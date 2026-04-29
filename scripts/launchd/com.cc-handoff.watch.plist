@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cc-handoff.watch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/cc-handoff</string>
+    <string>watch</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <!-- Replace with the absolute path to your receiving repo. -->
+  <string>/Users/CHANGE_ME/Workspace/your-frontend-repo</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/cc-handoff.watch.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/cc-handoff.watch.err.log</string>
+
+  <!-- Inherit PATH so that osascript and git resolve. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

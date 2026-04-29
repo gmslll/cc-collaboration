@@ -1,0 +1,6 @@
+# User-level config — copy to ~/.config/cc-handoff/config.toml
+# This file holds machine-wide defaults shared across all repos.
+
+relay_url = "https://your-vps.example.com"
+token     = "REPLACE_WITH_TOKEN_FROM_RELAY_ADMIN"
+identity  = "you@backend"   # how this machine identifies itself; must match an entry in the relay's tokens.json

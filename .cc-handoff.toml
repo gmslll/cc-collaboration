@@ -1,0 +1,11 @@
+[identity]
+  partner = "alex@frontend"
+
+[paths]
+  base = "origin/main"
+  repo = "/Users/user/Workspace/go/src/github.com/test-app-work/test-backend"
+
+[partner_mapping]
+
+[triggers]
+  auto_launch = false

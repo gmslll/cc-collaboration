@@ -1,0 +1,12 @@
+bin/
+*.exe
+*.test
+*.out
+.DS_Store
+.idea/
+.vscode/
+relay.db
+relay.db-journal
+relay.db-wal
+relay.db-shm
+*.local.toml

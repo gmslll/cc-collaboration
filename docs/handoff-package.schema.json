@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cc-collaboration/docs/handoff-package.schema.json",
+  "title": "Handoff Package",
+  "type": "object",
+  "required": ["id", "schema_version", "sender", "recipient", "urgency", "created_at", "repo"],
+  "properties": {
+    "id":             {"type": "string", "pattern": "^h_[0-9]{8}_[A-Z0-9]+$"},
+    "schema_version": {"type": "integer", "const": 1},
+    "sender":         {"type": "string"},
+    "recipient":      {"type": "string"},
+    "urgency":        {"type": "string", "enum": ["normal", "urgent"]},
+    "created_at":     {"type": "string", "format": "date-time"},
+    "repo": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name":     {"type": "string"},
+        "branch":   {"type": "string"},
+        "head_sha": {"type": "string"},
+        "base_sha": {"type": "string"}
+      }
+    },
+    "summary_md": {"type": "string"},
+    "git": {
+      "type": "object",
+      "properties": {
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sha", "subject"],
+            "properties": {
+              "sha":     {"type": "string"},
+              "subject": {"type": "string"},
+              "body":    {"type": "string"}
+            }
+          }
+        },
+        "diffstat":      {"type": "string"},
+        "diff_unified":  {"type": "string"},
+        "changed_paths": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "api_delta": {
+      "type": "object",
+      "required": ["format"],
+      "properties": {
+        "format":           {"type": "string"},
+        "added":            {"type": "array", "items": {"$ref": "#/$defs/op"}},
+        "changed":          {"type": "array", "items": {"$ref": "#/$defs/op"}},
+        "removed":          {"type": "array", "items": {"$ref": "#/$defs/op"}},
+        "raw_yaml_excerpt": {"type": "string"}
+      }
+    },
+    "targeting_hints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {
+          "reason":         {"type": "string"},
+          "matched_path":   {"type": "string"},
+          "captures":       {"type": "object", "additionalProperties": {"type": "string"}},
+          "suggest_edit":   {"type": "array", "items": {"type": "string"}},
+          "suggest_create": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "note_md":     {"type": "string"},
+    "replaces_id": {"type": "string"}
+  },
+  "$defs": {
+    "op": {
+      "type": "object",
+      "required": ["method", "path"],
+      "properties": {
+        "method":       {"type": "string"},
+        "path":         {"type": "string"},
+        "operation_id": {"type": "string"},
+        "summary":      {"type": "string"}
+      }
+    }
+  }
+}

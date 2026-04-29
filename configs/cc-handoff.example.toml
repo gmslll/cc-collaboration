@@ -1,0 +1,28 @@
+# Repo-level config — copy to <repo-root>/.cc-handoff.toml
+# Example below maps test-backend → test-frontend; adjust the regex/templates for your pair.
+
+[identity]
+# me      = "you@backend"    # optional; overrides user-level identity for this repo
+partner = "alex@frontend"    # default recipient when you run `cc-handoff submit`
+
+[paths]
+swagger = "docs/swagger.yaml"   # optional; if set, swagger delta is included in the package
+base    = "origin/main"          # optional; git base ref for commits / changed paths
+# repo  = "test-backend"      # optional; defaults to basename of repo root
+
+[partner_mapping]
+# Rules are applied to each changed path collected from git.
+# Named regex groups become template variables in suggest_edit / suggest_create.
+# These are heuristic hints — the receiver's Claude will verify them against the real frontend tree.
+[[partner_mapping.rule]]
+when_path_matches         = "^internal/module/(?P<domain>[^/]+)/"
+suggest_edit              = ["lib/api/{domain}.ts"]
+suggest_create_if_missing = true
+
+[[partner_mapping.rule]]
+when_path_matches = "^internal/module/(?P<domain>[^/]+)/dto/"
+suggest_edit      = ["types/{domain}.ts"]
+
+[triggers]
+auto_launch  = false       # if true, urgent handoffs auto-spawn a new terminal on receive
+terminal_app = "terminal"  # "terminal" | "iterm2"
