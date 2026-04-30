@@ -14,8 +14,9 @@
 
 .PARAMETER BinDir
   Directory containing cc-handoff.exe and cc-handoff-mcp.exe. Defaults to
-  the bin/ directory of the repo, looking for the *-windows-amd64.exe
-  artifacts produced by the Makefile.
+  the bin/ directory of the repo, looking for the *-windows-<arch>.exe
+  artifacts produced by the Makefile (arch is auto-detected from
+  $env:PROCESSOR_ARCHITECTURE).
 
 .PARAMETER RegisterTask
   Also register the cc-handoff-watch scheduled task in the current repo's
@@ -33,11 +34,16 @@ $ErrorActionPreference = 'Stop'
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\cc-handoff'
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
-# Accept either the cross-build artifact name (cc-handoff-windows-amd64.exe)
+$arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+  'ARM64' { 'arm64' }
+  default { 'amd64' }   # AMD64 / x86 / unset → amd64
+}
+
+# Accept either the cross-build artifact name (cc-handoff-windows-<arch>.exe)
 # or the plain name (cc-handoff.exe), copying whichever exists.
 $pairs = @(
-  @{ Src = 'cc-handoff-windows-amd64.exe'; Alt = 'cc-handoff.exe';     Dst = 'cc-handoff.exe' },
-  @{ Src = 'cc-handoff-mcp-windows-amd64.exe'; Alt = 'cc-handoff-mcp.exe'; Dst = 'cc-handoff-mcp.exe' }
+  @{ Src = "cc-handoff-windows-$arch.exe";     Alt = 'cc-handoff.exe';     Dst = 'cc-handoff.exe' },
+  @{ Src = "cc-handoff-mcp-windows-$arch.exe"; Alt = 'cc-handoff-mcp.exe'; Dst = 'cc-handoff-mcp.exe' }
 )
 foreach ($p in $pairs) {
   $src = Join-Path $BinDir $p.Src

@@ -228,8 +228,8 @@ Windows 是一等支持平台,所有功能(CLI / MCP / watch / 通知 / 紧急 h
 **安装**:
 
 ```powershell
-# 仓库根目录,先交叉编译
-make windows                    # 产出 bin\*-windows-amd64.exe
+# 仓库根目录,先交叉编译(产出 amd64 + arm64 两个架构 cli/mcp 共 4 个 .exe)
+make windows
 
 # 一键装到 %LOCALAPPDATA%\Programs\cc-handoff,加 PATH,注册 watch 任务
 .\scripts\install.ps1 -RegisterTask

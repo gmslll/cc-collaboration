@@ -222,8 +222,8 @@ Windows is a first-class platform — CLI, MCP, watch, toast notifications, urge
 **Install**:
 
 ```powershell
-# from the repo root, cross-compile first
-make windows                    # produces bin\*-windows-amd64.exe
+# from the repo root, cross-compile first (produces amd64 + arm64 cli/mcp, 4 .exe total)
+make windows
 
 # one-shot install: copies to %LOCALAPPDATA%\Programs\cc-handoff, adds PATH,
 # registers the watch task
