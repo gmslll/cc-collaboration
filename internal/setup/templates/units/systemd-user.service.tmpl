@@ -1,0 +1,16 @@
+[Unit]
+Description=cc-handoff watch (receiver-side handoff inbox daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{.WorkDir}}
+ExecStart={{.BinPath}} watch
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/tmp/cc-handoff.watch.out.log
+StandardError=append:/tmp/cc-handoff.watch.err.log
+
+[Install]
+WantedBy=default.target

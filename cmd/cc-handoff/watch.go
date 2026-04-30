@@ -7,17 +7,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/inbox"
 	"github.com/cc-collaboration/internal/notify"
 	"github.com/cc-collaboration/internal/relay/sse"
+	"github.com/cc-collaboration/internal/setup"
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
 func runWatch(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "print-unit" {
+		return runWatchPrintUnit(args[1:])
+	}
+
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	noNotify := fs.Bool("no-notify", false, "skip desktop notification (useful for CI / e2e tests)")
 	noLaunch := fs.Bool("no-launch", false, "log auto-launch invocations instead of opening a terminal")
@@ -180,3 +186,43 @@ func firstLine(s string) string {
 
 // errStop signals the SSE loop to exit cleanly (used by --stop-after).
 var errStop = fmt.Errorf("watch: requested stop")
+
+// runWatchPrintUnit renders the launchd plist or systemd user unit for the
+// receiver-side watch daemon to stdout. It does not write any system files —
+// piping the output to ~/Library/LaunchAgents/ or ~/.config/systemd/user/ is
+// the user's job.
+func runWatchPrintUnit(args []string) error {
+	fs := flag.NewFlagSet("watch print-unit", flag.ContinueOnError)
+	platform := fs.String("platform", "", "launchd | systemd (default: launchd on macOS, systemd elsewhere)")
+	workDir := fs.String("workdir", "", "absolute path to the receiving repo (default: current working directory)")
+	binPath := fs.String("bin", "", "absolute path to the cc-handoff binary (default: the running binary)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *platform == "" {
+		if runtime.GOOS == "darwin" {
+			*platform = string(setup.PlatformLaunchd)
+		} else {
+			*platform = string(setup.PlatformSystemd)
+		}
+	}
+	if *workDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		*workDir = cwd
+	}
+	if *binPath == "" {
+		bin, err := setup.CurrentBinary()
+		if err != nil {
+			return fmt.Errorf("resolve current binary: %w", err)
+		}
+		*binPath = bin
+	}
+	return setup.RenderUnit(setup.Platform(*platform), setup.UnitParams{
+		BinPath: *binPath,
+		WorkDir: *workDir,
+	}, os.Stdout)
+}

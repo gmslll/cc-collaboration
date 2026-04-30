@@ -57,6 +57,7 @@ Usage:
   cc-handoff list     [--json]
   cc-handoff pickup   <handoff-id> [--no-ack]
   cc-handoff watch    [--no-notify] [--no-launch] [--stop-after N]
+  cc-handoff watch print-unit [--platform=launchd|systemd] [--workdir=PATH] [--bin=PATH]
   cc-handoff comment  <handoff-id> <body...>
   cc-handoff comment  --list <handoff-id>
 

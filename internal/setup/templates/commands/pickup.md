@@ -22,5 +22,3 @@ You're the receiving side of a cc-handoff pair. Your partner just sent integrati
    - Honor any "禁止 / forbidden" rules in the local CLAUDE.md.
 
 4. When done, summarize what you changed (files touched, types added, breaking changes propagated) so the user can review.
-
-<!-- cc-handoff-version: 0.1.0 -->

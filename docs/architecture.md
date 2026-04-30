@@ -1,0 +1,269 @@
+# cc-handoff 架构
+
+读完这份文档,你会知道每个组件做什么、数据怎么流、配置在哪、出错时该看哪里。
+**面向想理解或扩展系统的开发者**;部署和日常运维看 [`deployment.md`](deployment.md),
+跨端 schema 看 [`handoff-package.schema.json`](handoff-package.schema.json) 与
+[`pkg/handoffschema/package.go`](../pkg/handoffschema/package.go)。
+
+---
+
+## 1. Components
+
+三个 Go 二进制 + 两端的 Claude Code 进程。
+
+| 组件 | 跑在哪 | 协议入口 | 主要职责 |
+|---|---|---|---|
+| `cc-relay` | VPS,systemd service | HTTP+SSE on `127.0.0.1:8080` | 收 / 发 handoff、广播 SSE 事件、按 recipient 鉴权 |
+| `cc-handoff` (CLI) | 两端开发者 Mac | argv | `init` / `submit` / `list` / `pickup` / `watch` / `comment` / `watch print-unit` |
+| `cc-handoff-mcp` | 两端开发者 Mac,Claude Code 通过 stdio 拉起 | MCP / stdio | 把 6 个 CLI 动作暴露为 `submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `attach_to_handoff` 等 MCP 工具,给 Claude Code 内的 `/handoff` `/pickup` slash command 用 |
+| `cc-handoff watch` (常驻) | 接收侧 Mac,launchd / systemd user | SSE 长连接 | 拉服务端事件、把 handoff 落到 `.claude/handoff-inbox/<id>/`、必要时弹通知 / `claude -p` |
+
+VPS 一定挂反向代理(caddy / nginx)终结 TLS,relay 自己只听 loopback。
+`flush_interval -1` 是 SSE 必须的反向代理配置。
+
+---
+
+## 2. Sequence diagrams
+
+### 2.1 submit (后端发送)
+
+```
+后端 Claude        cc-handoff-mcp          cc-relay              接收侧 watch
+   │                    │                    │                       │
+   │ /handoff (slash)   │                    │                       │
+   ├──────────────────► │                    │                       │
+   │                    │ build package      │                       │
+   │                    │   (git diff,       │                       │
+   │                    │    swagger delta,  │                       │
+   │                    │    rules → hints)  │                       │
+   │                    │                    │                       │
+   │                    │ POST /v1/handoffs  │                       │
+   │                    ├──────────────────► │                       │
+   │                    │                    │ INSERT handoffs       │
+   │                    │                    │ broadcast SSE         │
+   │                    │                    │   handoff.created ────┤
+   │                    │ 201 + handoff_id   │                       │
+   │                    │ ◄──────────────────┤                       │
+   │ id, recipient,     │                    │                       │
+   │ targeting hints    │                    │                       │
+   │ ◄──────────────────┤                    │                       │
+```
+
+### 2.2 pickup (前端接收)
+
+```
+接收侧 watch                    cc-relay              前端 Claude       cc-handoff-mcp
+   │ (always running)              │                    │                  │
+   │ ── SSE handoff.created ───────┤                    │                  │
+   │ GET /v1/handoffs/{id}         │                    │                  │
+   │ ────────────────────────────► │                    │                  │
+   │ 200 + package json            │                    │                  │
+   │ ◄──────────────────────────── │                    │                  │
+   │ Materialize:                  │                    │                  │
+   │  .claude/handoff-inbox/<id>/  │                    │                  │
+   │    summary.md prompt.md       │                    │                  │
+   │    api-delta.md package.json  │                    │                  │
+   │ Optional notify / launch      │                    │                  │
+   │                               │                    │                  │
+   │                               │                    │ /pickup (slash)  │
+   │                               │                    ├────────────────► │
+   │                               │ list_inbox         │                  │
+   │                               │ ◄──────────────────┤ list_inbox       │
+   │                               │ pickup_handoff     │                  │
+   │                               │ ◄──────────────────┤ pickup_handoff   │
+   │                               │ POST /v1/handoffs/ │                  │
+   │                               │   {id}/ack         │                  │
+   │                               │ Tool returns       │                  │
+   │                               │ integration prompt │                  │
+   │                               │   (also re-mat.)   │                  │
+   │                               │                    │ Claude reads     │
+   │                               │                    │ local code,      │
+   │                               │                    │ writes           │
+   │                               │                    │ INTEGRATION.md   │
+```
+
+### 2.3 comment (双向旁路)
+
+任意一方 → `comment_handoff` MCP / `cc-handoff comment` CLI → relay → SSE
+`comment.created` 推到对方的 watch → 追加到 `comments.md`。可读 / 可写,无 ack。
+
+---
+
+## 3. Handoff package schema
+
+完整定义见 `pkg/handoffschema/package.go`,JSON schema 见
+[`handoff-package.schema.json`](handoff-package.schema.json)。要点:
+
+- **diff 模式 vs module-brief 模式**(见 §6)
+- **附件分离**:`Attachments` 只存元信息(name / sha256 / size),字节通过单独的
+  `/v1/handoffs/{id}/attachments/{name}` 端点上传 / 下载。设计上是为了让 `package.json`
+  本身保持小、可 inline,大文件(全量 diff 截图等)按需取
+- **`SchemaVersion = 1`**:破坏性变更先写迁移路径再升版本
+- **`ReplacesID`**:重发场景下指向被替换的旧 handoff,但 relay 当前不做级联失效
+
+---
+
+## 4. SQLite schema
+
+VPS `/var/lib/cc-handoff/relay.db`,WAL 模式。三张表:
+
+```sql
+CREATE TABLE handoffs (
+  id          TEXT PRIMARY KEY,           -- h_YYYYMMDD_XXXXXXXX
+  sender      TEXT NOT NULL,
+  recipient   TEXT NOT NULL,
+  urgency     TEXT NOT NULL,              -- normal | urgent
+  state       TEXT NOT NULL,              -- pending | picked | expired
+  created_at  INTEGER NOT NULL,           -- unix millis
+  picked_at   INTEGER,                    -- set by ack
+  repo_name   TEXT NOT NULL,              -- denormalized for /list
+  branch      TEXT NOT NULL,
+  headline    TEXT NOT NULL,              -- first line of summary_md
+  payload     TEXT NOT NULL               -- full Package JSON
+);
+CREATE INDEX idx_handoffs_recipient_state_created
+  ON handoffs(recipient, state, created_at);
+
+CREATE TABLE comments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  handoff_id  TEXT NOT NULL REFERENCES handoffs(id) ON DELETE CASCADE,
+  sender      TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE attachments (
+  handoff_id  TEXT NOT NULL REFERENCES handoffs(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  sha256      TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  content     BLOB NOT NULL,
+  PRIMARY KEY (handoff_id, name)
+);
+```
+
+- 列表查询(`GET /v1/handoffs?recipient=X`)只读 denormalized 列,不解 payload
+- ack 是 conditional UPDATE + 二次读判定,保证幂等(已 picked 不报错,只是不动 state)
+- 备份脚本 `scripts/backup.sh`(VPS 上 `cc-handoff-backup`):热备份 SQLite,
+  `KEEP=N` 控制保留份数
+
+---
+
+## 5. Auth model
+
+每个 identity(`me@team` / `alex@frontend`)在 VPS 端有一条 token,存在
+`/etc/cc-handoff/tokens.json`。所有 HTTP 请求必须带 `Authorization: Bearer <token>`。
+
+请求权限按 token 解出的 identity 检查:
+
+| 端点 | 写约束 | 读约束 |
+|---|---|---|
+| POST /v1/handoffs | sender 必须等于 token identity | — |
+| GET /v1/handoffs?recipient= | — | recipient 必须等于 token identity(只能列自己的) |
+| GET /v1/handoffs/{id} | — | recipient 或 sender 等于 token identity |
+| POST /v1/handoffs/{id}/ack | recipient 必须等于 token identity | — |
+| POST /v1/handoffs/{id}/comments | sender 或 recipient 等于 token identity | — |
+| GET/POST /v1/handoffs/{id}/attachments/* | 同上 | 同上 |
+| GET /v1/events?recipient= | — | recipient 必须等于 token identity |
+
+token 轮换:VPS 上 `sudo cc-handoff-rotate-token <identity>` 重写 tokens.json 并 SIGHUP relay。
+
+---
+
+## 6. Mode 区分:diff 模式 vs module-brief 模式
+
+cc-handoff 有两种发送场景,体现在 `Package` 是否带 `Git` 字段:
+
+| | diff 模式 | module-brief 模式 |
+|---|---|---|
+| **触发命令** | `/handoff` slash | `/handoff-module <path...>` |
+| **场景** | 刚写完一段改动想推过去 | 模块早就合并、前端要新做集成 |
+| **`Git` 字段** | 有(commits + changed_paths) | nil |
+| **`ModulePaths`** | 空 | 用户给的模块路径数组 |
+| **`SummaryMD`** | Claude 写的对接说明 | Claude 读 routes/dto 后整理的完整 API 契约 brief |
+| **接收端 prompt 模板** | "读 diff 配 INTEGRATION.md" | "按 brief 调对应客户端、注意契约一致" |
+
+接收端的模板选择由 `internal/inbox/materialize.go::renderPromptMD` 按 `Git == nil` 自动判断,
+不依赖 `ModulePaths` 字段的存在(为了兼容老 MCP)。
+
+---
+
+## 7. Threat model
+
+MVP 安全姿态有意保守。明确防的 / 不防的:
+
+- **TLS + Bearer token 防的**:
+  - 公网窃听(TLS)
+  - 误把别人 inbox 的 handoff 拿走(token-bound identity 校验)
+  - VPS 公开监听(loopback-only,反代终结 TLS)
+- **不防的**:
+  - VPS 沦陷 → 攻击者能读全部 handoff payload 与 comment(plaintext at rest)
+  - token 泄漏 → 等价于该 identity 的全部权限,直到 rotate
+  - 客户端到 Claude Code 的 stdio 通道 → 信任本机
+- **延后**:E2E 加密(sender 公钥加密 payload,recipient 私钥解)— 设计上预留
+  schema 字段位置但未实施;判断点是 VPS 攻击面变大或 payload 含敏感凭证时
+
+---
+
+## 8. Extension points
+
+不规定方案,只标位置,方便后人接:
+
+- **触发**:目前只手动 `/handoff`。Stop hook / pre-commit / CI artifact 想接进来,
+  挂在 `cc-handoff submit` 这一层(`cmd/cc-handoff/submit.go`)
+- **包内容**:`internal/handoff/build.go::Build` 是构造 `Package` 的唯一入口,
+  新增字段先在这里塞,接收端在 `internal/inbox/materialize.go` 渲染
+- **协议变更**:bump `pkg/handoffschema.SchemaVersion`,在 store 迁移加新列,
+  接收端基于版本兜底
+- **第三个 / 第 N 个收件人**:relay schema 已经按 `recipient` 索引,改成多收件人
+  需要 fan-out 逻辑(insert N 行)+ 协议层带 `recipients[]`
+- **rules 引擎**:`internal/rules/engine.go` 是把 changed_paths 映射到前端建议位置
+  的纯函数;新增映射形态(比如根据 commit 主题)在这里加
+
+---
+
+## 9. Failure modes & recovery
+
+| 故障 | 行为 | 用户怎么处理 |
+|---|---|---|
+| relay 不可达 | submit 直接报错,不重试,不入队 | 用户重发(`/handoff` 再点一次)。**故意不做后台队列**——状态可见性优于"看起来什么都没发生" |
+| 部分 pickup(已下载未 ack) | `pickup_handoff --no-ack` 让用户先看再 ack;ack 是幂等的(已 picked 重发依旧返回成功) | 重新跑 `pickup_handoff` 即可 |
+| watch SSE 断开 | `internal/transport/sse_client.go` 内置指数退避重连;断网期间 handoff 不丢(relay 持久化) | 网络恢复自动重连;启动时一次性拉 list 兜底未投递的 |
+| token 过期 / 轮换 | 客户端 401 直接报错 | VPS 上 `cc-handoff-rotate-token`,客户端改 user config 后重启 watch |
+| sender 改了文件再发 | `ReplacesID` 字段标了但 relay 不级联失效旧的 | 接收端通过 list 看到两条;按 created_at 取最新即可 |
+| 接收端 `INTEGRATION.md` 写错 | 文档里强调"写完停下等 review,不直接改代码" | 人工 review 时驳回;接收端 Claude 重做 |
+
+---
+
+## 10. Identity & repo resolution
+
+`me` / `partner` / `repo_name` 在多个来源之间合并,优先级从高到低:
+
+| 字段 | 1. CLI flag | 2. repo `.cc-handoff.toml` | 3. user `~/.config/cc-handoff/config.toml` | 4. 默认 |
+|---|---|---|---|---|
+| `Me` | (无 flag) | `[identity].me` | `identity` | — (必须有) |
+| `Partner` | `--to ID` (submit) | `[identity].partner` | — | — (必须有) |
+| `RelayURL` / `Token` | — | — | `relay_url` / `token` | — (必须有) |
+| `RepoName` | `--repo NAME` (init) | `[paths].repo` | — | `basename(repoRoot)` |
+| `Base` | `--base REF` | `[paths].base` | — | `origin/main` |
+| `Swagger` | `--swagger PATH` (init) | `[paths].swagger` | — | (空,跳过 API delta) |
+
+合并逻辑在 `internal/config/config.go::Resolve`。
+**仓库根判定**:`RepoConfigPath` 从 cwd 向上找 `.git`,找到的目录就是 repo 根,
+否则 fallback 到 cwd。
+
+---
+
+## State ownership
+
+| 状态 | 由谁拥有 | 何时清理 |
+|---|---|---|
+| relay SQLite (`/var/lib/cc-handoff/relay.db`) | VPS | 不自动清理(MVP);备份脚本按 KEEP 滚动保留 |
+| 接收端 `.claude/handoff-inbox/<id>/` | 接收侧 Mac | 用户手动;ack 后不删,留作 review 历史 |
+| 接收端 `.claude/handoff-inbox/<id>/INTEGRATION.md` | 接收侧 Claude 写、人工 review、人工提交 | 进入接收端 git 仓库后由 git 管 |
+| 发送侧 git refs | 发送侧 Mac(本地 git) | git 自己管;cc-handoff 不动 |
+| MCP stdio session | Claude Code 进程 | 进程结束即销毁;无持久化 |
+| user config `~/.config/cc-handoff/config.toml` | 用户 home(0o600) | 用户手动;`cc-handoff init` 会 prompt 后覆盖 |
+| repo config `<repo>/.cc-handoff.toml` | 仓库根 | 提交进 git;`init` 会 prompt 后覆盖 |
+| Claude Code MCP 注册 | `~/.claude.json` (user scope) 或 `.mcp.json` (project scope) | `claude mcp remove`;`init --with-mcp` 会先 remove 再 add(幂等) |
+| `.claude/commands/{handoff,handoff-module,pickup}.md` | 仓库根 | 提交进 git;`init --with-commands` 带版本戳,旧版本会触发冲突 prompt |

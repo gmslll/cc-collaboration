@@ -26,5 +26,3 @@ You just finished writing or modifying an API. Hand it off to the frontend partn
 5. Report back the handoff id, recipient, and the targeting hints / api_delta counts shown in the tool's response.
 
 Do **not** invent endpoints you didn't actually implement. Use only what's in git diff and your session memory. **Do not invent requirements either** — if the user said "没有" / "n" / 没回复需求，就不传 note。
-
-<!-- cc-handoff-version: 0.1.0 -->

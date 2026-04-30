@@ -2,7 +2,7 @@
 
 跨机器 Claude Code 协作工具。后端开发者写完接口后，用一条 `/handoff` 把 Swagger 增量、commit 元信息、Claude 写的会话总结打包，结合前端项目目录约定生成定位提示，推送到自有 VPS 上的中转服务；前端开发者机器上的常驻进程收到后，默认入收件箱+系统通知+一键唤起 Claude，**接收端 Claude 读本地真实代码后产出 `INTEGRATION.md` 作为对接文档**，人工 review 后再执行。紧急任务可自动开新终端跑 `claude -p`。
 
-四个里程碑全部完成。完整方案见 `docs/architecture.md`。
+四个里程碑全部完成。架构与数据流见 [`docs/architecture.md`](docs/architecture.md)，部署与运维见 [`docs/deployment.md`](docs/deployment.md)。
 
 ## 里程碑
 
@@ -41,19 +41,35 @@ handoff.your-domain.com {
 客户端（前后端各一次）：
 
 ```bash
-make build
-sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
-cd /path/to/your-repo && cc-handoff init
-bash /path/to/cc-collaboration/scripts/install-mcp.sh
-mkdir -p .claude/commands
-cp /path/to/cc-collaboration/.claude/commands/{handoff,handoff-module,pickup}.md .claude/commands/
+# 1) 编译并装到 PATH
+make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
+
+# 2) 在你的工作仓库里 init —— 写两个 toml,
+#    --with-mcp 顺手 `claude mcp add`,
+#    --with-commands 顺手把 /handoff /handoff-module /pickup 装到 .claude/commands/
+cd /path/to/your-repo
+cc-handoff init --with-mcp --with-commands
 ```
 
-接收侧 Mac 还要起常驻 watch（编辑 plist 里 WorkingDirectory 后）：
+`--with-*` 可省;省略时 `cc-handoff init` 退化为只写两个 toml,
+其余步骤需自己跑 `bash /path/to/cc-collaboration/scripts/install-mcp.sh`
+和 `cp .claude/commands/*.md`(适合 CI / 想完全控制每一步的场景)。
+
+接收侧 Mac 还要起常驻 watch:
 
 ```bash
-cp /path/to/cc-collaboration/scripts/launchd/com.cc-handoff.watch.plist ~/Library/LaunchAgents/
+# launchd 模板由二进制自带,渲染好的 plist 直接喂给 ~/Library/LaunchAgents/
+cc-handoff watch print-unit --workdir=$(pwd) > ~/Library/LaunchAgents/com.cc-handoff.watch.plist
 launchctl load ~/Library/LaunchAgents/com.cc-handoff.watch.plist
+```
+
+Linux 接收侧用 `--platform=systemd` 输出 user unit:
+
+```bash
+cc-handoff watch print-unit --platform=systemd --workdir=$(pwd) \
+  > ~/.config/systemd/user/cc-handoff-watch.service
+systemctl --user daemon-reload
+systemctl --user enable --now cc-handoff-watch
 ```
 
 VPS 之前想先在本机试一遍：见 [`docs/dogfood-runbook.md`](docs/dogfood-runbook.md)，`bash scripts/dogfood.sh setup` 一键起本地隔离环境。
