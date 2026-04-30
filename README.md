@@ -46,7 +46,7 @@ sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 cd /path/to/your-repo && cc-handoff init
 bash /path/to/cc-collaboration/scripts/install-mcp.sh
 mkdir -p .claude/commands
-cp /path/to/cc-collaboration/.claude/commands/{handoff,pickup}.md .claude/commands/
+cp /path/to/cc-collaboration/.claude/commands/{handoff,handoff-module,pickup}.md .claude/commands/
 ```
 
 接收侧 Mac 还要起常驻 watch（编辑 plist 里 WorkingDirectory 后）：
@@ -60,4 +60,9 @@ VPS 之前想先在本机试一遍：见 [`docs/dogfood-runbook.md`](docs/dogfoo
 
 ## 在 Claude Code 内使用
 
-后端 Claude 完成接口后输入 `/handoff` → Claude 自己写对接说明并调 `submit_handoff`。前端 Claude 输入 `/pickup` → Claude 看 `list_inbox` 后用 `pickup_handoff` 拉取并直接开始改 `lib/api/<domain>.ts`。中途要问问题用 `comment_handoff` 工具（或 `cc-handoff comment <id> <body>`）。
+后端两种入口,看场景挑:
+
+- **`/handoff`（diff 模式）**:刚写完一段改动想推过去时用。Claude 读分支 diff、写对接说明、调 `submit_handoff`。
+- **`/handoff-module <module-path> [more...]`（模块 brief 模式）**:某模块早就合并、前端要新做集成时用。Claude 读模块下的 routes/handlers/dto/swagger,整理成自包含的 API 契约文档,调 `submit_handoff` 时带 `module_paths`,接收端会自动切到「模块对接」prompt 模板。一次可以传多个模块,空格分隔。
+
+前端 `/pickup` → Claude 看 `list_inbox` 后用 `pickup_handoff` 拉取,产出 `docs/integrations/<id>.md` 等人工 review。中途要问问题用 `comment_handoff` 工具(或 `cc-handoff comment <id> <body>`)。

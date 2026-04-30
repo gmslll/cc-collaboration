@@ -132,6 +132,14 @@ func renderSummaryMD(p *handoffschema.Package) string {
 		sb.WriteString("\n")
 	}
 
+	if len(p.ModulePaths) > 0 {
+		sb.WriteString("## 模块范围 (module brief)\n\n")
+		for _, m := range p.ModulePaths {
+			fmt.Fprintf(&sb, "- `%s`\n", m)
+		}
+		sb.WriteString("\n")
+	}
+
 	if p.Git != nil && len(p.Git.Commits) > 0 {
 		sb.WriteString("## Commits\n\n")
 		for _, c := range p.Git.Commits {
@@ -168,14 +176,31 @@ func renderSummaryMD(p *handoffschema.Package) string {
 
 func renderPromptMD(p *handoffschema.Package) string {
 	integrationPath := fmt.Sprintf("docs/integrations/%s.md", p.ID)
+	moduleMode := len(p.ModulePaths) > 0
 
 	var sb strings.Builder
-	sb.WriteString("# Handoff: 产出前端对接方案\n\n")
-	fmt.Fprintf(&sb, "收到 handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
-	fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s`，写完后停下等人工 review。\n\n", integrationPath)
+	if moduleMode {
+		sb.WriteString("# Handoff: 模块对接 — 产出前端集成方案\n\n")
+		fmt.Fprintf(&sb, "收到模块 brief handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
+		sb.WriteString("**这是一份后端整理好的、对一个或多个已有模块的完整 API 契约文档**，不是 diff。后端的「意图」就是文档本身。\n\n")
+		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s`，写完后停下等人工 review。\n\n", integrationPath)
+		sb.WriteString("## 模块范围\n\n")
+		for _, m := range p.ModulePaths {
+			fmt.Fprintf(&sb, "- `%s`\n", m)
+		}
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("# Handoff: 产出前端对接方案\n\n")
+		fmt.Fprintf(&sb, "收到 handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
+		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s`，写完后停下等人工 review。\n\n", integrationPath)
+	}
 
 	if p.SummaryMD != "" {
-		sb.WriteString("## 后端的意图 (sender's notes)\n\n")
+		if moduleMode {
+			sb.WriteString("## 后端整理的 API 契约 (模块 brief)\n\n")
+		} else {
+			sb.WriteString("## 后端的意图 (sender's notes)\n\n")
+		}
 		sb.WriteString(p.SummaryMD)
 		if !strings.HasSuffix(p.SummaryMD, "\n") {
 			sb.WriteString("\n")
@@ -236,7 +261,11 @@ func renderPromptMD(p *handoffschema.Package) string {
 	sb.WriteString("**先用 `comment_handoff` MCP 工具或 `cc-handoff comment <id>` CLI 问发送端，等回复后再继续**。不要脑补。\n")
 	sb.WriteString("1. 完整读完上面所有信息。\n")
 	sb.WriteString("2. 扫本仓库前端代码，定位以下层：API client / 类型定义 / DTO / hooks / 调用方组件。\n")
-	sb.WriteString("3. 把 API delta 每一条**对应到本仓库的真实文件路径** —— 不要照抄发送端 hints，hints 可能过期。\n")
+	if moduleMode {
+		sb.WriteString("3. 把 brief 中**每个 endpoint** 落到本仓库 API client 真实文件路径 —— 不要照抄 hints。对每个 endpoint，明确：本仓库是否已经有 client / 类型 / 调用点；缺什么、要新增什么、要改什么。\n")
+	} else {
+		sb.WriteString("3. 把 API delta 每一条**对应到本仓库的真实文件路径** —— 不要照抄发送端 hints，hints 可能过期。\n")
+	}
 	fmt.Fprintf(&sb, "4. 在仓库根写 `%s`（必要时 `mkdir -p docs/integrations/`），结构必须包含：\n", integrationPath)
 	sb.WriteString("   - **Overview**：1-2 段说清这次对接要达成什么。\n")
 	sb.WriteString("   - **File changes**：按 `Modify` / `Create` / `Remove` 分组；每条带 Path（已用真实代码核对）+ Why + 具体代码片段或伪代码 + ")

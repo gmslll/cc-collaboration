@@ -40,11 +40,12 @@ func submitHandoffTool() Tool {
 	schema := json.RawMessage(`{
   "type": "object",
   "properties": {
-    "summary":   {"type": "string", "description": "Markdown summary of the change. Written to .claude/handoff-inbox/.draft-summary.md before the package is built. If omitted, the existing draft (if any) is used."},
-    "to":        {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
-    "urgent":    {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
-    "note":      {"type": "string", "description": "Markdown 写的「需求 / 跨端约束」段，例如错误码对照、字段大小写规则、分页约定、不可合并的请求等。会以「⚠️ 后端备注 / 需求 (必读)」醒目段渲染到接收端 prompt，并被强制要求 INTEGRATION.md 逐条响应。短到一两句也可以；没有就不传。"},
-    "cwd":       {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+    "summary":      {"type": "string", "description": "Markdown summary of the change. Written to .claude/handoff-inbox/.draft-summary.md before the package is built. If omitted, the existing draft (if any) is used."},
+    "to":           {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
+    "urgent":       {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
+    "note":         {"type": "string", "description": "Markdown 写的「需求 / 跨端约束」段，例如错误码对照、字段大小写规则、分页约定、不可合并的请求等。会以「⚠️ 后端备注 / 需求 (必读)」醒目段渲染到接收端 prompt，并被强制要求 INTEGRATION.md 逐条响应。短到一两句也可以；没有就不传。"},
+    "module_paths": {"type": "array", "items": {"type": "string"}, "description": "Module-brief mode: relative-to-repo-root directory paths (e.g. internal/module/oms/order). When set, the build switches to module-brief mode — git diff and Swagger delta are skipped, and summary is treated as a self-contained API contract document. Drive this from the /handoff-module slash command; do not set it manually unless you know why."},
+    "cwd":          {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
 	return Tool{
@@ -56,11 +57,12 @@ func submitHandoffTool() Tool {
 }
 
 type submitArgs struct {
-	Summary string `json:"summary"`
-	To      string `json:"to"`
-	Urgent  bool   `json:"urgent"`
-	Note    string `json:"note"`
-	CWD     string `json:"cwd"`
+	Summary     string   `json:"summary"`
+	To          string   `json:"to"`
+	Urgent      bool     `json:"urgent"`
+	Note        string   `json:"note"`
+	ModulePaths []string `json:"module_paths"`
+	CWD         string   `json:"cwd"`
 }
 
 func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -112,6 +114,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Note:        a.Note,
 		Rules:       engine,
 		SwaggerPath: res.Swagger,
+		ModulePaths: a.ModulePaths,
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -125,8 +128,13 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Submitted handoff `%s` to `%s`.\n\n", out.ID, recipient)
-	fmt.Fprintf(&sb, "- branch: `%s`\n- base: `%s`\n- head: `%s`\n",
-		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.BaseSHA), handoff.ShortSHA(pkg.Repo.HeadSHA))
+	if len(pkg.ModulePaths) > 0 {
+		fmt.Fprintf(&sb, "- mode: module-brief\n- modules: %s\n- branch: `%s`\n- head: `%s`\n",
+			strings.Join(pkg.ModulePaths, ", "), pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
+	} else {
+		fmt.Fprintf(&sb, "- branch: `%s`\n- base: `%s`\n- head: `%s`\n",
+			pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.BaseSHA), handoff.ShortSHA(pkg.Repo.HeadSHA))
+	}
 	if pkg.Git != nil {
 		fmt.Fprintf(&sb, "- changed_paths: %d\n- commits: %d\n",
 			len(pkg.Git.ChangedPaths), len(pkg.Git.Commits))

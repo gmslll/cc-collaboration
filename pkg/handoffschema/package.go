@@ -30,6 +30,7 @@ type Package struct {
 	SummaryMD      string          `json:"summary_md"`
 	Git            *Git            `json:"git,omitempty"`
 	APIDelta       *APIDelta       `json:"api_delta,omitempty"`
+	ModulePaths    []string        `json:"module_paths,omitempty"`
 	TargetingHints []TargetingHint `json:"targeting_hints,omitempty"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
 	NoteMD         string          `json:"note_md,omitempty"`

@@ -19,16 +19,9 @@ import (
 // the integration plan against the recipient's real frontend tree, not against
 // the sender's diff.
 func Collect(ctx context.Context, repoDir, base string) (*handoffschema.Git, handoffschema.Repo, error) {
-	repo := handoffschema.Repo{}
-
-	headSHA, err := run(ctx, repoDir, "git", "rev-parse", "HEAD")
+	repo, err := CollectRepoMeta(ctx, repoDir)
 	if err != nil {
-		return nil, repo, fmt.Errorf("rev-parse HEAD: %w", err)
-	}
-	repo.HeadSHA = strings.TrimSpace(headSHA)
-
-	if branch, err := run(ctx, repoDir, "git", "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		repo.Branch = strings.TrimSpace(branch)
+		return nil, repo, err
 	}
 
 	baseSHA, err := run(ctx, repoDir, "git", "rev-parse", base)
@@ -57,6 +50,22 @@ func Collect(ctx context.Context, repoDir, base string) (*handoffschema.Git, han
 	}
 
 	return g, repo, nil
+}
+
+// CollectRepoMeta returns just HEAD + branch — no diff work, no base ref.
+// Used by module-mode handoffs that ship a self-contained API brief without
+// a diff window. BaseSHA is intentionally left empty.
+func CollectRepoMeta(ctx context.Context, repoDir string) (handoffschema.Repo, error) {
+	repo := handoffschema.Repo{}
+	headSHA, err := run(ctx, repoDir, "git", "rev-parse", "HEAD")
+	if err != nil {
+		return repo, fmt.Errorf("rev-parse HEAD: %w", err)
+	}
+	repo.HeadSHA = strings.TrimSpace(headSHA)
+	if branch, err := run(ctx, repoDir, "git", "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		repo.Branch = strings.TrimSpace(branch)
+	}
+	return repo, nil
 }
 
 func parseCommits(raw string) []handoffschema.Commit {
