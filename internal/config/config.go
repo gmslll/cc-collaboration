@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/BurntSushi/toml"
 )
@@ -51,12 +52,24 @@ type Triggers struct {
 }
 
 const (
-	TerminalAppTerminal = "terminal"
-	TerminalAppITerm2   = "iterm2"
+	TerminalAppTerminal        = "terminal"
+	TerminalAppITerm2          = "iterm2"
+	TerminalAppWindowsTerminal = "windows-terminal"
+	TerminalAppPowerShell      = "powershell"
 )
 
-// UserConfigPath returns the canonical user-level config path.
+// UserConfigPath returns the canonical user-level config path. On Windows it
+// resolves to %AppData%\cc-handoff\config.toml; on macOS/Linux it stays at
+// ~/.config/cc-handoff/config.toml for backwards compatibility with existing
+// installs that predate Windows support.
 func UserConfigPath() (string, error) {
+	if runtime.GOOS == "windows" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, "cc-handoff", "config.toml"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err

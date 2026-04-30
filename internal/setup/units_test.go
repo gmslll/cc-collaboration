@@ -50,6 +50,30 @@ func TestRenderUnit_Systemd(t *testing.T) {
 	}
 }
 
+func TestRenderUnit_WindowsTask(t *testing.T) {
+	var buf bytes.Buffer
+	err := RenderUnit(PlatformWindowsTask, UnitParams{
+		BinPath: `C:\Users\me\AppData\Local\Programs\cc-handoff\cc-handoff.exe`,
+		WorkDir: `C:\Users\me\repo`,
+	}, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		`<?xml version="1.0" encoding="UTF-8"?>`,
+		`<LogonTrigger>`,
+		`<Command>C:\Users\me\AppData\Local\Programs\cc-handoff\cc-handoff.exe</Command>`,
+		`<Arguments>watch</Arguments>`,
+		`<WorkingDirectory>C:\Users\me\repo</WorkingDirectory>`,
+		`<RestartOnFailure>`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderUnit_RequiresParams(t *testing.T) {
 	if err := RenderUnit(PlatformLaunchd, UnitParams{WorkDir: "/x"}, &bytes.Buffer{}); err == nil {
 		t.Error("expected error when BinPath is empty")

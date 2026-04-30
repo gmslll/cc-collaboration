@@ -328,7 +328,7 @@ var errStop = fmt.Errorf("watch: requested stop")
 // the user's job.
 func runWatchPrintUnit(args []string) error {
 	fs := flag.NewFlagSet("watch print-unit", flag.ContinueOnError)
-	platform := fs.String("platform", "", "launchd | systemd (default: launchd on macOS, systemd elsewhere)")
+	platform := fs.String("platform", "", "launchd | systemd | windows-task (default: launchd on macOS, windows-task on Windows, systemd elsewhere)")
 	workDir := fs.String("workdir", "", "absolute path to the receiving repo (default: current working directory)")
 	binPath := fs.String("bin", "", "absolute path to the cc-handoff binary (default: the running binary)")
 	if err := fs.Parse(args); err != nil {
@@ -336,9 +336,12 @@ func runWatchPrintUnit(args []string) error {
 	}
 
 	if *platform == "" {
-		if runtime.GOOS == "darwin" {
+		switch runtime.GOOS {
+		case "darwin":
 			*platform = string(setup.PlatformLaunchd)
-		} else {
+		case "windows":
+			*platform = string(setup.PlatformWindowsTask)
+		default:
 			*platform = string(setup.PlatformSystemd)
 		}
 	}

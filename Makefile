@@ -8,7 +8,7 @@ VERSION     := $(shell cat VERSION)
 LDFLAGS     := -X 'github.com/cc-collaboration/internal/version.Version=$(VERSION)'
 INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 install test e2e deploy clean version release-tag
+.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows install test e2e deploy clean version release-tag
 
 all: build
 
@@ -29,6 +29,23 @@ relay-linux:
 
 relay-linux-arm64:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/cc-relay-linux-arm64 ./cmd/relay
+
+# Cross-builds for Windows. Receivers run cli + mcp; the relay is backend-only
+# and not built for Windows.
+cli-windows-amd64:
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff-windows-amd64.exe ./cmd/cc-handoff
+
+cli-windows-arm64:
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff-windows-arm64.exe ./cmd/cc-handoff
+
+mcp-windows-amd64:
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff-mcp-windows-amd64.exe ./cmd/cc-handoff-mcp
+
+mcp-windows-arm64:
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff-mcp-windows-arm64.exe ./cmd/cc-handoff-mcp
+
+# Aggregate: build all Windows binaries (amd64 + arm64) for cli and mcp.
+windows: cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64
 
 install: cli mcp
 	install -m 755 bin/cc-handoff $(INSTALL_DIR)/cc-handoff

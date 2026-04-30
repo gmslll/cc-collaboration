@@ -12,14 +12,6 @@ import (
 	"github.com/cc-collaboration/internal/config"
 )
 
-// LaunchOpts describes a desired auto-launch invocation.
-type LaunchOpts struct {
-	App        string // config.TerminalAppTerminal | TerminalAppITerm2; empty = Terminal.app
-	CWD        string // absolute path to the receiving repo
-	PromptFile string // absolute path to prompt.md inside the materialized inbox dir
-	Dry        bool   // log what would happen instead of actually opening a window
-}
-
 // LaunchTerminal opens a new Terminal.app or iTerm2 window in the requested
 // directory and starts `claude -p "$(cat <PromptFile>)"`.
 //

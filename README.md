@@ -219,6 +219,48 @@ sudo journalctl -u cc-handoff-relay -f
 详细排错(watch 连不上 / token 过期 / SSE 不通 / 升级回滚)见
 [`docs/deployment.md`](docs/deployment.md) 的「故障排查」章。
 
+## Windows 支持
+
+Windows 是一等支持平台,所有功能(CLI / MCP / watch / 通知 / 紧急 handoff 自动开终端 / 守护进程)都可用。
+
+**前置依赖**:Windows 10 1809+ 或 Windows 11;PowerShell 5.1+(预装);`claude` CLI 在 PATH。
+
+**安装**:
+
+```powershell
+# 仓库根目录,先交叉编译
+make windows                    # 产出 bin\*-windows-amd64.exe
+
+# 一键装到 %LOCALAPPDATA%\Programs\cc-handoff,加 PATH,注册 watch 任务
+.\scripts\install.ps1 -RegisterTask
+```
+
+**手动注册守护进程**(已装好 cc-handoff.exe 后):
+
+```powershell
+# PowerShell 5.1 的 `>` 默认写 UTF-16 LE BOM,会和模板里的 UTF-8 声明对不上,
+# schtasks 会拒收。用 WriteAllText 强制 UTF-8 无 BOM。
+$xml = cc-handoff watch print-unit
+[System.IO.File]::WriteAllText("cc-handoff-watch.xml", ($xml -join "`n"), [System.Text.UTF8Encoding]::new($false))
+schtasks /Create /XML cc-handoff-watch.xml /TN cc-handoff-watch
+schtasks /Run /TN cc-handoff-watch
+```
+
+**关键路径与配置项**:
+
+| 项目 | 位置 |
+|---|---|
+| 用户配置 | `%AppData%\cc-handoff\config.toml` |
+| 仓库配置 | `<repo>\.cc-handoff.toml`(同 macOS / Linux) |
+| `terminal_app` 取值 | `windows-terminal`(默认,wt.exe 不在 PATH 时回退到 powershell)、`powershell` |
+
+**清理**:
+
+```powershell
+schtasks /Delete /TN cc-handoff-watch /F
+Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
+```
+
 ## 进一步阅读
 
 | 文档 | 说什么 |

@@ -10,7 +10,7 @@ import "embed"
 //go:embed templates/commands/handoff.md templates/commands/handoff-module.md templates/commands/pickup.md
 var commandsFS embed.FS
 
-//go:embed templates/units/launchd.plist.tmpl templates/units/systemd-user.service.tmpl
+//go:embed templates/units/launchd.plist.tmpl templates/units/systemd-user.service.tmpl templates/units/windows-task.xml.tmpl
 var unitsFS embed.FS
 
 // CommandFiles enumerates the slash command files in copy order. The list is

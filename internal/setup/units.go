@@ -12,8 +12,9 @@ import (
 type Platform string
 
 const (
-	PlatformLaunchd Platform = "launchd"
-	PlatformSystemd Platform = "systemd"
+	PlatformLaunchd     Platform = "launchd"
+	PlatformSystemd     Platform = "systemd"
+	PlatformWindowsTask Platform = "windows-task"
 )
 
 // UnitParams populates the launchd plist / systemd unit templates that the
@@ -42,8 +43,10 @@ func RenderUnit(platform Platform, p UnitParams, out io.Writer) error {
 		name = "templates/units/launchd.plist.tmpl"
 	case PlatformSystemd:
 		name = "templates/units/systemd-user.service.tmpl"
+	case PlatformWindowsTask:
+		name = "templates/units/windows-task.xml.tmpl"
 	default:
-		return fmt.Errorf("unknown platform %q (want launchd or systemd)", platform)
+		return fmt.Errorf("unknown platform %q (want launchd, systemd, or windows-task)", platform)
 	}
 
 	raw, err := unitsFS.ReadFile(name)

@@ -213,6 +213,50 @@ sudo journalctl -u cc-handoff-relay -f
 
 Detailed troubleshooting (watch can't connect / token expired / SSE not flowing / upgrade rollback) lives in the troubleshooting section of [`docs/deployment.md`](docs/deployment.md) (currently Chinese-only).
 
+## Windows support
+
+Windows is a first-class platform — CLI, MCP, watch, toast notifications, urgent-handoff terminal launch, and the daemon all work.
+
+**Prerequisites**: Windows 10 1809+ or Windows 11; PowerShell 5.1+ (preinstalled); `claude` CLI on PATH.
+
+**Install**:
+
+```powershell
+# from the repo root, cross-compile first
+make windows                    # produces bin\*-windows-amd64.exe
+
+# one-shot install: copies to %LOCALAPPDATA%\Programs\cc-handoff, adds PATH,
+# registers the watch task
+.\scripts\install.ps1 -RegisterTask
+```
+
+**Manual daemon registration** (after cc-handoff.exe is on PATH):
+
+```powershell
+# PowerShell 5.1's `>` writes UTF-16 LE with BOM, which mismatches the
+# template's <?xml encoding="UTF-8"?> declaration and schtasks rejects it.
+# Use WriteAllText to force UTF-8 without BOM.
+$xml = cc-handoff watch print-unit
+[System.IO.File]::WriteAllText("cc-handoff-watch.xml", ($xml -join "`n"), [System.Text.UTF8Encoding]::new($false))
+schtasks /Create /XML cc-handoff-watch.xml /TN cc-handoff-watch
+schtasks /Run /TN cc-handoff-watch
+```
+
+**Paths and config**:
+
+| Item | Location |
+|---|---|
+| User config | `%AppData%\cc-handoff\config.toml` |
+| Repo config | `<repo>\.cc-handoff.toml` (same as macOS / Linux) |
+| `terminal_app` values | `windows-terminal` (default, falls back to powershell if `wt.exe` is missing), `powershell` |
+
+**Uninstall**:
+
+```powershell
+schtasks /Delete /TN cc-handoff-watch /F
+Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
+```
+
 ## Further reading
 
 | Doc | What's in it |
