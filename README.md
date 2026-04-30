@@ -132,14 +132,18 @@ make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 
 # 在你的工作仓库里 init —— 同时:
 #   写两个 toml(user 级 / 仓库级)
-#   --with-mcp     顺手 `claude mcp add`
-#   --with-commands 顺手把 /handoff /handoff-module /pickup 装到 .claude/commands/
+#   --agent <name>     默认按 PATH 探测 (claude > codex > manual);可显式覆盖
+#   --with-mcp         注册 MCP server(claude 自动跑 `claude mcp add`;
+#                      codex 打印 TOML 片段让你贴到 ~/.codex/config.toml)
+#   --with-commands    Claude 用户:把 /handoff /handoff-module /pickup
+#                      装到 .claude/commands/(codex / manual 跳过)
+#   --with-instructions 把 cc-handoff 用法段追加到 CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
-cc-handoff init --with-mcp --with-commands
+cc-handoff init --with-mcp --with-commands --with-instructions
 ```
 
-`--with-*` 全部可选。省略时 `cc-handoff init` 退化为只写两个 toml,
-其余步骤(`bash scripts/install-mcp.sh`、`cp .claude/commands/*.md`)自己跑 ——
+所有 `--with-*` 都可选。省略时 `cc-handoff init` 退化为只写两个 toml,
+其余步骤(`bash scripts/install-mcp.sh`、`cp .claude/commands/*.md`、手动贴 TOML)自己跑 ——
 适合 CI 或想完全控制每一步的场景。
 
 ### 4. 接收侧起 watch 守护

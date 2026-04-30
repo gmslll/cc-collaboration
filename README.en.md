@@ -129,15 +129,19 @@ Hand each token to the right person. `cc-handoff init` will ask for it next.
 # Build and install to PATH
 make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 
-# In your working repo, init does three things at once:
+# In your working repo, init wires the agent up:
 #   writes the user-level + repo-level toml configs,
-#   --with-mcp     runs `claude mcp add` for you,
-#   --with-commands drops /handoff /handoff-module /pickup into .claude/commands/
+#   --agent <name>      default: detect on PATH (claude > codex > manual)
+#   --with-mcp          register the MCP server (claude: auto `claude mcp add`;
+#                       codex: prints a TOML snippet for ~/.codex/config.toml)
+#   --with-commands     Claude only: install /handoff /handoff-module /pickup
+#                       into .claude/commands/ (codex / manual skip)
+#   --with-instructions append cc-handoff usage block to CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
-cc-handoff init --with-mcp --with-commands
+cc-handoff init --with-mcp --with-commands --with-instructions
 ```
 
-`--with-*` are all optional. Without them `cc-handoff init` just writes the two toml files; you then run `bash scripts/install-mcp.sh` and `cp .claude/commands/*.md` yourself — fine for CI or any setup where you want to control every step.
+All `--with-*` flags are optional. Without them `cc-handoff init` just writes the two toml files; you then run `bash scripts/install-mcp.sh` and `cp .claude/commands/*.md` (or paste the Codex TOML yourself) — fine for CI or any setup where you want to control every step.
 
 ### 4. Run the watch daemon (receiver only)
 
