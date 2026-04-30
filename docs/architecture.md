@@ -163,6 +163,8 @@ CREATE TABLE attachments (
 | GET /v1/handoffs/{id} | — | recipient 或 sender 等于 token identity |
 | POST /v1/handoffs/{id}/ack | recipient 必须等于 token identity | — |
 | POST /v1/handoffs/{id}/comments | sender 或 recipient 等于 token identity | — |
+| GET /v1/handoffs/{id}/comments | — | sender 或 recipient 等于 token identity |
+| GET /v1/comments?since=&limit= | — | 只返回调用者参与的 handoff 上、非自己发的 comment |
 | GET/POST /v1/handoffs/{id}/attachments/* | 同上 | 同上 |
 | GET /v1/events?recipient= | — | recipient 必须等于 token identity |
 
@@ -228,7 +230,7 @@ MVP 安全姿态有意保守。明确防的 / 不防的:
 |---|---|---|
 | relay 不可达 | submit 直接报错,不重试,不入队 | 用户重发(`/handoff` 再点一次)。**故意不做后台队列**——状态可见性优于"看起来什么都没发生" |
 | 部分 pickup(已下载未 ack) | `pickup_handoff --no-ack` 让用户先看再 ack;ack 是幂等的(已 picked 重发依旧返回成功) | 重新跑 `pickup_handoff` 即可 |
-| watch SSE 断开 | `internal/transport/sse_client.go` 内置指数退避重连;断网期间 handoff 不丢(relay 持久化) | 网络恢复自动重连;启动时一次性拉 list 兜底未投递的 |
+| watch SSE 断开 / 前端机器下线 | `internal/transport/sse_client.go` 指数退避重连;同时 watch 启动时跑一次 catch-up:`/v1/handoffs?state=pending` 拉所有未 pickup 的 handoff、`/v1/comments?since=<cursor>` 拉新 comment,经同一 SSE handler 派发(通知+落盘+auto-launch)。游标存 `.claude/handoff-inbox/.watch-cursor.json`,首次运行 bootstrap 到当前 max id 不重放历史 | 重启 watch 即可补;`--no-catchup` 可临时关掉 |
 | token 过期 / 轮换 | 客户端 401 直接报错 | VPS 上 `cc-handoff-rotate-token`,客户端改 user config 后重启 watch |
 | sender 改了文件再发 | `ReplacesID` 字段标了但 relay 不级联失效旧的 | 接收端通过 list 看到两条;按 created_at 取最新即可 |
 | 接收端 `INTEGRATION.md` 写错 | 文档里强调"写完停下等 review,不直接改代码" | 人工 review 时驳回;接收端 Claude 重做 |

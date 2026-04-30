@@ -174,6 +174,48 @@ func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body strin
 	}, nil
 }
 
+// ListCommentsSince returns comments visible to identity (caller is sender or
+// recipient of the handoff) with id > since, excluding comments the caller
+// posted themselves. Also returns the global max comment id for cursor bootstrap.
+// limit <= 0 means "max_id only, no rows"; limit is capped at 500.
+func (s *Store) ListCommentsSince(ctx context.Context, identity string, since int64, limit int) ([]handoffschema.Comment, int64, error) {
+	var maxID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM comments`).Scan(&maxID); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		return nil, maxID, nil
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT c.id, c.handoff_id, c.sender, c.body, c.created_at
+		   FROM comments c JOIN handoffs h ON c.handoff_id = h.id
+		  WHERE c.id > ? AND c.sender != ? AND (h.sender = ? OR h.recipient = ?)
+		  ORDER BY c.id ASC LIMIT ?`,
+		since, identity, identity, identity, limit,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []handoffschema.Comment
+	for rows.Next() {
+		var c handoffschema.Comment
+		var createdMS int64
+		if err := rows.Scan(&c.ID, &c.HandoffID, &c.Sender, &c.Body, &createdMS); err != nil {
+			return nil, 0, err
+		}
+		c.CreatedAt = time.UnixMilli(createdMS).UTC()
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return out, maxID, nil
+}
+
 func (s *Store) ListComments(ctx context.Context, handoffID string) ([]handoffschema.Comment, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, sender, body, created_at FROM comments

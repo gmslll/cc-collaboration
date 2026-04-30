@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,6 +144,22 @@ func (c *Client) Comment(ctx context.Context, handoffID, body string) (*handoffs
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ListInboxComments returns comments addressed to the caller (where they're a
+// participant but not the author) with id > since. Limit 0 is interpreted by
+// the relay as "max_id only", returning an empty list — used by watch catch-up
+// to bootstrap the cursor on first run without replaying historical comments.
+func (c *Client) ListInboxComments(ctx context.Context, since int64, limit int) ([]handoffschema.Comment, int64, error) {
+	q := "?since=" + strconv.FormatInt(since, 10) + "&limit=" + strconv.Itoa(limit)
+	var out struct {
+		Comments []handoffschema.Comment `json:"comments"`
+		MaxID    int64                   `json:"max_id"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/comments"+q, nil, &out); err != nil {
+		return nil, 0, err
+	}
+	return out.Comments, out.MaxID, nil
 }
 
 func (c *Client) ListComments(ctx context.Context, handoffID string) ([]handoffschema.Comment, error) {

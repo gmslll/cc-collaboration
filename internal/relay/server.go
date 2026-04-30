@@ -37,7 +37,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/handoffs/{id}", s.get)
 	api.HandleFunc("POST /v1/handoffs/{id}/ack", s.ack)
 	api.HandleFunc("POST /v1/handoffs/{id}/comment", s.postComment)
-	api.HandleFunc("GET /v1/handoffs/{id}/comments", s.listComments)
+	api.HandleFunc("GET /v1/handoffs/{id}/comments", s.listHandoffComments)
+	api.HandleFunc("GET /v1/comments", s.listInboxComments)
 	api.HandleFunc("POST /v1/handoffs/{id}/attachments/{name}", s.putAttachment)
 	api.HandleFunc("GET /v1/handoffs/{id}/attachments/{name}", s.getAttachment)
 	api.HandleFunc("GET /v1/events", s.events)
@@ -243,7 +244,7 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
-func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
+func (s *Server) listHandoffComments(w http.ResponseWriter, r *http.Request) {
 	pkg, _ := s.requireParticipant(w, r)
 	if pkg == nil {
 		return
@@ -254,6 +255,41 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"comments": comments})
+}
+
+// listInboxComments returns comments addressed to the caller across every
+// handoff they participate in, with id > since. Used by `cc-handoff watch`
+// catch-up on startup to surface comments missed while offline.
+func (s *Server) listInboxComments(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	var since int64
+	if v := r.URL.Query().Get("since"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			http.Error(w, "invalid since", http.StatusBadRequest)
+			return
+		}
+		since = n
+	}
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+
+	comments, maxID, err := s.Store.ListCommentsSince(r.Context(), identity, since, limit)
+	if err != nil {
+		http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"comments": comments,
+		"max_id":   maxID,
+	})
 }
 
 const attachmentMaxBytes = 50 << 20 // 50 MB ought to cover any sensible diff
