@@ -1,34 +1,108 @@
 # cc-handoff
 
-跨机器 Claude Code 协作工具。后端开发者写完接口后，用一条 `/handoff` 把 Swagger 增量、commit 元信息、Claude 写的会话总结打包，结合前端项目目录约定生成定位提示，推送到自有 VPS 上的中转服务；前端开发者机器上的常驻进程收到后，默认入收件箱+系统通知+一键唤起 Claude，**接收端 Claude 读本地真实代码后产出 `INTEGRATION.md` 作为对接文档**，人工 review 后再执行。紧急任务可自动开新终端跑 `claude -p`。
+[![CI](https://github.com/gmslll/cc-collaboration/actions/workflows/ci.yml/badge.svg)](https://github.com/gmslll/cc-collaboration/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cc-collaboration.svg)](https://pkg.go.dev/github.com/cc-collaboration)
 
-四个里程碑全部完成。架构与数据流见 [`docs/architecture.md`](docs/architecture.md)，部署与运维见 [`docs/deployment.md`](docs/deployment.md)。
+> [English](README.en.md) | **中文**
 
-## 里程碑
+> 跨机器 Claude Code 协作工具 —— 让"后端写完接口、前端去对接"这件事从「手抄群里贴 + 自己读 swagger」变成「`/handoff` 一条命令推过去,前端 `/pickup` 一条命令接住」。
+
+## 它解决什么问题
+
+前后端分仓远程协作时,API 对接的真实流程通常是:
+
+1. 后端写完接口、合并 PR
+2. 后端在群里贴一段说明:有几个新 endpoint、字段名、错误码、踩坑点
+3. 前端开发者拷回去,自己再去翻 swagger / 读后端代码 / 在群里反复确认细节
+4. 写出客户端代码,出问题时重复步骤 3
+
+这个流程的痛点是**对接信息散在群里、PR 描述里、后端记忆里**,且每次都要前端重新读后端代码做心理建模。
+
+cc-handoff 把这一段变成结构化的 handoff:
+
+- **后端**在 Claude Code 内一条 `/handoff`,Claude 读 git diff + swagger 增量 + commit log,自动写出对接说明,打包推到自有 VPS
+- **前端**机器上常驻进程默认入收件箱、系统通知、紧急任务自动开新终端
+- **前端**一条 `/pickup`,Claude 读后端推过来的包**+ 本地真实代码**,产出 `INTEGRATION.md` 草稿
+- **人工 review** `INTEGRATION.md` 后再让 Claude 落代码,接收端 Claude 默认**写完停下等 review,不直接改代码**
+
+跟纯人力贴说明 / 让一个共享 Claude session 来回切换的方案相比,优点:
+
+| | 群里贴 + 自己读 | 共享 Claude session | cc-handoff |
+|---|---|---|---|
+| 对接说明结构化 | ✗ | △(看本次 prompt) | ✓ (handoff package + schema) |
+| 接收端读真实代码 | ✗(靠后端记忆) | △(共享 session 不 ground 在前端真代码上) | ✓(接收端 Claude 在前端机器上读) |
+| 跨机器、跨时区 | △(异步靠群) | ✗(要同时在线) | ✓(SSE + 持久化 inbox) |
+| 上下文不被对方污染 | ✓ | ✗(共用一个会话) | ✓(各自的 Claude session) |
+| 历史可回查 | ✗ | ✗ | ✓(SQLite + comments + attachments) |
+| 紧急自动唤起对方 | ✗ | ✗ | ✓(可配,默认关) |
+
+设计原则:
+
+- **手动可控,反对自动魔法**。MVP 没有 Stop hook 自动触发,没有自动重试,没有"悄悄帮你改文件"。每个动作都打印将做什么、用户回车确认。
+- **接收端 Claude 写,人工 review**。发送端不知道前端真实目录结构,只能给启发式建议;真正的对接决策由前端那边的 Claude(看到真代码)做,且默认停下等人。
+- **边界清晰胜于代码复用**。三个二进制(CLI / MCP / relay)各管各的,中间走 HTTP+SSE,不共享数据库。
+
+## 架构
+
+三个 Go 二进制,跑在三台机器上:
+
+```
+后端开发者 Mac                      你的 VPS                    前端开发者 Mac
+────────────────                  ─────────                  ─────────────────
+Claude Code (后端)                                            Claude Code (前端)
+  ↓ /handoff                                                    ↑ /pickup
+cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► cc-handoff-mcp
+                                   ↓                              ↑
+                                cc-relay:8080 ◄──SSE──── cc-handoff watch (launchd/systemd)
+                                   ↓
+                                /var/lib/cc-handoff/relay.db
+                                   + comments + attachments
+```
+
+- `cc-relay`:VPS 上 systemd 服务,听 loopback,反代终结 TLS。HTTP REST + SSE,SQLite 持久化。
+- `cc-handoff` (CLI):两端各装一份。子命令:`init` / `submit` / `list` / `pickup` / `watch` / `comment`。
+- `cc-handoff-mcp`:Claude Code 通过 stdio 拉起的 MCP server,把上面的子命令暴露成 MCP 工具(`submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff` 等)。
+- `cc-handoff watch`:接收侧常驻进程,SSE 长连接拉服务端事件,落盘到 `.claude/handoff-inbox/<id>/`,必要时弹通知或开新终端跑 `claude -p`。
+
+完整数据流、SQLite schema、auth、failure mode 见 [`docs/architecture.md`](docs/architecture.md)。
+
+## 状态
+
+四个里程碑全部完成,v0.1.0 已发布:
 
 - ✓ **M1** 手动 submit / list / pickup
 - ✓ **M2** SSE + watch 守护 + osascript 通知 + partner_mapping 规则引擎 + Swagger 增量
-- ✓ **M3** MCP server（`/handoff` `/pickup` slash command）
+- ✓ **M3** MCP server(`/handoff` `/pickup` slash command)
 - ✓ **M4** 自动唤起新终端 + back-channel comments + 附件通道 + 结构化审计日志
 
-## 部署
+## 快速部署
 
-完整端到端部署 + 运维 + 故障排查见 **[`docs/deployment.md`](docs/deployment.md)**。最常用的几条：
+总耗时约 30 分钟,完整运维向手册见 **[`docs/deployment.md`](docs/deployment.md)**。
+
+### 前置
+
+| 哪一端 | 要什么 |
+|---|---|
+| VPS | Linux(amd64 或 arm64),有 sudo,80/443 端口开放 |
+| 域名 | 给 relay 一个二级域名,如 `handoff.your-domain.com` |
+| 反向代理 | VPS 上预装 caddy 或 nginx 之一(终结 TLS) |
+| Mac / Linux 客户端 | Go 1.22+ 用于本地构建、git、`claude` CLI 已登录 |
+
+### 1. VPS 起 relay
+
+在你 Mac 上的 cc-collaboration 仓库根:
 
 ```bash
-# 第一次部署 / 升级 relay 到 VPS（Mac 上跑）
 make deploy HOST=user@your-vps
-
-# VPS 上随时可用（deploy 自动安装到 /usr/local/sbin/）
-sudo cc-handoff-rotate-token <identity>     # 轮换 token
-sudo cc-handoff-backup                       # 热备份 SQLite，KEEP=N 保留份数
-sudo cc-handoff-uninstall [--purge]          # 卸载
-
-# 实时审计日志
-sudo journalctl -u cc-handoff-relay -f
+# 自定义 ssh:
+make deploy HOST=user@your-vps SSH_OPTS="-p 2222 -i ~/.ssh/id_ed25519"
 ```
 
-VPS 一定要挂反向代理终结 TLS。caddy 一行就好（`flush_interval -1` 是 SSE 必须的）：
+幂等。第一次是全新部署,再跑就是滚动升级二进制 + 重启,配置和 DB 不动。
+脚本会自动跨编译 `cc-relay` 到 VPS 架构、装 systemd unit、建 `cc-handoff` 系统用户、初始化 `/etc/cc-handoff/tokens.json` 与 `/var/lib/cc-handoff/relay.db`。
+
+VPS 上挂反代,caddy 一行就好(`flush_interval -1` 是 SSE 必须的):
 
 ```caddyfile
 handoff.your-domain.com {
@@ -38,32 +112,46 @@ handoff.your-domain.com {
 }
 ```
 
-客户端（前后端各一次）：
+### 2. 拿 token
+
+VPS 上 `/etc/cc-handoff/tokens.json` 默认带一对示例 identity/token。
+线上要给前后端各自分配一对:
 
 ```bash
-# 1) 编译并装到 PATH
+sudo cc-handoff-rotate-token user@backend
+sudo cc-handoff-rotate-token alex@frontend
+```
+
+输出的 token 各自保管,后面 `cc-handoff init` 要填。
+
+### 3. 客户端装(前后端各一次)
+
+```bash
+# 编译并装到 PATH
 make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 
-# 2) 在你的工作仓库里 init —— 写两个 toml,
-#    --with-mcp 顺手 `claude mcp add`,
-#    --with-commands 顺手把 /handoff /handoff-module /pickup 装到 .claude/commands/
+# 在你的工作仓库里 init —— 同时:
+#   写两个 toml(user 级 / 仓库级)
+#   --with-mcp     顺手 `claude mcp add`
+#   --with-commands 顺手把 /handoff /handoff-module /pickup 装到 .claude/commands/
 cd /path/to/your-repo
 cc-handoff init --with-mcp --with-commands
 ```
 
-`--with-*` 可省;省略时 `cc-handoff init` 退化为只写两个 toml,
-其余步骤需自己跑 `bash /path/to/cc-collaboration/scripts/install-mcp.sh`
-和 `cp .claude/commands/*.md`(适合 CI / 想完全控制每一步的场景)。
+`--with-*` 全部可选。省略时 `cc-handoff init` 退化为只写两个 toml,
+其余步骤(`bash scripts/install-mcp.sh`、`cp .claude/commands/*.md`)自己跑 ——
+适合 CI 或想完全控制每一步的场景。
 
-接收侧 Mac 还要起常驻 watch:
+### 4. 接收侧起 watch 守护
+
+只有"等接对接"那一端要起。**macOS** 用 launchd:
 
 ```bash
-# launchd 模板由二进制自带,渲染好的 plist 直接喂给 ~/Library/LaunchAgents/
 cc-handoff watch print-unit --workdir=$(pwd) > ~/Library/LaunchAgents/com.cc-handoff.watch.plist
 launchctl load ~/Library/LaunchAgents/com.cc-handoff.watch.plist
 ```
 
-Linux 接收侧用 `--platform=systemd` 输出 user unit:
+**Linux** 用 systemd user unit:
 
 ```bash
 cc-handoff watch print-unit --platform=systemd --workdir=$(pwd) \
@@ -72,13 +160,76 @@ systemctl --user daemon-reload
 systemctl --user enable --now cc-handoff-watch
 ```
 
-VPS 之前想先在本机试一遍：见 [`docs/dogfood-runbook.md`](docs/dogfood-runbook.md)，`bash scripts/dogfood.sh setup` 一键起本地隔离环境。
+`print-unit` 只打印模板,load / enable 由你显式做 —— 反对悄悄改用户的 launchd / systemd 配置。
+
+### 5. 验证
+
+后端 Claude Code 内:
+
+```
+> 我现在有哪些 MCP 工具?
+```
+
+应当看到 `submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff`。命令行验证:
+
+```bash
+claude mcp list
+# cc-handoff: /usr/local/bin/cc-handoff-mcp  - ✓ Connected
+```
+
+---
+
+VPS 之前先在本机试一遍?`bash scripts/dogfood.sh setup` 一键起本地隔离环境,
+自带 test-backend / test-frontend 仓库。`scripts/dogfood.sh` 顶部有完整说明,
+也支持 `cleanup` / `status` 子命令。
 
 ## 在 Claude Code 内使用
 
-后端两种入口,看场景挑:
+### 后端发送
 
-- **`/handoff`（diff 模式）**:刚写完一段改动想推过去时用。Claude 读分支 diff、写对接说明、调 `submit_handoff`。
-- **`/handoff-module <module-path> [more...]`（模块 brief 模式）**:某模块早就合并、前端要新做集成时用。Claude 读模块下的 routes/handlers/dto/swagger,整理成自包含的 API 契约文档,调 `submit_handoff` 时带 `module_paths`,接收端会自动切到「模块对接」prompt 模板。一次可以传多个模块,空格分隔。
+按场景挑一种:
 
-前端 `/pickup` → Claude 看 `list_inbox` 后用 `pickup_handoff` 拉取,产出 `docs/integrations/<id>.md` 等人工 review。中途要问问题用 `comment_handoff` 工具(或 `cc-handoff comment <id> <body>`)。
+- **`/handoff`(diff 模式)** —— 刚写完一段改动想推过去时用。Claude 读分支 diff、写对接说明、调 `submit_handoff`。
+- **`/handoff-module <module-path> [more...]`(模块 brief 模式)** —— 某模块早就合并、前端要新做集成时用。Claude 读模块下的 routes/handlers/dto/swagger,整理成自包含的 API 契约文档,调 `submit_handoff` 时带 `module_paths`,接收端会自动切到「模块对接」prompt 模板。一次可以传多个模块,空格分隔。
+
+两种模式下 Claude 都会先**问你一次跨端备注 / 约束**(错误码对照、字段大小写规则、分页默认值等),没有直接回 `没有` 即可。
+
+### 前端接收
+
+```
+/pickup
+```
+
+Claude 看 `list_inbox`,有多条会让你挑一条,然后 `pickup_handoff` 拉取、materialize 到 `.claude/handoff-inbox/<id>/`,产出 `INTEGRATION.md` 草稿等你 review。
+
+中途要问后端:`comment_handoff` MCP 工具,或命令行 `cc-handoff comment <id> "你的问题"`。后端那边 watch 会推 SSE,落到 `.claude/handoff-inbox/<id>/comments.md`。
+
+## 日常运维
+
+```bash
+# VPS 上(deploy 自动装到 /usr/local/sbin/)
+sudo cc-handoff-rotate-token <identity>     # 轮换 token
+sudo cc-handoff-backup                       # 热备份 SQLite,KEEP=N 保留份数
+sudo cc-handoff-uninstall [--purge]          # 卸载
+
+# 实时审计日志
+sudo journalctl -u cc-handoff-relay -f
+```
+
+详细排错(watch 连不上 / token 过期 / SSE 不通 / 升级回滚)见
+[`docs/deployment.md`](docs/deployment.md) 的「故障排查」章。
+
+## 进一步阅读
+
+| 文档 | 说什么 |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | 概念向 —— 组件、数据流、SQLite schema、auth、threat model、failure mode、扩展点 |
+| [`docs/deployment.md`](docs/deployment.md) | 运维向 —— 端到端部署、TLS、监控、token 轮换、升级回滚、故障排查 |
+| [`scripts/dogfood.sh`](scripts/dogfood.sh) | 在本机起隔离环境,先把流程跑一遍再上 VPS(脚本顶部有完整说明) |
+| [`docs/handoff-package.schema.json`](docs/handoff-package.schema.json) | handoff 包的 JSON schema |
+| [`pkg/handoffschema/package.go`](pkg/handoffschema/package.go) | 同上的 Go 类型定义 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 版本变更 |
+
+## License
+
+MIT — see [`LICENSE`](LICENSE)。

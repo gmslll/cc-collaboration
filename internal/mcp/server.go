@@ -70,7 +70,7 @@ type ToolResult struct {
 }
 
 type ContentBlock struct {
-	Type string `json:"type"`           // "text" only for now
+	Type string `json:"type"` // "text" only for now
 	Text string `json:"text,omitempty"`
 }
 
