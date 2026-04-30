@@ -34,7 +34,7 @@ func main() {
 	case "comment":
 		err = runComment(ctx, args)
 	case "version", "-v", "--version":
-		fmt.Println("cc-handoff dev")
+		runVersion()
 	case "help", "-h", "--help":
 		usage()
 	default:

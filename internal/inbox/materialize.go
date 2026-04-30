@@ -176,7 +176,11 @@ func renderSummaryMD(p *handoffschema.Package) string {
 
 func renderPromptMD(p *handoffschema.Package) string {
 	integrationPath := fmt.Sprintf("docs/integrations/%s.md", p.ID)
-	moduleMode := len(p.ModulePaths) > 0
+	// Detect module-brief mode by content shape, not just the ModulePaths
+	// field: an older receiver binary may have dropped the field on JSON
+	// decode. p.Git == nil is the reliable signal — non-module Build always
+	// returns a non-nil Git block, even if it is empty.
+	moduleMode := len(p.ModulePaths) > 0 || p.Git == nil
 
 	var sb strings.Builder
 	if moduleMode {
@@ -257,7 +261,11 @@ func renderPromptMD(p *handoffschema.Package) string {
 	}
 
 	sb.WriteString("## 你必须按顺序做的事\n\n")
-	sb.WriteString("0. 如果 API delta / summary 有关键歧义（字段语义、请求体形态、错误码不明等），")
+	if moduleMode {
+		sb.WriteString("0. 如果 brief 中字段语义、请求体形态、错误码不明等有歧义，")
+	} else {
+		sb.WriteString("0. 如果 API delta / summary 有关键歧义（字段语义、请求体形态、错误码不明等），")
+	}
 	sb.WriteString("**先用 `comment_handoff` MCP 工具或 `cc-handoff comment <id>` CLI 问发送端，等回复后再继续**。不要脑补。\n")
 	sb.WriteString("1. 完整读完上面所有信息。\n")
 	sb.WriteString("2. 扫本仓库前端代码，定位以下层：API client / 类型定义 / DTO / hooks / 调用方组件。\n")

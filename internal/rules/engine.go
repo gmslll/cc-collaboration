@@ -48,6 +48,11 @@ func Compile(rules []config.Rule) (*Engine, error) {
 // deduplicated slice of TargetingHints. Each hint records which path matched
 // and which capture groups were used for template expansion, so the receiving
 // side can show *why* a target was suggested.
+//
+// Two-stage dedup: first by (path, edits, creates) so a single path doesn't
+// appear twice; then by (edits, creates) alone so a module mode that walks
+// many files all routing to the same client target collapses to one
+// representative hint with a "(and N other paths in module)" suffix.
 func (e *Engine) Apply(changedPaths []string) []handoffschema.TargetingHint {
 	if e == nil || len(e.rules) == 0 || len(changedPaths) == 0 {
 		return nil
@@ -81,7 +86,38 @@ func (e *Engine) Apply(changedPaths []string) []handoffschema.TargetingHint {
 			})
 		}
 	}
-	return hints
+
+	return collapseByTarget(hints)
+}
+
+// collapseByTarget folds hints that share the same (SuggestEdit, SuggestCreate)
+// down to a single representative hint, recording how many other paths fed
+// into it on the Reason line. Useful in module mode where every handler/dto
+// file in the same module routes to the same client target.
+func collapseByTarget(hints []handoffschema.TargetingHint) []handoffschema.TargetingHint {
+	if len(hints) <= 1 {
+		return hints
+	}
+	idxByKey := make(map[string]int, len(hints))
+	extras := make(map[string]int, len(hints))
+	out := make([]handoffschema.TargetingHint, 0, len(hints))
+	for _, h := range hints {
+		key := strings.Join(h.SuggestEdit, ",") + "|" + strings.Join(h.SuggestCreate, ",")
+		if _, ok := idxByKey[key]; ok {
+			extras[key]++
+			continue
+		}
+		idxByKey[key] = len(out)
+		out = append(out, h)
+	}
+	for key, n := range extras {
+		if n == 0 {
+			continue
+		}
+		i := idxByKey[key]
+		out[i].Reason = fmt.Sprintf("%s (and %d other paths in module)", out[i].Reason, n)
+	}
+	return out
 }
 
 func captureMap(re *regexp.Regexp, match []string) map[string]string {
