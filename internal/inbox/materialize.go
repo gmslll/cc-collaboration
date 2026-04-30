@@ -12,16 +12,26 @@ import (
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
-func InboxDir(repoRoot string) string {
-	return filepath.Join(repoRoot, ".claude", "handoff-inbox")
+// InboxDir returns the inbox root for repoRoot, honoring the optional
+// override (from .cc-handoff.toml's [inbox] dir field). When override is
+// empty, the path is .cc-handoff/inbox unless the repo already has the
+// pre-multi-agent .claude/handoff-inbox directory, in which case that's kept
+// for backwards compatibility.
+//
+// Production callers should resolve once at startup (config.Resolve does
+// this) and pass the resolved string directly to PackageDir / Materialize /
+// LoadCursor / SaveCursor — those take an inboxDir not a repoRoot, so the
+// double os.Stat in the legacy fallback only runs once per CLI invocation.
+func InboxDir(repoRoot, override string) string {
+	return resolveDir(repoRoot, override)
 }
 
-func PackageDir(repoRoot, id string) string {
-	return filepath.Join(InboxDir(repoRoot), id)
+func PackageDir(inboxDir, id string) string {
+	return filepath.Join(inboxDir, id)
 }
 
 // Result is what Materialize produces: the directory and the rendered prompt
-// (so callers can return the prompt to Claude without re-reading from disk).
+// (so callers can return the prompt to the agent without re-reading from disk).
 type Result struct {
 	Dir    string
 	Prompt string
@@ -30,10 +40,10 @@ type Result struct {
 // AttachmentsDir returns <dir>/attachments — created on demand by DownloadAttachments.
 func AttachmentsDir(dir string) string { return filepath.Join(dir, "attachments") }
 
-// Materialize writes a Handoff Package and its derived human/Claude-friendly
-// views under <repoRoot>/.claude/handoff-inbox/<id>/.
-func Materialize(repoRoot string, p *handoffschema.Package) (Result, error) {
-	dir := PackageDir(repoRoot, p.ID)
+// Materialize writes a Handoff Package and its derived human/agent-friendly
+// views under <inboxDir>/<id>/.
+func Materialize(inboxDir string, p *handoffschema.Package) (Result, error) {
+	dir := PackageDir(inboxDir, p.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Result{}, err
 	}

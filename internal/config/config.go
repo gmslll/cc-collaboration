@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"github.com/BurntSushi/toml"
+	"github.com/cc-collaboration/internal/agent"
 )
 
 // User-level config: shared across repos on this machine.
@@ -15,6 +16,10 @@ type User struct {
 	RelayURL string `toml:"relay_url"`
 	Token    string `toml:"token"`
 	Identity string `toml:"identity"`
+	// Agent picks the AI agent adapter cc-handoff drives: "claude" |
+	// "codex" | "manual". Empty falls back to "claude" for backwards
+	// compatibility with installs predating multi-agent support.
+	Agent string `toml:"agent,omitempty"`
 }
 
 // Repo-level config: lives at <repo-root>/.cc-handoff.toml.
@@ -23,6 +28,14 @@ type Repo struct {
 	Paths          Paths          `toml:"paths"`
 	PartnerMapping PartnerMapping `toml:"partner_mapping"`
 	Triggers       Triggers       `toml:"triggers"`
+	Inbox          Inbox          `toml:"inbox,omitempty"`
+}
+
+// Inbox controls where Materialize writes handoff packages. Empty Dir means
+// "auto": .cc-handoff/inbox by default, falling back to legacy
+// .claude/handoff-inbox when that already exists in the repo.
+type Inbox struct {
+	Dir string `toml:"dir,omitempty"`
 }
 
 type Identity struct {
@@ -168,6 +181,14 @@ type Resolved struct {
 	Swagger  string
 	Triggers Triggers
 	Rules    []Rule
+	Agent    agent.Agent
+	// InboxOverride is the raw user-supplied [inbox] dir from
+	// .cc-handoff.toml; "" means auto-detect. Callers resolve to an absolute
+	// path once via inbox.InboxDir(repoRoot, override) and reuse that for
+	// the lifetime of the command — config.Resolved can't hold the resolved
+	// path itself without an import cycle (rules → config → inbox →
+	// handoff → rules).
+	InboxOverride string
 }
 
 func Resolve(cwd string) (*Resolved, error) {
@@ -197,16 +218,22 @@ func Resolve(cwd string) (*Resolved, error) {
 	if base == "" {
 		base = "origin/main"
 	}
+	ag, err := agent.Resolve(u.Agent)
+	if err != nil {
+		return nil, fmt.Errorf("user config: %w", err)
+	}
 	out := &Resolved{
-		RelayURL: u.RelayURL,
-		Token:    u.Token,
-		Me:       me,
-		Partner:  r.Identity.Partner,
-		RepoName: repoName,
-		Base:     base,
-		Swagger:  r.Paths.Swagger,
-		Triggers: r.Triggers,
-		Rules:    r.PartnerMapping.Rules,
+		RelayURL:      u.RelayURL,
+		Token:         u.Token,
+		Me:            me,
+		Partner:       r.Identity.Partner,
+		RepoName:      repoName,
+		Base:          base,
+		Swagger:       r.Paths.Swagger,
+		Triggers:      r.Triggers,
+		Rules:         r.PartnerMapping.Rules,
+		Agent:         ag,
+		InboxOverride: r.Inbox.Dir,
 	}
 	if out.RelayURL == "" || out.Token == "" || out.Me == "" {
 		return nil, fmt.Errorf("incomplete config: relay_url/token/identity must be set in user config")

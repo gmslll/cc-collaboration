@@ -8,6 +8,7 @@ import (
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/handoff"
+	"github.com/cc-collaboration/internal/inbox"
 	"github.com/cc-collaboration/internal/rules"
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/handoffschema"
@@ -56,8 +57,9 @@ func runSubmit(ctx context.Context, args []string) error {
 		return err
 	}
 
+	repoRoot := config.RepoRoot(cwd)
 	pkg, err := handoff.Build(ctx, handoff.BuildOptions{
-		RepoRoot:    config.RepoRoot(cwd),
+		RepoRoot:    repoRoot,
 		RepoName:    res.RepoName,
 		Sender:      res.Me,
 		Recipient:   recipient,
@@ -66,6 +68,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		Note:        *note,
 		Rules:       engine,
 		SwaggerPath: res.Swagger,
+		InboxDir:    inbox.InboxDir(repoRoot, res.InboxOverride),
 	})
 	if err != nil {
 		return err

@@ -1,9 +1,13 @@
 package notify
 
+import "github.com/cc-collaboration/internal/agent"
+
 // LaunchOpts is the platform-neutral payload for LaunchTerminal. The actual
 // LaunchTerminal implementation lives in mac_launch.go (darwin),
 // mac_launch_windows.go (windows), or mac_launch_other.go (everything else).
 type LaunchOpts struct {
+	// Agent owns the per-tool prompt invocation; required.
+	Agent agent.Agent
 	// App selects the terminal program. Recognized values depend on the
 	// platform:
 	//   darwin:  config.TerminalAppTerminal | TerminalAppITerm2 (default Terminal.app)
@@ -13,7 +17,7 @@ type LaunchOpts struct {
 	// starts there.
 	CWD string
 	// PromptFile is the absolute path to prompt.md inside the materialized
-	// inbox dir; the launched shell reads it and pipes it into `claude -p`.
+	// inbox dir; the launched shell reads it and pipes it into the agent.
 	PromptFile string
 	// Dry logs what would happen instead of actually opening a window.
 	Dry bool

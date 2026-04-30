@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cc-collaboration/internal/agent"
 	"github.com/cc-collaboration/internal/config"
+	"github.com/cc-collaboration/internal/inbox"
 	"github.com/cc-collaboration/internal/setup"
 	"github.com/cc-collaboration/internal/version"
 )
@@ -49,13 +51,16 @@ func runInit(ctx context.Context, args []string) error {
 	repoName := fs.String("repo", "", "repo name (default: basename of repo root)")
 	base := fs.String("base", "origin/main", "git base ref for diff/log")
 	swagger := fs.String("swagger", "", "path to OpenAPI/Swagger file relative to repo root (optional)")
-	terminalApp := fs.String("terminal", "", "terminal app for auto-launch: terminal | iterm2")
+	terminalApp := fs.String("terminal", "", "terminal app for auto-launch: terminal | iterm2 (macOS) or windows-terminal | powershell (Windows)")
+	agentName := fs.String("agent", "", "AI agent: claude | codex | manual (default: auto-detect on PATH)")
 	nonInteractive := fs.Bool("non-interactive", false, "fail instead of prompting for missing values")
 
-	withMCP := fs.Bool("with-mcp", false, "register cc-handoff with Claude Code as an MCP server (user scope)")
-	noMCP := fs.Bool("no-mcp", false, "skip MCP server registration even if claude CLI is available")
-	withCommands := fs.Bool("with-commands", false, "copy /handoff /handoff-module /pickup slash commands into ./.claude/commands/")
-	noCommands := fs.Bool("no-commands", false, "skip slash command copy")
+	withMCP := fs.Bool("with-mcp", false, "register cc-handoff as an MCP server with the chosen agent")
+	noMCP := fs.Bool("no-mcp", false, "skip MCP server registration")
+	withCommands := fs.Bool("with-commands", false, "install per-agent slash commands (Claude only; no-op for codex / manual)")
+	noCommands := fs.Bool("no-commands", false, "skip slash command install")
+	withInstructions := fs.Bool("with-instructions", false, "append cc-handoff usage snippet to the agent's project-level instructions file (CLAUDE.md / AGENTS.md)")
+	noInstructions := fs.Bool("no-instructions", false, "skip the instructions snippet")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -69,6 +74,20 @@ func runInit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	instrChoice, err := parseTriState(*withInstructions, *noInstructions, "instructions")
+	if err != nil {
+		return err
+	}
+
+	ag, err := resolveAgent(*agentName)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("agent: %s", ag.Name())
+	if !ag.Available() && ag.Name() != "manual" {
+		fmt.Printf(" (CLI %q not found on PATH; pure-CLI flow still works)", ag.CLI())
+	}
+	fmt.Println()
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -90,6 +109,13 @@ func runInit(ctx context.Context, args []string) error {
 	}
 	if *me != "" {
 		user.Identity = *me
+	}
+	if *agentName != "" {
+		user.Agent = ag.Name()
+	} else if user.Agent == "" {
+		// First-time install with auto-detected agent: persist the
+		// detection so future runs don't rely on PATH state.
+		user.Agent = ag.Name()
 	}
 
 	rd := bufio.NewReader(os.Stdin)
@@ -158,11 +184,25 @@ func runInit(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("✓ wrote %s\n", repoPath)
 
-	runRegisterMCP(ctx, mcpChoice, *nonInteractive, rd)
-	runCopyCommands(cmdsChoice, *nonInteractive, rd, config.RepoRoot(cwd))
+	repoRoot := config.RepoRoot(cwd)
+	runRegisterMCP(ctx, ag, mcpChoice, *nonInteractive, rd)
+	runInstallCommands(ag, cmdsChoice, *nonInteractive, rd, repoRoot)
+	runAppendInstructions(ag, instrChoice, *nonInteractive, rd, repoRoot)
 
-	fmt.Println("Done. Try `cc-handoff submit` after writing .claude/handoff-inbox/.draft-summary.md.")
+	inboxDir := inbox.InboxDir(repoRoot, repoCfg.Inbox.Dir)
+	fmt.Printf("Done. Try `cc-handoff submit` after writing %s.\n",
+		filepath.Join(inboxDir, ".draft-summary.md"))
 	return nil
+}
+
+// resolveAgent maps the --agent flag (or empty for auto-detect) into an Agent
+// implementation. Errors when the user names something we don't know — better
+// than silently falling back to manual.
+func resolveAgent(name string) (agent.Agent, error) {
+	if name == "" {
+		return agent.Detect(), nil
+	}
+	return agent.Resolve(name)
 }
 
 // shouldRunOptional resolves a triState + interactive prompt into a single
@@ -183,14 +223,9 @@ func shouldRunOptional(choice triState, nonInteractive bool, rd *bufio.Reader, q
 
 // Errors are non-fatal: init has already saved configs, the user can re-run
 // install steps manually.
-func runRegisterMCP(ctx context.Context, choice triState, nonInteractive bool, rd *bufio.Reader) {
-	if !setup.ClaudeAvailable() {
-		if choice == triYes {
-			fmt.Fprintln(os.Stderr, "  ! --with-mcp set but `claude` CLI not on PATH; skipping")
-		}
-		return
-	}
-	if !shouldRunOptional(choice, nonInteractive, rd, "Register cc-handoff MCP server with Claude Code (user scope)?") {
+func runRegisterMCP(ctx context.Context, ag agent.Agent, choice triState, nonInteractive bool, rd *bufio.Reader) {
+	question := fmt.Sprintf("Register cc-handoff MCP server with %s?", ag.Name())
+	if !shouldRunOptional(choice, nonInteractive, rd, question) {
 		return
 	}
 
@@ -206,21 +241,20 @@ func runRegisterMCP(ctx context.Context, choice triState, nonInteractive bool, r
 	}
 
 	fmt.Println()
-	fmt.Println("Registering MCP server with Claude Code:")
-	fmt.Printf("  claude mcp remove cc-handoff --scope user\n")
-	fmt.Printf("  claude mcp add --scope user --transport stdio cc-handoff -- %s\n", binPath)
-
-	if err := setup.Register(ctx, setup.MCPRegisterOptions{BinPath: binPath}, os.Stdout); err != nil {
+	if err := ag.RegisterMCP(ctx, setup.MCPRegisterOptions{BinPath: binPath}, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "  ! %v\n", err)
 	}
 }
 
-func runCopyCommands(choice triState, nonInteractive bool, rd *bufio.Reader, repoRoot string) {
-	if !shouldRunOptional(choice, nonInteractive, rd, "Copy /handoff /handoff-module /pickup slash commands to ./.claude/commands/?") {
+func runInstallCommands(ag agent.Agent, choice triState, nonInteractive bool, rd *bufio.Reader, repoRoot string) {
+	if !ag.SupportsCommands() {
 		return
 	}
-	dest := filepath.Join(repoRoot, ".claude", "commands")
-	fmt.Printf("\nCopying slash commands to %s …\n", dest)
+	question := fmt.Sprintf("Install %s slash commands into ./.claude/commands/?", ag.Name())
+	if !shouldRunOptional(choice, nonInteractive, rd, question) {
+		return
+	}
+	fmt.Printf("\nInstalling %s slash commands …\n", ag.Name())
 
 	var conflictPrompt setup.PromptFunc
 	if !nonInteractive {
@@ -244,8 +278,30 @@ func runCopyCommands(choice triState, nonInteractive bool, rd *bufio.Reader, rep
 		}
 	}
 
-	if _, err := setup.CopyCommands(dest, version.Version, conflictPrompt, os.Stdout); err != nil {
+	if _, err := ag.InstallCommands(repoRoot, version.Version, conflictPrompt, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "  ! %v\n", err)
+	}
+}
+
+func runAppendInstructions(ag agent.Agent, choice triState, nonInteractive bool, rd *bufio.Reader, repoRoot string) {
+	filename, snippet := ag.InstructionsFile()
+	if filename == "" {
+		return
+	}
+	question := fmt.Sprintf("Append cc-handoff usage snippet to %s?", filename)
+	if !shouldRunOptional(choice, nonInteractive, rd, question) {
+		return
+	}
+	path := filepath.Join(repoRoot, filename)
+	res, err := setup.AppendSnippet(path, snippet)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ! %v\n", err)
+		return
+	}
+	if res == setup.SnippetWritten {
+		fmt.Printf("  ✓ wrote cc-handoff snippet into %s\n", path)
+	} else {
+		fmt.Printf("  · %s already has cc-handoff snippet, skipped\n", path)
 	}
 }
 

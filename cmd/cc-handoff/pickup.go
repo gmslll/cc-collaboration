@@ -36,7 +36,7 @@ func runPickup(ctx context.Context, args []string) error {
 		return err
 	}
 
-	mat, err := inbox.Materialize(config.RepoRoot(cwd), pkg)
+	mat, err := inbox.Materialize(inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride), pkg)
 	if err != nil {
 		return err
 	}
@@ -53,6 +53,6 @@ func runPickup(ctx context.Context, args []string) error {
 			fmt.Println("✓ acked on relay")
 		}
 	}
-	fmt.Printf("Open %s/prompt.md and feed it to your Claude Code session.\n", mat.Dir)
+	fmt.Printf("Open %s/prompt.md and feed it to your %s session.\n", mat.Dir, res.Agent.Name())
 	return nil
 }

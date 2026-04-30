@@ -13,18 +13,21 @@ import (
 )
 
 // LaunchTerminal opens a new Terminal.app or iTerm2 window in the requested
-// directory and starts `claude -p "$(cat <PromptFile>)"`.
+// directory and starts the agent's prompt invocation.
 //
-// Quoting is two-layered: the shell command uses single quotes for paths
-// (POSIX-safe), then the entire shell command becomes an AppleScript string
-// literal with backslashes and double-quotes escaped.
+// Quoting is two-layered: the agent owns POSIX shell quoting for cwd /
+// promptFile (single-quoted, embedded ' as '\”); the entire shell command
+// then becomes an AppleScript string literal with backslashes and
+// double-quotes escaped.
 func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
+	if opts.Agent == nil {
+		return fmt.Errorf("LaunchTerminal: Agent required")
+	}
 	if opts.CWD == "" || opts.PromptFile == "" {
 		return fmt.Errorf("LaunchTerminal: CWD and PromptFile required")
 	}
 
-	shellCmd := "cd " + shellSingleQuote(opts.CWD) +
-		` && claude -p "$(cat ` + shellSingleQuote(opts.PromptFile) + `)"`
+	shellCmd := opts.Agent.POSIXPromptCmd(opts.CWD, opts.PromptFile)
 
 	app := opts.App
 	if app == "" {
@@ -57,12 +60,6 @@ end tell`
 		return nil
 	}
 	return exec.CommandContext(ctx, "osascript", "-e", script).Run()
-}
-
-// shellSingleQuote wraps s in single quotes, escaping embedded single quotes
-// using the POSIX idiom '\”.
-func shellSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // applescriptStringLit wraps s in AppleScript double-quotes, escaping

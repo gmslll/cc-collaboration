@@ -10,21 +10,22 @@ import (
 )
 
 // WatchCursor tracks per-repo state the watch daemon needs to resume catch-up
-// across restarts. Lives at <repoRoot>/.claude/handoff-inbox/.watch-cursor.json.
+// across restarts. Lives at <inboxDir>/.watch-cursor.json — a single cursor
+// file follows the inbox.
 type WatchCursor struct {
 	LastCommentID int64 `json:"last_comment_id"`
 }
 
 const cursorFile = ".watch-cursor.json"
 
-func CursorPath(repoRoot string) string {
-	return filepath.Join(InboxDir(repoRoot), cursorFile)
+func CursorPath(inboxDir string) string {
+	return filepath.Join(inboxDir, cursorFile)
 }
 
 // LoadCursor reads the cursor file. exists=false (no error) when the file is
 // absent — the caller decides bootstrap behavior.
-func LoadCursor(repoRoot string) (WatchCursor, bool, error) {
-	path := CursorPath(repoRoot)
+func LoadCursor(inboxDir string) (WatchCursor, bool, error) {
+	path := CursorPath(inboxDir)
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return WatchCursor{}, false, nil
@@ -41,8 +42,8 @@ func LoadCursor(repoRoot string) (WatchCursor, bool, error) {
 
 // SaveCursor writes atomically (tmp file + rename) so a crash mid-write can't
 // leave a half-written cursor that fails to parse on next start.
-func SaveCursor(repoRoot string, c WatchCursor) error {
-	path := CursorPath(repoRoot)
+func SaveCursor(inboxDir string, c WatchCursor) error {
+	path := CursorPath(inboxDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

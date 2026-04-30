@@ -26,10 +26,18 @@ type BuildOptions struct {
 	Rules       *rules.Engine
 	SwaggerPath string   // optional, relative to RepoRoot
 	ModulePaths []string // module-brief mode: when set, skip git diff + swagger delta and treat summary as a self-contained API contract
+	// InboxDir is the absolute resolved inbox directory (caller computes via
+	// inbox.InboxDir to apply the legacy / primary fallback). The draft
+	// summary file lives here.
+	InboxDir string
 }
 
-func SummaryDraftPath(repoRoot string) string {
-	return filepath.Join(repoRoot, ".claude", "handoff-inbox", ".draft-summary.md")
+// SummaryDraftPath returns where the human-authored summary draft lives. The
+// caller passes the resolved inbox dir; cc-handoff doesn't try to recompute
+// it here to avoid a circular import (inbox → handoff already exists for
+// ShortSHA).
+func SummaryDraftPath(inboxDir string) string {
+	return filepath.Join(inboxDir, ".draft-summary.md")
 }
 
 func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, error) {
@@ -83,13 +91,13 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 	}
 	repoMeta.Name = opts.RepoName
 
-	summary, err := readSummary(opts.RepoRoot)
+	summary, err := readSummary(opts.InboxDir)
 	if err != nil {
 		return nil, err
 	}
 	if summary == "" {
 		return nil, fmt.Errorf("summary is empty: write %s before submitting — handoff intent must be human-authored, the receiver's Claude relies on it to generate INTEGRATION.md",
-			SummaryDraftPath(opts.RepoRoot))
+			SummaryDraftPath(opts.InboxDir))
 	}
 
 	urgency := opts.Urgency
@@ -114,8 +122,8 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 	return pkg, nil
 }
 
-func readSummary(repoRoot string) (string, error) {
-	p := SummaryDraftPath(repoRoot)
+func readSummary(inboxDir string) (string, error) {
+	p := SummaryDraftPath(inboxDir)
 	b, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {

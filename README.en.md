@@ -6,7 +6,7 @@
 
 > **English** | [中文](README.md)
 
-> Cross-machine handoff for Claude Code — turn "backend ships an API, frontend has to integrate it" from "paste a blurb in chat + read the swagger yourself" into "`/handoff` to push, `/pickup` to receive."
+> Cross-machine handoff for AI coding agents — turn "backend ships an API, frontend has to integrate it" from "paste a blurb in chat + read the swagger yourself" into "`/handoff` to push, `/pickup` to receive." First-class support for Claude Code and OpenAI Codex CLI; other agents work via manual mode (pure CLI flow).
 
 ## What problem does it solve
 
@@ -63,7 +63,7 @@ cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► c
 - **`cc-relay`** — VPS-side systemd service, listens on loopback only; reverse proxy terminates TLS. HTTP REST + SSE, persisted to SQLite.
 - **`cc-handoff` (CLI)** — installed on both machines. Subcommands: `init` / `submit` / `list` / `pickup` / `watch` / `comment`.
 - **`cc-handoff-mcp`** — MCP server that Claude Code launches over stdio. Exposes the CLI's actions as MCP tools (`submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff` and friends).
-- **`cc-handoff watch`** — receiver-side daemon. Holds an SSE long connection, materializes incoming handoffs into `.claude/handoff-inbox/<id>/`, fires desktop notifications, can spawn a terminal for urgent items.
+- **`cc-handoff watch`** — receiver-side daemon. Holds an SSE long connection, materializes incoming handoffs into `.cc-handoff/inbox/<id>/`, fires desktop notifications, can spawn a terminal for urgent items.
 
 Full data flow, SQLite schema, auth model, and failure modes live in [`docs/architecture.md`](docs/architecture.md) (currently Chinese-only).
 
@@ -195,9 +195,9 @@ In both modes, Claude will **ask you once** for any cross-cutting requirements o
 /pickup
 ```
 
-Claude calls `list_inbox`; if there are several, it'll let you pick. Then it `pickup_handoff`s the chosen one, materializes it under `.claude/handoff-inbox/<id>/`, and produces an `INTEGRATION.md` draft for you to review.
+Claude calls `list_inbox`; if there are several, it'll let you pick. Then it `pickup_handoff`s the chosen one, materializes it under `.cc-handoff/inbox/<id>/`, and produces an `INTEGRATION.md` draft for you to review.
 
-To ask the backend something mid-integration: the `comment_handoff` MCP tool (or `cc-handoff comment <id> "your question"` from the shell). The backend's watch daemon picks it up via SSE and appends it to `.claude/handoff-inbox/<id>/comments.md`.
+To ask the backend something mid-integration: the `comment_handoff` MCP tool (or `cc-handoff comment <id> "your question"` from the shell). The backend's watch daemon picks it up via SSE and appends it to `.cc-handoff/inbox/<id>/comments.md`.
 
 ## Day-to-day ops
 
@@ -256,6 +256,34 @@ schtasks /Run /TN cc-handoff-watch
 schtasks /Delete /TN cc-handoff-watch /F
 Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 ```
+
+## Multi-agent support
+
+| agent | CLI invocation | MCP register | slash commands | project instructions file |
+|---|---|---|---|---|
+| `claude` (default) | `claude -p "$(cat prompt.md)"` | auto: `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup}.md` | appended to `CLAUDE.md` |
+| `codex` | `codex exec "$(cat prompt.md)"` | init prints a TOML snippet to paste into `~/.codex/config.toml`, then restart codex | none (call MCP tools directly by name) | appended to `AGENTS.md` |
+| `manual` | does not auto-launch a terminal | init prints generic stdio MCP guidance | none | none |
+
+**Picking an agent**: `cc-handoff init` defaults to PATH detection (claude > codex > manual). Override with `cc-handoff init --agent codex`. The result is persisted to the `agent` field in `~/.config/cc-handoff/config.toml` (Linux/macOS) or `%AppData%\cc-handoff\config.toml` (Windows); subsequent commands honor it.
+
+**`cc-handoff init` step toggles** (each independent):
+
+- `--with-mcp` / `--no-mcp` — register the MCP server (claude: runs `claude mcp add`; codex: prints snippet)
+- `--with-commands` / `--no-commands` — install slash commands (Claude only)
+- `--with-instructions` / `--no-instructions` — append cc-handoff usage block to `CLAUDE.md` or `AGENTS.md` (idempotent: skips when the `## cc-handoff` heading is already present)
+
+**For Codex users**: paste the snippet init prints into `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.cc-handoff]
+command = "/usr/local/bin/cc-handoff-mcp"
+args = []
+```
+
+Then restart codex and call `submit_handoff` / `pickup_handoff` / etc. directly — semantically equivalent to Claude's `/handoff` `/pickup` slash commands.
+
+**Inbox path**: new installs use `.cc-handoff/inbox/`; existing repos with `.claude/handoff-inbox/` keep using it (no migration needed). The `[inbox] dir = "..."` override in `.cc-handoff.toml` accepts an absolute or relative path.
 
 ## Further reading
 

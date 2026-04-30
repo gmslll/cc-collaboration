@@ -43,9 +43,11 @@ func runWatch(ctx context.Context, args []string) error {
 		return err
 	}
 
+	repoRoot := config.RepoRoot(cwd)
 	h := &watchHandler{
 		client:    transport.New(res.RelayURL, res.Token),
-		repoRoot:  config.RepoRoot(cwd),
+		repoRoot:  repoRoot,
+		inboxDir:  inbox.InboxDir(repoRoot, res.InboxOverride),
 		res:       res,
 		noNotify:  *noNotify,
 		noLaunch:  *noLaunch,
@@ -68,6 +70,7 @@ func runWatch(ctx context.Context, args []string) error {
 type watchHandler struct {
 	client      *transport.Client
 	repoRoot    string
+	inboxDir    string // resolved once at start; used for Materialize / cursor / PackageDir
 	res         *config.Resolved
 	noNotify    bool
 	noLaunch    bool
@@ -108,7 +111,7 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 		fmt.Fprintf(os.Stderr, "warning: fetch %s: %v\n", notice.ID, err)
 		return nil
 	}
-	mat, err := inbox.Materialize(h.repoRoot, pkg)
+	mat, err := inbox.Materialize(h.inboxDir, pkg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: materialize %s: %v\n", notice.ID, err)
 		return nil
@@ -136,6 +139,7 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 
 	if pkg.Urgency == handoffschema.UrgencyUrgent && h.res.Triggers.AutoLaunch {
 		err := notify.LaunchTerminal(ctx, notify.LaunchOpts{
+			Agent:      h.res.Agent,
 			App:        h.res.Triggers.TerminalApp,
 			CWD:        h.repoRoot,
 			PromptFile: filepath.Join(mat.Dir, "prompt.md"),
@@ -158,7 +162,7 @@ func (h *watchHandler) onCommentCreated(ctx context.Context, ev transport.SSEEve
 		fmt.Fprintf(os.Stderr, "warning: bad comment event payload: %v\n", err)
 		return nil
 	}
-	dir := inbox.PackageDir(h.repoRoot, c.HandoffID)
+	dir := inbox.PackageDir(h.inboxDir, c.HandoffID)
 	if err := appendCommentToFile(dir, c); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: append comment %s: %v\n", c.HandoffID, err)
 	}
@@ -188,7 +192,7 @@ func (h *watchHandler) advanceCommentCursor(id int64) {
 	if h.batchCursor {
 		return
 	}
-	if err := inbox.SaveCursor(h.repoRoot, h.cursor); err != nil {
+	if err := inbox.SaveCursor(h.inboxDir, h.cursor); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: save cursor: %v\n", err)
 	}
 }
@@ -214,7 +218,7 @@ func (h *watchHandler) catchUp(ctx context.Context) error {
 		return err
 	}
 
-	cursor, exists, err := inbox.LoadCursor(h.repoRoot)
+	cursor, exists, err := inbox.LoadCursor(h.inboxDir)
 	if err != nil {
 		return fmt.Errorf("load cursor: %w", err)
 	}
@@ -254,7 +258,7 @@ func (h *watchHandler) bootstrapCommentCursor(ctx context.Context) error {
 		return fmt.Errorf("bootstrap comment cursor: %w", err)
 	}
 	h.cursor.LastCommentID = maxID
-	if err := inbox.SaveCursor(h.repoRoot, h.cursor); err != nil {
+	if err := inbox.SaveCursor(h.inboxDir, h.cursor); err != nil {
 		return fmt.Errorf("save bootstrap cursor: %w", err)
 	}
 	if maxID > 0 {
@@ -284,13 +288,13 @@ func (h *watchHandler) replayCommentsSinceCursor(ctx context.Context) error {
 			ev := transport.SSEEvent{Type: sse.EventTypeCommentCreated, Data: data}
 			if err := h.onCommentCreated(ctx, ev); err != nil {
 				if errors.Is(err, errStop) {
-					_ = inbox.SaveCursor(h.repoRoot, h.cursor)
+					_ = inbox.SaveCursor(h.inboxDir, h.cursor)
 					return nil
 				}
 				return err
 			}
 		}
-		if err := inbox.SaveCursor(h.repoRoot, h.cursor); err != nil {
+		if err := inbox.SaveCursor(h.inboxDir, h.cursor); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: save cursor: %v\n", err)
 		}
 		if len(comments) < catchUpPageSize {

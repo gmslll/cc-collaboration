@@ -42,12 +42,6 @@ type MCPRegisterOptions struct {
 	Name string
 }
 
-// ClaudeAvailable returns true if the `claude` CLI is on PATH.
-func ClaudeAvailable() bool {
-	_, err := exec.LookPath("claude")
-	return err == nil
-}
-
 // ResolveMCPBinary returns the path to cc-handoff-mcp. Search order:
 //  1. Sibling of the currently-running cc-handoff binary (same directory).
 //  2. PATH lookup of "cc-handoff-mcp".

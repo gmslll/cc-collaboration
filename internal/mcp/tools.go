@@ -40,7 +40,7 @@ func submitHandoffTool() Tool {
 	schema := json.RawMessage(`{
   "type": "object",
   "properties": {
-    "summary":      {"type": "string", "description": "Markdown summary of the change. Written to .claude/handoff-inbox/.draft-summary.md before the package is built. If omitted, the existing draft (if any) is used."},
+    "summary":      {"type": "string", "description": "Markdown summary of the change. Written to <inbox-dir>/.draft-summary.md before the package is built (inbox-dir defaults to .cc-handoff/inbox, falls back to legacy .claude/handoff-inbox in older repos). If omitted, the existing draft (if any) is used."},
     "to":           {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
     "urgent":       {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
     "note":         {"type": "string", "description": "Markdown 写的「需求 / 跨端约束」段，例如错误码对照、字段大小写规则、分页约定、不可合并的请求等。会以「⚠️ 后端备注 / 需求 (必读)」醒目段渲染到接收端 prompt，并被强制要求 INTEGRATION.md 逐条响应。短到一两句也可以；没有就不传。"},
@@ -79,9 +79,10 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		return ToolResult{}, err
 	}
 	repoRoot := config.RepoRoot(cwd)
+	inboxDir := inbox.InboxDir(repoRoot, res.InboxOverride)
 
 	if a.Summary != "" {
-		if err := writeDraftSummary(repoRoot, a.Summary); err != nil {
+		if err := writeDraftSummary(inboxDir, a.Summary); err != nil {
 			return ToolResult{}, err
 		}
 	}
@@ -115,6 +116,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Rules:       engine,
 		SwaggerPath: res.Swagger,
 		ModulePaths: a.ModulePaths,
+		InboxDir:    inboxDir,
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -211,7 +213,7 @@ func pickupHandoffTool() Tool {
 }`)
 	return Tool{
 		Name:        ToolPickupHandoff,
-		Description: "Fetch a handoff by id, materialize it under .claude/handoff-inbox/<id>/, ack it on the relay, and return the integration prompt as the tool result. After this returns, you should follow the returned prompt to integrate the changes.",
+		Description: "Fetch a handoff by id, materialize it under <inbox-dir>/<id>/ (default .cc-handoff/inbox; legacy .claude/handoff-inbox preserved on older repos), ack it on the relay, and return the integration prompt as the tool result. After this returns, you should follow the returned prompt to integrate the changes.",
 		InputSchema: schema,
 		Handler:     pickupHandoffHandler,
 	}
@@ -244,8 +246,7 @@ func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if err != nil {
 		return ToolResult{}, err
 	}
-	repoRoot := config.RepoRoot(cwd)
-	mat, err := inbox.Materialize(repoRoot, pkg)
+	mat, err := inbox.Materialize(inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride), pkg)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -343,8 +344,8 @@ func resolveCWD(arg string) (string, error) {
 	return os.Getwd()
 }
 
-func writeDraftSummary(repoRoot, content string) error {
-	p := handoff.SummaryDraftPath(repoRoot)
+func writeDraftSummary(inboxDir, content string) error {
+	p := handoff.SummaryDraftPath(inboxDir)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}

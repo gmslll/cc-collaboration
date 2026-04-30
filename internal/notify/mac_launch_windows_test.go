@@ -6,39 +6,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cc-collaboration/internal/agent"
 	"github.com/cc-collaboration/internal/config"
 )
 
-func TestPSSingleQuote(t *testing.T) {
-	cases := map[string]string{
-		"":                `''`,
-		"plain":           `'plain'`,
-		"with space":      `'with space'`,
-		"with'quote":      `'with''quote'`,
-		"a'b'c":           `'a''b''c'`,
-		`/path/with"d`:    `'/path/with"d'`,
-		`C:\Users\me\dir`: `'C:\Users\me\dir'`,
-	}
-	for in, want := range cases {
-		if got := psSingleQuote(in); got != want {
-			t.Errorf("psSingleQuote(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // TestLaunchTerminalDry covers the command-building path without actually
 // invoking cmd.exe / wt.exe / powershell.exe, by routing through Dry=true and
-// validating it returns nil.
+// validating it returns nil. PowerShell quoting is owned by the agent and
+// tested in internal/agent.
 func TestLaunchTerminalDry(t *testing.T) {
+	ag, _ := agent.Resolve("claude")
 	for _, app := range []string{
 		"",
 		config.TerminalAppWindowsTerminal,
 		config.TerminalAppPowerShell,
 	} {
 		err := LaunchTerminal(t.Context(), LaunchOpts{
+			Agent:      ag,
 			App:        app,
 			CWD:        `C:\repo with space`,
-			PromptFile: `C:\repo with space\.claude\handoff-inbox\h_x\prompt.md`,
+			PromptFile: `C:\repo with space\.cc-handoff\inbox\h_x\prompt.md`,
 			Dry:        true,
 		})
 		if err != nil {
@@ -48,7 +35,9 @@ func TestLaunchTerminalDry(t *testing.T) {
 }
 
 func TestLaunchTerminalRejectsUnknown(t *testing.T) {
+	ag, _ := agent.Resolve("claude")
 	err := LaunchTerminal(t.Context(), LaunchOpts{
+		Agent:      ag,
 		App:        "kitty",
 		CWD:        `C:\tmp`,
 		PromptFile: `C:\tmp\p.md`,
@@ -59,11 +48,23 @@ func TestLaunchTerminalRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestLaunchTerminalRequiresAgent(t *testing.T) {
+	err := LaunchTerminal(t.Context(), LaunchOpts{
+		CWD:        `C:\tmp`,
+		PromptFile: `C:\tmp\p.md`,
+		Dry:        true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "Agent required") {
+		t.Errorf("expected Agent required error, got %v", err)
+	}
+}
+
 func TestLaunchTerminalRequiresCWDAndPromptFile(t *testing.T) {
-	if err := LaunchTerminal(t.Context(), LaunchOpts{Dry: true}); err == nil {
+	ag, _ := agent.Resolve("claude")
+	if err := LaunchTerminal(t.Context(), LaunchOpts{Agent: ag, Dry: true}); err == nil {
 		t.Error("expected error when CWD and PromptFile are empty")
 	}
-	if err := LaunchTerminal(t.Context(), LaunchOpts{CWD: `C:\tmp`, Dry: true}); err == nil {
+	if err := LaunchTerminal(t.Context(), LaunchOpts{Agent: ag, CWD: `C:\tmp`, Dry: true}); err == nil {
 		t.Error("expected error when PromptFile is empty")
 	}
 }

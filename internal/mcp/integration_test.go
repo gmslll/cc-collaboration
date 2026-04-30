@@ -218,18 +218,18 @@ repo = "frontend-demo"
 		t.Errorf("pickup_handoff prompt missing rule-derived hint")
 	}
 	for _, f := range []string{"package.json", "summary.md", "prompt.md"} {
-		path := filepath.Join(front, ".claude/handoff-inbox", id, f)
+		path := filepath.Join(front, ".cc-handoff/inbox", id, f)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected materialized file %s: %v", f, err)
 		}
 	}
 	// full.diff must NOT exist — the new flow ships only API delta + commits + paths,
 	// and the recipient's Claude generates INTEGRATION.md from those.
-	if _, err := os.Stat(filepath.Join(front, ".claude/handoff-inbox", id, "full.diff")); err == nil {
+	if _, err := os.Stat(filepath.Join(front, ".cc-handoff/inbox", id, "full.diff")); err == nil {
 		t.Error("full.diff should not be materialized in the new prompt-driven flow")
 	}
 	// prompt.md must instruct the receiver to write INTEGRATION.md, not edit code directly.
-	promptBytes, err := os.ReadFile(filepath.Join(front, ".claude/handoff-inbox", id, "prompt.md"))
+	promptBytes, err := os.ReadFile(filepath.Join(front, ".cc-handoff/inbox", id, "prompt.md"))
 	if err != nil {
 		t.Fatalf("read prompt.md: %v", err)
 	}

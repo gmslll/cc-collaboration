@@ -69,12 +69,13 @@ func TestCatchUpHandoffsAndComments(t *testing.T) {
 	// prior session that has now reconnected. Without an existing cursor,
 	// catchUp would bootstrap and skip the comment instead of replaying it.
 	repoRoot := t.TempDir()
-	if err := inbox.SaveCursor(repoRoot, inbox.WatchCursor{LastCommentID: 0}); err != nil {
+	if err := inbox.SaveCursor(inbox.InboxDir(repoRoot, ""), inbox.WatchCursor{LastCommentID: 0}); err != nil {
 		t.Fatalf("seed cursor: %v", err)
 	}
 	h := &watchHandler{
 		client:   transport.New(srv.URL, "tok-front"),
 		repoRoot: repoRoot,
+		inboxDir: inbox.InboxDir(repoRoot, ""),
 		res: &config.Resolved{
 			RelayURL: srv.URL,
 			Token:    "tok-front",
@@ -91,7 +92,7 @@ func TestCatchUpHandoffsAndComments(t *testing.T) {
 	// Both handoffs materialized.
 	for _, id := range []string{r1.ID, r2.ID} {
 		for _, f := range []string{"package.json", "summary.md", "prompt.md"} {
-			path := filepath.Join(repoRoot, ".claude/handoff-inbox", id, f)
+			path := filepath.Join(repoRoot, ".cc-handoff/inbox", id, f)
 			if _, err := os.Stat(path); err != nil {
 				t.Errorf("expected materialized %s for %s: %v", f, id, err)
 			}
@@ -99,7 +100,7 @@ func TestCatchUpHandoffsAndComments(t *testing.T) {
 	}
 
 	// Comment appended to first handoff's comments.md.
-	commentsFile := filepath.Join(repoRoot, ".claude/handoff-inbox", r1.ID, "comments.md")
+	commentsFile := filepath.Join(repoRoot, ".cc-handoff/inbox", r1.ID, "comments.md")
 	body, err := os.ReadFile(commentsFile)
 	if err != nil {
 		t.Fatalf("read comments.md: %v", err)
@@ -109,7 +110,7 @@ func TestCatchUpHandoffsAndComments(t *testing.T) {
 	}
 
 	// Cursor file exists and points past the comment we just consumed.
-	cur, exists, err := inbox.LoadCursor(repoRoot)
+	cur, exists, err := inbox.LoadCursor(inbox.InboxDir(repoRoot, ""))
 	if err != nil {
 		t.Fatalf("LoadCursor: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestCatchUpHandoffsAndComments(t *testing.T) {
 	if err := h.catchUp(ctx); err != nil {
 		t.Fatalf("second catchUp: %v", err)
 	}
-	cur2, _, _ := inbox.LoadCursor(repoRoot)
+	cur2, _, _ := inbox.LoadCursor(inbox.InboxDir(repoRoot, ""))
 	if cur2.LastCommentID != prev {
 		t.Errorf("cursor moved on idempotent re-run: %d -> %d", prev, cur2.LastCommentID)
 	}
@@ -179,6 +180,7 @@ func TestCatchUpFirstRunSkipsHistory(t *testing.T) {
 	h := &watchHandler{
 		client:   front,
 		repoRoot: repoRoot,
+		inboxDir: inbox.InboxDir(repoRoot, ""),
 		res:      &config.Resolved{RelayURL: srv.URL, Token: "tok-front", Me: "alex@frontend"},
 		noNotify: true,
 		noLaunch: true,
@@ -189,13 +191,13 @@ func TestCatchUpFirstRunSkipsHistory(t *testing.T) {
 	}
 
 	// Old comment must NOT have been materialized — first-run bootstrap skips history.
-	commentsFile := filepath.Join(repoRoot, ".claude/handoff-inbox", res.ID, "comments.md")
+	commentsFile := filepath.Join(repoRoot, ".cc-handoff/inbox", res.ID, "comments.md")
 	if _, err := os.Stat(commentsFile); err == nil {
 		t.Errorf("expected comments.md to NOT exist on first-run bootstrap")
 	}
 
 	// Cursor must be set to the bootstrap max id (>0).
-	cur, exists, err := inbox.LoadCursor(repoRoot)
+	cur, exists, err := inbox.LoadCursor(inbox.InboxDir(repoRoot, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

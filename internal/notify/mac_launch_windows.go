@@ -7,21 +7,22 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/cc-collaboration/internal/config"
 )
 
-// LaunchTerminal opens a new terminal window in opts.CWD and starts
-// `claude -p (Get-Content -Raw -LiteralPath <PromptFile>)`. The default
-// terminal is Windows Terminal (wt.exe); if it isn't on PATH we fall back to
-// a plain PowerShell window launched via cmd.exe's start verb.
+// LaunchTerminal opens a new terminal window in opts.CWD and starts the
+// agent's prompt invocation. Default terminal is Windows Terminal (wt.exe);
+// if it isn't on PATH we fall back to a plain PowerShell window launched via
+// cmd.exe's start verb.
 //
-// Quoting is single-layered: the PowerShell command uses single-quoted
-// literals (PowerShell 's escape rule: double the embedded single quote),
-// then the whole thing becomes a single -Command argument that exec.Command
-// passes through Go's CmdLine quoting.
+// Quoting is single-layered: the agent's PowerShellPromptCmd does single-
+// quoted literal escaping, and the whole thing becomes a single -Command
+// argument that exec.Command passes through Go's CmdLine quoting.
 func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
+	if opts.Agent == nil {
+		return fmt.Errorf("LaunchTerminal: Agent required")
+	}
 	if opts.CWD == "" || opts.PromptFile == "" {
 		return fmt.Errorf("LaunchTerminal: CWD and PromptFile required")
 	}
@@ -31,8 +32,7 @@ func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
 		app = pickWindowsDefault()
 	}
 
-	inner := "Set-Location -LiteralPath " + psSingleQuote(opts.CWD) +
-		"; claude -p (Get-Content -Raw -LiteralPath " + psSingleQuote(opts.PromptFile) + ")"
+	inner := opts.Agent.PowerShellPromptCmd(opts.CWD, opts.PromptFile)
 
 	var cmd *exec.Cmd
 	switch app {
@@ -66,11 +66,4 @@ func pickWindowsDefault() string {
 		return config.TerminalAppWindowsTerminal
 	}
 	return config.TerminalAppPowerShell
-}
-
-// psSingleQuote wraps s in a PowerShell single-quoted literal, escaping
-// embedded single quotes by doubling them — PowerShell's only escape rule
-// inside single-quoted strings.
-func psSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
