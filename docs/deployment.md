@@ -135,6 +135,70 @@ curl -i https://handoff.your-domain.com/healthz
 
 > SSE 需要中间层不缓冲。caddy `flush_interval -1` 和 nginx `proxy_buffering off` 这两条**必须设**，否则 watch 收事件会延迟几十秒甚至卡死。
 
+### 1.2.alt 不要反代,直接 `http://<ip>:8080`(仅在可信网络用)
+
+适用场景:VPN / Tailscale / WireGuard / 公司内网 / 家庭实验 —— 链路本身已经被你信任了。不挂 caddy/nginx,不要域名,直接把 8080 端口暴露给客户端。
+
+> ⚠️ **没有 TLS。** Bearer token 和 handoff 全文(可能含 git diff、commit message、API 文档)都在 HTTP 上明文跑。**任何能截获你这条链路的中间人都能读 + 重放。** 千万别在公网裸用 —— 真的要公网就回去用 §1.2 装反代 + 域名。
+
+三处改动:
+
+**1. relay 监听地址放开**
+
+`scripts/systemd/cc-handoff-relay.service` 默认 `-addr 127.0.0.1:8080`(只 loopback,留给反代用)。改成 `0.0.0.0:8080`(所有网卡)或具体 IP(`10.0.0.5:8080`、Tailscale IP 等):
+
+```bash
+sudo sed -i 's|-addr 127.0.0.1:8080|-addr 0.0.0.0:8080|' /etc/systemd/system/cc-handoff-relay.service
+sudo systemctl daemon-reload
+sudo systemctl restart cc-handoff-relay
+```
+
+要持久化(下次 `make deploy` 不被覆盖):改仓库里 `scripts/systemd/cc-handoff-relay.service`,重新 deploy。
+
+**2. 防火墙开端口**
+
+```bash
+# ufw —— 限到搭档的固定 IP(强烈推荐)
+sudo ufw allow from <搭档公网 IP> to any port 8080 proto tcp comment 'cc-handoff'
+# 或全开(只在 VPN-only 场景)
+sudo ufw allow 8080/tcp
+
+# firewalld
+sudo firewall-cmd --add-port=8080/tcp --permanent && sudo firewall-cmd --reload
+```
+
+**3. 客户端 `init` 时填 `http://<ip>:8080`**
+
+```
+Relay URL: http://203.0.113.42:8080      # VPS 公网 IP
+# 或:
+Relay URL: http://100.64.1.7:8080        # Tailscale 100.x.x.x IP
+```
+
+等价于在 `~/.config/cc-handoff/config.toml` 里直接写:
+
+```toml
+relay_url = "http://203.0.113.42:8080"   # 注意是 http:// 不是 https://,且要带端口
+token     = "<步骤 1.3 拿到的对应 token>"
+identity  = "you@backend"
+```
+
+**冒烟测试:**
+
+```bash
+curl -i http://203.0.113.42:8080/healthz
+# HTTP/1.1 200 OK + {"ok":true}
+```
+
+**想保留这种部署但加点保护?**
+
+不上反代但又想要传输层加密:
+
+- **Tailscale Funnel / Serve** —— `tailscale serve --https=443 --bg http://localhost:8080`,Tailscale 自动给你套 HTTPS,无需自己装反代;只对 tailnet / Funnel 客户端可见
+- **WireGuard / OpenVPN** —— 链路加密,relay 绑到 VPN 网卡 IP(`-addr 10.8.0.1:8080`)
+
+这俩比"裸 0.0.0.0:8080"安全得多,代价是搭一次 VPN —— 但既然链路已受信,应用层用 HTTP 就够了。
+
 ### 1.3 生成真实 token
 
 `install.sh` 写的是占位 token。VPS 上替换：
