@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,16 @@ import (
 
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
+
+// ErrNotImplemented signals the relay returned 404 for an endpoint the client
+// expected. Almost always means the relay binary predates the feature; the
+// CLI surfaces "your relay is too old, run `make deploy`".
+var ErrNotImplemented = errors.New("relay does not implement this endpoint")
+
+// ErrConflict signals the relay returned 409 — typically retracting a
+// handoff that's already been picked up. Callers should print the server
+// message verbatim; it explains the recovery path.
+var ErrConflict = errors.New("conflict")
 
 type Client struct {
 	BaseURL string
@@ -162,6 +173,45 @@ func (c *Client) ListInboxComments(ctx context.Context, since int64, limit int) 
 	return out.Comments, out.MaxID, nil
 }
 
+// Status returns the status snapshot (state / picked_at / comment summary)
+// for a handoff the caller is sender or recipient of. Returns
+// ErrNotImplemented when talking to a pre-multi-agent relay binary.
+func (c *Client) Status(ctx context.Context, id string) (*handoffschema.Status, error) {
+	var out handoffschema.Status
+	if err := c.do(ctx, http.MethodGet, "/v1/handoffs/"+id+"/status", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListSent returns the caller's most recent sent handoffs (any state),
+// newest-first.
+func (c *Client) ListSent(ctx context.Context, limit int) ([]handoffschema.ListItem, error) {
+	q := "?as=sender"
+	if limit > 0 {
+		q += "&limit=" + strconv.Itoa(limit)
+	}
+	var out struct {
+		Items []handoffschema.ListItem `json:"items"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/handoffs"+q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// Retract cancels a still-pending handoff the caller sent. reason is
+// optional; surfaced in the SSE event the recipient's watch sees. Returns
+// ErrConflict if the recipient already picked it up.
+func (c *Client) Retract(ctx context.Context, id, reason string) error {
+	var body io.Reader
+	if reason != "" {
+		payload, _ := json.Marshal(map[string]string{"reason": reason})
+		body = bytes.NewReader(payload)
+	}
+	return c.do(ctx, http.MethodPost, "/v1/handoffs/"+id+"/retract", body, nil)
+}
+
 func (c *Client) ListComments(ctx context.Context, handoffID string) ([]handoffschema.Comment, error) {
 	var out struct {
 		Comments []handoffschema.Comment `json:"comments"`
@@ -188,7 +238,21 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("relay %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(b)))
+		msg := strings.TrimSpace(string(b))
+		switch resp.StatusCode {
+		case http.StatusNotFound:
+			// Distinguish "this id doesn't exist" from "this endpoint
+			// doesn't exist on this relay" by sniffing the body — the
+			// id-not-found path returns the literal "not found" we set
+			// in handlers, while unknown-route returns Go's default
+			// "404 page not found".
+			if strings.Contains(msg, "page not found") {
+				return fmt.Errorf("%w: %s %s", ErrNotImplemented, method, path)
+			}
+		case http.StatusConflict:
+			return fmt.Errorf("%w: %s", ErrConflict, msg)
+		}
+		return fmt.Errorf("relay %s %s: %s: %s", method, path, resp.Status, msg)
 	}
 	if out == nil {
 		return nil

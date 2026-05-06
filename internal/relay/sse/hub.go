@@ -16,6 +16,12 @@ const EventTypeHandoffCreated = "handoff.created"
 // handoff. Pushed to whichever side did NOT post the comment.
 const EventTypeCommentCreated = "comment.created"
 
+// EventTypeHandoffRetracted is published when a sender retracts a handoff
+// that hasn't been picked up yet. Pushed to the recipient so their watch can
+// surface "this was retracted" instead of leaving stale prompt files
+// looking unhandled.
+const EventTypeHandoffRetracted = "handoff.retracted"
+
 // subscriberBuffer caps per-subscriber backlog. A slow client can fall behind
 // and drop events; recovery happens via Last-Event-Id reconnect, so the buffer
 // only needs to absorb short bursts during a write to the wire.

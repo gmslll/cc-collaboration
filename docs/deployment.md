@@ -589,6 +589,9 @@ rm -rf ~/.config/cc-handoff
 | urgent 没自动开终端 | (1) `.cc-handoff.toml` 里 `triggers.auto_launch = true` 没设；(2) watch 不在跑；(3) macOS 隐私权限被拒了，去"系统设置 → 隐私 → 自动化"把 cc-handoff-mcp / cc-handoff 控制 Terminal 的权限打开 |
 | `make deploy` ssh 失败 | 用 `SSH_OPTS="-i ~/.ssh/id_xxx -p 2222"` 透传给 ssh/scp |
 | 升级后 watch 还连旧 token | `launchctl kickstart -k gui/$(id -u)/com.cc-handoff.watch` 强制重启 |
+| `cc-handoff status / sent / retract` 返回 "relay does not implement this endpoint" | relay 还是旧版本(没多 agent / 状态可见性那批)。`make deploy HOST=<vps>` 升级 relay |
+| `cc-handoff retract` 返回 409 | 对方已经 pickup,无法 retract。改用 `cc-handoff comment <id> "..."` 协调 |
+| 不知道某 handoff 还在不在 / 状态如何 | `cc-handoff status <id>`(发件人)/ `cc-handoff inbox`(收件人本地)/ `cc-handoff list`(收件人 relay 上 pending) |
 
 ---
 

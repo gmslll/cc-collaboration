@@ -302,3 +302,149 @@ func (s *Store) Ack(ctx context.Context, id, byIdentity string) error {
 	}
 	return nil
 }
+
+// ErrConflict signals a state-machine violation — the caller asked for a
+// transition the row's current state doesn't allow (e.g. retracting a handoff
+// that's already been picked up). Server maps this to HTTP 409.
+var ErrConflict = errors.New("state conflict")
+
+// ErrForbidden signals an authorization failure — caller is not the sender
+// (for retract) or not sender/recipient (for status). Server maps to 403.
+var ErrForbidden = errors.New("forbidden")
+
+// Retract marks a pending handoff as retracted, sender-only. On success
+// returns the recipient identity so the caller can fan out a
+// handoff.retracted SSE event without a second roundtrip. Returns
+// ErrNotFound if id doesn't exist, ErrForbidden if caller isn't the sender,
+// ErrConflict if the handoff was already picked or retracted.
+func (s *Store) Retract(ctx context.Context, id, byIdentity string) (string, error) {
+	// Fetch sender + recipient + state in one query, then UPDATE if the
+	// pre-state allows it. Two roundtrips on the success path (down from
+	// three when callers had to call Status() first) and avoids the
+	// expensive Status (with comment counts) on failure paths.
+	var sender, recipient, state string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT sender, recipient, state FROM handoffs WHERE id = ?`, id,
+	).Scan(&sender, &recipient, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if sender != byIdentity {
+		return "", fmt.Errorf("%w: handoff is owned by %s", ErrForbidden, sender)
+	}
+	if state != string(handoffschema.StatePending) {
+		return "", fmt.Errorf("%w: cannot retract handoff in state %s", ErrConflict, state)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE handoffs SET state = ? WHERE id = ? AND sender = ? AND state = ?`,
+		string(handoffschema.StateRetracted), id, byIdentity, string(handoffschema.StatePending),
+	); err != nil {
+		return "", err
+	}
+	return recipient, nil
+}
+
+// ListSent returns the caller's most recent sent handoffs (any state),
+// newest-first. Mirrors ListPending for the sender side; senders can use this
+// to see "did the recipient pick it up yet?" without polling status one-by-one.
+func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]handoffschema.ListItem, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, sender, recipient, urgency, state, created_at, repo_name, branch, headline FROM handoffs
+		 WHERE sender = ?
+		 ORDER BY created_at DESC LIMIT ?`,
+		sender, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []handoffschema.ListItem
+	for rows.Next() {
+		var (
+			id, snd, recipient, urgency, state, repoName, branch, headline string
+			createdMS                                                      int64
+		)
+		if err := rows.Scan(&id, &snd, &recipient, &urgency, &state, &createdMS, &repoName, &branch, &headline); err != nil {
+			return nil, err
+		}
+		out = append(out, handoffschema.ListItem{
+			ID:        id,
+			Sender:    snd,
+			Recipient: recipient,
+			Urgency:   handoffschema.Urgency(urgency),
+			State:     handoffschema.State(state),
+			CreatedAt: time.UnixMilli(createdMS).UTC(),
+			RepoName:  repoName,
+			Branch:    branch,
+			Headline:  headline,
+		})
+	}
+	return out, rows.Err()
+}
+
+// Status returns the per-handoff status snapshot for callers who want
+// state + picked_at + comment summary without re-fetching the package
+// payload. Caller must be the sender or recipient (server enforces).
+func (s *Store) Status(ctx context.Context, id string) (handoffschema.Status, error) {
+	var (
+		sender, recipient, state string
+		createdMS                int64
+		pickedMS                 sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT sender, recipient, state, created_at, picked_at FROM handoffs WHERE id = ?`, id,
+	).Scan(&sender, &recipient, &state, &createdMS, &pickedMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return handoffschema.Status{}, ErrNotFound
+	}
+	if err != nil {
+		return handoffschema.Status{}, err
+	}
+
+	var commentCount int
+	var lastID sql.NullInt64
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), MAX(id) FROM comments WHERE handoff_id = ?`, id,
+	).Scan(&commentCount, &lastID)
+	if err != nil {
+		return handoffschema.Status{}, fmt.Errorf("count comments: %w", err)
+	}
+
+	out := handoffschema.Status{
+		ID:           id,
+		State:        handoffschema.State(state),
+		Sender:       sender,
+		Recipient:    recipient,
+		CreatedAt:    time.UnixMilli(createdMS).UTC(),
+		CommentCount: commentCount,
+	}
+	if pickedMS.Valid {
+		t := time.UnixMilli(pickedMS.Int64).UTC()
+		out.PickedAt = &t
+	}
+	if lastID.Valid {
+		var lc handoffschema.Comment
+		var bodyMS int64
+		err = s.db.QueryRowContext(ctx,
+			`SELECT id, sender, body, created_at FROM comments WHERE id = ?`, lastID.Int64,
+		).Scan(&lc.ID, &lc.Sender, &lc.Body, &bodyMS)
+		if err != nil {
+			return handoffschema.Status{}, fmt.Errorf("fetch last comment: %w", err)
+		}
+		lc.HandoffID = id
+		lc.CreatedAt = time.UnixMilli(bodyMS).UTC()
+		// Truncate to 80 runes — Status is meant for summary display, full
+		// body comes from ListComments when the user wants details.
+		if r := []rune(lc.Body); len(r) > 80 {
+			lc.Body = string(r[:80]) + "…"
+		}
+		out.LastComment = &lc
+	}
+	return out, nil
+}

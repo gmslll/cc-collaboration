@@ -53,6 +53,11 @@ func runPickup(ctx context.Context, args []string) error {
 			fmt.Println("✓ acked on relay")
 		}
 	}
-	fmt.Printf("Open %s/prompt.md and feed it to your %s session.\n", mat.Dir, res.Agent.Name())
+	fmt.Println()
+	fmt.Printf("Materialized at %s\n", mat.Dir)
+	fmt.Printf("\nNext: launch your %s session on this handoff:\n", res.Agent.Name())
+	fmt.Printf("  cc-handoff open %s\n", id)
+	fmt.Println()
+	fmt.Println("Or read prompt.md and paste it into an existing session manually.")
 	return nil
 }

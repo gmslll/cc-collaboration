@@ -203,6 +203,30 @@ Claude calls `list_inbox`; if there are several, it'll let you pick. Then it `pi
 
 To ask the backend something mid-integration: the `comment_handoff` MCP tool (or `cc-handoff comment <id> "your question"` from the shell). The backend's watch daemon picks it up via SSE and appends it to `.cc-handoff/inbox/<id>/comments.md`.
 
+### Visibility & recovery
+
+After submitting, check what's happened on the other side:
+
+```bash
+cc-handoff status <id>     # state / picked_at / comment count / latest-comment summary
+cc-handoff sent             # list my recent sent handoffs with state
+```
+
+Sent the wrong thing? Retract while it's still pending (after pickup, coordinate via comment):
+
+```bash
+cc-handoff retract <id> --reason "wrong branch"   # marks retracted; recipient watch writes RETRACTED.md + notifies
+```
+
+Receiver lost the auto-launched terminal or rebooted? Find and re-open the prompt:
+
+```bash
+cc-handoff inbox            # list locally materialized handoffs (with RET / C flags)
+cc-handoff open <id>        # re-launch the configured agent on a previously picked handoff
+```
+
+Equivalent MCP tools (`status_handoff` / `list_sent` / `retract_handoff` / `list_local_inbox`) are exposed for in-session agent use.
+
 ## Day-to-day ops
 
 ```bash

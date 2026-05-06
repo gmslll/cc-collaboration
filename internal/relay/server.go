@@ -35,7 +35,9 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/handoffs", s.submit)
 	api.HandleFunc("GET /v1/handoffs", s.list)
 	api.HandleFunc("GET /v1/handoffs/{id}", s.get)
+	api.HandleFunc("GET /v1/handoffs/{id}/status", s.status)
 	api.HandleFunc("POST /v1/handoffs/{id}/ack", s.ack)
+	api.HandleFunc("POST /v1/handoffs/{id}/retract", s.retract)
 	api.HandleFunc("POST /v1/handoffs/{id}/comment", s.postComment)
 	api.HandleFunc("GET /v1/handoffs/{id}/comments", s.listHandoffComments)
 	api.HandleFunc("GET /v1/comments", s.listInboxComments)
@@ -100,26 +102,47 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
-	recipient := r.URL.Query().Get("recipient")
-	if recipient == "" {
-		recipient = identity
-	}
-	if recipient != identity {
-		http.Error(w, "can only list your own inbox", http.StatusForbidden)
-		return
-	}
 	limit := 100
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			limit = n
 		}
 	}
-	items, err := s.Store.ListPending(r.Context(), recipient, limit)
-	if err != nil {
-		http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
-		return
+
+	// ?as=sender lists handoffs the caller sent (any state, newest-first);
+	// ?as=recipient (default, also matches old ?recipient= queries) lists
+	// caller's pending inbox. Either way the role is anchored to the
+	// authenticated identity — there's no third-party visibility.
+	role := r.URL.Query().Get("as")
+	if role == "" {
+		// Back-compat: old clients pass ?recipient=<me>. Treat both as
+		// "recipient" role; reject cross-identity recipient queries.
+		recipient := r.URL.Query().Get("recipient")
+		if recipient != "" && recipient != identity {
+			http.Error(w, "can only list your own inbox", http.StatusForbidden)
+			return
+		}
+		role = "recipient"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+
+	switch role {
+	case "recipient":
+		items, err := s.Store.ListPending(r.Context(), identity, limit)
+		if err != nil {
+			http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	case "sender":
+		items, err := s.Store.ListSent(r.Context(), identity, limit)
+		if err != nil {
+			http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	default:
+		http.Error(w, "as must be 'sender' or 'recipient'", http.StatusBadRequest)
+	}
 }
 
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
@@ -364,6 +387,71 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// status returns state + picked_at + comment summary for a single handoff.
+// Caller must be sender or recipient (peer parties only).
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+	st, err := s.Store.Status(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if st.Sender != identity && st.Recipient != identity {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// retract marks a still-pending handoff as retracted. Sender-only; broadcasts
+// a handoff.retracted SSE event so the recipient's watch surfaces the
+// withdrawal. Returns 409 if the recipient already picked it up — past that
+// point coordinate via comments.
+func (s *Server) retract(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	// Optional reason body. {} also fine.
+	var body struct {
+		Reason string `json:"reason,omitempty"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	recipient, err := s.Store.Retract(r.Context(), id, identity)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	case errors.Is(err, store.ErrForbidden):
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	case errors.Is(err, store.ErrConflict):
+		http.Error(w, err.Error()+" — coordinate via comment instead", http.StatusConflict)
+		return
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if s.Hub != nil {
+		ev := handoffschema.RetractEvent{ID: id, Sender: identity, Reason: body.Reason}
+		if data, err := json.Marshal(ev); err == nil {
+			s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffRetracted, Recipient: recipient, Data: data})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

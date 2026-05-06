@@ -96,7 +96,22 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 		return nil, err
 	}
 	if summary == "" {
-		return nil, fmt.Errorf("summary is empty: write %s before submitting — handoff intent must be human-authored, the receiver's Claude relies on it to generate INTEGRATION.md",
+		return nil, fmt.Errorf(`summary is empty: write %s before submitting — handoff intent must be human-authored, the receiver's agent relies on it to generate INTEGRATION.md.
+
+Example:
+
+  ## What changed
+  - POST /api/v1/users — creates a user; returns 201 with {id, ...}
+  - PUT  /api/v1/users/{id}/email — updates email, returns 204
+
+  ## Why
+  Frontend onboarding flow needs an email-change endpoint.
+
+  ## Cross-end constraints
+  - Email must be lowercased before send.
+  - 409 = email already in use.
+
+Or call submit_handoff (MCP) with summary=... to skip the file step`,
 			SummaryDraftPath(opts.InboxDir))
 	}
 

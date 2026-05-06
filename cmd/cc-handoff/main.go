@@ -33,6 +33,16 @@ func main() {
 		err = runWatch(ctx, args)
 	case "comment":
 		err = runComment(ctx, args)
+	case "status":
+		err = runStatus(ctx, args)
+	case "sent":
+		err = runSent(ctx, args)
+	case "retract":
+		err = runRetract(ctx, args)
+	case "inbox":
+		err = runInbox(ctx, args)
+	case "open":
+		err = runOpen(ctx, args)
 	case "version", "-v", "--version":
 		runVersion()
 	case "help", "-h", "--help":
@@ -49,17 +59,28 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `cc-handoff — cross-machine Claude Code collaboration
+	fmt.Fprint(os.Stderr, `cc-handoff — cross-machine AI agent handoff
 
-Usage:
-  cc-handoff init     [--relay URL --token T --me ID --partner ID --repo NAME --base REF] [--non-interactive]
+Setup:
+  cc-handoff init     [--agent claude|codex|manual] [--with-mcp] [--with-commands] [--with-instructions]
+
+Sender flow:
   cc-handoff submit   [--to ID] [--urgent] [--note TEXT] [--base REF]
-  cc-handoff list     [--json]
-  cc-handoff pickup   <handoff-id> [--no-ack]
+  cc-handoff sent     [--limit N] [--json]              list my recent sent handoffs
+  cc-handoff status   <id> [--json]                     show state / picked_at / comments
+  cc-handoff retract  <id> [--reason TEXT]              cancel a still-pending handoff
+
+Receiver flow:
+  cc-handoff list     [--json]                          inbox: pending handoffs on relay
+  cc-handoff pickup   <id> [--no-ack]                   fetch + materialize + ack
+  cc-handoff inbox    [--json]                          local: already-materialized handoffs
+  cc-handoff open     <id> [--dry]                      re-launch the agent on a picked handoff
   cc-handoff watch    [--no-notify] [--no-launch] [--stop-after N]
-  cc-handoff watch print-unit [--platform=launchd|systemd] [--workdir=PATH] [--bin=PATH]
-  cc-handoff comment  <handoff-id> <body...>
-  cc-handoff comment  --list <handoff-id>
+  cc-handoff watch    print-unit [--platform launchd|systemd|windows-task] [--workdir PATH] [--bin PATH]
+
+Both sides:
+  cc-handoff comment  <id> <body...>                    post a comment
+  cc-handoff comment  --list <id>                       list comments on a handoff
 
 Run cc-handoff <subcommand> --help for details.
 `)

@@ -23,6 +23,10 @@ const (
 	ToolListInbox      = "list_inbox"
 	ToolPickupHandoff  = "pickup_handoff"
 	ToolCommentHandoff = "comment_handoff"
+	ToolStatusHandoff  = "status_handoff"
+	ToolListSent       = "list_sent"
+	ToolRetractHandoff = "retract_handoff"
+	ToolListLocalInbox = "list_local_inbox"
 )
 
 // DefaultTools returns the tools cc-handoff exposes via MCP. They wrap the
@@ -33,6 +37,10 @@ func DefaultTools() []Tool {
 		listInboxTool(),
 		pickupHandoffTool(),
 		commentHandoffTool(),
+		statusHandoffTool(),
+		listSentTool(),
+		retractHandoffTool(),
+		listLocalInboxTool(),
 	}
 }
 
@@ -354,4 +362,230 @@ func writeDraftSummary(inboxDir, content string) error {
 
 func textResult(s string) ToolResult {
 	return ToolResult{Content: []ContentBlock{{Type: ContentTypeText, Text: s}}}
+}
+
+// --- status_handoff ---------------------------------------------------------
+
+func statusHandoffTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "id":  {"type": "string", "description": "Handoff id (e.g. h_20260428_ABCD1234)"},
+    "cwd": {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  },
+  "required": ["id"]
+}`)
+	return Tool{
+		Name:        ToolStatusHandoff,
+		Description: "Show the current state of a handoff: pending / picked / retracted, when picked, comment count, and the latest comment summary. Use to check whether the recipient has read a handoff you sent before nudging them via comment.",
+		InputSchema: schema,
+		Handler:     statusHandoffHandler,
+	}
+}
+
+type statusArgs struct {
+	ID  string `json:"id"`
+	CWD string `json:"cwd"`
+}
+
+func statusHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a statusArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	if a.ID == "" {
+		return ToolResult{}, fmt.Errorf("id is required")
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	client := transport.New(res.RelayURL, res.Token)
+	st, err := client.Status(ctx, a.ID)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "handoff `%s`\n", st.ID)
+	fmt.Fprintf(&sb, "- state: %s\n", st.State)
+	fmt.Fprintf(&sb, "- sender: %s\n- recipient: %s\n", st.Sender, st.Recipient)
+	fmt.Fprintf(&sb, "- created: %s\n", st.CreatedAt.Format("2006-01-02 15:04:05 MST"))
+	if st.PickedAt != nil {
+		fmt.Fprintf(&sb, "- picked: %s\n", st.PickedAt.Format("2006-01-02 15:04:05 MST"))
+	} else {
+		fmt.Fprintf(&sb, "- picked: (not yet)\n")
+	}
+	fmt.Fprintf(&sb, "- comments: %d\n", st.CommentCount)
+	if st.LastComment != nil {
+		fmt.Fprintf(&sb, "- last comment by %s: %s\n", st.LastComment.Sender, st.LastComment.Body)
+	}
+	return textResult(sb.String()), nil
+}
+
+// --- list_sent --------------------------------------------------------------
+
+func listSentTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "limit": {"type": "integer", "description": "Max items, defaults to 20."},
+    "cwd":   {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolListSent,
+		Description: "List handoffs you (the caller's identity) have sent recently, newest-first, with state. Useful for checking which of your past handoffs are still pending vs picked up.",
+		InputSchema: schema,
+		Handler:     listSentHandler,
+	}
+}
+
+type listSentArgs struct {
+	Limit int    `json:"limit"`
+	CWD   string `json:"cwd"`
+}
+
+func listSentHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a listSentArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	if a.Limit <= 0 {
+		a.Limit = 20
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	client := transport.New(res.RelayURL, res.Token)
+	items, err := client.ListSent(ctx, a.Limit)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if len(items) == 0 {
+		return textResult("You haven't sent any handoffs yet."), nil
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d sent handoff(s):\n\n", len(items))
+	for _, it := range items {
+		fmt.Fprintf(&sb, "- `%s` to `%s` state=%s urgency=%s repo=`%s` created=%s\n  %s\n",
+			it.ID, it.Recipient, it.State, it.Urgency, it.RepoName,
+			it.CreatedAt.Format("2006-01-02 15:04:05"), it.Headline)
+	}
+	return textResult(sb.String()), nil
+}
+
+// --- retract_handoff --------------------------------------------------------
+
+func retractHandoffTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "id":     {"type": "string", "description": "Handoff id to retract."},
+    "reason": {"type": "string", "description": "Optional reason; surfaced to the recipient via SSE."},
+    "cwd":    {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  },
+  "required": ["id"]
+}`)
+	return Tool{
+		Name:        ToolRetractHandoff,
+		Description: "Cancel a still-pending handoff you sent (sender-only). Use when you realized the diff was wrong / wrong recipient / wrong branch — only works before the recipient picks it up. After pickup, coordinate via " + ToolCommentHandoff + " instead.",
+		InputSchema: schema,
+		Handler:     retractHandoffHandler,
+	}
+}
+
+type retractArgs struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+	CWD    string `json:"cwd"`
+}
+
+func retractHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a retractArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	if a.ID == "" {
+		return ToolResult{}, fmt.Errorf("id is required")
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	client := transport.New(res.RelayURL, res.Token)
+	if err := client.Retract(ctx, a.ID, a.Reason); err != nil {
+		return ToolResult{}, err
+	}
+	return textResult(fmt.Sprintf("Retracted `%s`. Recipient watch will be notified.", a.ID)), nil
+}
+
+// --- list_local_inbox -------------------------------------------------------
+
+func listLocalInboxTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "cwd": {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolListLocalInbox,
+		Description: "List handoffs already materialized into this repo's local inbox dir (.cc-handoff/inbox/<id>/). Unlike " + ToolListInbox + " (which queries the relay for pending), this reads disk and includes already-picked, already-retracted, and commented handoffs. Useful when the user asks 'what's been on my desk lately?'.",
+		InputSchema: schema,
+		Handler:     listLocalInboxHandler,
+	}
+}
+
+type listLocalArgs struct {
+	CWD string `json:"cwd"`
+}
+
+func listLocalInboxHandler(_ context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a listLocalArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	dir := inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride)
+	items, err := inbox.ListLocal(dir)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("read %s: %w", dir, err)
+	}
+	if len(items) == 0 {
+		return textResult(fmt.Sprintf("No materialized handoffs at `%s`.", dir)), nil
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d handoff(s) in local inbox `%s`:\n\n", len(items), dir)
+	for _, it := range items {
+		fmt.Fprintf(&sb, "- `%s` from `%s` repo=`%s` created=%s",
+			it.ID, it.Sender, it.Repo, it.CreatedAt.Format("2006-01-02 15:04:05"))
+		if it.Retracted {
+			sb.WriteString(" **RETRACTED**")
+		}
+		if it.HasComments {
+			sb.WriteString(" (has comments)")
+		}
+		sb.WriteString("\n")
+	}
+	return textResult(sb.String()), nil
 }

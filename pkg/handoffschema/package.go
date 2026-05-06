@@ -14,9 +14,10 @@ const (
 type State string
 
 const (
-	StatePending State = "pending"
-	StatePicked  State = "picked"
-	StateExpired State = "expired"
+	StatePending   State = "pending"
+	StatePicked    State = "picked"
+	StateExpired   State = "expired"
+	StateRetracted State = "retracted"
 )
 
 type Package struct {
@@ -86,10 +87,14 @@ type TargetingHint struct {
 	SuggestCreate []string          `json:"suggest_create,omitempty"`
 }
 
-// ListItem is the compact form returned by GET /v1/handoffs?recipient=X.
+// ListItem is the compact form returned by GET /v1/handoffs?as=recipient
+// (default) and GET /v1/handoffs?as=sender. Recipient is populated for sent
+// listings; receivers can leave it empty since they already know they're
+// the recipient.
 type ListItem struct {
 	ID        string    `json:"id"`
 	Sender    string    `json:"sender"`
+	Recipient string    `json:"recipient,omitempty"`
 	Urgency   Urgency   `json:"urgency"`
 	State     State     `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
@@ -107,4 +112,27 @@ type Comment struct {
 	Sender    string    `json:"sender"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Status is the response of GET /v1/handoffs/{id}/status — what callers
+// (sender checking "did they read it?", agent checking before retract) need
+// without re-fetching the full Package payload. CommentCount and LastComment
+// are precomputed by the relay so clients don't N+1 a comments listing.
+type Status struct {
+	ID           string     `json:"id"`
+	State        State      `json:"state"`
+	Sender       string     `json:"sender"`
+	Recipient    string     `json:"recipient"`
+	CreatedAt    time.Time  `json:"created_at"`
+	PickedAt     *time.Time `json:"picked_at,omitempty"`
+	CommentCount int        `json:"comment_count"`
+	LastComment  *Comment   `json:"last_comment,omitempty"`
+}
+
+// RetractEvent is the payload of an EventTypeHandoffRetracted SSE event,
+// pushed to the recipient when sender retracts. Reason is optional.
+type RetractEvent struct {
+	ID     string `json:"id"`
+	Sender string `json:"sender"`
+	Reason string `json:"reason,omitempty"`
 }

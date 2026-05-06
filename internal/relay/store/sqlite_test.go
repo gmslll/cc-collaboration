@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,5 +143,150 @@ func TestListCommentsSinceEmpty(t *testing.T) {
 	}
 	if len(got) != 0 || maxID != 0 {
 		t.Errorf("expected (nil, 0); got (%+v, %d)", got, maxID)
+	}
+}
+
+func TestRetractPendingHandoff(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+
+	if recipient, err := st.Retract(ctx, "h1", "alice"); err != nil {
+		t.Fatalf("first retract: %v", err)
+	} else if recipient != "bob" {
+		t.Errorf("retract recipient: got %q, want bob", recipient)
+	}
+	// State is now retracted; ListPending should NOT return it.
+	pending, err := st.ListPending(ctx, "bob", 10)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("retracted handoff still pending: %+v", pending)
+	}
+}
+
+func TestRetractRejectsNonSender(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+
+	_, err := st.Retract(ctx, "h1", "carl")
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-sender retract: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestRetractRejectsAfterAck(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+	if err := st.Ack(ctx, "h1", "bob"); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+	_, err := st.Retract(ctx, "h1", "alice")
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("retract-after-ack: want ErrConflict, got %v", err)
+	}
+}
+
+func TestRetractMissingHandoff(t *testing.T) {
+	st := openTestStore(t)
+	_, err := st.Retract(context.Background(), "nope", "alice")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing handoff: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestListSent(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+	mustInsertHandoff(t, st, "h2", "alice", "carl")
+	mustInsertHandoff(t, st, "h3", "bob", "alice") // not alice's send
+	if err := st.Ack(ctx, "h2", "carl"); err != nil {
+		t.Fatalf("ack h2: %v", err)
+	}
+
+	got, err := st.ListSent(ctx, "alice", 10)
+	if err != nil {
+		t.Fatalf("ListSent: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 alice-sent handoffs, got %d: %+v", len(got), got)
+	}
+	// State of each — h2 should be picked, h1 pending.
+	stateByID := map[string]handoffschema.State{}
+	for _, it := range got {
+		stateByID[it.ID] = it.State
+	}
+	if stateByID["h1"] != handoffschema.StatePending {
+		t.Errorf("h1 state: %v", stateByID["h1"])
+	}
+	if stateByID["h2"] != handoffschema.StatePicked {
+		t.Errorf("h2 state: %v", stateByID["h2"])
+	}
+}
+
+func TestStatusReportsCommentSummary(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+	mustInsertComment(t, st, "h1", "bob", "first")
+	last := mustInsertComment(t, st, "h1", "alice", "second")
+
+	got, err := st.Status(ctx, "h1")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got.State != handoffschema.StatePending {
+		t.Errorf("state: %v", got.State)
+	}
+	if got.PickedAt != nil {
+		t.Errorf("picked_at not nil before ack: %v", got.PickedAt)
+	}
+	if got.CommentCount != 2 {
+		t.Errorf("comment count: %d", got.CommentCount)
+	}
+	if got.LastComment == nil || got.LastComment.ID != last.ID {
+		t.Errorf("last comment id: %+v", got.LastComment)
+	}
+}
+
+func TestStatusAfterAckHasPickedAt(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+	if err := st.Ack(ctx, "h1", "bob"); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+	got, err := st.Status(ctx, "h1")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got.State != handoffschema.StatePicked {
+		t.Errorf("state: %v", got.State)
+	}
+	if got.PickedAt == nil {
+		t.Errorf("picked_at nil after ack")
+	}
+}
+
+func TestStatusTruncatesLongLastCommentBody(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+	mustInsertComment(t, st, "h1", "bob", strings.Repeat("x", 100))
+
+	got, err := st.Status(ctx, "h1")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got.LastComment == nil {
+		t.Fatalf("last comment nil")
+	}
+	// Truncated to 80 runes plus ellipsis.
+	if want := 81; len([]rune(got.LastComment.Body)) != want {
+		t.Errorf("truncated body length: got %d, want %d", len([]rune(got.LastComment.Body)), want)
 	}
 }

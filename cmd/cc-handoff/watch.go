@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/inbox"
@@ -90,10 +92,59 @@ func (h *watchHandler) dispatch(ctx context.Context) func(transport.SSEEvent) er
 			return h.onHandoffCreated(ctx, ev)
 		case sse.EventTypeCommentCreated:
 			return h.onCommentCreated(ctx, ev)
+		case sse.EventTypeHandoffRetracted:
+			return h.onHandoffRetracted(ctx, ev)
 		default:
 			return nil
 		}
 	}
+}
+
+// onHandoffRetracted is fired when the sender retracts a handoff that was
+// addressed to us. We don't delete the materialized files (the user might
+// want to glance at what was sent) — instead, we drop a marker file and
+// pop a notification, so the next time anyone runs `cc-handoff inbox` they
+// see the RET flag and don't waste time thinking it's still actionable.
+func (h *watchHandler) onHandoffRetracted(ctx context.Context, ev transport.SSEEvent) error {
+	var ret handoffschema.RetractEvent
+	if err := json.Unmarshal(ev.Data, &ret); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: bad retract payload: %v\n", err)
+		return nil
+	}
+	dir := inbox.PackageDir(h.inboxDir, ret.ID)
+	if err := writeRetractedMarker(dir, ret); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: write RETRACTED.md %s: %v\n", ret.ID, err)
+	}
+	fmt.Printf("⚠ %s retracted handoff %s\n", ret.Sender, ret.ID)
+
+	if !h.noNotify {
+		body := ret.Sender + " retracted handoff " + ret.ID
+		if ret.Reason != "" {
+			body += ": " + ret.Reason
+		}
+		_ = notify.Show(ctx, notify.Notification{
+			Title:    "cc-handoff retracted",
+			Subtitle: ret.ID,
+			Body:     body,
+		})
+	}
+	return h.bumpAndMaybeStop()
+}
+
+// writeRetractedMarker drops a RETRACTED.md inside the materialized handoff
+// dir so `cc-handoff inbox` can flag it. Idempotent: re-creates with newer
+// timestamp on duplicate events (relay shouldn't fire twice, but SSE replay
+// after reconnect is a thing).
+func writeRetractedMarker(dir string, ret handoffschema.RetractEvent) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	body := fmt.Sprintf("# Retracted by %s\n\nReason: %s\nAt: %s\n",
+		ret.Sender,
+		cmp.Or(ret.Reason, "(none given)"),
+		time.Now().Format("2006-01-02 15:04:05 MST"),
+	)
+	return os.WriteFile(filepath.Join(dir, "RETRACTED.md"), []byte(body), 0o644)
 }
 
 func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEvent) error {

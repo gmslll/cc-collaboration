@@ -190,8 +190,21 @@ func runInit(ctx context.Context, args []string) error {
 	runAppendInstructions(ag, instrChoice, *nonInteractive, rd, repoRoot)
 
 	inboxDir := inbox.InboxDir(repoRoot, repoCfg.Inbox.Dir)
-	fmt.Printf("Done. Try `cc-handoff submit` after writing %s.\n",
-		filepath.Join(inboxDir, ".draft-summary.md"))
+	fmt.Println()
+	fmt.Println("Done. Next steps:")
+	fmt.Println()
+	fmt.Println("  As sender (recipient is `" + repoCfg.Identity.Partner + "`):")
+	fmt.Println("    1. Write a Markdown summary to " + filepath.Join(inboxDir, ".draft-summary.md"))
+	fmt.Println("    2. cc-handoff submit  [--urgent --note \"...\"]")
+	fmt.Println("    3. cc-handoff status <id>     # check whether the recipient has picked it up")
+	fmt.Println("    4. cc-handoff retract <id>    # if you sent the wrong thing")
+	fmt.Println()
+	fmt.Println("  As receiver:")
+	fmt.Println("    1. Start the watch daemon:  cc-handoff watch print-unit > <plist|service|xml>")
+	fmt.Println("       and load it with launchd / systemd / Task Scheduler (see docs/deployment.md)")
+	fmt.Println("    2. cc-handoff list            # what's pending in my inbox")
+	fmt.Println("    3. cc-handoff pickup <id>     # fetch + materialize")
+	fmt.Println("    4. cc-handoff inbox / open <id>   # revisit a previously picked handoff")
 	return nil
 }
 
