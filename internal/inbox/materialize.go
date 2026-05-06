@@ -37,12 +37,20 @@ type Result struct {
 	Prompt string
 }
 
+// Mode controls the prompt template renderPromptMD emits.
+type Mode int
+
+const (
+	ModeDocFirst Mode = iota // write docs/integrations/<id>.md, stop, wait review
+	ModeDirect               // skip the doc, modify code directly, stop for diff review
+)
+
 // AttachmentsDir returns <dir>/attachments — created on demand by DownloadAttachments.
 func AttachmentsDir(dir string) string { return filepath.Join(dir, "attachments") }
 
 // Materialize writes a Handoff Package and its derived human/agent-friendly
 // views under <inboxDir>/<id>/.
-func Materialize(inboxDir string, p *handoffschema.Package) (Result, error) {
+func Materialize(inboxDir string, p *handoffschema.Package, mode Mode) (Result, error) {
 	dir := PackageDir(inboxDir, p.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Result{}, err
@@ -59,7 +67,7 @@ func Materialize(inboxDir string, p *handoffschema.Package) (Result, error) {
 	if err := writeFile(filepath.Join(dir, "summary.md"), []byte(renderSummaryMD(p))); err != nil {
 		return Result{}, err
 	}
-	prompt := renderPromptMD(p)
+	prompt := renderPromptMD(p, mode)
 	if err := writeFile(filepath.Join(dir, "prompt.md"), []byte(prompt)); err != nil {
 		return Result{}, err
 	}
@@ -184,7 +192,7 @@ func renderSummaryMD(p *handoffschema.Package) string {
 	return sb.String()
 }
 
-func renderPromptMD(p *handoffschema.Package) string {
+func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 	integrationPath := fmt.Sprintf("docs/integrations/%s.md", p.ID)
 	// Detect module-brief mode by content shape, not just the ModulePaths
 	// field: an older receiver binary may have dropped the field on JSON
@@ -193,7 +201,18 @@ func renderPromptMD(p *handoffschema.Package) string {
 	moduleMode := len(p.ModulePaths) > 0 || p.Git == nil
 
 	var sb strings.Builder
-	if moduleMode {
+	switch {
+	case moduleMode && mode == ModeDirect:
+		sb.WriteString("# Handoff: 模块对接 — 直接修改前端代码\n\n")
+		fmt.Fprintf(&sb, "收到模块 brief handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
+		sb.WriteString("**这是一份后端整理好的、对一个或多个已有模块的完整 API 契约文档**，不是 diff。后端的「意图」就是文档本身。\n\n")
+		sb.WriteString("**你的任务是直接修改本仓库前端代码完成对接**，不需要先产出 INTEGRATION.md。改完后停下等人工 review 你的 diff。\n\n")
+		sb.WriteString("## 模块范围\n\n")
+		for _, m := range p.ModulePaths {
+			fmt.Fprintf(&sb, "- `%s`\n", m)
+		}
+		sb.WriteString("\n")
+	case moduleMode:
 		sb.WriteString("# Handoff: 模块对接 — 产出前端集成方案\n\n")
 		fmt.Fprintf(&sb, "收到模块 brief handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
 		sb.WriteString("**这是一份后端整理好的、对一个或多个已有模块的完整 API 契约文档**，不是 diff。后端的「意图」就是文档本身。\n\n")
@@ -203,7 +222,11 @@ func renderPromptMD(p *handoffschema.Package) string {
 			fmt.Fprintf(&sb, "- `%s`\n", m)
 		}
 		sb.WriteString("\n")
-	} else {
+	case mode == ModeDirect:
+		sb.WriteString("# Handoff: 直接修改前端代码完成对接\n\n")
+		fmt.Fprintf(&sb, "收到 handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
+		sb.WriteString("**你的任务是直接修改本仓库前端代码完成对接**，不需要先产出 INTEGRATION.md。改完后停下等人工 review 你的 diff。\n\n")
+	default:
 		sb.WriteString("# Handoff: 产出前端对接方案\n\n")
 		fmt.Fprintf(&sb, "收到 handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
 		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s`，写完后停下等人工 review。\n\n", integrationPath)
@@ -224,7 +247,11 @@ func renderPromptMD(p *handoffschema.Package) string {
 
 	if note := strings.TrimSpace(p.NoteMD); note != "" {
 		sb.WriteString("## ⚠️ 后端备注 / 需求 (必读)\n\n")
-		sb.WriteString("发送端额外提出的跨端约束或注意事项。INTEGRATION.md 必须逐条响应：\n\n")
+		if mode == ModeDirect {
+			sb.WriteString("发送端额外提出的跨端约束或注意事项。代码改动必须逐条满足：\n\n")
+		} else {
+			sb.WriteString("发送端额外提出的跨端约束或注意事项。INTEGRATION.md 必须逐条响应：\n\n")
+		}
 		sb.WriteString(note)
 		sb.WriteString("\n\n")
 	}
@@ -284,13 +311,21 @@ func renderPromptMD(p *handoffschema.Package) string {
 	} else {
 		sb.WriteString("3. 把 API delta 每一条**对应到本仓库的真实文件路径** —— 不要照抄发送端 hints，hints 可能过期。\n")
 	}
-	fmt.Fprintf(&sb, "4. 在仓库根写 `%s`（必要时 `mkdir -p docs/integrations/`），结构必须包含：\n", integrationPath)
-	sb.WriteString("   - **Overview**：1-2 段说清这次对接要达成什么。\n")
-	sb.WriteString("   - **File changes**：按 `Modify` / `Create` / `Remove` 分组；每条带 Path（已用真实代码核对）+ Why + 具体代码片段或伪代码 + ")
-	sb.WriteString("**风格锚点**（引用本仓库已存在的同类文件路径，如「参考 `lib/api/users.ts` 的 fetcher 写法」「按 `hooks/useCustomers.ts` 的 SWR key 约定」），避免风格漂移。\n")
-	sb.WriteString("   - **API client 变更**：每个新增/变更 endpoint 对应的 TS 函数 / 类型 / DTO 改动。\n")
-	sb.WriteString("   - **Call-site updates**：消费这些 API 的组件 / hooks / services 列表。\n")
-	sb.WriteString("   - **Verification**：如何验证（命令、页面、预期行为）。\n")
-	sb.WriteString("5. **停下**。不要直接改代码。等人工 review，确认后告诉我「按 INTEGRATION.md 执行」我才开始改代码。中途有疑问继续走 comment 通道。\n")
+	if mode == ModeDirect {
+		sb.WriteString("4. 直接修改代码完成对接：\n")
+		sb.WriteString("   - **API client / 类型 / DTO**：新增或变更每个 endpoint 对应的 TS 函数、类型、DTO。\n")
+		sb.WriteString("   - **Call-site updates**：消费这些 API 的组件 / hooks / services 一并更新。\n")
+		sb.WriteString("   - **风格锚点**：引用本仓库已存在的同类文件（如 `lib/api/users.ts` 的 fetcher 写法、`hooks/useCustomers.ts` 的 SWR key 约定），避免风格漂移。\n")
+		sb.WriteString("5. **停下**。不要继续跑 lint / format / build / test，除非用户明确要求。告诉我「改完了，这些是改动的文件」，等我 review 你的 diff。中途有疑问继续走 comment 通道。\n")
+	} else {
+		fmt.Fprintf(&sb, "4. 在仓库根写 `%s`（必要时 `mkdir -p docs/integrations/`），结构必须包含：\n", integrationPath)
+		sb.WriteString("   - **Overview**：1-2 段说清这次对接要达成什么。\n")
+		sb.WriteString("   - **File changes**：按 `Modify` / `Create` / `Remove` 分组；每条带 Path（已用真实代码核对）+ Why + 具体代码片段或伪代码 + ")
+		sb.WriteString("**风格锚点**（引用本仓库已存在的同类文件路径，如「参考 `lib/api/users.ts` 的 fetcher 写法」「按 `hooks/useCustomers.ts` 的 SWR key 约定」），避免风格漂移。\n")
+		sb.WriteString("   - **API client 变更**：每个新增/变更 endpoint 对应的 TS 函数 / 类型 / DTO 改动。\n")
+		sb.WriteString("   - **Call-site updates**：消费这些 API 的组件 / hooks / services 列表。\n")
+		sb.WriteString("   - **Verification**：如何验证（命令、页面、预期行为）。\n")
+		sb.WriteString("5. **停下**。不要直接改代码。等人工 review，确认后告诉我「按 INTEGRATION.md 执行」我才开始改代码。中途有疑问继续走 comment 通道。\n")
+	}
 	return sb.String()
 }

@@ -217,22 +217,24 @@ func pickupHandoffTool() Tool {
   "properties": {
     "id":      {"type": "string", "description": "Handoff id (e.g. h_20260428_ABCD1234)"},
     "no_ack":  {"type": "boolean", "description": "Skip marking the handoff as picked on the relay."},
+    "direct":  {"type": "boolean", "description": "If true, the returned prompt instructs the receiver to modify code directly and stop after the diff for review. Default false: the prompt requires producing docs/integrations/<id>.md first and stopping for human review of the plan. Pass true only when the user has explicitly asked for direct/fast pickup."},
     "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   },
   "required": ["id"]
 }`)
 	return Tool{
 		Name:        ToolPickupHandoff,
-		Description: "Fetch a handoff by id, materialize it under <inbox-dir>/<id>/ (default .cc-handoff/inbox; legacy .claude/handoff-inbox preserved on older repos), ack it on the relay, and return the integration prompt as the tool result. After this returns, you should follow the returned prompt to integrate the changes.",
+		Description: "Fetch a handoff by id, materialize it under <inbox-dir>/<id>/ (default .cc-handoff/inbox; legacy .claude/handoff-inbox preserved on older repos), ack it on the relay, and return the integration prompt as the tool result. After this returns, you should follow the returned prompt to integrate the changes. Default mode produces an integration doc; pass direct=true to skip the doc and modify code directly.",
 		InputSchema: schema,
 		Handler:     pickupHandoffHandler,
 	}
 }
 
 type pickupArgs struct {
-	ID    string `json:"id"`
-	NoAck bool   `json:"no_ack"`
-	CWD   string `json:"cwd"`
+	ID     string `json:"id"`
+	NoAck  bool   `json:"no_ack"`
+	Direct bool   `json:"direct"`
+	CWD    string `json:"cwd"`
 }
 
 func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -256,7 +258,11 @@ func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if err != nil {
 		return ToolResult{}, err
 	}
-	mat, err := inbox.Materialize(inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride), pkg)
+	mode := inbox.ModeDocFirst
+	if a.Direct {
+		mode = inbox.ModeDirect
+	}
+	mat, err := inbox.Materialize(inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride), pkg, mode)
 	if err != nil {
 		return ToolResult{}, err
 	}

@@ -9,7 +9,11 @@ You're the receiving side of a cc-handoff pair. Your partner just sent integrati
    - If there's exactly one, proceed with it.
    - If there are several, summarize them and ask the user which to pick up.
 
-2. Call `pickup_handoff` with the chosen id. The tool will materialize the package under `.claude/handoff-inbox/<id>/` and return a prompt describing what to integrate. The package directory contains:
+2. Call `pickup_handoff` with the chosen id.
+   - **Default** (omit `direct`, or set `direct: false`): the returned prompt instructs you to produce `docs/integrations/<id>.md` first and stop for human review of the plan before touching code.
+   - **Direct mode** (`direct: true`): only when the user explicitly asks ("直接改 / 不用文档 / direct / fast / just do it"). The prompt then tells you to modify code directly and stop after the diff for human review.
+
+   The tool will materialize the package under `.claude/handoff-inbox/<id>/` and return a prompt describing what to integrate. The package directory contains:
    - `summary.md` — human-readable overview
    - `prompt.md` — the same content the tool returned to you, useful for re-reading
    - `full.diff` — the sender-side unified diff

@@ -162,7 +162,8 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 		fmt.Fprintf(os.Stderr, "warning: fetch %s: %v\n", notice.ID, err)
 		return nil
 	}
-	mat, err := inbox.Materialize(h.inboxDir, pkg)
+	// Default to doc-first; pickup re-materializes with the user's actual choice.
+	mat, err := inbox.Materialize(h.inboxDir, pkg, inbox.ModeDocFirst)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: materialize %s: %v\n", notice.ID, err)
 		return nil

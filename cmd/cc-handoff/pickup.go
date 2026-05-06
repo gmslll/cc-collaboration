@@ -14,11 +14,12 @@ import (
 func runPickup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("pickup", flag.ContinueOnError)
 	noAck := fs.Bool("no-ack", false, "do not mark as picked on the relay")
+	direct := fs.Bool("direct", false, "skip docs/integrations/<id>.md and instruct the receiver to modify code directly (default: write integration doc and stop for review)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: cc-handoff pickup <handoff-id> [--no-ack]")
+		return fmt.Errorf("usage: cc-handoff pickup <handoff-id> [--no-ack] [--direct]")
 	}
 	id := fs.Arg(0)
 
@@ -36,7 +37,11 @@ func runPickup(ctx context.Context, args []string) error {
 		return err
 	}
 
-	mat, err := inbox.Materialize(inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride), pkg)
+	mode := inbox.ModeDocFirst
+	if *direct {
+		mode = inbox.ModeDirect
+	}
+	mat, err := inbox.Materialize(inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride), pkg, mode)
 	if err != nil {
 		return err
 	}
