@@ -212,6 +212,20 @@ func (c *Client) Retract(ctx context.Context, id, reason string) error {
 	return c.do(ctx, http.MethodPost, "/v1/handoffs/"+id+"/retract", body, nil)
 }
 
+// ListOnlineUsers returns the relay's roster of known identities with a
+// per-row online flag (true when an SSE subscription is currently live).
+// Returns ErrNotImplemented when talking to a relay that predates the
+// /v1/users/online endpoint.
+func (c *Client) ListOnlineUsers(ctx context.Context) ([]handoffschema.OnlineUser, error) {
+	var out struct {
+		Users []handoffschema.OnlineUser `json:"users"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/users/online", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Users, nil
+}
+
 func (c *Client) ListComments(ctx context.Context, handoffID string) ([]handoffschema.Comment, error) {
 	var out struct {
 		Comments []handoffschema.Comment `json:"comments"`

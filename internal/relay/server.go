@@ -44,6 +44,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/handoffs/{id}/attachments/{name}", s.putAttachment)
 	api.HandleFunc("GET /v1/handoffs/{id}/attachments/{name}", s.getAttachment)
 	api.HandleFunc("GET /v1/events", s.events)
+	api.HandleFunc("GET /v1/users/online", s.listOnlineUsers)
 
 	mux.Handle("/v1/", s.Tokens.Middleware(api))
 	return logging(mux)
@@ -207,6 +208,25 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// listOnlineUsers exposes the relay roster so a caller can answer "is my
+// partner currently watching?" before sending an urgent handoff or comment.
+func (s *Server) listOnlineUsers(w http.ResponseWriter, _ *http.Request) {
+	if s.Hub == nil {
+		http.Error(w, "events not enabled", http.StatusNotImplemented)
+		return
+	}
+	online := map[string]bool{}
+	for _, id := range s.Hub.OnlineRecipients() {
+		online[id] = true
+	}
+	known := s.Tokens.Identities()
+	users := make([]handoffschema.OnlineUser, 0, len(known))
+	for _, id := range known {
+		users = append(users, handoffschema.OnlineUser{Identity: id, Online: online[id]})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": users})
 }
 
 // requireParticipant fetches the handoff for the {id} path segment and

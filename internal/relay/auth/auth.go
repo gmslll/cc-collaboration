@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -82,6 +84,18 @@ func (t *Tokens) Count() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return len(t.m)
+}
+
+// Identities returns the registered identities, collapsing any one-per-machine
+// tokens that map to the same person into a single entry.
+func (t *Tokens) Identities() []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	seen := make(map[string]struct{}, len(t.m))
+	for _, id := range t.m {
+		seen[id] = struct{}{}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // Middleware returns an http middleware that requires Authorization: Bearer <token>

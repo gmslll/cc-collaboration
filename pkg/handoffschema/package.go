@@ -129,6 +129,14 @@ type Status struct {
 	LastComment  *Comment   `json:"last_comment,omitempty"`
 }
 
+// OnlineUser is one row in the GET /v1/users/online response: a known
+// identity (drawn from the relay's token registry) plus a flag indicating
+// whether it currently holds at least one active SSE subscription.
+type OnlineUser struct {
+	Identity string `json:"identity"`
+	Online   bool   `json:"online"`
+}
+
 // RetractEvent is the payload of an EventTypeHandoffRetracted SSE event,
 // pushed to the recipient when sender retracts. Reason is optional.
 type RetractEvent struct {

@@ -4,6 +4,8 @@
 package sse
 
 import (
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -77,6 +79,18 @@ func (h *Hub) Subscribe(recipient string) (*Subscriber, func()) {
 		h.mu.Unlock()
 	}
 	return sub, cancel
+}
+
+// OnlineRecipients returns the active subscriber identities, deduped across
+// any per-machine watch sessions a single identity might be running.
+func (h *Hub) OnlineRecipients() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	seen := make(map[string]struct{}, len(h.subs))
+	for _, s := range h.subs {
+		seen[s.recipient] = struct{}{}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // Publish assigns a monotonic ID and fans out to matching subscribers.

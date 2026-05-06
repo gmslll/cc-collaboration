@@ -43,6 +43,8 @@ func main() {
 		err = runInbox(ctx, args)
 	case "open":
 		err = runOpen(ctx, args)
+	case "online":
+		err = runOnline(ctx, args)
 	case "version", "-v", "--version":
 		runVersion()
 	case "help", "-h", "--help":
@@ -81,6 +83,7 @@ Receiver flow:
 Both sides:
   cc-handoff comment  <id> <body...>                    post a comment
   cc-handoff comment  --list <id>                       list comments on a handoff
+  cc-handoff online   [--json]                          show registered identities + who is currently watching
 
 Run cc-handoff <subcommand> --help for details.
 `)

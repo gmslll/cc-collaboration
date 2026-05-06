@@ -19,14 +19,15 @@ import (
 // Tool names — referenced from slash command markdown and from each other's
 // help text, so a typo here only breaks at runtime.
 const (
-	ToolSubmitHandoff  = "submit_handoff"
-	ToolListInbox      = "list_inbox"
-	ToolPickupHandoff  = "pickup_handoff"
-	ToolCommentHandoff = "comment_handoff"
-	ToolStatusHandoff  = "status_handoff"
-	ToolListSent       = "list_sent"
-	ToolRetractHandoff = "retract_handoff"
-	ToolListLocalInbox = "list_local_inbox"
+	ToolSubmitHandoff   = "submit_handoff"
+	ToolListInbox       = "list_inbox"
+	ToolPickupHandoff   = "pickup_handoff"
+	ToolCommentHandoff  = "comment_handoff"
+	ToolStatusHandoff   = "status_handoff"
+	ToolListSent        = "list_sent"
+	ToolRetractHandoff  = "retract_handoff"
+	ToolListLocalInbox  = "list_local_inbox"
+	ToolListOnlineUsers = "list_online_users"
 )
 
 // DefaultTools returns the tools cc-handoff exposes via MCP. They wrap the
@@ -41,6 +42,7 @@ func DefaultTools() []Tool {
 		listSentTool(),
 		retractHandoffTool(),
 		listLocalInboxTool(),
+		listOnlineUsersTool(),
 	}
 }
 
@@ -551,6 +553,73 @@ func listLocalInboxTool() Tool {
 
 type listLocalArgs struct {
 	CWD string `json:"cwd"`
+}
+
+// --- list_online_users ------------------------------------------------------
+
+func listOnlineUsersTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "cwd": {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolListOnlineUsers,
+		Description: "List identities registered on the relay with a per-row online flag (true = currently holds an SSE subscription via `cc-handoff watch`). Use this to check whether your partner is reachable for live coordination before sending an urgent handoff or a comment.",
+		InputSchema: schema,
+		Handler:     listOnlineUsersHandler,
+	}
+}
+
+type listOnlineArgs struct {
+	CWD string `json:"cwd"`
+}
+
+func listOnlineUsersHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a listOnlineArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	client := transport.New(res.RelayURL, res.Token)
+	users, err := client.ListOnlineUsers(ctx)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if len(users) == 0 {
+		return textResult("No identities registered on this relay."), nil
+	}
+	online := 0
+	for _, u := range users {
+		if u.Online {
+			online++
+		}
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d online of %d known identities:\n\n", online, len(users))
+	for _, u := range users {
+		marker := ""
+		switch u.Identity {
+		case res.Me:
+			marker = " (you)"
+		case res.Partner:
+			marker = " (partner)"
+		}
+		status := "offline"
+		if u.Online {
+			status = "ONLINE"
+		}
+		fmt.Fprintf(&sb, "- %-7s `%s`%s\n", status, u.Identity, marker)
+	}
+	return textResult(sb.String()), nil
 }
 
 func listLocalInboxHandler(_ context.Context, raw json.RawMessage) (ToolResult, error) {
