@@ -24,5 +24,8 @@ when_path_matches = "^internal/module/(?P<domain>[^/]+)/dto/"
 suggest_edit      = ["types/{domain}.ts"]
 
 [triggers]
-auto_launch  = false       # if true, urgent handoffs auto-spawn a new terminal on receive
-terminal_app = "terminal"  # "terminal" | "iterm2"
+auto_launch     = false       # if true, urgent handoffs auto-spawn a new terminal on receive
+terminal_app    = "terminal"  # "terminal" | "iterm2"
+wake_on_comment = false       # Claude only: if true, partner replies pull this Claude session
+                              # back into a turn via a Stop hook. Run `cc-handoff init
+                              # --with-wake-on-comment` to install the hook into .claude/settings.json.

@@ -58,6 +58,11 @@ type Agent interface {
 	// would do real disk I/O on every probe).
 	SupportsCommands() bool
 
+	// SupportsHooks reports whether the agent has a Claude-Code-style
+	// hook system (Stop, PreToolUse, etc.). cc-handoff's wake-on-comment
+	// installs a Stop hook only when this returns true.
+	SupportsHooks() bool
+
 	// InstallCommands materializes any per-agent slash command / prompt
 	// templates into the repo. No-op for agents whose SupportsCommands
 	// returns false (codex, manual).

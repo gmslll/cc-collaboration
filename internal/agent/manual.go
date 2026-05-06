@@ -32,6 +32,8 @@ func (manualAgent) InstructionsFile() (string, string) { return "", "" }
 
 func (manualAgent) SupportsCommands() bool { return false }
 
+func (manualAgent) SupportsHooks() bool { return false }
+
 func (manualAgent) InstallCommands(_, _ string, _ setup.PromptFunc, _ io.Writer) (setup.CopyResult, error) {
 	return setup.CopyResult{}, nil
 }

@@ -61,6 +61,8 @@ func runInit(ctx context.Context, args []string) error {
 	noCommands := fs.Bool("no-commands", false, "skip slash command install")
 	withInstructions := fs.Bool("with-instructions", false, "append cc-handoff usage snippet to the agent's project-level instructions file (CLAUDE.md / AGENTS.md)")
 	noInstructions := fs.Bool("no-instructions", false, "skip the instructions snippet")
+	withWake := fs.Bool("with-wake-on-comment", false, "enable wake-on-comment: install a Claude Code Stop hook so partner replies pull this Claude session back into a turn (Claude only)")
+	noWake := fs.Bool("no-wake-on-comment", false, "do not install the wake-on-comment Stop hook")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -75,6 +77,10 @@ func runInit(ctx context.Context, args []string) error {
 		return err
 	}
 	instrChoice, err := parseTriState(*withInstructions, *noInstructions, "instructions")
+	if err != nil {
+		return err
+	}
+	wakeChoice, err := parseTriState(*withWake, *noWake, "wake-on-comment")
 	if err != nil {
 		return err
 	}
@@ -177,6 +183,12 @@ func runInit(ctx context.Context, args []string) error {
 	if *terminalApp != "" {
 		repoCfg.Triggers.TerminalApp = *terminalApp
 	}
+	switch wakeChoice {
+	case triYes:
+		repoCfg.Triggers.WakeOnComment = true
+	case triNo:
+		repoCfg.Triggers.WakeOnComment = false
+	}
 
 	repoPath := config.RepoConfigPath(cwd)
 	if err := config.SaveRepo(repoPath, repoCfg); err != nil {
@@ -188,6 +200,7 @@ func runInit(ctx context.Context, args []string) error {
 	runRegisterMCP(ctx, ag, mcpChoice, *nonInteractive, rd)
 	runInstallCommands(ag, cmdsChoice, *nonInteractive, rd, repoRoot)
 	runAppendInstructions(ag, instrChoice, *nonInteractive, rd, repoRoot)
+	runEnsureWakeHook(ag, repoCfg.Triggers.WakeOnComment, repoRoot)
 
 	inboxDir := inbox.InboxDir(repoRoot, repoCfg.Inbox.Dir)
 	fmt.Println()
@@ -315,6 +328,33 @@ func runAppendInstructions(ag agent.Agent, choice triState, nonInteractive bool,
 		fmt.Printf("  ✓ wrote cc-handoff snippet into %s\n", path)
 	} else {
 		fmt.Printf("  · %s already has cc-handoff snippet, skipped\n", path)
+	}
+}
+
+// runEnsureWakeHook wires the cc-handoff Stop hook into .claude/settings.json
+// when the receiver opted into wake-on-comment AND is on Claude Code (the
+// only agent that supports Stop hooks). Disabling wake-on-comment later does
+// NOT auto-remove the hook because the hook is a no-op when the config flag
+// is off — leaving it installed costs nothing.
+func runEnsureWakeHook(ag agent.Agent, enabled bool, repoRoot string) {
+	if !enabled {
+		return
+	}
+	if !ag.SupportsHooks() {
+		fmt.Printf("  · wake_on_comment=true noted; Stop hook install skipped (agent %q has no equivalent)\n", ag.Name())
+		return
+	}
+	res, err := setup.EnsureStopHook(repoRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ! wire Stop hook: %v\n", err)
+		return
+	}
+	target := filepath.Join(repoRoot, ".claude", "settings.json")
+	switch res {
+	case setup.EnsureWritten:
+		fmt.Printf("  ✓ wired wake-on-comment Stop hook into %s\n", target)
+	case setup.EnsureAlreadyPresent:
+		fmt.Printf("  · %s already has cc-handoff Stop hook, skipped\n", target)
 	}
 }
 

@@ -218,6 +218,11 @@ func (h *watchHandler) onCommentCreated(ctx context.Context, ev transport.SSEEve
 	if err := appendCommentToFile(dir, c); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: append comment %s: %v\n", c.HandoffID, err)
 	}
+	if h.res.Triggers.WakeOnComment && c.Sender != h.res.Me {
+		if err := inbox.WriteUnread(dir, c); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write unread marker %d: %v\n", c.ID, err)
+		}
+	}
 	fmt.Printf("💬 %s on %s: %s\n", c.Sender, c.HandoffID, firstLine(c.Body))
 
 	if !h.noNotify {

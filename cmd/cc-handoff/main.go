@@ -45,6 +45,8 @@ func main() {
 		err = runOpen(ctx, args)
 	case "online":
 		err = runOnline(ctx, args)
+	case "stop-hook":
+		err = runStopHook(ctx, args)
 	case "version", "-v", "--version":
 		runVersion()
 	case "help", "-h", "--help":

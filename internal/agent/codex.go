@@ -41,6 +41,8 @@ func (codexAgent) InstructionsFile() (string, string) {
 
 func (codexAgent) SupportsCommands() bool { return false }
 
+func (codexAgent) SupportsHooks() bool { return false }
+
 func (codexAgent) InstallCommands(_, _ string, _ setup.PromptFunc, _ io.Writer) (setup.CopyResult, error) {
 	return setup.CopyResult{}, nil
 }

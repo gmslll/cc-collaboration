@@ -35,6 +35,8 @@ func (claudeAgent) InstructionsFile() (string, string) {
 
 func (claudeAgent) SupportsCommands() bool { return true }
 
+func (claudeAgent) SupportsHooks() bool { return true }
+
 // InstallCommands copies the slash command templates into <repoRoot>/.claude/commands/.
 // Conflict resolution is delegated to setup.CopyCommands via the prompt callback;
 // callers pass nil prompt to make it non-interactive (skip on conflict).
