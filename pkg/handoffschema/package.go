@@ -20,9 +20,33 @@ const (
 	StateRetracted State = "retracted"
 )
 
+// Kind distinguishes the direction/intent of a Package. Default (empty/
+// "delivery") is the original /handoff flow: sender finished work and is
+// shipping a diff/contract for the recipient to integrate. "request" is the
+// reverse flow: sender (typically frontend) is asking the recipient
+// (typically backend) to add/change something, with no diff to ship — the
+// summary describes what's missing and why.
+type Kind string
+
+const (
+	KindDelivery Kind = "delivery"
+	KindRequest  Kind = "request"
+)
+
+// EffectiveKind returns the package's Kind, defaulting an empty value to
+// KindDelivery so older payloads (no kind field) keep their original
+// integration-style behavior.
+func (p *Package) EffectiveKind() Kind {
+	if p.Kind == "" {
+		return KindDelivery
+	}
+	return p.Kind
+}
+
 type Package struct {
 	ID             string          `json:"id"`
 	SchemaVersion  int             `json:"schema_version"`
+	Kind           Kind            `json:"kind,omitempty"`
 	Sender         string          `json:"sender"`
 	Recipient      string          `json:"recipient"`
 	Urgency        Urgency         `json:"urgency"`
@@ -36,6 +60,7 @@ type Package struct {
 	Attachments    []Attachment    `json:"attachments,omitempty"`
 	NoteMD         string          `json:"note_md,omitempty"`
 	ReplacesID     string          `json:"replaces_id,omitempty"`
+	RespondsTo     string          `json:"responds_to,omitempty"`
 }
 
 // Attachment is metadata for a binary blob stored on the relay alongside the
@@ -93,6 +118,7 @@ type TargetingHint struct {
 // the recipient.
 type ListItem struct {
 	ID        string    `json:"id"`
+	Kind      Kind      `json:"kind,omitempty"`
 	Sender    string    `json:"sender"`
 	Recipient string    `json:"recipient,omitempty"`
 	Urgency   Urgency   `json:"urgency"`

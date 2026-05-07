@@ -20,6 +20,7 @@ import (
 // help text, so a typo here only breaks at runtime.
 const (
 	ToolSubmitHandoff   = "submit_handoff"
+	ToolSubmitRequest   = "submit_request"
 	ToolListInbox       = "list_inbox"
 	ToolPickupHandoff   = "pickup_handoff"
 	ToolCommentHandoff  = "comment_handoff"
@@ -35,6 +36,7 @@ const (
 func DefaultTools() []Tool {
 	return []Tool{
 		submitHandoffTool(),
+		submitRequestTool(),
 		listInboxTool(),
 		pickupHandoffTool(),
 		commentHandoffTool(),
@@ -55,6 +57,7 @@ func submitHandoffTool() Tool {
     "urgent":       {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
     "note":         {"type": "string", "description": "Markdown 写的「需求 / 跨端约束」段，例如错误码对照、字段大小写规则、分页约定、不可合并的请求等。会以「⚠️ 后端备注 / 需求 (必读)」醒目段渲染到接收端 prompt，并被强制要求 INTEGRATION.md 逐条响应。短到一两句也可以；没有就不传。"},
     "module_paths": {"type": "array", "items": {"type": "string"}, "description": "Module-brief mode: relative-to-repo-root directory paths (e.g. internal/module/oms/order). When set, the build switches to module-brief mode — git diff and Swagger delta are skipped, and summary is treated as a self-contained API contract document. Drive this from the /handoff-module slash command; do not set it manually unless you know why."},
+    "responds_to":  {"type": "string", "description": "若本 handoff 是对某个对端 request (kind=request) 的回应，把 request id 填这里 (例如 h_20260507_ABCD1234)。会渲染到接收端 prompt 顶端的「↩️ 回应 xxx」段，让发起方知道此次交付是回应哪条需求。"},
     "cwd":          {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
@@ -72,6 +75,7 @@ type submitArgs struct {
 	Urgent      bool     `json:"urgent"`
 	Note        string   `json:"note"`
 	ModulePaths []string `json:"module_paths"`
+	RespondsTo  string   `json:"responds_to"`
 	CWD         string   `json:"cwd"`
 }
 
@@ -126,6 +130,8 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Rules:       engine,
 		SwaggerPath: res.Swagger,
 		ModulePaths: a.ModulePaths,
+		Kind:        handoffschema.KindDelivery,
+		RespondsTo:  a.RespondsTo,
 		InboxDir:    inboxDir,
 	})
 	if err != nil {
@@ -158,6 +164,99 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		fmt.Fprintf(&sb, "- api_delta: +%d ~%d -%d\n",
 			len(pkg.APIDelta.Added), len(pkg.APIDelta.Changed), len(pkg.APIDelta.Removed))
 	}
+	if pkg.RespondsTo != "" {
+		fmt.Fprintf(&sb, "- responds_to: `%s`\n", pkg.RespondsTo)
+	}
+	return textResult(sb.String()), nil
+}
+
+func submitRequestTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "summary": {"type": "string", "description": "Markdown 描述需求：缺什么字段 / 没暴露什么能力 / 返回结构哪里有问题，写到具体 endpoint + field。包含 Why（前端要拿它做什么）和 Acceptance（怎样算 OK）。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
+    "to":      {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
+    "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
+    "note":    {"type": "string", "description": "给后端的额外约束/备注，例如「不要破坏现有调用方」「字段命名跟 X 一致」「兼容现存数据」。会以「⚠️ 发起方备注 / 跨端约束 (必读)」段渲染到接收端 prompt，被要求逐条响应。没有就不传。"},
+    "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolSubmitRequest,
+		Description: "Send a feature/field/endpoint request from this side (typically frontend) to the partner (typically backend). Use this when the partner's API is incomplete — missing fields, missing endpoints, broken response shapes, etc. The summary IS the request body; no git diff or swagger delta is collected. Recipient picks it up via /pickup, designs/implements, then handoffs back with responds_to=<this id>.",
+		InputSchema: schema,
+		Handler:     submitRequestHandler,
+	}
+}
+
+type submitRequestArgs struct {
+	Summary string `json:"summary"`
+	To      string `json:"to"`
+	Urgent  bool   `json:"urgent"`
+	Note    string `json:"note"`
+	CWD     string `json:"cwd"`
+}
+
+func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a submitRequestArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	repoRoot := config.RepoRoot(cwd)
+	inboxDir := inbox.InboxDir(repoRoot, res.InboxOverride)
+
+	if a.Summary != "" {
+		if err := writeDraftSummary(inboxDir, a.Summary); err != nil {
+			return ToolResult{}, err
+		}
+	}
+
+	recipient := res.Partner
+	if a.To != "" {
+		recipient = a.To
+	}
+	if recipient == "" {
+		return ToolResult{}, fmt.Errorf("no recipient: pass `to` or set identity.partner in .cc-handoff.toml")
+	}
+
+	urgency := handoffschema.UrgencyNormal
+	if a.Urgent {
+		urgency = handoffschema.UrgencyUrgent
+	}
+
+	pkg, err := handoff.Build(ctx, handoff.BuildOptions{
+		RepoRoot:  repoRoot,
+		RepoName:  res.RepoName,
+		Sender:    res.Me,
+		Recipient: recipient,
+		Urgency:   urgency,
+		Note:      a.Note,
+		Kind:      handoffschema.KindRequest,
+		InboxDir:  inboxDir,
+	})
+	if err != nil {
+		return ToolResult{}, err
+	}
+
+	client := transport.New(res.RelayURL, res.Token)
+	out, err := client.Submit(ctx, pkg, nil)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Submitted request `%s` to `%s`.\n\n", out.ID, recipient)
+	fmt.Fprintf(&sb, "- kind: request\n- branch: `%s`\n- head: `%s`\n",
+		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
+	sb.WriteString("\nThe partner will pick it up via /pickup; their prompt will guide them to design/implement. When they handoff back, the package will carry `responds_to=" + out.ID + "`.")
 	return textResult(sb.String()), nil
 }
 
@@ -202,13 +301,22 @@ func listInboxHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 		return textResult("Inbox is empty."), nil
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d pending handoff(s):\n\n", len(items))
+	fmt.Fprintf(&sb, "%d pending item(s):\n\n", len(items))
 	for _, it := range items {
-		fmt.Fprintf(&sb, "- `%s` from `%s` urgency=%s repo=`%s` branch=`%s`\n  %s\n",
-			it.ID, it.Sender, it.Urgency, it.RepoName, it.Branch, it.Headline)
+		fmt.Fprintf(&sb, "- [%s] `%s` from `%s` urgency=%s repo=`%s` branch=`%s`\n  %s\n",
+			tagFor(it.Kind), it.ID, it.Sender, it.Urgency, it.RepoName, it.Branch, it.Headline)
 	}
-	sb.WriteString("\nUse " + ToolPickupHandoff + " with one of these ids to materialize and start work.")
+	sb.WriteString("\nUse " + ToolPickupHandoff + " with one of these ids to materialize and start work. `[REQUEST]` items are reverse-direction asks (the sender wants you to add/change something); the materialized prompt will guide you.")
 	return textResult(sb.String()), nil
+}
+
+// tagFor renders the inbox/sent list label for a Kind. Empty Kind (legacy
+// payloads) is treated as a delivery handoff.
+func tagFor(k handoffschema.Kind) string {
+	if k == handoffschema.KindRequest {
+		return "REQUEST"
+	}
+	return "handoff"
 }
 
 func pickupHandoffTool() Tool {
@@ -482,10 +590,10 @@ func listSentHandler(ctx context.Context, raw json.RawMessage) (ToolResult, erro
 		return textResult("You haven't sent any handoffs yet."), nil
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d sent handoff(s):\n\n", len(items))
+	fmt.Fprintf(&sb, "%d sent item(s):\n\n", len(items))
 	for _, it := range items {
-		fmt.Fprintf(&sb, "- `%s` to `%s` state=%s urgency=%s repo=`%s` created=%s\n  %s\n",
-			it.ID, it.Recipient, it.State, it.Urgency, it.RepoName,
+		fmt.Fprintf(&sb, "- [%s] `%s` to `%s` state=%s urgency=%s repo=`%s` created=%s\n  %s\n",
+			tagFor(it.Kind), it.ID, it.Recipient, it.State, it.Urgency, it.RepoName,
 			it.CreatedAt.Format("2006-01-02 15:04:05"), it.Headline)
 	}
 	return textResult(sb.String()), nil

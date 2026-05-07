@@ -37,7 +37,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
+	if _, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS handoffs (
   id          TEXT PRIMARY KEY,
   sender      TEXT NOT NULL,
@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS handoffs (
   repo_name   TEXT NOT NULL DEFAULT '',
   branch      TEXT NOT NULL DEFAULT '',
   headline    TEXT NOT NULL DEFAULT '',
+  kind        TEXT NOT NULL DEFAULT '',
   payload     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_handoffs_recipient_state_created
@@ -72,8 +73,18 @@ CREATE TABLE IF NOT EXISTS attachments (
   content     BLOB NOT NULL,
   PRIMARY KEY (handoff_id, name)
 );
-`)
-	return err
+`); err != nil {
+		return err
+	}
+	// Idempotent column addition for installs that predate the kind column.
+	// SQLite returns "duplicate column name" when it already exists; treat
+	// that as success.
+	if _, err := s.db.Exec(`ALTER TABLE handoffs ADD COLUMN kind TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("add kind column: %w", err)
+		}
+	}
+	return nil
 }
 
 var ErrNotFound = errors.New("handoff not found")
@@ -85,11 +96,11 @@ func (s *Store) Insert(ctx context.Context, p *handoffschema.Package) error {
 	}
 	headline, _, _ := strings.Cut(p.SummaryMD, "\n")
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO handoffs(id, sender, recipient, urgency, state, created_at, repo_name, branch, headline, payload)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO handoffs(id, sender, recipient, urgency, state, created_at, repo_name, branch, headline, kind, payload)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Sender, p.Recipient, string(p.Urgency),
 		string(handoffschema.StatePending), p.CreatedAt.UnixMilli(),
-		p.Repo.Name, p.Repo.Branch, headline, string(payload),
+		p.Repo.Name, p.Repo.Branch, headline, string(p.Kind), string(payload),
 	)
 	if err != nil {
 		return fmt.Errorf("insert handoff: %w", err)
@@ -123,7 +134,7 @@ func (s *Store) ListPending(ctx context.Context, recipient string, limit int) ([
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, sender, urgency, state, created_at, repo_name, branch, headline FROM handoffs
+		`SELECT id, sender, urgency, state, created_at, repo_name, branch, headline, kind FROM handoffs
 		 WHERE recipient = ? AND state = ?
 		 ORDER BY created_at ASC LIMIT ?`,
 		recipient, string(handoffschema.StatePending), limit,
@@ -135,14 +146,15 @@ func (s *Store) ListPending(ctx context.Context, recipient string, limit int) ([
 	var out []handoffschema.ListItem
 	for rows.Next() {
 		var (
-			id, sender, urgency, state, repoName, branch, headline string
-			createdMS                                              int64
+			id, sender, urgency, state, repoName, branch, headline, kind string
+			createdMS                                                    int64
 		)
-		if err := rows.Scan(&id, &sender, &urgency, &state, &createdMS, &repoName, &branch, &headline); err != nil {
+		if err := rows.Scan(&id, &sender, &urgency, &state, &createdMS, &repoName, &branch, &headline, &kind); err != nil {
 			return nil, err
 		}
 		out = append(out, handoffschema.ListItem{
 			ID:        id,
+			Kind:      handoffschema.Kind(kind),
 			Sender:    sender,
 			Urgency:   handoffschema.Urgency(urgency),
 			State:     handoffschema.State(state),
@@ -355,7 +367,7 @@ func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]hando
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, sender, recipient, urgency, state, created_at, repo_name, branch, headline FROM handoffs
+		`SELECT id, sender, recipient, urgency, state, created_at, repo_name, branch, headline, kind FROM handoffs
 		 WHERE sender = ?
 		 ORDER BY created_at DESC LIMIT ?`,
 		sender, limit,
@@ -367,14 +379,15 @@ func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]hando
 	var out []handoffschema.ListItem
 	for rows.Next() {
 		var (
-			id, snd, recipient, urgency, state, repoName, branch, headline string
-			createdMS                                                      int64
+			id, snd, recipient, urgency, state, repoName, branch, headline, kind string
+			createdMS                                                            int64
 		)
-		if err := rows.Scan(&id, &snd, &recipient, &urgency, &state, &createdMS, &repoName, &branch, &headline); err != nil {
+		if err := rows.Scan(&id, &snd, &recipient, &urgency, &state, &createdMS, &repoName, &branch, &headline, &kind); err != nil {
 			return nil, err
 		}
 		out = append(out, handoffschema.ListItem{
 			ID:        id,
+			Kind:      handoffschema.Kind(kind),
 			Sender:    snd,
 			Recipient: recipient,
 			Urgency:   handoffschema.Urgency(urgency),

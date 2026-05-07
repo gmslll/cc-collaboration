@@ -123,11 +123,12 @@ repo = "frontend-demo"
 	// tools/list
 	toolsRes := mustResult(t, byID[2])
 	tools, _ := toolsRes["tools"].([]any)
-	if len(tools) != 9 {
-		t.Fatalf("tools/list: want 9 tools, got %d", len(tools))
+	if len(tools) != 10 {
+		t.Fatalf("tools/list: want 10 tools, got %d", len(tools))
 	}
 	wantNames := map[string]bool{
 		mcp.ToolSubmitHandoff:   false,
+		mcp.ToolSubmitRequest:   false,
 		mcp.ToolListInbox:       false,
 		mcp.ToolPickupHandoff:   false,
 		mcp.ToolCommentHandoff:  false,

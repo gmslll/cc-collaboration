@@ -84,6 +84,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if s.Hub != nil {
 		notice := handoffschema.ListItem{
 			ID:        p.ID,
+			Kind:      p.Kind,
 			Sender:    p.Sender,
 			Urgency:   p.Urgency,
 			State:     handoffschema.StatePending,

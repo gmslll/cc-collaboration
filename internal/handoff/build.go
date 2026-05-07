@@ -24,8 +24,10 @@ type BuildOptions struct {
 	Base        string
 	Note        string
 	Rules       *rules.Engine
-	SwaggerPath string   // optional, relative to RepoRoot
-	ModulePaths []string // module-brief mode: when set, skip git diff + swagger delta and treat summary as a self-contained API contract
+	SwaggerPath string             // optional, relative to RepoRoot
+	ModulePaths []string           // module-brief mode: when set, skip git diff + swagger delta and treat summary as a self-contained API contract
+	Kind        handoffschema.Kind // empty defaults to KindDelivery; KindRequest skips git diff / swagger / rules
+	RespondsTo  string             // on a delivery, the request id this answers (renders a banner on the receiver side)
 	// InboxDir is the absolute resolved inbox directory (caller computes via
 	// inbox.InboxDir to apply the legacy / primary fallback). The draft
 	// summary file lives here.
@@ -41,7 +43,8 @@ func SummaryDraftPath(inboxDir string) string {
 }
 
 func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, error) {
-	moduleMode := len(opts.ModulePaths) > 0
+	requestMode := opts.Kind == handoffschema.KindRequest
+	moduleMode := !requestMode && len(opts.ModulePaths) > 0
 
 	var (
 		g        *handoffschema.Git
@@ -51,7 +54,19 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 		err      error
 	)
 
-	if moduleMode {
+	switch {
+	case requestMode:
+		// Request flow: there's no diff to ship and no swagger to compare —
+		// the summary IS the body. Still collect repo meta so the receiver
+		// can see who's asking from where.
+		repoMeta, err = git.CollectRepoMeta(ctx, opts.RepoRoot)
+		if err != nil {
+			return nil, fmt.Errorf("collect repo meta: %w", err)
+		}
+		if len(opts.ModulePaths) > 0 {
+			return nil, fmt.Errorf("request mode does not accept module_paths; describe the need in summary instead")
+		}
+	case moduleMode:
 		repoMeta, err = git.CollectRepoMeta(ctx, opts.RepoRoot)
 		if err != nil {
 			return nil, fmt.Errorf("collect repo meta: %w", err)
@@ -69,7 +84,7 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 			return nil, fmt.Errorf("module paths %v contain no Go files; nothing to derive hints from", opts.ModulePaths)
 		}
 		hints = opts.Rules.Apply(seedPaths)
-	} else {
+	default:
 		g, repoMeta, err = git.Collect(ctx, opts.RepoRoot, opts.Base)
 		if err != nil {
 			return nil, fmt.Errorf("collect git: %w", err)
@@ -96,7 +111,58 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 		return nil, err
 	}
 	if summary == "" {
-		return nil, fmt.Errorf(`summary is empty: write %s before submitting — handoff intent must be human-authored, the receiver's agent relies on it to generate INTEGRATION.md.
+		return nil, emptySummaryError(opts.InboxDir, requestMode)
+	}
+
+	urgency := opts.Urgency
+	if urgency == "" {
+		urgency = handoffschema.UrgencyNormal
+	}
+
+	kind := opts.Kind
+	if kind == "" {
+		kind = handoffschema.KindDelivery
+	}
+
+	pkg := &handoffschema.Package{
+		SchemaVersion:  handoffschema.SchemaVersion,
+		Kind:           kind,
+		Sender:         opts.Sender,
+		Recipient:      opts.Recipient,
+		Urgency:        urgency,
+		Repo:           repoMeta,
+		SummaryMD:      summary,
+		Git:            g,
+		APIDelta:       apiDelta,
+		ModulePaths:    opts.ModulePaths,
+		TargetingHints: hints,
+		NoteMD:         opts.Note,
+		RespondsTo:     opts.RespondsTo,
+	}
+
+	return pkg, nil
+}
+
+func emptySummaryError(inboxDir string, requestMode bool) error {
+	if requestMode {
+		return fmt.Errorf(`summary is empty: write %s before submitting — request intent must be human-authored, the receiver's agent relies on it to design a response.
+
+Example:
+
+  ## What's needed
+  - GET /api/v1/orders — response is missing customer_phone (string, optional)
+  - GET /api/v1/orders — pagination response is missing total (int)
+
+  ## Why
+  Order list page on frontend needs phone for the contact column and total for the pager.
+
+  ## Acceptance
+  - customer_phone present on every order; null when absent
+  - total reflects pre-pagination count
+
+Or call submit_request (MCP) with summary=... to skip the file step`, SummaryDraftPath(inboxDir))
+	}
+	return fmt.Errorf(`summary is empty: write %s before submitting — handoff intent must be human-authored, the receiver's agent relies on it to generate INTEGRATION.md.
 
 Example:
 
@@ -112,29 +178,7 @@ Example:
   - 409 = email already in use.
 
 Or call submit_handoff (MCP) with summary=... to skip the file step`,
-			SummaryDraftPath(opts.InboxDir))
-	}
-
-	urgency := opts.Urgency
-	if urgency == "" {
-		urgency = handoffschema.UrgencyNormal
-	}
-
-	pkg := &handoffschema.Package{
-		SchemaVersion:  handoffschema.SchemaVersion,
-		Sender:         opts.Sender,
-		Recipient:      opts.Recipient,
-		Urgency:        urgency,
-		Repo:           repoMeta,
-		SummaryMD:      summary,
-		Git:            g,
-		APIDelta:       apiDelta,
-		ModulePaths:    opts.ModulePaths,
-		TargetingHints: hints,
-		NoteMD:         opts.Note,
-	}
-
-	return pkg, nil
+		SummaryDraftPath(inboxDir))
 }
 
 func readSummary(inboxDir string) (string, error) {

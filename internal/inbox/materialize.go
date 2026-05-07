@@ -137,12 +137,25 @@ func DownloadAttachments(ctx context.Context, fetcher AttachmentFetcher, dir str
 
 func renderSummaryMD(p *handoffschema.Package) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# Handoff %s\n\n", p.ID)
-	fmt.Fprintf(&sb, "- From: `%s`\n- To: `%s`\n- Urgency: `%s`\n- Repo: `%s` @ `%s`\n- Created: %s\n\n",
+	isRequest := p.EffectiveKind() == handoffschema.KindRequest
+	if isRequest {
+		fmt.Fprintf(&sb, "# Request %s\n\n", p.ID)
+	} else {
+		fmt.Fprintf(&sb, "# Handoff %s\n\n", p.ID)
+	}
+	fmt.Fprintf(&sb, "- From: `%s`\n- To: `%s`\n- Urgency: `%s`\n- Repo: `%s` @ `%s`\n- Created: %s\n",
 		p.Sender, p.Recipient, p.Urgency, p.Repo.Name, p.Repo.Branch, p.CreatedAt.Format("2006-01-02 15:04:05 MST"))
+	if p.RespondsTo != "" {
+		fmt.Fprintf(&sb, "- Responds to: `%s`\n", p.RespondsTo)
+	}
+	sb.WriteString("\n")
 
 	if p.SummaryMD != "" {
-		sb.WriteString("## Sender's notes\n\n")
+		if isRequest {
+			sb.WriteString("## 前端的需求描述\n\n")
+		} else {
+			sb.WriteString("## Sender's notes\n\n")
+		}
 		sb.WriteString(p.SummaryMD)
 		if !strings.HasSuffix(p.SummaryMD, "\n") {
 			sb.WriteString("\n")
@@ -193,11 +206,16 @@ func renderSummaryMD(p *handoffschema.Package) string {
 }
 
 func renderPromptMD(p *handoffschema.Package, mode Mode) string {
+	if p.EffectiveKind() == handoffschema.KindRequest {
+		return renderRequestPromptMD(p, mode)
+	}
 	integrationPath := fmt.Sprintf("docs/integrations/%s.md", p.ID)
 	// Detect module-brief mode by content shape, not just the ModulePaths
 	// field: an older receiver binary may have dropped the field on JSON
 	// decode. p.Git == nil is the reliable signal — non-module Build always
 	// returns a non-nil Git block, even if it is empty.
+	// Request packages also have Git == nil but they take the early-return
+	// above, so this only fires for legitimate module-brief / legacy cases.
 	moduleMode := len(p.ModulePaths) > 0 || p.Git == nil
 
 	var sb strings.Builder
@@ -230,6 +248,10 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 		sb.WriteString("# Handoff: 产出前端对接方案\n\n")
 		fmt.Fprintf(&sb, "收到 handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
 		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s`，写完后停下等人工 review。\n\n", integrationPath)
+	}
+
+	if p.RespondsTo != "" {
+		fmt.Fprintf(&sb, "> ↩️ 这次 handoff 是在回应你之前发起的需求 `%s`。先去 `.cc-handoff/inbox/%s/`（如果当时领过）或 `comment_handoff` 拉一下原需求内容对照，再开始整合。\n\n", p.RespondsTo, p.RespondsTo)
 	}
 
 	if p.SummaryMD != "" {
@@ -326,6 +348,72 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 		sb.WriteString("   - **Call-site updates**：消费这些 API 的组件 / hooks / services 列表。\n")
 		sb.WriteString("   - **Verification**：如何验证（命令、页面、预期行为）。\n")
 		sb.WriteString("5. **停下**。不要直接改代码。等人工 review，确认后告诉我「按 INTEGRATION.md 执行」我才开始改代码。中途有疑问继续走 comment 通道。\n")
+	}
+	return sb.String()
+}
+
+// renderRequestPromptMD generates the receiver-side prompt for a KindRequest
+// package. The receiver here is whichever side is being asked to add/change
+// something (typically the backend, but the mechanism is symmetric). Unlike
+// a delivery, there's no diff or API delta to read — the summary IS the body.
+func renderRequestPromptMD(p *handoffschema.Package, mode Mode) string {
+	responsePath := fmt.Sprintf("docs/requests/%s.md", p.ID)
+
+	var sb strings.Builder
+	if mode == ModeDirect {
+		sb.WriteString("# Request: 直接实现对端发起的需求\n\n")
+		fmt.Fprintf(&sb, "收到 request `%s` (from `%s`).\n\n", p.ID, p.Sender)
+		sb.WriteString("**这不是在让你对接已存在的 API**，而是发起方（通常是前端）发现你这边设计不全 / 缺字段 / 缺能力，让你补齐。\n\n")
+		sb.WriteString("**你的任务是直接修改本仓库代码实现这个需求**，不需要先产出方案文档。改完后停下等人工 review 你的 diff。\n\n")
+	} else {
+		sb.WriteString("# Request: 设计对端发起的需求的响应方案\n\n")
+		fmt.Fprintf(&sb, "收到 request `%s` (from `%s`).\n\n", p.ID, p.Sender)
+		sb.WriteString("**这不是在让你对接已存在的 API**，而是发起方（通常是前端）发现你这边设计不全 / 缺字段 / 缺能力，让你补齐。\n\n")
+		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s` 的响应方案，写完后停下等人工 review。\n\n", responsePath)
+	}
+
+	if p.SummaryMD != "" {
+		sb.WriteString("## 发起方的需求描述 (request body)\n\n")
+		sb.WriteString(p.SummaryMD)
+		if !strings.HasSuffix(p.SummaryMD, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if note := strings.TrimSpace(p.NoteMD); note != "" {
+		sb.WriteString("## ⚠️ 发起方备注 / 跨端约束 (必读)\n\n")
+		if mode == ModeDirect {
+			sb.WriteString("发起方提出的额外约束。代码改动必须逐条满足：\n\n")
+		} else {
+			sb.WriteString("发起方提出的额外约束。响应方案必须逐条响应：\n\n")
+		}
+		sb.WriteString(note)
+		sb.WriteString("\n\n")
+	}
+
+	sb.WriteString("## 你必须按顺序做的事\n\n")
+	sb.WriteString("0. 如果需求描述里**关键信息有歧义**（具体要哪些字段、字段类型、错误处理预期、是否破坏现有调用方等），**先用 `comment_handoff` MCP 工具或 `cc-handoff comment <id>` CLI 问发起方，等回复后再继续**。不要脑补需求。\n")
+	sb.WriteString("1. 完整读完上面的需求描述与备注。\n")
+	sb.WriteString("2. 扫本仓库代码，定位与需求相关的层：router / handler / service / dto / 数据模型 / swagger。明确改动落在哪些真实文件。\n")
+	if mode == ModeDirect {
+		sb.WriteString("3. 直接修改代码实现需求：\n")
+		sb.WriteString("   - **Handler / DTO / Service / 数据层**：按需新增或修改。\n")
+		sb.WriteString("   - **Swagger / OpenAPI 注释**：如果仓库用 swagger 注解生成 API 文档，同步更新。\n")
+		sb.WriteString("   - **风格锚点**：引用本仓库已存在的同类 handler / DTO 的写法，避免风格漂移。\n")
+		sb.WriteString("   - **不破坏现有调用方**：除非发起方明确允许破坏，新增字段优先 optional / nullable。\n")
+		sb.WriteString("4. **停下**。不要继续跑 lint / format / build / test，除非用户明确要求。告诉用户「改完了，这些是改动的文件」，等 review。中途有疑问继续走 comment 通道。\n")
+		fmt.Fprintf(&sb, "5. review 通过、改动合并后，跑 `/handoff` 把交付送回给 `%s`，并在调用 `submit_handoff` 时**带上 `responds_to=%s`** —— 这样发起方那边能看到「这次交付是回应你之前的 %s 需求」。\n", p.Sender, p.ID, p.ID)
+	} else {
+		fmt.Fprintf(&sb, "3. 在仓库根写 `%s`（必要时 `mkdir -p docs/requests/`），结构必须包含：\n", responsePath)
+		sb.WriteString("   - **需求理解**：用你自己的话复述发起方要的是什么；列出你认定的关键约束。\n")
+		sb.WriteString("   - **影响范围**：受影响的真实文件 —— router / handler / service / dto / 数据模型 / swagger。每条带 Path + Why。\n")
+		sb.WriteString("   - **实现方案**：分 `Modify` / `Create` / `Remove` 分组；每条带具体代码片段或伪代码 + **风格锚点**（引用本仓库已存在的同类文件路径，如「参考 `internal/handler/order.go` 的错误返回写法」），避免风格漂移。\n")
+		sb.WriteString("   - **不在范围**：发起方没要、但你看到顺手能做的，写在这里**不做**，避免 scope creep。\n")
+		sb.WriteString("   - **兼容性**：是否破坏现有调用方？字段是否 optional / nullable？\n")
+		sb.WriteString("   - **Verification**：怎么验证（curl / 测试 / swagger UI / 预期响应）。\n")
+		sb.WriteString("4. **停下**。不要直接改代码。等人工 review，确认后告诉用户「按响应方案执行」才开始改。中途有疑问继续走 comment 通道。\n")
+		fmt.Fprintf(&sb, "5. 改动完成、合并后，跑 `/handoff` 把交付送回给 `%s`，并在调用 `submit_handoff` 时**带上 `responds_to=%s`** —— 这样发起方那边能看到「这次交付是回应你之前的 %s 需求」。\n", p.Sender, p.ID, p.ID)
 	}
 	return sb.String()
 }
