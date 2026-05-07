@@ -62,7 +62,7 @@ cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► c
 
 - **`cc-relay`** — VPS-side systemd service, listens on loopback only; reverse proxy terminates TLS. HTTP REST + SSE, persisted to SQLite.
 - **`cc-handoff` (CLI)** — installed on both machines. Subcommands: `init` / `submit` / `list` / `pickup` / `watch` / `comment`.
-- **`cc-handoff-mcp`** — MCP server that Claude Code launches over stdio. Exposes the CLI's actions as MCP tools (`submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff` and friends).
+- **`cc-handoff-mcp`** — MCP server that Claude Code launches over stdio. Exposes the CLI's actions as MCP tools (`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` and friends).
 - **`cc-handoff watch`** — receiver-side daemon. Holds an SSE long connection, materializes incoming handoffs into `.cc-handoff/inbox/<id>/`, fires desktop notifications, can spawn a terminal for urgent items.
 
 Full data flow, SQLite schema, auth model, and failure modes live in [`docs/architecture.md`](docs/architecture.md) (currently Chinese-only).
@@ -134,7 +134,7 @@ make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 #   --agent <name>      default: detect on PATH (claude > codex > manual)
 #   --with-mcp          register the MCP server (claude: auto `claude mcp add`;
 #                       codex: prints a TOML snippet for ~/.codex/config.toml)
-#   --with-commands     Claude only: install /handoff /handoff-module /pickup
+#   --with-commands     Claude only: install /handoff /handoff-module /pickup /request
 #                       into .claude/commands/ (codex / manual skip)
 #   --with-instructions append cc-handoff usage block to CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
@@ -171,7 +171,7 @@ Inside a backend Claude Code session:
 > What MCP tools do I have right now?
 ```
 
-You should see `submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff`. From the shell:
+You should see `submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`. From the shell:
 
 ```bash
 claude mcp list
@@ -202,6 +202,16 @@ In both modes, Claude will **ask you once** for any cross-cutting requirements o
 Claude calls `list_inbox`; if there are several, it'll let you pick. Then it `pickup_handoff`s the chosen one, materializes it under `.cc-handoff/inbox/<id>/`, and produces an `INTEGRATION.md` draft for you to review.
 
 To ask the backend something mid-integration: the `comment_handoff` MCP tool (or `cc-handoff comment <id> "your question"` from the shell). The backend's watch daemon picks it up via SSE and appends it to `.cc-handoff/inbox/<id>/comments.md`.
+
+### Frontend: filing a reverse request `/request`
+
+When the frontend hits something the backend needs to add — a missing field, an unexposed capability, a wrong response shape — file a request from inside Claude Code with `/request`:
+
+- Claude reads the relevant frontend code, drafts a clear "what's needed / why / what 'done' looks like" summary, and calls `submit_request`. There's no git diff; the summary IS the request body.
+- On the backend side, `list_inbox` shows the pending item tagged `[REQUEST]`. Running `/pickup` materializes it under the same inbox dir, but the prompt automatically switches to a request-specific template — guiding the backend Claude to read the request, scan the relevant handler/dto/router/swagger, and (default) write a response plan to `docs/requests/<id>.md` for review (or, in direct mode, modify code and stop for diff review).
+- When the backend ships the result back via `/handoff`, the prompt asks it to set `responds_to=<original request id>`. The frontend's pickup prompt then renders an "↩️ 这次 handoff 是在回应你之前发起的需求 r_xxx" banner so you can trace the loop.
+
+`/request` asks once for cross-end constraints (e.g. "don't break existing callers", "field naming should match X", "stay backward-compatible"), same as `/handoff`. The whole flow is the symmetric reverse of `/handoff` and reuses the same inbox / comment / status / retract machinery.
 
 ### Visibility & recovery
 
@@ -289,7 +299,7 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 
 | agent | CLI invocation | MCP register | slash commands | project instructions file |
 |---|---|---|---|---|
-| `claude` (default) | `claude -p "$(cat prompt.md)"` | auto: `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup}.md` | appended to `CLAUDE.md` |
+| `claude` (default) | `claude -p "$(cat prompt.md)"` | auto: `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup,request}.md` | appended to `CLAUDE.md` |
 | `codex` | `codex exec "$(cat prompt.md)"` | init prints a TOML snippet to paste into `~/.codex/config.toml`, then restart codex | none (call MCP tools directly by name) | appended to `AGENTS.md` |
 | `manual` | does not auto-launch a terminal | init prints generic stdio MCP guidance | none | none |
 

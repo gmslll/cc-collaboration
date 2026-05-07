@@ -11,7 +11,7 @@ import (
 // claudeAgent drives Anthropic's Claude Code CLI:
 //   - non-interactive prompt:  claude -p "<prompt body>"
 //   - MCP register:            claude mcp add --scope user --transport stdio cc-handoff -- <bin>
-//   - slash commands:          .claude/commands/{handoff,handoff-module,pickup}.md
+//   - slash commands:          .claude/commands/{handoff,handoff-module,pickup,request}.md
 //   - project instructions:    CLAUDE.md
 type claudeAgent struct{}
 

@@ -358,21 +358,21 @@ args = []
 
 ### 2.4 安装 slash commands(若 2.2 没用 `--with-commands`)
 
-> Codex / manual 用户跳过本节 —— Codex 没有 slash 命令机制,直接在会话里调 MCP 工具名(`submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff`)即可;manual 同理。
+> Codex / manual 用户跳过本节 —— Codex 没有 slash 命令机制,直接在会话里调 MCP 工具名(`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`)即可;manual 同理。
 
-把 `/handoff`、`/handoff-module`、`/pickup` 拷到目标仓库:
+把 `/handoff`、`/handoff-module`、`/pickup`、`/request` 拷到目标仓库:
 
 ```bash
 cd /path/to/your-repo
 mkdir -p .claude/commands
-cp /path/to/cc-collaboration/.claude/commands/{handoff,handoff-module,pickup}.md .claude/commands/
+cp /path/to/cc-collaboration/.claude/commands/{handoff,handoff-module,pickup,request}.md .claude/commands/
 ```
 
 `cc-handoff init --with-commands` 把这一步内嵌进二进制了 — 拷出来的文件
 末尾会带 `<!-- cc-handoff-version: vX.Y.Z -->`,二跑 init 时若版本旧于二进制
 会触发 `[o]verwrite / [s]kip / [b]ackup` 提示。
 
-> 后端仓库实际用 `/handoff`(diff 模式)和 `/handoff-module`(模块 brief 模式 — 推送已有模块的完整 API 契约文档),前端仓库实际只用 `/pickup`。三份都拷无妨 — Claude 不会去调没意义的那条。
+> 实际用法按角色分:后端仓库主要用 `/handoff`(diff 模式)和 `/handoff-module`(模块 brief — 推送已有模块的完整 API 契约文档);前端仓库主要用 `/pickup`(领取后端推过来的对接)和 `/request`(反向给后端发起需求 —— 缺字段、缺能力、响应结构问题等)。**`/pickup` 双方都用** —— 接收端不论是 delivery 还是 request,流程是对称的。四份都拷无妨,Claude 不会去调没意义的那条。
 
 ### 2.5 验证客户端
 

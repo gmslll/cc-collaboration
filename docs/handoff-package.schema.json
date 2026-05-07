@@ -7,6 +7,7 @@
   "properties": {
     "id":             {"type": "string", "pattern": "^h_[0-9]{8}_[A-Z0-9]+$"},
     "schema_version": {"type": "integer", "const": 1},
+    "kind":           {"type": "string", "enum": ["", "delivery", "request"], "description": "Direction/intent of the package. Empty (omitted) is treated as 'delivery' for backward compatibility with v0.1 payloads. 'request' is the reverse flow: sender (typically frontend) is asking the recipient (typically backend) to add/change something — no diff, no swagger; the summary IS the request body."},
     "sender":         {"type": "string"},
     "recipient":      {"type": "string"},
     "urgency":        {"type": "string", "enum": ["normal", "urgent"]},
@@ -68,7 +69,8 @@
       }
     },
     "note_md":     {"type": "string"},
-    "replaces_id": {"type": "string"}
+    "replaces_id": {"type": "string"},
+    "responds_to": {"type": "string", "description": "When this package is a delivery answering a prior 'request' package, the original request id. The receiver-side prompt and summary.md render an '↩️ 回应' banner so the original requester can trace the loop. Should not be set on kind='request' packages."}
   },
   "$defs": {
     "op": {
