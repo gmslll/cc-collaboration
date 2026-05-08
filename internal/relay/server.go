@@ -28,6 +28,13 @@ type Server struct {
 }
 
 func (s *Server) Handler() http.Handler {
+	// Don't overwrite an externally-set callback (eases tests that wire their
+	// own presence observer; harmless on the standard main.go path where
+	// Handler is called once per Server with a fresh Hub).
+	if s.Hub != nil && s.Hub.OnPresenceChange == nil {
+		s.Hub.OnPresenceChange = s.broadcastPresence
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 
@@ -48,6 +55,20 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("/v1/", s.Tokens.Middleware(api))
 	return logging(mux)
+}
+
+// broadcastPresence is wired as Hub.OnPresenceChange. Fans a user.online /
+// user.offline event out to every OTHER subscribed identity.
+func (s *Server) broadcastPresence(identity string, online bool) {
+	eventType := sse.EventTypeUserOnline
+	if !online {
+		eventType = sse.EventTypeUserOffline
+	}
+	data, err := json.Marshal(handoffschema.OnlineUser{Identity: identity, Online: online})
+	if err != nil {
+		return
+	}
+	s.Hub.PublishExcept(identity, sse.Event{Type: eventType, Data: data})
 }
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {

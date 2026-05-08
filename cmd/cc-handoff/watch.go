@@ -94,6 +94,10 @@ func (h *watchHandler) dispatch(ctx context.Context) func(transport.SSEEvent) er
 			return h.onCommentCreated(ctx, ev)
 		case sse.EventTypeHandoffRetracted:
 			return h.onHandoffRetracted(ctx, ev)
+		case sse.EventTypeUserOnline:
+			return h.onUserPresence(ctx, ev, true)
+		case sse.EventTypeUserOffline:
+			return h.onUserPresence(ctx, ev, false)
 		default:
 			return nil
 		}
@@ -235,6 +239,39 @@ func (h *watchHandler) onCommentCreated(ctx context.Context, ev transport.SSEEve
 
 	h.advanceCommentCursor(c.ID)
 	return h.bumpAndMaybeStop()
+}
+
+// onUserPresence surfaces user.online / user.offline events as desktop
+// notifications. Reconnect blips can flap; user can mute via the
+// mute_user_presence trigger. Doesn't count toward --stop-after — those
+// counters target handoff/comment flows, presence is a side channel.
+func (h *watchHandler) onUserPresence(ctx context.Context, ev transport.SSEEvent, online bool) error {
+	if h.res.Triggers.MuteUserPresence {
+		return nil
+	}
+	var u handoffschema.OnlineUser
+	if err := json.Unmarshal(ev.Data, &u); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: bad presence payload: %v\n", err)
+		return nil
+	}
+	if u.Identity == "" || u.Identity == h.res.Me {
+		return nil
+	}
+	state := "offline"
+	glyph := "⚪"
+	if online {
+		state = "online"
+		glyph = "🟢"
+	}
+	fmt.Printf("%s %s is %s\n", glyph, u.Identity, state)
+	if !h.noNotify {
+		_ = notify.Show(ctx, notify.Notification{
+			Title:    "cc-handoff",
+			Subtitle: state,
+			Body:     u.Identity + " is " + state,
+		})
+	}
+	return nil
 }
 
 // advanceCommentCursor pushes the persisted cursor forward so a watch restart

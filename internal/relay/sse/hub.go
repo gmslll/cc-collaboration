@@ -24,6 +24,14 @@ const EventTypeCommentCreated = "comment.created"
 // looking unhandled.
 const EventTypeHandoffRetracted = "handoff.retracted"
 
+// EventTypeUserOnline / EventTypeUserOffline are presence events: fan out to
+// every OTHER subscribed identity when a new identity's first watch session
+// connects (online) or its last one drops (offline). Reconnect blips can
+// surface as offline-then-online — receivers can mute via the
+// `mute_user_presence` trigger.
+const EventTypeUserOnline = "user.online"
+const EventTypeUserOffline = "user.offline"
+
 // subscriberBuffer caps per-subscriber backlog. A slow client can fall behind
 // and drop events; recovery happens via Last-Event-Id reconnect, so the buffer
 // only needs to absorb short bursts during a write to the wire.
@@ -53,6 +61,12 @@ type Hub struct {
 	nextID uint64
 	subs   map[uint64]*Subscriber
 	seq    atomic.Uint64
+
+	// OnPresenceChange, if set, is invoked when an identity transitions between
+	// having zero and at least one active subscriber. Called outside the hub
+	// lock so the callback may itself call back into the hub (e.g. Publish)
+	// without deadlocking. Same identity may flap on SSE reconnect blips.
+	OnPresenceChange func(identity string, online bool)
 }
 
 func NewHub() *Hub {
@@ -67,18 +81,40 @@ func (h *Hub) Subscribe(recipient string) (*Subscriber, func()) {
 	id := h.nextID
 	h.nextID++
 	sub := &Subscriber{id: id, recipient: recipient, ch: make(chan Event, subscriberBuffer)}
+	becameOnline := h.countByIdentityLocked(recipient) == 0
 	h.subs[id] = sub
 	h.mu.Unlock()
 
+	if becameOnline && h.OnPresenceChange != nil {
+		h.OnPresenceChange(recipient, true)
+	}
+
 	cancel := func() {
 		h.mu.Lock()
+		var becameOffline bool
 		if _, ok := h.subs[id]; ok {
 			delete(h.subs, id)
 			close(sub.ch)
+			becameOffline = h.countByIdentityLocked(recipient) == 0
 		}
 		h.mu.Unlock()
+		if becameOffline && h.OnPresenceChange != nil {
+			h.OnPresenceChange(recipient, false)
+		}
 	}
 	return sub, cancel
+}
+
+// countByIdentityLocked counts active subscribers for identity. Caller must
+// hold h.mu (read or write).
+func (h *Hub) countByIdentityLocked(identity string) int {
+	n := 0
+	for _, s := range h.subs {
+		if s.recipient == identity {
+			n++
+		}
+	}
+	return n
 }
 
 // OnlineRecipients returns the active subscriber identities, deduped across
@@ -102,6 +138,27 @@ func (h *Hub) Publish(e Event) Event {
 	defer h.mu.RUnlock()
 	for _, s := range h.subs {
 		if s.recipient != e.Recipient {
+			continue
+		}
+		select {
+		case s.ch <- e:
+		default:
+		}
+	}
+	return e
+}
+
+// PublishExcept fans the event out to every active subscriber whose
+// recipient identity differs from `except`. Used for presence broadcast
+// where the identity coming online/offline shouldn't be notified about
+// itself — this is the authoritative self-exclusion; receivers don't need
+// to filter their own identity out of the payload.
+func (h *Hub) PublishExcept(except string, e Event) Event {
+	e.ID = h.seq.Add(1)
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, s := range h.subs {
+		if s.recipient == except {
 			continue
 		}
 		select {

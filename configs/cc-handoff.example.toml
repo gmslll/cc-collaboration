@@ -31,3 +31,6 @@ terminal_app       = "terminal"  # "terminal" | "iterm2"
 wake_on_comment    = false       # Claude only: if true, partner replies pull this Claude session
                                  # back into a turn via a Stop hook. Run `cc-handoff init
                                  # --with-wake-on-comment` to install the hook into .claude/settings.json.
+mute_user_presence = false       # default false: pop a notification when other identities come
+                                 # online / go offline (relay broadcasts presence on watch
+                                 # connect/disconnect). Set true to silence them.

@@ -64,6 +64,9 @@ type Triggers struct {
 	AutoLaunchNormal bool   `toml:"auto_launch_normal,omitempty"`
 	TerminalApp      string `toml:"terminal_app,omitempty"`
 	WakeOnComment    bool   `toml:"wake_on_comment,omitempty"`
+	// MuteUserPresence: default false (fire desktop notifications when other
+	// identities come online / go offline). Set true to silence them.
+	MuteUserPresence bool `toml:"mute_user_presence,omitempty"`
 }
 
 const (
