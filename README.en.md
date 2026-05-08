@@ -212,7 +212,7 @@ Pick the slash command that fits your moment:
 - **`/handoff` (diff mode)** — you just finished a chunk of changes and want to push them out. Claude reads the branch diff, drafts the integration notes, calls `submit_handoff`.
 - **`/handoff-module <module-path> [more...]` (module-brief mode)** — a module landed long ago and the frontend is now starting fresh integration. Claude reads `routes/handlers/dto/swagger` under that module, assembles a self-contained API contract document, then calls `submit_handoff` with `module_paths`. The receiving side automatically switches to the "module integration" prompt template. You can pass several module paths at once, space-separated.
 
-In both modes, Claude will **ask you once** for any cross-cutting requirements or constraints (error-code mappings, casing rules, default page sizes, things the UI must not collapse into a single request, etc.). If there's nothing, just say "no" — Claude will skip the note section.
+In both modes, Claude will **first ask once for a product brief / PRD** (file path, pasted text, or a verbal description — rendered on the receiving side as background context, **not** required to be addressed line-by-line), then **ask once for cross-cutting hard constraints** (error-code mappings, casing rules, default page sizes, things the UI must not collapse into a single request — rendered as "must address line-by-line" in INTEGRATION.md). If there's nothing for either, just say "no" twice; Claude will skip the corresponding section.
 
 ### Frontend: receiving
 
@@ -232,7 +232,7 @@ When the frontend hits something the backend needs to add — a missing field, a
 - On the backend side, `list_inbox` shows the pending item tagged `[REQUEST]`. Running `/pickup` materializes it under the same inbox dir, but the prompt automatically switches to a request-specific template — guiding the backend Claude to read the request, scan the relevant handler/dto/router/swagger, and (default) write a response plan to `docs/requests/<id>.md` for review (or, in direct mode, modify code and stop for diff review).
 - When the backend ships the result back via `/handoff`, the prompt asks it to set `responds_to=<original request id>`. The frontend's pickup prompt then renders an "↩️ 这次 handoff 是在回应你之前发起的需求 r_xxx" banner so you can trace the loop.
 
-`/request` asks once for cross-end constraints (e.g. "don't break existing callers", "field naming should match X", "stay backward-compatible"), same as `/handoff`. The whole flow is the symmetric reverse of `/handoff` and reuses the same inbox / comment / status / retract machinery.
+`/request` first asks once for a product brief / PRD (the upstream "why" — what product wants, rendered as background context on the backend side), then asks once for cross-end constraints (e.g. "don't break existing callers", "field naming should match X", "stay backward-compatible"), same as `/handoff`. The whole flow is the symmetric reverse of `/handoff` and reuses the same inbox / comment / status / retract machinery.
 
 ### Visibility & recovery
 
