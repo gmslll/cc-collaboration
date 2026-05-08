@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            include_relay: true
+          - os: linux
+            arch: arm64
+            include_relay: true
+          - os: darwin
+            arch: amd64
+            include_relay: false
+          - os: darwin
+            arch: arm64
+            include_relay: false
+          - os: windows
+            arch: amd64
+            include_relay: false
+            ext: .exe
+          - os: windows
+            arch: arm64
+            include_relay: false
+            ext: .exe
+    env:
+      GOOS: ${{ matrix.os }}
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: read VERSION + verify tag
+        id: ver
+        run: |
+          version=$(cat VERSION)
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$tag_version" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match VERSION file ($version)" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: build binaries
+        run: |
+          mkdir -p dist
+          ldflags="-X 'github.com/cc-collaboration/internal/version.Version=${{ steps.ver.outputs.version }}'"
+          go build -ldflags "$ldflags" -o "dist/cc-handoff${{ matrix.ext }}" ./cmd/cc-handoff
+          go build -ldflags "$ldflags" -o "dist/cc-handoff-mcp${{ matrix.ext }}" ./cmd/cc-handoff-mcp
+          if [ "${{ matrix.include_relay }}" = "true" ]; then
+            go build -ldflags "$ldflags" -o "dist/cc-relay${{ matrix.ext }}" ./cmd/relay
+          fi
+
+      - name: package archive
+        id: pkg
+        run: |
+          base="cc-handoff_v${{ steps.ver.outputs.version }}_${{ matrix.os }}_${{ matrix.arch }}"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            archive="${base}.zip"
+            (cd dist && zip -r "../${archive}" .)
+          else
+            archive="${base}.tar.gz"
+            tar -C dist -czf "${archive}" .
+          fi
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.archive }}
+          path: ${{ steps.pkg.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download all archives
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: write checksums
+        working-directory: dist
+        run: sha256sum * > checksums.txt
+
+      - name: extract release notes from CHANGELOG
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Pull the body of the matching `## [X.Y.Z]` section, stopping at the next `## [`.
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]"          { flag=1; next }
+            flag && /^## \[/                  { exit }
+            flag && /^\[[^]]+\]: /            { exit }
+            flag                              { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "no matching CHANGELOG entry for v$version — falling back to placeholder" >&2
+            echo "(no release notes — see CHANGELOG.md)" > release-notes.md
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          body_path: release-notes.md
+          fail_on_unmatched_files: true
