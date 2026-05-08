@@ -6,6 +6,8 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-08
+
 ### Added
 
 - `prd` parameter on `submit_handoff` / `submit_request` MCP tools, `--prd` flag on `cc-handoff submit`, and `BuildOptions.Prd` → `Package.PrdMD` (`prd_md` JSON field, `omitempty`). Carries upstream product-requirement / design-intent markdown as background reference. Renders to receiver prompt as `## 📋 产品需求 / 设计意图 (背景参考)` section between the responds-to banner and the summary; **not** required to be addressed line-by-line in INTEGRATION.md (the distinction vs. `note`, which renders as `(必读)` and is). Slash commands `/handoff`, `/handoff-module`, `/request` ask the user once for PRD before the existing note step, accepting three input modalities: file path, pasted text, verbal description (Claude organizes faithfully without inventing). Backward-compatible: `omitempty` keeps old envelopes byte-identical, and all renderers gate the section on `strings.TrimSpace(p.PrdMD) != ""` so empty/whitespace PRDs are skipped uniformly.
