@@ -125,10 +125,31 @@ Hand each token to the right person. `cc-handoff init` will ask for it next.
 
 ### 3. Install on each client (backend and frontend, once each)
 
-```bash
-# Build and install to PATH
-make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
+**A. One-shot install of the prebuilt binaries (recommended on macOS / Linux)**
 
+No repo clone, no Go toolchain — pull the latest GitHub Release straight to your PATH:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gmslll/cc-collaboration/main/scripts/install-client.sh | bash
+```
+
+Optional env: `INSTALL_DIR=$HOME/.local/bin` (target dir), `VERSION=v0.1.2` (pin a version, default `latest`), `SKIP_RELAY=1` (linux: skip `cc-relay`, only install `cc-handoff` + `cc-handoff-mcp`). The script verifies sha256 against `checksums.txt`. After install: `cc-handoff version` should print the embedded semver.
+
+Windows: grab `cc-handoff_v*_windows_<arch>.zip` from the [Releases page](https://github.com/gmslll/cc-collaboration/releases/latest), unpack the `.exe` files onto your PATH, or run `scripts/install.ps1` (see the Windows support section below).
+
+**B. Build from source**
+
+Needs this repo + Go 1.22+:
+
+```bash
+make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
+```
+
+---
+
+Once the binaries are installed (A or B), init your working repo:
+
+```bash
 # In your working repo, init wires the agent up:
 #   writes the user-level + repo-level toml configs,
 #   --agent <name>      default: detect on PATH (claude > codex > manual)

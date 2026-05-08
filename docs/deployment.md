@@ -258,7 +258,17 @@ curl -N -H "Authorization: Bearer $TOK_BACK" \
 
 后端、前端两台 Mac 各自做一遍这一节。
 
-### 2.1 构建二进制
+### 2.1 装二进制
+
+不想本地装 Go 编译?直接拉最新 GitHub Release(macOS / Linux 一行搞定):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gmslll/cc-collaboration/main/scripts/install-client.sh | bash
+```
+
+env 可调:`INSTALL_DIR` / `VERSION` / `SKIP_RELAY`,详见脚本头注释或 README。
+
+要从源码编译(本仓库 + Go 1.22+):
 
 ```bash
 cd /path/to/cc-collaboration

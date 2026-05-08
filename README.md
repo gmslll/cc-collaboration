@@ -126,10 +126,31 @@ sudo cc-handoff-rotate-token alex@frontend
 
 ### 3. 客户端装(前后端各一次)
 
-```bash
-# 编译并装到 PATH
-make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
+**A. 一键装预编译版本(推荐 macOS / Linux)**
 
+不需要本仓库代码,不需要 Go,直接拉最新 GitHub Release 二进制装到 PATH:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gmslll/cc-collaboration/main/scripts/install-client.sh | bash
+```
+
+可调 env(都可选):`INSTALL_DIR=$HOME/.local/bin`(改装到哪)、`VERSION=v0.1.2`(锁版本,默认 latest)、`SKIP_RELAY=1`(linux 上不装 cc-relay,只装 cli + mcp)。脚本会校验 sha256,装好后 `cc-handoff version` 验一下。
+
+Windows:从 [Releases 页](https://github.com/gmslll/cc-collaboration/releases/latest) 下 `cc-handoff_v*_windows_<arch>.zip`,解压后把 .exe 放进 PATH(或跑 `scripts/install.ps1`,见 §Windows 支持)。
+
+**B. 从源码编译**
+
+需要本仓库 + Go 1.22+:
+
+```bash
+make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
+```
+
+---
+
+装好二进制后(A 或 B 都行),进你的工作仓库 init:
+
+```bash
 # 在你的工作仓库里 init —— 同时:
 #   写两个 toml(user 级 / 仓库级)
 #   --agent <name>     默认按 PATH 探测 (claude > codex > manual);可显式覆盖
