@@ -28,6 +28,15 @@ auto_launch        = false       # gate: if false, no terminal is ever auto-laun
 auto_launch_normal = false       # if true, normal-priority handoffs ALSO auto-launch (default: only urgent does);
                                  # ignored when auto_launch=false
 terminal_app       = "terminal"  # "terminal" | "iterm2"
+launch_mode        = "window"    # "window" (default: new window) | "split" (iTerm2 split-pane;
+                                 # Terminal.app falls back to a new tab; Windows always uses a new window)
+launch_interactive = false       # default false: run agent one-shot (e.g. `claude -p "$prompt"`).
+                                 # Set true to start agent interactively and inject the prompt body
+                                 # via the terminal app's API after the REPL is ready (uses
+                                 # bracketed-paste markers; macOS only — Windows still one-shots).
+pre_launch         = ""          # shell snippet inserted between `cd <repo>` and the agent invocation.
+                                 # Useful for multi-account OAuth / env activation.
+                                 # Example: pre_launch = "clset 6"
 wake_on_comment    = false       # Claude only: if true, partner replies pull this Claude session
                                  # back into a turn via a Stop hook. Run `cc-handoff init
                                  # --with-wake-on-comment` to install the hook into .claude/settings.json.

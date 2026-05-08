@@ -20,11 +20,11 @@ func (manualAgent) Name() string    { return "manual" }
 func (manualAgent) CLI() string     { return "" }
 func (manualAgent) Available() bool { return true }
 
-func (manualAgent) POSIXPromptCmd(_, _ string) string {
+func (manualAgent) POSIXPromptCmd(_, _, _ string, _ bool) string {
 	return "echo 'cc-handoff: agent=manual; auto-launch is disabled, run your agent on the prompt file yourself'"
 }
 
-func (manualAgent) PowerShellPromptCmd(_, _ string) string {
+func (manualAgent) PowerShellPromptCmd(_, _, _ string, _ bool) string {
 	return "Write-Host 'cc-handoff: agent=manual; auto-launch is disabled, run your agent on the prompt file yourself'"
 }
 

@@ -19,20 +19,14 @@ func Show(ctx context.Context, n Notification) error {
 func buildAppleScript(n Notification) string {
 	var sb strings.Builder
 	sb.WriteString("display notification ")
-	sb.WriteString(quote(n.Body))
+	sb.WriteString(applescriptStringLit(n.Body))
 	if n.Title != "" {
 		sb.WriteString(" with title ")
-		sb.WriteString(quote(n.Title))
+		sb.WriteString(applescriptStringLit(n.Title))
 	}
 	if n.Subtitle != "" {
 		sb.WriteString(" subtitle ")
-		sb.WriteString(quote(n.Subtitle))
+		sb.WriteString(applescriptStringLit(n.Subtitle))
 	}
 	return sb.String()
-}
-
-// quote AppleScript-quotes a string by replacing `"` with `\"` and `\` with `\\`.
-func quote(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-	return `"` + r.Replace(s) + `"`
 }

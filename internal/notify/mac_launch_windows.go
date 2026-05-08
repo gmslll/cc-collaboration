@@ -32,7 +32,12 @@ func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
 		app = pickWindowsDefault()
 	}
 
-	inner := opts.Agent.PowerShellPromptCmd(opts.CWD, opts.PromptFile)
+	// Windows always uses a new window (no native split-pane API parity).
+	// Interactive injection isn't implemented here yet; if the user enables it
+	// on Windows we still run the agent via the configured one-shot/interactive
+	// PromptCmd, but the prompt body won't be auto-injected into an interactive
+	// REPL — for now they'd need to ⌘V it themselves.
+	inner := opts.Agent.PowerShellPromptCmd(opts.CWD, opts.PromptFile, opts.PreLaunch, opts.Interactive)
 
 	var cmd *exec.Cmd
 	switch app {

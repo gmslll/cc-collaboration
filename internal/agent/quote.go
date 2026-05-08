@@ -16,3 +16,25 @@ func POSIXSingleQuote(s string) string {
 func PSSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
+
+// posixCompose builds `cd '<cwd>' [&& <preLaunch>] && <invocation>`. Shared
+// by all POSIX agent adapters so pre-launch insertion stays uniform.
+func posixCompose(cwd, preLaunch, invocation string) string {
+	parts := []string{"cd " + POSIXSingleQuote(cwd)}
+	if preLaunch != "" {
+		parts = append(parts, preLaunch)
+	}
+	parts = append(parts, invocation)
+	return strings.Join(parts, " && ")
+}
+
+// psCompose is the PowerShell counterpart of posixCompose, using `;` as the
+// statement separator (PowerShell's `&&` was 7+; we keep `;` for portability).
+func psCompose(cwd, preLaunch, invocation string) string {
+	parts := []string{"Set-Location -LiteralPath " + PSSingleQuote(cwd)}
+	if preLaunch != "" {
+		parts = append(parts, preLaunch)
+	}
+	parts = append(parts, invocation)
+	return strings.Join(parts, "; ")
+}

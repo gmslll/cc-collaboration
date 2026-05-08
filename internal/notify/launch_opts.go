@@ -21,4 +21,15 @@ type LaunchOpts struct {
 	PromptFile string
 	// Dry logs what would happen instead of actually opening a window.
 	Dry bool
+	// PreLaunch is an optional shell snippet inserted between `cd <repo>`
+	// and the agent invocation (e.g. "clset 6" to switch OAuth account).
+	PreLaunch string
+	// Interactive switches launch from one-shot (`claude -p ...`) to an
+	// interactive REPL with the prompt body injected via the terminal app's
+	// API after the agent starts.
+	Interactive bool
+	// Mode picks terminal placement: "" / "window" (new window, default) or
+	// "split" (split current window). Windows always uses a new window.
+	// Terminal.app has no native split; "split" falls back to a new tab there.
+	Mode string
 }

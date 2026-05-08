@@ -67,7 +67,7 @@ func TestPSSingleQuote(t *testing.T) {
 }
 
 func TestClaudePOSIXPromptCmd(t *testing.T) {
-	got := claudeAgent{}.POSIXPromptCmd("/tmp/repo with space", "/tmp/repo with space/.cc-handoff/inbox/h_x/prompt.md")
+	got := claudeAgent{}.POSIXPromptCmd("/tmp/repo with space", "/tmp/repo with space/.cc-handoff/inbox/h_x/prompt.md", "", false)
 	want := `cd '/tmp/repo with space' && claude -p "$(cat '/tmp/repo with space/.cc-handoff/inbox/h_x/prompt.md')"`
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -75,15 +75,28 @@ func TestClaudePOSIXPromptCmd(t *testing.T) {
 }
 
 func TestClaudePowerShellPromptCmd(t *testing.T) {
-	got := claudeAgent{}.PowerShellPromptCmd(`C:\repo with space`, `C:\repo with space\.cc-handoff\inbox\h_x\prompt.md`)
+	got := claudeAgent{}.PowerShellPromptCmd(`C:\repo with space`, `C:\repo with space\.cc-handoff\inbox\h_x\prompt.md`, "", false)
 	want := `Set-Location -LiteralPath 'C:\repo with space'; claude -p (Get-Content -Raw -LiteralPath 'C:\repo with space\.cc-handoff\inbox\h_x\prompt.md')`
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 }
 
+func TestClaudePOSIXPromptCmdPreLaunchAndInteractive(t *testing.T) {
+	got := claudeAgent{}.POSIXPromptCmd("/repo", "/repo/p.md", "clset 6", true)
+	want := `cd '/repo' && clset 6 && claude`
+	if got != want {
+		t.Errorf("interactive+preLaunch: got %q, want %q", got, want)
+	}
+	got = claudeAgent{}.POSIXPromptCmd("/repo", "/repo/p.md", "clset 6", false)
+	want = `cd '/repo' && clset 6 && claude -p "$(cat '/repo/p.md')"`
+	if got != want {
+		t.Errorf("oneshot+preLaunch: got %q, want %q", got, want)
+	}
+}
+
 func TestCodexPOSIXPromptCmd(t *testing.T) {
-	got := codexAgent{}.POSIXPromptCmd("/repo", "/repo/.cc-handoff/inbox/h_x/prompt.md")
+	got := codexAgent{}.POSIXPromptCmd("/repo", "/repo/.cc-handoff/inbox/h_x/prompt.md", "", false)
 	want := `cd '/repo' && codex exec "$(cat '/repo/.cc-handoff/inbox/h_x/prompt.md')"`
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -91,7 +104,7 @@ func TestCodexPOSIXPromptCmd(t *testing.T) {
 }
 
 func TestCodexPowerShellPromptCmd(t *testing.T) {
-	got := codexAgent{}.PowerShellPromptCmd(`C:\repo`, `C:\repo\.cc-handoff\inbox\h_x\prompt.md`)
+	got := codexAgent{}.PowerShellPromptCmd(`C:\repo`, `C:\repo\.cc-handoff\inbox\h_x\prompt.md`, "", false)
 	want := `Set-Location -LiteralPath 'C:\repo'; codex exec (Get-Content -Raw -LiteralPath 'C:\repo\.cc-handoff\inbox\h_x\prompt.md')`
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)

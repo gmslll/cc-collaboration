@@ -37,13 +37,18 @@ type Agent interface {
 	Available() bool
 
 	// POSIXPromptCmd returns a single-line bash/zsh command that, when
-	// executed in a fresh shell, cd's into cwd and runs the agent on the
-	// prompt at promptFile. Used by darwin's Terminal.app/iTerm2 launcher.
-	POSIXPromptCmd(cwd, promptFile string) string
+	// executed in a fresh shell, cd's into cwd and runs the agent.
+	//
+	//   preLaunch: optional shell snippet inserted between the cd and the
+	//              agent invocation (e.g. "clset 6" to switch OAuth account).
+	//   interactive: when true, start the agent without a prompt arg — the
+	//                caller is expected to inject promptFile content via the
+	//                terminal app's API after the REPL is ready. When false,
+	//                the agent runs one-shot on the file's contents and exits.
+	POSIXPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string
 
 	// PowerShellPromptCmd is the same as POSIXPromptCmd but for PowerShell.
-	// Used by Windows's cmd /c start launcher.
-	PowerShellPromptCmd(cwd, promptFile string) string
+	PowerShellPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string
 
 	// InstructionsFile returns (filename, snippet) describing where to write
 	// the cc-handoff usage instructions and what to put in them. filename is

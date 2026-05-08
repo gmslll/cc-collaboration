@@ -25,14 +25,20 @@ func (codexAgent) Name() string    { return "codex" }
 func (codexAgent) CLI() string     { return "codex" }
 func (codexAgent) Available() bool { return onPath("codex") }
 
-func (codexAgent) POSIXPromptCmd(cwd, promptFile string) string {
-	return "cd " + POSIXSingleQuote(cwd) +
-		` && codex exec "$(cat ` + POSIXSingleQuote(promptFile) + `)"`
+func (codexAgent) POSIXPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string {
+	invocation := "codex"
+	if !interactive {
+		invocation = `codex exec "$(cat ` + POSIXSingleQuote(promptFile) + `)"`
+	}
+	return posixCompose(cwd, preLaunch, invocation)
 }
 
-func (codexAgent) PowerShellPromptCmd(cwd, promptFile string) string {
-	return "Set-Location -LiteralPath " + PSSingleQuote(cwd) +
-		"; codex exec (Get-Content -Raw -LiteralPath " + PSSingleQuote(promptFile) + ")"
+func (codexAgent) PowerShellPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string {
+	invocation := "codex"
+	if !interactive {
+		invocation = "codex exec (Get-Content -Raw -LiteralPath " + PSSingleQuote(promptFile) + ")"
+	}
+	return psCompose(cwd, preLaunch, invocation)
 }
 
 func (codexAgent) InstructionsFile() (string, string) {

@@ -19,14 +19,20 @@ func (claudeAgent) Name() string    { return "claude" }
 func (claudeAgent) CLI() string     { return "claude" }
 func (claudeAgent) Available() bool { return onPath("claude") }
 
-func (claudeAgent) POSIXPromptCmd(cwd, promptFile string) string {
-	return "cd " + POSIXSingleQuote(cwd) +
-		` && claude -p "$(cat ` + POSIXSingleQuote(promptFile) + `)"`
+func (claudeAgent) POSIXPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string {
+	invocation := "claude"
+	if !interactive {
+		invocation = `claude -p "$(cat ` + POSIXSingleQuote(promptFile) + `)"`
+	}
+	return posixCompose(cwd, preLaunch, invocation)
 }
 
-func (claudeAgent) PowerShellPromptCmd(cwd, promptFile string) string {
-	return "Set-Location -LiteralPath " + PSSingleQuote(cwd) +
-		"; claude -p (Get-Content -Raw -LiteralPath " + PSSingleQuote(promptFile) + ")"
+func (claudeAgent) PowerShellPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string {
+	invocation := "claude"
+	if !interactive {
+		invocation = "claude -p (Get-Content -Raw -LiteralPath " + PSSingleQuote(promptFile) + ")"
+	}
+	return psCompose(cwd, preLaunch, invocation)
 }
 
 func (claudeAgent) InstructionsFile() (string, string) {

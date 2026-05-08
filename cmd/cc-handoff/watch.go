@@ -194,13 +194,7 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 	}
 
 	if h.res.Triggers.AutoLaunch && (pkg.Urgency == handoffschema.UrgencyUrgent || h.res.Triggers.AutoLaunchNormal) {
-		err := notify.LaunchTerminal(ctx, notify.LaunchOpts{
-			Agent:      h.res.Agent,
-			App:        h.res.Triggers.TerminalApp,
-			CWD:        h.repoRoot,
-			PromptFile: filepath.Join(mat.Dir, "prompt.md"),
-			Dry:        h.noLaunch,
-		})
+		err := notify.LaunchTerminal(ctx, buildLaunchOpts(h.res, h.repoRoot, filepath.Join(mat.Dir, "prompt.md"), h.noLaunch))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: auto-launch failed: %v\n", err)
 		}
@@ -297,6 +291,22 @@ func (h *watchHandler) bumpAndMaybeStop() error {
 		return errStop
 	}
 	return nil
+}
+
+// buildLaunchOpts maps the resolved [triggers] config to a notify.LaunchOpts
+// for the auto-launch / `cc-handoff open` paths. Both call sites take the
+// same fields; a helper keeps them in sync as new triggers are added.
+func buildLaunchOpts(res *config.Resolved, cwd, promptFile string, dry bool) notify.LaunchOpts {
+	return notify.LaunchOpts{
+		Agent:       res.Agent,
+		App:         res.Triggers.TerminalApp,
+		CWD:         cwd,
+		PromptFile:  promptFile,
+		Dry:         dry,
+		PreLaunch:   res.Triggers.PreLaunch,
+		Interactive: res.Triggers.LaunchInteractive,
+		Mode:        res.Triggers.LaunchMode,
+	}
 }
 
 // catchUp drains anything that piled up while watch was offline:

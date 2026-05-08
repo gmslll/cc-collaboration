@@ -67,7 +67,26 @@ type Triggers struct {
 	// MuteUserPresence: default false (fire desktop notifications when other
 	// identities come online / go offline). Set true to silence them.
 	MuteUserPresence bool `toml:"mute_user_presence,omitempty"`
+	// PreLaunch is a shell snippet inserted between `cd <repo>` and the agent
+	// invocation in auto-launch flows. Use it to switch OAuth accounts /
+	// activate envs / load .nvmrc before the agent starts.
+	// Example: pre_launch = "clset 6"
+	PreLaunch string `toml:"pre_launch,omitempty"`
+	// LaunchInteractive controls how the agent is started. Default false →
+	// existing one-shot mode (e.g. `claude -p "$(cat prompt.md)"`). True →
+	// start the agent interactively (no -p) and inject the prompt body via
+	// the terminal app's API after the REPL is ready.
+	LaunchInteractive bool `toml:"launch_interactive,omitempty"`
+	// LaunchMode picks the terminal placement: LaunchModeWindow (default) opens
+	// a brand-new window; LaunchModeSplit splits the current window.
+	// Windows always uses a new window regardless.
+	LaunchMode string `toml:"launch_mode,omitempty"`
 }
+
+const (
+	LaunchModeWindow = "window"
+	LaunchModeSplit  = "split"
+)
 
 const (
 	TerminalAppTerminal        = "terminal"
