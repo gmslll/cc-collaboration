@@ -1,6 +1,11 @@
 package notify
 
-import "github.com/cc-collaboration/internal/agent"
+import (
+	"fmt"
+
+	"github.com/cc-collaboration/internal/agent"
+	"github.com/cc-collaboration/internal/config"
+)
 
 // LaunchOpts is the platform-neutral payload for LaunchTerminal. The actual
 // LaunchTerminal implementation lives in mac_launch.go (darwin),
@@ -32,4 +37,40 @@ type LaunchOpts struct {
 	// "split" (split current window). Windows always uses a new window.
 	// Terminal.app has no native split; "split" falls back to a new tab there.
 	Mode string
+	// HandoffID is the relay id of the handoff being launched. Required when
+	// AckOnLaunch != "" / "never" so the launcher can build a `cc-handoff
+	// pickup <id>` chain or a postlude pointing at the right id.
+	HandoffID string
+	// AckOnLaunch chooses if/when the handoff is ack'd on the relay during
+	// auto-launch. See config.AckOnLaunch* constants for semantics.
+	AckOnLaunch string
+}
+
+// validateAckOnLaunch enforces the (mode, interactive) combos. on_launch
+// runs `cc-handoff pickup <id>` before the agent invocation in the same
+// shell — combining with interactive=true would mean the agent runs after
+// pickup but the AppleScript prompt-body injection still has to find a
+// foreground claude/codex process to type into, which is racy. Refuse
+// upfront and point users at after_exit. Unknown modes also error.
+func validateAckOnLaunch(mode string, interactive bool, handoffID string) error {
+	switch mode {
+	case config.AckOnLaunchNever:
+		return nil
+	case config.AckOnLaunchAfterExit, config.AckOnLaunchOnLaunch, config.AckOnLaunchSlashPickup:
+		if handoffID == "" {
+			return fmt.Errorf("LaunchTerminal: ack_on_launch=%q requires HandoffID", mode)
+		}
+	default:
+		return fmt.Errorf("LaunchTerminal: unknown ack_on_launch %q (want %q, %q, %q, or %q)",
+			mode, config.AckOnLaunchNever, config.AckOnLaunchAfterExit, config.AckOnLaunchOnLaunch, config.AckOnLaunchSlashPickup)
+	}
+	if mode == config.AckOnLaunchOnLaunch && interactive {
+		return fmt.Errorf("LaunchTerminal: ack_on_launch=%q is incompatible with launch_interactive=true (set launch_interactive=false or pick %q)",
+			config.AckOnLaunchOnLaunch, config.AckOnLaunchAfterExit)
+	}
+	if mode == config.AckOnLaunchSlashPickup && !interactive {
+		return fmt.Errorf("LaunchTerminal: ack_on_launch=%q requires launch_interactive=true (slash commands need a REPL)",
+			config.AckOnLaunchSlashPickup)
+	}
+	return nil
 }

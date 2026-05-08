@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/cc-collaboration/internal/agent"
 	"github.com/cc-collaboration/internal/config"
 )
 
@@ -32,12 +33,45 @@ func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
 		app = pickWindowsDefault()
 	}
 
-	// Windows always uses a new window (no native split-pane API parity).
-	// Interactive injection isn't implemented here yet; if the user enables it
-	// on Windows we still run the agent via the configured one-shot/interactive
-	// PromptCmd, but the prompt body won't be auto-injected into an interactive
-	// REPL — for now they'd need to ⌘V it themselves.
-	inner := opts.Agent.PowerShellPromptCmd(opts.CWD, opts.PromptFile, opts.PreLaunch, opts.Interactive)
+	ackMode := opts.AckOnLaunch
+	if ackMode == "" {
+		ackMode = config.AckOnLaunchNever
+	}
+	if err := validateAckOnLaunch(ackMode, opts.Interactive, opts.HandoffID); err != nil {
+		return err
+	}
+	if ackMode == config.AckOnLaunchSlashPickup {
+		// Slash-command injection requires terminal-side text-injection into a
+		// running REPL — not implemented on Windows yet (the macOS path uses
+		// AppleScript). Refuse explicitly so users don't get silent fallback.
+		return fmt.Errorf("LaunchTerminal: ack_on_launch=%q is not supported on Windows yet", ackMode)
+	}
+
+	preLaunch := opts.PreLaunch
+	if ackMode == config.AckOnLaunchOnLaunch {
+		// PowerShell equivalent of brace-group + ; true: a `try { ... } catch {}`
+		// block always succeeds; followed by `;` so the agent invocation runs
+		// regardless of pickup outcome. Uses the agent's own quoting helper to
+		// stay safe.
+		pickup := "try { cc-handoff pickup " + agent.PSSingleQuote(opts.HandoffID) + " } catch {}"
+		if preLaunch != "" {
+			preLaunch = preLaunch + "; " + pickup
+		} else {
+			preLaunch = pickup
+		}
+	}
+
+	inner := opts.Agent.PowerShellPromptCmd(opts.CWD, opts.PromptFile, preLaunch, opts.Interactive)
+	if ackMode == config.AckOnLaunchAfterExit && !opts.Interactive {
+		// Chain pickup AFTER the agent — PowerShell short-circuit equivalent
+		// of bash's `&&` is `; if ($?) { ... }` (run only when previous
+		// succeeded).
+		inner += "; if ($?) { cc-handoff pickup " + agent.PSSingleQuote(opts.HandoffID) + " }"
+	}
+	// Note: interactive prompt-body injection isn't implemented on Windows yet,
+	// so AckOnLaunchAfterExit + Interactive is a no-op here. Document and move
+	// on; a future Windows interactive injection path would slot the postlude
+	// into the injected text the same way mac_launch.go does.
 
 	var cmd *exec.Cmd
 	switch app {

@@ -38,5 +38,5 @@ func runOpen(ctx context.Context, args []string) error {
 		return fmt.Errorf("no materialized handoff at %s — has it been picked up? (try `cc-handoff pickup %s`)", dir, id)
 	}
 
-	return notify.LaunchTerminal(ctx, buildLaunchOpts(res, repoRoot, prompt, *dry))
+	return notify.LaunchTerminal(ctx, buildLaunchOpts(res, repoRoot, prompt, id, *dry))
 }

@@ -37,6 +37,26 @@ launch_interactive = false       # default false: run agent one-shot (e.g. `clau
 pre_launch         = ""          # shell snippet inserted between `cd <repo>` and the agent invocation.
                                  # Useful for multi-account OAuth / env activation.
                                  # Example: pre_launch = "clset 6"
+ack_on_launch      = "never"     # if/when the auto-launched handoff is ack'd on the relay
+                                 # (state moves pending → picked):
+                                 #   "never"        — manual /pickup later (default; preserves old flow)
+                                 #   "after_exit"   — interactive: prompt body gets a postlude asking
+                                 #                    the agent to call pickup_handoff MCP at end of
+                                 #                    turn; one-shot (-p): shell chains `<claude> &&
+                                 #                    cc-handoff pickup <id>` so pickup runs only on
+                                 #                    a clean exit
+                                 #   "on_launch"    — shell chains `cc-handoff pickup <id>` BEFORE
+                                 #                    the agent (in a brace group so pickup failure
+                                 #                    doesn't block the agent). Requires
+                                 #                    launch_interactive=false.
+                                 #   "slash_pickup" — start the agent interactively, then inject
+                                 #                    `/pickup` as the first user input. The slash
+                                 #                    command's pickup.md template tells claude to
+                                 #                    list_inbox + pickup_handoff itself. No prompt
+                                 #                    body is injected — the slash command resolves
+                                 #                    to the integration flow. Requires
+                                 #                    launch_interactive=true and Claude (slash
+                                 #                    commands aren't a Codex feature). macOS only.
 wake_on_comment    = false       # Claude only: if true, partner replies pull this Claude session
                                  # back into a turn via a Stop hook. Run `cc-handoff init
                                  # --with-wake-on-comment` to install the hook into .claude/settings.json.

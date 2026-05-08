@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/cc-collaboration/internal/agent"
 	"github.com/cc-collaboration/internal/config"
 )
 
@@ -25,6 +26,15 @@ const (
 // agent startup latency on most machines. If users report "prompt arrives
 // before REPL is ready", lift to a config knob.
 const launchInjectDelaySec = "1.5"
+
+// afterExitInteractivePostludeFmt is appended to the materialized prompt
+// body when ack_on_launch="after_exit" + interactive — instructs the agent
+// to ack via pickup_handoff MCP at end of turn. %s is the handoff id.
+const afterExitInteractivePostludeFmt = "\n\n## After integration\n\n**Important**: before completing this turn, call the `pickup_handoff` MCP tool with `id=%s` to ack the relay. The watch daemon already materialized files; this just updates the relay state from `pending` to `picked`.\n"
+
+// pickupSlashCommand is the slash command typed into the REPL when
+// ack_on_launch="slash_pickup". Resolves to .claude/commands/pickup.md.
+const pickupSlashCommand = "/pickup"
 
 // LaunchTerminal opens Terminal.app or iTerm2 in the requested directory and
 // starts the agent. Behavior depends on opts.Mode and opts.Interactive:
@@ -64,23 +74,70 @@ func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
 			mode, config.LaunchModeWindow, config.LaunchModeSplit)
 	}
 
-	shellCmd := opts.Agent.POSIXPromptCmd(opts.CWD, opts.PromptFile, opts.PreLaunch, opts.Interactive)
+	ackMode := opts.AckOnLaunch
+	if ackMode == "" {
+		ackMode = config.AckOnLaunchNever
+	}
+	if err := validateAckOnLaunch(ackMode, opts.Interactive, opts.HandoffID); err != nil {
+		return err
+	}
 
-	var promptBody string
-	if opts.Interactive {
-		body, err := os.ReadFile(opts.PromptFile)
-		if err != nil {
-			return fmt.Errorf("LaunchTerminal: read prompt %s: %w", opts.PromptFile, err)
+	preLaunch := opts.PreLaunch
+	if ackMode == config.AckOnLaunchOnLaunch {
+		// Inject the pickup as part of preLaunch so it lands BETWEEN cd and
+		// the agent invocation. Brace-group + `; true` makes it always
+		// succeed at the shell level — if the relay is unreachable, claude
+		// still opens. Cwd is preserved (no subshell). Quote the id so a
+		// hostile id can't escape (relay-issued ids are ASCII alnum + _,
+		// but defense in depth is cheap).
+		pickup := "{ cc-handoff pickup " + agent.POSIXSingleQuote(opts.HandoffID) + " ; true ; }"
+		if preLaunch != "" {
+			preLaunch = preLaunch + " && " + pickup
+		} else {
+			preLaunch = pickup
 		}
-		promptBody = string(body)
+	}
+
+	shellCmd := opts.Agent.POSIXPromptCmd(opts.CWD, opts.PromptFile, preLaunch, opts.Interactive)
+
+	if ackMode == config.AckOnLaunchAfterExit && !opts.Interactive {
+		// Chain pickup AFTER the agent exits; `&&` so it only acks on a
+		// successful claude run.
+		shellCmd += " && cc-handoff pickup " + agent.POSIXSingleQuote(opts.HandoffID)
+	}
+
+	// inject describes what to send to the started REPL after the shellCmd has
+	// had a moment to bring the agent up. `text` is the literal payload; `kind`
+	// picks how the AppleScript layer types it:
+	//   - injectKindNone: nothing to inject
+	//   - injectKindPaste: wrap with bracketed-paste markers, no trailing
+	//                     newline (multi-line prompt body)
+	//   - injectKindLine: type as a single line, with default trailing return
+	//                    (slash command — claude submits it)
+	var inject postLaunchInject
+	if opts.Interactive {
+		switch ackMode {
+		case config.AckOnLaunchSlashPickup:
+			inject = postLaunchInject{kind: injectKindLine, text: pickupSlashCommand}
+		default:
+			body, err := os.ReadFile(opts.PromptFile)
+			if err != nil {
+				return fmt.Errorf("LaunchTerminal: read prompt %s: %w", opts.PromptFile, err)
+			}
+			text := string(body)
+			if ackMode == config.AckOnLaunchAfterExit {
+				text += fmt.Sprintf(afterExitInteractivePostludeFmt, opts.HandoffID)
+			}
+			inject = postLaunchInject{kind: injectKindPaste, text: text}
+		}
 	}
 
 	var script string
 	switch app {
 	case config.TerminalAppITerm2:
-		script = itermScript(mode, shellCmd, promptBody, opts.Interactive)
+		script = itermScript(mode, shellCmd, inject)
 	case config.TerminalAppTerminal:
-		script = terminalAppScript(mode, shellCmd, promptBody, opts.Interactive)
+		script = terminalAppScript(mode, shellCmd, inject)
 	default:
 		return fmt.Errorf("LaunchTerminal: unknown terminal_app %q (want %q or %q)",
 			app, config.TerminalAppTerminal, config.TerminalAppITerm2)
@@ -94,7 +151,20 @@ func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
 	return exec.CommandContext(ctx, "osascript", "-e", script).Run()
 }
 
-func itermScript(mode, shellCmd, promptBody string, interactive bool) string {
+type injectKind int
+
+const (
+	injectKindNone injectKind = iota
+	injectKindPaste
+	injectKindLine
+)
+
+type postLaunchInject struct {
+	kind injectKind
+	text string
+}
+
+func itermScript(mode, shellCmd string, inj postLaunchInject) string {
 	var sb strings.Builder
 	sb.WriteString("tell application \"iTerm\"\n\tactivate\n")
 	switch mode {
@@ -116,15 +186,19 @@ func itermScript(mode, shellCmd, promptBody string, interactive bool) string {
 	}
 	sb.WriteString("\ttell targetSession\n")
 	sb.WriteString("\t\twrite text " + applescriptStringLit(shellCmd) + "\n")
-	if interactive && promptBody != "" {
+	switch inj.kind {
+	case injectKindPaste:
 		sb.WriteString("\t\tdelay " + launchInjectDelaySec + "\n")
-		sb.WriteString("\t\twrite text " + applescriptStringLit(bracketedPaste(promptBody)) + " newline NO\n")
+		sb.WriteString("\t\twrite text " + applescriptStringLit(bracketedPaste(inj.text)) + " newline NO\n")
+	case injectKindLine:
+		sb.WriteString("\t\tdelay " + launchInjectDelaySec + "\n")
+		sb.WriteString("\t\twrite text " + applescriptStringLit(inj.text) + "\n")
 	}
 	sb.WriteString("\tend tell\nend tell")
 	return sb.String()
 }
 
-func terminalAppScript(mode, shellCmd, promptBody string, interactive bool) string {
+func terminalAppScript(mode, shellCmd string, inj postLaunchInject) string {
 	var sb strings.Builder
 	sb.WriteString("tell application \"Terminal\"\n\tactivate\n")
 	switch mode {
@@ -142,9 +216,13 @@ func terminalAppScript(mode, shellCmd, promptBody string, interactive bool) stri
 	default: // window
 		sb.WriteString("\tset target to (do script " + applescriptStringLit(shellCmd) + ")\n")
 	}
-	if interactive && promptBody != "" {
+	switch inj.kind {
+	case injectKindPaste:
 		sb.WriteString("\tdelay " + launchInjectDelaySec + "\n")
-		sb.WriteString("\tdo script " + applescriptStringLit(bracketedPaste(promptBody)) + " in target\n")
+		sb.WriteString("\tdo script " + applescriptStringLit(bracketedPaste(inj.text)) + " in target\n")
+	case injectKindLine:
+		sb.WriteString("\tdelay " + launchInjectDelaySec + "\n")
+		sb.WriteString("\tdo script " + applescriptStringLit(inj.text) + " in target\n")
 	}
 	sb.WriteString("end tell")
 	return sb.String()

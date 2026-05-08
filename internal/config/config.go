@@ -81,11 +81,34 @@ type Triggers struct {
 	// a brand-new window; LaunchModeSplit splits the current window.
 	// Windows always uses a new window regardless.
 	LaunchMode string `toml:"launch_mode,omitempty"`
+	// AckOnLaunch decides if/when an auto-launched handoff is ack'd on the
+	// relay (state moves pending → picked):
+	//   - "never" (default): manual /pickup later, like the existing flow
+	//   - "after_exit": ack only after the agent finishes processing —
+	//                   for interactive launches, we append a postlude line
+	//                   to the prompt body asking the agent to call
+	//                   pickup_handoff MCP at the end of its turn; for
+	//                   one-shot (-p) launches, the shell chains
+	//                   `<claude> && cc-handoff pickup <id>` so pickup
+	//                   runs only on a clean claude exit
+	//   - "on_launch": ack via `cc-handoff pickup <id>` chained right
+	//                  before the agent invocation. Only valid with
+	//                  launch_interactive=false; the launcher errors out
+	//                  if both are set (backgrounding the agent breaks
+	//                  the terminal-side prompt injection)
+	AckOnLaunch string `toml:"ack_on_launch,omitempty"`
 }
 
 const (
 	LaunchModeWindow = "window"
 	LaunchModeSplit  = "split"
+)
+
+const (
+	AckOnLaunchNever       = "never"
+	AckOnLaunchAfterExit   = "after_exit"
+	AckOnLaunchOnLaunch    = "on_launch"
+	AckOnLaunchSlashPickup = "slash_pickup"
 )
 
 const (
