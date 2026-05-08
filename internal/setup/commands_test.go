@@ -11,7 +11,7 @@ import (
 
 func TestCopyCommands_FreshDir(t *testing.T) {
 	dir := t.TempDir()
-	res, err := CopyCommands(dir, "0.1.0", refusePrompt(t), io.Discard)
+	res, err := CopyCommands(dir, "0.1.1", refusePrompt(t), io.Discard)
 	if err != nil {
 		t.Fatalf("CopyCommands: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestCopyCommands_FreshDir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		if !strings.Contains(string(got), "cc-handoff-version: 0.1.0") {
+		if !strings.Contains(string(got), "cc-handoff-version: 0.1.1") {
 			t.Errorf("%s missing version stamp:\n%s", name, got)
 		}
 	}
@@ -31,10 +31,10 @@ func TestCopyCommands_FreshDir(t *testing.T) {
 
 func TestCopyCommands_SameVersionSkips(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := CopyCommands(dir, "0.1.0", nil, io.Discard); err != nil {
+	if _, err := CopyCommands(dir, "0.1.1", nil, io.Discard); err != nil {
 		t.Fatalf("first copy: %v", err)
 	}
-	res, err := CopyCommands(dir, "0.1.0", refusePrompt(t), io.Discard)
+	res, err := CopyCommands(dir, "0.1.1", refusePrompt(t), io.Discard)
 	if err != nil {
 		t.Fatalf("second copy: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestCopyCommands_NewerOnDiskWarns(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	var buf bytes.Buffer
-	res, err := CopyCommands(dir, "0.1.0", refusePrompt(t), &buf)
+	res, err := CopyCommands(dir, "0.1.1", refusePrompt(t), &buf)
 	if err != nil {
 		t.Fatalf("CopyCommands: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCopyCommands_OlderTargetPromptsOverwrite(t *testing.T) {
 		}
 		return 'o', nil
 	}
-	res, err := CopyCommands(dir, "0.1.0", prompt, io.Discard)
+	res, err := CopyCommands(dir, "0.1.1", prompt, io.Discard)
 	if err != nil {
 		t.Fatalf("CopyCommands: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCopyCommands_UnstampedTargetPromptsBackup(t *testing.T) {
 		}
 		return 'b', nil
 	}
-	res, err := CopyCommands(dir, "0.1.0", prompt, io.Discard)
+	res, err := CopyCommands(dir, "0.1.1", prompt, io.Discard)
 	if err != nil {
 		t.Fatalf("CopyCommands: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestCopyCommands_NilPromptSkipsConflicts(t *testing.T) {
 	if _, err := CopyCommands(dir, "0.0.9", nil, io.Discard); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	res, err := CopyCommands(dir, "0.1.0", nil, io.Discard)
+	res, err := CopyCommands(dir, "0.1.1", nil, io.Discard)
 	if err != nil {
 		t.Fatalf("CopyCommands: %v", err)
 	}
@@ -143,12 +143,12 @@ func TestCopyCommands_NilPromptSkipsConflicts(t *testing.T) {
 }
 
 func TestStampAndExtract(t *testing.T) {
-	got := stampVersion([]byte("hello\n"), "0.1.0")
-	if !strings.HasSuffix(string(got), "<!-- cc-handoff-version: 0.1.0 -->\n") {
+	got := stampVersion([]byte("hello\n"), "0.1.1")
+	if !strings.HasSuffix(string(got), "<!-- cc-handoff-version: 0.1.1 -->\n") {
 		t.Errorf("stamp at tail: %q", got)
 	}
-	if v := extractVersion(got); v != "0.1.0" {
-		t.Errorf("extractVersion = %q, want 0.1.0", v)
+	if v := extractVersion(got); v != "0.1.1" {
+		t.Errorf("extractVersion = %q, want 0.1.1", v)
 	}
 	bumped := stampVersion(got, "0.2.0")
 	if v := extractVersion(bumped); v != "0.2.0" {
@@ -165,12 +165,12 @@ func TestCompareSemver(t *testing.T) {
 		a, b string
 		want int
 	}{
-		{"0.1.0", "0.1.0", 0},
-		{"0.1.0", "0.2.0", -1},
+		{"0.1.1", "0.1.1", 0},
+		{"0.1.1", "0.2.0", -1},
 		{"1.0.0", "0.9.9", 1},
-		{"v0.1.0", "0.1.0", 0},
-		{"dev", "0.1.0", -1},
-		{"0.1.0-rc1", "0.1.0", 0},
+		{"v0.1.1", "0.1.1", 0},
+		{"dev", "0.1.1", -1},
+		{"0.1.1-rc1", "0.1.1", 0},
 	}
 	for _, c := range cases {
 		if got := compareSemver(c.a, c.b); got != c.want {

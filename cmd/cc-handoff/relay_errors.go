@@ -16,7 +16,7 @@ import (
 //     instead", which already tells the user what to do next.
 //   - anything else: pass through unchanged.
 //
-// All commands that touch endpoints added after 0.1.0 should funnel their
+// All commands that touch endpoints added after 0.1.1 should funnel their
 // transport error returns through this helper so the messaging stays consistent.
 func relayCompatError(err error, feature string) error {
 	if err == nil {

@@ -163,7 +163,7 @@ func extractVersion(content []byte) string {
 // compareSemver returns -1/0/+1 comparing two semver-ish strings.
 // "dev" sorts as the lowest possible version. Strings without a leading 'v' or
 // digit fall back to lexicographic compare; we don't need full semver semantics
-// here since all real values come from the VERSION file ("0.1.0") or ldflags.
+// here since all real values come from the VERSION file ("0.1.1") or ldflags.
 func compareSemver(a, b string) int {
 	an := normalizeVer(a)
 	bn := normalizeVer(b)

@@ -45,4 +45,4 @@ You just finished writing or modifying an API. Hand it off to the frontend partn
 
 Do **not** invent endpoints you didn't actually implement. Use only what's in git diff and your session memory. **Do not invent requirements or product intent either** — if the user said "没有" / "n"，就不传 note；PRD 同理，没有就不传 prd。
 
-<!-- cc-handoff-version: 0.1.0 -->
+<!-- cc-handoff-version: 0.1.1 -->

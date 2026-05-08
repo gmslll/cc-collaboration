@@ -108,4 +108,4 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 
 Do **not** invent endpoints you couldn't ground in real route registrations. If the brief feels thin, that's a signal you need to read more files, not a signal to fill in plausible-looking content. **Do not invent requirements or product intent either** — `没有` 就是没有,note 和 prd 都不要伪造。
 
-<!-- cc-handoff-version: 0.1.0 -->
+<!-- cc-handoff-version: 0.1.1 -->

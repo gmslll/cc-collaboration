@@ -47,4 +47,4 @@ This command is the **reverse** of `/handoff`. There's no diff to ship; the summ
 
 Do **not** propose backend implementation details — that's the receiving Claude's job after pickup. Stick to "what I need and why"; let them figure out "how". And **do not invent fields, endpoints, or product intent the user didn't actually give you** — 用户说没有就是没有，note 和 prd 都不要伪造。
 
-<!-- cc-handoff-version: 0.1.0 -->
+<!-- cc-handoff-version: 0.1.1 -->
