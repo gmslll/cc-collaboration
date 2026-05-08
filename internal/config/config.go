@@ -60,9 +60,10 @@ type Rule struct {
 }
 
 type Triggers struct {
-	AutoLaunch    bool   `toml:"auto_launch"`
-	TerminalApp   string `toml:"terminal_app,omitempty"`
-	WakeOnComment bool   `toml:"wake_on_comment,omitempty"`
+	AutoLaunch       bool   `toml:"auto_launch"`
+	AutoLaunchNormal bool   `toml:"auto_launch_normal,omitempty"`
+	TerminalApp      string `toml:"terminal_app,omitempty"`
+	WakeOnComment    bool   `toml:"wake_on_comment,omitempty"`
 }
 
 const (

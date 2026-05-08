@@ -651,6 +651,7 @@ rm -rf ~/.config/cc-handoff
 | `/v1/events` 在反代背后返回 5xx | nginx/caddy 的 `proxy_buffering`/`flush_interval` 没设；或 caddy 之前用过 HTTP/3 出 bug，强制 `protocols h1 h2` |
 | Claude Code 看不见 MCP 工具 | (1) 没重启 Claude Code session；(2) `claude mcp list` 看有没有 cc-handoff；(3) `cc-handoff-mcp` 二进制没装到 PATH |
 | urgent 没自动开终端 | (1) `.cc-handoff.toml` 里 `triggers.auto_launch = true` 没设；(2) watch 不在跑；(3) macOS 隐私权限被拒了，去"系统设置 → 隐私 → 自动化"把 cc-handoff-mcp / cc-handoff 控制 Terminal 的权限打开 |
+| 普通优先级也想自动开终端 | 接收侧 `.cc-handoff.toml` 里再加 `triggers.auto_launch_normal = true`(`auto_launch=true` 是前提)。改完重启 watch |
 | `make deploy` ssh 失败 | 用 `SSH_OPTS="-i ~/.ssh/id_xxx -p 2222"` 透传给 ssh/scp |
 | 升级后 watch 还连旧 token | `launchctl kickstart -k gui/$(id -u)/com.cc-handoff.watch` 强制重启 |
 | `cc-handoff status / sent / retract` 返回 "relay does not implement this endpoint" | relay 还是旧版本(没多 agent / 状态可见性那批)。`make deploy HOST=<vps>` 升级 relay |

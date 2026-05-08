@@ -189,7 +189,7 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 		})
 	}
 
-	if pkg.Urgency == handoffschema.UrgencyUrgent && h.res.Triggers.AutoLaunch {
+	if h.res.Triggers.AutoLaunch && (pkg.Urgency == handoffschema.UrgencyUrgent || h.res.Triggers.AutoLaunchNormal) {
 		err := notify.LaunchTerminal(ctx, notify.LaunchOpts{
 			Agent:      h.res.Agent,
 			App:        h.res.Triggers.TerminalApp,
