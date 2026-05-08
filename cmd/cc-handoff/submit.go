@@ -19,6 +19,7 @@ func runSubmit(ctx context.Context, args []string) error {
 	to := fs.String("to", "", "recipient identity (default: partner from .cc-handoff.toml)")
 	urgent := fs.Bool("urgent", false, "mark handoff as urgent (recipient may auto-launch)")
 	note := fs.String("note", "", "需求 / 跨端约束 (Markdown)；会以「⚠️ 必读」段渲染到接收端 prompt 并要求 INTEGRATION.md 逐条响应")
+	prd := fs.String("prd", "", "产品需求 / 设计意图 (Markdown)；以「📋 背景参考」段渲染到接收端 prompt，不强制逐条响应（区别于 --note）")
 	baseOverride := fs.String("base", "", "override git base ref")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -66,6 +67,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		Urgency:     urgency,
 		Base:        base,
 		Note:        *note,
+		Prd:         *prd,
 		Rules:       engine,
 		SwaggerPath: res.Swagger,
 		InboxDir:    inbox.InboxDir(repoRoot, res.InboxOverride),

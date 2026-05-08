@@ -202,6 +202,12 @@ func renderSummaryMD(p *handoffschema.Package) string {
 		sb.WriteString(p.NoteMD)
 		sb.WriteString("\n")
 	}
+
+	if prd := strings.TrimSpace(p.PrdMD); prd != "" {
+		sb.WriteString("## Product brief / PRD\n\n")
+		sb.WriteString(prd)
+		sb.WriteString("\n")
+	}
 	return sb.String()
 }
 
@@ -252,6 +258,16 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 
 	if p.RespondsTo != "" {
 		fmt.Fprintf(&sb, "> ↩️ 这次 handoff 是在回应你之前发起的需求 `%s`。先去 `.cc-handoff/inbox/%s/`（如果当时领过）或 `comment_handoff` 拉一下原需求内容对照，再开始整合。\n\n", p.RespondsTo, p.RespondsTo)
+	}
+
+	if prd := strings.TrimSpace(p.PrdMD); prd != "" {
+		sb.WriteString("## 📋 产品需求 / 设计意图 (背景参考)\n\n")
+		sb.WriteString("以下是后端从产品侧拿到的需求描述，用来帮你理解这次 API 变更的业务目的。**作为背景阅读**，不要求在 INTEGRATION.md 里逐条映射；但你的集成方案应当与这里的产品意图自洽，遇到契约描述与产品意图明显冲突时优先用 `comment_handoff` 问发送端。\n\n")
+		sb.WriteString(prd)
+		if !strings.HasSuffix(prd, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
 	}
 
 	if p.SummaryMD != "" {
@@ -370,6 +386,16 @@ func renderRequestPromptMD(p *handoffschema.Package, mode Mode) string {
 		fmt.Fprintf(&sb, "收到 request `%s` (from `%s`).\n\n", p.ID, p.Sender)
 		sb.WriteString("**这不是在让你对接已存在的 API**，而是发起方（通常是前端）发现你这边设计不全 / 缺字段 / 缺能力，让你补齐。\n\n")
 		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s` 的响应方案，写完后停下等人工 review。\n\n", responsePath)
+	}
+
+	if prd := strings.TrimSpace(p.PrdMD); prd != "" {
+		sb.WriteString("## 📋 产品需求 / 设计意图 (背景参考)\n\n")
+		sb.WriteString("以下是发起方（前端）从产品侧拿到的需求描述，用来帮你理解这个 request 背后的业务目的。**作为背景阅读**，不要求在响应方案里逐条映射；但你的设计应当与这里的产品意图自洽。\n\n")
+		sb.WriteString(prd)
+		if !strings.HasSuffix(prd, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
 	}
 
 	if p.SummaryMD != "" {

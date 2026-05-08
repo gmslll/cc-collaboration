@@ -65,7 +65,27 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 非显然的对接注意点。例如:「列表接口分页基于 cursor 而不是 offset」「金额单位是分」「时间字段是 RFC3339 string」「同一个 endpoint 在不同租户下返回字段集合不同」等。
 ```
 
-## 4. 询问跨端需求 / 约束
+## 4. 询问产品需求 / 设计意图 (PRD)
+
+在询问 note 之前先问一次:
+
+> 有产品需求文档或设计意图想一起带过去吗?前端拿到这层 why 集成会更准。三种方式都行:
+> - **文件路径**(如 `docs/prd/feature-x.md`)—— 我用 Read 读完整内容
+> - **直接粘贴文本** —— 你把内容贴进来
+> - **口头描述** —— 你用自然语言说,我帮你整理成 markdown
+>
+> 没有就回 `没有` / `n`。
+
+**例外**:如果用户在原始 `/handoff-module` 指令里已经写明 PRD 来源(例如 `/handoff-module internal/module/oms/order prd:docs/prd/order.md`),跳过这一问,按用户给的来源直接处理。
+
+处理方式:
+- 文件路径:用 Read 读取完整内容;路径不存在让用户确认,**不要伪造**
+- 粘贴文本:直接采用用户原文
+- 口头描述:整理成结构化 markdown,但**忠实复述**用户表达,不要替产品扩写需求或加入用户没说的细节
+
+把结果作为 `prd` 参数传给 `submit_handoff`。PRD 会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt,**作为背景参考阅读,不要求逐条响应** —— 这是它和 note 的区别:note 是硬约束必读,prd 是 why 参考。
+
+## 5. 询问跨端需求 / 约束
 
 调 `submit_handoff` 之前,明确问用户一次:
 
@@ -73,18 +93,19 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 
 **例外**:如果用户在原始 `/handoff-module` 指令里已经写明了备注(例如 `/handoff-module internal/module/oms/order 备注:分页默认 50 条`),跳过这一问,直接采用用户那段话作为备注,不要再确认。
 
-## 5. Submit
+## 6. Submit
 
 调 `submit_handoff` MCP 工具:
 - `summary`: 第 3 步的完整 brief Markdown(始终传 — 不依赖磁盘 draft)
 - `module_paths`: 用户给的模块路径数组,与磁盘上一致
-- `note`: 第 4 步的需求备注(用户回 `没有` / `n` 就不传)
+- `prd`: 第 4 步的产品需求(用户回 `没有` / `n` 就不传)
+- `note`: 第 5 步的需求备注(用户回 `没有` / `n` 就不传)
 - `urgent: true`:仅当用户明确说紧急时
 
-## 6. Report back
+## 7. Report back
 
 打印:handoff id、recipient、包含的模块、targeting_hints 数量。
 
-Do **not** invent endpoints you couldn't ground in real route registrations. If the brief feels thin, that's a signal you need to read more files, not a signal to fill in plausible-looking content. **Do not invent requirements either** — `没有` 就是没有。
+Do **not** invent endpoints you couldn't ground in real route registrations. If the brief feels thin, that's a signal you need to read more files, not a signal to fill in plausible-looking content. **Do not invent requirements or product intent either** — `没有` 就是没有,note 和 prd 都不要伪造。
 
 <!-- cc-handoff-version: 0.1.0 -->

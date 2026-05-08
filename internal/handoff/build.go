@@ -23,6 +23,7 @@ type BuildOptions struct {
 	Urgency     handoffschema.Urgency
 	Base        string
 	Note        string
+	Prd         string
 	Rules       *rules.Engine
 	SwaggerPath string             // optional, relative to RepoRoot
 	ModulePaths []string           // module-brief mode: when set, skip git diff + swagger delta and treat summary as a self-contained API contract
@@ -137,6 +138,7 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 		ModulePaths:    opts.ModulePaths,
 		TargetingHints: hints,
 		NoteMD:         opts.Note,
+		PrdMD:          opts.Prd,
 		RespondsTo:     opts.RespondsTo,
 	}
 

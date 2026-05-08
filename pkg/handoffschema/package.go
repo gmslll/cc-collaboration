@@ -59,6 +59,7 @@ type Package struct {
 	TargetingHints []TargetingHint `json:"targeting_hints,omitempty"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
 	NoteMD         string          `json:"note_md,omitempty"`
+	PrdMD          string          `json:"prd_md,omitempty"`
 	ReplacesID     string          `json:"replaces_id,omitempty"`
 	RespondsTo     string          `json:"responds_to,omitempty"`
 }

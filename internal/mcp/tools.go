@@ -56,6 +56,7 @@ func submitHandoffTool() Tool {
     "to":           {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
     "urgent":       {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
     "note":         {"type": "string", "description": "Markdown 写的「需求 / 跨端约束」段，例如错误码对照、字段大小写规则、分页约定、不可合并的请求等。会以「⚠️ 后端备注 / 需求 (必读)」醒目段渲染到接收端 prompt，并被强制要求 INTEGRATION.md 逐条响应。短到一两句也可以；没有就不传。"},
+    "prd":          {"type": "string", "description": "产品需求 / 设计意图 markdown（背景参考）。会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt，作为背景阅读，不要求 INTEGRATION.md 逐条响应。和 note 区分：note 是必须兑现的硬约束（必读），prd 是 why（参考）。没有就不传。"},
     "module_paths": {"type": "array", "items": {"type": "string"}, "description": "Module-brief mode: relative-to-repo-root directory paths (e.g. internal/module/oms/order). When set, the build switches to module-brief mode — git diff and Swagger delta are skipped, and summary is treated as a self-contained API contract document. Drive this from the /handoff-module slash command; do not set it manually unless you know why."},
     "responds_to":  {"type": "string", "description": "若本 handoff 是对某个对端 request (kind=request) 的回应，把 request id 填这里 (例如 h_20260507_ABCD1234)。会渲染到接收端 prompt 顶端的「↩️ 回应 xxx」段，让发起方知道此次交付是回应哪条需求。"},
     "cwd":          {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
@@ -74,6 +75,7 @@ type submitArgs struct {
 	To          string   `json:"to"`
 	Urgent      bool     `json:"urgent"`
 	Note        string   `json:"note"`
+	Prd         string   `json:"prd"`
 	ModulePaths []string `json:"module_paths"`
 	RespondsTo  string   `json:"responds_to"`
 	CWD         string   `json:"cwd"`
@@ -127,6 +129,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Urgency:     urgency,
 		Base:        res.Base,
 		Note:        a.Note,
+		Prd:         a.Prd,
 		Rules:       engine,
 		SwaggerPath: res.Swagger,
 		ModulePaths: a.ModulePaths,
@@ -178,6 +181,7 @@ func submitRequestTool() Tool {
     "to":      {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
     "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
     "note":    {"type": "string", "description": "给后端的额外约束/备注，例如「不要破坏现有调用方」「字段命名跟 X 一致」「兼容现存数据」。会以「⚠️ 发起方备注 / 跨端约束 (必读)」段渲染到接收端 prompt，被要求逐条响应。没有就不传。"},
+    "prd":     {"type": "string", "description": "前端从产品侧拿到的需求 / 设计意图 markdown（背景参考）。会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt，帮接收方理解这个 request 背后的业务目的。**作为背景阅读**，不要求逐条响应。和 note 区分：note 是必须兑现的硬约束（必读），prd 是 why（参考）。没有就不传。"},
     "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
@@ -194,6 +198,7 @@ type submitRequestArgs struct {
 	To      string `json:"to"`
 	Urgent  bool   `json:"urgent"`
 	Note    string `json:"note"`
+	Prd     string `json:"prd"`
 	CWD     string `json:"cwd"`
 }
 
@@ -239,6 +244,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Recipient: recipient,
 		Urgency:   urgency,
 		Note:      a.Note,
+		Prd:       a.Prd,
 		Kind:      handoffschema.KindRequest,
 		InboxDir:  inboxDir,
 	})
