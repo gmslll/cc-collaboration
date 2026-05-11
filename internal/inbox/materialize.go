@@ -290,6 +290,9 @@ func renderSummaryMD(p *handoffschema.Package) string {
 	if p.RespondsTo != "" {
 		fmt.Fprintf(&sb, "- Responds to: `%s`\n", p.RespondsTo)
 	}
+	if p.AmendsHandoff != "" {
+		fmt.Fprintf(&sb, "- Amends: `%s`\n", p.AmendsHandoff)
+	}
 	sb.WriteString("\n")
 
 	if p.SummaryMD != "" {
@@ -396,6 +399,10 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 		sb.WriteString("# Handoff: 产出前端对接方案\n\n")
 		fmt.Fprintf(&sb, "收到 handoff `%s` (from `%s`).\n\n", p.ID, p.Sender)
 		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s`，写完后停下等人工 review。\n\n", integrationPath)
+	}
+
+	if id := p.AmendsHandoff; id != "" {
+		fmt.Fprintf(&sb, "> ⚠️ **修正交付**:本次 handoff 是对你**之前已经收到**的 `%s` 的修正/补丁。**先打开** `.cc-handoff/inbox/%s/`(若当时已 pickup;否则 `comment_handoff %s` 拉一下) 和前端仓库 `docs/integrations/%s.md` 读原方案,本次只交付**相对原 handoff 的增量改动**;凡跟原方案冲突的以这次为准。\n\n", id, id, id, id)
 	}
 
 	if p.RespondsTo != "" {
@@ -542,9 +549,13 @@ func renderRequestPromptMD(p *handoffschema.Package, mode Mode) string {
 		fmt.Fprintf(&sb, "**你的任务不是直接改代码**，而是产出 `%s` 的响应方案，写完后停下等人工 review。\n\n", responsePath)
 	}
 
+	if p.AmendsHandoff != "" {
+		fmt.Fprintf(&sb, "> ⚠️ **修正交付**:本次 request 是对你**之前已经收到**的 `%s` 的修正/补丁。先翻原 request 看上下文,本次只交付**相对原 request 的增量**;凡跟原内容冲突的以这次为准。\n\n", p.AmendsHandoff)
+	}
+
 	if prd := strings.TrimSpace(p.PrdMD); prd != "" {
 		sb.WriteString("## 📋 产品需求 / 设计意图 (背景参考)\n\n")
-		sb.WriteString("> 🟢 **这一段是「为什么」的背景参考，不是逐条硬约束**。读懂它能让你的响应方案契合产品意图，但**不要求你在响应方案 / 代码里逐条回应**。它和下面的「发起方备注」是两个用途：备注必须逐条兑现，PRD 用来理解意图。\n\n")
+		sb.WriteString("> 🟢 **这一段是「为什么」的背景参考，不是逐条硬约束**。读懂它能让你的响应方案契合产品意图,但**不要求你在响应方案 / 代码里逐条回应**。它和下面的「发起方备注」是两个用途:备注必须逐条兑现,PRD 用来理解意图。\n\n")
 		sb.WriteString("以下是发起方（前端）从产品侧拿到的需求描述，用来帮你理解这个 request 背后的业务目的。\n\n")
 		sb.WriteString(prd)
 		if !strings.HasSuffix(prd, "\n") {

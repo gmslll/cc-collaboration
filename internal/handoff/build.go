@@ -29,6 +29,7 @@ type BuildOptions struct {
 	ModulePaths []string           // module-brief mode: when set, skip git diff + swagger delta and treat summary as a self-contained API contract
 	Kind        handoffschema.Kind // empty defaults to KindDelivery; KindRequest skips git diff / swagger / rules
 	RespondsTo  string             // on a delivery, the request id this answers (renders a banner on the receiver side)
+	Amends      string             // on a delivery, the prior handoff id this delivery corrects/supersedes (renders a banner on the receiver side)
 	// InboxDir is the absolute resolved inbox directory (caller computes via
 	// inbox.InboxDir to apply the legacy / primary fallback). The draft
 	// summary file lives here.
@@ -140,6 +141,7 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 		NoteMD:         opts.Note,
 		PrdMD:          opts.Prd,
 		RespondsTo:     opts.RespondsTo,
+		AmendsHandoff:  opts.Amends,
 	}
 
 	return pkg, nil

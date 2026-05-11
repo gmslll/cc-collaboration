@@ -61,6 +61,7 @@ func submitHandoffTool() Tool {
     "prd":          {"type": "string", "description": "产品需求 / 设计意图 markdown（背景参考）。会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt，作为背景阅读，不要求 INTEGRATION.md 逐条响应。和 note 区分：note 是必须兑现的硬约束（必读），prd 是 why（参考）。没有就不传。"},
     "module_paths": {"type": "array", "items": {"type": "string"}, "description": "Module-brief mode: relative-to-repo-root directory paths (e.g. internal/module/oms/order). When set, the build switches to module-brief mode — git diff and Swagger delta are skipped, and summary is treated as a self-contained API contract document. Drive this from the /handoff-module slash command; do not set it manually unless you know why."},
     "responds_to":  {"type": "string", "description": "若本 handoff 是对某个对端 request (kind=request) 的回应，把 request id 填这里 (例如 h_20260507_ABCD1234)。会渲染到接收端 prompt 顶端的「↩️ 回应 xxx」段，让发起方知道此次交付是回应哪条需求。"},
+    "amends":       {"type": "string", "description": "若本次 handoff 是对自己**先前已发出**的某个 handoff 的修正交付(比如 endpoint 改了字段、错误码变了、整合方案需要重做),把上次的 handoff id 填这里。会渲染到接收端 prompt 顶端的「⚠️ 修正交付」横幅,提示前端去翻原版 INTEGRATION.md 对照本次增量。和 responds_to 区分:responds_to 是「我在回应你之前发的需求」,amends 是「我之前发过的 handoff 这次要改」。没有就不传。"},
     "cwd":          {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
@@ -80,6 +81,7 @@ type submitArgs struct {
 	Prd         string   `json:"prd"`
 	ModulePaths []string `json:"module_paths"`
 	RespondsTo  string   `json:"responds_to"`
+	Amends      string   `json:"amends"`
 	CWD         string   `json:"cwd"`
 }
 
@@ -137,6 +139,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		ModulePaths: a.ModulePaths,
 		Kind:        handoffschema.KindDelivery,
 		RespondsTo:  a.RespondsTo,
+		Amends:      a.Amends,
 		InboxDir:    inboxDir,
 	})
 	if err != nil {
@@ -171,6 +174,9 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	}
 	if pkg.RespondsTo != "" {
 		fmt.Fprintf(&sb, "- responds_to: `%s`\n", pkg.RespondsTo)
+	}
+	if pkg.AmendsHandoff != "" {
+		fmt.Fprintf(&sb, "- amends: `%s`\n", pkg.AmendsHandoff)
 	}
 	return textResult(sb.String()), nil
 }
@@ -828,6 +834,9 @@ func listLocalInboxHandler(_ context.Context, raw json.RawMessage) (ToolResult, 
 	for _, it := range items {
 		fmt.Fprintf(&sb, "- `%s` from `%s` repo=`%s` created=%s",
 			it.ID, it.Sender, it.Repo, it.CreatedAt.Format("2006-01-02 15:04:05"))
+		if it.AmendsHandoff != "" {
+			fmt.Fprintf(&sb, " (amends `%s`)", it.AmendsHandoff)
+		}
 		if it.Retracted {
 			sb.WriteString(" **RETRACTED**")
 		}

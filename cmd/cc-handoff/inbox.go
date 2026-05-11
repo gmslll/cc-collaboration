@@ -41,7 +41,7 @@ func runInbox(_ context.Context, args []string) error {
 		fmt.Printf("no materialized handoffs at %s\n", dir)
 		return nil
 	}
-	fmt.Printf("%-32s  %-22s  %-7s  %-19s  %-7s  %s\n", "ID", "FROM", "URG", "WHEN", "FLAGS", "REPO")
+	fmt.Printf("%-32s  %-22s  %-7s  %-19s  %-9s  %s\n", "ID", "FROM", "URG", "WHEN", "FLAGS", "REPO")
 	for _, it := range items {
 		flags := ""
 		if it.Retracted {
@@ -50,10 +50,13 @@ func runInbox(_ context.Context, args []string) error {
 		if it.HasComments {
 			flags += "C "
 		}
+		if it.AmendsHandoff != "" {
+			flags += "A "
+		}
 		if flags == "" {
 			flags = "-"
 		}
-		fmt.Printf("%-32s  %-22s  %-7s  %-19s  %-7s  %s\n",
+		fmt.Printf("%-32s  %-22s  %-7s  %-19s  %-9s  %s\n",
 			it.ID,
 			truncRight(it.Sender, 22),
 			it.Urgency,

@@ -15,15 +15,16 @@ import (
 // `cc-handoff inbox` and MCP `list_local_inbox` both consume this), so the
 // directory walk + package.json decode + flag detection lives in one place.
 type LocalItem struct {
-	ID          string    `json:"id"`
-	Sender      string    `json:"sender"`
-	Recipient   string    `json:"recipient"`
-	Repo        string    `json:"repo"`
-	Urgency     string    `json:"urgency"`
-	CreatedAt   time.Time `json:"created_at"`
-	Retracted   bool      `json:"retracted"`
-	HasComments bool      `json:"has_comments"`
-	Path        string    `json:"path"`
+	ID            string    `json:"id"`
+	Sender        string    `json:"sender"`
+	Recipient     string    `json:"recipient"`
+	Repo          string    `json:"repo"`
+	Urgency       string    `json:"urgency"`
+	CreatedAt     time.Time `json:"created_at"`
+	Retracted     bool      `json:"retracted"`
+	HasComments   bool      `json:"has_comments"`
+	Path          string    `json:"path"`
+	AmendsHandoff string    `json:"amends_handoff,omitempty"`
 }
 
 // ListLocal returns the materialized handoffs under inboxDir, newest-first.
@@ -56,15 +57,16 @@ func ListLocal(inboxDir string) ([]LocalItem, error) {
 		_, retractedErr := os.Stat(filepath.Join(dir, "RETRACTED.md"))
 		_, commentsErr := os.Stat(filepath.Join(dir, "comments.md"))
 		out = append(out, LocalItem{
-			ID:          p.ID,
-			Sender:      p.Sender,
-			Recipient:   p.Recipient,
-			Repo:        p.Repo.Name,
-			Urgency:     string(p.Urgency),
-			CreatedAt:   p.CreatedAt,
-			Retracted:   retractedErr == nil,
-			HasComments: commentsErr == nil,
-			Path:        dir,
+			ID:            p.ID,
+			Sender:        p.Sender,
+			Recipient:     p.Recipient,
+			Repo:          p.Repo.Name,
+			Urgency:       string(p.Urgency),
+			CreatedAt:     p.CreatedAt,
+			Retracted:     retractedErr == nil,
+			HasComments:   commentsErr == nil,
+			Path:          dir,
+			AmendsHandoff: p.AmendsHandoff,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })

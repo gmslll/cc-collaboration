@@ -20,6 +20,7 @@ func runSubmit(ctx context.Context, args []string) error {
 	urgent := fs.Bool("urgent", false, "mark handoff as urgent (recipient may auto-launch)")
 	note := fs.String("note", "", "需求 / 跨端约束 (Markdown)；会以「⚠️ 必读」段渲染到接收端 prompt 并要求 INTEGRATION.md 逐条响应")
 	prd := fs.String("prd", "", "产品需求 / 设计意图 (Markdown)；以「📋 背景参考」段渲染到接收端 prompt，不强制逐条响应（区别于 --note）")
+	amends := fs.String("amends", "", "若本次是对之前已发过的某个 handoff 的修正交付,填上次的 handoff id;接收端 prompt 顶端会显示「⚠️ 修正交付」横幅,提示前端去对照原版 INTEGRATION.md")
 	baseOverride := fs.String("base", "", "override git base ref")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -70,6 +71,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		Prd:         *prd,
 		Rules:       engine,
 		SwaggerPath: res.Swagger,
+		Amends:      *amends,
 		InboxDir:    inbox.InboxDir(repoRoot, res.InboxOverride),
 	})
 	if err != nil {
@@ -93,6 +95,9 @@ func runSubmit(ctx context.Context, args []string) error {
 	if pkg.APIDelta != nil {
 		fmt.Printf("  api_delta: +%d ~%d -%d\n",
 			len(pkg.APIDelta.Added), len(pkg.APIDelta.Changed), len(pkg.APIDelta.Removed))
+	}
+	if pkg.AmendsHandoff != "" {
+		fmt.Printf("  amends=%s\n", pkg.AmendsHandoff)
 	}
 	return nil
 }

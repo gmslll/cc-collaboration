@@ -60,7 +60,7 @@ type Package struct {
 	Attachments    []Attachment    `json:"attachments,omitempty"`
 	NoteMD         string          `json:"note_md,omitempty"`
 	PrdMD          string          `json:"prd_md,omitempty"`
-	ReplacesID     string          `json:"replaces_id,omitempty"`
+	AmendsHandoff  string          `json:"amends_handoff,omitempty"`
 	RespondsTo     string          `json:"responds_to,omitempty"`
 }
 

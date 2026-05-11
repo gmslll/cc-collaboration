@@ -96,6 +96,44 @@ func TestRenderAPIDeltaMD_FieldLevel(t *testing.T) {
 	}
 }
 
+// TestRenderPromptMD_AmendsBanner: when AmendsHandoff is set on a delivery
+// package, the receiver-side prompt must lead with a prominent "修正交付"
+// banner pointing back at the prior id.
+func TestRenderPromptMD_AmendsBanner(t *testing.T) {
+	p := &handoffschema.Package{
+		ID:            "h_new",
+		Sender:        "backend",
+		Recipient:     "frontend",
+		AmendsHandoff: "h_prior",
+		SummaryMD:     "fixed discount field type",
+	}
+	got := renderPromptMD(p, ModeDocFirst)
+	for _, want := range []string{
+		"⚠️ **修正交付**",
+		"`h_prior`",
+		"docs/integrations/h_prior.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("amends banner missing %q\nfull:\n%s", want, got)
+		}
+	}
+}
+
+// TestRenderPromptMD_NoAmendsBannerWhenAbsent confirms that without
+// AmendsHandoff the banner doesn't appear (no stray "修正交付" leak).
+func TestRenderPromptMD_NoAmendsBannerWhenAbsent(t *testing.T) {
+	p := &handoffschema.Package{
+		ID:        "h_new",
+		Sender:    "backend",
+		Recipient: "frontend",
+		SummaryMD: "regular delivery",
+	}
+	got := renderPromptMD(p, ModeDocFirst)
+	if strings.Contains(got, "修正交付") {
+		t.Errorf("unexpected amends banner when AmendsHandoff is empty:\n%s", got)
+	}
+}
+
 // TestRenderAPIDeltaMD_LegacyOpWithoutDetail confirms older payloads
 // (Detail == nil) still render their operation heading without crashing.
 func TestRenderAPIDeltaMD_LegacyOpWithoutDetail(t *testing.T) {

@@ -108,16 +108,25 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 
 **例外**:如果用户在原始 `/handoff-module` 指令里已经写明了备注(例如 `/handoff-module internal/module/oms/order 备注:分页默认 50 条`),跳过这一问,直接采用用户那段话作为备注,不要再确认。
 
-## 7. Submit
+## 7. 判断是不是「修正交付」
+
+如果本次 brief 是对**之前已经发过的某次模块 handoff** 的修正(模块里有 endpoint 改了字段 / 类型 / 错误码,或者前端那边的整合方案需要重做),需要带 `amends` 参数告诉前端「这是补丁,不是新交付」。
+
+- 怎么知道有没有上次?跑 `list_sent` MCP 工具看自己最近发出的 handoff id;或者用户在 `/handoff-module` 指令里直接给了上次的 id(例如 `/handoff-module internal/module/oms/order amends:h_20260507_ABCD1234`)。
+- 如果是首次为某模块出 brief,**不传**这个参数。`amends` 不是默认值。
+- 区别于 `responds_to`:`responds_to` 是「我在回应你之前发的 request」,`amends` 是「我之前发过的 handoff 这次要改」。
+
+## 8. Submit
 
 调 `submit_handoff` MCP 工具:
 - `summary`: 第 4 步的完整 brief Markdown(已经把第 3 步自检的产物吸收进契约 / 集成提示;始终传 — 不依赖磁盘 draft)
 - `module_paths`: 用户给的模块路径数组,与磁盘上一致
 - `prd`: 第 5 步的产品需求(用户回 `没有` / `n` 就不传)
 - `note`: 第 6 步的需求备注(用户回 `没有` / `n` 就不传)
+- `amends`: 第 7 步判断的上次 handoff id(只在确实是修正交付时传)
 - `urgent: true`:仅当用户明确说紧急时
 
-## 8. Report back
+## 9. Report back
 
 打印:handoff id、recipient、包含的模块、targeting_hints 数量。
 
