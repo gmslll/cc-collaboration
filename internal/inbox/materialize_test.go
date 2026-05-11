@@ -134,6 +134,55 @@ func TestRenderPromptMD_NoAmendsBannerWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestRenderPromptMD_FeedbackTemplate confirms the C2 structured feedback
+// step appears in every delivery prompt, with the four canonical sections
+// the receiver is expected to fill in via comment_handoff.
+func TestRenderPromptMD_FeedbackTemplate(t *testing.T) {
+	cases := []struct {
+		name string
+		pkg  *handoffschema.Package
+		mode Mode
+	}{
+		{
+			name: "doc-first delivery",
+			pkg:  &handoffschema.Package{ID: "h_d1", Sender: "backend", Recipient: "frontend", SummaryMD: "x"},
+			mode: ModeDocFirst,
+		},
+		{
+			name: "direct delivery",
+			pkg:  &handoffschema.Package{ID: "h_d2", Sender: "backend", Recipient: "frontend", SummaryMD: "x"},
+			mode: ModeDirect,
+		},
+		{
+			name: "module-brief doc-first",
+			pkg:  &handoffschema.Package{ID: "h_m1", Sender: "backend", Recipient: "frontend", SummaryMD: "x", ModulePaths: []string{"internal/foo"}},
+			mode: ModeDocFirst,
+		},
+		{
+			name: "module-brief direct",
+			pkg:  &handoffschema.Package{ID: "h_m2", Sender: "backend", Recipient: "frontend", SummaryMD: "x", ModulePaths: []string{"internal/foo"}},
+			mode: ModeDirect,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderPromptMD(tc.pkg, tc.mode)
+			for _, want := range []string{
+				"结构化反馈",
+				"comment_handoff " + tc.pkg.ID,
+				"理解:",
+				"已落地:",
+				"疑问:",
+				"跨端反馈:",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("feedback template missing %q\nfull:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
 // TestRenderAPIDeltaMD_LegacyOpWithoutDetail confirms older payloads
 // (Detail == nil) still render their operation heading without crashing.
 func TestRenderAPIDeltaMD_LegacyOpWithoutDetail(t *testing.T) {

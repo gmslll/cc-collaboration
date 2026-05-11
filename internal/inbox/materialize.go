@@ -526,6 +526,18 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 		sb.WriteString("   - **Verification**：如何验证（命令、页面、预期行为）。\n")
 		sb.WriteString("5. **停下**。不要直接改代码。等人工 review，确认后告诉我「按 INTEGRATION.md 执行」我才开始改代码。中途有疑问继续走 comment 通道。\n")
 	}
+	fmt.Fprintf(&sb, "6. **review 通过 / 改动 merge 之后**，用 `comment_handoff %s <body>` MCP 工具(或 `cc-handoff comment %s \"...\"` CLI)给发送端回一份**结构化反馈**。这是收闭环,不是 nice-to-have —— 发送端只有看到你的反馈才知道契约是否被正确理解、有没有遗漏点。模板:\n\n", p.ID, p.ID)
+	sb.WriteString("   ```\n")
+	sb.WriteString("   理解: 一两句话复述这次交付的核心目的(让发送端确认你没误读)\n\n")
+	sb.WriteString("   已落地:\n")
+	sb.WriteString("   ✓ 关键点 1(对应 INTEGRATION.md / 代码里某项具体改动)\n")
+	sb.WriteString("   ✓ 关键点 2\n\n")
+	sb.WriteString("   疑问:\n")
+	sb.WriteString("   ? 任何不确定 / 留了 TODO / 用直觉填的地方(没有就写「无」)\n\n")
+	sb.WriteString("   跨端反馈:\n")
+	sb.WriteString("   - 给发送端的反向约束 / 边界 case / 命名建议 / 下次想要的字段(没有就写「无」)\n")
+	sb.WriteString("   ```\n")
+	sb.WriteString("   每段 1-4 行就够,不要写小作文。「无」也要明示。\n")
 	return sb.String()
 }
 
