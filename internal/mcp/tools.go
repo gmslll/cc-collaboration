@@ -3,12 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/cc-collaboration/internal/config"
+	"github.com/cc-collaboration/internal/drift"
 	"github.com/cc-collaboration/internal/handoff"
 	"github.com/cc-collaboration/internal/inbox"
 	"github.com/cc-collaboration/internal/rules"
@@ -30,6 +32,7 @@ const (
 	ToolRetractHandoff  = "retract_handoff"
 	ToolListLocalInbox  = "list_local_inbox"
 	ToolListOnlineUsers = "list_online_users"
+	ToolCheckDrift      = "check_drift"
 )
 
 // DefaultTools returns the tools cc-handoff exposes via MCP. They wrap the
@@ -47,6 +50,7 @@ func DefaultTools() []Tool {
 		retractHandoffTool(),
 		listLocalInboxTool(),
 		listOnlineUsersTool(),
+		checkDriftTool(),
 	}
 }
 
@@ -125,7 +129,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		return ToolResult{}, err
 	}
 
-	pkg, err := handoff.Build(ctx, handoff.BuildOptions{
+	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
 		RepoRoot:    repoRoot,
 		RepoName:    res.RepoName,
 		Sender:      res.Me,
@@ -147,7 +151,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	}
 
 	client := transport.New(res.RelayURL, res.Token)
-	out, err := client.Submit(ctx, pkg, nil)
+	out, err := client.Submit(ctx, pkg, attachments)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -245,7 +249,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		urgency = handoffschema.UrgencyUrgent
 	}
 
-	pkg, err := handoff.Build(ctx, handoff.BuildOptions{
+	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
 		RepoRoot:  repoRoot,
 		RepoName:  res.RepoName,
 		Sender:    res.Me,
@@ -261,7 +265,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	}
 
 	client := transport.New(res.RelayURL, res.Token)
-	out, err := client.Submit(ctx, pkg, nil)
+	out, err := client.Submit(ctx, pkg, attachments)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -846,4 +850,62 @@ func listLocalInboxHandler(_ context.Context, raw json.RawMessage) (ToolResult, 
 		sb.WriteString("\n")
 	}
 	return textResult(sb.String()), nil
+}
+
+// --- check_drift ------------------------------------------------------------
+
+func checkDriftTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "to":    {"type": "string", "description": "Limit baseline search to handoffs sent to this recipient. Defaults to identity.partner from .cc-handoff.toml."},
+    "limit": {"type": "integer", "description": "How many sent items to scan looking for a baseline handoff with a swagger snapshot. Defaults to 20."},
+    "cwd":   {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolCheckDrift,
+		Description: "Detect whether your local OpenAPI spec has drifted since the last handoff you shipped to the partner. Walks recent sent items, picks the newest one that carried a swagger snapshot (B3 attachment), and diffs it against the current spec on disk. If drift is found, suggests running " + ToolSubmitHandoff + " with `amends=<baseline-id>` so the partner sees this as a corrective patch rather than a new delivery. Use this before forgetting to ship a follow-up handoff after a contract change. No-op if `paths.swagger` is not configured.",
+		InputSchema: schema,
+		Handler:     checkDriftHandler,
+	}
+}
+
+type checkDriftArgs struct {
+	To    string `json:"to"`
+	Limit int    `json:"limit"`
+	CWD   string `json:"cwd"`
+}
+
+func checkDriftHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a checkDriftArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	if a.Limit <= 0 {
+		a.Limit = 20
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	recipient := res.Partner
+	if a.To != "" {
+		recipient = a.To
+	}
+	client := transport.New(res.RelayURL, res.Token)
+	result, err := drift.Detect(ctx, client, recipient, config.ResolveSwaggerPath(config.RepoRoot(cwd), res.Swagger), a.Limit)
+	if err != nil {
+		// ErrNoSpec isn't a tool failure — it's "you haven't configured one
+		// yet". Surface as text so the agent doesn't bubble it as an error.
+		if errors.Is(err, drift.ErrNoSpec) {
+			return textResult("No swagger spec configured (set `paths.swagger` in `.cc-handoff.toml`)."), nil
+		}
+		return ToolResult{}, err
+	}
+	return textResult(result.Summary(recipient)), nil
 }

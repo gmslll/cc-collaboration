@@ -60,7 +60,7 @@ func runSubmit(ctx context.Context, args []string) error {
 	}
 
 	repoRoot := config.RepoRoot(cwd)
-	pkg, err := handoff.Build(ctx, handoff.BuildOptions{
+	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
 		RepoRoot:    repoRoot,
 		RepoName:    res.RepoName,
 		Sender:      res.Me,
@@ -79,7 +79,7 @@ func runSubmit(ctx context.Context, args []string) error {
 	}
 
 	client := transport.New(res.RelayURL, res.Token)
-	out, err := client.Submit(ctx, pkg, nil)
+	out, err := client.Submit(ctx, pkg, attachments)
 	if err != nil {
 		return err
 	}

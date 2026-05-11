@@ -39,6 +39,8 @@ func main() {
 		err = runSent(ctx, args)
 	case "history":
 		err = runHistory(ctx, args)
+	case "check-drift":
+		err = runCheckDrift(ctx, args)
 	case "retract":
 		err = runRetract(ctx, args)
 	case "inbox":
@@ -71,10 +73,11 @@ Setup:
   cc-handoff init     [--agent claude|codex|manual] [--with-mcp] [--with-commands] [--with-instructions]
 
 Sender flow:
-  cc-handoff submit   [--to ID] [--urgent] [--note TEXT] [--base REF]
-  cc-handoff sent     [--limit N] [--json]              list my recent sent handoffs
-  cc-handoff status   <id> [--json]                     show state / picked_at / comments
-  cc-handoff retract  <id> [--reason TEXT]              cancel a still-pending handoff
+  cc-handoff submit       [--to ID] [--urgent] [--note TEXT] [--base REF] [--amends ID]
+  cc-handoff sent         [--limit N] [--json]          list my recent sent handoffs
+  cc-handoff status       <id> [--json]                 show state / picked_at / comments
+  cc-handoff retract      <id> [--reason TEXT]          cancel a still-pending handoff
+  cc-handoff check-drift  [--to ID] [--limit N] [--json] swagger drifted since the last handoff?
 
 Receiver flow:
   cc-handoff list     [--json]                          inbox: pending handoffs on relay

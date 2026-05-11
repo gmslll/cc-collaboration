@@ -27,46 +27,55 @@ import (
 // nest beyond ~4 levels; 8 is generous.
 const maxDepth = 8
 
+// cacheFilename is where Collect persists the last-seen current spec under
+// the per-repo cache dir. The "<repo-hash>/swagger.last.yaml" relative path
+// is the stable on-disk contract — don't rename without a migration.
+const cacheFilename = "swagger.last.yaml"
+
 // Collect compares the spec at specPath against the cached previous version
-// and returns an APIDelta. If specPath does not exist, returns (nil, nil) so
-// callers can treat "no swagger file" as a non-fatal absence.
+// and returns the APIDelta plus the raw bytes of the current spec (so callers
+// can ship them as a handoff attachment). If specPath does not exist, returns
+// (nil, nil, nil) so callers can treat "no swagger file" as a non-fatal
+// absence. Snapshot is returned even when delta is nil (spec unchanged) —
+// downstream tooling like check-drift wants the snapshot regardless of
+// whether *this* submit had API changes.
 //
 // repoRoot is used as the cache key (its absolute path is hashed) so that two
 // distinct repos on the same machine don't share a cache.
-func Collect(repoRoot, specPath string) (*handoffschema.APIDelta, error) {
+func Collect(repoRoot, specPath string) (*handoffschema.APIDelta, []byte, error) {
 	abs, err := filepath.Abs(specPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	current, err := os.ReadFile(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("read swagger %s: %w", abs, err)
+		return nil, nil, fmt.Errorf("read swagger %s: %w", abs, err)
 	}
 
 	cacheDir, err := cachePath(repoRoot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	cacheFile := filepath.Join(cacheDir, "swagger.last.yaml")
+	cacheFile := filepath.Join(cacheDir, cacheFilename)
 	previous, _ := os.ReadFile(cacheFile) // first run: empty previous
 
 	delta, err := diff(previous, current)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if delta != nil {
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := os.WriteFile(cacheFile, current, 0o644); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return delta, nil
+	return delta, current, nil
 }
 
 func cachePath(repoRoot string) (string, error) {
@@ -765,6 +774,14 @@ func diffResponseBody(prev, curr rawResponse, prevComps, currComps rawComponents
 }
 
 // ---- Top-level diff -------------------------------------------------------
+
+// Diff compares two raw OpenAPI 3 specs (previous, current) and returns a
+// field-level APIDelta or nil if there's no detectable change. Exported so
+// callers outside this package (e.g. drift detection) can re-use the
+// parser/comparer without going through the file-cached `Collect` path.
+func Diff(previous, current []byte) (*handoffschema.APIDelta, error) {
+	return diff(previous, current)
+}
 
 func diff(previous, current []byte) (*handoffschema.APIDelta, error) {
 	prev, err := parseSpec(previous)

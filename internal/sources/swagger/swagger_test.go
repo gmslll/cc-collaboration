@@ -1,12 +1,68 @@
 package swagger
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
+
+// isolateUserCacheDir redirects os.UserCacheDir() to a per-test tempdir so
+// the swagger cache (~/.cache/cc-handoff/<hash>/swagger.last.yaml on linux,
+// ~/Library/Caches/... on darwin) doesn't pollute the real user cache and
+// prior test runs don't leak in. HOME works on both platforms because
+// os.UserCacheDir() resolves $HOME on darwin and falls back to $HOME/.cache
+// on linux; XDG_CACHE_HOME alone is silently ignored on darwin.
+func isolateUserCacheDir(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+}
+
+// TestCollect_ReturnsSnapshotBytes verifies that Collect returns the raw
+// bytes of the current spec alongside the delta (B3 — snapshot is shipped as
+// an attachment so downstream tools like check-drift have access to it).
+func TestCollect_ReturnsSnapshotBytes(t *testing.T) {
+	isolateUserCacheDir(t)
+	dir := t.TempDir()
+	spec := []byte(`openapi: 3.0.0
+paths:
+  /customers:
+    get:
+      operationId: listCustomers
+      summary: list customers
+`)
+	specPath := filepath.Join(dir, "swagger.yaml")
+	if err := os.WriteFile(specPath, spec, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, snapshot, err := Collect(dir, specPath)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if !slices.Equal(snapshot, spec) {
+		t.Errorf("snapshot bytes don't match input spec\nwant: %q\ngot:  %q", spec, snapshot)
+	}
+}
+
+// TestCollect_MissingSpecReturnsAllNil confirms the "no swagger file" path
+// still returns clean tuple-of-nils so callers can treat it as a non-fatal
+// absence (preserved from the pre-B3 contract).
+func TestCollect_MissingSpecReturnsAllNil(t *testing.T) {
+	isolateUserCacheDir(t)
+	dir := t.TempDir()
+
+	delta, snapshot, err := Collect(dir, filepath.Join(dir, "does-not-exist.yaml"))
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if delta != nil || snapshot != nil {
+		t.Errorf("expected (nil, nil, nil); got (%+v, %v, nil)", delta, snapshot != nil)
+	}
+}
 
 // findOp returns the first operation matching (method, path) from one of the
 // three buckets. Test helper.

@@ -27,6 +27,12 @@ var ErrNotImplemented = errors.New("relay does not implement this endpoint")
 // message verbatim; it explains the recovery path.
 var ErrConflict = errors.New("conflict")
 
+// ErrAttachmentNotFound signals FetchAttachment hit a 404 — the handoff
+// exists but doesn't carry an attachment with that name. Drift detection
+// uses this to scan through sent history skipping older handoffs that
+// predate the swagger-snapshot attachment.
+var ErrAttachmentNotFound = errors.New("attachment not found")
+
 type Client struct {
 	BaseURL string
 	Token   string
@@ -105,6 +111,9 @@ func (c *Client) FetchAttachment(ctx context.Context, handoffID, name string) ([
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrAttachmentNotFound
+	}
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		return nil, fmt.Errorf("relay GET attachment %s: %s: %s", name, resp.Status, strings.TrimSpace(string(b)))

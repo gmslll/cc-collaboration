@@ -2,6 +2,8 @@ package handoff
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,11 +11,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/rules"
 	"github.com/cc-collaboration/internal/sources/git"
 	"github.com/cc-collaboration/internal/sources/swagger"
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
+
+// SwaggerSnapshotName is the attachment filename used to ship the current
+// OpenAPI spec alongside a handoff. Receivers find it under
+// `<inbox>/<id>/attachments/swagger.yaml` after pickup; downstream tooling
+// (cc-handoff check-drift, etc.) reads from a stable name.
+const SwaggerSnapshotName = "swagger.yaml"
 
 type BuildOptions struct {
 	RepoRoot    string
@@ -44,9 +53,14 @@ func SummaryDraftPath(inboxDir string) string {
 	return filepath.Join(inboxDir, ".draft-summary.md")
 }
 
-func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, error) {
+// Build assembles the handoff Package plus any out-of-band attachments
+// (binary blobs uploaded separately via transport.UploadAttachment). The
+// returned attachments map is keyed by filename and may be empty / nil when
+// no snapshot is shipping (request kind, module-brief, or no swagger file).
+func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[string][]byte, error) {
 	requestMode := opts.Kind == handoffschema.KindRequest
 	moduleMode := !requestMode && len(opts.ModulePaths) > 0
+	attachments := map[string][]byte{}
 
 	var (
 		g        *handoffschema.Git
@@ -63,57 +77,56 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 		// can see who's asking from where.
 		repoMeta, err = git.CollectRepoMeta(ctx, opts.RepoRoot)
 		if err != nil {
-			return nil, fmt.Errorf("collect repo meta: %w", err)
+			return nil, nil, fmt.Errorf("collect repo meta: %w", err)
 		}
 		if len(opts.ModulePaths) > 0 {
-			return nil, fmt.Errorf("request mode does not accept module_paths; describe the need in summary instead")
+			return nil, nil, fmt.Errorf("request mode does not accept module_paths; describe the need in summary instead")
 		}
 	case moduleMode:
 		repoMeta, err = git.CollectRepoMeta(ctx, opts.RepoRoot)
 		if err != nil {
-			return nil, fmt.Errorf("collect repo meta: %w", err)
+			return nil, nil, fmt.Errorf("collect repo meta: %w", err)
 		}
 		for _, m := range opts.ModulePaths {
 			if err := validateModulePath(opts.RepoRoot, m); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		seedPaths, err := collectModuleFiles(opts.RepoRoot, opts.ModulePaths)
 		if err != nil {
-			return nil, fmt.Errorf("walk module paths: %w", err)
+			return nil, nil, fmt.Errorf("walk module paths: %w", err)
 		}
 		if len(seedPaths) == 0 {
-			return nil, fmt.Errorf("module paths %v contain no Go files; nothing to derive hints from", opts.ModulePaths)
+			return nil, nil, fmt.Errorf("module paths %v contain no Go files; nothing to derive hints from", opts.ModulePaths)
 		}
 		hints = opts.Rules.Apply(seedPaths)
 	default:
 		g, repoMeta, err = git.Collect(ctx, opts.RepoRoot, opts.Base)
 		if err != nil {
-			return nil, fmt.Errorf("collect git: %w", err)
+			return nil, nil, fmt.Errorf("collect git: %w", err)
 		}
 		if g != nil {
 			hints = opts.Rules.Apply(g.ChangedPaths)
 		}
-		if opts.SwaggerPath != "" {
-			spec := opts.SwaggerPath
-			if !filepath.IsAbs(spec) {
-				spec = filepath.Join(opts.RepoRoot, spec)
-			}
-			d, err := swagger.Collect(opts.RepoRoot, spec)
+		if spec := config.ResolveSwaggerPath(opts.RepoRoot, opts.SwaggerPath); spec != "" {
+			d, snapshot, err := swagger.Collect(opts.RepoRoot, spec)
 			if err != nil {
-				return nil, fmt.Errorf("swagger delta: %w", err)
+				return nil, nil, fmt.Errorf("swagger delta: %w", err)
 			}
 			apiDelta = d
+			if len(snapshot) > 0 {
+				attachments[SwaggerSnapshotName] = snapshot
+			}
 		}
 	}
 	repoMeta.Name = opts.RepoName
 
 	summary, err := readSummary(opts.InboxDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if summary == "" {
-		return nil, emptySummaryError(opts.InboxDir, requestMode)
+		return nil, nil, emptySummaryError(opts.InboxDir, requestMode)
 	}
 
 	urgency := opts.Urgency
@@ -144,7 +157,24 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, erro
 		AmendsHandoff:  opts.Amends,
 	}
 
-	return pkg, nil
+	// Populate Package.Attachments metadata (name + sha256 + size) in a
+	// stable order so receivers can verify integrity before download.
+	names := make([]string, 0, len(attachments))
+	for n := range attachments {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		body := attachments[n]
+		sum := sha256.Sum256(body)
+		pkg.Attachments = append(pkg.Attachments, handoffschema.Attachment{
+			Name:   n,
+			SHA256: hex.EncodeToString(sum[:]),
+			Size:   len(body),
+		})
+	}
+
+	return pkg, attachments, nil
 }
 
 func emptySummaryError(inboxDir string, requestMode bool) error {

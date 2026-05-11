@@ -193,6 +193,17 @@ func RepoRoot(cwd string) string {
 	return filepath.Dir(RepoConfigPath(cwd))
 }
 
+// ResolveSwaggerPath turns a paths.swagger config value (which may be empty,
+// relative, or absolute) into an absolute path or "". Relative paths are
+// joined with repoRoot so a setting like `paths.swagger = "docs/swagger.yaml"`
+// works regardless of where the sender invokes cc-handoff from.
+func ResolveSwaggerPath(repoRoot, spec string) string {
+	if spec == "" || filepath.IsAbs(spec) {
+		return spec
+	}
+	return filepath.Join(repoRoot, spec)
+}
+
 func LoadRepo(cwd string) (*Repo, string, error) {
 	p := RepoConfigPath(cwd)
 	var r Repo
