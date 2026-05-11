@@ -32,7 +32,22 @@ For each module path, methodically read:
 - Every field in a request/response shape must come from a DTO you read. If a field's semantics are unclear, mark it `// TODO: confirm with backend` rather than inventing.
 - Method + path must match exactly what the handler registers. No "probably POST" guesses.
 
-## 3. Compose the brief (Markdown, 中文)
+## 3. 契约自检 — 反推前端疑问（关键）
+
+读完模块后、动手写 brief 前，逐条过下面的清单。这是从「前端会怎么用这个模块」回看你的契约描述是否完整。每条都要么能直接从代码 / swagger 答上来，要么去补读代码答上来，要么在写 brief 时显式标出「未确认」并问用户。**不要凭直觉跳过**——前端拿到 brief 后最多的来回问就来自这几个点：
+
+- **每个 endpoint 的字段必填性**：每个字段是必填还是可选？类型是什么？看 DTO 的 `validate` tag 和 JSON tag 的 `omitempty`，不要靠猜。
+- **错误码**：handler 里实际会返回哪些 HTTP code + 业务 code？每个对前端 UI 的预期是什么（toast / 表单内联 / 跳登录 / 全局 banner / 静默重试）？业务码如果是数字，**列出实际值**。
+- **endpoint 之间的关系**：模块里多个 endpoint 之间有没有「次序约束」（必须先调 A 再调 B）、「替代关系」（新版替代旧版）、「资源链」（A 返回 ID 给 B 用）？前端是要全调还是按需调？
+- **跨模块依赖**：如果一个 endpoint 返回的 ID / 引用指向另一个模块，明确说出来（例如「`order.customer_id` 对应 `internal/module/customer` 的 ID 体系」），别让前端自己猜。
+- **分页 / 排序 / 过滤**：默认值是什么？上下限？cursor 还是 offset？空集时返回什么？排序键有哪些？
+- **字段命名 / 类型可能的冲突**：列出 2-3 个最容易被前端误用的字段（金额单位是分还是元？时间是 RFC3339 string 还是 Unix ms？ID 是 uuid 还是数据库自增？大小写？）。
+- **副作用与时序**：调用这个 endpoint 之后，是否会触发异步任务、消息推送、缓存失效？前端是要轮询还是接 webhook 还是直接展示乐观更新？
+- **多租户 / 权限隔离**：同一个 endpoint 在不同租户 / 角色下返回的字段集合是否一致？
+
+把答案合并进下一步的 brief —— 字段必填性进 **请求体 / 响应**，错误码进 **响应**，关系与跨模块依赖进 **集成提示**，命名冲突也进 **集成提示**。**不要单独写一份独立自检文档**。
+
+## 4. Compose the brief (Markdown, 中文)
 
 Structure (one `# 模块 API Brief: <name>` block per module — do not merge endpoint tables across modules):
 
@@ -65,7 +80,7 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 非显然的对接注意点。例如:「列表接口分页基于 cursor 而不是 offset」「金额单位是分」「时间字段是 RFC3339 string」「同一个 endpoint 在不同租户下返回字段集合不同」等。
 ```
 
-## 4. 询问产品需求 / 设计意图 (PRD)
+## 5. 询问产品需求 / 设计意图 (PRD)
 
 在询问 note 之前先问一次:
 
@@ -85,7 +100,7 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 
 把结果作为 `prd` 参数传给 `submit_handoff`。PRD 会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt,**作为背景参考阅读,不要求逐条响应** —— 这是它和 note 的区别:note 是硬约束必读,prd 是 why 参考。
 
-## 5. 询问跨端需求 / 约束
+## 6. 询问跨端需求 / 约束
 
 调 `submit_handoff` 之前,明确问用户一次:
 
@@ -93,16 +108,16 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 
 **例外**:如果用户在原始 `/handoff-module` 指令里已经写明了备注(例如 `/handoff-module internal/module/oms/order 备注:分页默认 50 条`),跳过这一问,直接采用用户那段话作为备注,不要再确认。
 
-## 6. Submit
+## 7. Submit
 
 调 `submit_handoff` MCP 工具:
-- `summary`: 第 3 步的完整 brief Markdown(始终传 — 不依赖磁盘 draft)
+- `summary`: 第 4 步的完整 brief Markdown(已经把第 3 步自检的产物吸收进契约 / 集成提示;始终传 — 不依赖磁盘 draft)
 - `module_paths`: 用户给的模块路径数组,与磁盘上一致
-- `prd`: 第 4 步的产品需求(用户回 `没有` / `n` 就不传)
-- `note`: 第 5 步的需求备注(用户回 `没有` / `n` 就不传)
+- `prd`: 第 5 步的产品需求(用户回 `没有` / `n` 就不传)
+- `note`: 第 6 步的需求备注(用户回 `没有` / `n` 就不传)
 - `urgent: true`:仅当用户明确说紧急时
 
-## 7. Report back
+## 8. Report back
 
 打印:handoff id、recipient、包含的模块、targeting_hints 数量。
 

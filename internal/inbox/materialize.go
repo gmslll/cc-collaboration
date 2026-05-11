@@ -262,7 +262,8 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 
 	if prd := strings.TrimSpace(p.PrdMD); prd != "" {
 		sb.WriteString("## 📋 产品需求 / 设计意图 (背景参考)\n\n")
-		sb.WriteString("以下是后端从产品侧拿到的需求描述，用来帮你理解这次 API 变更的业务目的。**作为背景阅读**，不要求在 INTEGRATION.md 里逐条映射；但你的集成方案应当与这里的产品意图自洽，遇到契约描述与产品意图明显冲突时优先用 `comment_handoff` 问发送端。\n\n")
+		sb.WriteString("> 🟢 **这一段是「为什么」的背景参考，不是逐条硬约束**。读懂它能让你的方案契合产品意图，但**不要求你在 INTEGRATION.md / 代码改动里逐条回应**。它和下面的「后端备注」是两个用途：备注是必须逐条兑现，PRD 是用来理解意图。\n\n")
+		sb.WriteString("以下是后端从产品侧拿到的需求描述，用来帮你理解这次 API 变更的业务目的。遇到契约描述与产品意图明显冲突时，优先用 `comment_handoff` 问发送端。\n\n")
 		sb.WriteString(prd)
 		if !strings.HasSuffix(prd, "\n") {
 			sb.WriteString("\n")
@@ -284,12 +285,13 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 	}
 
 	if note := strings.TrimSpace(p.NoteMD); note != "" {
-		sb.WriteString("## ⚠️ 后端备注 / 需求 (必读)\n\n")
+		bindLoc, requireVerb := "INTEGRATION.md 里逐条响应", "INTEGRATION.md 必须逐条响应"
 		if mode == ModeDirect {
-			sb.WriteString("发送端额外提出的跨端约束或注意事项。代码改动必须逐条满足：\n\n")
-		} else {
-			sb.WriteString("发送端额外提出的跨端约束或注意事项。INTEGRATION.md 必须逐条响应：\n\n")
+			bindLoc, requireVerb = "代码改动里兑现", "代码改动必须逐条满足"
 		}
+		sb.WriteString("## ⚠️ 后端备注 / 需求 (必读)\n\n")
+		fmt.Fprintf(&sb, "> 🔴 **这一段每一条都是硬约束**。和上面的 PRD 不同：PRD 是背景参考，这里每条都必须在 %s，漏掉就是 bug。\n\n", bindLoc)
+		fmt.Fprintf(&sb, "发送端额外提出的跨端约束或注意事项。%s：\n\n", requireVerb)
 		sb.WriteString(note)
 		sb.WriteString("\n\n")
 	}
@@ -335,6 +337,16 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 		sb.WriteString("\n")
 	}
 
+	sb.WriteString("## 自检 — 动手前先答 4 个问题\n\n")
+	if mode == ModeDirect {
+		sb.WriteString("在改代码前，把下面四个问题在脑里 / 笔记里答完。**任何一个答不上来，先用 `comment_handoff` MCP 工具或 `cc-handoff comment <id>` CLI 问发送端，等回复了再继续**。这是为了避免你写完后回头返工：\n\n")
+	} else {
+		sb.WriteString("在动手写 INTEGRATION.md 前，把下面四个问题在脑里 / 笔记里答完。**任何一个答不上来，先用 `comment_handoff` MCP 工具或 `cc-handoff comment <id>` CLI 问发送端，等回复了再继续**。这是为了避免你写完方案后再回头返工：\n\n")
+	}
+	sb.WriteString("1. **字段级**：每个新增 / 改动字段，我都能说出它的**类型 + 是否必填 + 旧客户端兜底**吗？（类型从 swagger / DTO / summary 来，不要靠猜）\n")
+	sb.WriteString("2. **错误码**：每个错误码（HTTP + 业务码）我都知道 UI 该怎么显示（toast / 表单内联 / 跳登录 / 全局 banner / 静默重试）吗？\n")
+	sb.WriteString("3. **替代关系**：这次新增 / 改动的 endpoint 是不是替代了某个旧 endpoint？如果是，**旧 endpoint 在本仓库哪些地方被调用**，怎么过渡？\n")
+	sb.WriteString("4. **命名 / 类型冲突**：新增字段名 / 类型名跟本仓库已有 TS 类型、interface、常量有没有同名但语义不同的？（金额单位、时间格式、ID 形态都要核对）\n\n")
 	sb.WriteString("## 你必须按顺序做的事\n\n")
 	if moduleMode {
 		sb.WriteString("0. 如果 brief 中字段语义、请求体形态、错误码不明等有歧义，")
@@ -390,7 +402,8 @@ func renderRequestPromptMD(p *handoffschema.Package, mode Mode) string {
 
 	if prd := strings.TrimSpace(p.PrdMD); prd != "" {
 		sb.WriteString("## 📋 产品需求 / 设计意图 (背景参考)\n\n")
-		sb.WriteString("以下是发起方（前端）从产品侧拿到的需求描述，用来帮你理解这个 request 背后的业务目的。**作为背景阅读**，不要求在响应方案里逐条映射；但你的设计应当与这里的产品意图自洽。\n\n")
+		sb.WriteString("> 🟢 **这一段是「为什么」的背景参考，不是逐条硬约束**。读懂它能让你的响应方案契合产品意图，但**不要求你在响应方案 / 代码里逐条回应**。它和下面的「发起方备注」是两个用途：备注必须逐条兑现，PRD 用来理解意图。\n\n")
+		sb.WriteString("以下是发起方（前端）从产品侧拿到的需求描述，用来帮你理解这个 request 背后的业务目的。\n\n")
 		sb.WriteString(prd)
 		if !strings.HasSuffix(prd, "\n") {
 			sb.WriteString("\n")
@@ -408,12 +421,13 @@ func renderRequestPromptMD(p *handoffschema.Package, mode Mode) string {
 	}
 
 	if note := strings.TrimSpace(p.NoteMD); note != "" {
-		sb.WriteString("## ⚠️ 发起方备注 / 跨端约束 (必读)\n\n")
+		bindLoc, requireVerb := "响应方案里逐条响应", "响应方案必须逐条响应"
 		if mode == ModeDirect {
-			sb.WriteString("发起方提出的额外约束。代码改动必须逐条满足：\n\n")
-		} else {
-			sb.WriteString("发起方提出的额外约束。响应方案必须逐条响应：\n\n")
+			bindLoc, requireVerb = "代码改动里兑现", "代码改动必须逐条满足"
 		}
+		sb.WriteString("## ⚠️ 发起方备注 / 跨端约束 (必读)\n\n")
+		fmt.Fprintf(&sb, "> 🔴 **这一段每一条都是硬约束**。和上面的 PRD 不同：PRD 是背景参考，这里每条都必须在 %s，漏掉就是 bug。\n\n", bindLoc)
+		fmt.Fprintf(&sb, "发起方提出的额外约束。%s：\n\n", requireVerb)
 		sb.WriteString(note)
 		sb.WriteString("\n\n")
 	}
