@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cc-collaboration/internal/handoff"
@@ -88,18 +89,159 @@ func renderAPIDeltaMD(d *handoffschema.APIDelta) string {
 		}
 		fmt.Fprintf(&sb, "## %s\n\n", title)
 		for _, op := range ops {
-			line := op.Method + " " + op.Path
-			if op.Summary != "" {
-				line += " — " + op.Summary
-			}
-			fmt.Fprintf(&sb, "- %s\n", line)
+			renderOperation(&sb, op)
 		}
-		sb.WriteString("\n")
 	}
 	section("Added", d.Added)
 	section("Changed", d.Changed)
 	section("Removed", d.Removed)
+	renderGlobalChanges(&sb, d)
 	return sb.String()
+}
+
+func renderOperation(sb *strings.Builder, op handoffschema.Operation) {
+	head := op.Method + " " + op.Path
+	if op.Summary != "" {
+		head += " — " + op.Summary
+	}
+	fmt.Fprintf(sb, "### %s\n\n", head)
+
+	if op.Detail == nil {
+		// Older payload, or summary-only change: just the heading is enough.
+		return
+	}
+
+	if d := op.Detail.RequestBody; d != nil {
+		sb.WriteString("**请求体变更**\n\n")
+		renderSchemaDiff(sb, d)
+	}
+
+	if len(op.Detail.Responses) > 0 {
+		codes := sortedKeys(op.Detail.Responses)
+		for _, code := range codes {
+			r := op.Detail.Responses[code]
+			if r == nil {
+				continue
+			}
+			if r.Body != nil {
+				fmt.Fprintf(sb, "**%s 响应变更**\n\n", code)
+				renderSchemaDiff(sb, r.Body)
+			}
+			if r.Headers != nil {
+				fmt.Fprintf(sb, "**%s 响应 header 变更**\n\n", code)
+				renderSchemaDiff(sb, r.Headers)
+			}
+		}
+	}
+
+	if d := op.Detail.Parameters; d != nil {
+		sb.WriteString("**参数变更**\n\n")
+		renderSchemaDiff(sb, d)
+	}
+
+	if d := op.Detail.ErrorCodes; d != nil {
+		sb.WriteString("**错误码列表**\n\n")
+		renderStringListLines(sb, d.Added, d.Removed)
+	}
+
+	if d := op.Detail.Security; d != nil {
+		sb.WriteString("**安全要求**\n\n")
+		renderStringListLines(sb, d.Added, d.Removed)
+	}
+}
+
+func renderSchemaDiff(sb *strings.Builder, d *handoffschema.SchemaDiff) {
+	for _, f := range d.Added {
+		fmt.Fprintf(sb, "- + %s\n", formatField(f))
+	}
+	for _, f := range d.Removed {
+		fmt.Fprintf(sb, "- - %s\n", formatField(f))
+	}
+	for _, c := range d.Changed {
+		reason := c.Reason
+		if reason == "" {
+			reason = "变更"
+		}
+		fmt.Fprintf(sb, "- ~ `%s`: %s → %s (%s)\n", c.Path, fieldSummary(c.Before), fieldSummary(c.After), reason)
+	}
+	sb.WriteString("\n")
+}
+
+// fieldAttrs collects the type/format/required/nullable/enum descriptors
+// of a FieldRef in a stable order. Both the "with-path" bullet form and the
+// "before → after" change form share this body.
+func fieldAttrs(f handoffschema.FieldRef) []string {
+	var parts []string
+	if f.Type != "" {
+		parts = append(parts, f.Type)
+	}
+	if f.Format != "" {
+		parts = append(parts, "format="+f.Format)
+	}
+	if f.Required {
+		parts = append(parts, "required")
+	}
+	if f.Nullable {
+		parts = append(parts, "nullable")
+	}
+	if len(f.Enum) > 0 {
+		parts = append(parts, "enum=["+strings.Join(f.Enum, "|")+"]")
+	}
+	return parts
+}
+
+// formatField renders a FieldRef as a single bullet body, e.g.
+// "`address.city` string required format=date-time enum=[a|b]".
+func formatField(f handoffschema.FieldRef) string {
+	attrs := fieldAttrs(f)
+	if len(attrs) == 0 {
+		return fmt.Sprintf("`%s`", f.Path)
+	}
+	return fmt.Sprintf("`%s` %s", f.Path, strings.Join(attrs, " "))
+}
+
+// fieldSummary renders the type+format part of a FieldRef inline, used inside
+// a "before → after" change line where the path is shown separately.
+func fieldSummary(f handoffschema.FieldRef) string {
+	attrs := fieldAttrs(f)
+	if len(attrs) == 0 {
+		return "(无)"
+	}
+	return strings.Join(attrs, " ")
+}
+
+func renderStringListLines(sb *strings.Builder, added, removed []string) {
+	for _, s := range added {
+		fmt.Fprintf(sb, "- + %s\n", s)
+	}
+	for _, s := range removed {
+		fmt.Fprintf(sb, "- - %s\n", s)
+	}
+	sb.WriteString("\n")
+}
+
+func renderGlobalChanges(sb *strings.Builder, d *handoffschema.APIDelta) {
+	if d.Servers == nil && d.Security == nil {
+		return
+	}
+	sb.WriteString("## 全局变更\n\n")
+	if d.Servers != nil {
+		sb.WriteString("**Servers**\n\n")
+		renderStringListLines(sb, d.Servers.Added, d.Servers.Removed)
+	}
+	if d.Security != nil {
+		sb.WriteString("**Security**\n\n")
+		renderStringListLines(sb, d.Security.Added, d.Security.Removed)
+	}
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func writeFile(path string, b []byte) error {

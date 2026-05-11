@@ -92,17 +92,72 @@ type Commit struct {
 }
 
 type APIDelta struct {
-	Format  string      `json:"format"`
-	Added   []Operation `json:"added,omitempty"`
-	Changed []Operation `json:"changed,omitempty"`
-	Removed []Operation `json:"removed,omitempty"`
+	Format   string          `json:"format"`
+	Added    []Operation     `json:"added,omitempty"`
+	Changed  []Operation     `json:"changed,omitempty"`
+	Removed  []Operation     `json:"removed,omitempty"`
+	Servers  *StringListDiff `json:"servers,omitempty"`
+	Security *StringListDiff `json:"security,omitempty"`
 }
 
 type Operation struct {
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	OperationID string `json:"operation_id,omitempty"`
-	Summary     string `json:"summary,omitempty"`
+	Method      string           `json:"method"`
+	Path        string           `json:"path"`
+	OperationID string           `json:"operation_id,omitempty"`
+	Summary     string           `json:"summary,omitempty"`
+	Detail      *OperationDetail `json:"detail,omitempty"`
+}
+
+// OperationDetail carries field-level diff information for a single operation.
+// Populated only when an older "Changed/Added/Removed" entry needs more than
+// method+path to be actionable; older payloads leave Detail nil and the
+// receiver falls back to the operation-level rendering.
+type OperationDetail struct {
+	Parameters  *SchemaDiff                `json:"parameters,omitempty"`
+	RequestBody *SchemaDiff                `json:"request_body,omitempty"`
+	Responses   map[string]*ResponseDetail `json:"responses,omitempty"`
+	ErrorCodes  *StatusCodeListDiff        `json:"error_codes,omitempty"`
+	Security    *StringListDiff            `json:"security,omitempty"`
+}
+
+type ResponseDetail struct {
+	Body    *SchemaDiff `json:"body,omitempty"`
+	Headers *SchemaDiff `json:"headers,omitempty"`
+}
+
+type SchemaDiff struct {
+	Added   []FieldRef    `json:"added,omitempty"`
+	Removed []FieldRef    `json:"removed,omitempty"`
+	Changed []FieldChange `json:"changed,omitempty"`
+}
+
+// FieldRef is one entry in a SchemaDiff. Path uses dotted property names with
+// "[]" appended for array element traversal — e.g. "address.city",
+// "items[].name", "headers.X-Trace-Id".
+type FieldRef struct {
+	Path     string   `json:"path"`
+	Type     string   `json:"type,omitempty"`
+	Format   string   `json:"format,omitempty"`
+	Required bool     `json:"required,omitempty"`
+	Enum     []string `json:"enum,omitempty"`
+	Nullable bool     `json:"nullable,omitempty"`
+}
+
+type FieldChange struct {
+	Path   string   `json:"path"`
+	Before FieldRef `json:"before"`
+	After  FieldRef `json:"after"`
+	Reason string   `json:"reason,omitempty"`
+}
+
+type StatusCodeListDiff struct {
+	Added   []string `json:"added,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+}
+
+type StringListDiff struct {
+	Added   []string `json:"added,omitempty"`
+	Removed []string `json:"removed,omitempty"`
 }
 
 type TargetingHint struct {
