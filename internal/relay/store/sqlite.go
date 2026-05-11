@@ -167,6 +167,48 @@ func (s *Store) ListPending(ctx context.Context, recipient string, limit int) ([
 	return out, rows.Err()
 }
 
+// ListHistory returns compact list items addressed to recipient that have
+// already been picked up, newest-first. Lets a recipient look back at "what
+// did I receive recently?" — pending items live in ListPending, retracted
+// items are intentionally excluded here.
+func (s *Store) ListHistory(ctx context.Context, recipient string, limit int) ([]handoffschema.ListItem, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, sender, urgency, state, created_at, repo_name, branch, headline, kind FROM handoffs
+		 WHERE recipient = ? AND state = ?
+		 ORDER BY created_at DESC LIMIT ?`,
+		recipient, string(handoffschema.StatePicked), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []handoffschema.ListItem
+	for rows.Next() {
+		var (
+			id, sender, urgency, state, repoName, branch, headline, kind string
+			createdMS                                                    int64
+		)
+		if err := rows.Scan(&id, &sender, &urgency, &state, &createdMS, &repoName, &branch, &headline, &kind); err != nil {
+			return nil, err
+		}
+		out = append(out, handoffschema.ListItem{
+			ID:        id,
+			Kind:      handoffschema.Kind(kind),
+			Sender:    sender,
+			Urgency:   handoffschema.Urgency(urgency),
+			State:     handoffschema.State(state),
+			CreatedAt: time.UnixMilli(createdMS).UTC(),
+			RepoName:  repoName,
+			Branch:    branch,
+			Headline:  headline,
+		})
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body string) (handoffschema.Comment, error) {
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,

@@ -200,6 +200,23 @@ func (c *Client) ListSent(ctx context.Context, limit int) ([]handoffschema.ListI
 	return out.Items, nil
 }
 
+// ListHistory returns the caller's already-picked receipts, newest-first.
+// Mirrors List (pending inbox) but for the history view — shows what the
+// caller has already pickup'd, since list_inbox filters those out.
+func (c *Client) ListHistory(ctx context.Context, limit int) ([]handoffschema.ListItem, error) {
+	q := "?as=history"
+	if limit > 0 {
+		q += "&limit=" + strconv.Itoa(limit)
+	}
+	var out struct {
+		Items []handoffschema.ListItem `json:"items"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/handoffs"+q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
 // Retract cancels a still-pending handoff the caller sent. reason is
 // optional; surfaced in the SSE event the recipient's watch sees. Returns
 // ErrConflict if the recipient already picked it up.

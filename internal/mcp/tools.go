@@ -26,6 +26,7 @@ const (
 	ToolCommentHandoff  = "comment_handoff"
 	ToolStatusHandoff   = "status_handoff"
 	ToolListSent        = "list_sent"
+	ToolListHistory     = "list_history"
 	ToolRetractHandoff  = "retract_handoff"
 	ToolListLocalInbox  = "list_local_inbox"
 	ToolListOnlineUsers = "list_online_users"
@@ -42,6 +43,7 @@ func DefaultTools() []Tool {
 		commentHandoffTool(),
 		statusHandoffTool(),
 		listSentTool(),
+		listHistoryTool(),
 		retractHandoffTool(),
 		listLocalInboxTool(),
 		listOnlineUsersTool(),
@@ -602,6 +604,64 @@ func listSentHandler(ctx context.Context, raw json.RawMessage) (ToolResult, erro
 			tagFor(it.Kind), it.ID, it.Recipient, it.State, it.Urgency, it.RepoName,
 			it.CreatedAt.Format("2006-01-02 15:04:05"), it.Headline)
 	}
+	return textResult(sb.String()), nil
+}
+
+// --- list_history -----------------------------------------------------------
+
+func listHistoryTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "limit": {"type": "integer", "description": "Max items, defaults to 20."},
+    "cwd":   {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolListHistory,
+		Description: "List handoffs you (the caller's identity) have already picked up from the relay (state=picked), newest-first. Use this to look back at handoffs you received and acted on previously — " + ToolListInbox + " only shows pending items, this surfaces the rest. Different from " + ToolListLocalInbox + " (which reads this repo's local inbox dir): this query hits the relay and covers receipts across all your repos.",
+		InputSchema: schema,
+		Handler:     listHistoryHandler,
+	}
+}
+
+type listHistoryArgs struct {
+	Limit int    `json:"limit"`
+	CWD   string `json:"cwd"`
+}
+
+func listHistoryHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a listHistoryArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	if a.Limit <= 0 {
+		a.Limit = 20
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	client := transport.New(res.RelayURL, res.Token)
+	items, err := client.ListHistory(ctx, a.Limit)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if len(items) == 0 {
+		return textResult("No picked-up handoffs in your history yet."), nil
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d picked-up item(s):\n\n", len(items))
+	for _, it := range items {
+		fmt.Fprintf(&sb, "- [%s] `%s` from `%s` urgency=%s repo=`%s` branch=`%s` created=%s\n  %s\n",
+			tagFor(it.Kind), it.ID, it.Sender, it.Urgency, it.RepoName, it.Branch,
+			it.CreatedAt.Format("2006-01-02 15:04:05"), it.Headline)
+	}
+	sb.WriteString("\nUse " + ToolStatusHandoff + " <id> for picked_at + comment summary, or " + ToolCommentHandoff + " <id> to follow up.")
 	return textResult(sb.String()), nil
 }
 

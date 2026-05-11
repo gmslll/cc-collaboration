@@ -134,7 +134,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 
 	// ?as=sender lists handoffs the caller sent (any state, newest-first);
 	// ?as=recipient (default, also matches old ?recipient= queries) lists
-	// caller's pending inbox. Either way the role is anchored to the
+	// caller's pending inbox; ?as=history lists caller's already-picked
+	// receipts (history view). Either way the role is anchored to the
 	// authenticated identity — there's no third-party visibility.
 	role := r.URL.Query().Get("as")
 	if role == "" {
@@ -163,8 +164,15 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	case "history":
+		items, err := s.Store.ListHistory(r.Context(), identity, limit)
+		if err != nil {
+			http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	default:
-		http.Error(w, "as must be 'sender' or 'recipient'", http.StatusBadRequest)
+		http.Error(w, "as must be 'sender', 'recipient', or 'history'", http.StatusBadRequest)
 	}
 }
 

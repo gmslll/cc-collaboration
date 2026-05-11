@@ -198,6 +198,66 @@ func TestRetractMissingHandoff(t *testing.T) {
 	}
 }
 
+func TestListHistory(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")  // pending — must NOT show
+	mustInsertHandoff(t, st, "h2", "alice", "bob")  // will be picked
+	time.Sleep(2 * time.Millisecond)                // ensure h3.created_at > h2.created_at at ms granularity
+	mustInsertHandoff(t, st, "h3", "alice", "bob")  // will be picked
+	mustInsertHandoff(t, st, "h4", "alice", "carl") // bob is not recipient
+	if err := st.Ack(ctx, "h2", "bob"); err != nil {
+		t.Fatalf("ack h2: %v", err)
+	}
+	if err := st.Ack(ctx, "h3", "bob"); err != nil {
+		t.Fatalf("ack h3: %v", err)
+	}
+
+	got, err := st.ListHistory(ctx, "bob", 10)
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 picked items for bob, got %d: %+v", len(got), got)
+	}
+	if got[0].ID != "h3" || got[1].ID != "h2" {
+		t.Errorf("want newest-first order [h3, h2], got [%s, %s]", got[0].ID, got[1].ID)
+	}
+	for _, it := range got {
+		if it.State != handoffschema.StatePicked {
+			t.Errorf("%s: want state=picked, got %s", it.ID, it.State)
+		}
+		if it.ID == "h1" || it.ID == "h4" {
+			t.Errorf("unexpected id %s in history (should be filtered)", it.ID)
+		}
+	}
+
+	// alice has not received anything → empty.
+	got, err = st.ListHistory(ctx, "alice", 10)
+	if err != nil {
+		t.Fatalf("ListHistory(alice): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("alice has no receipts; got %+v", got)
+	}
+}
+
+func TestListHistoryExcludesRetracted(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+	if _, err := st.Retract(ctx, "h1", "alice"); err != nil {
+		t.Fatalf("retract: %v", err)
+	}
+	got, err := st.ListHistory(ctx, "bob", 10)
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("retracted handoff appeared in history: %+v", got)
+	}
+}
+
 func TestListSent(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
