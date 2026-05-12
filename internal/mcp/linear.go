@@ -99,8 +99,8 @@ func renderSubmitBlock(l config.LinearIntegration, ctx LinearSyncCtx) string {
 	if len(l.DefaultLabels) > 0 {
 		fmt.Fprintf(&sb, "   - labels: `%s`\n", strings.Join(l.DefaultLabels, "`, `"))
 	}
-	fmt.Fprintf(&sb, "2. 拿到 Linear 返回的 issue identifier(如 `%s-456`)和 URL 后,执行 shell 命令把绑定关系写回本地(让 status_handoff / 后续 sync 能直接读):\n", teamExample)
-	fmt.Fprintf(&sb, "   ```\n   cc-handoff link-linear --handoff %s --issue <IDENTIFIER> --url <URL>\n   ```\n", ctx.HandoffID)
+	fmt.Fprintf(&sb, "2. 拿到 Linear 返回的 issue identifier(如 `%s-456`)和 URL 后,调用 MCP 工具 `%s%s` 把绑定关系写回本地(让 status_handoff / 后续 sync 能直接读):\n", teamExample, CCHandoffMCPPrefix, ToolLinkLinear)
+	fmt.Fprintf(&sb, "   参数:`{handoff: \"%s\", issue: \"<IDENTIFIER>\", url: \"<URL>\"}`\n", ctx.HandoffID)
 	sb.WriteString("3. 如果创建 issue 失败或 Linear MCP 不可用,继续推进 — 这是后置同步,不影响 handoff 本身已经在 relay 上的状态。\n")
 	return sb.String()
 }

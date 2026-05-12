@@ -2,27 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/inbox"
 )
-
-// linearLink is the on-disk record that ties a handoff to a Linear issue.
-// Written by `cc-handoff link-linear`, read by anyone who later wants to know
-// which Linear issue a given handoff belongs to (status_handoff prints this,
-// and the various Linear sync prompts in MCP tool outputs reference it).
-type linearLink struct {
-	HandoffID  string    `json:"handoff_id"`
-	Identifier string    `json:"identifier"`
-	URL        string    `json:"url,omitempty"`
-	LinkedAt   time.Time `json:"linked_at"`
-}
 
 func runLinkLinear(_ context.Context, args []string) error {
 	fs := flag.NewFlagSet("link-linear", flag.ContinueOnError)
@@ -44,29 +30,10 @@ func runLinkLinear(_ context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	repoRoot := config.RepoRoot(cwd)
-	target := filepath.Join(inbox.InboxDir(repoRoot, res.InboxOverride), "sent", *handoffID)
-	if err := os.MkdirAll(target, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", target, err)
-	}
-
-	link := linearLink{
-		HandoffID:  *handoffID,
-		Identifier: *issue,
-		URL:        *url,
-		LinkedAt:   time.Now().UTC(),
-	}
-	out := filepath.Join(target, "linear.json")
-	data, err := json.MarshalIndent(link, "", "  ")
+	inboxDir := inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride)
+	out, err := inbox.WriteLinearLink(inboxDir, *handoffID, *issue, *url)
 	if err != nil {
 		return err
-	}
-	tmp := out + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, out); err != nil {
-		return fmt.Errorf("rename %s: %w", out, err)
 	}
 	fmt.Printf("✓ linked %s → %s (%s)\n", *handoffID, *issue, out)
 	return nil

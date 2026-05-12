@@ -123,8 +123,8 @@ repo = "frontend-demo"
 	// tools/list
 	toolsRes := mustResult(t, byID[2])
 	tools, _ := toolsRes["tools"].([]any)
-	if len(tools) != 12 {
-		t.Fatalf("tools/list: want 12 tools, got %d", len(tools))
+	if want := len(mcp.DefaultTools()); len(tools) != want {
+		t.Fatalf("tools/list: want %d tools, got %d", want, len(tools))
 	}
 	wantNames := map[string]bool{
 		mcp.ToolSubmitHandoff:   false,
@@ -139,6 +139,7 @@ repo = "frontend-demo"
 		mcp.ToolListLocalInbox:  false,
 		mcp.ToolListOnlineUsers: false,
 		mcp.ToolCheckDrift:      false,
+		mcp.ToolLinkLinear:      false,
 	}
 	for _, t0 := range tools {
 		m, _ := t0.(map[string]any)

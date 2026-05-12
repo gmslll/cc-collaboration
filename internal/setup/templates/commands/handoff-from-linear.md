@@ -67,10 +67,11 @@ This is the **inbound** half of the Linear integration:
      Sent to partner via cc-handoff: `<handoff_id>`. Partner will pick this up and respond.
      ```
 
-8. **Record locally.** Run the shell command:
-   ```
-   cc-handoff link-linear --handoff <handoff_id> --issue <ENG-XXX> --url <issue URL>
-   ```
+8. **Record locally.** Call `mcp__cc-handoff__link_linear` with:
+   - `handoff`: the returned handoff_id from step 6
+   - `issue`: the Linear issue identifier (e.g. `ENG-123`)
+   - `url`: the Linear issue URL from step 2
+
    This writes the binding to `<inbox-dir>/sent/<handoff_id>/linear.json` so `status_handoff` and future sync prompts can read it without round-tripping Linear.
 
 9. **Report back.** Tell the user:

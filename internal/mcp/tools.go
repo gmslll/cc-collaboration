@@ -33,7 +33,14 @@ const (
 	ToolListLocalInbox  = "list_local_inbox"
 	ToolListOnlineUsers = "list_online_users"
 	ToolCheckDrift      = "check_drift"
+	ToolLinkLinear      = "link_linear"
 )
+
+// CCHandoffMCPPrefix is the wire-name prefix Claude uses when calling tools
+// exposed by this MCP server (server name "cc-handoff", see
+// cmd/cc-handoff-mcp/main.go). Use it together with the Tool* constants when
+// rendering prompts that ask the agent to call back into cc-handoff.
+const CCHandoffMCPPrefix = "mcp__cc-handoff__"
 
 // DefaultTools returns the tools cc-handoff exposes via MCP. They wrap the
 // same internals the CLI uses so behavior stays identical.
@@ -51,6 +58,7 @@ func DefaultTools() []Tool {
 		listLocalInboxTool(),
 		listOnlineUsersTool(),
 		checkDriftTool(),
+		linkLinearTool(),
 	}
 }
 
@@ -929,4 +937,56 @@ func checkDriftHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 		return ToolResult{}, err
 	}
 	return textResult(result.Summary(recipient)), nil
+}
+
+// --- link_linear ------------------------------------------------------------
+
+func linkLinearTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "handoff": {"type": "string", "description": "Handoff id this binding belongs to (e.g. h_20260512_ABCD1234)."},
+    "issue":   {"type": "string", "description": "Linear issue identifier (e.g. ENG-456)."},
+    "url":     {"type": "string", "description": "Linear issue URL (optional)."},
+    "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  },
+  "required": ["handoff", "issue"]
+}`)
+	return Tool{
+		Name:        ToolLinkLinear,
+		Description: "Record the binding between a cc-handoff handoff and a Linear issue. Call this after creating the Linear issue (via Linear MCP) so future " + ToolStatusHandoff + " / sync prompts can recover the issue id without round-tripping Linear. Writes `<inbox-dir>/sent/<handoff>/linear.json` atomically.",
+		InputSchema: schema,
+		Handler:     linkLinearHandler,
+	}
+}
+
+type linkLinearArgs struct {
+	Handoff string `json:"handoff"`
+	Issue   string `json:"issue"`
+	URL     string `json:"url"`
+	CWD     string `json:"cwd"`
+}
+
+func linkLinearHandler(_ context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a linkLinearArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	if a.Handoff == "" || a.Issue == "" {
+		return ToolResult{}, fmt.Errorf("handoff and issue are required")
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	inboxDir := inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride)
+	out, err := inbox.WriteLinearLink(inboxDir, a.Handoff, a.Issue, a.URL)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	return textResult(fmt.Sprintf("✓ linked `%s` → `%s` (%s)", a.Handoff, a.Issue, out)), nil
 }
