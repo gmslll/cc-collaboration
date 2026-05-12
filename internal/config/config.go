@@ -29,6 +29,33 @@ type Repo struct {
 	PartnerMapping PartnerMapping `toml:"partner_mapping"`
 	Triggers       Triggers       `toml:"triggers"`
 	Inbox          Inbox          `toml:"inbox,omitempty"`
+	Integrations   Integrations   `toml:"integrations,omitempty"`
+}
+
+// Integrations groups optional third-party integrations. Each sub-integration
+// is independent: leaving the whole section out (or setting enabled=false on
+// a specific one) makes cc-handoff behave exactly as before, with no extra
+// prompt sections or external API calls.
+type Integrations struct {
+	Linear LinearIntegration `toml:"linear,omitempty"`
+}
+
+// LinearIntegration controls Linear-issue sync. cc-handoff itself never calls
+// the Linear API; instead, when Enabled is true, MCP tool results get an
+// extra "## 同步到 Linear" block appended at the end, listing the exact
+// mcp__linear__* calls Claude should make. Authentication and HTTP are
+// delegated to whichever Linear MCP server the user already has configured.
+type LinearIntegration struct {
+	Enabled       bool     `toml:"enabled"`
+	TeamKey       string   `toml:"team_key"`
+	DefaultLabels []string `toml:"default_labels,omitempty"`
+	// MCPPrefix overrides the Linear MCP tool-name prefix (default "linear"),
+	// for installs that namespace their MCP tools differently.
+	MCPPrefix     string `toml:"mcp_prefix,omitempty"`
+	SyncOnSubmit  bool   `toml:"sync_on_submit,omitempty"`
+	SyncOnPickup  bool   `toml:"sync_on_pickup,omitempty"`
+	SyncOnComment bool   `toml:"sync_on_comment,omitempty"`
+	SyncOnRetract bool   `toml:"sync_on_retract,omitempty"`
 }
 
 // Inbox controls where Materialize writes handoff packages. Empty Dir means
@@ -247,6 +274,7 @@ type Resolved struct {
 	// path itself without an import cycle (rules → config → inbox →
 	// handoff → rules).
 	InboxOverride string
+	Linear        LinearIntegration
 }
 
 func Resolve(cwd string) (*Resolved, error) {
@@ -292,6 +320,7 @@ func Resolve(cwd string) (*Resolved, error) {
 		Rules:         r.PartnerMapping.Rules,
 		Agent:         ag,
 		InboxOverride: r.Inbox.Dir,
+		Linear:        r.Integrations.Linear,
 	}
 	if out.RelayURL == "" || out.Token == "" || out.Me == "" {
 		return nil, fmt.Errorf("incomplete config: relay_url/token/identity must be set in user config")

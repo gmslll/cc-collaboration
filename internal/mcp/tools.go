@@ -182,6 +182,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if pkg.AmendsHandoff != "" {
 		fmt.Fprintf(&sb, "- amends: `%s`\n", pkg.AmendsHandoff)
 	}
+	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{HandoffID: out.ID}))
 	return textResult(sb.String()), nil
 }
 
@@ -275,6 +276,10 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	fmt.Fprintf(&sb, "- kind: request\n- branch: `%s`\n- head: `%s`\n",
 		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
 	sb.WriteString("\nThe partner will pick it up via /pickup; their prompt will guide them to design/implement. When they handoff back, the package will carry `responds_to=" + out.ID + "`.")
+	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{
+		HandoffID: out.ID,
+		IsRequest: true,
+	}))
 	return textResult(sb.String()), nil
 }
 
@@ -405,6 +410,10 @@ func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	fmt.Fprintf(&sb, "Picked up handoff `%s`. Files materialized at `%s`.\n\n", pkg.ID, mat.Dir)
 	sb.WriteString("Follow the prompt below to integrate the changes:\n\n---\n\n")
 	sb.WriteString(mat.Prompt)
+	sb.WriteString(linearSyncBlock(res.Linear, LinearEventPickup, LinearSyncCtx{
+		HandoffID: pkg.ID,
+		Me:        res.Me,
+	}))
 	return textResult(sb.String()), nil
 }
 
@@ -476,7 +485,13 @@ func commentHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult
 	if err != nil {
 		return ToolResult{}, err
 	}
-	return textResult(fmt.Sprintf("Posted comment #%d on `%s`. The other side will be notified via SSE.", c.ID, c.HandoffID)), nil
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Posted comment #%d on `%s`. The other side will be notified via SSE.", c.ID, c.HandoffID)
+	sb.WriteString(linearSyncBlock(res.Linear, LinearEventComment, LinearSyncCtx{
+		HandoffID: c.HandoffID,
+		CommentBy: c.Sender,
+	}))
+	return textResult(sb.String()), nil
 }
 
 func resolveCWD(arg string) (string, error) {
@@ -721,7 +736,13 @@ func retractHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult
 	if err := client.Retract(ctx, a.ID, a.Reason); err != nil {
 		return ToolResult{}, err
 	}
-	return textResult(fmt.Sprintf("Retracted `%s`. Recipient watch will be notified.", a.ID)), nil
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Retracted `%s`. Recipient watch will be notified.", a.ID)
+	sb.WriteString(linearSyncBlock(res.Linear, LinearEventRetract, LinearSyncCtx{
+		HandoffID: a.ID,
+		Reason:    a.Reason,
+	}))
+	return textResult(sb.String()), nil
 }
 
 // --- list_local_inbox -------------------------------------------------------

@@ -43,6 +43,8 @@ func main() {
 		err = runCheckDrift(ctx, args)
 	case "retract":
 		err = runRetract(ctx, args)
+	case "link-linear":
+		err = runLinkLinear(ctx, args)
 	case "inbox":
 		err = runInbox(ctx, args)
 	case "open":
@@ -89,9 +91,11 @@ Receiver flow:
   cc-handoff watch    print-unit [--platform launchd|systemd|windows-task] [--workdir PATH] [--bin PATH]
 
 Both sides:
-  cc-handoff comment  <id> <body...>                    post a comment
-  cc-handoff comment  --list <id>                       list comments on a handoff
-  cc-handoff online   [--json]                          show registered identities + who is currently watching
+  cc-handoff comment      <id> <body...>                post a comment
+  cc-handoff comment      --list <id>                   list comments on a handoff
+  cc-handoff online       [--json]                      show registered identities + who is currently watching
+  cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
+                                                        record a Linear issue ↔ handoff binding locally
 
 Run cc-handoff <subcommand> --help for details.
 `)
