@@ -6,6 +6,15 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Added
+
+- `[integrations.linear]` config block in `.cc-handoff.toml` (fields: `enabled`, `team_key`, `default_labels`, `mcp_prefix`, `sync_on_submit`, `sync_on_pickup`, `sync_on_comment`, `sync_on_retract`). Disabled by default; when enabled, the five operation MCP tools (`submit_handoff`, `submit_request`, `pickup_handoff`, `comment_handoff`, `retract_handoff`) append a `## 同步到 Linear` section at the end of their result instructing the agent which `mcp__linear__*` calls to make next. cc-handoff itself never calls the Linear API — authentication and HTTP are delegated to whichever Linear MCP server the user already has configured. `mcp_prefix` overrides the wire-name prefix (default `linear`) for installs that namespace their Linear MCP tools differently.
+- `cc-handoff link-linear --handoff <id> --issue <ENG-XXX> [--url URL]` CLI subcommand and `mcp__cc-handoff__link_linear` MCP tool. Both record the handoff↔Linear-issue binding to `<inbox-dir>/sent/<handoff>/linear.json` using atomic tmp+rename write. The MCP tool is the loop-closer Claude calls after creating the Linear issue, so the entire Linear outbound flow stays in MCP without dropping to Bash.
+- `/handoff-from-linear <issue-id>` slash command — reads a Linear issue via Linear MCP (`mcp__linear__get_issue`), composes a cc-handoff request summary preserving title / description / acceptance / source URL, sends it via `submit_request`, then appends a `<!-- cc-handoff: <id> -->` anchor to the Linear issue description so the binding is recoverable later. Inbound counterpart to the outbound sync block.
+- `inbox.LinearLink` struct and `inbox.WriteLinearLink(inboxDir, handoffID, identifier, url) (string, error)` — shared atomic writer used by both the CLI subcommand and the MCP handler. Same tmp+rename pattern as `inbox.SaveCursor`.
+- `mcp.CCHandoffMCPPrefix = "mcp__cc-handoff__"` constant and `mcp.ToolLinkLinear = "link_linear"` constant in the tool registry. The prompt template composes the wire name from these instead of hardcoding it, so renaming a tool only requires updating its constant.
+- MCP tool count: 12 → 13. Integration test `TestMCPEndToEnd` now compares against `len(mcp.DefaultTools())` instead of a hardcoded literal, so future tool additions don't require updating the assertion.
+
 ## [0.1.1] - 2026-05-08
 
 ### Added

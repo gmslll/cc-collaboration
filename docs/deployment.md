@@ -392,7 +392,7 @@ cp /path/to/cc-collaboration/.claude/commands/{handoff,handoff-module,pickup,req
 > 我现在有哪些 MCP 工具？
 ```
 
-应当列出 `submit_handoff` / `list_inbox` / `pickup_handoff` / `comment_handoff`。也可以走 agent 自带的命令行验:
+应当列出 13 个工具:`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`。也可以走 agent 自带的命令行验:
 
 ```bash
 # Claude
@@ -402,6 +402,52 @@ claude mcp list
 # Codex —— 没有等价的 list 命令,直接看配置
 grep -A2 '\[mcp_servers.cc-handoff\]' ~/.codex/config.toml
 ```
+
+---
+
+### 2.6 启用 Linear 集成(可选)
+
+把 cc-handoff 的四个核心事件(submit / pickup / comment / retract)与 Linear issue 双向绑定。**零 secret**:cc-handoff 不直接调 Linear API,所有同步动作由 Claude Code 里的 Linear MCP 完成。
+
+**前置**:Linear MCP server 必须已经在你的 Claude Code 装好(任意一种社区实现都行,如 [`linear-mcp`](https://github.com/jerhadf/linear-mcp))。验证方式:在 Claude Code 会话里问"我有 `mcp__linear__*` 工具吗?",看得到 `create_issue` / `update_issue` / `get_issue` / `create_comment` 这几个即 OK。
+
+**配置**:在仓库的 `.cc-handoff.toml` 加段:
+
+```toml
+[integrations.linear]
+enabled = true
+team_key = "ENG"                  # Linear team prefix,prompt 内做示例占位
+default_labels = ["cc-handoff"]   # 新建 issue 时打的 label
+mcp_prefix = "linear"             # Linear MCP 工具名前缀,默认 linear → mcp__linear__*
+sync_on_submit = true             # submit_handoff / submit_request 后追加 sync 段
+sync_on_pickup = true             # pickup_handoff 后追加
+sync_on_comment = true            # comment_handoff 后追加
+sync_on_retract = true            # retract_handoff 后追加
+```
+
+字段含义见 [`docs/architecture.md` §11.4](architecture.md#114-配置-integrationslinear)。
+
+**字段速查表**:
+
+| 字段 | 作用 | 不设的后果 |
+|---|---|---|
+| `enabled` | 总开关 | `false`(缺省)→ 所有 sync 段不渲染,行为与未集成时一致 |
+| `team_key` | prompt 内的示例占位(如 `ENG-456`) | 空时用占位 `ENG` |
+| `default_labels` | 新建 issue 时打的 label | 不打 label |
+| `mcp_prefix` | Linear MCP 工具名前缀 | 缺省 `linear`(对应 `mcp__linear__create_issue` 等);若 MCP 包用了别的前缀,改这里 |
+| `sync_on_*` | 各事件是否触发同步段 | 单独关掉某个事件 |
+
+**验证**:开启后跑一次 submit:
+
+```
+> 用 mcp__cc-handoff__submit_handoff 发个测试 handoff
+```
+
+工具返回 prompt 末尾应当出现「## 同步到 Linear」段,告诉 Claude 调 `mcp__linear__create_issue` 创建 issue,再用 `mcp__cc-handoff__link_linear` 把 issue id 写回本地 `<inbox>/sent/<id>/linear.json`。Claude 会按这套指令把闭环走完,中间不触发 Bash 权限确认。
+
+**入站反向流**:`/handoff-from-linear ENG-123` 把现成的 Linear issue 转成 cc-handoff request 发给对端。详见 [`docs/architecture.md` §11.5](architecture.md#115-入站reverse流程)。
+
+**回退**:把 `enabled = false`,所有 sync 段消失,handoff 字节级回到改前的输出。
 
 ---
 
@@ -667,6 +713,9 @@ rm -rf ~/.config/cc-handoff
 | `cc-handoff status / sent / retract` 返回 "relay does not implement this endpoint" | relay 还是旧版本(没多 agent / 状态可见性那批)。`make deploy HOST=<vps>` 升级 relay |
 | `cc-handoff retract` 返回 409 | 对方已经 pickup,无法 retract。改用 `cc-handoff comment <id> "..."` 协调 |
 | 不知道某 handoff 还在不在 / 状态如何 | `cc-handoff status <id>`(发件人)/ `cc-handoff inbox`(收件人本地)/ `cc-handoff list`(收件人 relay 上 pending) |
+| Linear sync 段没出现在 prompt 末尾 | 检查 `.cc-handoff.toml` 的 `[integrations.linear]`:`enabled = true` 且对应事件 `sync_on_<event> = true`;`enabled` 缺省 false |
+| `mcp__cc-handoff__link_linear` 报 "handoff and issue are required" | schema 标 `handoff` / `issue` 都是 required;调用时漏传或空字符串会被拒。手工 CLI 同理:`cc-handoff link-linear --handoff h_xxx --issue ENG-XXX` 两个 flag 都得给 |
+| Claude 找不到 `mcp__linear__create_issue` 类工具 | Linear MCP server 没装或前缀对不上。装好后若工具名前缀不是 `linear`,改 `[integrations.linear] mcp_prefix = "你的前缀"` |
 
 ---
 

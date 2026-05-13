@@ -15,7 +15,7 @@
 |---|---|---|---|
 | `cc-relay` | VPS,systemd service | HTTP+SSE on `127.0.0.1:8080` | 收 / 发 handoff、广播 SSE 事件、按 recipient 鉴权 |
 | `cc-handoff` (CLI) | 两端开发者 Mac | argv | `init` / `submit` / `list` / `pickup` / `watch` / `comment` / `watch print-unit` |
-| `cc-handoff-mcp` | 两端开发者 Mac,Claude Code 通过 stdio 拉起 | MCP / stdio | 把 CLI 动作暴露为 `submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `retract_handoff` / `list_local_inbox` / `list_online_users` 等 MCP 工具,给 Claude Code 内的 `/handoff` `/pickup` `/request` slash command 用 |
+| `cc-handoff-mcp` | 两端开发者 Mac,Claude Code 通过 stdio 拉起 | MCP / stdio | 把 CLI 动作全部暴露为 MCP 工具,共 13 个:`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`(最后一个走可选 Linear 集成,见 §11)。给 Claude Code 内的 `/handoff` `/pickup` `/request` `/handoff-from-linear` slash command 用 |
 | `cc-handoff watch` (常驻) | 接收侧 Mac,launchd / systemd user | SSE 长连接 | 拉服务端事件、把 handoff 落到 `.claude/handoff-inbox/<id>/`、必要时弹通知 / `claude -p` |
 
 VPS 一定挂反向代理(caddy / nginx)终结 TLS,relay 自己只听 loopback。
@@ -278,6 +278,79 @@ MVP 安全姿态有意保守。明确防的 / 不防的:
 合并逻辑在 `internal/config/config.go::Resolve`。
 **仓库根判定**:`RepoConfigPath` 从 cwd 向上找 `.git`,找到的目录就是 repo 根,
 否则 fallback 到 cwd。
+
+---
+
+## 11. Linear integration
+
+可选的双向同步层。设计原则:**cc-handoff 二进制不直接调 Linear API**,所有 Linear 调用都通过 prompt 让 Claude Code 用自己已经装好的 Linear MCP server(`mcp__linear__*` 工具)去做。零 secret,零额外认证。
+
+### 11.1 触发点
+
+五个操作型 MCP 工具(`submit_handoff` / `submit_request` / `pickup_handoff` / `comment_handoff` / `retract_handoff`)在 handler 返回前条件追加一段 markdown:
+
+```
+## 同步到 Linear (<事件名>)
+请用 mcp__linear__<op> ...
+```
+
+只有当 `Resolved.Linear.Enabled && Resolved.Linear.SyncOnX == true` 时才渲染,否则返回空串,工具输出与未集成时字节一致。实现在 `internal/mcp/linear.go:linearSyncBlock`,5 个 handler 调用点都在 `internal/mcp/tools.go`。
+
+### 11.2 数据流
+
+```
+Claude Code ──► mcp__cc-handoff__<op>  ──►  cc-handoff-mcp
+                       │                          │
+                       ▼ (sync block in result)   ▼
+                Claude reads prompt        relay SQLite (handoff itself)
+                       │
+                       ▼
+                mcp__linear__<op>  ──►  Linear API (auth/HTTP owned by Linear MCP)
+                       │
+                       ▼
+                mcp__cc-handoff__link_linear  ──►  <inbox>/sent/<id>/linear.json
+```
+
+`link_linear` 是闭环工具:Claude 拿到 Linear issue identifier 后调它,把 `{handoff_id, identifier, url, linked_at}` 通过 `inbox.WriteLinearLink` 原子写到本地。后续 `status_handoff` / 同步段都能从这里恢复 issue id。
+
+### 11.3 绑定锚点
+
+两套互补的存储:
+
+- **Linear 端**:issue 描述末尾嵌 `<!-- cc-handoff: h_YYYYMMDD_XXXXXXXX -->`(HTML 注释,Linear markdown 编辑器保留),后续 sync 段让 Claude 用 `mcp__linear__get_issue` 全文搜锚点反查 issue
+- **本地端**:`<inbox-dir>/sent/<handoff-id>/linear.json`(发送方),tmp+rename 原子写,格式见 `inbox.LinearLink`
+
+两端任一存在都能恢复绑定。
+
+### 11.4 配置 `[integrations.linear]`
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `enabled` | bool | 总开关。`false` 时所有 sync block 返回空串,handoff 行为与未集成时一致 |
+| `team_key` | string | Linear team prefix,用于 prompt 内的示例 issue id(如 `ENG-456`)。空时占位写 `ENG` |
+| `default_labels` | []string | 创建 issue 时打的 label |
+| `mcp_prefix` | string | Linear MCP 工具名前缀,缺省 `linear`(→ `mcp__linear__*`)。不同社区 MCP 实现可能用其它前缀,这里改 |
+| `sync_on_submit` | bool | submit_handoff / submit_request 后是否追加 sync block |
+| `sync_on_pickup` | bool | pickup_handoff 后是否追加 |
+| `sync_on_comment` | bool | comment_handoff 后是否追加 |
+| `sync_on_retract` | bool | retract_handoff 后是否追加 |
+
+入口结构:`internal/config/config.go::LinearIntegration`,透传到 `Resolved.Linear`。
+
+### 11.5 入站(reverse)流程
+
+`/handoff-from-linear ENG-123` slash command(`internal/setup/templates/commands/handoff-from-linear.md`):
+
+1. Claude 用 `mcp__linear__get_issue` 读 issue
+2. 拼出 cc-handoff request summary(包含 title / description / acceptance / source URL)
+3. 调 `mcp__cc-handoff__submit_request` 发出 handoff
+4. 调 `mcp__linear__update_issue` 把 `<!-- cc-handoff: <new-id> -->` 锚点追加到 issue 描述
+5. 调 `mcp__cc-handoff__link_linear` 写本地映射
+
+### 11.6 失败降级
+
+- Linear MCP 未配置 / 工具名错:Claude 看到指令但找不到工具 → 跳过同步段,handoff 主流程不受影响(prompt 里也明确写了"失败不要中断主流程")
+- `link_linear` 写盘失败:tmp+rename,中途崩 tmp 残留下次覆盖,不会污染主映射
 
 ---
 

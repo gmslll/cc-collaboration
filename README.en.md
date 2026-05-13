@@ -62,7 +62,7 @@ cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► c
 
 - **`cc-relay`** — VPS-side systemd service, listens on loopback only; reverse proxy terminates TLS. HTTP REST + SSE, persisted to SQLite.
 - **`cc-handoff` (CLI)** — installed on both machines. Subcommands: `init` / `submit` / `list` / `pickup` / `watch` / `comment`.
-- **`cc-handoff-mcp`** — MCP server that Claude Code launches over stdio. Exposes the CLI's actions as MCP tools (`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` and friends).
+- **`cc-handoff-mcp`** — MCP server that Claude Code launches over stdio. Exposes every CLI action as an MCP tool, 13 total: `submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear` (the last one is for the optional Linear integration).
 - **`cc-handoff watch`** — receiver-side daemon. Holds an SSE long connection, materializes incoming handoffs into `.cc-handoff/inbox/<id>/`, fires desktop notifications, can spawn a terminal for urgent items.
 
 Full data flow, SQLite schema, auth model, and failure modes live in [`docs/architecture.md`](docs/architecture.md) (currently Chinese-only).
@@ -192,7 +192,7 @@ Inside a backend Claude Code session:
 > What MCP tools do I have right now?
 ```
 
-You should see `submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`. From the shell:
+You should see the 13 tools listed in the Architecture section above (`submit_handoff` and friends). From the shell:
 
 ```bash
 claude mcp list
@@ -271,6 +271,32 @@ sudo journalctl -u cc-handoff-relay -f
 ```
 
 Detailed troubleshooting (watch can't connect / token expired / SSE not flowing / upgrade rollback) lives in the troubleshooting section of [`docs/deployment.md`](docs/deployment.md) (currently Chinese-only).
+
+## Linear integration (optional)
+
+Bind cc-handoff's four event kinds (submit / pickup / comment / retract) to Linear issues, in both directions. **Zero secrets**: the cc-handoff binary never calls the Linear API directly — all sync actions are delegated to whichever Linear MCP server (`mcp__linear__*` tools) Claude Code already has configured.
+
+**Configuration**: add this block to your repo's `.cc-handoff.toml`:
+
+```toml
+[integrations.linear]
+enabled = true
+team_key = "ENG"                  # Linear team prefix; used as a placeholder in example issue ids
+default_labels = ["cc-handoff"]   # labels applied when an issue is created
+mcp_prefix = "linear"             # prefix for the Linear MCP tool names (override if you don't use the default mcp__linear__*)
+sync_on_submit = true
+sync_on_pickup = true
+sync_on_comment = true
+sync_on_retract = true
+```
+
+`enabled = false` (the default) makes every command output byte-identical to the pre-integration behavior.
+
+**Outbound flow** (any of the five operation MCP tools — `submit_handoff` / `submit_request` / `pickup_handoff` / `comment_handoff` / `retract_handoff`): the tool result appends a `## 同步到 Linear` section telling Claude which `mcp__linear__create_issue` / `update_issue` / `create_comment` calls to make next, then asks Claude to call `mcp__cc-handoff__link_linear` to record the issue identifier into `<inbox>/sent/<id>/linear.json`. The whole chain stays in MCP — no Bash permission prompts.
+
+**Inbound flow** (starting from a Linear issue): run `/handoff-from-linear ENG-123` in Claude Code. The skill reads the issue via Linear MCP, composes a cc-handoff request, and appends a `<!-- cc-handoff: h_xxx -->` anchor to the Linear issue description so future syncs can recover the binding.
+
+**Graceful degradation**: if the Linear MCP server isn't installed, Claude skips the sync section — the underlying handoff still ships normally.
 
 ## Windows support
 

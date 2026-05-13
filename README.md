@@ -62,7 +62,7 @@ cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► c
 
 - `cc-relay`:VPS 上 systemd 服务,听 loopback,反代终结 TLS。HTTP REST + SSE,SQLite 持久化。
 - `cc-handoff` (CLI):两端各装一份。子命令:`init` / `submit` / `list` / `pickup` / `watch` / `comment`。
-- `cc-handoff-mcp`:Claude Code 通过 stdio 拉起的 MCP server,把上面的子命令暴露成 MCP 工具(`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` 等)。
+- `cc-handoff-mcp`:Claude Code 通过 stdio 拉起的 MCP server,把上面的子命令全部暴露成 MCP 工具,共 13 个:`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`(最后一个用于可选的 Linear 集成)。
 - `cc-handoff watch`:接收侧常驻进程,SSE 长连接拉服务端事件,落盘到 `.cc-handoff/inbox/<id>/`(老仓库已有 `.claude/handoff-inbox/` 时继续沿用),必要时弹通知或按当前 agent 开新终端(`claude -p` / `codex exec` / …)。
 
 完整数据流、SQLite schema、auth、failure mode 见 [`docs/architecture.md`](docs/architecture.md)。
@@ -195,7 +195,7 @@ systemctl --user enable --now cc-handoff-watch
 > 我现在有哪些 MCP 工具?
 ```
 
-应当看到 `submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`。命令行验证:
+应当看到上文「架构」段列出的 13 个工具(`submit_handoff` 等)。命令行验证:
 
 ```bash
 claude mcp list
@@ -277,6 +277,36 @@ sudo journalctl -u cc-handoff-relay -f
 
 详细排错(watch 连不上 / token 过期 / SSE 不通 / 升级回滚)见
 [`docs/deployment.md`](docs/deployment.md) 的「故障排查」章。
+
+## Linear 集成(可选)
+
+把 cc-handoff 的四类事件(submit / pickup / comment / retract)与 Linear issue 绑定,出入双向。**零 secret**:cc-handoff 二进制不直接调 Linear API,所有同步动作都委托给 Claude Code 里已经装好的 Linear MCP server(`mcp__linear__*` 工具)。
+
+**配置**:在仓库的 `.cc-handoff.toml` 加一段:
+
+```toml
+[integrations.linear]
+enabled = true
+team_key = "ENG"                  # Linear team prefix,生成示例 issue id 用
+default_labels = ["cc-handoff"]   # 创建 issue 时打的 label
+mcp_prefix = "linear"             # Linear MCP 工具的前缀(若装的不是默认 mcp__linear__,改这里)
+sync_on_submit = true
+sync_on_pickup = true
+sync_on_comment = true
+sync_on_retract = true
+```
+
+缺省 `enabled = false`,关闭时所有命令输出与未集成时完全一致。
+
+**出站流程**(发出 handoff 或操作 handoff 时):跑五个操作型 MCP 工具(`submit_handoff` / `submit_request` / `pickup_handoff` / `comment_handoff` / `retract_handoff`)任一个后,工具返回的 prompt 末尾追加「## 同步到 Linear」段,告诉 Claude:
+1. 用 `mcp__linear__create_issue` / `update_issue` / `create_comment` 同步状态
+2. 用 `mcp__cc-handoff__link_linear` 把返回的 issue identifier 写回本地 `<inbox>/sent/<id>/linear.json` 映射
+
+整条链路一个 Bash 权限确认都不触发。
+
+**入站流程**(从 Linear issue 起手):在 Claude Code 里跑 `/handoff-from-linear ENG-123` → skill 读 Linear issue 内容 → 转成 cc-handoff request → 把 `<!-- cc-handoff: h_xxx -->` 锚点写回 Linear issue 描述,后续 sync 靠这个锚点找回 issue。
+
+**失败降级**:Linear MCP 不可用时,Claude 会跳过同步段、handoff 主流程不受影响。
 
 ## Windows 支持
 
