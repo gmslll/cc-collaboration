@@ -37,14 +37,18 @@ This command is the **reverse** of `/handoff`. There's no diff to ship; the summ
 
    把用户给的备注（如有）按原文整理成 Markdown，作为 `note` 参数传给 `submit_request`。备注会以「⚠️ 发起方备注 / 跨端约束 (必读)」段渲染到接收端 prompt，被要求逐条响应。
 
-5. 调 `submit_request` MCP 工具：
+5. **询问附件 (可选)**:如果有线上响应截图、HAR、控制台错误日志等想证明你看到的问题,问用户一次:
+   > 有截图 / HAR / 错误日志要随 request 带给后端吗?给我文件路径(绝对或相对 cwd 都行)。没有就回 `没有` 或 `n`。
+
+   把路径数组传给 `attachment_paths` 参数。**不要伪造路径** —— 用户说没有就不传。
+
+6. 调 `submit_request` MCP 工具：
    - `summary`: 第 2 步的 Markdown 总结
    - `prd`: 第 3 步的产品需求（没有就不传）
    - `note`: 第 4 步的备注（没有就不传）
+   - `attachment_paths`: 第 5 步的路径数组(没有就不传)
    - `urgent: true`：仅当用户明确说紧急 / 「让对方现在就开始」时
 
-6. Report back the request id and recipient. Tell the user the partner will pick this up via `/pickup` and the eventual delivery will carry `responds_to=<this id>`.
+7. Report back the request id and recipient. Tell the user the partner will pick this up via `/pickup` and the eventual delivery will carry `responds_to=<this id>`.
 
 Do **not** propose backend implementation details — that's the receiving Claude's job after pickup. Stick to "what I need and why"; let them figure out "how". And **do not invent fields, endpoints, or product intent the user didn't actually give you** — 用户说没有就是没有，note 和 prd 都不要伪造。
-
-<!-- cc-handoff-version: 0.1.1 -->

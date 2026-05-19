@@ -356,6 +356,52 @@ func renderSummaryMD(p *handoffschema.Package) string {
 	return sb.String()
 }
 
+// renderAttachmentsSection emits the "📎 附件" block listing every package
+// attachment except the swagger snapshot (which is already referenced via the
+// API delta section). Returns "" when there are no user attachments, so
+// callers can unconditionally concatenate.
+func renderAttachmentsSection(p *handoffschema.Package) string {
+	type item struct {
+		name string
+		size int
+	}
+	var items []item
+	for _, a := range p.Attachments {
+		if a.Name == handoff.SwaggerSnapshotName {
+			continue
+		}
+		items = append(items, item{name: a.Name, size: a.Size})
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("## 📎 附件\n\n")
+	sb.WriteString("> 发送端附了以下文件,已下载到 `./attachments/`。需要时**用 Read 工具打开它们**(图片直接渲染,文本文件按文本读)。\n\n")
+	for _, it := range items {
+		fmt.Fprintf(&sb, "- `attachments/%s` — %s\n", it.name, humanSize(it.size))
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// humanSize renders bytes as "542 KB" / "1.2 MB" etc. Inline here rather
+// than pulling in a humanize lib for one call site.
+func humanSize(n int) string {
+	const (
+		kb = 1024
+		mb = 1024 * 1024
+	)
+	switch {
+	case n >= mb:
+		return fmt.Sprintf("%.1f MB", float64(n)/float64(mb))
+	case n >= kb:
+		return fmt.Sprintf("%d KB", n/kb)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
 func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 	switch p.EffectiveKind() {
 	case handoffschema.KindRequest:
@@ -435,6 +481,8 @@ func renderPromptMD(p *handoffschema.Package, mode Mode) string {
 		}
 		sb.WriteString("\n")
 	}
+
+	sb.WriteString(renderAttachmentsSection(p))
 
 	if note := strings.TrimSpace(p.NoteMD); note != "" {
 		bindLoc, requireVerb := "INTEGRATION.md 里逐条响应", "INTEGRATION.md 必须逐条响应"
@@ -588,6 +636,8 @@ func renderRequestPromptMD(p *handoffschema.Package, mode Mode) string {
 		sb.WriteString("\n")
 	}
 
+	sb.WriteString(renderAttachmentsSection(p))
+
 	if note := strings.TrimSpace(p.NoteMD); note != "" {
 		bindLoc, requireVerb := "响应方案里逐条响应", "响应方案必须逐条响应"
 		if mode == ModeDirect {
@@ -686,6 +736,8 @@ func renderBugPromptMD(p *handoffschema.Package, mode Mode) string {
 		}
 		sb.WriteString("\n")
 	}
+
+	sb.WriteString(renderAttachmentsSection(p))
 
 	if note := strings.TrimSpace(p.NoteMD); note != "" {
 		sb.WriteString("## ⚠️ 测试备注 / 验收标准 (必读)\n\n")

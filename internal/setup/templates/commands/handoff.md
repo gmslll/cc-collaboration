@@ -52,13 +52,19 @@ You just finished writing or modifying an API. Hand it off to the frontend partn
    - 如果不确定或者明显是全新 endpoint,**不传**这个参数。`amends` 不是默认值。
    - 区别于 `responds_to`:`responds_to` 是「我在回应你之前发的 request」,`amends` 是「我之前发过的 handoff 这次要改」。
 
-7. 调 `submit_handoff` MCP 工具：
+7. **询问附件 (可选)**:如果这次交付想随包带 UI 截图 / 设计稿 / 错误响应截图等给前端,问用户一次:
+   > 有 UI 截图 / 设计稿 / 任何想随交付带过去的文件吗?给我路径(绝对或相对 cwd 都行),用逗号或换行分开多个。没有就回 `没有` 或 `n`。
+
+   把路径数组传给 `attachment_paths` 参数。**不要伪造路径** —— 用户说没有就不传。
+
+8. 调 `submit_handoff` MCP 工具：
    - `summary`: 第 3 步的 Markdown 总结（已经把第 2 步自检的产物吸收进 Contract / Notes 段）
    - `prd`: 第 4 步的产品需求（没有就不传）
    - `note`: 第 5 步的需求备注（没有就不传）
    - `amends`: 第 6 步判断的上次 handoff id(只在确实是修正交付时传)
+   - `attachment_paths`: 第 7 步的路径数组(没有就不传)
    - `urgent: true`：仅当用户明确说紧急 / 「让对方现在就开始」时
 
-8. Report back the handoff id, recipient, and the targeting hints / api_delta counts shown in the tool's response.
+9. Report back the handoff id, recipient, and the targeting hints / api_delta counts shown in the tool's response.
 
 Do **not** invent endpoints you didn't actually implement. Use only what's in git diff and your session memory. **Do not invent requirements or product intent either** — if the user said "没有" / "n"，就不传 note；PRD 同理，没有就不传 prd。

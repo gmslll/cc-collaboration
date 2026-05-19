@@ -201,6 +201,72 @@ func TestRenderAPIDeltaMD_LegacyOpWithoutDetail(t *testing.T) {
 	}
 }
 
+// TestRenderAttachmentsSection_SkipsSwagger verifies the swagger snapshot is
+// excluded (it's covered by the API delta section), while user-supplied
+// attachments are listed with size + path.
+func TestRenderAttachmentsSection_SkipsSwagger(t *testing.T) {
+	p := &handoffschema.Package{
+		Attachments: []handoffschema.Attachment{
+			{Name: "swagger.yaml", SHA256: "x", Size: 12345},
+			{Name: "screenshot.png", SHA256: "y", Size: 555_000},
+			{Name: "network.har", SHA256: "z", Size: 12 * 1024},
+		},
+	}
+	got := renderAttachmentsSection(p)
+	if strings.Contains(got, "swagger.yaml") {
+		t.Errorf("swagger.yaml should be excluded:\n%s", got)
+	}
+	for _, want := range []string{
+		"## 📎 附件",
+		"attachments/screenshot.png",
+		"attachments/network.har",
+		"用 Read",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// TestRenderAttachmentsSection_EmptyWhenNothingUserAttached: a package with
+// only swagger.yaml (the default for delivery) produces no section — empty
+// templates concatenate fine.
+func TestRenderAttachmentsSection_EmptyWhenNothingUserAttached(t *testing.T) {
+	p := &handoffschema.Package{
+		Attachments: []handoffschema.Attachment{
+			{Name: "swagger.yaml", SHA256: "x", Size: 12345},
+		},
+	}
+	if got := renderAttachmentsSection(p); got != "" {
+		t.Errorf("expected empty section, got:\n%s", got)
+	}
+}
+
+// TestRenderBugPromptMD_AttachmentsBeforeDecisionTree: in bug templates the
+// attachment list must come *before* the decision tree, because screenshots
+// are evidence the receiver uses to judge ownership in step 1.
+func TestRenderBugPromptMD_AttachmentsBeforeDecisionTree(t *testing.T) {
+	p := &handoffschema.Package{
+		ID:         "b_attach",
+		Kind:       handoffschema.KindBug,
+		Sender:     "tester",
+		Recipients: []string{"backend", "frontend"},
+		SummaryMD:  "## Symptom\n broken",
+		Attachments: []handoffschema.Attachment{
+			{Name: "screenshot.png", SHA256: "a", Size: 1024},
+		},
+	}
+	got := renderPromptMD(p, ModeDocFirst)
+	attachIdx := strings.Index(got, "## 📎 附件")
+	treeIdx := strings.Index(got, "## 归属判断决策树")
+	if attachIdx < 0 || treeIdx < 0 {
+		t.Fatalf("missing sections: attach=%d, tree=%d\n%s", attachIdx, treeIdx, got)
+	}
+	if attachIdx > treeIdx {
+		t.Errorf("attachments (%d) should appear before decision tree (%d)", attachIdx, treeIdx)
+	}
+}
+
 // TestRenderBugPromptMD_MultiRecipient checks the decision-tree template fires
 // for kind=bug and surfaces the multi-recipient banner when more than one
 // engineering side is on the to= list.

@@ -25,6 +25,12 @@ import (
 // (cc-handoff check-drift, etc.) reads from a stable name.
 const SwaggerSnapshotName = "swagger.yaml"
 
+// AttachmentMaxBytes caps a single attachment's size. Enforced both
+// client-side (MCP readAttachments fails fast before allocating bytes) and
+// server-side (relay putAttachment via http.MaxBytesReader). Defined here so
+// the two layers can never disagree.
+const AttachmentMaxBytes = 50 << 20
+
 type BuildOptions struct {
 	RepoRoot  string
 	RepoName  string
@@ -48,6 +54,12 @@ type BuildOptions struct {
 	// inbox.InboxDir to apply the legacy / primary fallback). The draft
 	// summary file lives here.
 	InboxDir string
+	// ExtraAttachments are caller-provided binary blobs keyed by the basename
+	// they should land as on the receiver side (`<inbox>/<id>/attachments/<name>`).
+	// Used by submit_bug for screenshots / HAR / logs, and by handoff/request
+	// for design refs. Reserved names (currently `swagger.yaml`) are rejected
+	// so user input can never shadow the auto-derived swagger snapshot.
+	ExtraAttachments map[string][]byte
 }
 
 // SummaryDraftPath returns where the human-authored summary draft lives. The
@@ -172,6 +184,21 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 	}
 	if summary == "" {
 		return nil, nil, emptySummaryError(opts.InboxDir, opts.Kind)
+	}
+
+	// Caller-supplied attachments (screenshots / HAR / logs) ride alongside
+	// any auto-derived ones (currently just the swagger snapshot). Reject the
+	// reserved name so user input can't shadow the snapshot — Build owns that
+	// slot, and renderAttachmentsSection on the receiver side filters it out
+	// to avoid double-counting.
+	for name, body := range opts.ExtraAttachments {
+		if name == SwaggerSnapshotName {
+			return nil, nil, fmt.Errorf("attachment name %q is reserved", name)
+		}
+		if _, exists := attachments[name]; exists {
+			return nil, nil, fmt.Errorf("duplicate attachment name %q", name)
+		}
+		attachments[name] = body
 	}
 
 	urgency := opts.Urgency

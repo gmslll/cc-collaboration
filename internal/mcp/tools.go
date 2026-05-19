@@ -81,6 +81,7 @@ func submitHandoffTool() Tool {
     "module_paths": {"type": "array", "items": {"type": "string"}, "description": "Module-brief mode: relative-to-repo-root directory paths (e.g. internal/module/oms/order). When set, the build switches to module-brief mode — git diff and Swagger delta are skipped, and summary is treated as a self-contained API contract document. Drive this from the /handoff-module slash command; do not set it manually unless you know why."},
     "responds_to":  {"type": "string", "description": "若本 handoff 是对某个对端 request (kind=request) 的回应，把 request id 填这里 (例如 h_20260507_ABCD1234)。会渲染到接收端 prompt 顶端的「↩️ 回应 xxx」段，让发起方知道此次交付是回应哪条需求。"},
     "amends":       {"type": "string", "description": "若本次 handoff 是对自己**先前已发出**的某个 handoff 的修正交付(比如 endpoint 改了字段、错误码变了、整合方案需要重做),把上次的 handoff id 填这里。会渲染到接收端 prompt 顶端的「⚠️ 修正交付」横幅,提示前端去翻原版 INTEGRATION.md 对照本次增量。和 responds_to 区分:responds_to 是「我在回应你之前发的需求」,amends 是「我之前发过的 handoff 这次要改」。没有就不传。"},
+    "attachment_paths": {"type": "array", "items": {"type": "string"}, "description": "可选,本地文件路径数组(绝对路径或相对 cwd),随 handoff 一起发给接收端。任意类型:UI 截图 / 设计稿 / 错误响应 / HAR / log / 视频 都行,单文件 ≤ 50MB,同 basename 自动加序号。接收端 pickup 后文件落到 .cc-handoff/inbox/<id>/attachments/,prompt.md 会列出来。"},
     "cwd":          {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
@@ -93,15 +94,16 @@ func submitHandoffTool() Tool {
 }
 
 type submitArgs struct {
-	Summary     string   `json:"summary"`
-	To          string   `json:"to"`
-	Urgent      bool     `json:"urgent"`
-	Note        string   `json:"note"`
-	Prd         string   `json:"prd"`
-	ModulePaths []string `json:"module_paths"`
-	RespondsTo  string   `json:"responds_to"`
-	Amends      string   `json:"amends"`
-	CWD         string   `json:"cwd"`
+	Summary         string   `json:"summary"`
+	To              string   `json:"to"`
+	Urgent          bool     `json:"urgent"`
+	Note            string   `json:"note"`
+	Prd             string   `json:"prd"`
+	ModulePaths     []string `json:"module_paths"`
+	RespondsTo      string   `json:"responds_to"`
+	Amends          string   `json:"amends"`
+	AttachmentPaths []string `json:"attachment_paths"`
+	CWD             string   `json:"cwd"`
 }
 
 func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -144,22 +146,28 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		return ToolResult{}, err
 	}
 
+	extras, _, err := readAttachments(cwd, a.AttachmentPaths)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
-		RepoRoot:    repoRoot,
-		RepoName:    res.RepoName,
-		Sender:      res.Me,
-		Recipient:   recipient,
-		Urgency:     urgency,
-		Base:        res.Base,
-		Note:        a.Note,
-		Prd:         a.Prd,
-		Rules:       engine,
-		SwaggerPath: res.Swagger,
-		ModulePaths: a.ModulePaths,
-		Kind:        handoffschema.KindDelivery,
-		RespondsTo:  a.RespondsTo,
-		Amends:      a.Amends,
-		InboxDir:    inboxDir,
+		RepoRoot:         repoRoot,
+		RepoName:         res.RepoName,
+		Sender:           res.Me,
+		Recipient:        recipient,
+		Urgency:          urgency,
+		Base:             res.Base,
+		Note:             a.Note,
+		Prd:              a.Prd,
+		Rules:            engine,
+		SwaggerPath:      res.Swagger,
+		ModulePaths:      a.ModulePaths,
+		Kind:             handoffschema.KindDelivery,
+		RespondsTo:       a.RespondsTo,
+		Amends:           a.Amends,
+		InboxDir:         inboxDir,
+		ExtraAttachments: extras,
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -197,8 +205,27 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if pkg.AmendsHandoff != "" {
 		fmt.Fprintf(&sb, "- amends: `%s`\n", pkg.AmendsHandoff)
 	}
+	writeAttachmentSummary(&sb, pkg)
 	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{HandoffID: out.ID}))
 	return textResult(sb.String()), nil
+}
+
+// writeAttachmentSummary appends an "- attachments:" line to the user-facing
+// tool response when the package carries any non-swagger attachment. The
+// receiver-side prompt will list them in detail; here we just confirm they
+// rode along so the sender knows they made it through readAttachments.
+func writeAttachmentSummary(sb *strings.Builder, pkg *handoffschema.Package) {
+	var names []string
+	for _, a := range pkg.Attachments {
+		if a.Name == handoff.SwaggerSnapshotName {
+			continue
+		}
+		names = append(names, a.Name)
+	}
+	if len(names) == 0 {
+		return
+	}
+	fmt.Fprintf(sb, "- attachments: %s\n", strings.Join(names, ", "))
 }
 
 func submitRequestTool() Tool {
@@ -210,6 +237,7 @@ func submitRequestTool() Tool {
     "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
     "note":    {"type": "string", "description": "给后端的额外约束/备注，例如「不要破坏现有调用方」「字段命名跟 X 一致」「兼容现存数据」。会以「⚠️ 发起方备注 / 跨端约束 (必读)」段渲染到接收端 prompt，被要求逐条响应。没有就不传。"},
     "prd":     {"type": "string", "description": "前端从产品侧拿到的需求 / 设计意图 markdown（背景参考）。会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt，帮接收方理解这个 request 背后的业务目的。**作为背景阅读**，不要求逐条响应。和 note 区分：note 是必须兑现的硬约束（必读），prd 是 why（参考）。没有就不传。"},
+    "attachment_paths": {"type": "array", "items": {"type": "string"}, "description": "可选,本地文件路径数组(绝对或相对 cwd),随 request 一起带给后端。任意类型:线上响应截图 / HAR / 日志 / 视频 都行,单文件 ≤ 50MB,同 basename 自动加序号。接收端 pickup 后落到 .cc-handoff/inbox/<id>/attachments/。"},
     "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
@@ -222,12 +250,13 @@ func submitRequestTool() Tool {
 }
 
 type submitRequestArgs struct {
-	Summary string `json:"summary"`
-	To      string `json:"to"`
-	Urgent  bool   `json:"urgent"`
-	Note    string `json:"note"`
-	Prd     string `json:"prd"`
-	CWD     string `json:"cwd"`
+	Summary         string   `json:"summary"`
+	To              string   `json:"to"`
+	Urgent          bool     `json:"urgent"`
+	Note            string   `json:"note"`
+	Prd             string   `json:"prd"`
+	AttachmentPaths []string `json:"attachment_paths"`
+	CWD             string   `json:"cwd"`
 }
 
 func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -265,16 +294,22 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		urgency = handoffschema.UrgencyUrgent
 	}
 
+	extras, _, err := readAttachments(cwd, a.AttachmentPaths)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
-		RepoRoot:  repoRoot,
-		RepoName:  res.RepoName,
-		Sender:    res.Me,
-		Recipient: recipient,
-		Urgency:   urgency,
-		Note:      a.Note,
-		Prd:       a.Prd,
-		Kind:      handoffschema.KindRequest,
-		InboxDir:  inboxDir,
+		RepoRoot:         repoRoot,
+		RepoName:         res.RepoName,
+		Sender:           res.Me,
+		Recipient:        recipient,
+		Urgency:          urgency,
+		Note:             a.Note,
+		Prd:              a.Prd,
+		Kind:             handoffschema.KindRequest,
+		InboxDir:         inboxDir,
+		ExtraAttachments: extras,
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -290,6 +325,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	fmt.Fprintf(&sb, "Submitted request `%s` to `%s`.\n\n", out.ID, recipient)
 	fmt.Fprintf(&sb, "- kind: request\n- branch: `%s`\n- head: `%s`\n",
 		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
+	writeAttachmentSummary(&sb, pkg)
 	sb.WriteString("\nThe partner will pick it up via /pickup; their prompt will guide them to design/implement. When they handoff back, the package will carry `responds_to=" + out.ID + "`.")
 	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{
 		HandoffID: out.ID,
@@ -307,6 +343,7 @@ func submitBugTool() Tool {
     "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal each."},
     "note":    {"type": "string", "description": "测试备注 / 验收标准 markdown。会以「⚠️ 测试备注 / 验收标准 (必读)」段渲染到接收端 prompt，被要求逐条响应。没有就不传。"},
     "prd":     {"type": "string", "description": "产品需求 / 设计意图 markdown（背景参考），帮接收端理解 bug 背后的业务目的。没有就不传。"},
+    "attachment_paths": {"type": "array", "items": {"type": "string"}, "description": "可选,本地文件路径数组(绝对或相对 cwd)。截图 / HAR / 控制台日志 / 录屏 都行,单文件 ≤ 50MB,同 basename 自动加序号。接收端 pickup 后会在 prompt 顶部的「📎 附件」段看到列表,并被引导用 Read 打开它们辅助判定 bug 归属。"},
     "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
@@ -319,12 +356,13 @@ func submitBugTool() Tool {
 }
 
 type submitBugArgs struct {
-	Summary string   `json:"summary"`
-	To      []string `json:"to"`
-	Urgent  bool     `json:"urgent"`
-	Note    string   `json:"note"`
-	Prd     string   `json:"prd"`
-	CWD     string   `json:"cwd"`
+	Summary         string   `json:"summary"`
+	To              []string `json:"to"`
+	Urgent          bool     `json:"urgent"`
+	Note            string   `json:"note"`
+	Prd             string   `json:"prd"`
+	AttachmentPaths []string `json:"attachment_paths"`
+	CWD             string   `json:"cwd"`
 }
 
 func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -367,16 +405,22 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 		urgency = handoffschema.UrgencyUrgent
 	}
 
+	extras, _, err := readAttachments(cwd, a.AttachmentPaths)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
-		RepoRoot:   repoRoot,
-		RepoName:   res.RepoName,
-		Sender:     res.Me,
-		Recipients: recipients,
-		Urgency:    urgency,
-		Note:       a.Note,
-		Prd:        a.Prd,
-		Kind:       handoffschema.KindBug,
-		InboxDir:   inboxDir,
+		RepoRoot:         repoRoot,
+		RepoName:         res.RepoName,
+		Sender:           res.Me,
+		Recipients:       recipients,
+		Urgency:          urgency,
+		Note:             a.Note,
+		Prd:              a.Prd,
+		Kind:             handoffschema.KindBug,
+		InboxDir:         inboxDir,
+		ExtraAttachments: extras,
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -392,6 +436,7 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 	fmt.Fprintf(&sb, "Submitted bug `%s` to %s.\n\n", out.ID, formatRecipientList(recipients))
 	fmt.Fprintf(&sb, "- kind: bug\n- branch: `%s`\n- head: `%s`\n",
 		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
+	writeAttachmentSummary(&sb, pkg)
 	sb.WriteString("\n每个收件人 /pickup 后会看到「归属判断决策树」:\n")
 	sb.WriteString("- 是我的 → 修复 + ack\n")
 	sb.WriteString("- 不是我的 → mcp__cc-handoff__reassign_bug 转给对端\n")
@@ -622,6 +667,7 @@ func commentHandoffTool() Tool {
     "id":   {"type": "string", "description": "Handoff id (e.g. h_20260428_ABCD1234)"},
     "body": {"type": "string", "description": "Comment text. Markdown is fine."},
     "list": {"type": "boolean", "description": "If true, return existing comments instead of posting a new one. body is then ignored."},
+    "attachment_paths": {"type": "array", "items": {"type": "string"}, "description": "可选,本地文件路径数组(绝对或相对 cwd),作为附件挂到这条 handoff 上;同时 comment 正文末尾会自动追加 一行 「📎 attached: name1, name2...」,接收端 watch 写 comments.md 时也能看到这条引用。任意类型 ≤ 50MB,同 basename 自动加序号。"},
     "cwd":  {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   },
   "required": ["id"]
@@ -635,10 +681,11 @@ func commentHandoffTool() Tool {
 }
 
 type commentArgs struct {
-	ID   string `json:"id"`
-	Body string `json:"body"`
-	List bool   `json:"list"`
-	CWD  string `json:"cwd"`
+	ID              string   `json:"id"`
+	Body            string   `json:"body"`
+	List            bool     `json:"list"`
+	AttachmentPaths []string `json:"attachment_paths"`
+	CWD             string   `json:"cwd"`
 }
 
 func commentHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -676,15 +723,51 @@ func commentHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult
 		return textResult(sb.String()), nil
 	}
 
-	if a.Body == "" {
-		return ToolResult{}, fmt.Errorf("body is required when not listing")
-	}
-	c, err := client.Comment(ctx, a.ID, a.Body)
+	// Read attachments up-front so we can fail before posting the comment
+	// (avoids a half-state where the comment lands but uploads error out).
+	// Order is preserved so the body footer lists attachments in the order
+	// the user wrote them.
+	extras, names, err := readAttachments(cwd, a.AttachmentPaths)
 	if err != nil {
 		return ToolResult{}, err
 	}
+
+	body := a.Body
+	if len(names) > 0 {
+		// Append a marker line so receivers see what files came along even
+		// when reading comments.md in isolation (without the handoff's
+		// attachments listing).
+		if body != "" && !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
+		body += "\n📎 attached: " + strings.Join(names, ", ")
+	}
+	if body == "" {
+		return ToolResult{}, fmt.Errorf("body is required when not listing (or pass attachment_paths)")
+	}
+
+	c, err := client.Comment(ctx, a.ID, body)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
+	var uploaded, failed []string
+	for _, name := range names {
+		if err := client.UploadAttachment(ctx, a.ID, name, extras[name]); err != nil {
+			failed = append(failed, fmt.Sprintf("%s (%v)", name, err))
+			continue
+		}
+		uploaded = append(uploaded, name)
+	}
+
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Posted comment #%d on `%s`. The other side will be notified via SSE.", c.ID, c.HandoffID)
+	if len(uploaded) > 0 {
+		fmt.Fprintf(&sb, "\n- attached: %s", strings.Join(uploaded, ", "))
+	}
+	if len(failed) > 0 {
+		fmt.Fprintf(&sb, "\n- ⚠️ failed uploads: %s — comment is posted but these files didn't go up; retry by re-running comment_handoff with the same paths.", strings.Join(failed, "; "))
+	}
 	sb.WriteString(linearSyncBlock(res.Linear, LinearEventComment, LinearSyncCtx{
 		HandoffID: c.HandoffID,
 		CommentBy: c.Sender,
@@ -697,6 +780,66 @@ func resolveCWD(arg string) (string, error) {
 		return arg, nil
 	}
 	return os.Getwd()
+}
+
+// readAttachments reads user-provided file paths into a name→bytes map ready
+// to hand to handoff.BuildOptions.ExtraAttachments / Client.UploadAttachment.
+// Paths may be absolute or relative to cwd. basename collisions get a -2 /
+// -3 / … suffix before the file extension so two `screenshot.png` from
+// different directories both survive. Reserved names (swagger.yaml) are
+// rejected outright — the user should rename their file.
+func readAttachments(cwd string, paths []string) (map[string][]byte, []string, error) {
+	if len(paths) == 0 {
+		return nil, nil, nil
+	}
+	out := make(map[string][]byte, len(paths))
+	order := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		p := raw
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(cwd, p)
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("attachment %q: %w", raw, err)
+		}
+		if fi.IsDir() {
+			return nil, nil, fmt.Errorf("attachment %q is a directory; pass individual files", raw)
+		}
+		if fi.Size() > handoff.AttachmentMaxBytes {
+			return nil, nil, fmt.Errorf("attachment %q is %d bytes; max is %d", raw, fi.Size(), handoff.AttachmentMaxBytes)
+		}
+		base := filepath.Base(p)
+		if base == handoff.SwaggerSnapshotName {
+			return nil, nil, fmt.Errorf("attachment name %q is reserved (rename the file)", base)
+		}
+		name := uniqueAttachmentName(base, out)
+		body, err := os.ReadFile(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read attachment %q: %w", raw, err)
+		}
+		out[name] = body
+		order = append(order, name)
+	}
+	return out, order, nil
+}
+
+// uniqueAttachmentName returns base when it isn't already in taken, otherwise
+// appends -2 / -3 / … before the extension until it is. Keeps the suffix
+// before any dot so `screenshot.png` becomes `screenshot-2.png` instead of
+// `screenshot.png-2`.
+func uniqueAttachmentName(base string, taken map[string][]byte) string {
+	if _, exists := taken[base]; !exists {
+		return base
+	}
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
+		if _, exists := taken[candidate]; !exists {
+			return candidate
+		}
+	}
 }
 
 func writeDraftSummary(inboxDir, content string) error {

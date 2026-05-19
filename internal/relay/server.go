@@ -11,8 +11,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cc-collaboration/internal/handoff"
@@ -434,20 +436,25 @@ func (s *Server) listInboxComments(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const attachmentMaxBytes = 50 << 20 // 50 MB ought to cover any sensible diff
-
 func (s *Server) putAttachment(w http.ResponseWriter, r *http.Request) {
-	pkg, identity := s.requireParticipant(w, r)
+	pkg, _ := s.requireParticipant(w, r)
 	if pkg == nil {
 		return
 	}
-	if identity != pkg.Sender {
-		http.Error(w, "forbidden: only sender can upload attachments", http.StatusForbidden)
+	name := r.PathValue("name")
+	// Reject anything other than a bare, non-traversal basename. The name
+	// flows directly into both DB storage and (on the receiver)
+	// inbox/<id>/attachments/<name>; "../etc/passwd" must never get there,
+	// and "." / ".." pass filepath.Base unchanged so they need explicit
+	// rejection on top.
+	if name == "" || name == "." || name == ".." ||
+		name != filepath.Base(name) ||
+		strings.ContainsAny(name, `/\`) {
+		http.Error(w, "invalid attachment name", http.StatusBadRequest)
 		return
 	}
-	name := r.PathValue("name")
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, attachmentMaxBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, handoff.AttachmentMaxBytes))
 	if err != nil {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
