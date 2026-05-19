@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -45,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/handoffs/{id}/status", s.status)
 	api.HandleFunc("POST /v1/handoffs/{id}/ack", s.ack)
 	api.HandleFunc("POST /v1/handoffs/{id}/retract", s.retract)
+	api.HandleFunc("POST /v1/handoffs/{id}/reassign", s.reassign)
 	api.HandleFunc("POST /v1/handoffs/{id}/comment", s.postComment)
 	api.HandleFunc("GET /v1/handoffs/{id}/comments", s.listHandoffComments)
 	api.HandleFunc("GET /v1/comments", s.listInboxComments)
@@ -82,7 +84,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if p.Recipient == "" {
+	if len(p.EffectiveRecipients()) == 0 {
 		http.Error(w, "recipient required", http.StatusBadRequest)
 		return
 	}
@@ -102,25 +104,29 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "insert: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if s.Hub != nil {
-		notice := handoffschema.ListItem{
-			ID:        p.ID,
-			Kind:      p.Kind,
-			Sender:    p.Sender,
-			Urgency:   p.Urgency,
-			State:     handoffschema.StatePending,
-			CreatedAt: p.CreatedAt,
-			RepoName:  p.Repo.Name,
-			Branch:    p.Repo.Branch,
-		}
-		if data, err := json.Marshal(notice); err == nil {
-			s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffCreated, Recipient: p.Recipient, Data: data})
-		}
-	}
+	s.publishHandoffCreated(&p, p.EffectiveRecipients())
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         p.ID,
 		"created_at": p.CreatedAt,
 	})
+}
+
+// publishHandoffCreated fans a handoff.created SSE event out to each of the
+// targeted recipients. No-op when the Hub isn't configured (e.g. in tests
+// that don't wire one). Marshalling failure is silent — events are
+// best-effort; reconnect-with-Last-Event-Id is the recovery path.
+func (s *Server) publishHandoffCreated(p *handoffschema.Package, targets []string) {
+	if s.Hub == nil || len(targets) == 0 {
+		return
+	}
+	notice := handoffschema.NoticeListItem(p, handoffschema.StatePending)
+	data, err := json.Marshal(notice)
+	if err != nil {
+		return
+	}
+	for _, rec := range targets {
+		s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffCreated, Recipient: rec, Data: data})
+	}
 }
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
@@ -188,11 +194,51 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if pkg.Recipient != identity && pkg.Sender != identity {
+	if !s.callerCanView(r.Context(), pkg, identity) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	writeJSON(w, http.StatusOK, pkg)
+}
+
+// packageParticipants returns the union of sender + EffectiveRecipients +
+// every BugGroupParticipants entry. Used by callerCanView and commentTargets
+// so both auth + comment fan-out can share one BugGroupParticipants query.
+// The bug-group expansion is load-bearing: tester sent the original bug to
+// backend only, then backend reassigned to frontend — tester is no longer on
+// the new handoff's sender/recipient set, but they still belong to the group.
+func (s *Server) packageParticipants(ctx context.Context, pkg *handoffschema.Package) []string {
+	seen := map[string]struct{}{}
+	add := func(id string) {
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+	}
+	add(pkg.Sender)
+	for _, r := range pkg.EffectiveRecipients() {
+		add(r)
+	}
+	if pkg.BugGroupID != "" {
+		if extra, err := s.Store.BugGroupParticipants(ctx, pkg.BugGroupID); err == nil {
+			for _, p := range extra {
+				add(p)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out
+}
+
+func (s *Server) callerCanView(ctx context.Context, pkg *handoffschema.Package, identity string) bool {
+	for _, p := range s.packageParticipants(ctx, pkg) {
+		if p == identity {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -260,8 +306,9 @@ func (s *Server) listOnlineUsers(w http.ResponseWriter, _ *http.Request) {
 }
 
 // requireParticipant fetches the handoff for the {id} path segment and
-// rejects callers that aren't the sender or recipient. Returns nil if the
-// response has already been written (404/500/403).
+// rejects callers that aren't the sender, a recipient slot owner, or a
+// bug-group co-participant. Returns nil if the response has already been
+// written (404/500/403).
 func (s *Server) requireParticipant(w http.ResponseWriter, r *http.Request) (*handoffschema.Package, string) {
 	identity := auth.Identity(r.Context())
 	id := r.PathValue("id")
@@ -274,7 +321,7 @@ func (s *Server) requireParticipant(w http.ResponseWriter, r *http.Request) (*ha
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil, ""
 	}
-	if identity != pkg.Sender && identity != pkg.Recipient {
+	if !s.callerCanView(r.Context(), pkg, identity) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return nil, ""
 	}
@@ -282,8 +329,29 @@ func (s *Server) requireParticipant(w http.ResponseWriter, r *http.Request) (*ha
 }
 
 func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
-	pkg, identity := s.requireParticipant(w, r)
-	if pkg == nil {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+	pkg, _, err := s.Store.Get(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// One BugGroupParticipants query covers both auth and SSE fan-out — the
+	// shared helper means we don't pay twice on the bug-group hot path.
+	participants := s.packageParticipants(r.Context(), pkg)
+	caller := false
+	for _, p := range participants {
+		if p == identity {
+			caller = true
+			break
+		}
+	}
+	if !caller {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -306,12 +374,13 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.Hub != nil {
-		target := pkg.Recipient
-		if identity == pkg.Recipient {
-			target = pkg.Sender
-		}
 		if data, err := json.Marshal(c); err == nil {
-			s.Hub.Publish(sse.Event{Type: sse.EventTypeCommentCreated, Recipient: target, Data: data})
+			for _, t := range participants {
+				if t == identity {
+					continue
+				}
+				s.Hub.Publish(sse.Event{Type: sse.EventTypeCommentCreated, Recipient: t, Data: data})
+			}
 		}
 	}
 	writeJSON(w, http.StatusCreated, c)
@@ -440,7 +509,8 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request) {
 }
 
 // status returns state + picked_at + comment summary for a single handoff.
-// Caller must be sender or recipient (peer parties only).
+// Caller must be a participant — sender, recipient slot owner, or bug-group
+// co-participant.
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	id := r.PathValue("id")
@@ -453,7 +523,27 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if st.Sender != identity && st.Recipient != identity {
+	allowed := st.Sender == identity || st.Recipient == identity
+	if !allowed {
+		for _, rec := range st.Recipients {
+			if rec == identity {
+				allowed = true
+				break
+			}
+		}
+	}
+	if !allowed && st.BugGroupID != "" {
+		participants, err := s.Store.BugGroupParticipants(r.Context(), st.BugGroupID)
+		if err == nil {
+			for _, p := range participants {
+				if p == identity {
+					allowed = true
+					break
+				}
+			}
+		}
+	}
+	if !allowed {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -479,7 +569,7 @@ func (s *Server) retract(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	recipient, err := s.Store.Retract(r.Context(), id, identity)
+	recipients, err := s.Store.Retract(r.Context(), id, identity)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
@@ -498,10 +588,73 @@ func (s *Server) retract(w http.ResponseWriter, r *http.Request) {
 	if s.Hub != nil {
 		ev := handoffschema.RetractEvent{ID: id, Sender: identity, Reason: body.Reason}
 		if data, err := json.Marshal(ev); err == nil {
-			s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffRetracted, Recipient: recipient, Data: data})
+			for _, rec := range recipients {
+				s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffRetracted, Recipient: rec, Data: data})
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+}
+
+// reassign forwards a bug handoff to a different identity. The caller (the
+// current recipient who decided "this is not my bug") closes their slot and
+// the relay creates a fresh bug handoff for `to`, sharing the original's
+// bug_group_id so comments stay synced across the whole reassign chain.
+func (s *Server) reassign(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	var req struct {
+		To     string `json:"to"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.To == "" {
+		http.Error(w, "to required", http.StatusBadRequest)
+		return
+	}
+	if req.To == identity {
+		http.Error(w, "cannot reassign to yourself", http.StatusBadRequest)
+		return
+	}
+
+	orig, _, err := s.Store.Get(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	newPkg := handoff.BuildReassignment(orig, req.To, req.Reason, identity, time.Now().UTC())
+
+	if err := s.Store.Reassign(r.Context(), id, identity, newPkg, req.Reason); err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "not found", http.StatusNotFound)
+		case errors.Is(err, store.ErrForbidden):
+			http.Error(w, err.Error(), http.StatusForbidden)
+		case errors.Is(err, store.ErrConflict):
+			http.Error(w, err.Error(), http.StatusConflict)
+		default:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	s.publishHandoffCreated(newPkg, []string{req.To})
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":              newPkg.ID,
+		"reassigned_to":   req.To,
+		"bug_group_id":    newPkg.BugGroupID,
+		"reassigned_from": id,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

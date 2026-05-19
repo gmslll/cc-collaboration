@@ -226,6 +226,31 @@ func (c *Client) ListHistory(ctx context.Context, limit int) ([]handoffschema.Li
 	return out.Items, nil
 }
 
+// ReassignResult is what the relay returns when /v1/handoffs/{id}/reassign
+// succeeds: the id of the newly-created handoff for the new recipient, plus
+// the bug_group_id so the caller can mention it in their follow-up comment.
+type ReassignResult struct {
+	ID             string `json:"id"`
+	ReassignedTo   string `json:"reassigned_to"`
+	BugGroupID     string `json:"bug_group_id"`
+	ReassignedFrom string `json:"reassigned_from"`
+}
+
+// Reassign forwards a bug handoff the caller currently owns to a different
+// identity. The relay closes the caller's slot on the original handoff and
+// creates a fresh bug handoff for `to` sharing the same bug_group_id, so
+// comments and reassign chains stay correlated. Returns ErrConflict when the
+// target is already an open recipient in the same bug group (loop guard) or
+// when the original handoff isn't kind=bug.
+func (c *Client) Reassign(ctx context.Context, id, to, reason string) (*ReassignResult, error) {
+	payload, _ := json.Marshal(map[string]string{"to": to, "reason": reason})
+	var out ReassignResult
+	if err := c.do(ctx, http.MethodPost, "/v1/handoffs/"+id+"/reassign", bytes.NewReader(payload), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Retract cancels a still-pending handoff the caller sent. reason is
 // optional; surfaced in the SSE event the recipient's watch sees. Returns
 // ErrConflict if the recipient already picked it up.

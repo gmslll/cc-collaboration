@@ -357,8 +357,11 @@ func renderSummaryMD(p *handoffschema.Package) string {
 }
 
 func renderPromptMD(p *handoffschema.Package, mode Mode) string {
-	if p.EffectiveKind() == handoffschema.KindRequest {
+	switch p.EffectiveKind() {
+	case handoffschema.KindRequest:
 		return renderRequestPromptMD(p, mode)
+	case handoffschema.KindBug:
+		return renderBugPromptMD(p, mode)
 	}
 	integrationPath := fmt.Sprintf("docs/integrations/%s.md", p.ID)
 	// Detect module-brief mode by content shape, not just the ModulePaths
@@ -620,5 +623,120 @@ func renderRequestPromptMD(p *handoffschema.Package, mode Mode) string {
 		sb.WriteString("4. **停下**。不要直接改代码。等人工 review，确认后告诉用户「按响应方案执行」才开始改。中途有疑问继续走 comment 通道。\n")
 		fmt.Fprintf(&sb, "5. 改动完成、合并后，跑 `/handoff` 把交付送回给 `%s`，并在调用 `submit_handoff` 时**带上 `responds_to=%s`** —— 这样发起方那边能看到「这次交付是回应你之前的 %s 需求」。\n", p.Sender, p.ID, p.ID)
 	}
+	return sb.String()
+}
+
+// renderBugPromptMD generates the receiver-side prompt for a KindBug package.
+// The receiver is one of the engineering sides (typically backend or frontend)
+// who was named in the tester's submit_bug `to` list, or who got the bug
+// forwarded via reassign_bug. The prompt is built around an explicit decision
+// tree (fix it / forward to the other side / pull the other side in for
+// discussion) so the receiver doesn't have to invent an ownership policy.
+func renderBugPromptMD(p *handoffschema.Package, mode Mode) string {
+	bugDocPath := fmt.Sprintf("docs/bugs/%s.md", p.ID)
+	originalSender := p.OriginalSender
+	if originalSender == "" {
+		originalSender = p.Sender
+	}
+
+	var sb strings.Builder
+	if mode == ModeDirect {
+		sb.WriteString("# Bug: 判定归属并直接修复\n\n")
+	} else {
+		sb.WriteString("# Bug: 判定归属并产出修复方案\n\n")
+	}
+	fmt.Fprintf(&sb, "收到 bug `%s` (reported by `%s`).\n\n", p.ID, originalSender)
+	sb.WriteString("**这是测试端发来的 bug,不是已经定责到你的。第一步必须判断这个 bug 的根因是不是在你这一端。** ")
+	sb.WriteString("如果不是,用 `mcp__cc-handoff__reassign_bug` 转给对端;如果是,按下面的工作流修复或写方案。中间不确定就 `comment_handoff` 拉对端 / 测试讨论 —— 同一个 bug_group 内的评论会自动同步给所有参与者,不需要你人肉中转。\n\n")
+
+	if recipients := p.EffectiveRecipients(); len(recipients) > 1 {
+		sb.WriteString("> 👥 **同时发送**:此 bug 同时发给了 ")
+		for i, r := range recipients {
+			if i > 0 {
+				sb.WriteString(" / ")
+			}
+			fmt.Fprintf(&sb, "`%s`", r)
+		}
+		sb.WriteString(" —— 你只决策**你这一格**(reassign 也只关你这一格,对端那一格不受影响)。对端可能正在同步分析,看 `status_handoff` 查 pickup 状态;通过 `comment_handoff` 拉对端进群协商比并行返工更省事。\n\n")
+	}
+
+	if p.ReassignedFrom != "" {
+		fmt.Fprintf(&sb, "> ↪️ **由对端转过来**:此 bug 原本发给 `%s`,被对方调用 `reassign_bug` 转给了你。\n", p.Sender)
+		if reason := strings.TrimSpace(p.ReassignedReason); reason != "" {
+			fmt.Fprintf(&sb, ">\n> **对方给的理由**:%s\n", reason)
+		}
+		sb.WriteString(">\n> 转交意味着对方读完代码、判断根因在你这边。你**可以**(也只应该在真有依据时)再次反向 reassign,但同一个 bug_group 不允许反向转回对方(relay 会 409),那种情况下用 comment_handoff 协商。\n\n")
+	}
+
+	if prd := strings.TrimSpace(p.PrdMD); prd != "" {
+		sb.WriteString("## 📋 产品需求 / 设计意图 (背景参考)\n\n")
+		sb.WriteString("> 🟢 **这一段是「为什么」的背景参考,不是逐条硬约束**。读懂它能帮你判断这个 bug 的优先级和影响面,但不要求你逐条响应。\n\n")
+		sb.WriteString(prd)
+		if !strings.HasSuffix(prd, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if p.SummaryMD != "" {
+		sb.WriteString("## Bug 描述 (测试原话)\n\n")
+		sb.WriteString(p.SummaryMD)
+		if !strings.HasSuffix(p.SummaryMD, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if note := strings.TrimSpace(p.NoteMD); note != "" {
+		sb.WriteString("## ⚠️ 测试备注 / 验收标准 (必读)\n\n")
+		sb.WriteString("> 🔴 **这一段是硬约束**。任何修复都必须满足下面的验收条件;漏掉一条就是没修干净。\n\n")
+		sb.WriteString(note)
+		sb.WriteString("\n\n")
+	}
+
+	sb.WriteString("## 归属判断决策树 (动手前必走)\n\n")
+	sb.WriteString("**Step 0 — 信息够不够?**\n")
+	sb.WriteString("- 复现步骤、期望、实际三者有一个含糊就先 `comment_handoff` 问测试,等回复后再继续。不要靠脑补复现。\n\n")
+	sb.WriteString("**Step 1 — 根因到底在哪一端?**\n")
+	sb.WriteString("- 扫本仓库代码,在你这一端定位最可能的根因路径(handler / service / 字段映射 / 渲染层等)。\n")
+	sb.WriteString("- 用本仓库的真实代码核对,而不是相信对端原文里的「我怀疑是 XX」。\n")
+	sb.WriteString("- 三种结论之一:\n")
+	sb.WriteString("  - **明确是我这边** → 走 Step 2A(修复 / 写方案)\n")
+	sb.WriteString("  - **明确是对端** → 走 Step 2B(reassign_bug)\n")
+	sb.WriteString("  - **不确定 / 跨端协作** → 走 Step 2C(拉对端进群讨论)\n\n")
+
+	sb.WriteString("**Step 2A — 是我这边,修复**\n\n")
+	if mode == ModeDirect {
+		sb.WriteString("1. 直接修代码。命名/类型/错误处理参考本仓库已存在的同类写法,避免风格漂移。\n")
+		fmt.Fprintf(&sb, "2. (强烈推荐)在仓库根写 `%s` 记录根因 + 修复点 + 回归用例。短就行,1-2 段足够。\n", bugDocPath)
+		sb.WriteString("3. **停下**。不要继续跑 lint / format / build / test,除非用户明确要求。告诉用户「改完了,这些是改动的文件」,等 review。\n")
+		fmt.Fprintf(&sb, "4. review 通过、改动合并后,用 `comment_handoff %s` 通知 group(测试 + 对端)修复已 ship、附上一句根因摘要 + 改动点路径,再调用 `pickup_handoff` 把你这一格 ack 掉。\n\n", p.ID)
+	} else {
+		fmt.Fprintf(&sb, "1. 在仓库根写 `%s`(必要时 `mkdir -p docs/bugs/`),结构包含:\n", bugDocPath)
+		sb.WriteString("   - **根因**:1-2 段说清楚出 bug 的真实原因(不是症状)\n")
+		sb.WriteString("   - **修复方案**:具体改哪些文件 / 函数 / 字段;给关键代码片段或伪代码\n")
+		sb.WriteString("   - **回归测试**:怎么确认这个 bug 不会再出(用例 / 断言)\n")
+		sb.WriteString("   - **影响面**:这个 bug 还可能在哪些场景出现?顺手列一下\n")
+		sb.WriteString("2. **停下**。不要直接改代码。等人工 review,确认后用户会说「按方案执行」才开始改。\n")
+		fmt.Fprintf(&sb, "3. 改完、合并后,用 `comment_handoff %s` 通知 group(测试 + 对端)修复已 ship、附上一句根因摘要 + 改动点路径,再调用 `pickup_handoff` 把你这一格 ack 掉。\n\n", p.ID)
+	}
+
+	sb.WriteString("**Step 2B — 是对端,转交**\n\n")
+	sb.WriteString("调用:\n\n")
+	sb.WriteString("```\n")
+	fmt.Fprintf(&sb, "mcp__cc-handoff__reassign_bug id=%s to=<other-side> reason=\"<一段话写清楚为什么是对方的>\"\n", p.ID)
+	sb.WriteString("```\n\n")
+	sb.WriteString("- **reason 必须有依据**(读了对应代码 / 看到字段是对方拼的 / 看到错误码是对方定义的等),不要只写「不是我的」。理由会作为横幅出现在对端 prompt 顶部。\n")
+	sb.WriteString("- **不要反向转回**(同一个 bug_group 已经待过的人会被 relay 拒掉 409)。这种情况下用 `comment_handoff` 拉双方协商。\n")
+	sb.WriteString("- 转交后你这一格关闭(state=reassigned)。group 内后续评论你仍然能在 `list_history` / comment SSE 里看到。\n\n")
+
+	sb.WriteString("**Step 2C — 不确定 / 跨端协作**\n\n")
+	fmt.Fprintf(&sb, "- `comment_handoff %s \"<你的初步分析 / 想问对端的具体问题>\"` 把对端拉进群;同一个 bug_group 内的评论会自动同步给测试 + 已经在群里的所有人。\n", p.ID)
+	sb.WriteString("- 等对端回复后再决定 Step 2A(修)还是 Step 2B(转)。\n")
+	sb.WriteString("- 不要在没问清楚的情况下盲目 reassign —— 一旦对端也判定不是自己的,你们就只能 comment 协商了。\n\n")
+
+	sb.WriteString("## Routing 提示\n\n")
+	fmt.Fprintf(&sb, "- 报告人(`%s`)+ 同 bug_group 内出现过的所有身份都会自动收到本 group 任何 handoff 上的评论。你不用人肉中转。\n", originalSender)
+	sb.WriteString("- 用 `status_handoff` 看每一格的 pickup 状态(谁还没读 / 谁已读 / 谁已转交)。\n")
 	return sb.String()
 }

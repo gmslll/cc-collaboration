@@ -151,10 +151,10 @@ func TestRetractPendingHandoff(t *testing.T) {
 	ctx := context.Background()
 	mustInsertHandoff(t, st, "h1", "alice", "bob")
 
-	if recipient, err := st.Retract(ctx, "h1", "alice"); err != nil {
+	if recipients, err := st.Retract(ctx, "h1", "alice"); err != nil {
 		t.Fatalf("first retract: %v", err)
-	} else if recipient != "bob" {
-		t.Errorf("retract recipient: got %q, want bob", recipient)
+	} else if len(recipients) != 1 || recipients[0] != "bob" {
+		t.Errorf("retract recipients: got %v, want [bob]", recipients)
 	}
 	// State is now retracted; ListPending should NOT return it.
 	pending, err := st.ListPending(ctx, "bob", 10)
@@ -195,6 +195,335 @@ func TestRetractMissingHandoff(t *testing.T) {
 	_, err := st.Retract(context.Background(), "nope", "alice")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing handoff: want ErrNotFound, got %v", err)
+	}
+}
+
+// mustInsertBug inserts a multi-recipient bug handoff. Mirrors mustInsertHandoff
+// but exercises the Recipients []string path through Insert + handoff_recipients.
+func mustInsertBug(t *testing.T, st *Store, id, sender string, recipients []string) {
+	t.Helper()
+	pkg := &handoffschema.Package{
+		ID:             id,
+		SchemaVersion:  handoffschema.SchemaVersion,
+		Kind:           handoffschema.KindBug,
+		Sender:         sender,
+		Recipients:     recipients,
+		Urgency:        handoffschema.UrgencyNormal,
+		CreatedAt:      time.Now().UTC(),
+		Repo:           handoffschema.Repo{Name: "demo"},
+		SummaryMD:      "## Symptom\n broken thing",
+		OriginalSender: sender,
+	}
+	if err := st.Insert(context.Background(), pkg); err != nil {
+		t.Fatalf("insert bug %s: %v", id, err)
+	}
+}
+
+// TestInsertMultiRecipientListPendingShowsBoth verifies a bug handoff with
+// Recipients=[backend, frontend] appears in BOTH recipients' inboxes.
+func TestInsertMultiRecipientListPendingShowsBoth(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertBug(t, st, "b1", "tester", []string{"backend", "frontend"})
+
+	for _, who := range []string{"backend", "frontend"} {
+		items, err := st.ListPending(ctx, who, 10)
+		if err != nil {
+			t.Fatalf("ListPending(%s): %v", who, err)
+		}
+		if len(items) != 1 || items[0].ID != "b1" {
+			t.Errorf("%s inbox: want [b1], got %+v", who, items)
+		}
+		if items[0].Kind != handoffschema.KindBug {
+			t.Errorf("%s inbox kind: got %q, want bug", who, items[0].Kind)
+		}
+		if len(items[0].Recipients) != 2 {
+			t.Errorf("%s inbox recipients: got %v, want [backend frontend]", who, items[0].Recipients)
+		}
+	}
+}
+
+// TestAckOnlyMarksCallerSlot verifies that ack on a multi-recipient bug only
+// closes the caller's slot; the other recipient still sees it as pending.
+// Parent handoff state stays pending until all slots are closed.
+func TestAckOnlyMarksCallerSlot(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertBug(t, st, "b1", "tester", []string{"backend", "frontend"})
+
+	if err := st.Ack(ctx, "b1", "backend"); err != nil {
+		t.Fatalf("backend ack: %v", err)
+	}
+
+	// backend's inbox is empty now; frontend still sees it.
+	if items, _ := st.ListPending(ctx, "backend", 10); len(items) != 0 {
+		t.Errorf("backend inbox after ack: want empty, got %+v", items)
+	}
+	if items, _ := st.ListPending(ctx, "frontend", 10); len(items) != 1 {
+		t.Errorf("frontend inbox after backend ack: want [b1], got %+v", items)
+	}
+
+	// Parent handoff still pending (one slot open).
+	st2, err := st.Status(ctx, "b1")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st2.State != handoffschema.StatePending {
+		t.Errorf("parent state after partial ack: got %q, want pending", st2.State)
+	}
+	if got := st2.PickupBy["backend"].State; got != "picked" {
+		t.Errorf("backend slot state: got %q, want picked", got)
+	}
+	if got := st2.PickupBy["frontend"].State; got != "pending" {
+		t.Errorf("frontend slot state: got %q, want pending", got)
+	}
+
+	// Now frontend acks → parent moves to picked.
+	if err := st.Ack(ctx, "b1", "frontend"); err != nil {
+		t.Fatalf("frontend ack: %v", err)
+	}
+	st3, _ := st.Status(ctx, "b1")
+	if st3.State != handoffschema.StatePicked {
+		t.Errorf("parent state after both acks: got %q, want picked", st3.State)
+	}
+}
+
+// TestAckForbiddenForNonRecipient verifies a third party can't ack a bug
+// they're not on.
+func TestAckForbiddenForNonRecipient(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertBug(t, st, "b1", "tester", []string{"backend", "frontend"})
+
+	err := st.Ack(ctx, "b1", "stranger")
+	if !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-recipient ack: want ErrForbidden, got %v", err)
+	}
+}
+
+// TestReassignCreatesNewBugAndClosesSlot covers the happy path: backend
+// reassigns its slot to frontend; backend's slot becomes "reassigned", a new
+// bug handoff lands in frontend's inbox sharing the same bug_group_id.
+func TestReassignCreatesNewBugAndClosesSlot(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertBug(t, st, "b1", "tester", []string{"backend"})
+
+	newPkg := &handoffschema.Package{
+		ID:             "b2",
+		SchemaVersion:  handoffschema.SchemaVersion,
+		Kind:           handoffschema.KindBug,
+		Sender:         "backend",
+		Recipients:     []string{"frontend"},
+		Urgency:        handoffschema.UrgencyNormal,
+		CreatedAt:      time.Now().UTC(),
+		Repo:           handoffschema.Repo{Name: "demo"},
+		SummaryMD:      "## Symptom\n broken thing",
+		OriginalSender: "tester",
+	}
+	if err := st.Reassign(ctx, "b1", "backend", newPkg, "字段在前端拼装"); err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+
+	// backend's slot on b1 → reassigned; b1's overall state → picked
+	// (only one slot, now terminal).
+	st1, err := st.Status(ctx, "b1")
+	if err != nil {
+		t.Fatalf("status b1: %v", err)
+	}
+	if got := st1.PickupBy["backend"].State; got != "reassigned" {
+		t.Errorf("backend slot after reassign: got %q, want reassigned", got)
+	}
+	if st1.BugGroupID == "" {
+		t.Error("bug_group_id should have been assigned on first reassign, got empty")
+	}
+
+	// frontend sees b2 in its inbox.
+	items, _ := st.ListPending(ctx, "frontend", 10)
+	if len(items) != 1 || items[0].ID != "b2" {
+		t.Fatalf("frontend inbox after reassign: want [b2], got %+v", items)
+	}
+	if items[0].BugGroupID != st1.BugGroupID {
+		t.Errorf("b2 bug_group_id %q != b1 %q", items[0].BugGroupID, st1.BugGroupID)
+	}
+	if items[0].Kind != handoffschema.KindBug {
+		t.Errorf("b2 kind: got %q, want bug", items[0].Kind)
+	}
+}
+
+// TestReassignLoopDetection verifies a reassign that would put `to` back into
+// an already-active slot in the same bug group gets rejected with ErrConflict.
+func TestReassignLoopDetection(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertBug(t, st, "b1", "tester", []string{"backend"})
+
+	// backend → frontend (legitimate).
+	newPkg := &handoffschema.Package{
+		ID:            "b2",
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindBug,
+		Sender:        "backend",
+		Recipients:    []string{"frontend"},
+		Urgency:       handoffschema.UrgencyNormal,
+		CreatedAt:     time.Now().UTC(),
+		Repo:          handoffschema.Repo{Name: "demo"},
+		SummaryMD:     "## Symptom\n broken",
+	}
+	if err := st.Reassign(ctx, "b1", "backend", newPkg, "reason1"); err != nil {
+		t.Fatalf("reassign 1: %v", err)
+	}
+
+	// frontend → backend (loop).
+	loopPkg := &handoffschema.Package{
+		ID:            "b3",
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindBug,
+		Sender:        "frontend",
+		Recipients:    []string{"backend"},
+		Urgency:       handoffschema.UrgencyNormal,
+		CreatedAt:     time.Now().UTC(),
+		Repo:          handoffschema.Repo{Name: "demo"},
+		SummaryMD:     "## Symptom\n broken",
+	}
+	err := st.Reassign(ctx, "b2", "frontend", loopPkg, "no it's yours")
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("loop reassign: want ErrConflict, got %v", err)
+	}
+}
+
+// TestReassignNonBugRejected verifies you can't reassign a delivery/request
+// handoff — only kind=bug.
+func TestReassignNonBugRejected(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob") // kind=delivery (empty → default)
+
+	newPkg := &handoffschema.Package{
+		ID:            "h2",
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindBug,
+		Sender:        "bob",
+		Recipients:    []string{"carl"},
+		Urgency:       handoffschema.UrgencyNormal,
+		CreatedAt:     time.Now().UTC(),
+		Repo:          handoffschema.Repo{Name: "demo"},
+		SummaryMD:     "## Symptom",
+	}
+	err := st.Reassign(ctx, "h1", "bob", newPkg, "not mine")
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("reassign non-bug: want ErrConflict, got %v", err)
+	}
+}
+
+// TestListCommentsSinceBugGroupParticipant verifies that comments on a
+// reassigned child handoff are visible to participants from the original
+// (e.g. tester filed the bug, backend reassigned to frontend, frontend
+// commented — tester sees the comment via the bug_group join).
+func TestListCommentsSinceBugGroupParticipant(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	// tester → backend; backend reassigns to frontend.
+	mustInsertBug(t, st, "b1", "tester", []string{"backend"})
+	newPkg := &handoffschema.Package{
+		ID:             "b2",
+		SchemaVersion:  handoffschema.SchemaVersion,
+		Kind:           handoffschema.KindBug,
+		Sender:         "backend",
+		Recipients:     []string{"frontend"},
+		Urgency:        handoffschema.UrgencyNormal,
+		CreatedAt:      time.Now().UTC(),
+		Repo:           handoffschema.Repo{Name: "demo"},
+		SummaryMD:      "## Symptom",
+		OriginalSender: "tester",
+	}
+	if err := st.Reassign(ctx, "b1", "backend", newPkg, "front-end issue"); err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+
+	// frontend comments on b2; tester should see it via bug-group join.
+	mustInsertComment(t, st, "b2", "frontend", "looking into it")
+
+	got, _, err := st.ListCommentsSince(ctx, "tester", 0, 10)
+	if err != nil {
+		t.Fatalf("ListCommentsSince(tester): %v", err)
+	}
+	if len(got) != 1 || got[0].HandoffID != "b2" {
+		t.Errorf("tester should see frontend's comment on b2 via bug_group: got %+v", got)
+	}
+
+	// backend (now in reassigned state) should still see comments on b2
+	// because they're a participant in the same bug group.
+	got, _, err = st.ListCommentsSince(ctx, "backend", 0, 10)
+	if err != nil {
+		t.Fatalf("ListCommentsSince(backend): %v", err)
+	}
+	if len(got) != 1 || got[0].HandoffID != "b2" {
+		t.Errorf("backend (reassigned, still in group) should see b2 comments: got %+v", got)
+	}
+}
+
+// TestBugGroupParticipants verifies the participant query returns the full
+// union of senders and recipients across every handoff in the group.
+func TestBugGroupParticipants(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	mustInsertBug(t, st, "b1", "tester", []string{"backend"})
+	newPkg := &handoffschema.Package{
+		ID:            "b2",
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindBug,
+		Sender:        "backend",
+		Recipients:    []string{"frontend"},
+		Urgency:       handoffschema.UrgencyNormal,
+		CreatedAt:     time.Now().UTC(),
+		Repo:          handoffschema.Repo{Name: "demo"},
+		SummaryMD:     "## Symptom",
+	}
+	if err := st.Reassign(ctx, "b1", "backend", newPkg, "x"); err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+
+	// Pick the bug_group_id off b1.
+	st1, _ := st.Status(ctx, "b1")
+	parts, err := st.BugGroupParticipants(ctx, st1.BugGroupID)
+	if err != nil {
+		t.Fatalf("BugGroupParticipants: %v", err)
+	}
+	want := map[string]bool{"tester": true, "backend": true, "frontend": true}
+	if len(parts) != 3 {
+		t.Errorf("participants: want 3 (tester/backend/frontend), got %v", parts)
+	}
+	for _, p := range parts {
+		if !want[p] {
+			t.Errorf("unexpected participant %q in %v", p, parts)
+		}
+	}
+}
+
+// TestRetractCascadesToOpenRecipients verifies sender retracting a
+// multi-recipient bug returns every still-pending recipient so the relay can
+// fan SSE events out.
+func TestRetractCascadesToOpenRecipients(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertBug(t, st, "b1", "tester", []string{"backend", "frontend"})
+
+	recipients, err := st.Retract(ctx, "b1", "tester")
+	if err != nil {
+		t.Fatalf("retract: %v", err)
+	}
+	if len(recipients) != 2 {
+		t.Errorf("retract recipients: want 2, got %v", recipients)
+	}
+	seen := map[string]bool{}
+	for _, r := range recipients {
+		seen[r] = true
+	}
+	if !seen["backend"] || !seen["frontend"] {
+		t.Errorf("retract should cover both recipients, got %v", recipients)
 	}
 }
 

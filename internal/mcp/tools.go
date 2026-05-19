@@ -24,6 +24,8 @@ import (
 const (
 	ToolSubmitHandoff   = "submit_handoff"
 	ToolSubmitRequest   = "submit_request"
+	ToolSubmitBug       = "submit_bug"
+	ToolReassignBug     = "reassign_bug"
 	ToolListInbox       = "list_inbox"
 	ToolPickupHandoff   = "pickup_handoff"
 	ToolCommentHandoff  = "comment_handoff"
@@ -50,6 +52,8 @@ func DefaultTools() []Tool {
 	return []Tool{
 		submitHandoffTool(),
 		submitRequestTool(),
+		submitBugTool(),
+		reassignBugTool(),
 		listInboxTool(),
 		pickupHandoffTool(),
 		commentHandoffTool(),
@@ -294,6 +298,186 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	return textResult(sb.String()), nil
 }
 
+func submitBugTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "summary": {"type": "string", "description": "Markdown 描述 bug：症状 / 复现步骤 / 期望 / 实际 / 怀疑归属(可选)。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
+    "to":      {"type": "array", "items": {"type": "string"}, "description": "Recipient identities（一个或多个，例如 [\"backend\", \"frontend\"]）。Defaults to identity.partners from .cc-handoff.toml; falls back to [identity.partner] if partners 没配。"},
+    "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal each."},
+    "note":    {"type": "string", "description": "测试备注 / 验收标准 markdown。会以「⚠️ 测试备注 / 验收标准 (必读)」段渲染到接收端 prompt，被要求逐条响应。没有就不传。"},
+    "prd":     {"type": "string", "description": "产品需求 / 设计意图 markdown（背景参考），帮接收端理解 bug 背后的业务目的。没有就不传。"},
+    "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolSubmitBug,
+		Description: "Report a bug from the test/QA side to one or more engineering identities at once (typically [\"backend\", \"frontend\"]). The receivers' prompt walks them through a decision tree: judge if the bug is on their side → fix it / call reassign_bug to forward it / call comment_handoff to discuss cross-end. Comments on any handoff in the resulting bug group are auto-broadcast to every participant so the tester stays in the loop without manually relaying.",
+		InputSchema: schema,
+		Handler:     submitBugHandler,
+	}
+}
+
+type submitBugArgs struct {
+	Summary string   `json:"summary"`
+	To      []string `json:"to"`
+	Urgent  bool     `json:"urgent"`
+	Note    string   `json:"note"`
+	Prd     string   `json:"prd"`
+	CWD     string   `json:"cwd"`
+}
+
+func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a submitBugArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	repoRoot := config.RepoRoot(cwd)
+	inboxDir := inbox.InboxDir(repoRoot, res.InboxOverride)
+
+	if a.Summary != "" {
+		if err := writeDraftSummary(inboxDir, a.Summary); err != nil {
+			return ToolResult{}, err
+		}
+	}
+
+	recipients := handoffschema.DedupeIdentities(a.To)
+	if len(recipients) == 0 {
+		recipients = append([]string(nil), res.Partners...)
+	}
+	if len(recipients) == 0 {
+		return ToolResult{}, fmt.Errorf("no recipients: pass `to=[\"backend\",\"frontend\",...]` or set identity.partners in .cc-handoff.toml")
+	}
+	for _, r := range recipients {
+		if r == res.Me {
+			return ToolResult{}, fmt.Errorf("cannot send a bug to yourself (%s)", r)
+		}
+	}
+
+	urgency := handoffschema.UrgencyNormal
+	if a.Urgent {
+		urgency = handoffschema.UrgencyUrgent
+	}
+
+	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
+		RepoRoot:   repoRoot,
+		RepoName:   res.RepoName,
+		Sender:     res.Me,
+		Recipients: recipients,
+		Urgency:    urgency,
+		Note:       a.Note,
+		Prd:        a.Prd,
+		Kind:       handoffschema.KindBug,
+		InboxDir:   inboxDir,
+	})
+	if err != nil {
+		return ToolResult{}, err
+	}
+
+	client := transport.New(res.RelayURL, res.Token)
+	out, err := client.Submit(ctx, pkg, attachments)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Submitted bug `%s` to %s.\n\n", out.ID, formatRecipientList(recipients))
+	fmt.Fprintf(&sb, "- kind: bug\n- branch: `%s`\n- head: `%s`\n",
+		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
+	sb.WriteString("\n每个收件人 /pickup 后会看到「归属判断决策树」:\n")
+	sb.WriteString("- 是我的 → 修复 + ack\n")
+	sb.WriteString("- 不是我的 → mcp__cc-handoff__reassign_bug 转给对端\n")
+	sb.WriteString("- 不确定 → comment_handoff 拉对端协商\n\n")
+	sb.WriteString("整个 bug_group 内的评论会自动同步,你不用人肉中转。用 status_handoff 看每端 pickup 状态。")
+	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{HandoffID: out.ID}))
+	return textResult(sb.String()), nil
+}
+
+func reassignBugTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "id":     {"type": "string", "description": "Bug handoff id you currently own and want to forward (e.g. h_20260519_ABCD1234)."},
+    "to":     {"type": "string", "description": "Recipient identity to forward the bug to (the other engineering side)."},
+    "reason": {"type": "string", "description": "为什么这个 bug 是对方的 —— 一段话写清楚为什么不是你这边的问题（可以是「字段是前端拼的」「我看了 handler 没问题，怀疑是 CSS」之类）。会作为横幅渲染在对端的 pickup prompt 顶部。"},
+    "cwd":    {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  },
+  "required": ["id", "to"]
+}`)
+	return Tool{
+		Name:        ToolReassignBug,
+		Description: "Forward a bug handoff to the other engineering side after judging the root cause is on their side. Closes your slot on the current bug handoff and creates a fresh one for `to`, sharing the original bug_group_id so the tester + original side + new side all see comments synced. Returns the new handoff id. Refuses with 409 if `to` already has an open slot in the same bug group (avoids reassign loops — use comment_handoff to coordinate instead).",
+		InputSchema: schema,
+		Handler:     reassignBugHandler,
+	}
+}
+
+type reassignBugArgs struct {
+	ID     string `json:"id"`
+	To     string `json:"to"`
+	Reason string `json:"reason"`
+	CWD    string `json:"cwd"`
+}
+
+func reassignBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a reassignBugArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	if a.ID == "" {
+		return ToolResult{}, fmt.Errorf("id is required")
+	}
+	if a.To == "" {
+		return ToolResult{}, fmt.Errorf("to is required")
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if a.To == res.Me {
+		return ToolResult{}, fmt.Errorf("cannot reassign to yourself")
+	}
+
+	client := transport.New(res.RelayURL, res.Token)
+	out, err := client.Reassign(ctx, a.ID, a.To, a.Reason)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Reassigned bug `%s` → `%s`.\n\n", a.ID, a.To)
+	fmt.Fprintf(&sb, "- new handoff id: `%s`\n", out.ID)
+	if out.BugGroupID != "" {
+		fmt.Fprintf(&sb, "- bug_group_id: `%s`\n", out.BugGroupID)
+	}
+	if a.Reason != "" {
+		sb.WriteString("- reason was rendered on the receiver's prompt banner\n")
+	}
+	sb.WriteString("\n你这一格已经关闭(state=reassigned)。后续 group 内任何一方的评论你还能在 list_history / comment SSE 里看到。")
+	return textResult(sb.String()), nil
+}
+
+// formatRecipientList renders ["backend", "frontend"] as "`backend`, `frontend`".
+func formatRecipientList(rs []string) string {
+	quoted := make([]string, 0, len(rs))
+	for _, r := range rs {
+		quoted = append(quoted, "`"+r+"`")
+	}
+	return strings.Join(quoted, ", ")
+}
+
 func listInboxTool() Tool {
 	schema := json.RawMessage(`{
   "type": "object",
@@ -347,8 +531,11 @@ func listInboxHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 // tagFor renders the inbox/sent list label for a Kind. Empty Kind (legacy
 // payloads) is treated as a delivery handoff.
 func tagFor(k handoffschema.Kind) string {
-	if k == handoffschema.KindRequest {
+	switch k {
+	case handoffschema.KindRequest:
 		return "REQUEST"
+	case handoffschema.KindBug:
+		return "BUG"
 	}
 	return "handoff"
 }

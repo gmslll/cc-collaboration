@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/rules"
@@ -25,10 +26,14 @@ import (
 const SwaggerSnapshotName = "swagger.yaml"
 
 type BuildOptions struct {
-	RepoRoot    string
-	RepoName    string
-	Sender      string
-	Recipient   string
+	RepoRoot  string
+	RepoName  string
+	Sender    string
+	Recipient string
+	// Recipients is the multi-recipient list used by KindBug. When set,
+	// Recipient is ignored. For 2-party kinds (delivery / request) leave
+	// this empty and use Recipient.
+	Recipients  []string
 	Urgency     handoffschema.Urgency
 	Base        string
 	Note        string
@@ -36,7 +41,7 @@ type BuildOptions struct {
 	Rules       *rules.Engine
 	SwaggerPath string             // optional, relative to RepoRoot
 	ModulePaths []string           // module-brief mode: when set, skip git diff + swagger delta and treat summary as a self-contained API contract
-	Kind        handoffschema.Kind // empty defaults to KindDelivery; KindRequest skips git diff / swagger / rules
+	Kind        handoffschema.Kind // empty defaults to KindDelivery; KindRequest / KindBug skip git diff / swagger / rules (summary IS the body)
 	RespondsTo  string             // on a delivery, the request id this answers (renders a banner on the receiver side)
 	Amends      string             // on a delivery, the prior handoff id this delivery corrects/supersedes (renders a banner on the receiver side)
 	// InboxDir is the absolute resolved inbox directory (caller computes via
@@ -53,13 +58,49 @@ func SummaryDraftPath(inboxDir string) string {
 	return filepath.Join(inboxDir, ".draft-summary.md")
 }
 
+// BuildReassignment clones the metadata of `orig` into a fresh bug Package
+// addressed to `to`, with the relay-side handler as the new sender. Used by
+// /v1/handoffs/{id}/reassign so the HTTP handler doesn't have to know which
+// fields a reassigned bug carries forward (summary / note / prd / repo /
+// urgency) vs. which are re-derived (id / sender / created_at / kind /
+// recipients / reassigned_from / reassigned_reason). OriginalSender is
+// preserved across the reassign chain so the receiver's prompt template can
+// still name the tester even after the bug bounces between sides.
+func BuildReassignment(orig *handoffschema.Package, to, reason, by string, now time.Time) *handoffschema.Package {
+	originalSender := orig.OriginalSender
+	if originalSender == "" {
+		originalSender = orig.Sender
+	}
+	return &handoffschema.Package{
+		ID:               NewID(now),
+		SchemaVersion:    handoffschema.SchemaVersion,
+		Kind:             handoffschema.KindBug,
+		Sender:           by,
+		Recipient:        to,
+		Recipients:       []string{to},
+		Urgency:          orig.Urgency,
+		CreatedAt:        now,
+		Repo:             orig.Repo,
+		SummaryMD:        orig.SummaryMD,
+		NoteMD:           orig.NoteMD,
+		PrdMD:            orig.PrdMD,
+		OriginalSender:   originalSender,
+		ReassignedFrom:   orig.ID,
+		ReassignedReason: reason,
+	}
+}
+
 // Build assembles the handoff Package plus any out-of-band attachments
 // (binary blobs uploaded separately via transport.UploadAttachment). The
 // returned attachments map is keyed by filename and may be empty / nil when
 // no snapshot is shipping (request kind, module-brief, or no swagger file).
 func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[string][]byte, error) {
 	requestMode := opts.Kind == handoffschema.KindRequest
-	moduleMode := !requestMode && len(opts.ModulePaths) > 0
+	bugMode := opts.Kind == handoffschema.KindBug
+	// Bug + request flows share the "summary is the body" semantics: skip
+	// git diff / swagger / rules, the receiver works off SummaryMD alone.
+	skipDiff := requestMode || bugMode
+	moduleMode := !skipDiff && len(opts.ModulePaths) > 0
 	attachments := map[string][]byte{}
 
 	var (
@@ -71,16 +112,20 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 	)
 
 	switch {
-	case requestMode:
-		// Request flow: there's no diff to ship and no swagger to compare —
-		// the summary IS the body. Still collect repo meta so the receiver
-		// can see who's asking from where.
+	case skipDiff:
+		// Request / bug flow: there's no diff to ship and no swagger to
+		// compare — the summary IS the body. Still collect repo meta so
+		// the receiver can see who's asking from where.
 		repoMeta, err = git.CollectRepoMeta(ctx, opts.RepoRoot)
 		if err != nil {
 			return nil, nil, fmt.Errorf("collect repo meta: %w", err)
 		}
 		if len(opts.ModulePaths) > 0 {
-			return nil, nil, fmt.Errorf("request mode does not accept module_paths; describe the need in summary instead")
+			modeName := "request"
+			if bugMode {
+				modeName = "bug"
+			}
+			return nil, nil, fmt.Errorf("%s mode does not accept module_paths; describe the issue in summary instead", modeName)
 		}
 	case moduleMode:
 		repoMeta, err = git.CollectRepoMeta(ctx, opts.RepoRoot)
@@ -126,7 +171,7 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 		return nil, nil, err
 	}
 	if summary == "" {
-		return nil, nil, emptySummaryError(opts.InboxDir, requestMode)
+		return nil, nil, emptySummaryError(opts.InboxDir, opts.Kind)
 	}
 
 	urgency := opts.Urgency
@@ -139,11 +184,20 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 		kind = handoffschema.KindDelivery
 	}
 
+	// Keep the legacy scalar `Recipient` populated even for multi-recipient
+	// bugs so display-only code (summary header, local inbox link file)
+	// can render *something* without having to learn EffectiveRecipients().
+	// Multi-recipient consumers iterate over Recipients directly.
+	scalarRecipient := opts.Recipient
+	if scalarRecipient == "" && len(opts.Recipients) > 0 {
+		scalarRecipient = opts.Recipients[0]
+	}
 	pkg := &handoffschema.Package{
 		SchemaVersion:  handoffschema.SchemaVersion,
 		Kind:           kind,
 		Sender:         opts.Sender,
-		Recipient:      opts.Recipient,
+		Recipient:      scalarRecipient,
+		Recipients:     opts.Recipients,
 		Urgency:        urgency,
 		Repo:           repoMeta,
 		SummaryMD:      summary,
@@ -155,6 +209,11 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 		PrdMD:          opts.Prd,
 		RespondsTo:     opts.RespondsTo,
 		AmendsHandoff:  opts.Amends,
+	}
+	// For bug kind: OriginalSender = Sender on the first hop; reassign_bug
+	// preserves the original tester identity via the relay-side handler.
+	if kind == handoffschema.KindBug {
+		pkg.OriginalSender = opts.Sender
 	}
 
 	// Populate Package.Attachments metadata (name + sha256 + size) in a
@@ -177,8 +236,32 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 	return pkg, attachments, nil
 }
 
-func emptySummaryError(inboxDir string, requestMode bool) error {
-	if requestMode {
+func emptySummaryError(inboxDir string, kind handoffschema.Kind) error {
+	if kind == handoffschema.KindBug {
+		return fmt.Errorf(`summary is empty: write %s before submitting — bug reports must be human-authored. The receiver's agent uses it to (a) judge whether the bug is on their side, (b) reproduce it, (c) decide between fix / reassign / discuss.
+
+Example:
+
+  ## Symptom
+  /orders 列表页订单时间字段 created_at 显示成 "Invalid Date"。
+
+  ## Reproduction
+  1. 登录 https://staging.kunlun.local
+  2. 进入"订单管理"页面
+  3. 查看任意订单的"创建时间"列
+
+  ## Expected
+  显示 "2026-05-19 14:23"
+
+  ## Actual
+  显示 "Invalid Date"
+
+  ## 怀疑归属
+  不太确定。后端 API 返回的字段名是 createdAt（驼峰），前端 mapping 是不是漏了？或者是后端字段类型变了？
+
+Or call submit_bug (MCP) with summary=... to skip the file step`, SummaryDraftPath(inboxDir))
+	}
+	if kind == handoffschema.KindRequest {
 		return fmt.Errorf(`summary is empty: write %s before submitting — request intent must be human-authored, the receiver's agent relies on it to design a response.
 
 Example:

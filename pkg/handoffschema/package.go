@@ -14,10 +14,11 @@ const (
 type State string
 
 const (
-	StatePending   State = "pending"
-	StatePicked    State = "picked"
-	StateExpired   State = "expired"
-	StateRetracted State = "retracted"
+	StatePending    State = "pending"
+	StatePicked     State = "picked"
+	StateExpired    State = "expired"
+	StateRetracted  State = "retracted"
+	StateReassigned State = "reassigned" // per-recipient slot only; the parent handoff stays "picked" once every slot is terminal
 )
 
 // Kind distinguishes the direction/intent of a Package. Default (empty/
@@ -25,12 +26,16 @@ const (
 // shipping a diff/contract for the recipient to integrate. "request" is the
 // reverse flow: sender (typically frontend) is asking the recipient
 // (typically backend) to add/change something, with no diff to ship — the
-// summary describes what's missing and why.
+// summary describes what's missing and why. "bug" is a tester-originated
+// report sent to one or both engineering sides simultaneously, with a
+// decision tree at pickup time (fix it / reassign to the other side / pull
+// the other side into the discussion).
 type Kind string
 
 const (
 	KindDelivery Kind = "delivery"
 	KindRequest  Kind = "request"
+	KindBug      Kind = "bug"
 )
 
 // EffectiveKind returns the package's Kind, defaulting an empty value to
@@ -43,12 +48,27 @@ func (p *Package) EffectiveKind() Kind {
 	return p.Kind
 }
 
+// EffectiveRecipients returns the recipient list. For bug-kind packages this
+// is the multi-recipient array; for legacy delivery/request packages with a
+// single Recipient it wraps that scalar into a single-element slice so all
+// callers can iterate uniformly.
+func (p *Package) EffectiveRecipients() []string {
+	if len(p.Recipients) > 0 {
+		return p.Recipients
+	}
+	if p.Recipient != "" {
+		return []string{p.Recipient}
+	}
+	return nil
+}
+
 type Package struct {
 	ID             string          `json:"id"`
 	SchemaVersion  int             `json:"schema_version"`
 	Kind           Kind            `json:"kind,omitempty"`
 	Sender         string          `json:"sender"`
 	Recipient      string          `json:"recipient"`
+	Recipients     []string        `json:"recipients,omitempty"`
 	Urgency        Urgency         `json:"urgency"`
 	CreatedAt      time.Time       `json:"created_at"`
 	Repo           Repo            `json:"repo"`
@@ -62,6 +82,23 @@ type Package struct {
 	PrdMD          string          `json:"prd_md,omitempty"`
 	AmendsHandoff  string          `json:"amends_handoff,omitempty"`
 	RespondsTo     string          `json:"responds_to,omitempty"`
+	// BugGroupID links the original bug handoff and any handoffs produced by
+	// reassign_bug from it. Empty on non-bug packages. Comment broadcast uses
+	// it to sync conversation across the whole reassign chain so tester +
+	// every side that ever touched the bug stays in the loop.
+	BugGroupID string `json:"bug_group_id,omitempty"`
+	// OriginalSender is the identity that filed the bug. For the first bug
+	// in a chain it equals Sender; on a reassigned bug the relay sets Sender
+	// to whichever side did the reassign but OriginalSender stays as the
+	// tester so the receiver knows where the report ultimately came from.
+	OriginalSender string `json:"original_sender,omitempty"`
+	// ReassignedFrom is the handoff id this bug was forwarded from (the
+	// previous recipient called reassign_bug). Empty on the original bug.
+	ReassignedFrom string `json:"reassigned_from,omitempty"`
+	// ReassignedReason is the explanation the reassigning side gave for
+	// passing the bug along ("this is a frontend issue because …"). Renders
+	// as a banner in the bug prompt template.
+	ReassignedReason string `json:"reassigned_reason,omitempty"`
 }
 
 // Attachment is metadata for a binary blob stored on the relay alongside the
@@ -171,18 +208,21 @@ type TargetingHint struct {
 // ListItem is the compact form returned by GET /v1/handoffs?as=recipient
 // (default) and GET /v1/handoffs?as=sender. Recipient is populated for sent
 // listings; receivers can leave it empty since they already know they're
-// the recipient.
+// the recipient. Recipients (multi) and BugGroupID surface multi-recipient
+// bug context for tester's `?as=sender` view without a second roundtrip.
 type ListItem struct {
-	ID        string    `json:"id"`
-	Kind      Kind      `json:"kind,omitempty"`
-	Sender    string    `json:"sender"`
-	Recipient string    `json:"recipient,omitempty"`
-	Urgency   Urgency   `json:"urgency"`
-	State     State     `json:"state"`
-	CreatedAt time.Time `json:"created_at"`
-	RepoName  string    `json:"repo_name"`
-	Branch    string    `json:"branch,omitempty"`
-	Headline  string    `json:"headline,omitempty"`
+	ID         string    `json:"id"`
+	Kind       Kind      `json:"kind,omitempty"`
+	Sender     string    `json:"sender"`
+	Recipient  string    `json:"recipient,omitempty"`
+	Recipients []string  `json:"recipients,omitempty"`
+	Urgency    Urgency   `json:"urgency"`
+	State      State     `json:"state"`
+	CreatedAt  time.Time `json:"created_at"`
+	RepoName   string    `json:"repo_name"`
+	Branch     string    `json:"branch,omitempty"`
+	Headline   string    `json:"headline,omitempty"`
+	BugGroupID string    `json:"bug_group_id,omitempty"`
 }
 
 // Comment is a back-channel message attached to a handoff. Either sender or
@@ -200,15 +240,69 @@ type Comment struct {
 // (sender checking "did they read it?", agent checking before retract) need
 // without re-fetching the full Package payload. CommentCount and LastComment
 // are precomputed by the relay so clients don't N+1 a comments listing.
+// For bug handoffs PickupBy is populated per recipient (state pending /
+// picked / reassigned) so the tester can see "backend picked it up but
+// frontend hasn't even read it yet" without listing comments.
 type Status struct {
-	ID           string     `json:"id"`
-	State        State      `json:"state"`
-	Sender       string     `json:"sender"`
-	Recipient    string     `json:"recipient"`
-	CreatedAt    time.Time  `json:"created_at"`
-	PickedAt     *time.Time `json:"picked_at,omitempty"`
-	CommentCount int        `json:"comment_count"`
-	LastComment  *Comment   `json:"last_comment,omitempty"`
+	ID           string                     `json:"id"`
+	State        State                      `json:"state"`
+	Sender       string                     `json:"sender"`
+	Recipient    string                     `json:"recipient"`
+	Recipients   []string                   `json:"recipients,omitempty"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	PickedAt     *time.Time                 `json:"picked_at,omitempty"`
+	PickupBy     map[string]RecipientStatus `json:"pickup_by,omitempty"`
+	CommentCount int                        `json:"comment_count"`
+	LastComment  *Comment                   `json:"last_comment,omitempty"`
+	BugGroupID   string                     `json:"bug_group_id,omitempty"`
+}
+
+// RecipientStatus is one entry in Status.PickupBy: per-recipient slot state
+// (pending / picked / reassigned) and the timestamp the slot last changed.
+type RecipientStatus struct {
+	State    State      `json:"state"`
+	PickedAt *time.Time `json:"picked_at,omitempty"`
+}
+
+// DedupeIdentities preserves first-seen order, drops empty entries and
+// duplicates. Shared helper for normalizing recipient lists from user input
+// (TOML `identity.partners`, MCP `submit_bug.to`).
+func DedupeIdentities(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// NoticeListItem builds the compact ListItem the relay publishes via SSE on
+// handoff.created. Mirrors the columns the relay's denormalized list query
+// returns so a watch client sees the same shape whether it came from
+// /v1/handoffs or events.
+func NoticeListItem(p *Package, state State) ListItem {
+	return ListItem{
+		ID:         p.ID,
+		Kind:       p.Kind,
+		Sender:     p.Sender,
+		Recipients: p.Recipients,
+		Urgency:    p.Urgency,
+		State:      state,
+		CreatedAt:  p.CreatedAt,
+		RepoName:   p.Repo.Name,
+		Branch:     p.Repo.Branch,
+		BugGroupID: p.BugGroupID,
+	}
 }
 
 // OnlineUser is one row in the GET /v1/users/online response: a known

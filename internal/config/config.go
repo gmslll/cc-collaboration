@@ -8,6 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/cc-collaboration/internal/agent"
+	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
 // User-level config: shared across repos on this machine.
@@ -80,8 +81,16 @@ type Inbox struct {
 }
 
 type Identity struct {
-	Me      string `toml:"me,omitempty"` // optional override of user-level identity
-	Partner string `toml:"partner"`      // default recipient
+	Me string `toml:"me,omitempty"` // optional override of user-level identity
+	// Partner is the legacy single-recipient field used by
+	// submit_handoff/submit_request. Required for 2-party repos; tester
+	// repos that only ever fan out to multiple sides can leave it empty as
+	// long as Partners is set.
+	Partner string `toml:"partner,omitempty"`
+	// Partners is the multi-recipient list used by submit_bug as the default
+	// `to=[...]` value. Empty means "fall back to [Partner]". Set this for
+	// tester repos: partners = ["backend", "frontend"].
+	Partners []string `toml:"partners,omitempty"`
 }
 
 type Paths struct {
@@ -274,7 +283,16 @@ type Resolved struct {
 	RelayURL string
 	Token    string
 	Me       string
-	Partner  string
+	// Partner is the default single recipient for /handoff and /request.
+	// Equals Partners[0] when only Partners was configured; equals the raw
+	// identity.partner otherwise. Empty only on tester repos that solely
+	// fan out — submit_handoff / submit_request will error in that case
+	// unless the caller passes an explicit `to=`.
+	Partner string
+	// Partners is the default recipient list used by /submit-bug. Falls
+	// back to [Partner] when identity.partners isn't set, so existing
+	// 2-party repos transparently get a one-element list.
+	Partners []string
 	RepoName string
 	Base     string
 	Swagger  string
@@ -323,11 +341,20 @@ func Resolve(cwd string) (*Resolved, error) {
 	if err != nil {
 		return nil, fmt.Errorf("user config: %w", err)
 	}
+	partners := handoffschema.DedupeIdentities(r.Identity.Partners)
+	partner := r.Identity.Partner
+	if partner == "" && len(partners) > 0 {
+		partner = partners[0]
+	}
+	if len(partners) == 0 && partner != "" {
+		partners = []string{partner}
+	}
 	out := &Resolved{
 		RelayURL:            u.RelayURL,
 		Token:               u.Token,
 		Me:                  me,
-		Partner:             r.Identity.Partner,
+		Partner:             partner,
+		Partners:            partners,
 		RepoName:            repoName,
 		Base:                base,
 		Swagger:             r.Paths.Swagger,
@@ -341,8 +368,8 @@ func Resolve(cwd string) (*Resolved, error) {
 	if out.RelayURL == "" || out.Token == "" || out.Me == "" {
 		return nil, fmt.Errorf("incomplete config: relay_url/token/identity must be set in user config")
 	}
-	if out.Partner == "" {
-		return nil, fmt.Errorf("incomplete repo config: identity.partner must be set in %s", RepoConfigPath(cwd))
+	if len(out.Partners) == 0 {
+		return nil, fmt.Errorf("incomplete repo config: identity.partner or identity.partners must be set in %s", RepoConfigPath(cwd))
 	}
 	return out, nil
 }

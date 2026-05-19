@@ -200,3 +200,82 @@ func TestRenderAPIDeltaMD_LegacyOpWithoutDetail(t *testing.T) {
 		t.Errorf("legacy op should have no body sub-section: %s", got)
 	}
 }
+
+// TestRenderBugPromptMD_MultiRecipient checks the decision-tree template fires
+// for kind=bug and surfaces the multi-recipient banner when more than one
+// engineering side is on the to= list.
+func TestRenderBugPromptMD_MultiRecipient(t *testing.T) {
+	p := &handoffschema.Package{
+		ID:             "b_test",
+		Kind:           handoffschema.KindBug,
+		Sender:         "tester",
+		OriginalSender: "tester",
+		Recipients:     []string{"backend", "frontend"},
+		SummaryMD:      "## Symptom\n broken thing on /orders",
+		NoteMD:         "must pass automated regression",
+	}
+	got := renderPromptMD(p, ModeDocFirst)
+
+	mustContain := []string{
+		"# Bug:",
+		"reported by `tester`",
+		"同时发送", // multi-recipient banner
+		"`backend`",
+		"`frontend`",
+		"## 归属判断决策树",
+		"reassign_bug",
+		"comment_handoff",
+		"## ⚠️ 测试备注 / 验收标准 (必读)",
+		"must pass automated regression",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(got, want) {
+			t.Errorf("bug prompt missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// TestRenderBugPromptMD_ReassignedBanner verifies the "由对端转过来" banner
+// renders the reassign reason when ReassignedFrom is set.
+func TestRenderBugPromptMD_ReassignedBanner(t *testing.T) {
+	p := &handoffschema.Package{
+		ID:               "b_child",
+		Kind:             handoffschema.KindBug,
+		Sender:           "backend",
+		OriginalSender:   "tester",
+		Recipients:       []string{"frontend"},
+		SummaryMD:        "## Symptom\n broken thing",
+		ReassignedFrom:   "b_parent",
+		ReassignedReason: "字段是前端拼的",
+	}
+	got := renderPromptMD(p, ModeDocFirst)
+
+	mustContain := []string{
+		"由对端转过来",
+		"`backend`",
+		"字段是前端拼的",
+		"reassign_bug",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(got, want) {
+			t.Errorf("reassigned bug prompt missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// TestRenderBugPromptMD_OriginalSenderFallback verifies the reporter name in
+// the header falls back to Sender when OriginalSender is empty (e.g. legacy
+// payloads or first-hop bug never reassigned).
+func TestRenderBugPromptMD_OriginalSenderFallback(t *testing.T) {
+	p := &handoffschema.Package{
+		ID:         "b_orig",
+		Kind:       handoffschema.KindBug,
+		Sender:     "tester",
+		Recipients: []string{"backend"},
+		SummaryMD:  "## Symptom\n broken",
+	}
+	got := renderPromptMD(p, ModeDocFirst)
+	if !strings.Contains(got, "reported by `tester`") {
+		t.Errorf("header should fall back to Sender when OriginalSender empty:\n%s", got)
+	}
+}

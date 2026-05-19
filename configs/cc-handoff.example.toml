@@ -3,7 +3,13 @@
 
 [identity]
 # me      = "you@backend"    # optional; overrides user-level identity for this repo
-partner = "alex@frontend"    # default recipient when you run `cc-handoff submit`
+partner = "alex@frontend"    # default recipient for /handoff and /request (single-target flows)
+
+# partners = ["backend", "frontend"]
+# Multi-recipient default for /submit-bug (tester / QA repos). When set,
+# `submit_bug` fans the bug out to every identity here unless the caller
+# passes an explicit `to=[...]`. For a normal 2-party repo leave this
+# unset — it'll fall back to [partner] automatically.
 
 [paths]
 swagger = "docs/swagger.yaml"   # optional; if set, swagger delta is included in the package

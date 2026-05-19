@@ -62,7 +62,8 @@ cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► c
 
 - `cc-relay`:VPS 上 systemd 服务,听 loopback,反代终结 TLS。HTTP REST + SSE,SQLite 持久化。
 - `cc-handoff` (CLI):两端各装一份。子命令:`init` / `submit` / `list` / `pickup` / `watch` / `comment`。
-- `cc-handoff-mcp`:Claude Code 通过 stdio 拉起的 MCP server,把上面的子命令全部暴露成 MCP 工具,共 13 个:`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`(最后一个用于可选的 Linear 集成)。
+- `cc-handoff-mcp`:Claude Code 通过 stdio 拉起的 MCP server,把上面的子命令全部暴露成 MCP 工具,共 15 个:`submit_handoff` / `submit_request` / `submit_bug` / `reassign_bug` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`(最后一个用于可选的 Linear 集成)。
+- **三角协作(可选)**:除了 `backend ↔ frontend` 的标准 2 方流(`/handoff` 交付 + `/request` 反向需求),还支持引入测试端做 bug 上报。tester 在 `.cc-handoff.toml` 配 `identity.partners = ["backend", "frontend"]`,用 `/submit-bug` 同时发给两端;接收端 prompt 内置归属判断决策树:是自己的就修,不是自己的用 `reassign_bug` 转给对端(同一 bug_group 内的评论自动同步给三方)。
 - `cc-handoff watch`:接收侧常驻进程,SSE 长连接拉服务端事件,落盘到 `.cc-handoff/inbox/<id>/`(老仓库已有 `.claude/handoff-inbox/` 时继续沿用),必要时弹通知或按当前 agent 开新终端(`claude -p` / `codex exec` / …)。
 
 完整数据流、SQLite schema、auth、failure mode 见 [`docs/architecture.md`](docs/architecture.md)。
