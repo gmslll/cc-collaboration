@@ -20,6 +20,10 @@ type User struct {
 	// "codex" | "manual". Empty falls back to "claude" for backwards
 	// compatibility with installs predating multi-agent support.
 	Agent string `toml:"agent,omitempty"`
+	// LinearPersonalToken is the user's Linear API key used by linear-sync to
+	// pull notifications. Lives at user-level (not repo-level) so the secret
+	// stays out of git. Empty disables the linear-sync feature.
+	LinearPersonalToken string `toml:"linear_personal_token,omitempty"`
 }
 
 // Repo-level config: lives at <repo-root>/.cc-handoff.toml.
@@ -51,11 +55,21 @@ type LinearIntegration struct {
 	DefaultLabels []string `toml:"default_labels,omitempty"`
 	// MCPPrefix overrides the Linear MCP tool-name prefix (default "linear"),
 	// for installs that namespace their MCP tools differently.
-	MCPPrefix     string `toml:"mcp_prefix,omitempty"`
-	SyncOnSubmit  bool   `toml:"sync_on_submit,omitempty"`
-	SyncOnPickup  bool   `toml:"sync_on_pickup,omitempty"`
-	SyncOnComment bool   `toml:"sync_on_comment,omitempty"`
-	SyncOnRetract bool   `toml:"sync_on_retract,omitempty"`
+	MCPPrefix     string              `toml:"mcp_prefix,omitempty"`
+	SyncOnSubmit  bool                `toml:"sync_on_submit,omitempty"`
+	SyncOnPickup  bool                `toml:"sync_on_pickup,omitempty"`
+	SyncOnComment bool                `toml:"sync_on_comment,omitempty"`
+	SyncOnRetract bool                `toml:"sync_on_retract,omitempty"`
+	Notifications LinearNotifications `toml:"notifications,omitempty"`
+}
+
+// LinearNotifications opts the local watch daemon (or a manual sync command)
+// into pulling Linear notifications via the user's personal API token. Empty
+// PollInterval (or "0") leaves the background poller off — only the manual
+// `cc-handoff linear-sync` / `mcp__cc-handoff__linear_sync` paths fire.
+type LinearNotifications struct {
+	PollInterval string   `toml:"poll_interval,omitempty"`
+	Types        []string `toml:"types,omitempty"`
 }
 
 // Inbox controls where Materialize writes handoff packages. Empty Dir means
@@ -273,8 +287,9 @@ type Resolved struct {
 	// the lifetime of the command — config.Resolved can't hold the resolved
 	// path itself without an import cycle (rules → config → inbox →
 	// handoff → rules).
-	InboxOverride string
-	Linear        LinearIntegration
+	InboxOverride       string
+	Linear              LinearIntegration
+	LinearPersonalToken string
 }
 
 func Resolve(cwd string) (*Resolved, error) {
@@ -309,18 +324,19 @@ func Resolve(cwd string) (*Resolved, error) {
 		return nil, fmt.Errorf("user config: %w", err)
 	}
 	out := &Resolved{
-		RelayURL:      u.RelayURL,
-		Token:         u.Token,
-		Me:            me,
-		Partner:       r.Identity.Partner,
-		RepoName:      repoName,
-		Base:          base,
-		Swagger:       r.Paths.Swagger,
-		Triggers:      r.Triggers,
-		Rules:         r.PartnerMapping.Rules,
-		Agent:         ag,
-		InboxOverride: r.Inbox.Dir,
-		Linear:        r.Integrations.Linear,
+		RelayURL:            u.RelayURL,
+		Token:               u.Token,
+		Me:                  me,
+		Partner:             r.Identity.Partner,
+		RepoName:            repoName,
+		Base:                base,
+		Swagger:             r.Paths.Swagger,
+		Triggers:            r.Triggers,
+		Rules:               r.PartnerMapping.Rules,
+		Agent:               ag,
+		InboxOverride:       r.Inbox.Dir,
+		Linear:              r.Integrations.Linear,
+		LinearPersonalToken: u.LinearPersonalToken,
 	}
 	if out.RelayURL == "" || out.Token == "" || out.Me == "" {
 		return nil, fmt.Errorf("incomplete config: relay_url/token/identity must be set in user config")

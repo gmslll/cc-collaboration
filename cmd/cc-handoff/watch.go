@@ -15,6 +15,7 @@ import (
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/inbox"
+	"github.com/cc-collaboration/internal/linear"
 	"github.com/cc-collaboration/internal/notify"
 	"github.com/cc-collaboration/internal/relay/sse"
 	"github.com/cc-collaboration/internal/setup"
@@ -65,7 +66,101 @@ func runWatch(ctx context.Context, args []string) error {
 		}
 	}
 
+	if interval, ok := parseLinearPollInterval(res); ok {
+		fmt.Printf("polling Linear notifications every %s\n", interval)
+		go runLinearPoller(ctx, res, interval, *noNotify)
+	}
+
 	return h.client.Subscribe(ctx, res.Me, h.dispatch(ctx))
+}
+
+// parseLinearPollInterval returns the configured Linear poll interval, or
+// (0, false) when the feature is off (empty / "0" / unparseable / no token /
+// missing personal token). Returning false means "don't even spawn the
+// goroutine" rather than spawning a no-op one.
+func parseLinearPollInterval(res *config.Resolved) (time.Duration, bool) {
+	raw := res.Linear.Notifications.PollInterval
+	if raw == "" || raw == "0" {
+		return 0, false
+	}
+	if res.LinearPersonalToken == "" {
+		fmt.Fprintln(os.Stderr, "warning: linear notifications poll_interval set but linear_personal_token missing in user config; skipping poller")
+		return 0, false
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		fmt.Fprintf(os.Stderr, "warning: invalid linear poll_interval %q: %v\n", raw, err)
+		return 0, false
+	}
+	return d, true
+}
+
+// runLinearPoller drives a ticker loop that pulls new Linear notifications
+// every `interval` and fires desktop notifications for each. Errors trigger
+// exponential backoff up to 5 minutes — Linear API hiccups (rate limits,
+// transient 5xx) shouldn't kill the watch process.
+func runLinearPoller(ctx context.Context, res *config.Resolved, interval time.Duration, noNotify bool) {
+	cursorPath, err := linear.CursorPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "linear poller: cursor path: %v\n", err)
+		return
+	}
+	client := linear.NewClient(res.LinearPersonalToken)
+	const maxBackoff = 5 * time.Minute
+	// First tick fires immediately so a fresh `watch` doesn't wait the full
+	// interval before establishing baseline; subsequent ticks use `interval`.
+	delay := time.Duration(0)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+
+		since, err := linear.LoadCursor(cursorPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "linear poller: load cursor: %v\n", err)
+			delay = backoff(maxDuration(delay, time.Second), maxBackoff)
+			continue
+		}
+		items, newCursor, err := linear.PollOnce(ctx, client, since, res.Linear.Notifications.Types)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "linear poller: %v (backing off)\n", err)
+			delay = backoff(maxDuration(delay, time.Second), maxBackoff)
+			continue
+		}
+		if !newCursor.Equal(since) {
+			if err := linear.SaveCursor(cursorPath, newCursor); err != nil {
+				fmt.Fprintf(os.Stderr, "linear poller: save cursor: %v\n", err)
+			}
+		}
+		for _, it := range items {
+			fmt.Printf("📬 Linear @%s in %s — %s\n", it.ActorName, it.IssueIdent, it.IssueTitle)
+			if !noNotify {
+				_ = notify.Show(ctx, linear.ToNotify(it))
+			}
+		}
+		delay = interval
+	}
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func backoff(current, max time.Duration) time.Duration {
+	next := current * 2
+	if next > max {
+		return max
+	}
+	return next
 }
 
 // watchHandler bundles per-session state shared by both event types.

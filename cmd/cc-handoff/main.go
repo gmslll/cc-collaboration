@@ -45,6 +45,8 @@ func main() {
 		err = runRetract(ctx, args)
 	case "link-linear":
 		err = runLinkLinear(ctx, args)
+	case "linear-sync":
+		err = runLinearSync(ctx, args)
 	case "inbox":
 		err = runInbox(ctx, args)
 	case "open":
@@ -96,6 +98,7 @@ Both sides:
   cc-handoff online       [--json]                      show registered identities + who is currently watching
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
+  cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications
 
 Run cc-handoff <subcommand> --help for details.
 `)

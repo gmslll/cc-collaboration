@@ -140,6 +140,7 @@ repo = "frontend-demo"
 		mcp.ToolListOnlineUsers: false,
 		mcp.ToolCheckDrift:      false,
 		mcp.ToolLinkLinear:      false,
+		mcp.ToolLinearSync:      false,
 	}
 	for _, t0 := range tools {
 		m, _ := t0.(map[string]any)

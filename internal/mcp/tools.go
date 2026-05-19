@@ -13,6 +13,7 @@ import (
 	"github.com/cc-collaboration/internal/drift"
 	"github.com/cc-collaboration/internal/handoff"
 	"github.com/cc-collaboration/internal/inbox"
+	"github.com/cc-collaboration/internal/linear"
 	"github.com/cc-collaboration/internal/rules"
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/handoffschema"
@@ -34,6 +35,7 @@ const (
 	ToolListOnlineUsers = "list_online_users"
 	ToolCheckDrift      = "check_drift"
 	ToolLinkLinear      = "link_linear"
+	ToolLinearSync      = "linear_sync"
 )
 
 // CCHandoffMCPPrefix is the wire-name prefix Claude uses when calling tools
@@ -59,6 +61,7 @@ func DefaultTools() []Tool {
 		listOnlineUsersTool(),
 		checkDriftTool(),
 		linkLinearTool(),
+		linearSyncTool(),
 	}
 }
 
@@ -989,4 +992,74 @@ func linkLinearHandler(_ context.Context, raw json.RawMessage) (ToolResult, erro
 		return ToolResult{}, err
 	}
 	return textResult(fmt.Sprintf("✓ linked `%s` → `%s` (%s)", a.Handoff, a.Issue, out)), nil
+}
+
+// --- linear_sync ------------------------------------------------------------
+
+func linearSyncTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "cwd": {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
+  }
+}`)
+	return Tool{
+		Name:        ToolLinearSync,
+		Description: "Pull new Linear notifications (default: @-mentions only) for the authenticated user since the last sync, and return them as a markdown list. Use this when the user asks 'any new Linear @-mentions' or to manually sync without running the watch poller. Requires `linear_personal_token` in the user-level cc-handoff config.",
+		InputSchema: schema,
+		Handler:     linearSyncHandler,
+	}
+}
+
+type linearSyncArgs struct {
+	CWD string `json:"cwd"`
+}
+
+func linearSyncHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a linearSyncArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, fmt.Errorf("decode args: %w", err)
+	}
+	cwd, err := resolveCWD(a.CWD)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if res.LinearPersonalToken == "" {
+		return ToolResult{}, fmt.Errorf("linear_personal_token not set in user config; generate one at Linear → Account → Security & Access → Personal API Keys")
+	}
+	cursorPath, err := linear.CursorPath()
+	if err != nil {
+		return ToolResult{}, err
+	}
+	since, err := linear.LoadCursor(cursorPath)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	client := linear.NewClient(res.LinearPersonalToken)
+	items, newCursor, err := linear.PollOnce(ctx, client, since, res.Linear.Notifications.Types)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if err := linear.SaveCursor(cursorPath, newCursor); err != nil {
+		return ToolResult{}, fmt.Errorf("save cursor: %w", err)
+	}
+	if len(items) == 0 {
+		return textResult("No new Linear notifications."), nil
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d new Linear notification(s):\n\n", len(items))
+	for _, it := range items {
+		fmt.Fprintf(&sb, "- **[%s]** %s in `%s` — %s\n", it.Type, it.ActorName, it.IssueIdent, it.IssueTitle)
+		if it.Snippet != "" {
+			fmt.Fprintf(&sb, "  > %s\n", it.Snippet)
+		}
+		if it.IssueURL != "" {
+			fmt.Fprintf(&sb, "  %s\n", it.IssueURL)
+		}
+	}
+	return textResult(sb.String()), nil
 }
