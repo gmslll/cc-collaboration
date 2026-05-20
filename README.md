@@ -158,7 +158,7 @@ make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 #   --with-mcp         注册 MCP server(claude 跑 `claude mcp add`;
 #                      codex 跑 `codex mcp add`)
 #   --with-commands    安装 agent 命令(Claude: .claude/commands/;
-#                      Codex: 注册本地 plugin marketplace 并安装 cc-handoff plugin)
+#                      Codex: ~/.codex/prompts/*.md 自定义提示词)
 #   --with-instructions 把 cc-handoff 用法段追加到 CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
 cc-handoff init --with-mcp --with-commands --with-instructions
@@ -356,7 +356,7 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 | agent | CLI 调用 | MCP 注册 | 命令 | 项目级说明文件 |
 |---|---|---|---|---|
 | `claude`(默认) | `claude -p "$(cat prompt.md)"` | 自动 `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup,request}.md` | `CLAUDE.md`(追加段) |
-| `codex` | `codex exec "$(cat prompt.md)"` | 自动 `codex mcp add cc-handoff -- <bin>` | 稳定路径:让 Codex 直接调 MCP tools;`--with-commands` 会注册本地 plugin marketplace 并安装 cc-handoff plugin,是否出现在 `/` 取决于当前 Codex 客户端 | `AGENTS.md`(追加段) |
+| `codex` | `codex exec "$(cat prompt.md)"` | 自动 `codex mcp add cc-handoff -- <bin>` | `~/.codex/prompts/{handoff,pickup,request,...}.md`,重启后作为 `/handoff` 等自定义提示词出现 | `AGENTS.md`(追加段) |
 | `manual` | 不自动开终端 | init 打印通用 stdio 提示 | 无 | 无 |
 
 **选哪个 agent**:`cc-handoff init` 默认按 PATH 探测(claude > codex > manual)。手动指定:`cc-handoff init --agent codex`。结果写到 `~/.config/cc-handoff/config.toml`(Linux/macOS)或 `%AppData%\cc-handoff\config.toml`(Windows)的 `agent` 字段,后续命令一直按这个走。
@@ -364,10 +364,10 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 **`cc-handoff init` 子步骤**(各自独立可关):
 
 - `--with-mcp` / `--no-mcp` —— 注册 MCP 服务(claude 自动跑 `claude mcp add`,codex 自动跑 `codex mcp add`)
-- `--with-commands` / `--no-commands` —— 装 agent 命令(Claude slash commands;Codex 本地 plugin marketplace + plugin install)
+- `--with-commands` / `--no-commands` —— 装 agent 命令(Claude slash commands;Codex custom prompts)
 - `--with-instructions` / `--no-instructions` —— 把 cc-handoff 用法段追加到 `CLAUDE.md` 或 `AGENTS.md`(已含 `## cc-handoff` 标题则跳过,幂等)
 
-**Codex 用户**:`--with-mcp` 会直接写入 Codex MCP 配置。稳定用法是在 Codex 里自然语言要求调用 `submit_handoff` / `pickup_handoff` 等 MCP 工具;`--with-commands` 会注册本仓库 `.codex` 作为本地 plugin marketplace 并 `codex plugin add cc-handoff@cc-handoff-local`。重启 Codex 后若当前客户端支持 plugin commands,才会出现在 `/` 列表。
+**Codex 用户**:`--with-mcp` 会直接写入 Codex MCP 配置;`--with-commands` 会把同一批命令模板写到 `~/.codex/prompts/`。重启 Codex 后,文件名就是命令名,例如 `handoff.md` 对应 `/handoff`。Codex 自定义提示词不支持参数,这些提示词会指导 Codex 自己读取上下文并调用 MCP tools。
 
 **inbox 目录路径**:新装默认 `.cc-handoff/inbox/`;已有 `.claude/handoff-inbox/` 的老仓库继续沿用,不需要迁移。`.cc-handoff.toml` 里 `[inbox] dir = "..."` 可以显式 override(绝对或相对路径)。
 

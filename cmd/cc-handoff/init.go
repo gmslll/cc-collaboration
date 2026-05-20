@@ -57,7 +57,7 @@ func runInit(ctx context.Context, args []string) error {
 
 	withMCP := fs.Bool("with-mcp", false, "register cc-handoff as an MCP server with the chosen agent")
 	noMCP := fs.Bool("no-mcp", false, "skip MCP server registration")
-	withCommands := fs.Bool("with-commands", false, "install per-agent commands (Claude slash commands; Codex local plugin install)")
+	withCommands := fs.Bool("with-commands", false, "install per-agent commands (Claude slash commands; Codex custom prompts)")
 	noCommands := fs.Bool("no-commands", false, "skip slash command install")
 	withInstructions := fs.Bool("with-instructions", false, "append cc-handoff usage snippet to the agent's project-level instructions file (CLAUDE.md / AGENTS.md)")
 	noInstructions := fs.Bool("no-instructions", false, "skip the instructions snippet")
@@ -278,14 +278,14 @@ func runInstallCommands(ag agent.Agent, choice triState, nonInteractive bool, rd
 	}
 	question := fmt.Sprintf("Install %s commands?", ag.Name())
 	if ag.Name() == "codex" {
-		question = "Install cc-handoff Codex plugin commands?"
+		question = "Install cc-handoff Codex custom prompts into ~/.codex/prompts/?"
 	}
 	if !shouldRunOptional(choice, nonInteractive, rd, question) {
 		return
 	}
 	fmt.Printf("\nInstalling %s commands …\n", ag.Name())
 	if ag.Name() == "codex" {
-		fmt.Println("  · Codex MCP tools are the stable path; this will also try `codex plugin marketplace add` and `codex plugin add`.")
+		fmt.Println("  · Restart Codex after install; prompts appear as /<filename> commands.")
 	}
 
 	var conflictPrompt setup.PromptFunc
