@@ -149,6 +149,16 @@ func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) 
 	}
 	res := CopyResult{BackedUp: map[string]string{}}
 
+	marketplace, err := codexPluginFS.ReadFile("templates/codex-plugin/.agents/plugins/marketplace.json")
+	if err != nil {
+		return res, fmt.Errorf("read embedded codex plugin marketplace: %w", err)
+	}
+	written, skipped, backups, err := copyFile(filepath.Join(destDir, ".agents", "plugins", "marketplace.json"), marketplace, version, prompt, out, "marketplace.json", false)
+	if err != nil {
+		return res, err
+	}
+	appendResult(&res, written, skipped, backups)
+
 	manifest, err := codexPluginFS.ReadFile("templates/codex-plugin/.codex-plugin/plugin.json")
 	if err != nil {
 		return res, fmt.Errorf("read embedded codex plugin manifest: %w", err)
@@ -157,7 +167,7 @@ func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) 
 	if err != nil {
 		return res, fmt.Errorf("stamp codex plugin manifest: %w", err)
 	}
-	written, skipped, backups, err := copyFile(filepath.Join(destDir, ".codex-plugin", "plugin.json"), manifest, version, prompt, out, "plugin.json", false)
+	written, skipped, backups, err = copyFile(filepath.Join(destDir, "plugins", "cc-handoff", ".codex-plugin", "plugin.json"), manifest, version, prompt, out, "plugin.json", false)
 	if err != nil {
 		return res, err
 	}
@@ -168,7 +178,7 @@ func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) 
 		if err != nil {
 			return res, fmt.Errorf("read embedded %s: %w", name, err)
 		}
-		written, skipped, backups, err := copyFile(filepath.Join(destDir, "commands", name), src, version, prompt, out, name, true)
+		written, skipped, backups, err := copyFile(filepath.Join(destDir, "plugins", "cc-handoff", "commands", name), src, version, prompt, out, name, true)
 		if err != nil {
 			return res, err
 		}
@@ -229,7 +239,7 @@ func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io
 		fmt.Fprintf(out, "  ! %s is at %s (newer than binary %s), skipped\n", dest, existingVer, version)
 		return "", displayName, backups, nil
 	}
-	if !stamp && existingVer != "" && version != "" && compareSemver(existingVer, version) < 0 {
+	if !stamp && existingVer != "" && version != "" && compareSemver(existingVer, version) < 0 && prompt == nil {
 		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return "", "", backups, fmt.Errorf("overwrite %s: %w", dest, err)
 		}

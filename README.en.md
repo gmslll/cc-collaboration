@@ -156,7 +156,7 @@ Once the binaries are installed (A or B), init your working repo:
 #   --with-mcp          register the MCP server (claude: `claude mcp add`;
 #                       codex: `codex mcp add`)
 #   --with-commands     install agent commands (Claude: .claude/commands/;
-#                       Codex: optional .codex/plugins/cc-handoff/ command files)
+#                       Codex: register a local plugin marketplace and install cc-handoff)
 #   --with-instructions append cc-handoff usage block to CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
 cc-handoff init --with-mcp --with-commands --with-instructions
@@ -347,7 +347,7 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 | agent | CLI invocation | MCP register | commands | project instructions file |
 |---|---|---|---|---|
 | `claude` (default) | `claude -p "$(cat prompt.md)"` | auto: `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup,request}.md` | appended to `CLAUDE.md` |
-| `codex` | `codex exec "$(cat prompt.md)"` | auto: `codex mcp add cc-handoff -- <bin>` | stable path: ask Codex to call MCP tools; optional plugin command files at `.codex/plugins/cc-handoff/commands/*.md` only work when the client loads repo plugin commands | appended to `AGENTS.md` |
+| `codex` | `codex exec "$(cat prompt.md)"` | auto: `codex mcp add cc-handoff -- <bin>` | stable path: ask Codex to call MCP tools; `--with-commands` registers a local plugin marketplace and installs `cc-handoff`, but `/` visibility still depends on the current Codex client | appended to `AGENTS.md` |
 | `manual` | does not auto-launch a terminal | init prints generic stdio MCP guidance | none | none |
 
 **Picking an agent**: `cc-handoff init` defaults to PATH detection (claude > codex > manual). Override with `cc-handoff init --agent codex`. The result is persisted to the `agent` field in `~/.config/cc-handoff/config.toml` (Linux/macOS) or `%AppData%\cc-handoff\config.toml` (Windows); subsequent commands honor it.
@@ -355,10 +355,10 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 **`cc-handoff init` step toggles** (each independent):
 
 - `--with-mcp` / `--no-mcp` — register the MCP server (claude: runs `claude mcp add`; codex: runs `codex mcp add`)
-- `--with-commands` / `--no-commands` — install agent commands (Claude slash commands; optional Codex plugin command files)
+- `--with-commands` / `--no-commands` — install agent commands (Claude slash commands; Codex local plugin marketplace + plugin install)
 - `--with-instructions` / `--no-instructions` — append cc-handoff usage block to `CLAUDE.md` or `AGENTS.md` (idempotent: skips when the `## cc-handoff` heading is already present)
 
-**For Codex users**: `--with-mcp` writes the Codex MCP entry directly. The stable workflow is to ask Codex to call `submit_handoff` / `pickup_handoff` / etc.; `--with-commands` only installs repo-local plugin command files for Codex clients that support and load them into `/`.
+**For Codex users**: `--with-mcp` writes the Codex MCP entry directly. The stable workflow is to ask Codex to call `submit_handoff` / `pickup_handoff` / etc.; `--with-commands` registers this repo's `.codex` directory as a local plugin marketplace and runs `codex plugin add cc-handoff@cc-handoff-local`. Restart Codex afterwards; `/` visibility still depends on the current client.
 
 **Inbox path**: new installs use `.cc-handoff/inbox/`; existing repos with `.claude/handoff-inbox/` keep using it (no migration needed). The `[inbox] dir = "..."` override in `.cc-handoff.toml` accepts an absolute or relative path.
 
