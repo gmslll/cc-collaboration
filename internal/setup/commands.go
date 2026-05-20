@@ -2,7 +2,6 @@ package setup
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 )
 
 const versionMarker = "cc-handoff-version"
-const codexPluginVersionField = "x-cc-handoff-version"
 
 var versionLineRE = regexp.MustCompile(`<!--\s*` + versionMarker + `:\s*(\S+)\s*-->`)
 
@@ -141,33 +139,20 @@ func CopyCommands(destDir, version string, prompt PromptFunc, out io.Writer) (Co
 	return res, nil
 }
 
-// CopyCodexPlugin materializes a local Codex plugin under destDir. The plugin
-// exposes the same workflow prompts as Codex commands in commands/*.md.
-func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) (CopyResult, error) {
+// CopyCodexSkill materializes a Codex skill under destDir. The skill's
+// SKILL.md is intentionally small and routes to reference workflow prompts
+// copied from the same templates Claude uses for slash commands.
+func CopyCodexSkill(destDir, version string, prompt PromptFunc, out io.Writer) (CopyResult, error) {
 	if out == nil {
 		out = io.Discard
 	}
 	res := CopyResult{BackedUp: map[string]string{}}
 
-	marketplace, err := codexPluginFS.ReadFile("templates/codex-plugin/.agents/plugins/marketplace.json")
+	skill, err := codexSkillFS.ReadFile("templates/codex-skill/cc-handoff/SKILL.md")
 	if err != nil {
-		return res, fmt.Errorf("read embedded codex plugin marketplace: %w", err)
+		return res, fmt.Errorf("read embedded codex skill: %w", err)
 	}
-	written, skipped, backups, err := copyFile(filepath.Join(destDir, ".agents", "plugins", "marketplace.json"), marketplace, version, prompt, out, "marketplace.json", false)
-	if err != nil {
-		return res, err
-	}
-	appendResult(&res, written, skipped, backups)
-
-	manifest, err := codexPluginFS.ReadFile("templates/codex-plugin/.codex-plugin/plugin.json")
-	if err != nil {
-		return res, fmt.Errorf("read embedded codex plugin manifest: %w", err)
-	}
-	manifest, err = stampCodexPluginVersion(manifest, version)
-	if err != nil {
-		return res, fmt.Errorf("stamp codex plugin manifest: %w", err)
-	}
-	written, skipped, backups, err = copyFile(filepath.Join(destDir, "plugins", "cc-handoff", ".codex-plugin", "plugin.json"), manifest, version, prompt, out, "plugin.json", false)
+	written, skipped, backups, err := copyFile(filepath.Join(destDir, "SKILL.md"), skill, version, prompt, out, "SKILL.md", true)
 	if err != nil {
 		return res, err
 	}
@@ -178,7 +163,7 @@ func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) 
 		if err != nil {
 			return res, fmt.Errorf("read embedded %s: %w", name, err)
 		}
-		written, skipped, backups, err := copyFile(filepath.Join(destDir, "plugins", "cc-handoff", "commands", name), src, version, prompt, out, name, true)
+		written, skipped, backups, err := copyFile(filepath.Join(destDir, "references", name), src, version, prompt, out, name, true)
 		if err != nil {
 			return res, err
 		}
@@ -228,9 +213,6 @@ func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io
 	}
 
 	existingVer := extractVersion(existing)
-	if !stamp {
-		existingVer = extractCodexPluginVersion(existing)
-	}
 	if existingVer == version && existingVer != "" {
 		fmt.Fprintf(out, "  · %s already at %s, skipped\n", dest, version)
 		return "", displayName, backups, nil
@@ -238,13 +220,6 @@ func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io
 	if existingVer != "" && version != "" && compareSemver(existingVer, version) > 0 {
 		fmt.Fprintf(out, "  ! %s is at %s (newer than binary %s), skipped\n", dest, existingVer, version)
 		return "", displayName, backups, nil
-	}
-	if !stamp && existingVer != "" && version != "" && compareSemver(existingVer, version) < 0 && prompt == nil {
-		if err := os.WriteFile(dest, content, 0o644); err != nil {
-			return "", "", backups, fmt.Errorf("overwrite %s: %w", dest, err)
-		}
-		fmt.Fprintf(out, "  ✓ overwrote %s\n", dest)
-		return displayName, "", backups, nil
 	}
 
 	reason := ConflictUnstamped
@@ -283,31 +258,6 @@ func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io
 		fmt.Fprintf(out, "  · skipped %s\n", dest)
 		return "", displayName, backups, nil
 	}
-}
-
-func stampCodexPluginVersion(content []byte, version string) ([]byte, error) {
-	if version == "" {
-		return content, nil
-	}
-	var manifest map[string]any
-	if err := json.Unmarshal(content, &manifest); err != nil {
-		return nil, err
-	}
-	manifest[codexPluginVersionField] = version
-	out, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(out, '\n'), nil
-}
-
-func extractCodexPluginVersion(content []byte) string {
-	var manifest map[string]any
-	if err := json.Unmarshal(content, &manifest); err != nil {
-		return ""
-	}
-	v, _ := manifest[codexPluginVersionField].(string)
-	return v
 }
 
 // stampVersion returns content with a trailing version marker. If content already

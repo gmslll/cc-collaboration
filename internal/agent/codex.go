@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
+	"os"
 	"path/filepath"
 
 	"github.com/cc-collaboration/internal/setup"
@@ -13,9 +13,8 @@ import (
 // codexAgent drives OpenAI's Codex CLI:
 //   - non-interactive prompt:  codex exec "<prompt body>"   (positional, not -p)
 //   - MCP register:            codex mcp add <name> -- <bin>
-//   - commands:                .codex/.agents/plugins/marketplace.json
-//     plus .codex/plugins/cc-handoff/commands/*.md, installed through
-//     codex plugin marketplace/add when available
+//   - workflow prompts:        $CODEX_HOME/skills/cc-handoff/SKILL.md
+//     plus references/*.md, invoked by natural language ("use cc-handoff …")
 //   - project instructions:    AGENTS.md (industry standard adopted by Codex,
 //     Cursor, Aider, GitHub Copilot, …)
 type codexAgent struct{}
@@ -52,34 +51,30 @@ func (codexAgent) InstallCommands(repoRoot, version string, prompt setup.PromptF
 	if out == nil {
 		out = io.Discard
 	}
-	dest := filepath.Join(repoRoot, ".codex")
-	res, err := setup.CopyCodexPlugin(dest, version, prompt, out)
+	dest, err := codexSkillDir()
 	if err != nil {
-		return res, err
+		return setup.CopyResult{}, err
 	}
-	if err := installCodexPlugin(repoRoot, out); err != nil {
-		fmt.Fprintf(out, "  ! codex plugin install skipped: %v\n", err)
-		fmt.Fprintln(out, "    MCP tools are still available; restart codex and ask it to call submit_handoff / pickup_handoff directly.")
+	res, err := setup.CopyCodexSkill(dest, version, prompt, out)
+	if err == nil {
+		fmt.Fprintf(out, "  ✓ installed cc-handoff Codex skill at %s\n", dest)
+		fmt.Fprintln(out, "    Restart Codex, then ask it to use the cc-handoff skill (for example: \"use cc-handoff to handoff this API change\").")
 	}
-	return res, nil
+	return res, err
 }
 
 func (codexAgent) RegisterMCP(ctx context.Context, opts setup.MCPRegisterOptions, out io.Writer) error {
 	return setup.RegisterCodex(ctx, opts, out)
 }
 
-func installCodexPlugin(repoRoot string, out io.Writer) error {
-	if !onPath("codex") {
-		return fmt.Errorf("codex CLI not found on PATH")
+func codexSkillDir() (string, error) {
+	home := os.Getenv("CODEX_HOME")
+	if home == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory for Codex skill install: %w", err)
+		}
+		home = filepath.Join(userHome, ".codex")
 	}
-	marketplace := filepath.Join(repoRoot, ".codex")
-	exec.Command("codex", "plugin", "marketplace", "remove", "cc-handoff-local").Run()
-	if addOut, err := exec.Command("codex", "plugin", "marketplace", "add", marketplace).CombinedOutput(); err != nil {
-		return fmt.Errorf("codex plugin marketplace add: %w (output: %s)", err, string(addOut))
-	}
-	if addOut, err := exec.Command("codex", "plugin", "add", "cc-handoff@cc-handoff-local").CombinedOutput(); err != nil {
-		return fmt.Errorf("codex plugin add: %w (output: %s)", err, string(addOut))
-	}
-	fmt.Fprintln(out, "  ✓ installed cc-handoff Codex plugin (marketplace=cc-handoff-local)")
-	return nil
+	return filepath.Join(home, "skills", "cc-handoff"), nil
 }

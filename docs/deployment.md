@@ -301,7 +301,7 @@ cc-handoff init --with-mcp --with-commands --with-instructions
 #   Partner    : alex@frontend (或 user@backend)
 #   Repo name  : test-backend (回车默认 = 仓库目录名)
 #   Register cc-handoff MCP server with <agent>? [Y/n]: <回车>
-#   Install <agent> commands? [Y/n]: <回车>                  # codex 是可选增强;manual 不会问
+#   Install <agent> commands? [Y/n]: <回车>                  # codex 会安装 skill;manual 不会问
 #   Append cc-handoff usage snippet to CLAUDE.md / AGENTS.md? [Y/n]: <回车>
 ```
 
@@ -310,7 +310,7 @@ cc-handoff init --with-mcp --with-commands --with-instructions
 | 子步骤 | claude | codex | manual |
 |---|---|---|---|
 | `--with-mcp` (2.3) | 自动调 `claude mcp add` | 自动调 `codex mcp add` | 打印通用 stdio 提示 |
-| `--with-commands` (2.4) | 拷 `.claude/commands/*.md` 并打版本戳 | 写 `.codex/.agents/plugins/marketplace.json` 和 plugin files,再调用 `codex plugin marketplace add` / `codex plugin add`;是否进入 `/` 列表取决于当前 Codex 客户端 | 跳过 |
+| `--with-commands` (2.4) | 拷 `.claude/commands/*.md` 并打版本戳 | 写 `$CODEX_HOME/skills/cc-handoff/` skill 和 references;重启 Codex 后用自然语言触发 | 跳过 |
 | `--with-instructions` (2.5) | 把 cc-handoff 用法段追加到 `CLAUDE.md` | 追加到 `AGENTS.md` | 跳过 |
 
 任何 `--with-*` 都可以省(退化成只写 toml + 走交互问答)或换成 `--no-*` 显式跳过;脚本化场景配 `--non-interactive` 用。
@@ -365,9 +365,9 @@ codex mcp add cc-handoff -- /usr/local/bin/cc-handoff-mcp
 
 **manual** —— 按你的 agent 自身文档把 `/usr/local/bin/cc-handoff-mcp` 注册成 stdio MCP server。`cc-handoff init --with-mcp` 会打印通用提示行（含绝对路径）作参考。
 
-### 2.4 安装 agent commands(若 2.2 没用 `--with-commands`)
+### 2.4 安装 agent 工作流入口(若 2.2 没用 `--with-commands`)
 
-> manual 用户跳过本节。Codex 的稳定路径是直接在会话里调 MCP 工具名(`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`);plugin commands 只是可选增强。
+> manual 用户跳过本节。Codex 没有 Claude Code 那种自定义 slash command;这里安装的是 Codex skill,内部仍然走 MCP 工具名(`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`)。
 
 **Claude Code** —— 把 `/handoff`、`/handoff-module`、`/pickup`、`/request` 拷到目标仓库:
 
@@ -381,26 +381,22 @@ cp /path/to/cc-collaboration/.claude/commands/{handoff,handoff-module,pickup,req
 末尾会带 `<!-- cc-handoff-version: vX.Y.Z -->`,二跑 init 时若版本旧于二进制
 会触发 `[o]verwrite / [s]kip / [b]ackup` 提示。
 
-**OpenAI Codex CLI** —— `cc-handoff init --agent codex --with-commands` 会在当前仓库安装本地 marketplace 和 plugin:
+**OpenAI Codex CLI** —— `cc-handoff init --agent codex --with-commands` 会安装 user 级 skill:
 
 ```text
-.codex/.agents/plugins/marketplace.json
-.codex/plugins/cc-handoff/
-.codex/plugins/cc-handoff/.codex-plugin/plugin.json
-.codex/plugins/cc-handoff/commands/*.md
+$CODEX_HOME/skills/cc-handoff/SKILL.md
+$CODEX_HOME/skills/cc-handoff/references/*.md
 ```
 
-随后 init 会执行:
+`CODEX_HOME` 未设置时默认是 `~/.codex`。安装后重启 Codex,然后在会话里说:
 
-```bash
-codex plugin marketplace remove cc-handoff-local   # 忽略失败,用于幂等刷新
-codex plugin marketplace add ./.codex
-codex plugin add cc-handoff@cc-handoff-local
+```text
+使用 cc-handoff handoff 当前 API 改动
+使用 cc-handoff pickup
+使用 cc-handoff request 向后端要字段
 ```
 
-重启 Codex 后,如果当前客户端支持 plugin commands,它们才会出现在 `/` 列表。当前配置若只看到 `[mcp_servers.cc-handoff]` 或安装后仍没有 `/` 项,就按 MCP 自然语言触发使用,效果等价。
-
-如果要手动安装,从源码仓库复制 `internal/setup/templates/codex-plugin/.agents/plugins/marketplace.json`、`internal/setup/templates/codex-plugin/.codex-plugin/plugin.json` 和 `internal/setup/templates/commands/*.md` 到上面的路径,再运行上面的 `codex plugin ...` 命令。注意 `plugin.json` 必须保持纯 JSON;版本记录在 JSON 字段 `x-cc-handoff-version` 中,只有 `commands/*.md` 会带 `<!-- cc-handoff-version: ... -->` 版本戳。
+如果要手动安装,复制 `internal/setup/templates/codex-skill/cc-handoff/SKILL.md` 到上面的 `SKILL.md`,再把 `internal/setup/templates/commands/*.md` 复制到 `references/`。`cc-handoff init --with-commands` 会自动给这些文件追加 `<!-- cc-handoff-version: ... -->` 版本戳。
 
 > 实际用法按角色分:后端仓库主要用 `/handoff`(diff 模式)和 `/handoff-module`(模块 brief — 推送已有模块的完整 API 契约文档);前端仓库主要用 `/pickup`(领取后端推过来的对接)和 `/request`(反向给后端发起需求 —— 缺字段、缺能力、响应结构问题等)。**`/pickup` 双方都用** —— 接收端不论是 delivery 还是 request,流程是对称的。四份都拷无妨,Claude 不会去调没意义的那条。
 
@@ -421,11 +417,10 @@ claude mcp list
 
 # Codex
 codex mcp list
-codex plugin marketplace list
-codex plugin list --marketplace cc-handoff-local
+ls ${CODEX_HOME:-$HOME/.codex}/skills/cc-handoff
 ```
 
-Codex 看到 MCP server 后,即使 `/` 列表里没有 cc-handoff commands,也可以直接说“调用 cc-handoff 的 list_inbox,然后 pickup_handoff 领取那条 handoff”。这是 Codex 的稳定路径。
+Codex 看到 MCP server 和 skill 后,可以直接说“使用 cc-handoff 调 list_inbox,然后 pickup_handoff 领取那条 handoff”。这是 Codex 的稳定路径。
 
 ---
 
@@ -578,7 +573,7 @@ macOS 右上角同时会弹一条 cc-handoff 通知。
 2. 调 `pickup_handoff(id)`,拿到 prompt(含建议编辑哪个 `lib/api/<domain>.ts`)
 3. 立即开始读现有相邻文件、按本仓库风格写代码
 
-**Codex** —— 稳定用法是在 codex 会话里直接说"调 cc-handoff 的 list_inbox 看下收件箱、然后 pickup_handoff 拿那个 id"。如果 2.4 安装的 plugin command files 被当前客户端加载到了 `/` 列表,也可以用对应 command;两种方式最终都走同一套 MCP tools。
+**Codex** —— 稳定用法是在 codex 会话里直接说"使用 cc-handoff 看下收件箱,然后 pickup 那个 id"。2.4 安装的 skill 会把这句话映射到 `list_inbox` / `pickup_handoff`;最终仍然走同一套 MCP tools。
 
 观察:
 

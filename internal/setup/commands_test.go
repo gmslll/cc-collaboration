@@ -2,7 +2,6 @@ package setup
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,37 +29,27 @@ func TestCopyCommands_FreshDir(t *testing.T) {
 	}
 }
 
-func TestCopyCodexPlugin_FreshDir(t *testing.T) {
+func TestCopyCodexSkill_FreshDir(t *testing.T) {
 	dir := t.TempDir()
-	res, err := CopyCodexPlugin(dir, "0.1.1", refusePrompt(t), io.Discard)
+	res, err := CopyCodexSkill(dir, "0.1.1", refusePrompt(t), io.Discard)
 	if err != nil {
-		t.Fatalf("CopyCodexPlugin: %v", err)
+		t.Fatalf("CopyCodexSkill: %v", err)
 	}
-	if len(res.Written) != len(CommandFiles)+2 {
-		t.Fatalf("want %d written, got %v", len(CommandFiles)+2, res.Written)
+	if len(res.Written) != len(CommandFiles)+1 {
+		t.Fatalf("want %d written, got %v", len(CommandFiles)+1, res.Written)
 	}
-	if _, err := os.ReadFile(filepath.Join(dir, ".agents", "plugins", "marketplace.json")); err != nil {
-		t.Fatalf("read marketplace: %v", err)
-	}
-	manifest, err := os.ReadFile(filepath.Join(dir, "plugins", "cc-handoff", ".codex-plugin", "plugin.json"))
+	skill, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
 	if err != nil {
-		t.Fatalf("read plugin manifest: %v", err)
+		t.Fatalf("read SKILL.md: %v", err)
 	}
-	if !strings.Contains(string(manifest), `"name": "cc-handoff"`) {
-		t.Errorf("manifest missing plugin name:\n%s", manifest)
+	if !strings.Contains(string(skill), "name: cc-handoff") {
+		t.Errorf("skill missing name:\n%s", skill)
 	}
-	if strings.Contains(string(manifest), "<!--") {
-		t.Errorf("manifest must stay valid JSON without HTML version stamp:\n%s", manifest)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(manifest, &parsed); err != nil {
-		t.Fatalf("manifest is not valid JSON: %v\n%s", err, manifest)
-	}
-	if parsed[codexPluginVersionField] != "0.1.1" {
-		t.Errorf("manifest version field = %v, want 0.1.1", parsed[codexPluginVersionField])
+	if !strings.Contains(string(skill), "cc-handoff-version: 0.1.1") {
+		t.Errorf("skill missing version stamp:\n%s", skill)
 	}
 	for _, name := range CommandFiles {
-		got, err := os.ReadFile(filepath.Join(dir, "plugins", "cc-handoff", "commands", name))
+		got, err := os.ReadFile(filepath.Join(dir, "references", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -70,109 +59,19 @@ func TestCopyCodexPlugin_FreshDir(t *testing.T) {
 	}
 }
 
-func TestCopyCodexPlugin_NonInteractiveOverwritesOlderManifest(t *testing.T) {
+func TestCopyCodexSkill_SameVersionSkips(t *testing.T) {
 	dir := t.TempDir()
-	manifestDir := filepath.Join(dir, "plugins", "cc-handoff", ".codex-plugin")
-	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldManifest := []byte(`{
-  "name": "cc-handoff",
-  "version": "0.0.1",
-  "x-cc-handoff-version": "0.0.1",
-  "description": "old"
-}
-`)
-	manifestPath := filepath.Join(manifestDir, "plugin.json")
-	if err := os.WriteFile(manifestPath, oldManifest, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := CopyCodexPlugin(dir, "0.1.1", nil, io.Discard)
-	if err != nil {
-		t.Fatalf("CopyCodexPlugin: %v", err)
-	}
-	if !contains(res.Written, "plugin.json") {
-		t.Fatalf("expected older manifest to be overwritten non-interactively, written=%v skipped=%v", res.Written, res.Skipped)
-	}
-	got, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(got, &parsed); err != nil {
-		t.Fatalf("manifest is not valid JSON after overwrite: %v\n%s", err, got)
-	}
-	if parsed[codexPluginVersionField] != "0.1.1" {
-		t.Errorf("manifest version field = %v, want 0.1.1", parsed[codexPluginVersionField])
-	}
-	if parsed["description"] == "old" {
-		t.Errorf("manifest was not refreshed: %s", got)
-	}
-}
-
-func TestCopyCodexPlugin_InteractivePromptsForOlderManifest(t *testing.T) {
-	dir := t.TempDir()
-	manifestDir := filepath.Join(dir, "plugins", "cc-handoff", ".codex-plugin")
-	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldManifest := []byte(`{
-  "name": "cc-handoff",
-  "x-cc-handoff-version": "0.0.1",
-  "description": "locally edited"
-}
-`)
-	manifestPath := filepath.Join(manifestDir, "plugin.json")
-	if err := os.WriteFile(manifestPath, oldManifest, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	called := false
-	prompt := func(name string, reason ConflictReason, existing, newVer string) (rune, error) {
-		called = true
-		if name != "plugin.json" {
-			t.Errorf("prompt name = %q, want plugin.json", name)
-		}
-		if reason != ConflictOlder {
-			t.Errorf("reason = %v, want ConflictOlder", reason)
-		}
-		if existing != "0.0.1" || newVer != "0.1.1" {
-			t.Errorf("versions = %q -> %q, want 0.0.1 -> 0.1.1", existing, newVer)
-		}
-		return 's', nil
-	}
-	res, err := CopyCodexPlugin(dir, "0.1.1", prompt, io.Discard)
-	if err != nil {
-		t.Fatalf("CopyCodexPlugin: %v", err)
-	}
-	if !called {
-		t.Fatalf("expected prompt for older manifest")
-	}
-	if !contains(res.Skipped, "plugin.json") {
-		t.Fatalf("expected manifest skip, written=%v skipped=%v", res.Written, res.Skipped)
-	}
-	got, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(oldManifest) {
-		t.Errorf("manifest was overwritten despite skip:\n%s", got)
-	}
-}
-
-func TestCopyCodexPlugin_SameVersionSkips(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := CopyCodexPlugin(dir, "0.1.1", nil, io.Discard); err != nil {
+	if _, err := CopyCodexSkill(dir, "0.1.1", nil, io.Discard); err != nil {
 		t.Fatalf("first copy: %v", err)
 	}
-	res, err := CopyCodexPlugin(dir, "0.1.1", refusePrompt(t), io.Discard)
+	res, err := CopyCodexSkill(dir, "0.1.1", refusePrompt(t), io.Discard)
 	if err != nil {
 		t.Fatalf("second copy: %v", err)
 	}
 	if len(res.Written) != 0 {
 		t.Errorf("expected no writes on idempotent run, got %v", res.Written)
 	}
-	if len(res.Skipped) != len(CommandFiles)+2 {
+	if len(res.Skipped) != len(CommandFiles)+1 {
 		t.Errorf("expected all skipped, got %v", res.Skipped)
 	}
 }

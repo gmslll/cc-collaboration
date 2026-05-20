@@ -1,6 +1,6 @@
 // Package agent abstracts the AI coding agent (Claude Code, OpenAI Codex CLI,
 // etc.) that cc-handoff drives — auto-launching on urgent handoffs, registering
-// the cc-handoff MCP server, installing slash command templates, and writing
+// the cc-handoff MCP server, installing workflow helper templates, and writing
 // project-level usage instructions.
 //
 // Each agent's quirks live in its own file (claude.go, codex.go, manual.go).
@@ -18,7 +18,7 @@ import (
 )
 
 // Agent is the per-tool adapter cc-handoff uses to spawn prompts, register
-// the MCP server, copy slash commands, and emit project-level usage notes.
+// the MCP server, copy workflow helpers, and emit project-level usage notes.
 //
 // All methods MUST be safe to call when the agent's CLI is not on PATH —
 // they return errors or no-op as appropriate. Available() lets callers gate
@@ -58,7 +58,7 @@ type Agent interface {
 
 	// SupportsCommands reports whether InstallCommands actually does
 	// anything for this agent. Init uses this to decide whether to even
-	// pose the "install slash commands?" question — calling InstallCommands
+	// pose the "install workflow helpers?" question — calling InstallCommands
 	// just to discover it's a no-op is wasteful (Claude's implementation
 	// would do real disk I/O on every probe).
 	SupportsCommands() bool
@@ -68,9 +68,10 @@ type Agent interface {
 	// installs a Stop hook only when this returns true.
 	SupportsHooks() bool
 
-	// InstallCommands materializes any per-agent slash command / prompt
-	// templates into the repo. No-op for agents whose SupportsCommands
-	// returns false (codex, manual).
+	// InstallCommands materializes any per-agent workflow prompt templates.
+	// Claude receives slash commands under the repo; Codex receives a user
+	// skill under CODEX_HOME. No-op for agents whose SupportsCommands returns
+	// false (manual).
 	InstallCommands(repoRoot, version string, prompt setup.PromptFunc, out io.Writer) (setup.CopyResult, error)
 
 	// RegisterMCP wires cc-handoff-mcp into the agent's MCP config, or
