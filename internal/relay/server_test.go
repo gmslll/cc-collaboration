@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,57 @@ func TestListOnlineUsersUnauthorized(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("missing-token GET /v1/users/online status=%d, want 401", resp.StatusCode)
+	}
+}
+
+func TestUIServing(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	tokens := auth.NewTokens()
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	client := srv.Client()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := client.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("GET / status=%d, want 302", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/ui/" {
+		t.Fatalf("GET / Location=%q, want /ui/", loc)
+	}
+
+	uiResp, err := http.Get(srv.URL + "/ui/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uiResp.Body.Close()
+	if uiResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/ status=%d, want 200", uiResp.StatusCode)
+	}
+	body, _ := io.ReadAll(uiResp.Body)
+	if !strings.Contains(string(body), "cc-handoff") {
+		t.Fatalf("GET /ui/ body does not look like the embedded UI")
+	}
+
+	apiResp, err := http.Get(srv.URL + "/v1/handoffs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer apiResp.Body.Close()
+	if apiResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET /v1/handoffs without token status=%d, want 401", apiResp.StatusCode)
 	}
 }
 

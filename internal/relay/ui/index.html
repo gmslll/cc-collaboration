@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cc-handoff</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div>
+          <h1>cc-handoff</h1>
+          <p id="session-label">Not connected</p>
+        </div>
+        <button id="refresh-button" class="icon-button" type="button" title="Refresh" aria-label="Refresh">
+          <span aria-hidden="true">&#8635;</span>
+        </button>
+      </div>
+
+      <form id="auth-form" class="auth-panel">
+        <label for="token-input">Relay token</label>
+        <div class="token-row">
+          <input id="token-input" type="password" autocomplete="current-password" placeholder="Bearer token">
+          <button type="submit">Connect</button>
+        </div>
+        <p id="auth-message" class="muted">Stored locally in this browser.</p>
+      </form>
+
+      <nav class="view-tabs" aria-label="Handoff views">
+        <button class="tab-button active" type="button" data-view="recipient">Inbox</button>
+        <button class="tab-button" type="button" data-view="sender">Sent</button>
+        <button class="tab-button" type="button" data-view="history">History</button>
+      </nav>
+
+      <label class="search-box" for="search-input">
+        <span>Search</span>
+        <input id="search-input" type="search" placeholder="id, sender, repo, headline">
+      </label>
+
+      <section class="online-panel" aria-labelledby="online-title">
+        <div class="section-title">
+          <h2 id="online-title">Users</h2>
+          <span id="online-count">0 online</span>
+        </div>
+        <div id="online-list" class="online-list"></div>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <section class="list-pane" aria-labelledby="list-title">
+        <div class="pane-header">
+          <div>
+            <h2 id="list-title">Inbox</h2>
+            <p id="list-meta">Connect to load handoffs.</p>
+          </div>
+          <select id="limit-select" aria-label="Limit">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div id="handoff-list" class="handoff-list"></div>
+      </section>
+
+      <section class="detail-pane" aria-live="polite">
+        <div id="empty-state" class="empty-state">
+          <h2>Select a handoff</h2>
+          <p>Choose a row to inspect the package, status, comments, and available actions.</p>
+        </div>
+
+        <article id="detail-view" class="detail-view hidden">
+          <header class="detail-header">
+            <div>
+              <div id="detail-badges" class="badge-row"></div>
+              <h2 id="detail-title"></h2>
+              <p id="detail-subtitle"></p>
+            </div>
+            <div class="detail-actions">
+              <button id="ack-button" type="button">Mark picked</button>
+              <button id="retract-button" type="button" class="danger">Retract</button>
+            </div>
+          </header>
+
+          <div class="status-grid">
+            <div>
+              <span>State</span>
+              <strong id="status-state">-</strong>
+            </div>
+            <div>
+              <span>Created</span>
+              <strong id="status-created">-</strong>
+            </div>
+            <div>
+              <span>Comments</span>
+              <strong id="status-comments">-</strong>
+            </div>
+            <div>
+              <span>Picked</span>
+              <strong id="status-picked">-</strong>
+            </div>
+          </div>
+
+          <section id="recipient-slots" class="recipient-slots hidden"></section>
+
+          <div class="content-columns">
+            <section class="summary-panel" aria-labelledby="summary-title">
+              <div class="section-title">
+                <h3 id="summary-title">Summary</h3>
+                <button id="copy-summary-button" class="secondary" type="button">Copy</button>
+              </div>
+              <pre id="summary-content"></pre>
+            </section>
+
+            <aside class="metadata-panel" aria-label="Metadata">
+              <dl id="metadata-list"></dl>
+            </aside>
+          </div>
+
+          <section id="api-delta-panel" class="delta-panel hidden" aria-labelledby="delta-title">
+            <h3 id="delta-title">API Delta</h3>
+            <div id="api-delta-content" class="delta-content"></div>
+          </section>
+
+          <section class="comments-panel" aria-labelledby="comments-title">
+            <div class="section-title">
+              <h3 id="comments-title">Comments</h3>
+              <button id="reload-comments-button" class="secondary" type="button">Reload</button>
+            </div>
+            <div id="comments-list" class="comments-list"></div>
+            <form id="comment-form" class="comment-form">
+              <textarea id="comment-input" rows="3" placeholder="Add a comment"></textarea>
+              <button type="submit">Send</button>
+            </form>
+          </section>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/ui/app.js"></script>
+</body>
+</html>

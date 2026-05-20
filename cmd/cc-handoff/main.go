@@ -53,6 +53,8 @@ func main() {
 		err = runOpen(ctx, args)
 	case "online":
 		err = runOnline(ctx, args)
+	case "ui":
+		err = runUI(ctx, args)
 	case "stop-hook":
 		err = runStopHook(ctx, args)
 	case "version", "-v", "--version":
@@ -96,6 +98,7 @@ Both sides:
   cc-handoff comment      <id> <body...>                post a comment
   cc-handoff comment      --list <id>                   list comments on a handoff
   cc-handoff online       [--json]                      show registered identities + who is currently watching
+  cc-handoff ui           [--open] [--show-token]       print/open the relay management UI
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
   cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications

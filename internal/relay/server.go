@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"crypto/sha256"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,9 @@ import (
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
+//go:embed ui/*
+var uiFiles embed.FS
+
 type Server struct {
 	Store  *store.Store
 	Tokens *auth.Tokens
@@ -40,6 +44,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("/", s.uiIndex)
+	mux.HandleFunc("/ui", s.uiIndex)
+	mux.Handle("GET /ui/", http.FileServerFS(uiFiles))
 
 	api := http.NewServeMux()
 	api.HandleFunc("POST /v1/handoffs", s.submit)
@@ -77,6 +84,19 @@ func (s *Server) broadcastPresence(identity string, online bool) {
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) uiIndex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path != "/" && r.URL.Path != "/ui" {
+		http.NotFound(w, r)
+		return
+	}
+	http.Redirect(w, r, "/ui/", http.StatusFound)
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
