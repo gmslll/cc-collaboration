@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -45,8 +46,12 @@ func TestCopyCodexPlugin_FreshDir(t *testing.T) {
 	if !strings.Contains(string(manifest), `"name": "cc-handoff"`) {
 		t.Errorf("manifest missing plugin name:\n%s", manifest)
 	}
-	if !strings.Contains(string(manifest), "cc-handoff-version: 0.1.1") {
-		t.Errorf("manifest missing version stamp:\n%s", manifest)
+	if strings.Contains(string(manifest), "cc-handoff-version") {
+		t.Errorf("manifest must stay valid JSON without HTML version stamp:\n%s", manifest)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(manifest, &parsed); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v\n%s", err, manifest)
 	}
 	for _, name := range CommandFiles {
 		got, err := os.ReadFile(filepath.Join(dir, "commands", name))

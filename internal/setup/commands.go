@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -150,7 +151,7 @@ func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) 
 	if err != nil {
 		return res, fmt.Errorf("read embedded codex plugin manifest: %w", err)
 	}
-	written, skipped, backups, err := copyStampedFile(filepath.Join(destDir, ".codex-plugin", "plugin.json"), manifest, version, prompt, out, "plugin.json")
+	written, skipped, backups, err := copyFile(filepath.Join(destDir, ".codex-plugin", "plugin.json"), manifest, version, prompt, out, "plugin.json", false)
 	if err != nil {
 		return res, err
 	}
@@ -161,7 +162,7 @@ func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) 
 		if err != nil {
 			return res, fmt.Errorf("read embedded %s: %w", name, err)
 		}
-		written, skipped, backups, err := copyStampedFile(filepath.Join(destDir, "commands", name), src, version, prompt, out, name)
+		written, skipped, backups, err := copyFile(filepath.Join(destDir, "commands", name), src, version, prompt, out, name, true)
 		if err != nil {
 			return res, err
 		}
@@ -183,23 +184,31 @@ func appendResult(res *CopyResult, written, skipped string, backups map[string]s
 	}
 }
 
-func copyStampedFile(dest string, src []byte, version string, prompt PromptFunc, out io.Writer, displayName string) (written, skipped string, backups map[string]string, err error) {
+func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io.Writer, displayName string, stamp bool) (written, skipped string, backups map[string]string, err error) {
 	backups = map[string]string{}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", "", backups, fmt.Errorf("create %s: %w", filepath.Dir(dest), err)
 	}
 
-	stamped := stampVersion(src, version)
+	content := src
+	if stamp {
+		content = stampVersion(src, version)
+	}
 	existing, readErr := os.ReadFile(dest)
 	switch {
 	case errors.Is(readErr, os.ErrNotExist):
-		if err := os.WriteFile(dest, stamped, 0o644); err != nil {
+		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return "", "", backups, fmt.Errorf("write %s: %w", dest, err)
 		}
 		fmt.Fprintf(out, "  ✓ wrote %s\n", dest)
 		return displayName, "", backups, nil
 	case readErr != nil:
 		return "", "", backups, fmt.Errorf("stat %s: %w", dest, readErr)
+	}
+
+	if !stamp && bytes.Equal(existing, content) {
+		fmt.Fprintf(out, "  · %s already current, skipped\n", dest)
+		return "", displayName, backups, nil
 	}
 
 	existingVer := extractVersion(existing)
@@ -228,7 +237,7 @@ func copyStampedFile(dest string, src []byte, version string, prompt PromptFunc,
 
 	switch choice {
 	case 'o', 'O':
-		if err := os.WriteFile(dest, stamped, 0o644); err != nil {
+		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return "", "", backups, fmt.Errorf("overwrite %s: %w", dest, err)
 		}
 		fmt.Fprintf(out, "  ✓ overwrote %s\n", dest)
@@ -238,7 +247,7 @@ func copyStampedFile(dest string, src []byte, version string, prompt PromptFunc,
 		if err := os.WriteFile(backup, existing, 0o644); err != nil {
 			return "", "", backups, fmt.Errorf("backup %s: %w", dest, err)
 		}
-		if err := os.WriteFile(dest, stamped, 0o644); err != nil {
+		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return "", "", backups, fmt.Errorf("write %s after backup: %w", dest, err)
 		}
 		backups[dest] = backup
