@@ -156,7 +156,7 @@ Once the binaries are installed (A or B), init your working repo:
 #   --with-mcp          register the MCP server (claude: `claude mcp add`;
 #                       codex: `codex mcp add`)
 #   --with-commands     install agent workflow helpers (Claude: .claude/commands/;
-#                       Codex: $CODEX_HOME/skills/cc-handoff/)
+#                       Codex: $CODEX_HOME/skills/cc-handoff-*/)
 #   --with-instructions append cc-handoff usage block to CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
 cc-handoff init --with-mcp --with-commands --with-instructions
@@ -347,7 +347,7 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 | agent | CLI invocation | MCP register | commands | project instructions file |
 |---|---|---|---|---|
 | `claude` (default) | `claude -p "$(cat prompt.md)"` | auto: `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup,request}.md` | appended to `CLAUDE.md` |
-| `codex` | `codex exec "$(cat prompt.md)"` | auto: `codex mcp add cc-handoff -- <bin>` | `$CODEX_HOME/skills/cc-handoff/` skill; ask Codex to "use cc-handoff ..." and it calls MCP tools | appended to `AGENTS.md` |
+| `codex` | `codex exec "$(cat prompt.md)"` | auto: `codex mcp add cc-handoff -- <bin>` | `$CODEX_HOME/skills/cc-handoff-*/` workflow skills; these skills call cc-handoff MCP tools | appended to `AGENTS.md` |
 | `manual` | does not auto-launch a terminal | init prints generic stdio MCP guidance | none | none |
 
 **Picking an agent**: `cc-handoff init` defaults to PATH detection (claude > codex > manual). Override with `cc-handoff init --agent codex`. The result is persisted to the `agent` field in `~/.config/cc-handoff/config.toml` (Linux/macOS) or `%AppData%\cc-handoff\config.toml` (Windows); subsequent commands honor it.
@@ -355,10 +355,10 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 **`cc-handoff init` step toggles** (each independent):
 
 - `--with-mcp` / `--no-mcp` — register the MCP server (claude: runs `claude mcp add`; codex: runs `codex mcp add`)
-- `--with-commands` / `--no-commands` — install agent workflow helpers (Claude slash commands; Codex skill)
+- `--with-commands` / `--no-commands` — install agent workflow helpers (Claude slash commands; Codex workflow skills)
 - `--with-instructions` / `--no-instructions` — append cc-handoff usage block to `CLAUDE.md` or `AGENTS.md` (idempotent: skips when the `## cc-handoff` heading is already present)
 
-**For Codex users**: `--with-mcp` writes the Codex MCP entry directly. The stable workflow is to ask Codex to use the cc-handoff skill, which then calls `submit_handoff` / `pickup_handoff` / etc.; `--with-commands` installs `$CODEX_HOME/skills/cc-handoff/`. Restart Codex afterwards, then say things like "use cc-handoff to handoff this API change" or "use cc-handoff pickup".
+**For Codex users**: `--with-mcp` writes the Codex MCP entry directly. cc-handoff still executes as MCP tools; `--with-commands` turns each `internal/setup/templates/commands/*.md` workflow into a Codex skill under `$CODEX_HOME/skills/cc-handoff-*/`. Restart Codex afterwards, then say things like "use cc-handoff-handoff for this API change" or "use cc-handoff-pickup".
 
 **Inbox path**: new installs use `.cc-handoff/inbox/`; existing repos with `.claude/handoff-inbox/` keep using it (no migration needed). The `[inbox] dir = "..."` override in `.cc-handoff.toml` accepts an absolute or relative path.
 

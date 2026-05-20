@@ -278,14 +278,14 @@ func runInstallCommands(ag agent.Agent, choice triState, nonInteractive bool, rd
 	}
 	question := fmt.Sprintf("Install %s commands?", ag.Name())
 	if ag.Name() == "codex" {
-		question = "Install cc-handoff Codex skill?"
+		question = "Install cc-handoff Codex workflow skills?"
 	}
 	if !shouldRunOptional(choice, nonInteractive, rd, question) {
 		return
 	}
 	fmt.Printf("\nInstalling %s commands …\n", ag.Name())
 	if ag.Name() == "codex" {
-		fmt.Println("  · Codex does not support custom slash commands; installing a skill that routes to cc-handoff MCP tools.")
+		fmt.Println("  · Codex does not support custom slash commands; installing workflow skills that call cc-handoff MCP tools.")
 	}
 
 	var conflictPrompt setup.PromptFunc

@@ -139,31 +139,24 @@ func CopyCommands(destDir, version string, prompt PromptFunc, out io.Writer) (Co
 	return res, nil
 }
 
-// CopyCodexSkill materializes a Codex skill under destDir. The skill's
-// SKILL.md is intentionally small and routes to reference workflow prompts
-// copied from the same templates Claude uses for slash commands.
-func CopyCodexSkill(destDir, version string, prompt PromptFunc, out io.Writer) (CopyResult, error) {
+// CopyCodexSkills materializes the embedded workflow prompts as individual
+// Codex skills under destDir. cc-handoff itself remains an MCP server; these
+// skills are only natural-language entry points that instruct Codex to call
+// the cc-handoff MCP tools.
+func CopyCodexSkills(destDir, version string, prompt PromptFunc, out io.Writer) (CopyResult, error) {
 	if out == nil {
 		out = io.Discard
 	}
 	res := CopyResult{BackedUp: map[string]string{}}
-
-	skill, err := codexSkillFS.ReadFile("templates/codex-skill/cc-handoff/SKILL.md")
-	if err != nil {
-		return res, fmt.Errorf("read embedded codex skill: %w", err)
-	}
-	written, skipped, backups, err := copyFile(filepath.Join(destDir, "SKILL.md"), skill, version, prompt, out, "SKILL.md", true)
-	if err != nil {
-		return res, err
-	}
-	appendResult(&res, written, skipped, backups)
 
 	for _, name := range CommandFiles {
 		src, err := commandsFS.ReadFile("templates/commands/" + name)
 		if err != nil {
 			return res, fmt.Errorf("read embedded %s: %w", name, err)
 		}
-		written, skipped, backups, err := copyFile(filepath.Join(destDir, "references", name), src, version, prompt, out, name, true)
+		skillName := strings.TrimSuffix(name, ".md")
+		content := commandToCodexSkill(skillName, src)
+		written, skipped, backups, err := copyFile(filepath.Join(destDir, "cc-handoff-"+skillName, "SKILL.md"), content, version, prompt, out, "cc-handoff-"+skillName+"/SKILL.md", true, true)
 		if err != nil {
 			return res, err
 		}
@@ -171,6 +164,45 @@ func CopyCodexSkill(destDir, version string, prompt PromptFunc, out io.Writer) (
 	}
 
 	return res, nil
+}
+
+func commandToCodexSkill(name string, command []byte) []byte {
+	description, body := splitCommandFrontmatter(command)
+	if description == "" {
+		description = "Run the cc-handoff " + name + " workflow in Codex."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	fmt.Fprintf(&sb, "name: cc-handoff-%s\n", name)
+	fmt.Fprintf(&sb, "description: %s\n", description)
+	sb.WriteString("---\n\n")
+	fmt.Fprintf(&sb, "# cc-handoff-%s\n\n", name)
+	sb.WriteString("Use this skill when the user asks for this cc-handoff workflow in Codex. cc-handoff itself is provided through MCP tools; this skill is the workflow prompt that tells Codex how to use those tools.\n\n")
+	sb.WriteString(strings.TrimSpace(body))
+	sb.WriteString("\n")
+	return []byte(sb.String())
+}
+
+func splitCommandFrontmatter(content []byte) (description string, body string) {
+	s := strings.TrimLeft(string(content), "\ufeff")
+	if !strings.HasPrefix(s, "---\n") {
+		return "", s
+	}
+	rest := strings.TrimPrefix(s, "---\n")
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return "", s
+	}
+	fm := rest[:end]
+	body = strings.TrimLeft(rest[end+len("\n---"):], "\r\n")
+	for _, line := range strings.Split(fm, "\n") {
+		key, val, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(key) == "description" {
+			return strings.TrimSpace(val), body
+		}
+	}
+	return "", body
 }
 
 func appendResult(res *CopyResult, written, skipped string, backups map[string]string) {
@@ -185,7 +217,7 @@ func appendResult(res *CopyResult, written, skipped string, backups map[string]s
 	}
 }
 
-func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io.Writer, displayName string, stamp bool) (written, skipped string, backups map[string]string, err error) {
+func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io.Writer, displayName string, stamp bool, refreshOlderNonInteractive ...bool) (written, skipped string, backups map[string]string, err error) {
 	backups = map[string]string{}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", "", backups, fmt.Errorf("create %s: %w", filepath.Dir(dest), err)
@@ -220,6 +252,13 @@ func copyFile(dest string, src []byte, version string, prompt PromptFunc, out io
 	if existingVer != "" && version != "" && compareSemver(existingVer, version) > 0 {
 		fmt.Fprintf(out, "  ! %s is at %s (newer than binary %s), skipped\n", dest, existingVer, version)
 		return "", displayName, backups, nil
+	}
+	if len(refreshOlderNonInteractive) > 0 && refreshOlderNonInteractive[0] && prompt == nil && existingVer != "" && version != "" && compareSemver(existingVer, version) < 0 {
+		if err := os.WriteFile(dest, content, 0o644); err != nil {
+			return "", "", backups, fmt.Errorf("overwrite %s: %w", dest, err)
+		}
+		fmt.Fprintf(out, "  ✓ overwrote %s\n", dest)
+		return displayName, "", backups, nil
 	}
 
 	reason := ConflictUnstamped

@@ -158,7 +158,7 @@ func TestSupportsCommands(t *testing.T) {
 	}
 }
 
-func TestCodexInstallCommandsInstallsSkillUnderCodexHome(t *testing.T) {
+func TestCodexInstallCommandsInstallsSkillsUnderCodexHome(t *testing.T) {
 	repo := t.TempDir()
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
@@ -167,15 +167,15 @@ func TestCodexInstallCommandsInstallsSkillUnderCodexHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InstallCommands: %v", err)
 	}
-	if !containsString(res.Written, "SKILL.md") {
-		t.Fatalf("expected SKILL.md written, got %v", res.Written)
+	if !containsString(res.Written, "cc-handoff-handoff/SKILL.md") {
+		t.Fatalf("expected handoff SKILL.md written, got %v", res.Written)
 	}
-	skillPath := filepath.Join(codexHome, "skills", "cc-handoff", "SKILL.md")
+	skillPath := filepath.Join(codexHome, "skills", "cc-handoff-handoff", "SKILL.md")
 	got, err := os.ReadFile(skillPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", skillPath, err)
 	}
-	if !strings.Contains(string(got), "name: cc-handoff") {
+	if !strings.Contains(string(got), "name: cc-handoff-handoff") {
 		t.Fatalf("skill missing name:\n%s", got)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".codex", "plugins", "cc-handoff")); !os.IsNotExist(err) {

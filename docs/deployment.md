@@ -310,7 +310,7 @@ cc-handoff init --with-mcp --with-commands --with-instructions
 | 子步骤 | claude | codex | manual |
 |---|---|---|---|
 | `--with-mcp` (2.3) | 自动调 `claude mcp add` | 自动调 `codex mcp add` | 打印通用 stdio 提示 |
-| `--with-commands` (2.4) | 拷 `.claude/commands/*.md` 并打版本戳 | 写 `$CODEX_HOME/skills/cc-handoff/` skill 和 references;重启 Codex 后用自然语言触发 | 跳过 |
+| `--with-commands` (2.4) | 拷 `.claude/commands/*.md` 并打版本戳 | 把每个 workflow 写成 `$CODEX_HOME/skills/cc-handoff-*/SKILL.md`;重启 Codex 后用 skill 触发 | 跳过 |
 | `--with-instructions` (2.5) | 把 cc-handoff 用法段追加到 `CLAUDE.md` | 追加到 `AGENTS.md` | 跳过 |
 
 任何 `--with-*` 都可以省(退化成只写 toml + 走交互问答)或换成 `--no-*` 显式跳过;脚本化场景配 `--non-interactive` 用。
@@ -367,7 +367,7 @@ codex mcp add cc-handoff -- /usr/local/bin/cc-handoff-mcp
 
 ### 2.4 安装 agent 工作流入口(若 2.2 没用 `--with-commands`)
 
-> manual 用户跳过本节。Codex 没有 Claude Code 那种自定义 slash command;这里安装的是 Codex skill,内部仍然走 MCP 工具名(`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`)。
+> manual 用户跳过本节。Codex 没有 Claude Code 那种自定义 slash command;这里把每个 workflow 安装成 Codex skill,内部仍然走 cc-handoff MCP 工具名(`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff`)。
 
 **Claude Code** —— 把 `/handoff`、`/handoff-module`、`/pickup`、`/request` 拷到目标仓库:
 
@@ -381,22 +381,26 @@ cp /path/to/cc-collaboration/.claude/commands/{handoff,handoff-module,pickup,req
 末尾会带 `<!-- cc-handoff-version: vX.Y.Z -->`,二跑 init 时若版本旧于二进制
 会触发 `[o]verwrite / [s]kip / [b]ackup` 提示。
 
-**OpenAI Codex CLI** —— `cc-handoff init --agent codex --with-commands` 会安装 user 级 skill:
+**OpenAI Codex CLI** —— `cc-handoff init --agent codex --with-commands` 会安装 user 级 workflow skills:
 
 ```text
-$CODEX_HOME/skills/cc-handoff/SKILL.md
-$CODEX_HOME/skills/cc-handoff/references/*.md
+$CODEX_HOME/skills/cc-handoff-handoff/SKILL.md
+$CODEX_HOME/skills/cc-handoff-handoff-module/SKILL.md
+$CODEX_HOME/skills/cc-handoff-pickup/SKILL.md
+$CODEX_HOME/skills/cc-handoff-request/SKILL.md
+$CODEX_HOME/skills/cc-handoff-handoff-from-linear/SKILL.md
+$CODEX_HOME/skills/cc-handoff-submit-bug/SKILL.md
 ```
 
 `CODEX_HOME` 未设置时默认是 `~/.codex`。安装后重启 Codex,然后在会话里说:
 
 ```text
-使用 cc-handoff handoff 当前 API 改动
-使用 cc-handoff pickup
-使用 cc-handoff request 向后端要字段
+使用 cc-handoff-handoff 处理当前 API 改动
+使用 cc-handoff-pickup
+使用 cc-handoff-request 向后端要字段
 ```
 
-如果要手动安装,复制 `internal/setup/templates/codex-skill/cc-handoff/SKILL.md` 到上面的 `SKILL.md`,再把 `internal/setup/templates/commands/*.md` 复制到 `references/`。`cc-handoff init --with-commands` 会自动给这些文件追加 `<!-- cc-handoff-version: ... -->` 版本戳。
+如果要手动安装,把 `internal/setup/templates/commands/*.md` 分别转换成对应的 `cc-handoff-*/SKILL.md`。`cc-handoff init --with-commands` 会自动转换 frontmatter 并给这些文件追加 `<!-- cc-handoff-version: ... -->` 版本戳。
 
 > 实际用法按角色分:后端仓库主要用 `/handoff`(diff 模式)和 `/handoff-module`(模块 brief — 推送已有模块的完整 API 契约文档);前端仓库主要用 `/pickup`(领取后端推过来的对接)和 `/request`(反向给后端发起需求 —— 缺字段、缺能力、响应结构问题等)。**`/pickup` 双方都用** —— 接收端不论是 delivery 还是 request,流程是对称的。四份都拷无妨,Claude 不会去调没意义的那条。
 
@@ -417,10 +421,10 @@ claude mcp list
 
 # Codex
 codex mcp list
-ls ${CODEX_HOME:-$HOME/.codex}/skills/cc-handoff
+ls ${CODEX_HOME:-$HOME/.codex}/skills/cc-handoff-*
 ```
 
-Codex 看到 MCP server 和 skill 后,可以直接说“使用 cc-handoff 调 list_inbox,然后 pickup_handoff 领取那条 handoff”。这是 Codex 的稳定路径。
+Codex 看到 MCP server 和 workflow skills 后,可以直接说“使用 cc-handoff-pickup 领取那条 handoff”。这是 Codex 的稳定路径。
 
 ---
 
@@ -573,7 +577,7 @@ macOS 右上角同时会弹一条 cc-handoff 通知。
 2. 调 `pickup_handoff(id)`,拿到 prompt(含建议编辑哪个 `lib/api/<domain>.ts`)
 3. 立即开始读现有相邻文件、按本仓库风格写代码
 
-**Codex** —— 稳定用法是在 codex 会话里直接说"使用 cc-handoff 看下收件箱,然后 pickup 那个 id"。2.4 安装的 skill 会把这句话映射到 `list_inbox` / `pickup_handoff`;最终仍然走同一套 MCP tools。
+**Codex** —— 稳定用法是在 codex 会话里直接说"使用 cc-handoff-pickup 领取那个 id"。2.4 安装的 workflow skill 会把这句话映射到 `list_inbox` / `pickup_handoff`;最终仍然走同一套 MCP tools。
 
 观察:
 

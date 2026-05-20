@@ -29,29 +29,26 @@ func TestCopyCommands_FreshDir(t *testing.T) {
 	}
 }
 
-func TestCopyCodexSkill_FreshDir(t *testing.T) {
+func TestCopyCodexSkills_FreshDir(t *testing.T) {
 	dir := t.TempDir()
-	res, err := CopyCodexSkill(dir, "0.1.1", refusePrompt(t), io.Discard)
+	res, err := CopyCodexSkills(dir, "0.1.1", refusePrompt(t), io.Discard)
 	if err != nil {
-		t.Fatalf("CopyCodexSkill: %v", err)
+		t.Fatalf("CopyCodexSkills: %v", err)
 	}
-	if len(res.Written) != len(CommandFiles)+1 {
-		t.Fatalf("want %d written, got %v", len(CommandFiles)+1, res.Written)
-	}
-	skill, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
-	if err != nil {
-		t.Fatalf("read SKILL.md: %v", err)
-	}
-	if !strings.Contains(string(skill), "name: cc-handoff") {
-		t.Errorf("skill missing name:\n%s", skill)
-	}
-	if !strings.Contains(string(skill), "cc-handoff-version: 0.1.1") {
-		t.Errorf("skill missing version stamp:\n%s", skill)
+	if len(res.Written) != len(CommandFiles) {
+		t.Fatalf("want %d written, got %v", len(CommandFiles), res.Written)
 	}
 	for _, name := range CommandFiles {
-		got, err := os.ReadFile(filepath.Join(dir, "references", name))
+		skillName := strings.TrimSuffix(name, ".md")
+		got, err := os.ReadFile(filepath.Join(dir, "cc-handoff-"+skillName, "SKILL.md"))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
+		}
+		if !strings.Contains(string(got), "name: cc-handoff-"+skillName) {
+			t.Errorf("%s missing skill name:\n%s", name, got)
+		}
+		if strings.Contains(string(got), "---\ndescription:") {
+			t.Errorf("%s still contains command-style frontmatter:\n%s", name, got)
 		}
 		if !strings.Contains(string(got), "cc-handoff-version: 0.1.1") {
 			t.Errorf("%s missing version stamp:\n%s", name, got)
@@ -59,20 +56,41 @@ func TestCopyCodexSkill_FreshDir(t *testing.T) {
 	}
 }
 
-func TestCopyCodexSkill_SameVersionSkips(t *testing.T) {
+func TestCopyCodexSkills_SameVersionSkips(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := CopyCodexSkill(dir, "0.1.1", nil, io.Discard); err != nil {
+	if _, err := CopyCodexSkills(dir, "0.1.1", nil, io.Discard); err != nil {
 		t.Fatalf("first copy: %v", err)
 	}
-	res, err := CopyCodexSkill(dir, "0.1.1", refusePrompt(t), io.Discard)
+	res, err := CopyCodexSkills(dir, "0.1.1", refusePrompt(t), io.Discard)
 	if err != nil {
 		t.Fatalf("second copy: %v", err)
 	}
 	if len(res.Written) != 0 {
 		t.Errorf("expected no writes on idempotent run, got %v", res.Written)
 	}
-	if len(res.Skipped) != len(CommandFiles)+1 {
+	if len(res.Skipped) != len(CommandFiles) {
 		t.Errorf("expected all skipped, got %v", res.Skipped)
+	}
+}
+
+func TestCopyCodexSkills_NonInteractiveRefreshesOlderSkills(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := CopyCodexSkills(dir, "0.1.0", nil, io.Discard); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res, err := CopyCodexSkills(dir, "0.1.1", nil, io.Discard)
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	if len(res.Written) != len(CommandFiles) {
+		t.Fatalf("expected all older skills refreshed, written=%v skipped=%v", res.Written, res.Skipped)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "cc-handoff-handoff", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "cc-handoff-version: 0.1.1") {
+		t.Fatalf("skill was not refreshed:\n%s", got)
 	}
 }
 

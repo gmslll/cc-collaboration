@@ -11,9 +11,6 @@ import "embed"
 //go:embed templates/commands/handoff.md templates/commands/handoff-module.md templates/commands/pickup.md templates/commands/request.md templates/commands/handoff-from-linear.md templates/commands/submit-bug.md
 var commandsFS embed.FS
 
-//go:embed templates/codex-skill/cc-handoff/SKILL.md
-var codexSkillFS embed.FS
-
 //go:embed templates/units/launchd.plist.tmpl templates/units/systemd-user.service.tmpl templates/units/windows-task.xml.tmpl
 var unitsFS embed.FS
 
