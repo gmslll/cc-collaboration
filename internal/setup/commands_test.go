@@ -46,12 +46,15 @@ func TestCopyCodexPlugin_FreshDir(t *testing.T) {
 	if !strings.Contains(string(manifest), `"name": "cc-handoff"`) {
 		t.Errorf("manifest missing plugin name:\n%s", manifest)
 	}
-	if strings.Contains(string(manifest), "cc-handoff-version") {
+	if strings.Contains(string(manifest), "<!--") {
 		t.Errorf("manifest must stay valid JSON without HTML version stamp:\n%s", manifest)
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal(manifest, &parsed); err != nil {
 		t.Fatalf("manifest is not valid JSON: %v\n%s", err, manifest)
+	}
+	if parsed[codexPluginVersionField] != "0.1.1" {
+		t.Errorf("manifest version field = %v, want 0.1.1", parsed[codexPluginVersionField])
 	}
 	for _, name := range CommandFiles {
 		got, err := os.ReadFile(filepath.Join(dir, "commands", name))
@@ -61,6 +64,47 @@ func TestCopyCodexPlugin_FreshDir(t *testing.T) {
 		if !strings.Contains(string(got), "cc-handoff-version: 0.1.1") {
 			t.Errorf("%s missing version stamp:\n%s", name, got)
 		}
+	}
+}
+
+func TestCopyCodexPlugin_NonInteractiveOverwritesOlderManifest(t *testing.T) {
+	dir := t.TempDir()
+	manifestDir := filepath.Join(dir, ".codex-plugin")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldManifest := []byte(`{
+  "name": "cc-handoff",
+  "version": "0.0.1",
+  "x-cc-handoff-version": "0.0.1",
+  "description": "old"
+}
+`)
+	manifestPath := filepath.Join(manifestDir, "plugin.json")
+	if err := os.WriteFile(manifestPath, oldManifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := CopyCodexPlugin(dir, "0.1.1", nil, io.Discard)
+	if err != nil {
+		t.Fatalf("CopyCodexPlugin: %v", err)
+	}
+	if !contains(res.Written, "plugin.json") {
+		t.Fatalf("expected older manifest to be overwritten non-interactively, written=%v skipped=%v", res.Written, res.Skipped)
+	}
+	got, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("manifest is not valid JSON after overwrite: %v\n%s", err, got)
+	}
+	if parsed[codexPluginVersionField] != "0.1.1" {
+		t.Errorf("manifest version field = %v, want 0.1.1", parsed[codexPluginVersionField])
+	}
+	if parsed["description"] == "old" {
+		t.Errorf("manifest was not refreshed: %s", got)
 	}
 }
 
@@ -79,6 +123,15 @@ func TestCopyCodexPlugin_SameVersionSkips(t *testing.T) {
 	if len(res.Skipped) != len(CommandFiles)+1 {
 		t.Errorf("expected all skipped, got %v", res.Skipped)
 	}
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCopyCommands_SameVersionSkips(t *testing.T) {

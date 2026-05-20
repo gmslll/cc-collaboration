@@ -1,6 +1,7 @@
 {
   "name": "cc-handoff",
   "version": "0.1.0",
+  "x-cc-handoff-version": "dev",
   "description": "Codex commands for cc-handoff cross-agent handoffs.",
   "author": {
     "name": "cc-collaboration"

@@ -74,7 +74,7 @@ cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► c
 
 - ✓ **M1** 手动 submit / list / pickup
 - ✓ **M2** SSE + watch 守护 + osascript 通知 + partner_mapping 规则引擎 + Swagger 增量
-- ✓ **M3** MCP server(`/handoff` `/pickup` slash command)
+- ✓ **M3** MCP server(Claude `/handoff` `/pickup`;Codex 稳定路径是直接调 MCP tools,可选装 plugin command files)
 - ✓ **M4** 自动唤起新终端 + back-channel comments + 附件通道 + 结构化审计日志
 
 ## 快速部署
@@ -158,7 +158,7 @@ make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 #   --with-mcp         注册 MCP server(claude 跑 `claude mcp add`;
 #                      codex 跑 `codex mcp add`)
 #   --with-commands    安装 agent 命令(Claude: .claude/commands/;
-#                      Codex: .codex/plugins/cc-handoff/commands/)
+#                      Codex: 可选 .codex/plugins/cc-handoff/ command files)
 #   --with-instructions 把 cc-handoff 用法段追加到 CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
 cc-handoff init --with-mcp --with-commands --with-instructions
@@ -356,7 +356,7 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 | agent | CLI 调用 | MCP 注册 | 命令 | 项目级说明文件 |
 |---|---|---|---|---|
 | `claude`(默认) | `claude -p "$(cat prompt.md)"` | 自动 `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup,request}.md` | `CLAUDE.md`(追加段) |
-| `codex` | `codex exec "$(cat prompt.md)"` | 自动 `codex mcp add cc-handoff -- <bin>` | `.codex/plugins/cc-handoff/commands/*.md` | `AGENTS.md`(追加段) |
+| `codex` | `codex exec "$(cat prompt.md)"` | 自动 `codex mcp add cc-handoff -- <bin>` | 稳定路径:让 Codex 直接调 MCP tools;可选 `.codex/plugins/cc-handoff/commands/*.md` 仅在客户端支持并加载 repo plugin commands 时出现在 `/` | `AGENTS.md`(追加段) |
 | `manual` | 不自动开终端 | init 打印通用 stdio 提示 | 无 | 无 |
 
 **选哪个 agent**:`cc-handoff init` 默认按 PATH 探测(claude > codex > manual)。手动指定:`cc-handoff init --agent codex`。结果写到 `~/.config/cc-handoff/config.toml`(Linux/macOS)或 `%AppData%\cc-handoff\config.toml`(Windows)的 `agent` 字段,后续命令一直按这个走。
@@ -364,10 +364,10 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 **`cc-handoff init` 子步骤**(各自独立可关):
 
 - `--with-mcp` / `--no-mcp` —— 注册 MCP 服务(claude 自动跑 `claude mcp add`,codex 自动跑 `codex mcp add`)
-- `--with-commands` / `--no-commands` —— 装 agent 命令(Claude slash commands 或 Codex plugin commands)
+- `--with-commands` / `--no-commands` —— 装 agent 命令(Claude slash commands;Codex 可选 plugin command files)
 - `--with-instructions` / `--no-instructions` —— 把 cc-handoff 用法段追加到 `CLAUDE.md` 或 `AGENTS.md`(已含 `## cc-handoff` 标题则跳过,幂等)
 
-**Codex 用户**:`--with-mcp` 会直接写入 Codex MCP 配置;`--with-commands` 会安装本仓库的 Codex plugin commands。重启 codex 后可用 cc-handoff commands,也可以直接调 `submit_handoff` / `pickup_handoff` 等 MCP 工具。
+**Codex 用户**:`--with-mcp` 会直接写入 Codex MCP 配置。稳定用法是在 Codex 里自然语言要求调用 `submit_handoff` / `pickup_handoff` 等 MCP 工具;`--with-commands` 只安装 repo-local plugin command files,是否出现在 `/` 取决于当前 Codex 客户端是否支持并加载这类 commands。
 
 **inbox 目录路径**:新装默认 `.cc-handoff/inbox/`;已有 `.claude/handoff-inbox/` 的老仓库继续沿用,不需要迁移。`.cc-handoff.toml` 里 `[inbox] dir = "..."` 可以显式 override(绝对或相对路径)。
 
