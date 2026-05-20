@@ -149,6 +149,10 @@ func CopyCodexSkills(destDir, version string, prompt PromptFunc, out io.Writer) 
 	}
 	res := CopyResult{BackedUp: map[string]string{}}
 
+	if err := removeLegacyCodexSkill(destDir, out); err != nil {
+		return res, err
+	}
+
 	for _, name := range CommandFiles {
 		src, err := commandsFS.ReadFile("templates/commands/" + name)
 		if err != nil {
@@ -164,6 +168,28 @@ func CopyCodexSkills(destDir, version string, prompt PromptFunc, out io.Writer) 
 	}
 
 	return res, nil
+}
+
+func removeLegacyCodexSkill(destDir string, out io.Writer) error {
+	legacyDir := filepath.Join(destDir, "cc-handoff")
+	skillPath := filepath.Join(legacyDir, "SKILL.md")
+	content, err := os.ReadFile(skillPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("read legacy Codex skill %s: %w", skillPath, err)
+	}
+
+	if extractVersion(content) == "" {
+		fmt.Fprintf(out, "  ! legacy Codex skill %s has no cc-handoff version marker, left untouched\n", legacyDir)
+		return nil
+	}
+	if err := os.RemoveAll(legacyDir); err != nil {
+		return fmt.Errorf("remove legacy Codex skill %s: %w", legacyDir, err)
+	}
+	fmt.Fprintf(out, "  ✓ removed legacy Codex skill %s\n", legacyDir)
+	return nil
 }
 
 func commandToCodexSkill(name string, command []byte) []byte {

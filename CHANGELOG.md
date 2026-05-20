@@ -6,6 +6,8 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-05-20
+
 ### Added
 
 - `[integrations.linear]` config block in `.cc-handoff.toml` (fields: `enabled`, `team_key`, `default_labels`, `mcp_prefix`, `sync_on_submit`, `sync_on_pickup`, `sync_on_comment`, `sync_on_retract`). Disabled by default; when enabled, the five operation MCP tools (`submit_handoff`, `submit_request`, `pickup_handoff`, `comment_handoff`, `retract_handoff`) append a `## 同步到 Linear` section at the end of their result instructing the agent which `mcp__linear__*` calls to make next. cc-handoff itself never calls the Linear API — authentication and HTTP are delegated to whichever Linear MCP server the user already has configured. `mcp_prefix` overrides the wire-name prefix (default `linear`) for installs that namespace their Linear MCP tools differently.
@@ -14,6 +16,14 @@ The single source of truth for the version number is the `VERSION` file at the r
 - `inbox.LinearLink` struct and `inbox.WriteLinearLink(inboxDir, handoffID, identifier, url) (string, error)` — shared atomic writer used by both the CLI subcommand and the MCP handler. Same tmp+rename pattern as `inbox.SaveCursor`.
 - `mcp.CCHandoffMCPPrefix = "mcp__cc-handoff__"` constant and `mcp.ToolLinkLinear = "link_linear"` constant in the tool registry. The prompt template composes the wire name from these instead of hardcoding it, so renaming a tool only requires updating its constant.
 - MCP tool count: 12 → 13. Integration test `TestMCPEndToEnd` now compares against `len(mcp.DefaultTools())` instead of a hardcoded literal, so future tool additions don't require updating the assertion.
+- Codex workflow skills for the command templates: `cc-handoff init --agent codex --with-commands` now turns each `internal/setup/templates/commands/*.md` workflow into a user-level Codex skill under `$CODEX_HOME/skills/cc-handoff-*/SKILL.md` (`cc-handoff-handoff`, `cc-handoff-pickup`, `cc-handoff-request`, etc.). The actual cc-handoff integration remains MCP-based; the skills are natural-language workflow entry points that instruct Codex to call the cc-handoff MCP tools.
+
+### Changed
+
+- Codex command install no longer generates a repo-local `.codex` plugin marketplace or runs `codex plugin marketplace add` / `codex plugin add`. This avoids relying on unsupported custom slash-command behavior in current Codex CLI versions.
+- Non-interactive Codex workflow-skill installs now refresh older stamped skills automatically on binary upgrade, while still skipping newer on-disk versions.
+- Upgrades from the previous single `$CODEX_HOME/skills/cc-handoff/` Codex skill remove that legacy stamped skill so Codex does not keep discovering stale catch-all workflow prompts. Unstamped user-authored `cc-handoff` skills are left untouched.
+- Codex documentation now describes the stable MCP + workflow-skill path instead of promising `/` slash command visibility.
 
 ## [0.1.1] - 2026-05-08
 
@@ -63,5 +73,7 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/gmslll/cc-collaboration/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/gmslll/cc-collaboration/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gmslll/cc-collaboration/releases/tag/v0.1.0

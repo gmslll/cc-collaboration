@@ -94,6 +94,52 @@ func TestCopyCodexSkills_NonInteractiveRefreshesOlderSkills(t *testing.T) {
 	}
 }
 
+func TestCopyCodexSkills_RemovesStampedLegacySingleSkill(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "cc-handoff")
+	if err := os.MkdirAll(filepath.Join(legacy, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "SKILL.md"), []byte("old\n<!-- cc-handoff-version: 0.1.1 -->\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "references", "handoff.md"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CopyCodexSkills(dir, "0.1.2", nil, io.Discard); err != nil {
+		t.Fatalf("CopyCodexSkills: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy skill should be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cc-handoff-handoff", "SKILL.md")); err != nil {
+		t.Fatalf("new handoff skill missing: %v", err)
+	}
+}
+
+func TestCopyCodexSkills_KeepsUnstampedLegacySingleSkill(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "cc-handoff")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "SKILL.md"), []byte("user edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CopyCodexSkills(dir, "0.1.2", nil, io.Discard); err != nil {
+		t.Fatalf("CopyCodexSkills: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(legacy, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "user edited\n" {
+		t.Fatalf("unstamped legacy skill should be left untouched, got %q", got)
+	}
+}
+
 func contains(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {
