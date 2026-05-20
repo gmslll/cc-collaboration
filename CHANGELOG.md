@@ -24,6 +24,7 @@ The single source of truth for the version number is the `VERSION` file at the r
 - Non-interactive Codex workflow-skill installs now refresh older stamped skills automatically on binary upgrade, while still skipping newer on-disk versions.
 - Upgrades from the previous single `$CODEX_HOME/skills/cc-handoff/` Codex skill remove that legacy stamped skill so Codex does not keep discovering stale catch-all workflow prompts. Unstamped user-authored `cc-handoff` skills are left untouched.
 - Codex documentation now describes the stable MCP + workflow-skill path instead of promising `/` slash command visibility.
+- `submit_bug` now resolves role aliases such as `frontend`, `backend`, and `both` against configured real identities before submitting. This prevents bug reports from being sent to a literal role name like `frontend` when `.cc-handoff.toml` actually names `alex@frontend`.
 
 ## [0.1.1] - 2026-05-08
 

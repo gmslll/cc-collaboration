@@ -17,14 +17,14 @@ This command is different from `/handoff` (sender just finished work) and `/requ
 
 3. **决定发给谁**。问用户一次:
    > 这个 bug 你觉得发给谁?
-   > - 不确定/可能是两边 → `both`(同时发给 backend 和 frontend,先到的判定归属再决定修/转)
-   > - 明确是后端 → `backend`
-   > - 明确是前端 → `frontend`
-   > - 其他 → 直接写身份名(对应 `.cc-handoff.toml` 里 `identity.partners` 配的那些)
+   > - 不确定/可能是两边 → 用默认(省略 `to`,让 MCP 工具读取 `.cc-handoff.toml` 的 `identity.partners`;若只配了 `identity.partner`,就只发给这个真实身份)
+   > - 明确是后端 → 从 `.cc-handoff.toml` 的 `identity.partners` 里选真实后端 identity(例如 `user@backend`),不要直接传角色名 `backend`
+   > - 明确是前端 → 从 `.cc-handoff.toml` 的 `identity.partners` / `identity.partner` 里选真实前端 identity(例如 `alex@frontend`),不要直接传角色名 `frontend`
+   > - 其他 → 直接写真实 identity
 
    **例外**:用户在原始 `/submit-bug` 指令里已经写了 `to:backend` / `to:both` 之类的就跳过这一问。
 
-   把结果转成数组传给 `to` 参数:`both` → `["backend", "frontend"]`,单边 → `["<side>"]`。如果用户回"用默认",省略 `to` 参数(MCP 工具会自动用 `identity.partners`)。
+   调 `submit_bug` 时优先传真实 identity 数组;如果用户回"用默认"或"both",省略 `to` 参数(MCP 工具会自动用 `identity.partners`,没有则 fallback 到 `identity.partner`)。不要把 `frontend` / `backend` 当作最终收件人,除非配置里的真实 identity 就叫这个。
 
 4. **询问验收标准 / 测试备注**。在调 `submit_bug` 之前问一次:
    > 有要给开发的验收标准或硬约束吗?例如「修完后这个 case 必须通过自动化用例」「不要顺手改 X 模块」「字段不能改名(影响别的调用方)」。没有就回 `没有` 或 `n`。

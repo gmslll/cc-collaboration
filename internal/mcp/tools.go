@@ -339,7 +339,7 @@ func submitBugTool() Tool {
   "type": "object",
   "properties": {
     "summary": {"type": "string", "description": "Markdown 描述 bug：症状 / 复现步骤 / 期望 / 实际 / 怀疑归属(可选)。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
-    "to":      {"type": "array", "items": {"type": "string"}, "description": "Recipient identities（一个或多个，例如 [\"backend\", \"frontend\"]）。Defaults to identity.partners from .cc-handoff.toml; falls back to [identity.partner] if partners 没配。"},
+    "to":      {"type": "array", "items": {"type": "string"}, "description": "Recipient identities（一个或多个真实 identity,例如 [\"user@backend\", \"alex@frontend\"]）。Omit to use identity.partners from .cc-handoff.toml; falls back to [identity.partner] if partners 没配。Role aliases \"backend\" / \"frontend\" / \"both\" are accepted only as convenience and will be resolved against configured identities."},
     "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal each."},
     "note":    {"type": "string", "description": "测试备注 / 验收标准 markdown。会以「⚠️ 测试备注 / 验收标准 (必读)」段渲染到接收端 prompt，被要求逐条响应。没有就不传。"},
     "prd":     {"type": "string", "description": "产品需求 / 设计意图 markdown（背景参考），帮接收端理解 bug 背后的业务目的。没有就不传。"},
@@ -349,7 +349,7 @@ func submitBugTool() Tool {
 }`)
 	return Tool{
 		Name:        ToolSubmitBug,
-		Description: "Report a bug from the test/QA side to one or more engineering identities at once (typically [\"backend\", \"frontend\"]). The receivers' prompt walks them through a decision tree: judge if the bug is on their side → fix it / call reassign_bug to forward it / call comment_handoff to discuss cross-end. Comments on any handoff in the resulting bug group are auto-broadcast to every participant so the tester stays in the loop without manually relaying.",
+		Description: "Report a bug from the test/QA side to one or more engineering identities at once. Prefer omitting `to` so configured identity.partners are used, or pass real identities such as [\"user@backend\", \"alex@frontend\"]. Role aliases \"backend\" / \"frontend\" / \"both\" are resolved against configured identities. The receivers' prompt walks them through a decision tree: judge if the bug is on their side → fix it / call reassign_bug to forward it / call comment_handoff to discuss cross-end. Comments on any handoff in the resulting bug group are auto-broadcast to every participant so the tester stays in the loop without manually relaying.",
 		InputSchema: schema,
 		Handler:     submitBugHandler,
 	}
@@ -387,7 +387,10 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 		}
 	}
 
-	recipients := handoffschema.DedupeIdentities(a.To)
+	recipients, err := resolveBugRecipients(a.To, res)
+	if err != nil {
+		return ToolResult{}, err
+	}
 	if len(recipients) == 0 {
 		recipients = append([]string(nil), res.Partners...)
 	}
@@ -444,6 +447,61 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 	sb.WriteString("整个 bug_group 内的评论会自动同步,你不用人肉中转。用 status_handoff 看每端 pickup 状态。")
 	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{HandoffID: out.ID}))
 	return textResult(sb.String()), nil
+}
+
+func resolveBugRecipients(to []string, res *config.Resolved) ([]string, error) {
+	out := make([]string, 0, len(to))
+	for _, raw := range to {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		role := strings.ToLower(v)
+		switch role {
+		case "both", "all":
+			out = append(out, res.Partners...)
+		case "frontend", "backend":
+			resolved, err := resolveRecipientRole(role, res)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, resolved)
+		default:
+			out = append(out, v)
+		}
+	}
+	return handoffschema.DedupeIdentities(out), nil
+}
+
+func resolveRecipientRole(role string, res *config.Resolved) (string, error) {
+	for _, candidate := range res.Partners {
+		if strings.EqualFold(candidate, role) {
+			return candidate, nil
+		}
+	}
+	for _, candidate := range res.Partners {
+		if identityMatchesRole(candidate, role) {
+			return candidate, nil
+		}
+	}
+	if strings.EqualFold(res.Me, role) || identityMatchesRole(res.Me, role) {
+		return "", fmt.Errorf("role %q resolves to yourself (%s); pass the real recipient identity or update identity.partners", role, res.Me)
+	}
+	return "", fmt.Errorf("cannot resolve role %q to a recipient identity; pass the real identity (e.g. alex@frontend) or set identity.partners in .cc-handoff.toml", role)
+}
+
+func identityMatchesRole(identity, role string) bool {
+	identity = strings.ToLower(identity)
+	role = strings.ToLower(role)
+	if identity == role {
+		return true
+	}
+	for _, sep := range []string{"@", "/", ":", "-", "_", "."} {
+		if strings.HasSuffix(identity, sep+role) || strings.Contains(identity, sep+role+sep) {
+			return true
+		}
+	}
+	return false
 }
 
 func reassignBugTool() Tool {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/handoff"
 )
 
@@ -126,5 +127,42 @@ func TestUniqueAttachmentName_NoExt(t *testing.T) {
 	taken := map[string][]byte{"Makefile": nil}
 	if got := uniqueAttachmentName("Makefile", taken); got != "Makefile-2" {
 		t.Errorf("got %q, want Makefile-2", got)
+	}
+}
+
+func TestResolveBugRecipients_RoleAliasesUseConfiguredIdentities(t *testing.T) {
+	res := &config.Resolved{
+		Me:       "qa@tester",
+		Partner:  "alex@frontend",
+		Partners: []string{"user@backend", "alex@frontend"},
+	}
+
+	got, err := resolveBugRecipients([]string{"frontend"}, res)
+	if err != nil {
+		t.Fatalf("resolve frontend: %v", err)
+	}
+	if want := []string{"alex@frontend"}; !slices.Equal(got, want) {
+		t.Fatalf("frontend resolved to %v, want %v", got, want)
+	}
+
+	got, err = resolveBugRecipients([]string{"both"}, res)
+	if err != nil {
+		t.Fatalf("resolve both: %v", err)
+	}
+	if want := []string{"user@backend", "alex@frontend"}; !slices.Equal(got, want) {
+		t.Fatalf("both resolved to %v, want %v", got, want)
+	}
+}
+
+func TestResolveBugRecipients_RejectsRoleResolvingToSelf(t *testing.T) {
+	res := &config.Resolved{
+		Me:       "gms@backend",
+		Partner:  "alex@frontend",
+		Partners: []string{"alex@frontend"},
+	}
+
+	_, err := resolveBugRecipients([]string{"backend"}, res)
+	if err == nil || !strings.Contains(err.Error(), "yourself") {
+		t.Fatalf("expected self-resolution error, got %v", err)
 	}
 }
