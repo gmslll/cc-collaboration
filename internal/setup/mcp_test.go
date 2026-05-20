@@ -117,6 +117,74 @@ func TestRegister_RequiresBinPath(t *testing.T) {
 	}
 }
 
+func TestRegisterCodex_CallsRemoveThenAdd(t *testing.T) {
+	var calls []capturedCall
+	saved := execCommand
+	defer func() { execCommand = saved }()
+	execCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		calls = append(calls, capturedCall{name: name, args: args})
+		return exec.CommandContext(ctx, "/usr/bin/true")
+	}
+
+	err := RegisterCodex(context.Background(), MCPRegisterOptions{
+		BinPath: "/usr/local/bin/cc-handoff-mcp",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("RegisterCodex: %v", err)
+	}
+
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d: %v", len(calls), calls)
+	}
+
+	if calls[0].name != "codex" || !equalSlice(calls[0].args, []string{"mcp", "remove", "cc-handoff"}) {
+		t.Errorf("call 1 = %s %v", calls[0].name, calls[0].args)
+	}
+	if calls[1].name != "codex" || !equalSlice(calls[1].args, []string{"mcp", "add", "cc-handoff", "--", "/usr/local/bin/cc-handoff-mcp"}) {
+		t.Errorf("call 2 = %s %v", calls[1].name, calls[1].args)
+	}
+}
+
+func TestRegisterCodex_CustomName(t *testing.T) {
+	var calls []capturedCall
+	saved := execCommand
+	defer func() { execCommand = saved }()
+	execCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		calls = append(calls, capturedCall{name: name, args: args})
+		return exec.CommandContext(ctx, "/usr/bin/true")
+	}
+	err := RegisterCodex(context.Background(), MCPRegisterOptions{
+		BinPath: "/x",
+		Name:    "alt",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls[0].args[2] != "alt" || calls[1].args[2] != "alt" {
+		t.Errorf("custom name not propagated: %v", calls)
+	}
+}
+
+func TestRegisterCodex_AddFailurePropagates(t *testing.T) {
+	saved := execCommand
+	defer func() { execCommand = saved }()
+	execCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/usr/bin/false")
+	}
+	err := RegisterCodex(context.Background(), MCPRegisterOptions{
+		BinPath: "/usr/local/bin/cc-handoff-mcp",
+	}, io.Discard)
+	if err == nil {
+		t.Errorf("expected add failure to propagate")
+	}
+}
+
+func TestRegisterCodex_RequiresBinPath(t *testing.T) {
+	if err := RegisterCodex(context.Background(), MCPRegisterOptions{}, io.Discard); err == nil {
+		t.Errorf("expected error when BinPath is empty")
+	}
+}
+
 func TestRegister_CustomScopeAndName(t *testing.T) {
 	var calls []capturedCall
 	saved := execCommand

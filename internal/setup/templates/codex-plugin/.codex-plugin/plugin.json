@@ -1,0 +1,36 @@
+{
+  "name": "cc-handoff",
+  "version": "0.1.0",
+  "description": "Codex commands for cc-handoff cross-agent handoffs.",
+  "author": {
+    "name": "cc-collaboration"
+  },
+  "homepage": "https://github.com/cc-collaboration",
+  "repository": "https://github.com/cc-collaboration/cc-handoff",
+  "license": "MIT",
+  "keywords": [
+    "handoff",
+    "collaboration",
+    "mcp",
+    "codex"
+  ],
+  "interface": {
+    "displayName": "cc-handoff",
+    "shortDescription": "Send, request, and pick up cc-handoff packages from Codex.",
+    "longDescription": "Workflow commands for packaging API changes, sending cross-team requests, pulling pending handoffs, and linking Linear issues through the cc-handoff MCP server.",
+    "developerName": "cc-collaboration",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Send this API change with cc-handoff",
+      "Pick up the next cc-handoff package",
+      "Request a partner change with cc-handoff"
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

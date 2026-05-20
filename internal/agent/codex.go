@@ -2,21 +2,16 @@ package agent
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/cc-collaboration/internal/setup"
 )
 
 // codexAgent drives OpenAI's Codex CLI:
 //   - non-interactive prompt:  codex exec "<prompt body>"   (positional, not -p)
-//   - MCP register:            edit ~/.codex/config.toml manually
-//     (the [mcp_servers.<name>] block; printing the
-//     snippet beats automated TOML editing, which would
-//     clobber comments and formatting in the user's file)
-//   - slash commands:          n/a — Codex has no slash command mechanism;
-//     users invoke the MCP tools directly
+//   - MCP register:            codex mcp add <name> -- <bin>
+//   - commands:                .codex/plugins/cc-handoff/commands/*.md
 //   - project instructions:    AGENTS.md (industry standard adopted by Codex,
 //     Cursor, Aider, GitHub Copilot, …)
 type codexAgent struct{}
@@ -45,33 +40,15 @@ func (codexAgent) InstructionsFile() (string, string) {
 	return "AGENTS.md", instructionsSnippet
 }
 
-func (codexAgent) SupportsCommands() bool { return false }
+func (codexAgent) SupportsCommands() bool { return true }
 
 func (codexAgent) SupportsHooks() bool { return false }
 
-func (codexAgent) InstallCommands(_, _ string, _ setup.PromptFunc, _ io.Writer) (setup.CopyResult, error) {
-	return setup.CopyResult{}, nil
+func (codexAgent) InstallCommands(repoRoot, version string, prompt setup.PromptFunc, out io.Writer) (setup.CopyResult, error) {
+	dest := filepath.Join(repoRoot, ".codex", "plugins", "cc-handoff")
+	return setup.CopyCodexPlugin(dest, version, prompt, out)
 }
 
-// RegisterMCP prints the TOML snippet the user should append to
-// ~/.codex/config.toml. We deliberately do NOT auto-edit the file: TOML
-// libraries don't preserve comments or layout, so a round-trip would clobber
-// the user's other entries. The snippet is short enough to copy-paste.
-func (codexAgent) RegisterMCP(_ context.Context, opts setup.MCPRegisterOptions, out io.Writer) error {
-	if opts.BinPath == "" {
-		return errors.New("MCPRegisterOptions.BinPath is required")
-	}
-	if out == nil {
-		out = io.Discard
-	}
-	name := opts.Name
-	if name == "" {
-		name = "cc-handoff"
-	}
-	fmt.Fprintln(out, "agent=codex: append this to ~/.codex/config.toml then restart codex:")
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "[mcp_servers.%s]\n", name)
-	fmt.Fprintf(out, "command = %q\n", opts.BinPath)
-	fmt.Fprintln(out, "args = []")
-	return nil
+func (codexAgent) RegisterMCP(ctx context.Context, opts setup.MCPRegisterOptions, out io.Writer) error {
+	return setup.RegisterCodex(ctx, opts, out)
 }

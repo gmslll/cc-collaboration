@@ -57,7 +57,7 @@ func runInit(ctx context.Context, args []string) error {
 
 	withMCP := fs.Bool("with-mcp", false, "register cc-handoff as an MCP server with the chosen agent")
 	noMCP := fs.Bool("no-mcp", false, "skip MCP server registration")
-	withCommands := fs.Bool("with-commands", false, "install per-agent slash commands (Claude only; no-op for codex / manual)")
+	withCommands := fs.Bool("with-commands", false, "install per-agent commands (Claude slash commands or Codex plugin commands)")
 	noCommands := fs.Bool("no-commands", false, "skip slash command install")
 	withInstructions := fs.Bool("with-instructions", false, "append cc-handoff usage snippet to the agent's project-level instructions file (CLAUDE.md / AGENTS.md)")
 	noInstructions := fs.Bool("no-instructions", false, "skip the instructions snippet")
@@ -276,11 +276,11 @@ func runInstallCommands(ag agent.Agent, choice triState, nonInteractive bool, rd
 	if !ag.SupportsCommands() {
 		return
 	}
-	question := fmt.Sprintf("Install %s slash commands into ./.claude/commands/?", ag.Name())
+	question := fmt.Sprintf("Install %s commands?", ag.Name())
 	if !shouldRunOptional(choice, nonInteractive, rd, question) {
 		return
 	}
-	fmt.Printf("\nInstalling %s slash commands …\n", ag.Name())
+	fmt.Printf("\nInstalling %s commands …\n", ag.Name())
 
 	var conflictPrompt setup.PromptFunc
 	if !nonInteractive {

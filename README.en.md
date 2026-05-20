@@ -153,16 +153,16 @@ Once the binaries are installed (A or B), init your working repo:
 # In your working repo, init wires the agent up:
 #   writes the user-level + repo-level toml configs,
 #   --agent <name>      default: detect on PATH (claude > codex > manual)
-#   --with-mcp          register the MCP server (claude: auto `claude mcp add`;
-#                       codex: prints a TOML snippet for ~/.codex/config.toml)
-#   --with-commands     Claude only: install /handoff /handoff-module /pickup /request
-#                       into .claude/commands/ (codex / manual skip)
+#   --with-mcp          register the MCP server (claude: `claude mcp add`;
+#                       codex: `codex mcp add`)
+#   --with-commands     install agent commands (Claude: .claude/commands/;
+#                       Codex: .codex/plugins/cc-handoff/commands/)
 #   --with-instructions append cc-handoff usage block to CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
 cc-handoff init --with-mcp --with-commands --with-instructions
 ```
 
-All `--with-*` flags are optional. Without them `cc-handoff init` just writes the two toml files; you then run `bash scripts/install-mcp.sh` and `cp .claude/commands/*.md` (or paste the Codex TOML yourself) — fine for CI or any setup where you want to control every step.
+All `--with-*` flags are optional. Without them `cc-handoff init` just writes the two toml files; you then run `bash scripts/install-mcp.sh` and copy the commands / plugin files yourself — fine for CI or any setup where you want to control every step.
 
 ### 4. Run the watch daemon (receiver only)
 
@@ -344,29 +344,21 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 
 ## Multi-agent support
 
-| agent | CLI invocation | MCP register | slash commands | project instructions file |
+| agent | CLI invocation | MCP register | commands | project instructions file |
 |---|---|---|---|---|
 | `claude` (default) | `claude -p "$(cat prompt.md)"` | auto: `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup,request}.md` | appended to `CLAUDE.md` |
-| `codex` | `codex exec "$(cat prompt.md)"` | init prints a TOML snippet to paste into `~/.codex/config.toml`, then restart codex | none (call MCP tools directly by name) | appended to `AGENTS.md` |
+| `codex` | `codex exec "$(cat prompt.md)"` | auto: `codex mcp add cc-handoff -- <bin>` | `.codex/plugins/cc-handoff/commands/*.md` | appended to `AGENTS.md` |
 | `manual` | does not auto-launch a terminal | init prints generic stdio MCP guidance | none | none |
 
 **Picking an agent**: `cc-handoff init` defaults to PATH detection (claude > codex > manual). Override with `cc-handoff init --agent codex`. The result is persisted to the `agent` field in `~/.config/cc-handoff/config.toml` (Linux/macOS) or `%AppData%\cc-handoff\config.toml` (Windows); subsequent commands honor it.
 
 **`cc-handoff init` step toggles** (each independent):
 
-- `--with-mcp` / `--no-mcp` — register the MCP server (claude: runs `claude mcp add`; codex: prints snippet)
-- `--with-commands` / `--no-commands` — install slash commands (Claude only)
+- `--with-mcp` / `--no-mcp` — register the MCP server (claude: runs `claude mcp add`; codex: runs `codex mcp add`)
+- `--with-commands` / `--no-commands` — install agent commands (Claude slash commands or Codex plugin commands)
 - `--with-instructions` / `--no-instructions` — append cc-handoff usage block to `CLAUDE.md` or `AGENTS.md` (idempotent: skips when the `## cc-handoff` heading is already present)
 
-**For Codex users**: paste the snippet init prints into `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.cc-handoff]
-command = "/usr/local/bin/cc-handoff-mcp"
-args = []
-```
-
-Then restart codex and call `submit_handoff` / `pickup_handoff` / etc. directly — semantically equivalent to Claude's `/handoff` `/pickup` slash commands.
+**For Codex users**: `--with-mcp` writes the Codex MCP entry directly, and `--with-commands` installs repo-local Codex plugin commands. Restart codex afterwards; you can use the cc-handoff commands or call `submit_handoff` / `pickup_handoff` / etc. directly.
 
 **Inbox path**: new installs use `.cc-handoff/inbox/`; existing repos with `.claude/handoff-inbox/` keep using it (no migration needed). The `[inbox] dir = "..."` override in `.cc-handoff.toml` accepts an absolute or relative path.
 

@@ -101,6 +101,42 @@ func Register(ctx context.Context, opts MCPRegisterOptions, out io.Writer) error
 	return nil
 }
 
+// RegisterCodex registers cc-handoff with Codex CLI's MCP config. It runs:
+//
+//	codex mcp remove <name>     # ignore failures
+//	codex mcp add <name> -- <BinPath>
+//
+// This mirrors Register's remove-then-add behavior, but uses Codex's native
+// MCP subcommand instead of asking users to edit ~/.codex/config.toml.
+func RegisterCodex(ctx context.Context, opts MCPRegisterOptions, out io.Writer) error {
+	if out == nil {
+		out = io.Discard
+	}
+	name := opts.Name
+	if name == "" {
+		name = "cc-handoff"
+	}
+	if opts.BinPath == "" {
+		return errors.New("MCPRegisterOptions.BinPath is required")
+	}
+
+	rm := execCommand(ctx, "codex", "mcp", "remove", name)
+	if err := rm.Run(); err != nil {
+		fmt.Fprintf(out, "  · `codex mcp remove %s` returned %v (ignored)\n", name, err)
+	}
+
+	add := execCommand(ctx, "codex", "mcp", "add", name, "--", opts.BinPath)
+	addOut, err := add.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("codex mcp add: %w (output: %s)", err, string(addOut))
+	}
+	fmt.Fprintf(out, "  ✓ registered %s MCP server for codex -> %s\n", name, opts.BinPath)
+	if len(addOut) > 0 {
+		fmt.Fprintf(out, "    %s", indentLines(string(addOut), "    "))
+	}
+	return nil
+}
+
 // indentLines prefixes each line after the first with prefix so claude CLI
 // output stays visually attached to our own status lines.
 func indentLines(s, prefix string) string {

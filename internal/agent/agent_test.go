@@ -136,3 +136,21 @@ func TestInstructionsFile(t *testing.T) {
 		})
 	}
 }
+
+func TestSupportsCommands(t *testing.T) {
+	cases := []struct {
+		agent Agent
+		want  bool
+	}{
+		{claudeAgent{}, true},
+		{codexAgent{}, true},
+		{manualAgent{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.agent.Name(), func(t *testing.T) {
+			if got := c.agent.SupportsCommands(); got != c.want {
+				t.Errorf("SupportsCommands = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

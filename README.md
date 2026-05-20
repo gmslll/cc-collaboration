@@ -155,17 +155,17 @@ make build && sudo install bin/cc-handoff bin/cc-handoff-mcp /usr/local/bin/
 # 在你的工作仓库里 init —— 同时:
 #   写两个 toml(user 级 / 仓库级)
 #   --agent <name>     默认按 PATH 探测 (claude > codex > manual);可显式覆盖
-#   --with-mcp         注册 MCP server(claude 自动跑 `claude mcp add`;
-#                      codex 打印 TOML 片段让你贴到 ~/.codex/config.toml)
-#   --with-commands    Claude 用户:把 /handoff /handoff-module /pickup /request
-#                      装到 .claude/commands/(codex / manual 跳过)
+#   --with-mcp         注册 MCP server(claude 跑 `claude mcp add`;
+#                      codex 跑 `codex mcp add`)
+#   --with-commands    安装 agent 命令(Claude: .claude/commands/;
+#                      Codex: .codex/plugins/cc-handoff/commands/)
 #   --with-instructions 把 cc-handoff 用法段追加到 CLAUDE.md / AGENTS.md
 cd /path/to/your-repo
 cc-handoff init --with-mcp --with-commands --with-instructions
 ```
 
 所有 `--with-*` 都可选。省略时 `cc-handoff init` 退化为只写两个 toml,
-其余步骤(`bash scripts/install-mcp.sh`、`cp .claude/commands/*.md`、手动贴 TOML)自己跑 ——
+其余步骤(`bash scripts/install-mcp.sh`、复制 commands / plugin 文件)自己跑 ——
 适合 CI 或想完全控制每一步的场景。
 
 ### 4. 接收侧起 watch 守护
@@ -353,29 +353,21 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 
 ## 多 agent 支持
 
-| agent | CLI 调用 | MCP 注册 | slash 命令 | 项目级说明文件 |
+| agent | CLI 调用 | MCP 注册 | 命令 | 项目级说明文件 |
 |---|---|---|---|---|
 | `claude`(默认) | `claude -p "$(cat prompt.md)"` | 自动 `claude mcp add --scope user --transport stdio` | `.claude/commands/{handoff,handoff-module,pickup,request}.md` | `CLAUDE.md`(追加段) |
-| `codex` | `codex exec "$(cat prompt.md)"` | init 打印 TOML 片段,粘贴到 `~/.codex/config.toml` 后重启 codex | 无(用 MCP 工具名直接调用) | `AGENTS.md`(追加段) |
+| `codex` | `codex exec "$(cat prompt.md)"` | 自动 `codex mcp add cc-handoff -- <bin>` | `.codex/plugins/cc-handoff/commands/*.md` | `AGENTS.md`(追加段) |
 | `manual` | 不自动开终端 | init 打印通用 stdio 提示 | 无 | 无 |
 
 **选哪个 agent**:`cc-handoff init` 默认按 PATH 探测(claude > codex > manual)。手动指定:`cc-handoff init --agent codex`。结果写到 `~/.config/cc-handoff/config.toml`(Linux/macOS)或 `%AppData%\cc-handoff\config.toml`(Windows)的 `agent` 字段,后续命令一直按这个走。
 
 **`cc-handoff init` 子步骤**(各自独立可关):
 
-- `--with-mcp` / `--no-mcp` —— 注册 MCP 服务(claude 自动跑 `claude mcp add`,codex 打印片段)
-- `--with-commands` / `--no-commands` —— 装 slash 命令(只 Claude 有)
+- `--with-mcp` / `--no-mcp` —— 注册 MCP 服务(claude 自动跑 `claude mcp add`,codex 自动跑 `codex mcp add`)
+- `--with-commands` / `--no-commands` —— 装 agent 命令(Claude slash commands 或 Codex plugin commands)
 - `--with-instructions` / `--no-instructions` —— 把 cc-handoff 用法段追加到 `CLAUDE.md` 或 `AGENTS.md`(已含 `## cc-handoff` 标题则跳过,幂等)
 
-**Codex 用户**:init 完后跟着提示把片段贴进 `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.cc-handoff]
-command = "/usr/local/bin/cc-handoff-mcp"
-args = []
-```
-
-然后重启 codex,直接在会话里调 `submit_handoff` / `pickup_handoff` 等 MCP 工具,语义和 Claude 那边的 `/handoff` `/pickup` 等价。
+**Codex 用户**:`--with-mcp` 会直接写入 Codex MCP 配置;`--with-commands` 会安装本仓库的 Codex plugin commands。重启 codex 后可用 cc-handoff commands,也可以直接调 `submit_handoff` / `pickup_handoff` 等 MCP 工具。
 
 **inbox 目录路径**:新装默认 `.cc-handoff/inbox/`;已有 `.claude/handoff-inbox/` 的老仓库继续沿用,不需要迁移。`.cc-handoff.toml` 里 `[inbox] dir = "..."` 可以显式 override(绝对或相对路径)。
 

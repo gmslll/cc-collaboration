@@ -138,6 +138,118 @@ func CopyCommands(destDir, version string, prompt PromptFunc, out io.Writer) (Co
 	return res, nil
 }
 
+// CopyCodexPlugin materializes a local Codex plugin under destDir. The plugin
+// exposes the same workflow prompts as Codex commands in commands/*.md.
+func CopyCodexPlugin(destDir, version string, prompt PromptFunc, out io.Writer) (CopyResult, error) {
+	if out == nil {
+		out = io.Discard
+	}
+	res := CopyResult{BackedUp: map[string]string{}}
+
+	manifest, err := codexPluginFS.ReadFile("templates/codex-plugin/.codex-plugin/plugin.json")
+	if err != nil {
+		return res, fmt.Errorf("read embedded codex plugin manifest: %w", err)
+	}
+	written, skipped, backups, err := copyStampedFile(filepath.Join(destDir, ".codex-plugin", "plugin.json"), manifest, version, prompt, out, "plugin.json")
+	if err != nil {
+		return res, err
+	}
+	appendResult(&res, written, skipped, backups)
+
+	for _, name := range CommandFiles {
+		src, err := commandsFS.ReadFile("templates/commands/" + name)
+		if err != nil {
+			return res, fmt.Errorf("read embedded %s: %w", name, err)
+		}
+		written, skipped, backups, err := copyStampedFile(filepath.Join(destDir, "commands", name), src, version, prompt, out, name)
+		if err != nil {
+			return res, err
+		}
+		appendResult(&res, written, skipped, backups)
+	}
+
+	return res, nil
+}
+
+func appendResult(res *CopyResult, written, skipped string, backups map[string]string) {
+	if written != "" {
+		res.Written = append(res.Written, written)
+	}
+	if skipped != "" {
+		res.Skipped = append(res.Skipped, skipped)
+	}
+	for orig, bak := range backups {
+		res.BackedUp[orig] = bak
+	}
+}
+
+func copyStampedFile(dest string, src []byte, version string, prompt PromptFunc, out io.Writer, displayName string) (written, skipped string, backups map[string]string, err error) {
+	backups = map[string]string{}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return "", "", backups, fmt.Errorf("create %s: %w", filepath.Dir(dest), err)
+	}
+
+	stamped := stampVersion(src, version)
+	existing, readErr := os.ReadFile(dest)
+	switch {
+	case errors.Is(readErr, os.ErrNotExist):
+		if err := os.WriteFile(dest, stamped, 0o644); err != nil {
+			return "", "", backups, fmt.Errorf("write %s: %w", dest, err)
+		}
+		fmt.Fprintf(out, "  ✓ wrote %s\n", dest)
+		return displayName, "", backups, nil
+	case readErr != nil:
+		return "", "", backups, fmt.Errorf("stat %s: %w", dest, readErr)
+	}
+
+	existingVer := extractVersion(existing)
+	if existingVer == version && existingVer != "" {
+		fmt.Fprintf(out, "  · %s already at %s, skipped\n", dest, version)
+		return "", displayName, backups, nil
+	}
+	if existingVer != "" && version != "" && compareSemver(existingVer, version) > 0 {
+		fmt.Fprintf(out, "  ! %s is at %s (newer than binary %s), skipped\n", dest, existingVer, version)
+		return "", displayName, backups, nil
+	}
+
+	reason := ConflictUnstamped
+	if existingVer != "" {
+		reason = ConflictOlder
+	}
+
+	choice := 's'
+	if prompt != nil {
+		c, err := prompt(displayName, reason, existingVer, version)
+		if err != nil {
+			return "", "", backups, fmt.Errorf("prompt for %s: %w", displayName, err)
+		}
+		choice = c
+	}
+
+	switch choice {
+	case 'o', 'O':
+		if err := os.WriteFile(dest, stamped, 0o644); err != nil {
+			return "", "", backups, fmt.Errorf("overwrite %s: %w", dest, err)
+		}
+		fmt.Fprintf(out, "  ✓ overwrote %s\n", dest)
+		return displayName, "", backups, nil
+	case 'b', 'B':
+		backup := dest + ".bak." + time.Now().Format("20060102-150405")
+		if err := os.WriteFile(backup, existing, 0o644); err != nil {
+			return "", "", backups, fmt.Errorf("backup %s: %w", dest, err)
+		}
+		if err := os.WriteFile(dest, stamped, 0o644); err != nil {
+			return "", "", backups, fmt.Errorf("write %s after backup: %w", dest, err)
+		}
+		backups[dest] = backup
+		fmt.Fprintf(out, "  ✓ backed up to %s, then overwrote %s\n", backup, dest)
+		return displayName, "", backups, nil
+	default:
+		fmt.Fprintf(out, "  · skipped %s\n", dest)
+		return "", displayName, backups, nil
+	}
+}
+
 // stampVersion returns content with a trailing version marker. If content already
 // ends with a marker line, it's replaced; otherwise appended on its own line.
 func stampVersion(content []byte, version string) []byte {

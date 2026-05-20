@@ -29,6 +29,53 @@ func TestCopyCommands_FreshDir(t *testing.T) {
 	}
 }
 
+func TestCopyCodexPlugin_FreshDir(t *testing.T) {
+	dir := t.TempDir()
+	res, err := CopyCodexPlugin(dir, "0.1.1", refusePrompt(t), io.Discard)
+	if err != nil {
+		t.Fatalf("CopyCodexPlugin: %v", err)
+	}
+	if len(res.Written) != len(CommandFiles)+1 {
+		t.Fatalf("want %d written, got %v", len(CommandFiles)+1, res.Written)
+	}
+	manifest, err := os.ReadFile(filepath.Join(dir, ".codex-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read plugin manifest: %v", err)
+	}
+	if !strings.Contains(string(manifest), `"name": "cc-handoff"`) {
+		t.Errorf("manifest missing plugin name:\n%s", manifest)
+	}
+	if !strings.Contains(string(manifest), "cc-handoff-version: 0.1.1") {
+		t.Errorf("manifest missing version stamp:\n%s", manifest)
+	}
+	for _, name := range CommandFiles {
+		got, err := os.ReadFile(filepath.Join(dir, "commands", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !strings.Contains(string(got), "cc-handoff-version: 0.1.1") {
+			t.Errorf("%s missing version stamp:\n%s", name, got)
+		}
+	}
+}
+
+func TestCopyCodexPlugin_SameVersionSkips(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := CopyCodexPlugin(dir, "0.1.1", nil, io.Discard); err != nil {
+		t.Fatalf("first copy: %v", err)
+	}
+	res, err := CopyCodexPlugin(dir, "0.1.1", refusePrompt(t), io.Discard)
+	if err != nil {
+		t.Fatalf("second copy: %v", err)
+	}
+	if len(res.Written) != 0 {
+		t.Errorf("expected no writes on idempotent run, got %v", res.Written)
+	}
+	if len(res.Skipped) != len(CommandFiles)+1 {
+		t.Errorf("expected all skipped, got %v", res.Skipped)
+	}
+}
+
 func TestCopyCommands_SameVersionSkips(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := CopyCommands(dir, "0.1.1", nil, io.Discard); err != nil {
