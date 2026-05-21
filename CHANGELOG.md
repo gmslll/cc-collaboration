@@ -6,6 +6,14 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Added
+
+- `cc-handoff desktop` subcommand — opens the existing Web UI in a native-feeling Chromium app window via [Lorca](https://github.com/zserge/lorca). Pure Go, no CGO, so the main CLI's `CGO_ENABLED=0` Linux/Windows cross-compile path is preserved. Auto-injects the relay token from user config into `localStorage` and sets `:root[data-mode="desktop"]` so the auth panel hides — no token paste required. Probes Chrome → Edge → Brave → Chromium and honors `--chrome PATH` for explicit overrides; falls back with a clear message that points to `cc-handoff ui --open` when no Chromium-based browser is installed.
+
+### Changed
+
+- Web UI visual refresh in `internal/relay/ui/styles.css`: indigo accent palette, system font stack with antialiasing, dark-mode support via `prefers-color-scheme`, dedicated status-badge colors (pending/picked/retracted/expired/reassigned/urgent), distinct kind-badge colors (delivery/request/bug), card hover lift, tighter design tokens (CSS variables for radii / spacing / shadows). Same markup, no JS changes — improvements apply to both the browser UI and the new `cc-handoff desktop` window.
+
 ## [0.1.2] - 2026-05-20
 
 ### Added

@@ -55,6 +55,8 @@ func main() {
 		err = runOnline(ctx, args)
 	case "ui":
 		err = runUI(ctx, args)
+	case "desktop":
+		err = runDesktop(ctx, args)
 	case "stop-hook":
 		err = runStopHook(ctx, args)
 	case "version", "-v", "--version":
@@ -99,6 +101,8 @@ Both sides:
   cc-handoff comment      --list <id>                   list comments on a handoff
   cc-handoff online       [--json]                      show registered identities + who is currently watching
   cc-handoff ui           [--open] [--show-token]       print/open the relay management UI
+  cc-handoff desktop      [--width N] [--height N] [--chrome PATH]
+                                                        open the UI in a Chromium app window (Chrome/Edge/Brave)
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
   cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications

@@ -264,6 +264,21 @@ cc-handoff open <id>         # 重新调起当前 agent 的终端跑那条 promp
 
 MCP 工具同样齐全:`status_handoff` / `list_sent` / `retract_handoff` / `list_local_inbox`,在 agent 会话里直接调即可。
 
+### 图形界面
+
+不想一切走命令行,有两个入口:
+
+```bash
+cc-handoff ui --open            # 在默认浏览器里打开 relay 内嵌的 Web UI
+cc-handoff desktop              # 同一个 UI,但用 Chrome/Edge 起一个 app 窗口,token 自动注入
+cc-handoff desktop --width 1400 --height 900
+cc-handoff desktop --chrome "/path/to/your/browser"   # 指定浏览器二进制
+```
+
+`desktop` 子命令是纯 Go 的 Lorca 封装,会按 Chrome → Edge → Brave → Chromium 顺序探测本机已装的浏览器。Windows 10/11 自带 Edge 直接可用;macOS 用户多数都有 Chrome。没装任何 Chromium 内核浏览器时会回退提示用 `cc-handoff ui --open` 走默认浏览器。
+
+两个入口共用同一份 UI 资源,功能完全一致(inbox / sent / history / 评论 / ack / retract / 在线用户)。`desktop` 模式下 token 由本地 config 自动注入,免去手动输入。
+
 ## 日常运维
 
 ```bash
