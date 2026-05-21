@@ -8,7 +8,10 @@ VERSION     := $(shell cat VERSION)
 LDFLAGS     := -X 'github.com/cc-collaboration/internal/version.Version=$(VERSION)'
 INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows install test e2e deploy clean version release-tag
+.PHONY: all build cli relay mcp desktop desktop-darwin-package desktop-windows-package relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows install test e2e deploy clean version release-tag
+
+DESKTOP_APPID ?= ai.claude.cc-handoff
+DESKTOP_ICON  ?= $(CURDIR)/assets/icon.png
 
 all: build
 
@@ -22,6 +25,32 @@ relay:
 
 mcp:
 	go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff-mcp ./cmd/cc-handoff-mcp
+
+# Native desktop client (Fyne). Requires CGO + a C toolchain. Cross-compile
+# targets below (desktop-windows-package) rely on mingw-w64 / fyne-cross.
+desktop:
+	go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff-desktop ./cmd/cc-handoff-desktop
+
+# `fyne` CLI required: go install fyne.io/fyne/v2/cmd/fyne@latest
+# Produces bin/cc-handoff.app (macOS) or bin/cc-handoff.exe (Windows). The
+# binary inside the .app stays unsigned; first launch on a fresh mac needs
+# right-click → Open to bypass Gatekeeper. Add Developer ID signing later.
+desktop-darwin-package:
+	cd cmd/cc-handoff-desktop && fyne package \
+		-os darwin -name cc-handoff -appID $(DESKTOP_APPID) \
+		-appVersion $(VERSION) -icon $(DESKTOP_ICON) -release
+	mkdir -p bin
+	rm -rf bin/cc-handoff.app
+	mv cmd/cc-handoff-desktop/cc-handoff.app bin/
+
+# Windows packaging from macOS needs mingw-w64 (`brew install mingw-w64`) or
+# fyne-cross. Easiest CI path: run this target on a Windows runner.
+desktop-windows-package:
+	cd cmd/cc-handoff-desktop && fyne package \
+		-os windows -name cc-handoff -appID $(DESKTOP_APPID) \
+		-appVersion $(VERSION) -icon $(DESKTOP_ICON)
+	mkdir -p bin
+	mv cmd/cc-handoff-desktop/cc-handoff.exe bin/cc-handoff-desktop.exe
 
 # Cross-builds for a Linux VPS.
 relay-linux:
