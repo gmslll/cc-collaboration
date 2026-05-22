@@ -279,6 +279,27 @@ cc-handoff desktop --chrome "/path/to/your/browser"   # 指定浏览器二进制
 
 两个入口共用同一份 UI 资源,功能完全一致(inbox / sent / history / 评论 / ack / retract / 在线用户)。`desktop` 模式下 token 由本地 config 自动注入,免去手动输入。
 
+### 同人多仓接收
+
+一个 identity 对应多个 receiver repo 的场景(比如同一个前端同事同时维护 `frontend-project1` 和 `frontend-project2`,后端的 handoff 落到哪边由 handoff 内容决定)。
+
+配置:每个 receiver repo 各自一份 `.cc-handoff.toml`,都声明同一个 `identity.me`(比如 `you@frontend`)。Relay 端 token 只注册一份。
+
+接收姿势:
+
+```bash
+# 在最常用的仓里起 watch,但跳过预物化(否则所有 handoff 都会落到这一个仓)
+cc-handoff watch --no-materialize
+
+# 收到通知 + 看摘要后,显式选 repo 物化
+cc-handoff pickup h_xxx --repo ~/work/frontend-project1
+cc-handoff pickup h_xxx --repo ~/work/frontend-project2
+```
+
+`--no-materialize` 让 watch 只发通知,不在 receiver 端自动落地文件;`pickup --repo` 让你不用 cd 就能把包物化到任意 repo。这两个 flag 组合等同于"通知归通知、路由由人决定"。
+
+如果你只有一个 receiver repo,什么都不用配,默认行为就是对的。
+
 ## 日常运维
 
 ```bash

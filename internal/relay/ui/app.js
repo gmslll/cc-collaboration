@@ -1,5 +1,15 @@
+// Desktop mode is detected by the presence of the Lorca-bound function.
+// Lorca's Page.addScriptToEvaluateOnNewDocument re-binds on every navigation,
+// so window.ccHandoffPickup survives Cmd-R / DevTools reloads — using it as
+// the mode signal means dataset.mode is correct on every render without
+// needing to persist anything in localStorage.
+if (typeof window.ccHandoffPickup === "function") {
+  document.documentElement.dataset.mode = "desktop";
+}
+
 const state = {
   token: localStorage.getItem("cc-handoff-token") || "",
+  defaultRepo: localStorage.getItem("cc-handoff-default-repo") || "",
   view: "recipient",
   items: [],
   selectedID: "",
@@ -172,7 +182,7 @@ async function onPickup() {
     els.pickupButton.disabled = true;
     toast("正在 pickup…");
     try {
-      const out = await window.ccHandoffPickup(state.selectedID);
+      const out = await window.ccHandoffPickup(state.selectedID, state.defaultRepo || "");
       toast(`接收完成\n${out.split("\n")[0]}`);
       await refreshSelected();
       await loadList();

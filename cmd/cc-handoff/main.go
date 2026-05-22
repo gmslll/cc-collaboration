@@ -89,11 +89,12 @@ Sender flow:
 
 Receiver flow:
   cc-handoff list     [--json]                          inbox: pending handoffs on relay
-  cc-handoff pickup   <id> [--no-ack]                   fetch + materialize + ack
+  cc-handoff pickup   <id> [--no-ack] [--direct] [--repo PATH]
+                                                        fetch + materialize + ack (--repo targets a specific receiver repo)
   cc-handoff inbox    [--json]                          local: already-materialized handoffs
   cc-handoff history  [--limit N] [--json]              relay: handoffs you've picked up (cross-repo)
   cc-handoff open     <id> [--dry]                      re-launch the agent on a picked handoff
-  cc-handoff watch    [--no-notify] [--no-launch] [--stop-after N]
+  cc-handoff watch    [--no-notify] [--no-launch] [--no-catchup] [--no-materialize] [--workdir PATH] [--stop-after N]
   cc-handoff watch    print-unit [--platform launchd|systemd|windows-task] [--workdir PATH] [--bin PATH]
 
 Both sides:

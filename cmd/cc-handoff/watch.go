@@ -32,12 +32,14 @@ func runWatch(ctx context.Context, args []string) error {
 	noNotify := fs.Bool("no-notify", false, "skip desktop notification (useful for CI / e2e tests)")
 	noLaunch := fs.Bool("no-launch", false, "log auto-launch invocations instead of opening a terminal")
 	noCatchup := fs.Bool("no-catchup", false, "skip the startup catch-up that drains pending handoffs / unread comments")
+	noMaterialize := fs.Bool("no-materialize", false, "do not pre-materialize handoffs into the local inbox; notify only (useful when one identity owns multiple receiver repos and pickup picks the target)")
+	workdir := fs.String("workdir", "", "repo path to watch from (default: current working directory)")
 	stopAfter := fs.Int("stop-after", 0, "stop after N events (0 = run forever)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	cwd, err := os.Getwd()
+	cwd, err := resolveRepoFlag(*workdir, "--workdir")
 	if err != nil {
 		return err
 	}
@@ -48,17 +50,21 @@ func runWatch(ctx context.Context, args []string) error {
 
 	repoRoot := config.RepoRoot(cwd)
 	h := &watchHandler{
-		client:    transport.New(res.RelayURL, res.Token),
-		repoRoot:  repoRoot,
-		inboxDir:  inbox.InboxDir(repoRoot, res.InboxOverride),
-		res:       res,
-		noNotify:  *noNotify,
-		noLaunch:  *noLaunch,
-		stopAfter: *stopAfter,
-		seen:      map[string]bool{},
+		client:        transport.New(res.RelayURL, res.Token),
+		repoRoot:      repoRoot,
+		inboxDir:      inbox.InboxDir(repoRoot, res.InboxOverride),
+		res:           res,
+		noNotify:      *noNotify,
+		noLaunch:      *noLaunch,
+		noMaterialize: *noMaterialize,
+		stopAfter:     *stopAfter,
+		seen:          map[string]bool{},
 	}
 
 	fmt.Printf("watching for handoffs to %s on %s …\n", res.Me, res.RelayURL)
+	if *noMaterialize && res.Triggers.AutoLaunch {
+		fmt.Fprintln(os.Stderr, "warning: --no-materialize disables auto_launch — no terminal will be opened for urgent handoffs in this session")
+	}
 
 	if !*noCatchup {
 		if err := h.catchUp(ctx); err != nil {
@@ -165,17 +171,20 @@ func backoff(current, max time.Duration) time.Duration {
 
 // watchHandler bundles per-session state shared by both event types.
 type watchHandler struct {
-	client      *transport.Client
-	repoRoot    string
-	inboxDir    string // resolved once at start; used for Materialize / cursor / PackageDir
-	res         *config.Resolved
-	noNotify    bool
-	noLaunch    bool
-	stopAfter   int
-	dispatched  int             // count of events dispatched this session (used by --stop-after)
-	seen        map[string]bool // handoff IDs already dispatched this session, for catch-up + SSE dedup
-	cursor      inbox.WatchCursor
-	batchCursor bool // true while catch-up is replaying comments; defers cursor save to per-page flush
+	client        *transport.Client
+	repoRoot      string
+	inboxDir      string // resolved once at start; used for Materialize / cursor / PackageDir
+	res           *config.Resolved
+	noNotify      bool
+	noLaunch      bool
+	noMaterialize bool // notify-only mode; skips package fetch + on-disk materialize. Auto-launch and retract markers are also gated since they depend on the materialized dir.
+	stopAfter     int
+	dispatched    int             // count of events dispatched this session (used by --stop-after)
+	seen          map[string]bool // handoff IDs already dispatched this session, for catch-up + SSE dedup
+	cursor        inbox.WatchCursor
+	batchCursor   bool // true while catch-up is replaying comments; defers cursor save to per-page flush
+	inCatchUp     bool // notifyOnly suppresses per-item notifications while true; catchUp emits one summary at the end
+	catchUpCount  int  // number of pending handoffs surfaced during catch-up; reset before each catchUp call
 }
 
 const catchUpPageSize = 100
@@ -210,9 +219,11 @@ func (h *watchHandler) onHandoffRetracted(ctx context.Context, ev transport.SSEE
 		fmt.Fprintf(os.Stderr, "warning: bad retract payload: %v\n", err)
 		return nil
 	}
-	dir := inbox.PackageDir(h.inboxDir, ret.ID)
-	if err := writeRetractedMarker(dir, ret); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: write RETRACTED.md %s: %v\n", ret.ID, err)
+	if !h.noMaterialize {
+		dir := inbox.PackageDir(h.inboxDir, ret.ID)
+		if err := writeRetractedMarker(dir, ret); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write RETRACTED.md %s: %v\n", ret.ID, err)
+		}
 	}
 	fmt.Printf("⚠ %s retracted handoff %s\n", ret.Sender, ret.ID)
 
@@ -256,6 +267,11 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 		return nil
 	}
 	h.seen[notice.ID] = true
+
+	if h.noMaterialize {
+		return h.notifyOnly(ctx, notice)
+	}
+
 	pkg, err := h.client.Get(ctx, notice.ID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: fetch %s: %v\n", notice.ID, err)
@@ -273,19 +289,7 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 	fmt.Printf("⇣ %s from %s → %s\n", pkg.ID, pkg.Sender, mat.Dir)
 
 	if !h.noNotify {
-		body := pkg.Sender + ": " + notice.Headline
-		if body == pkg.Sender+": " {
-			body = pkg.Sender + " sent a handoff (" + pkg.Repo.Name + ")"
-		}
-		subtitle := string(pkg.Urgency)
-		if pkg.Urgency == handoffschema.UrgencyNormal {
-			subtitle = pkg.Repo.Name
-		}
-		_ = notify.Show(ctx, notify.Notification{
-			Title:    "cc-handoff",
-			Subtitle: subtitle,
-			Body:     body,
-		})
+		_ = notify.Show(ctx, buildHandoffNotice(notice))
 	}
 
 	if h.res.Triggers.AutoLaunch && (pkg.Urgency == handoffschema.UrgencyUrgent || h.res.Triggers.AutoLaunchNormal) {
@@ -298,6 +302,53 @@ func (h *watchHandler) onHandoffCreated(ctx context.Context, ev transport.SSEEve
 	return h.bumpAndMaybeStop()
 }
 
+// notifyOnly is the --no-materialize branch: skip the full package fetch and
+// on-disk write so multi-repo receivers can route handoffs at pickup time
+// without watch pre-materializing into whichever repo it happens to live in.
+// During catch-up, individual notifications are suppressed — catchUp emits
+// one aggregate "N 条待处理" notice once the replay finishes so a long-offline
+// receiver doesn't get hit with N native banners in a row.
+func (h *watchHandler) notifyOnly(ctx context.Context, notice handoffschema.ListItem) error {
+	fmt.Printf("⇣ %s from %s (notify-only, not materialized)\n", notice.ID, notice.Sender)
+
+	if h.inCatchUp {
+		h.catchUpCount++
+		return h.bumpAndMaybeStop()
+	}
+
+	if !h.noNotify {
+		_ = notify.Show(ctx, buildHandoffNotice(notice))
+	}
+
+	return h.bumpAndMaybeStop()
+}
+
+// buildHandoffNotice composes the desktop notification payload used by both
+// the materialize and notify-only paths so a future tweak to format lands in
+// one place. Sender / Urgency / RepoName are populated by both REST (List)
+// and SSE (NoticeListItem); Headline only became reliable on SSE after the
+// schema fix in pkg/handoffschema/package.go — old relays will still send
+// empty Headline, in which case the fallback body kicks in.
+func buildHandoffNotice(item handoffschema.ListItem) notify.Notification {
+	sender := item.Sender
+	if sender == "" {
+		sender = "someone"
+	}
+	body := sender + ": " + item.Headline
+	if item.Headline == "" {
+		body = sender + " sent a handoff (" + item.RepoName + ")"
+	}
+	subtitle := string(item.Urgency)
+	if item.Urgency == handoffschema.UrgencyNormal {
+		subtitle = item.RepoName
+	}
+	return notify.Notification{
+		Title:    "cc-handoff",
+		Subtitle: subtitle,
+		Body:     body,
+	}
+}
+
 // onCommentCreated appends the comment to comments.md inside the previously-
 // materialized inbox dir (creating it on demand for the sender side, who
 // won't have one until the first comment arrives).
@@ -307,13 +358,15 @@ func (h *watchHandler) onCommentCreated(ctx context.Context, ev transport.SSEEve
 		fmt.Fprintf(os.Stderr, "warning: bad comment event payload: %v\n", err)
 		return nil
 	}
-	dir := inbox.PackageDir(h.inboxDir, c.HandoffID)
-	if err := appendCommentToFile(dir, c); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: append comment %s: %v\n", c.HandoffID, err)
-	}
-	if h.res.Triggers.WakeOnComment && c.Sender != h.res.Me {
-		if err := inbox.WriteUnread(dir, c); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: write unread marker %d: %v\n", c.ID, err)
+	if !h.noMaterialize {
+		dir := inbox.PackageDir(h.inboxDir, c.HandoffID)
+		if err := appendCommentToFile(dir, c); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: append comment %s: %v\n", c.HandoffID, err)
+		}
+		if h.res.Triggers.WakeOnComment && c.Sender != h.res.Me {
+			if err := inbox.WriteUnread(dir, c); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: write unread marker %d: %v\n", c.ID, err)
+			}
 		}
 	}
 	fmt.Printf("💬 %s on %s: %s\n", c.Sender, c.HandoffID, firstLine(c.Body))
@@ -415,8 +468,19 @@ func buildLaunchOpts(res *config.Resolved, cwd, promptFile, handoffID string, dr
 // comment id without dispatching, so freshly-installed watch doesn't replay
 // year-old comments.
 func (h *watchHandler) catchUp(ctx context.Context) error {
+	h.inCatchUp = true
+	h.catchUpCount = 0
+	defer func() { h.inCatchUp = false }()
+
 	if err := h.replayPendingHandoffs(ctx); err != nil {
 		return err
+	}
+	if h.noMaterialize && !h.noNotify && h.catchUpCount > 0 {
+		_ = notify.Show(ctx, notify.Notification{
+			Title:    "cc-handoff",
+			Subtitle: fmt.Sprintf("%d 条待处理 handoff", h.catchUpCount),
+			Body:     fmt.Sprintf("watching as %s — 用 cc-handoff list 查看 / cc-handoff pickup <id> --repo <path> 物化", h.res.Me),
+		})
 	}
 
 	cursor, exists, err := inbox.LoadCursor(h.inboxDir)

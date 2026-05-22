@@ -7,16 +7,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/zserge/lorca"
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/desktop"
 )
-
-// data-mode value the Web UI's CSS checks via `:root[data-mode="desktop"]`
-// to hide the auth panel; the token is already in localStorage by then.
-const desktopDataMode = "desktop"
 
 func runDesktop(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("desktop", flag.ContinueOnError)
@@ -64,24 +62,46 @@ func runDesktop(ctx context.Context, args []string) error {
 	}
 	defer ui.Close()
 
-	// Bind the local pickup helper before Load so app.js sees it on the
-	// first render. JS calls `await window.ccHandoffPickup(id)`; we shell
-	// out to the same binary so behavior matches `cc-handoff pickup` 1:1.
+	// Bind must happen before Load — Lorca registers bindings on the next
+	// document via Page.addScriptToEvaluateOnNewDocument.
 	if err := ui.Bind("ccHandoffPickup", pickupHandler(ctx)); err != nil {
 		return fmt.Errorf("bind ccHandoffPickup: %w", err)
 	}
 
-	// Pre-inject the token into localStorage so app.js (which reads
-	// `localStorage.getItem("cc-handoff-token")` on load) skips the auth
-	// panel. data-mode has to wait until after Load because the new
-	// document doesn't inherit dataset from about:blank.
-	if err := ui.Eval(fmt.Sprintf(`localStorage.setItem(%q, %q);`, "cc-handoff-token", user.Token)).Err(); err != nil {
-		return fmt.Errorf("inject token: %w", err)
+	// Best-effort discovery of the receiver repo this window represents.
+	// app.js forwards it as the second arg to ccHandoffPickup so the
+	// shelled-out `cc-handoff pickup` uses --repo and isn't pinned to the
+	// child's inherited cwd. Empty when the launch dir isn't a configured
+	// repo — pickup then falls back to its own cwd-based behavior.
+	defaultRepo := ""
+	if cwd, err := os.Getwd(); err == nil {
+		if cfgPath := config.RepoConfigPath(cwd); cfgPath != "" {
+			if _, statErr := os.Stat(cfgPath); statErr == nil {
+				defaultRepo = filepath.Dir(cfgPath)
+			}
+		}
 	}
-	if err := ui.Load(relayUIURL(user.RelayURL)); err != nil {
+
+	// Two-load dance: Lorca opens on a data: URL where localStorage is
+	// disabled. First Load gets us onto the relay origin; Eval injects token
+	// + default-repo into localStorage; second Load re-runs app.js which now
+	// reads them. dataset.mode isn't persisted — app.js detects desktop mode
+	// by the presence of window.ccHandoffPickup (Bind survives every reload).
+	target := relayUIURL(user.RelayURL)
+	if err := ui.Load(target); err != nil {
 		return fmt.Errorf("navigate: %w", err)
 	}
-	_ = ui.Eval(fmt.Sprintf(`document.documentElement.dataset.mode = %q;`, desktopDataMode)).Err()
+	bootstrap := fmt.Sprintf(
+		`localStorage.setItem(%q,%q);localStorage.setItem(%q,%q);`,
+		"cc-handoff-token", user.Token,
+		"cc-handoff-default-repo", defaultRepo,
+	)
+	if err := ui.Eval(bootstrap).Err(); err != nil {
+		return fmt.Errorf("inject bootstrap: %w", err)
+	}
+	if err := ui.Load(target); err != nil {
+		return fmt.Errorf("reload: %w", err)
+	}
 
 	select {
 	case <-ui.Done():
@@ -92,9 +112,12 @@ func runDesktop(ctx context.Context, args []string) error {
 
 // pickupHandler shells out to `cc-handoff pickup <id>` so the JS-driven
 // pickup behaves identically to the user running it in their terminal —
-// terminal-launch, materialize, repo-config validation all inherited.
-func pickupHandler(ctx context.Context) func(id string) (string, error) {
-	return func(id string) (string, error) {
+// terminal-launch, materialize, repo-config validation all inherited. JS
+// passes repoPath so the multi-repo workflow (one identity, several receiver
+// repos) reaches the subcommand's --repo flag instead of being pinned to
+// whichever cwd `cc-handoff desktop` was launched from.
+func pickupHandler(ctx context.Context) func(id, repoPath string) (string, error) {
+	return func(id, repoPath string) (string, error) {
 		if id == "" {
 			return "", fmt.Errorf("handoff id required")
 		}
@@ -102,17 +125,26 @@ func pickupHandler(ctx context.Context) func(id string) (string, error) {
 		if err != nil {
 			self = os.Args[0]
 		}
+		args := []string{"pickup", id}
+		if repoPath != "" {
+			args = append(args, "--repo", repoPath)
+		}
+		// Detach from the parent's signal-cancelled ctx: when the user
+		// closes the window or hits Ctrl-C cc-handoff, we don't want a
+		// half-finished pickup leaving an inconsistent inbox dir on disk.
+		// We still pass a fresh ctx so a future caller could time it out.
+		runCtx := context.WithoutCancel(ctx)
 		var stdout, stderr bytes.Buffer
-		cmd := exec.CommandContext(ctx, self, "pickup", id)
+		cmd := exec.CommandContext(runCtx, self, args...)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		runErr := cmd.Run()
-		out := stdout.String() + stderr.String()
+		out := strings.TrimSpace(stdout.String() + stderr.String())
 		if runErr != nil {
 			if out == "" {
-				out = runErr.Error()
+				return "", runErr
 			}
-			return "", fmt.Errorf("%s", out)
+			return "", fmt.Errorf("%s: %w", out, runErr)
 		}
 		if out == "" {
 			out = "pickup ok"

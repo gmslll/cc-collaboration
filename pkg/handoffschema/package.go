@@ -1,6 +1,9 @@
 package handoffschema
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const SchemaVersion = 1
 
@@ -291,6 +294,7 @@ func DedupeIdentities(in []string) []string {
 // returns so a watch client sees the same shape whether it came from
 // /v1/handoffs or events.
 func NoticeListItem(p *Package, state State) ListItem {
+	headline, _, _ := strings.Cut(p.SummaryMD, "\n")
 	return ListItem{
 		ID:         p.ID,
 		Kind:       p.Kind,
@@ -301,6 +305,7 @@ func NoticeListItem(p *Package, state State) ListItem {
 		CreatedAt:  p.CreatedAt,
 		RepoName:   p.Repo.Name,
 		Branch:     p.Repo.Branch,
+		Headline:   headline,
 		BugGroupID: p.BugGroupID,
 	}
 }

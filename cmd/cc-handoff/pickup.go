@@ -15,15 +15,16 @@ func runPickup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("pickup", flag.ContinueOnError)
 	noAck := fs.Bool("no-ack", false, "do not mark as picked on the relay")
 	direct := fs.Bool("direct", false, "skip docs/integrations/<id>.md and instruct the receiver to modify code directly (default: write integration doc and stop for review)")
+	repoPath := fs.String("repo", "", "repo path to materialize into (default: current working directory). Useful when one identity owns multiple receiver repos.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: cc-handoff pickup <handoff-id> [--no-ack] [--direct]")
+		return fmt.Errorf("usage: cc-handoff pickup <handoff-id> [--no-ack] [--direct] [--repo PATH]")
 	}
 	id := fs.Arg(0)
 
-	cwd, err := os.Getwd()
+	cwd, err := resolveRepoFlag(*repoPath, "--repo")
 	if err != nil {
 		return err
 	}
