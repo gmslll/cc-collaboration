@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/zserge/lorca"
 
@@ -53,11 +55,21 @@ func runDesktop(ctx context.Context, args []string) error {
 	}
 	_ = os.Setenv("LOCATE_CHROME", browser)
 
-	ui, err := lorca.New("", "", *width, *height)
+	// --remote-allow-origins is required by Chrome M111+ for the remote
+	// debugging WebSocket; without it the handshake returns 403 and Lorca
+	// (unmaintained since 2021) reports "bad status".
+	ui, err := lorca.New("", "", *width, *height, "--remote-allow-origins=*")
 	if err != nil {
 		return fmt.Errorf("start chromium window: %w", err)
 	}
 	defer ui.Close()
+
+	// Bind the local pickup helper before Load so app.js sees it on the
+	// first render. JS calls `await window.ccHandoffPickup(id)`; we shell
+	// out to the same binary so behavior matches `cc-handoff pickup` 1:1.
+	if err := ui.Bind("ccHandoffPickup", pickupHandler(ctx)); err != nil {
+		return fmt.Errorf("bind ccHandoffPickup: %w", err)
+	}
 
 	// Pre-inject the token into localStorage so app.js (which reads
 	// `localStorage.getItem("cc-handoff-token")` on load) skips the auth
@@ -76,4 +88,35 @@ func runDesktop(ctx context.Context, args []string) error {
 	case <-ctx.Done():
 	}
 	return nil
+}
+
+// pickupHandler shells out to `cc-handoff pickup <id>` so the JS-driven
+// pickup behaves identically to the user running it in their terminal —
+// terminal-launch, materialize, repo-config validation all inherited.
+func pickupHandler(ctx context.Context) func(id string) (string, error) {
+	return func(id string) (string, error) {
+		if id == "" {
+			return "", fmt.Errorf("handoff id required")
+		}
+		self, err := os.Executable()
+		if err != nil {
+			self = os.Args[0]
+		}
+		var stdout, stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, self, "pickup", id)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		runErr := cmd.Run()
+		out := stdout.String() + stderr.String()
+		if runErr != nil {
+			if out == "" {
+				out = runErr.Error()
+			}
+			return "", fmt.Errorf("%s", out)
+		}
+		if out == "" {
+			out = "pickup ok"
+		}
+		return out, nil
+	}
 }

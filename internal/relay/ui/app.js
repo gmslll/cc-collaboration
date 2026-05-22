@@ -6,6 +6,8 @@ const state = {
   selectedPackage: null,
   selectedStatus: null,
   comments: [],
+  promptText: "",
+  online: [],
 };
 
 const els = {
@@ -27,8 +29,16 @@ const els = {
   detailBadges: document.querySelector("#detail-badges"),
   detailTitle: document.querySelector("#detail-title"),
   detailSubtitle: document.querySelector("#detail-subtitle"),
+  pickupButton: document.querySelector("#pickup-button"),
   ackButton: document.querySelector("#ack-button"),
+  reassignButton: document.querySelector("#reassign-button"),
   retractButton: document.querySelector("#retract-button"),
+  reassignDialog: document.querySelector("#reassign-dialog"),
+  reassignForm: document.querySelector("#reassign-form"),
+  reassignTarget: document.querySelector("#reassign-target"),
+  reassignReason: document.querySelector("#reassign-reason"),
+  reassignContext: document.querySelector("#reassign-context"),
+  reassignCancel: document.querySelector("#reassign-cancel"),
   statusState: document.querySelector("#status-state"),
   statusCreated: document.querySelector("#status-created"),
   statusComments: document.querySelector("#status-comments"),
@@ -39,6 +49,10 @@ const els = {
   metadataList: document.querySelector("#metadata-list"),
   apiDeltaPanel: document.querySelector("#api-delta-panel"),
   apiDeltaContent: document.querySelector("#api-delta-content"),
+  promptPanel: document.querySelector("#prompt-panel"),
+  promptContent: document.querySelector("#prompt-content"),
+  copyPromptButton: document.querySelector("#copy-prompt-button"),
+  copyPickupCmdButton: document.querySelector("#copy-pickup-cmd-button"),
   commentsList: document.querySelector("#comments-list"),
   reloadCommentsButton: document.querySelector("#reload-comments-button"),
   commentForm: document.querySelector("#comment-form"),
@@ -90,30 +104,48 @@ function wireEvents() {
     selectHandoff(row.dataset.id);
   });
 
+  els.pickupButton.addEventListener("click", onPickup);
+
   els.ackButton.addEventListener("click", async () => {
     if (!state.selectedID) return;
     await api(`/v1/handoffs/${encodeURIComponent(state.selectedID)}/ack`, { method: "POST" });
-    toast("Marked picked.");
+    toast("已标记为已接收");
     await refreshSelected();
     await loadList();
   });
 
   els.retractButton.addEventListener("click", async () => {
     if (!state.selectedID) return;
-    const reason = window.prompt("Reason for retracting this handoff", "");
+    const reason = window.prompt("撤回原因（可选）", "");
     if (reason === null) return;
     await api(`/v1/handoffs/${encodeURIComponent(state.selectedID)}/retract`, {
       method: "POST",
       body: JSON.stringify({ reason }),
     });
-    toast("Retracted.");
+    toast("已撤回");
     await refreshSelected();
     await loadList();
   });
 
-  els.copySummaryButton.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(els.summaryContent.textContent || "");
-    toast("Summary copied.");
+  els.reassignButton.addEventListener("click", openReassignDialog);
+  els.reassignCancel.addEventListener("click", () => els.reassignDialog.close());
+  els.reassignForm.addEventListener("submit", submitReassign);
+
+  els.copySummaryButton.addEventListener("click", () => {
+    copyToClipboard(els.summaryContent.textContent || "", "摘要已复制");
+  });
+
+  els.copyPromptButton.addEventListener("click", () => {
+    if (!state.promptText) {
+      toast("Prompt 尚未加载");
+      return;
+    }
+    copyToClipboard(state.promptText, "Prompt 已复制，去 Claude / Codex 粘贴即可");
+  });
+
+  els.copyPickupCmdButton.addEventListener("click", () => {
+    if (!state.selectedID) return;
+    copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "CLI 命令已复制，去终端粘贴执行");
   });
 
   els.reloadCommentsButton.addEventListener("click", loadComments);
@@ -127,10 +159,99 @@ function wireEvents() {
       body: JSON.stringify({ body }),
     });
     els.commentInput.value = "";
-    toast("Comment posted.");
+    toast("评论已发送");
     await loadComments();
     await refreshSelected();
   });
+}
+
+async function onPickup() {
+  if (!state.selectedID) return;
+  // Desktop fork-exec via Lorca Bind; browser mode falls back to clipboard.
+  if (typeof window.ccHandoffPickup === "function") {
+    els.pickupButton.disabled = true;
+    toast("正在 pickup…");
+    try {
+      const out = await window.ccHandoffPickup(state.selectedID);
+      toast(`接收完成\n${out.split("\n")[0]}`);
+      await refreshSelected();
+      await loadList();
+    } catch (err) {
+      toast(`接收失败：${err.message || err}`);
+    } finally {
+      els.pickupButton.disabled = false;
+    }
+    return;
+  }
+  copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "已复制 CLI 命令到剪贴板，去终端粘贴执行");
+}
+
+async function openReassignDialog() {
+  if (!state.selectedID) return;
+  const pkg = state.selectedPackage;
+  if (!pkg) return;
+
+  els.reassignContext.textContent = `当前 handoff：${pkg.id}　·　bug group：${pkg.bug_group_id || "-"}`;
+
+  let onlineUsers = state.online;
+  if (!onlineUsers.length) {
+    try {
+      const data = await api("/v1/users/online");
+      onlineUsers = data.users || [];
+    } catch (err) {
+      toast(`无法加载在线列表：${err.message}`);
+      return;
+    }
+  }
+
+  const participants = new Set([
+    pkg.sender || "",
+    pkg.recipient || "",
+    ...(pkg.recipients || []),
+  ]);
+  const candidates = onlineUsers.filter((u) => !participants.has(u.identity));
+
+  els.reassignTarget.innerHTML = "";
+  if (!candidates.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "（无可用目标）";
+    opt.disabled = true;
+    opt.selected = true;
+    els.reassignTarget.append(opt);
+  } else {
+    candidates.forEach((u) => {
+      const opt = document.createElement("option");
+      opt.value = u.identity;
+      opt.textContent = `${u.identity}${u.online ? "（在线）" : "（离线）"}`;
+      els.reassignTarget.append(opt);
+    });
+  }
+  els.reassignReason.value = "";
+  els.reassignDialog.showModal();
+}
+
+async function submitReassign(event) {
+  event.preventDefault();
+  if (!state.selectedID) return;
+  const to = els.reassignTarget.value.trim();
+  const reason = els.reassignReason.value.trim();
+  if (!to || !reason) {
+    toast("请选择目标并填写原因");
+    return;
+  }
+  try {
+    const result = await api(`/v1/handoffs/${encodeURIComponent(state.selectedID)}/reassign`, {
+      method: "POST",
+      body: JSON.stringify({ to, reason }),
+    });
+    els.reassignDialog.close();
+    toast(`已转交给 ${result.reassigned_to}，新 id ${result.id}`);
+    await refreshSelected();
+    await loadList();
+  } catch (err) {
+    toast(`转交失败：${err.message}`);
+  }
 }
 
 async function refreshAll() {
@@ -157,7 +278,8 @@ async function loadList() {
 async function loadOnline() {
   try {
     const data = await api("/v1/users/online");
-    renderOnline(data.users || []);
+    state.online = data.users || [];
+    renderOnline(state.online);
   } catch (err) {
     authError(err);
   }
@@ -176,14 +298,16 @@ async function refreshSelected() {
   }
   try {
     const id = encodeURIComponent(state.selectedID);
-    const [pkg, status, commentsData] = await Promise.all([
+    const [pkg, status, commentsData, promptText] = await Promise.all([
       api(`/v1/handoffs/${id}`),
       api(`/v1/handoffs/${id}/status`),
       api(`/v1/handoffs/${id}/comments`),
+      api(`/v1/handoffs/${id}/prompt`, { expectText: true }).catch(() => ""),
     ]);
     state.selectedPackage = pkg;
     state.selectedStatus = status;
     state.comments = commentsData.comments || [];
+    state.promptText = promptText;
     renderDetail();
   } catch (err) {
     toast(err.message);
@@ -217,7 +341,17 @@ async function api(path, options = {}) {
   }
   if (resp.status === 204) return null;
   const text = await resp.text();
+  if (options.expectText) return text;
   return text ? JSON.parse(text) : null;
+}
+
+async function copyToClipboard(text, message) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(message);
+  } catch (err) {
+    toast(`复制失败：${err.message || err}`);
+  }
 }
 
 function renderList() {
@@ -300,10 +434,16 @@ function renderDetail() {
   els.summaryContent.textContent = pkg.summary_md || "";
   renderMetadata(pkg);
   renderAPIDelta(pkg.api_delta);
+  els.promptContent.textContent = state.promptText || "(prompt 加载中…)";
   renderComments();
 
-  els.ackButton.disabled = state.view === "sender" || status?.state !== "pending";
-  els.retractButton.disabled = state.view !== "sender" || status?.state !== "pending";
+  const pending = status?.state === "pending";
+  const canAck = state.view !== "sender" && pending;
+  const canRetract = state.view === "sender" && pending;
+  els.pickupButton.disabled = !canAck;
+  els.ackButton.disabled = !canAck;
+  els.retractButton.disabled = !canRetract;
+  els.reassignButton.classList.toggle("hidden", !(canAck && kind === "bug"));
 }
 
 function renderRecipientSlots(status) {

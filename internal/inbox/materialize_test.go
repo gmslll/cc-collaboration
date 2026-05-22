@@ -107,7 +107,7 @@ func TestRenderPromptMD_AmendsBanner(t *testing.T) {
 		AmendsHandoff: "h_prior",
 		SummaryMD:     "fixed discount field type",
 	}
-	got := renderPromptMD(p, ModeDocFirst)
+	got := RenderPromptMD(p, ModeDocFirst)
 	for _, want := range []string{
 		"⚠️ **修正交付**",
 		"`h_prior`",
@@ -128,7 +128,7 @@ func TestRenderPromptMD_NoAmendsBannerWhenAbsent(t *testing.T) {
 		Recipient: "frontend",
 		SummaryMD: "regular delivery",
 	}
-	got := renderPromptMD(p, ModeDocFirst)
+	got := RenderPromptMD(p, ModeDocFirst)
 	if strings.Contains(got, "修正交付") {
 		t.Errorf("unexpected amends banner when AmendsHandoff is empty:\n%s", got)
 	}
@@ -166,7 +166,7 @@ func TestRenderPromptMD_FeedbackTemplate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := renderPromptMD(tc.pkg, tc.mode)
+			got := RenderPromptMD(tc.pkg, tc.mode)
 			for _, want := range []string{
 				"结构化反馈",
 				"comment_handoff " + tc.pkg.ID,
@@ -256,7 +256,7 @@ func TestRenderBugPromptMD_AttachmentsBeforeDecisionTree(t *testing.T) {
 			{Name: "screenshot.png", SHA256: "a", Size: 1024},
 		},
 	}
-	got := renderPromptMD(p, ModeDocFirst)
+	got := RenderPromptMD(p, ModeDocFirst)
 	attachIdx := strings.Index(got, "## 📎 附件")
 	treeIdx := strings.Index(got, "## 归属判断决策树")
 	if attachIdx < 0 || treeIdx < 0 {
@@ -280,7 +280,7 @@ func TestRenderBugPromptMD_MultiRecipient(t *testing.T) {
 		SummaryMD:      "## Symptom\n broken thing on /orders",
 		NoteMD:         "must pass automated regression",
 	}
-	got := renderPromptMD(p, ModeDocFirst)
+	got := RenderPromptMD(p, ModeDocFirst)
 
 	mustContain := []string{
 		"# Bug:",
@@ -314,7 +314,7 @@ func TestRenderBugPromptMD_ReassignedBanner(t *testing.T) {
 		ReassignedFrom:   "b_parent",
 		ReassignedReason: "字段是前端拼的",
 	}
-	got := renderPromptMD(p, ModeDocFirst)
+	got := RenderPromptMD(p, ModeDocFirst)
 
 	mustContain := []string{
 		"由对端转过来",
@@ -340,7 +340,7 @@ func TestRenderBugPromptMD_OriginalSenderFallback(t *testing.T) {
 		Recipients: []string{"backend"},
 		SummaryMD:  "## Symptom\n broken",
 	}
-	got := renderPromptMD(p, ModeDocFirst)
+	got := RenderPromptMD(p, ModeDocFirst)
 	if !strings.Contains(got, "reported by `tester`") {
 		t.Errorf("header should fall back to Sender when OriginalSender empty:\n%s", got)
 	}

@@ -38,7 +38,7 @@ type Result struct {
 	Prompt string
 }
 
-// Mode controls the prompt template renderPromptMD emits.
+// Mode controls the prompt template RenderPromptMD emits.
 type Mode int
 
 const (
@@ -68,7 +68,7 @@ func Materialize(inboxDir string, p *handoffschema.Package, mode Mode) (Result, 
 	if err := writeFile(filepath.Join(dir, "summary.md"), []byte(renderSummaryMD(p))); err != nil {
 		return Result{}, err
 	}
-	prompt := renderPromptMD(p, mode)
+	prompt := RenderPromptMD(p, mode)
 	if err := writeFile(filepath.Join(dir, "prompt.md"), []byte(prompt)); err != nil {
 		return Result{}, err
 	}
@@ -402,7 +402,7 @@ func humanSize(n int) string {
 	}
 }
 
-func renderPromptMD(p *handoffschema.Package, mode Mode) string {
+func RenderPromptMD(p *handoffschema.Package, mode Mode) string {
 	switch p.EffectiveKind() {
 	case handoffschema.KindRequest:
 		return renderRequestPromptMD(p, mode)

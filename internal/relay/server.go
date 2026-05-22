@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cc-collaboration/internal/handoff"
+	"github.com/cc-collaboration/internal/inbox"
 	"github.com/cc-collaboration/internal/relay/auth"
 	"github.com/cc-collaboration/internal/relay/sse"
 	"github.com/cc-collaboration/internal/relay/store"
@@ -53,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/handoffs", s.list)
 	api.HandleFunc("GET /v1/handoffs/{id}", s.get)
 	api.HandleFunc("GET /v1/handoffs/{id}/status", s.status)
+	api.HandleFunc("GET /v1/handoffs/{id}/prompt", s.prompt)
 	api.HandleFunc("POST /v1/handoffs/{id}/ack", s.ack)
 	api.HandleFunc("POST /v1/handoffs/{id}/retract", s.retract)
 	api.HandleFunc("POST /v1/handoffs/{id}/reassign", s.reassign)
@@ -221,6 +223,23 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, pkg)
+}
+
+// prompt renders the receiver-side prompt.md from the stored Package — pure
+// function, no recipient-side repo / git / swagger access needed.
+// ?mode=direct selects the direct-edit template; default is doc-first.
+func (s *Server) prompt(w http.ResponseWriter, r *http.Request) {
+	pkg, _ := s.requireParticipant(w, r)
+	if pkg == nil {
+		return
+	}
+	mode := inbox.ModeDocFirst
+	if r.URL.Query().Get("mode") == "direct" {
+		mode = inbox.ModeDirect
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, inbox.RenderPromptMD(pkg, mode))
 }
 
 // packageParticipants returns the union of sender + EffectiveRecipients +

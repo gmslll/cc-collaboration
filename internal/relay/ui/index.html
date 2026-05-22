@@ -79,8 +79,10 @@
               <p id="detail-subtitle"></p>
             </div>
             <div class="detail-actions">
-              <button id="ack-button" type="button">Mark picked</button>
-              <button id="retract-button" type="button" class="danger">Retract</button>
+              <button id="pickup-button" type="button">接收并物化</button>
+              <button id="ack-button" type="button" class="secondary">仅标记已接收</button>
+              <button id="reassign-button" type="button" class="secondary hidden">转交</button>
+              <button id="retract-button" type="button" class="danger">撤回</button>
             </div>
           </header>
 
@@ -124,6 +126,18 @@
             <div id="api-delta-content" class="delta-content"></div>
           </section>
 
+          <section id="prompt-panel" class="prompt-panel" aria-labelledby="prompt-title">
+            <div class="section-title">
+              <h3 id="prompt-title">Pickup Prompt</h3>
+              <div class="prompt-actions">
+                <button id="copy-prompt-button" class="secondary" type="button">复制 Prompt</button>
+                <button id="copy-pickup-cmd-button" class="secondary" type="button">复制 CLI 命令</button>
+              </div>
+            </div>
+            <p class="muted prompt-hint">把内容粘贴到 Claude / Codex 即可走完 pickup 流程；或在终端运行 CLI 命令。</p>
+            <pre id="prompt-content"></pre>
+          </section>
+
           <section class="comments-panel" aria-labelledby="comments-title">
             <div class="section-title">
               <h3 id="comments-title">Comments</h3>
@@ -139,6 +153,25 @@
       </section>
     </main>
   </div>
+
+  <dialog id="reassign-dialog" class="reassign-dialog">
+    <form id="reassign-form" method="dialog">
+      <h3>转交 bug handoff</h3>
+      <p class="muted" id="reassign-context"></p>
+      <label>
+        转交给
+        <select id="reassign-target" required></select>
+      </label>
+      <label>
+        原因（必填）
+        <textarea id="reassign-reason" required rows="3" placeholder="例如：这是前端字段渲染问题"></textarea>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" id="reassign-cancel" class="secondary">取消</button>
+        <button type="submit" id="reassign-submit">确认转交</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/ui/app.js"></script>
