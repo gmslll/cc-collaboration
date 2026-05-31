@@ -270,14 +270,18 @@ textarea:focus {
 }
 
 .view-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);
   padding: 4px;
   gap: 4px;
   box-shadow: var(--shadow-sm);
+}
+
+.view-tabs .tab-button {
+  flex: 1 1 0;
 }
 
 .tab-button {
@@ -520,6 +524,70 @@ textarea:focus {
 
 .detail-pane {
   overflow: auto;
+}
+
+/* Workspaces pane — spans the full main area, replacing the list+detail grid. */
+.workspaces-pane {
+  grid-column: 1 / -1;
+  padding: var(--space-6);
+  overflow: auto;
+}
+
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.workspace-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.workspace-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.workspace-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.workspace-path {
+  color: var(--muted);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.cli-cmd {
+  flex-basis: 100%;
+  margin: var(--space-2) 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 12.5px/1.6 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color: var(--text-soft);
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+.empty-list {
+  color: var(--muted);
+  font-size: 13px;
+  padding: var(--space-4);
 }
 
 .empty-state {

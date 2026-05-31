@@ -7,6 +7,10 @@ if (typeof window.ccHandoffPickup === "function") {
   document.documentElement.dataset.mode = "desktop";
 }
 
+// Workspaces are a local concept: the relay never sees local paths. The
+// desktop subcommand pre-injects the list into localStorage (see desktop.go).
+// In plain browser mode there's no injection, so the list is empty and the tab
+// stays hidden — it degrades cleanly.
 const state = {
   token: localStorage.getItem("cc-handoff-token") || "",
   defaultRepo: localStorage.getItem("cc-handoff-default-repo") || "",
@@ -18,7 +22,18 @@ const state = {
   comments: [],
   promptText: "",
   online: [],
+  workspaces: parseWorkspaces(localStorage.getItem("cc-handoff-workspaces")),
 };
+
+function parseWorkspaces(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 const els = {
   authForm: document.querySelector("#auth-form"),
@@ -68,14 +83,28 @@ const els = {
   commentForm: document.querySelector("#comment-form"),
   commentInput: document.querySelector("#comment-input"),
   toast: document.querySelector("#toast"),
+  listPane: document.querySelector(".list-pane"),
+  detailPane: document.querySelector(".detail-pane"),
+  workspacesTab: document.querySelector("#tab-workspaces"),
+  workspacesPane: document.querySelector("#workspaces-pane"),
+  workspacesMeta: document.querySelector("#workspaces-meta"),
+  workspaceList: document.querySelector("#workspace-list"),
 };
 
 els.tokenInput.value = state.token;
 setConnectedLabel();
+setupWorkspacesTab();
 wireEvents();
 renderList();
 if (state.token) {
   refreshAll();
+}
+
+// The Workspaces tab only makes sense in desktop mode (the only place the list
+// gets injected). Hide it entirely otherwise.
+function setupWorkspacesTab() {
+  const available = state.workspaces.length > 0;
+  els.workspacesTab.classList.toggle("hidden", !available);
 }
 
 function wireEvents() {
@@ -103,9 +132,22 @@ function wireEvents() {
       state.selectedStatus = null;
       state.comments = [];
       els.tabs.forEach((tab) => tab.classList.toggle("active", tab === button));
+      if (state.view === "workspaces") {
+        applyWorkspacesView(true);
+        renderWorkspaces();
+        return;
+      }
+      applyWorkspacesView(false);
       renderDetail();
       refreshAll();
     });
+  });
+
+  els.workspaceList.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-launch]");
+    if (!button) return;
+    const ws = state.workspaces[Number(button.dataset.launch)];
+    if (ws) copyToClipboard(ws.command, "启动命令已复制，去终端粘贴执行");
   });
 
   els.handoffList.addEventListener("click", (event) => {
@@ -412,6 +454,37 @@ function renderOnline(users) {
     <div class="online-user">
       <span>${escapeHTML(user.identity)}</span>
       <span class="presence ${user.online ? "online" : ""}" title="${user.online ? "Online" : "Offline"}"></span>
+    </div>
+  `).join("");
+}
+
+// applyWorkspacesView toggles between the handoff panes and the workspaces
+// pane. The handoff list/detail share the main grid; the workspaces pane
+// replaces them when active.
+function applyWorkspacesView(active) {
+  els.listPane.classList.toggle("hidden", active);
+  els.detailPane.classList.toggle("hidden", active);
+  els.workspacesPane.classList.toggle("hidden", !active);
+}
+
+function renderWorkspaces() {
+  const items = state.workspaces;
+  els.workspacesMeta.textContent = items.length
+    ? `${items.length} 个项目 · 点击「复制启动命令」到终端粘贴执行。`
+    : "未配置 workspace。用 `cc-handoff workspace add <name> <github-url|path>` 添加。";
+  if (!items.length) {
+    els.workspaceList.innerHTML = `<div class="empty-list">${escapeHTML("No workspaces configured.")}</div>`;
+    return;
+  }
+  els.workspaceList.innerHTML = items.map((ws, i) => `
+    <div class="workspace-row">
+      <div class="workspace-info">
+        <span class="workspace-name">${escapeHTML(ws.name || "(unnamed)")}</span>
+        ${ws.workspace ? `<span class="badge">${escapeHTML(ws.workspace)}</span>` : ""}
+        <span class="workspace-path">${escapeHTML(ws.path || "")}</span>
+        <pre class="cli-cmd">${escapeHTML(ws.command || "")}</pre>
+      </div>
+      <button class="secondary" type="button" data-launch="${i}">复制启动命令</button>
     </div>
   `).join("");
 }

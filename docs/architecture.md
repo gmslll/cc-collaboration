@@ -281,6 +281,10 @@ MVP 安全姿态有意保守。明确防的 / 不防的:
   需要 fan-out 逻辑(insert N 行)+ 协议层带 `recipients[]`
 - **rules 引擎**:`internal/rules/engine.go` 是把 changed_paths 映射到前端建议位置
   的纯函数;新增映射形态(比如根据 commit 主题)在这里加
+- **workspace 自动启动**:`cc-handoff workspace` 目前只生成可复制的启动命令
+  (见 [`workspaces.md`](workspaces.md))。要接真正的 spawn,实现
+  `config.LaunchProject`(`internal/config/workspace.go`),复用
+  `config.BuildLaunchCommand` 已解析的字段
 
 ---
 

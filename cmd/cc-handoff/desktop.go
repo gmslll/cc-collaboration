@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -91,10 +92,15 @@ func runDesktop(ctx context.Context, args []string) error {
 	if err := ui.Load(target); err != nil {
 		return fmt.Errorf("navigate: %w", err)
 	}
+	// Workspaces are local-only, so the desktop process resolves them here and
+	// hands the UI a ready-to-copy launch command per project. The relay never
+	// sees these paths. Best-effort: an empty list just hides the tab.
+	wsJSON := workspacesJSON(user)
 	bootstrap := fmt.Sprintf(
-		`localStorage.setItem(%q,%q);localStorage.setItem(%q,%q);`,
+		`localStorage.setItem(%q,%q);localStorage.setItem(%q,%q);localStorage.setItem(%q,%q);`,
 		"cc-handoff-token", user.Token,
 		"cc-handoff-default-repo", defaultRepo,
+		"cc-handoff-workspaces", wsJSON,
 	)
 	if err := ui.Eval(bootstrap).Err(); err != nil {
 		return fmt.Errorf("inject bootstrap: %w", err)
@@ -108,6 +114,35 @@ func runDesktop(ctx context.Context, args []string) error {
 	case <-ctx.Done():
 	}
 	return nil
+}
+
+// workspacesJSON flattens the user's workspaces into a per-project list the UI
+// can render directly: {workspace, name, path, command}. command is the same
+// copyable launch string `cc-handoff workspace list` prints. Returns "[]" on
+// any error so the caller can inject it unconditionally.
+func workspacesJSON(user *config.User) string {
+	type wsItem struct {
+		Workspace string `json:"workspace"`
+		Name      string `json:"name"`
+		Path      string `json:"path"`
+		Command   string `json:"command"`
+	}
+	items := []wsItem{}
+	for _, ws := range user.Workspaces {
+		for _, p := range config.ListProjects(user, ws) {
+			items = append(items, wsItem{
+				Workspace: ws.Name,
+				Name:      p.Name,
+				Path:      p.Path,
+				Command:   config.BuildLaunchCommand(user, ws, p),
+			})
+		}
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // pickupHandler shells out to `cc-handoff pickup <id>` so the JS-driven

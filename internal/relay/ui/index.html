@@ -32,6 +32,7 @@
         <button class="tab-button active" type="button" data-view="recipient">Inbox</button>
         <button class="tab-button" type="button" data-view="sender">Sent</button>
         <button class="tab-button" type="button" data-view="history">History</button>
+        <button id="tab-workspaces" class="tab-button hidden" type="button" data-view="workspaces">Workspaces</button>
       </nav>
 
       <label class="search-box" for="search-input">
@@ -150,6 +151,16 @@
             </form>
           </section>
         </article>
+      </section>
+
+      <section id="workspaces-pane" class="workspaces-pane hidden" aria-labelledby="workspaces-title">
+        <div class="pane-header">
+          <div>
+            <h2 id="workspaces-title">Workspaces</h2>
+            <p id="workspaces-meta" class="muted">点击「复制启动命令」到终端粘贴执行。</p>
+          </div>
+        </div>
+        <div id="workspace-list" class="workspace-list"></div>
       </section>
     </main>
   </div>

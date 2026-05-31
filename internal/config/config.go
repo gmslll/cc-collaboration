@@ -25,6 +25,49 @@ type User struct {
 	// pull notifications. Lives at user-level (not repo-level) so the secret
 	// stays out of git. Empty disables the linear-sync feature.
 	LinearPersonalToken string `toml:"linear_personal_token,omitempty"`
+	// WorkspaceRoot is the base directory under which `workspace create`/`add`
+	// carve a new workspace dir when no explicit path is given. Empty falls
+	// back to ~/cc-handoff-workspaces. Supports a leading ~ for the home dir.
+	WorkspaceRoot string `toml:"workspace_root,omitempty"`
+	// Workspaces is the user's workspace launcher list. Each workspace is a
+	// root directory holding one or more projects. Cross-project, so it lives
+	// at user level rather than in any single repo's .cc-handoff.toml.
+	Workspaces []Workspace `toml:"workspace,omitempty"`
+}
+
+// Workspace is one launcher entry: a root directory plus one or more projects.
+// It is a purely local concept — the relay never sees it. Projects come from
+// two sources merged at read time (see ListProjects): the git repos found by
+// scanning the workspace root, plus the entries explicitly tracked here (the
+// ones added/cloned via `cc-handoff workspace add`).
+type Workspace struct {
+	Name string `toml:"name"` // display name; empty falls back to basename(Path)
+	// Path is the workspace root directory. Empty resolves to
+	// <WorkspaceRoot>/<Name>. Supports a leading ~.
+	Path string `toml:"path,omitempty"`
+	// PreLaunch is a shell snippet inserted between `cd <project>` and the
+	// agent invocation in the generated launch command, same semantics as
+	// Triggers.PreLaunch (e.g. "nvm use", "clset 6").
+	PreLaunch string `toml:"pre_launch,omitempty"`
+	// Editor is an optional editor-launch command appended to the generated
+	// command, e.g. "code ." or "cursor .". Empty means no editor.
+	Editor string `toml:"editor,omitempty"`
+	// Agent overrides which agent command the generated launch uses
+	// ("claude" | "codex" | ...). Empty falls back to User.Agent, then "claude".
+	Agent string `toml:"agent,omitempty"`
+	// Projects are the explicitly tracked projects, primarily the ones cloned
+	// via `workspace add` (so the source URL is remembered). Repos discovered
+	// by scanning Path need not be listed here.
+	Projects []Project `toml:"project,omitempty"`
+}
+
+// Project is one project inside a Workspace.
+type Project struct {
+	Name string `toml:"name"`
+	// Path is the project directory: absolute, or relative to the workspace root.
+	Path string `toml:"path,omitempty"`
+	// GitHub records the source URL when the project was added via clone.
+	GitHub string `toml:"github,omitempty"`
 }
 
 // Repo-level config: lives at <repo-root>/.cc-handoff.toml.
