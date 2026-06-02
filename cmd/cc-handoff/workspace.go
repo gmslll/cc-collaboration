@@ -26,6 +26,8 @@ func runWorkspace(ctx context.Context, args []string) error {
 		return runWorkspaceCreate(ctx, rest)
 	case "add":
 		return runWorkspaceAdd(ctx, rest)
+	case "open":
+		return runWorkspaceOpen(ctx, rest)
 	case "help", "-h", "--help":
 		workspaceUsage()
 		return nil
@@ -45,9 +47,36 @@ func workspaceUsage() {
   cc-handoff workspace add <name> <github-url|local-path>
         add a project; a git URL is cloned into the workspace dir, a local
         path is just registered
+  cc-handoff workspace open <project> [--workspace NAME] [--window]
+        launch the agent in a project: in-place (replaces this shell) by
+        default, or in a new terminal window with --window
 
-The launch command is printed for you to copy/paste; nothing is auto-started.
+list/add print the launch command to copy; open actually starts the agent.
 `)
+}
+
+// runWorkspaceOpen launches the agent in a project. Default replaces the current
+// shell (SSH-friendly); --window opens a new terminal. exec does not return.
+func runWorkspaceOpen(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("workspace open", flag.ContinueOnError)
+	wsName := fs.String("workspace", "", "narrow the project lookup to this workspace")
+	window := fs.Bool("window", false, "open a new terminal window instead of replacing the current shell")
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: cc-handoff workspace open <project> [--workspace NAME] [--window]")
+	}
+	u, err := loadUserOrFail()
+	if err != nil {
+		return err
+	}
+	ws, p, err := resolveProject(u, pos[0], *wsName)
+	if err != nil {
+		return err
+	}
+	return launchProject(ctx, u, ws, p, *window)
 }
 
 func runWorkspaceList(ctx context.Context, args []string) error {

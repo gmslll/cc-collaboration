@@ -93,8 +93,8 @@ Sender flow:
 
 Receiver flow:
   cc-handoff list     [--json]                          inbox: pending handoffs on relay
-  cc-handoff pickup   <id> [--no-ack] [--direct] [--repo PATH]
-                                                        fetch + materialize + ack (--repo targets a specific receiver repo)
+  cc-handoff pickup   <id> [--no-ack] [--direct] [--repo PATH] [--worktree [--open [--window]]]
+                                                        fetch + materialize + ack (--worktree integrates on an isolated branch worktree)
   cc-handoff inbox    [--json]                          local: already-materialized handoffs
   cc-handoff history  [--limit N] [--json]              relay: handoffs you've picked up (cross-repo)
   cc-handoff open     <id> [--dry]                      re-launch the agent on a picked handoff
@@ -108,10 +108,10 @@ Both sides:
   cc-handoff ui           [--open] [--show-token]       print/open the relay management UI
   cc-handoff desktop      [--width N] [--height N] [--chrome PATH]
                                                         open the UI in a Chromium app window (Chrome/Edge/Brave)
-  cc-handoff workspace    list | create <name> [--path DIR] | add <name> <github-url|path>
-                                                        manage one-click launch targets (a root dir + projects)
-  cc-handoff worktree     add <project> <branch> [--workspace NAME] [--start REF] | list <project> | remove <project> <branch>
-                                                        manage branch worktrees under a workspace project
+  cc-handoff workspace    list | create <name> [--path DIR] | add <name> <github-url|path> | open <project> [--window]
+                                                        manage + launch one-click targets (open: in-place exec, or --window)
+  cc-handoff worktree     add <project> <branch> [--start REF] [--open] | list <project> | open <project> <branch> | remove <project> <branch> [--prune-merged --base main]
+                                                        manage + launch branch worktrees (remove --prune-merged sweeps merged ones)
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
   cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications

@@ -132,6 +132,23 @@ func WorktreeDir(projectPath, branch string) string {
 	return filepath.Join(WorktreesDir(projectPath), sanitizeBranch(branch))
 }
 
+// HandoffWorktreeBranch derives the branch name for a handoff's worktree:
+// h_<shortid>_<senderBranch>, falling back to h_<shortid> when the sender's
+// branch is unknown. shortid is the handoff id's trailing token (after the last
+// "_") so the name stays readable. Shared by `pickup --worktree` (CLI) and the
+// pickup_handoff MCP tool so both produce identical names.
+func HandoffWorktreeBranch(handoffID, senderBranch string) string {
+	short := handoffID
+	if i := strings.LastIndex(handoffID, "_"); i >= 0 && i+1 < len(handoffID) {
+		short = handoffID[i+1:]
+	}
+	name := "h_" + short
+	if b := strings.TrimSpace(senderBranch); b != "" {
+		name += "_" + sanitizeBranch(b)
+	}
+	return name
+}
+
 // sanitizeBranch turns a branch name into a single safe path segment. It only
 // collapses "/" → "-", which covers the common feature/x case on POSIX
 // filesystems. Other git-legal-but-path-hostile characters (":", "?", "\" on

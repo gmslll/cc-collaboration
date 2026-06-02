@@ -25,6 +25,8 @@ func runWorktree(ctx context.Context, args []string) error {
 		return runWorktreeList(ctx, rest)
 	case "remove", "rm":
 		return runWorktreeRemove(ctx, rest)
+	case "open":
+		return runWorktreeOpen(ctx, rest)
 	case "help", "-h", "--help":
 		worktreeUsage()
 		return nil
@@ -42,24 +44,61 @@ func worktreeUsage() {
         exist (from --start or HEAD), else attaches the existing one
   cc-handoff worktree list <project> [--workspace NAME]
         list the project's worktrees and the launch command to copy
+  cc-handoff worktree open <project> <branch> [--workspace NAME] [--window]
+        launch the agent in an existing worktree (in-place, or --window)
   cc-handoff worktree remove <project> <branch> [--workspace NAME] [--force]
         remove a worktree
+  cc-handoff worktree remove <project> --prune-merged [--base main] [--force]
+        remove every worktree whose branch is already merged into base, and
+        delete those local branches
 
-The launch command is printed for you to copy/paste; nothing is auto-started.
+list prints launch commands to copy; add --open / open actually start the agent.
 `)
+}
+
+// runWorktreeOpen launches the agent in an existing worktree. Default replaces
+// the current shell (SSH-friendly); --window opens a new terminal.
+func runWorktreeOpen(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("worktree open", flag.ContinueOnError)
+	wsName := fs.String("workspace", "", "narrow the project lookup to this workspace")
+	window := fs.Bool("window", false, "open a new terminal window instead of replacing the current shell")
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 2 {
+		return fmt.Errorf("usage: cc-handoff worktree open <project> <branch> [--workspace NAME] [--window]")
+	}
+	project, branch := pos[0], pos[1]
+	u, err := loadUserOrFail()
+	if err != nil {
+		return err
+	}
+	ws, p, err := resolveProject(u, project, *wsName)
+	if err != nil {
+		return err
+	}
+	dest := config.WorktreeDir(p.Path, branch)
+	if fi, err := os.Stat(dest); err != nil || !fi.IsDir() {
+		return fmt.Errorf("no worktree at %s — create it with `cc-handoff worktree add %s %s`", dest, project, branch)
+	}
+	return launchProject(ctx, u, ws, config.Project{Name: branch, Path: dest}, *window)
 }
 
 func runWorktreeAdd(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("worktree add", flag.ContinueOnError)
 	wsName := fs.String("workspace", "", "narrow the project lookup to this workspace")
 	start := fs.String("start", "", "start point for a new branch (default: current HEAD)")
-	if err := fs.Parse(args); err != nil {
+	open := fs.Bool("open", false, "launch the agent in the new worktree (in-place; replaces this shell)")
+	window := fs.Bool("window", false, "with --open, open a new terminal window instead of replacing this shell")
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 2 {
-		return fmt.Errorf("usage: cc-handoff worktree add <project> <branch> [--workspace NAME] [--start REF]")
+	if len(pos) != 2 {
+		return fmt.Errorf("usage: cc-handoff worktree add <project> <branch> [--workspace NAME] [--start REF] [--open [--window]]")
 	}
-	project, branch := fs.Arg(0), fs.Arg(1)
+	project, branch := pos[0], pos[1]
 
 	u, err := loadUserOrFail()
 	if err != nil {
@@ -83,7 +122,11 @@ func runWorktreeAdd(ctx context.Context, args []string) error {
 	fmt.Printf("created worktree for %q at %s\n", branch, dest)
 	// The Project here is an ephemeral launch-command carrier, not persisted to
 	// config — same reuse as worktreeLaunch.
-	fmt.Printf("launch with: %s\n", config.BuildLaunchCommand(u, ws, config.Project{Name: branch, Path: dest}))
+	wtProj := config.Project{Name: branch, Path: dest}
+	if *open {
+		return launchProject(ctx, u, ws, wtProj, *window) // exec: does not return
+	}
+	fmt.Printf("launch with: %s\n", config.BuildLaunchCommand(u, ws, wtProj))
 	return nil
 }
 
@@ -124,13 +167,24 @@ func runWorktreeRemove(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("worktree remove", flag.ContinueOnError)
 	wsName := fs.String("workspace", "", "narrow the project lookup to this workspace")
 	force := fs.Bool("force", false, "remove even with uncommitted changes")
-	if err := fs.Parse(args); err != nil {
+	pruneMerged := fs.Bool("prune-merged", false, "remove every worktree whose branch is already merged into --base, and delete those branches")
+	base := fs.String("base", "main", "base branch to test merges against (with --prune-merged)")
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 2 {
-		return fmt.Errorf("usage: cc-handoff worktree remove <project> <branch> [--workspace NAME] [--force]")
+
+	if *pruneMerged {
+		if len(pos) != 1 {
+			return fmt.Errorf("usage: cc-handoff worktree remove <project> --prune-merged [--base main] [--force]")
+		}
+		return runWorktreePruneMerged(ctx, pos[0], *wsName, *base, *force)
 	}
-	project, branch := fs.Arg(0), fs.Arg(1)
+
+	if len(pos) != 2 {
+		return fmt.Errorf("usage: cc-handoff worktree remove <project> <branch> [--workspace NAME] [--force]\n   or: cc-handoff worktree remove <project> --prune-merged [--base main]")
+	}
+	project, branch := pos[0], pos[1]
 
 	u, err := loadUserOrFail()
 	if err != nil {
@@ -145,6 +199,43 @@ func runWorktreeRemove(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("removed worktree %s\n", dest)
+	return nil
+}
+
+// runWorktreePruneMerged removes every worktree under the project whose branch
+// is already merged into base, deletes those local branches, and prunes stale
+// worktree entries. Failures on one worktree are reported but don't stop the
+// sweep.
+func runWorktreePruneMerged(ctx context.Context, project, wsName, base string, force bool) error {
+	u, err := loadUserOrFail()
+	if err != nil {
+		return err
+	}
+	_, p, err := resolveProject(u, project, wsName)
+	if err != nil {
+		return err
+	}
+	cands, err := gitsrc.MergedWorktreeBranches(ctx, p.Path, base)
+	if err != nil {
+		return err
+	}
+	if len(cands) == 0 {
+		fmt.Printf("no worktrees merged into %s to prune\n", base)
+		return nil
+	}
+	for _, wt := range cands {
+		if err := gitsrc.RemoveWorktree(ctx, p.Path, wt.Path, force); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: remove worktree %s: %v\n", wt.Path, err)
+			continue
+		}
+		if err := gitsrc.DeleteBranch(ctx, p.Path, wt.Branch); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: delete branch %s: %v\n", wt.Branch, err)
+		}
+		fmt.Printf("pruned %s (%s)\n", wt.Branch, wt.Path)
+	}
+	if err := gitsrc.PruneWorktrees(ctx, p.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: git worktree prune: %v\n", err)
+	}
 	return nil
 }
 

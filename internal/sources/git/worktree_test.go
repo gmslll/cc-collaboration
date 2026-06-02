@@ -117,6 +117,48 @@ func TestListWorktrees_NotARepo(t *testing.T) {
 	}
 }
 
+func TestMergedWorktreeBranches(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	gitInitRepo(t, repo)
+
+	// merged: branch off main, no new commits → already merged into main.
+	mergedDest := filepath.Join(repo, ".worktrees", "merged")
+	if err := AddWorktree(ctx, repo, mergedDest, "merged", ""); err != nil {
+		t.Fatalf("AddWorktree merged: %v", err)
+	}
+	// unmerged: branch off main with a commit only it has.
+	unmergedDest := filepath.Join(repo, ".worktrees", "unmerged")
+	if err := AddWorktree(ctx, repo, unmergedDest, "unmerged", ""); err != nil {
+		t.Fatalf("AddWorktree unmerged: %v", err)
+	}
+	runGit(t, unmergedDest, "commit", "--allow-empty", "-m", "ahead", "--quiet")
+
+	cands, err := MergedWorktreeBranches(ctx, repo, "main")
+	if err != nil {
+		t.Fatalf("MergedWorktreeBranches: %v", err)
+	}
+	if !hasBranch(cands, "merged") {
+		t.Errorf("expected 'merged' among candidates, got %v", cands)
+	}
+	if hasBranch(cands, "unmerged") {
+		t.Errorf("'unmerged' must not be a prune candidate, got %v", cands)
+	}
+	// The main worktree (branch main) is never a candidate.
+	if hasBranch(cands, "main") {
+		t.Errorf("main must never be a prune candidate, got %v", cands)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
+
 func hasBranch(wts []Worktree, branch string) bool {
 	for _, w := range wts {
 		if w.Branch == branch {

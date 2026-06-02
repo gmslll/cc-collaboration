@@ -52,18 +52,31 @@ injected by the local desktop process — in a plain browser (`cc-handoff ui
 --open`) there are no local paths to resolve, so the tab is hidden. Like the
 CLI, the button only copies the command; it does not auto-start anything.
 
-### What gets executed
+### Launching a project
 
-The **only** real action is `git clone` (run when you `add` a git URL).
-Starting the agent is **not** automated: `workspace list` / `add` print a launch
-command like
+`workspace list` / `add` print a launch command like
 
 ```sh
 cd '/Users/me/code/kunlun/kunlun-backend' && nvm use && code . && claude
 ```
 
-for you to copy and run. The `pre_launch`, `editor`, and `agent` fields control
-how that command is assembled.
+that you can copy. To skip the copy and just go, use `open`:
+
+```sh
+cc-handoff workspace open kunlun-backend          # in-place: replaces this shell
+cc-handoff workspace open kunlun-backend --window # opens a new terminal window
+```
+
+The default **in-place** path is built for SSH: it `exec`s your interactive
+shell (`$SHELL -i -c`) running the same command, so the terminal you're already
+in becomes the agent session — no new window, no copy-paste. Because it replaces
+the process, `open` does not return. `--window` instead opens a new terminal
+(macOS: Terminal.app/iTerm2 per the repo's `[triggers]`); it's not available
+over plain SSH.
+
+The `pre_launch`, `editor`, and `agent` fields control how the command is
+assembled — and since both `open` and the printed command come from the same
+`BuildLaunchCommand`, they never diverge.
 
 ## Config
 
@@ -100,11 +113,21 @@ is itself a launchable directory.
 cc-handoff worktree add kunlun-backend feature/login
 cc-handoff worktree add kunlun-backend hotfix --start origin/main
 
+# Create and jump straight in (in-place exec, or --window for a new terminal).
+cc-handoff worktree add kunlun-backend feature/login --open
+
 # List a project's worktrees with their launch commands.
 cc-handoff worktree list kunlun-backend
 
+# Launch the agent in an existing worktree.
+cc-handoff worktree open kunlun-backend feature/login
+
 # Remove one (use --force if it has uncommitted changes).
 cc-handoff worktree remove kunlun-backend feature/login
+
+# Sweep: remove every worktree whose branch is already merged into main,
+# deleting those local branches and pruning stale entries.
+cc-handoff worktree remove kunlun-backend --prune-merged --base main
 ```
 
 `cc-handoff wt ...` is an alias. Pass `--workspace NAME` when a project name
@@ -120,15 +143,34 @@ never mistakes a worktree for a top-level project.
 nothing is persisted to config. `cc-handoff workspace list` shows each project's
 worktrees indented under it (`↳`).
 
-**What gets executed.** `worktree add`/`remove` run real `git worktree`
-commands. Starting the agent is still copy-the-command, using the same
+**What gets executed.** `worktree add`/`remove`/`--prune-merged` run real `git
+worktree`/`git branch` commands. `add --open` and `open` launch the agent the
+same way `workspace open` does (in-place exec, or `--window`), using the same
 `BuildLaunchCommand` shape as projects.
 
-## Future extension point
+## Handoffs in a worktree
 
-`config.BuildLaunchCommand` is the single source of truth for the launch
-command shape. `config.LaunchProject` is a reserved hook for *actually* spawning
-the agent (open a terminal, `cd`, run `pre_launch`, start the agent); it is
-intentionally unimplemented in this version and returns a not-implemented error.
-Wiring up auto-launch later means feeding the fields `BuildLaunchCommand`
-already resolves into the terminal-launch path — a localized change.
+When you pick up a handoff you can integrate it on an isolated branch instead of
+your main checkout, so parallel handoffs don't collide:
+
+```sh
+cc-handoff pickup <id> --worktree            # carve a worktree, materialize into it
+cc-handoff pickup <id> --worktree --open     # …and launch the agent there (in-place)
+```
+
+The worktree lands at `<repo>/.worktrees/h_<shortid>_<senderBranch>` (the branch
+name comes from the handoff's `Repo.Branch`; `h_<shortid>` when unknown), and the
+inbox is materialized **inside** the worktree so the agent works in isolation.
+The `pickup_handoff` MCP tool takes the same `worktree: true` argument, but only
+creates + materializes — it never launches an agent (there's no terminal to exec
+into from a headless MCP server).
+
+## Launch internals (extension point)
+
+`config.BuildLaunchCommand` is the single source of truth for the launch command
+shape (`cd` + `pre_launch` + `editor` + agent). The cmd-layer `launchProject`
+(`cmd/cc-handoff/launch.go`) executes it two ways: `execInShell` replaces the
+current process with `$SHELL -i -c <command>` (in-place, SSH-friendly), and
+`notify.OpenTerminalCommand` opens a new terminal window running the same string.
+To add a strategy (e.g. tmux pane, remote trigger), slot it into `launchProject`
+— the command string itself never changes.

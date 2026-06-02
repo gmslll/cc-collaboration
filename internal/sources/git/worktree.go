@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -82,6 +83,21 @@ func AddWorktree(ctx context.Context, repoDir, dest, branch, start string) error
 	return runStreaming(ctx, repoDir, args...)
 }
 
+// CarveWorktree creates a worktree at dest under repoDir: it refuses if dest
+// already exists, ensures the parent dir, then runs AddWorktree. This is the
+// "carve a worktree at a known path" step shared by `pickup --worktree` (CLI)
+// and the pickup_handoff MCP tool, so the existence guard and mkdir don't drift
+// between them. Callers compute dest/branch from config's path + naming helpers.
+func CarveWorktree(ctx context.Context, repoDir, dest, branch, start string) error {
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("worktree %s already exists", dest)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("create worktrees dir: %w", err)
+	}
+	return AddWorktree(ctx, repoDir, dest, branch, start)
+}
+
 // RemoveWorktree runs `git worktree remove <dest>`, optionally with --force.
 func RemoveWorktree(ctx context.Context, repoDir, dest string, force bool) error {
 	args := []string{"worktree", "remove"}
@@ -90,6 +106,47 @@ func RemoveWorktree(ctx context.Context, repoDir, dest string, force bool) error
 	}
 	args = append(args, dest)
 	return runStreaming(ctx, repoDir, args...)
+}
+
+// MergedWorktreeBranches returns the worktrees whose branch has already been
+// merged into base — the cleanup candidates for `worktree remove --prune-merged`.
+// The main worktree, the bare repo, detached worktrees, and the base branch's
+// own worktree are excluded.
+func MergedWorktreeBranches(ctx context.Context, repoDir, base string) ([]Worktree, error) {
+	wts, err := ListWorktrees(ctx, repoDir)
+	if err != nil {
+		return nil, err
+	}
+	out, err := run(ctx, repoDir, "git", "branch", "--merged", base, "--format=%(refname:short)")
+	if err != nil {
+		return nil, err
+	}
+	merged := map[string]bool{}
+	for line := range strings.SplitSeq(out, "\n") {
+		if b := strings.TrimSpace(line); b != "" {
+			merged[b] = true
+		}
+	}
+	var cands []Worktree
+	for _, wt := range wts {
+		if wt.Bare || wt.Branch == "" || wt.Branch == base {
+			continue
+		}
+		if merged[wt.Branch] {
+			cands = append(cands, wt)
+		}
+	}
+	return cands, nil
+}
+
+// DeleteBranch runs `git branch -d <branch>` (safe delete; refuses if unmerged).
+func DeleteBranch(ctx context.Context, repoDir, branch string) error {
+	return runStreaming(ctx, repoDir, "branch", "-d", branch)
+}
+
+// PruneWorktrees runs `git worktree prune` to clear stale administrative entries.
+func PruneWorktrees(ctx context.Context, repoDir string) error {
+	return runStreaming(ctx, repoDir, "worktree", "prune")
 }
 
 // branchExists reports whether a local branch ref exists in repoDir.

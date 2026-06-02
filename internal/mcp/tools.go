@@ -15,6 +15,7 @@ import (
 	"github.com/cc-collaboration/internal/inbox"
 	"github.com/cc-collaboration/internal/linear"
 	"github.com/cc-collaboration/internal/rules"
+	gitsrc "github.com/cc-collaboration/internal/sources/git"
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
@@ -650,6 +651,7 @@ func pickupHandoffTool() Tool {
     "id":      {"type": "string", "description": "Handoff id (e.g. h_20260428_ABCD1234)"},
     "no_ack":  {"type": "boolean", "description": "Skip marking the handoff as picked on the relay."},
     "direct":  {"type": "boolean", "description": "If true, the returned prompt instructs the receiver to modify code directly and stop after the diff for review. Default false: the prompt requires producing docs/integrations/<id>.md first and stopping for human review of the plan. Pass true only when the user has explicitly asked for direct/fast pickup."},
+    "worktree": {"type": "boolean", "description": "If true, create an isolated git worktree under <repo>/.worktrees on a dedicated branch (h_<shortid>_<senderBranch>) and materialize into it, so the integration happens off the main checkout. The tool only creates and materializes; it does not start an agent."},
     "cwd":     {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   },
   "required": ["id"]
@@ -663,10 +665,11 @@ func pickupHandoffTool() Tool {
 }
 
 type pickupArgs struct {
-	ID     string `json:"id"`
-	NoAck  bool   `json:"no_ack"`
-	Direct bool   `json:"direct"`
-	CWD    string `json:"cwd"`
+	ID       string `json:"id"`
+	NoAck    bool   `json:"no_ack"`
+	Direct   bool   `json:"direct"`
+	Worktree bool   `json:"worktree"`
+	CWD      string `json:"cwd"`
 }
 
 func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -694,7 +697,23 @@ func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if a.Direct {
 		mode = inbox.ModeDirect
 	}
-	mat, err := inbox.Materialize(inbox.InboxDir(config.RepoRoot(cwd), res.InboxOverride), pkg, mode)
+
+	// With worktree=true, carve an isolated worktree on a dedicated branch and
+	// materialize into it. The tool never starts an agent (headless: there's no
+	// terminal to launch into).
+	repoRoot := config.RepoRoot(cwd)
+	materializeRoot := repoRoot
+	var worktreeDir string
+	if a.Worktree {
+		branch := config.HandoffWorktreeBranch(pkg.ID, pkg.Repo.Branch)
+		worktreeDir = config.WorktreeDir(repoRoot, branch)
+		if err := gitsrc.CarveWorktree(ctx, repoRoot, worktreeDir, branch, ""); err != nil {
+			return ToolResult{}, err
+		}
+		materializeRoot = worktreeDir
+	}
+
+	mat, err := inbox.Materialize(inbox.InboxDir(materializeRoot, res.InboxOverride), pkg, mode)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -708,7 +727,11 @@ func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		}
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Picked up handoff `%s`. Files materialized at `%s`.\n\n", pkg.ID, mat.Dir)
+	if a.Worktree {
+		fmt.Fprintf(&sb, "Created worktree `%s` for handoff `%s`. Files materialized at `%s`.\n\n", worktreeDir, pkg.ID, mat.Dir)
+	} else {
+		fmt.Fprintf(&sb, "Picked up handoff `%s`. Files materialized at `%s`.\n\n", pkg.ID, mat.Dir)
+	}
 	sb.WriteString("Follow the prompt below to integrate the changes:\n\n---\n\n")
 	sb.WriteString(mat.Prompt)
 	sb.WriteString(linearSyncBlock(res.Linear, LinearEventPickup, LinearSyncCtx{
