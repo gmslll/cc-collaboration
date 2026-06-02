@@ -88,6 +88,42 @@ agent      = "claude"                           # optional: overrides top-level 
 
 You can also edit this file by hand; the CLI just reads and writes it.
 
+## Worktrees
+
+Each project can spawn multiple **branch worktrees** so you can run parallel
+agent sessions on different branches without stepping on each other. A worktree
+is itself a launchable directory.
+
+```sh
+# Create a worktree. Makes the branch if it doesn't exist (from --start or
+# HEAD), else attaches the existing branch.
+cc-handoff worktree add kunlun-backend feature/login
+cc-handoff worktree add kunlun-backend hotfix --start origin/main
+
+# List a project's worktrees with their launch commands.
+cc-handoff worktree list kunlun-backend
+
+# Remove one (use --force if it has uncommitted changes).
+cc-handoff worktree remove kunlun-backend feature/login
+```
+
+`cc-handoff wt ...` is an alias. Pass `--workspace NAME` when a project name
+exists in more than one workspace.
+
+**Layout.** Worktrees live at `<project>/.worktrees/<branch>/` (slashes in the
+branch become `-`, so `feature/login` → `.worktrees/feature-login`). This keeps
+them owned by the project and out of the workspace root. Because a worktree's
+`.git` is a *file* nested two levels deep, `workspace list`'s one-level scan
+never mistakes a worktree for a top-level project.
+
+**Source of truth.** The worktree list is read live from `git worktree list`;
+nothing is persisted to config. `cc-handoff workspace list` shows each project's
+worktrees indented under it (`↳`).
+
+**What gets executed.** `worktree add`/`remove` run real `git worktree`
+commands. Starting the agent is still copy-the-command, using the same
+`BuildLaunchCommand` shape as projects.
+
 ## Future extension point
 
 `config.BuildLaunchCommand` is the single source of truth for the launch

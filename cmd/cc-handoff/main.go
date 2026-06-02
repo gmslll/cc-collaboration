@@ -59,6 +59,8 @@ func main() {
 		err = runDesktop(ctx, args)
 	case "workspace", "ws":
 		err = runWorkspace(ctx, args)
+	case "worktree", "wt":
+		err = runWorktree(ctx, args)
 	case "stop-hook":
 		err = runStopHook(ctx, args)
 	case "version", "-v", "--version":
@@ -108,6 +110,8 @@ Both sides:
                                                         open the UI in a Chromium app window (Chrome/Edge/Brave)
   cc-handoff workspace    list | create <name> [--path DIR] | add <name> <github-url|path>
                                                         manage one-click launch targets (a root dir + projects)
+  cc-handoff worktree     add <project> <branch> [--workspace NAME] [--start REF] | list <project> | remove <project> <branch>
+                                                        manage branch worktrees under a workspace project
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
   cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications

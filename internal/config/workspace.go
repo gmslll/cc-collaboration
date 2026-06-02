@@ -119,6 +119,28 @@ func LaunchProject(_ context.Context, _ *User, _ Workspace, _ Project) error {
 	return errors.New("workspace auto-launch not implemented yet; copy the launch command and run it instead")
 }
 
+// WorktreesDir returns a project's worktree container directory:
+// <projectPath>/.worktrees. Branch worktrees live one level below it.
+func WorktreesDir(projectPath string) string {
+	return filepath.Join(projectPath, ".worktrees")
+}
+
+// WorktreeDir returns the directory for a branch's worktree:
+// <projectPath>/.worktrees/<sanitized-branch>. Slashes in the branch name are
+// replaced with "-" so "feature/x" doesn't nest extra directories.
+func WorktreeDir(projectPath, branch string) string {
+	return filepath.Join(WorktreesDir(projectPath), sanitizeBranch(branch))
+}
+
+// sanitizeBranch turns a branch name into a single safe path segment. It only
+// collapses "/" → "-", which covers the common feature/x case on POSIX
+// filesystems. Other git-legal-but-path-hostile characters (":", "?", "\" on
+// Windows) are left as-is for now; the caller's "dest already exists" check
+// catches the rare collision (e.g. foo/bar and foo-bar both → foo-bar).
+func sanitizeBranch(branch string) string {
+	return strings.ReplaceAll(branch, "/", "-")
+}
+
 // projectPath resolves a project's configured path against the workspace root:
 // absolute paths (after ~ expansion) are returned as-is; relative paths are
 // joined onto root. Empty input returns "".

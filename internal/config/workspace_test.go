@@ -139,6 +139,42 @@ func TestBuildLaunchCommand(t *testing.T) {
 	}
 }
 
+func TestWorktreeDir(t *testing.T) {
+	proj := "/ws/api"
+	if got, want := WorktreesDir(proj), "/ws/api/.worktrees"; got != want {
+		t.Errorf("WorktreesDir = %q, want %q", got, want)
+	}
+	if got, want := WorktreeDir(proj, "main"), "/ws/api/.worktrees/main"; got != want {
+		t.Errorf("WorktreeDir = %q, want %q", got, want)
+	}
+	// Slashes in the branch collapse to a single path segment.
+	if got, want := WorktreeDir(proj, "feature/x"), "/ws/api/.worktrees/feature-x"; got != want {
+		t.Errorf("WorktreeDir slash = %q, want %q", got, want)
+	}
+}
+
+// TestListProjects_IgnoresWorktrees guards the layout assumption: a project's
+// .worktrees/<branch> dir must NOT be surfaced as a top-level project, because
+// ListProjects only scans one level deep for a .git *directory* (worktrees
+// have a .git *file* nested two levels down).
+func TestListProjects_IgnoresWorktrees(t *testing.T) {
+	root := t.TempDir()
+	mkRepo(t, filepath.Join(root, "api"))
+	// Simulate a worktree dir with a .git FILE under api/.worktrees/feature-x.
+	wt := filepath.Join(root, "api", ".worktrees", "feature-x")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: ../../.git/worktrees/feature-x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ListProjects(nil, Workspace{Name: "demo", Path: root})
+	if len(got) != 1 || got[0].Name != "api" {
+		t.Fatalf("expected only [api], got %v", names(got))
+	}
+}
+
 func mkRepo(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cc-collaboration/internal/config"
+	gitsrc "github.com/cc-collaboration/internal/sources/git"
 )
 
 func runWorkspace(ctx context.Context, args []string) error {
@@ -49,7 +50,7 @@ The launch command is printed for you to copy/paste; nothing is auto-started.
 `)
 }
 
-func runWorkspaceList(_ context.Context, args []string) error {
+func runWorkspaceList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("workspace list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -77,9 +78,28 @@ func runWorkspaceList(_ context.Context, args []string) error {
 		for _, p := range projects {
 			fmt.Printf("  • %s  %s\n", p.Name, p.Path)
 			fmt.Printf("      %s\n", config.BuildLaunchCommand(u, ws, p))
+			printWorktrees(ctx, u, ws, p)
 		}
 	}
 	return nil
+}
+
+// printWorktrees lists a project's extra branch worktrees (excluding the main
+// checkout, already shown as the project itself) indented under it. Best
+// effort: a project that isn't a git repo is silently skipped.
+func printWorktrees(ctx context.Context, u *config.User, ws config.Workspace, p config.Project) {
+	wts, err := gitsrc.ListWorktrees(ctx, p.Path)
+	if err != nil {
+		return
+	}
+	for _, wt := range wts {
+		if samePath(wt.Path, p.Path) || wt.Bare {
+			continue // the main checkout is the project row itself
+		}
+		branch, cmd := worktreeLaunch(u, ws, wt)
+		fmt.Printf("      ↳ %s  %s\n", branch, wt.Path)
+		fmt.Printf("          %s\n", cmd)
+	}
 }
 
 func runWorkspaceCreate(_ context.Context, args []string) error {
