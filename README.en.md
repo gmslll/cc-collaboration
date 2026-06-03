@@ -258,6 +258,44 @@ cc-handoff open <id>        # re-launch the configured agent on a previously pic
 
 Equivalent MCP tools (`status_handoff` / `list_sent` / `retract_handoff` / `list_local_inbox`) are exposed for in-session agent use.
 
+### Graphical UI
+
+Don't want everything on the command line? There are two entry points:
+
+```bash
+cc-handoff ui --open            # open the relay's built-in Web UI in your default browser
+cc-handoff desktop              # same UI, but in a Chrome/Edge app window with the token auto-injected
+cc-handoff desktop --width 1400 --height 900
+cc-handoff desktop --chrome "/path/to/your/browser"   # pin a specific browser binary
+```
+
+`desktop` is a pure-Go Lorca wrapper that probes Chrome → Edge → Brave → Chromium for an installed browser. Windows 10/11 ships Edge, so it works out of the box; most macOS users have Chrome. With no Chromium-based browser installed it falls back with a message pointing to `cc-handoff ui --open`. Both entry points share the same UI assets and are functionally identical (inbox / sent / history / comments / ack / retract / online users); in `desktop` mode the token is auto-injected from local config, so there's nothing to paste.
+
+The inbox detail view can also act on a handoff without dropping back to the CLI:
+
+- **接收并物化 (pick up & materialize)** — pickup + materialize in one click. In `desktop` mode it calls the local pickup directly and lands in the current repo (or the auto-discovered default repo).
+- **Prompt panel** — previews the receiver prompt with **复制 Prompt (copy prompt)** and **复制 CLI (copy CLI)** buttons, so you can paste either the prompt text or the matching `cc-handoff` command into a terminal.
+- **转交 (hand off)** — opens a dialog to pick a target user + reason and pass the task on; **shown only for pending `bug`-kind handoffs**, alongside the bug-only **reassign** button.
+
+### Multi-repo receiving
+
+One identity backing several receiver repos (e.g. the same frontend teammate maintaining `frontend-project1` and `frontend-project2`, where each backend handoff lands depends on its content).
+
+Setup: give each receiver repo its own `.cc-handoff.toml`, all declaring the same `identity.me` (e.g. `you@frontend`). Only one relay token is registered.
+
+Receiving:
+
+```bash
+# Run watch in your most-used repo, but skip pre-materialize (otherwise every handoff lands there)
+cc-handoff watch --no-materialize
+
+# After the notification + reading the summary, materialize into the repo you choose
+cc-handoff pickup h_xxx --repo ~/work/frontend-project1
+cc-handoff pickup h_xxx --repo ~/work/frontend-project2
+```
+
+`--no-materialize` makes watch notify-only instead of auto-landing files on the receiver side; `pickup --repo` materializes a package into any repo without `cd`-ing. Together they mean "notifications are just notifications, routing is decided by a human." With a single receiver repo you configure nothing — the default behavior is already correct.
+
 ## Day-to-day ops
 
 ```bash

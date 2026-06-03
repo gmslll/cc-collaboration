@@ -279,6 +279,12 @@ cc-handoff desktop --chrome "/path/to/your/browser"   # 指定浏览器二进制
 
 两个入口共用同一份 UI 资源,功能完全一致(inbox / sent / history / 评论 / ack / retract / 在线用户)。`desktop` 模式下 token 由本地 config 自动注入,免去手动输入。
 
+收件详情页里还能直接处理 handoff,不用回命令行:
+
+- **接收并物化** —— 一键 pickup + 物化。`desktop` 模式下直接调本地 pickup,落到当前仓(或自动发现的 defaultRepo)。
+- **Prompt 面板** —— 预览接收侧的 prompt,配「**复制 Prompt**」和「**复制 CLI**」两个按钮,把 prompt 文本或对应的 `cc-handoff` 命令拷到终端即可。
+- **转交** —— 弹出对话框选目标用户 + 填转交原因,把任务转给别人;**仅对 pending 的 bug 类 handoff 显示**。同类还有 bug 专属的 **reassign**(改派)按钮。
+
 ### 同人多仓接收
 
 一个 identity 对应多个 receiver repo 的场景(比如同一个前端同事同时维护 `frontend-project1` 和 `frontend-project2`,后端的 handoff 落到哪边由 handoff 内容决定)。
