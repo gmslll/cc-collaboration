@@ -325,3 +325,25 @@ type RetractEvent struct {
 	Sender string `json:"sender"`
 	Reason string `json:"reason,omitempty"`
 }
+
+// LogAlert is the payload of a log.alert event and the body of POST /v1/alerts.
+// A server-side error hook forwards it (via `cc-handoff alert` or a raw curl)
+// to a teammate's watch, which writes it as a triage prompt and — when
+// auto_launch_on_alert is set — launches the agent in the named project.
+type LogAlert struct {
+	// Recipient is the target identity whose watch should surface this. The
+	// relay fans the event out to that identity's subscribers.
+	Recipient string `json:"recipient"`
+	// Project is the workspace project name the receiver resolves to a local
+	// directory (so watch knows where to launch the agent). Empty is allowed —
+	// the receiver then only notifies, without a project to launch in.
+	Project string `json:"project,omitempty"`
+	// Level is a free-form severity tag for the notification subtitle
+	// (e.g. "error", "fatal"). Optional.
+	Level string `json:"level,omitempty"`
+	// Message is the log body / excerpt to triage.
+	Message string `json:"message"`
+	// Sender is set server-side from the authenticated identity; clients don't
+	// supply it.
+	Sender string `json:"sender,omitempty"`
+}

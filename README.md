@@ -419,6 +419,8 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | 概念向 —— 组件、数据流、SQLite schema、auth、threat model、failure mode、扩展点 |
 | [`docs/deployment.md`](docs/deployment.md) | 运维向 —— 端到端部署、TLS、监控、token 轮换、升级回滚、故障排查 |
+| [`docs/workspaces.md`](docs/workspaces.md) | 工作区 / 工作树启动器 —— 一键启动、分支 worktree、handoff 隔离 |
+| [`docs/logs.md`](docs/logs.md) | 日志排查 —— 配置日志来源、`cc-handoff logs` 拉取最新 error、push 告警自动排查 |
 | [`scripts/dogfood.sh`](scripts/dogfood.sh) | 在本机起隔离环境,先把流程跑一遍再上 VPS(脚本顶部有完整说明) |
 | [`docs/handoff-package.schema.json`](docs/handoff-package.schema.json) | handoff 包的 JSON schema |
 | [`pkg/handoffschema/package.go`](pkg/handoffschema/package.go) | 同上的 Go 类型定义 |

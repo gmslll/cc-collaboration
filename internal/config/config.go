@@ -68,7 +68,42 @@ type Project struct {
 	Path string `toml:"path,omitempty"`
 	// GitHub records the source URL when the project was added via clone.
 	GitHub string `toml:"github,omitempty"`
+	// Log is the optional log source for `cc-handoff logs <project>`. A pointer
+	// so a project without one stays byte-identical in the config file. nil
+	// means "no log source configured" — `logs` errors out and says how to add
+	// one.
+	Log *LogSource `toml:"log,omitempty"`
 }
+
+// LogSource describes how to pull a project's logs for `cc-handoff logs`.
+// Command's stdout is the raw log stream; the "latest error + context"
+// extraction happens locally on the captured output (predictable, no fragile
+// remote-command splicing). Host empty runs Command locally — handy for
+// `kubectl logs` / `docker logs` / a local file.
+type LogSource struct {
+	// Host is the ssh target (e.g. "deploy@10.0.0.5"). Empty runs Command on
+	// this machine instead of over ssh.
+	Host string `toml:"host,omitempty"`
+	// Command prints the log stream to stdout, e.g.
+	// "tail -n 2000 /var/log/app/error.log" or
+	// "journalctl -u app -n 2000 --no-pager".
+	Command string `toml:"command"`
+	// Grep is the error-matching regexp used to find the latest failure. Empty
+	// falls back to DefaultLogErrorPattern.
+	Grep string `toml:"grep,omitempty"`
+	// Context is how many lines on each side of the latest match to include.
+	// Zero falls back to DefaultLogContext.
+	Context int `toml:"context,omitempty"`
+}
+
+const (
+	// DefaultLogErrorPattern matches the latest failure line when a LogSource
+	// (or the --grep flag) doesn't set its own. Case-insensitive.
+	DefaultLogErrorPattern = `(?i)(error|panic|fatal|traceback|exception)`
+	// DefaultLogContext is the per-side context line count used when neither
+	// the LogSource nor --context sets one.
+	DefaultLogContext = 20
+)
 
 // Repo-level config: lives at <repo-root>/.cc-handoff.toml.
 type Repo struct {
@@ -190,6 +225,11 @@ type Triggers struct {
 	//                  if both are set (backgrounding the agent breaks
 	//                  the terminal-side prompt injection)
 	AckOnLaunch string `toml:"ack_on_launch,omitempty"`
+	// AutoLaunchOnAlert gates the push-log flow: when true, a log.alert event
+	// received over watch auto-launches the agent in the alert's project to
+	// triage. Default false keeps it manual — watch only writes the log file
+	// and pops a desktop notification, and the user runs the agent themselves.
+	AutoLaunchOnAlert bool `toml:"auto_launch_on_alert,omitempty"`
 }
 
 const (

@@ -287,6 +287,17 @@ func (c *Client) ListComments(ctx context.Context, handoffID string) ([]handoffs
 	return out.Comments, nil
 }
 
+// Alert forwards a log alert to the relay, which fans it out to the target
+// recipient's watch as a log.alert event. The relay stamps the sender from the
+// bearer token; the caller only sets recipient / project / level / message.
+func (c *Client) Alert(ctx context.Context, alert *handoffschema.LogAlert) error {
+	body, err := json.Marshal(alert)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/v1/alerts", bytes.NewReader(body), nil)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, body)
 	if err != nil {

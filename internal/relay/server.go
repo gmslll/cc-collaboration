@@ -65,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/handoffs/{id}/attachments/{name}", s.getAttachment)
 	api.HandleFunc("GET /v1/events", s.events)
 	api.HandleFunc("GET /v1/users/online", s.listOnlineUsers)
+	api.HandleFunc("POST /v1/alerts", s.postAlert)
 
 	mux.Handle("/v1/", s.Tokens.Middleware(api))
 	return logging(mux)
@@ -82,6 +83,35 @@ func (s *Server) broadcastPresence(identity string, online bool) {
 		return
 	}
 	s.Hub.PublishExcept(identity, sse.Event{Type: eventType, Data: data})
+}
+
+// postAlert receives a server-side log alert and fans it out to the target
+// recipient's watch as a log.alert SSE event. The relay does not persist
+// alerts — like other events they're best-effort; a missed alert is recovered
+// by the next one, not by replay. The authenticated identity is stamped as the
+// sender so clients can't spoof it.
+func (s *Server) postAlert(w http.ResponseWriter, r *http.Request) {
+	sender := auth.Identity(r.Context())
+	var alert handoffschema.LogAlert
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&alert); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(alert.Recipient) == "" {
+		http.Error(w, "recipient required", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(alert.Message) == "" {
+		http.Error(w, "message required", http.StatusBadRequest)
+		return
+	}
+	alert.Sender = sender
+	if s.Hub != nil {
+		if data, err := json.Marshal(alert); err == nil {
+			s.Hub.Publish(sse.Event{Type: sse.EventTypeLogAlert, Recipient: alert.Recipient, Data: data})
+		}
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {

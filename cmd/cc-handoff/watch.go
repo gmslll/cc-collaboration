@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cc-collaboration/internal/agent"
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/inbox"
 	"github.com/cc-collaboration/internal/linear"
@@ -202,6 +203,8 @@ func (h *watchHandler) dispatch(ctx context.Context) func(transport.SSEEvent) er
 			return h.onUserPresence(ctx, ev, true)
 		case sse.EventTypeUserOffline:
 			return h.onUserPresence(ctx, ev, false)
+		case sse.EventTypeLogAlert:
+			return h.onLogAlert(ctx, ev)
 		default:
 			return nil
 		}
@@ -347,6 +350,89 @@ func buildHandoffNotice(item handoffschema.ListItem) notify.Notification {
 		Subtitle: subtitle,
 		Body:     body,
 	}
+}
+
+// onLogAlert handles a pushed server log alert: resolve the named project to a
+// local dir, write the alert as a triage prompt (so there's always a file to
+// open), pop a desktop notification, and — only when auto_launch_on_alert is
+// set — launch the agent in a new terminal to start triaging. Auto-launch
+// always opens a window (never in-place exec) so it doesn't replace the watch
+// daemon's own process. A project we can't resolve degrades to notify-only.
+func (h *watchHandler) onLogAlert(ctx context.Context, ev transport.SSEEvent) error {
+	var alert handoffschema.LogAlert
+	if err := json.Unmarshal(ev.Data, &alert); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: bad log alert payload: %v\n", err)
+		return nil
+	}
+	from := cmp.Or(alert.Sender, "server")
+	fmt.Printf("🔔 log alert from %s", from)
+	if alert.Project != "" {
+		fmt.Printf(" → %s", alert.Project)
+	}
+	fmt.Println()
+
+	ws, p, promptFile := h.resolveAlertTriage(alert, from)
+
+	if !h.noNotify {
+		_ = notify.Show(ctx, notify.Notification{
+			Title:    "cc-handoff log alert",
+			Subtitle: cmp.Or(alert.Level, alert.Project, from),
+			Body:     from + ": " + firstLine(alert.Message),
+		})
+	}
+
+	if h.res.Triggers.AutoLaunchOnAlert && promptFile != "" {
+		if h.noLaunch {
+			fmt.Printf("  [no-launch] would launch agent in %s on %s\n", p.Path, promptFile)
+		} else {
+			ag := h.res.Agent
+			if ws.Agent != "" {
+				if a, err := agent.Resolve(ws.Agent); err == nil {
+					ag = a
+				}
+			}
+			if err := launchAgentWithPrompt(ctx, ag, p.Path, promptFile, ws.PreLaunch, true); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: alert auto-launch failed: %v\n", err)
+			}
+		}
+	}
+
+	return h.bumpAndMaybeStop()
+}
+
+// resolveAlertTriage resolves a log alert's project to a local workspace
+// project and writes the alert body as a triage prompt, returning the project
+// and the prompt-file path. It returns an empty path (and logs a warning) when
+// the alert has no project, the user config can't be loaded, the project can't
+// be resolved locally, or the file write fails — the caller then degrades to
+// notify-only. LoadUser is read per-alert (not cached) so a project added to
+// config mid-session resolves without restarting watch.
+func (h *watchHandler) resolveAlertTriage(alert handoffschema.LogAlert, from string) (config.Workspace, config.Project, string) {
+	if alert.Project == "" {
+		return config.Workspace{}, config.Project{}, ""
+	}
+	u, _, err := config.LoadUser()
+	if err != nil || u == nil {
+		fmt.Fprintf(os.Stderr, "warning: load user config for alert: %v\n", err)
+		return config.Workspace{}, config.Project{}, ""
+	}
+	ws, p, err := resolveProject(u, alert.Project, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: resolve project %q: %v\n", alert.Project, err)
+		return config.Workspace{}, config.Project{}, ""
+	}
+	source := "push alert from " + from
+	if alert.Level != "" {
+		source += " (" + alert.Level + ")"
+	}
+	body := logTriageMarkdown(p.Name, source, time.Now().Format(time.RFC3339), "", alert.Message)
+	f, err := writeLogTriageFile(p.Path, body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: write log triage: %v\n", err)
+		return ws, p, ""
+	}
+	fmt.Printf("  wrote %s\n", f)
+	return ws, p, f
 }
 
 // onCommentCreated appends the comment to comments.md inside the previously-

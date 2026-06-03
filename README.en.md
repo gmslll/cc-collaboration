@@ -406,6 +406,8 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Conceptual — components, data flow, SQLite schema, auth, threat model, failure modes, extension points |
 | [`docs/deployment.md`](docs/deployment.md) | Operational — end-to-end deployment, TLS, monitoring, token rotation, upgrade rollback, troubleshooting |
+| [`docs/workspaces.md`](docs/workspaces.md) | Workspace / worktree launcher — one-click launch, branch worktrees, handoff isolation |
+| [`docs/logs.md`](docs/logs.md) | Log triage — configure a log source, `cc-handoff logs` pulls the latest error, push alerts auto-triage |
 | [`scripts/dogfood.sh`](scripts/dogfood.sh) | Stand up a hermetic local environment to dry-run the whole flow before touching a VPS |
 | [`docs/handoff-package.schema.json`](docs/handoff-package.schema.json) | JSON schema for the handoff package |
 | [`pkg/handoffschema/package.go`](pkg/handoffschema/package.go) | Same, as Go types |

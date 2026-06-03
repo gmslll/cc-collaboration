@@ -32,6 +32,11 @@ const EventTypeHandoffRetracted = "handoff.retracted"
 const EventTypeUserOnline = "user.online"
 const EventTypeUserOffline = "user.offline"
 
+// EventTypeLogAlert is published when a server-side hook forwards a log alert
+// (POST /v1/alerts) for a recipient. Pushed to that recipient's watch, which
+// writes it as a triage prompt and optionally auto-launches the agent.
+const EventTypeLogAlert = "log.alert"
+
 // subscriberBuffer caps per-subscriber backlog. A slow client can fall behind
 // and drop events; recovery happens via Last-Event-Id reconnect, so the buffer
 // only needs to absorb short bursts during a write to the wire.
