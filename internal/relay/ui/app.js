@@ -945,21 +945,21 @@ async function renderProjectManage(id, body) {
       <div class="manage-block">
         <h4>Repos</h4>
         <div class="chip-row">
-          ${repos.length ? repos.map((r) => `<span class="chip">${escapeHTML(r)}<button type="button" data-unmap="${escapeAttr(r)}" title="移除">×</button></span>`).join("") : `<span class="muted">无</span>`}
+          ${repos.length ? repos.map((r) => `<span class="chip">${escapeHTML(r)}<button type="button" data-unmap="${escapeAttr(r)}" aria-label="移除 repo ${escapeAttr(r)}" title="移除">×</button></span>`).join("") : `<span class="muted">无</span>`}
         </div>
         <form class="inline-form" data-form="repo">
-          <input type="text" placeholder="repo 名（如 kunlun-backend）">
+          <input type="text" aria-label="要绑定的 repo 名" placeholder="repo 名（如 kunlun-backend）">
           <button type="submit" class="secondary">绑定 repo</button>
         </form>
       </div>
       <div class="manage-block">
         <h4>成员</h4>
         <div class="member-rows">
-          ${members.map((m) => `<div class="member-row"><span>${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span><button type="button" class="link-danger" data-remove-member="${escapeAttr(m.identity)}">移除</button></div>`).join("")}
+          ${members.map((m) => `<div class="member-row"><span>${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span><button type="button" class="link-danger" data-remove-member="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button></div>`).join("")}
         </div>
         <form class="inline-form" data-form="member">
-          <input type="text" name="identity" placeholder="identity">
-          <select name="role"><option value="member">member</option><option value="viewer">viewer</option><option value="owner">owner</option></select>
+          <input type="text" name="identity" aria-label="成员 identity" placeholder="identity">
+          <select name="role" aria-label="成员角色"><option value="member">member</option><option value="viewer">viewer</option><option value="owner">owner</option></select>
           <button type="submit" class="secondary">加成员</button>
         </form>
       </div>`;
