@@ -118,6 +118,7 @@ Both sides:
                                                         manage + launch branch worktrees (remove --prune-merged sweeps merged ones)
   cc-handoff logs         <project> [--workspace NAME] [--grep RE] [--context N] [--no-grade] [--open [--window]]
                                                         pull the project's log source, extract + grade the latest error (deduped), optionally launch the agent to triage
+  cc-handoff logs config  <project> [--workspace NAME]  interactively set up (or edit) the project's log source
   cc-handoff alert        --to <identity> --project <name> [--message TEXT | --file PATH] [--level LVL] [--grade]
                                                         forward a server log alert to a teammate's watch (server-side hook entry point)
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]

@@ -122,3 +122,49 @@ func TestParseSeverity(t *testing.T) {
 		}
 	}
 }
+
+func TestAttachLogSource(t *testing.T) {
+	src := config.LogSource{Host: "deploy@h", Command: "tail -n 500 /var/log/app.log", Grep: "(?i)panic", Context: 15}
+
+	t.Run("materializes an entry for an auto-discovered project", func(t *testing.T) {
+		u := &config.User{Workspaces: []config.Workspace{{Name: "kunlun"}}}
+		if err := attachLogSource(u, "kunlun", "backend", "/ws/kunlun/backend", src); err != nil {
+			t.Fatal(err)
+		}
+		ps := u.Workspaces[0].Projects
+		if len(ps) != 1 {
+			t.Fatalf("expected 1 project entry, got %d", len(ps))
+		}
+		if ps[0].Name != "backend" || ps[0].Path != "/ws/kunlun/backend" || ps[0].Log == nil || ps[0].Log.Command != src.Command {
+			t.Fatalf("unexpected entry: %+v", ps[0])
+		}
+	})
+
+	t.Run("updates an existing entry in place, no duplicate", func(t *testing.T) {
+		u := &config.User{Workspaces: []config.Workspace{{
+			Name:     "kunlun",
+			Projects: []config.Project{{Name: "backend", Path: "/ws/kunlun/backend"}},
+		}}}
+		if err := attachLogSource(u, "kunlun", "backend", "/ws/kunlun/backend", src); err != nil {
+			t.Fatal(err)
+		}
+		updated := src
+		updated.Context = 99
+		if err := attachLogSource(u, "kunlun", "backend", "/ws/kunlun/backend", updated); err != nil {
+			t.Fatal(err)
+		}
+		ps := u.Workspaces[0].Projects
+		if len(ps) != 1 {
+			t.Fatalf("expected no duplicate, got %d entries", len(ps))
+		}
+		if ps[0].Log == nil || ps[0].Log.Context != 99 {
+			t.Fatalf("expected in-place update to context=99, got %+v", ps[0].Log)
+		}
+	})
+
+	t.Run("missing workspace errors", func(t *testing.T) {
+		if err := attachLogSource(&config.User{}, "nope", "backend", "/x", src); err == nil {
+			t.Fatal("expected error for missing workspace")
+		}
+	})
+}

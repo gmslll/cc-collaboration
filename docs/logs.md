@@ -38,6 +38,12 @@ name = "kunlun"
   error + context" extraction happens **locally** on the captured output, so
   you don't have to splice `grep`/`tail` into a remote one-liner.
 
+Prefer not to hand-edit the TOML? `cc-handoff logs config <project>` walks you
+through host / command / grep / context interactively and writes the block for
+you (it pre-fills the current values, so the same command edits an existing
+source). The project just has to exist in a workspace first; an auto-discovered
+one gets pinned to an explicit entry on first config.
+
 ## Pull and triage
 
 ```sh

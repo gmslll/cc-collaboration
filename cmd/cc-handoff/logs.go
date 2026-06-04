@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +33,10 @@ const defaultLogTailLines = 200
 var defaultErrorRe = regexp.MustCompile(config.DefaultLogErrorPattern)
 
 func runLogs(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "config" {
+		return runLogsConfig(ctx, args[1:])
+	}
+
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	wsName := fs.String("workspace", "", "narrow the project lookup to this workspace")
 	grep := fs.String("grep", "", "error-matching regexp (overrides the log source's grep; default: "+config.DefaultLogErrorPattern+")")
@@ -109,6 +115,95 @@ func runLogs(ctx context.Context, args []string) error {
 		return err
 	}
 	return launchAgentWithPrompt(ctx, ag, p.Path, file, ws.PreLaunch, *window)
+}
+
+// runLogsConfig interactively configures (or edits) a project's log source —
+// the guided alternative to hand-editing [workspace.project.log] in the user
+// config. Pre-fills the current values so it doubles as an editor.
+func runLogsConfig(_ context.Context, args []string) error {
+	fs := flag.NewFlagSet("logs config", flag.ContinueOnError)
+	wsName := fs.String("workspace", "", "narrow the project lookup to this workspace")
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: cc-handoff logs config <project> [--workspace NAME]")
+	}
+
+	u, err := loadUserOrFail()
+	if err != nil {
+		return err
+	}
+	ws, p, err := resolveProject(u, pos[0], *wsName)
+	if err != nil {
+		return err
+	}
+	cur := config.LogSource{}
+	if p.Log != nil {
+		cur = *p.Log
+	}
+
+	rd := bufio.NewReader(os.Stdin)
+	prompt := func(label, current string) string {
+		if current != "" {
+			fmt.Printf("%s [%s]: ", label, current)
+		} else {
+			fmt.Printf("%s: ", label)
+		}
+		line, _ := rd.ReadString('\n')
+		if line = strings.TrimSpace(line); line == "" {
+			return current
+		}
+		return line
+	}
+
+	host := prompt("Log host (ssh target, blank = run command locally)", cur.Host)
+	command := prompt("Log command (its stdout is the raw log stream)", cur.Command)
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("log command is required")
+	}
+	grep := prompt("Error grep regexp (blank = default "+config.DefaultLogErrorPattern+")", cur.Grep)
+	ctxCur := ""
+	if cur.Context > 0 {
+		ctxCur = strconv.Itoa(cur.Context)
+	}
+	contextN := 0
+	if s := prompt("Context lines around the match (blank = default 20)", ctxCur); s != "" {
+		if contextN, err = strconv.Atoi(s); err != nil {
+			return fmt.Errorf("context must be a number: %w", err)
+		}
+	}
+
+	src := config.LogSource{Host: host, Command: command, Grep: grep, Context: contextN}
+	if err := attachLogSource(u, ws.Name, p.Name, p.Path, src); err != nil {
+		return err
+	}
+	path, err := config.SaveUser(u)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("configured log source for %q in %s\n", p.Name, path)
+	fmt.Printf("fetch it with: cc-handoff logs %s\n", p.Name)
+	return nil
+}
+
+// attachLogSource sets src as the project's log source in u, materializing an
+// explicit [[workspace.project]] entry when the project was only auto-discovered
+// (matched by name within the workspace). Mutates u in place; caller SaveUser.
+func attachLogSource(u *config.User, wsName, projName, projPath string, src config.LogSource) error {
+	ws := findWorkspace(u, wsName)
+	if ws == nil {
+		return fmt.Errorf("workspace %q not found", wsName)
+	}
+	for i := range ws.Projects {
+		if ws.Projects[i].Name == projName {
+			ws.Projects[i].Log = &src
+			return nil
+		}
+	}
+	ws.Projects = append(ws.Projects, config.Project{Name: projName, Path: projPath, Log: &src})
+	return nil
 }
 
 // fetchLogSource runs the log source's command and returns its stdout. With a
