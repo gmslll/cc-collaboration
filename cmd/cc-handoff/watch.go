@@ -421,13 +421,14 @@ func (h *watchHandler) resolveAlertTriage(alert handoffschema.LogAlert, from str
 		fmt.Fprintf(os.Stderr, "warning: resolve project %q: %v\n", alert.Project, err)
 		return config.Workspace{}, config.Project{}, ""
 	}
-	source := "push alert from " + from
-	if alert.Level != "" {
-		source += " (" + alert.Level + ")"
+	_, matchLine := extractLatestError(alert.Message, defaultErrorRe, 0, 0)
+	f, dup := logTriageTarget(p.Path, cmp.Or(matchLine, alert.Message))
+	if dup {
+		fmt.Printf("  duplicate error, already backed up — %s\n", f)
+		return ws, p, f
 	}
-	body := logTriageMarkdown(p.Name, source, time.Now().Format(time.RFC3339), "", alert.Message)
-	f, err := writeLogTriageFile(p.Path, body)
-	if err != nil {
+	body := logTriageMarkdown(p.Name, "push alert from "+from, time.Now().Format(time.RFC3339), "", alert.Level, alert.Message)
+	if err := writeTriageFile(f, body); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: write log triage: %v\n", err)
 		return ws, p, ""
 	}

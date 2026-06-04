@@ -54,14 +54,45 @@ cc-handoff logs kunlun-backend --grep "(?i)timeout" --context 40
 
 Flags: `--workspace NAME` (disambiguate a project shared across workspaces),
 `--grep RE` and `--context N` (override the source's settings), `--lines N`
-(trailing lines kept when nothing matches the pattern), `--open` / `--window`.
+(trailing lines kept when nothing matches the pattern), `--no-grade` (skip
+severity grading for this run), `--open` / `--window`.
 
-The excerpt is written to `<project>/.cc-handoff/logs/<timestamp>.md` as a
+The excerpt is written to `<project>/.cc-handoff/logs/<fingerprint>.md` as a
 ready-to-use triage prompt (provenance header + fenced log + a "find the root
 cause and fix it" task). `--open` feeds that file to the agent one-shot
 (`claude -p "$(cat …)"`) in the project dir, reusing the same launch path as
 `workspace open`. Without `--open` you just get the file path and a hint — copy
 it, open it, or run `--open` when ready.
+
+## Grade severity with a local AI
+
+Configure a `grade_command` at the top of your user config and `cc-handoff logs`
+asks a local model to rate each error `critical` / `high` / `medium` / `low`,
+recording it in the triage file header (`- 严重等级: high`):
+
+```toml
+# ~/.config/cc-handoff/config.toml
+grade_command = "ollama run llama3.2"   # local; or a cloud wrapper / `claude -p` reading stdin
+```
+
+cc-handoff pipes a short "rate this error's severity, reply with one word"
+prompt plus the excerpt to the command's stdin and reads the level back from its
+stdout (chatty replies are fine — the first level word wins). It's best-effort:
+a missing or failing grader just omits the level, never blocks the triage. Pass
+`--no-grade` to skip it for one run; leave `grade_command` unset to disable it.
+
+The same grader powers `cc-handoff alert --grade`, which rates the message and
+sends it as the alert's `--level` (see below).
+
+## Dedup: one backup per unique error
+
+Triage files are named by a **fingerprint** of the matched error line, not a
+timestamp, so the same failure recurring with a different timestamp / id / hex
+address / line number maps to one file — it's backed up only once. A repeat run
+reports `duplicate error, already backed up — <path>` and leaves the existing
+file untouched (you can still `--open` it). The fingerprint normalizes the
+volatile parts (digits, `0x…` addresses, UUIDs) before hashing. The same dedup
+applies to pushed alerts, so a flapping server error doesn't pile up files.
 
 ## Push: forward server alerts to your watch
 
@@ -74,6 +105,9 @@ and — when you've opted in — launches the agent to start triaging.
 
 ```sh
 cc-handoff alert --to you@backend --project kunlun-backend --level error \
+  --message "$(tail -n 200 /var/log/app/error.log)"
+# --grade rates the severity with the local grader and sends it as --level:
+cc-handoff alert --to you@backend --project kunlun-backend --grade \
   --message "$(tail -n 200 /var/log/app/error.log)"
 # or read the body from a file / stdin:
 cc-handoff alert --to you@backend --project kunlun-backend --file /var/log/app/error.log

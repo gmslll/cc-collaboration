@@ -116,9 +116,9 @@ Both sides:
                                                         manage + launch one-click targets (open: in-place exec, or --window)
   cc-handoff worktree     add <project> <branch> [--start REF] [--open] | list <project> | open <project> <branch> | remove <project> <branch> [--prune-merged --base main]
                                                         manage + launch branch worktrees (remove --prune-merged sweeps merged ones)
-  cc-handoff logs         <project> [--workspace NAME] [--grep RE] [--context N] [--open [--window]]
-                                                        pull the project's configured log source, extract the latest error, optionally launch the agent to triage
-  cc-handoff alert        --to <identity> --project <name> [--message TEXT | --file PATH] [--level LVL]
+  cc-handoff logs         <project> [--workspace NAME] [--grep RE] [--context N] [--no-grade] [--open [--window]]
+                                                        pull the project's log source, extract + grade the latest error (deduped), optionally launch the agent to triage
+  cc-handoff alert        --to <identity> --project <name> [--message TEXT | --file PATH] [--level LVL] [--grade]
                                                         forward a server log alert to a teammate's watch (server-side hook entry point)
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally

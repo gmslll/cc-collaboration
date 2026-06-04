@@ -23,6 +23,7 @@ func runAlert(ctx context.Context, args []string) error {
 	level := fs.String("level", "", "severity tag for the notification subtitle (e.g. error, fatal)")
 	message := fs.String("message", "", "log body / excerpt to triage")
 	file := fs.String("file", "", "read the log body from this file instead of --message ('-' for stdin)")
+	grade := fs.Bool("grade", false, "grade the message's severity with the configured local-AI grader and send it as --level")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -58,11 +59,19 @@ func runAlert(ctx context.Context, args []string) error {
 		return fmt.Errorf("relay_url/token missing in user config; run `cc-handoff init`")
 	}
 
+	lvl := *level
+	if *grade && lvl == "" {
+		if g := gradeSeverity(ctx, u.GradeCommand, msg); g != "" {
+			lvl = g
+			fmt.Printf("graded severity: %s\n", lvl)
+		}
+	}
+
 	client := transport.New(u.RelayURL, u.Token)
 	if err := client.Alert(ctx, &handoffschema.LogAlert{
 		Recipient: *to,
 		Project:   *project,
-		Level:     *level,
+		Level:     lvl,
 		Message:   msg,
 	}); err != nil {
 		return err

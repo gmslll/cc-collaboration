@@ -29,6 +29,12 @@ type User struct {
 	// carve a new workspace dir when no explicit path is given. Empty falls
 	// back to ~/cc-handoff-workspaces. Supports a leading ~ for the home dir.
 	WorkspaceRoot string `toml:"workspace_root,omitempty"`
+	// GradeCommand is an optional local-AI severity grader used by `cc-handoff
+	// logs` (and `cc-handoff alert --grade`). cc-handoff pipes a "rate this
+	// error's severity" prompt to the command's stdin and reads back one of
+	// critical/high/medium/low from its stdout. Wire a local model
+	// (e.g. "ollama run llama3.2") or a cloud wrapper. Empty disables grading.
+	GradeCommand string `toml:"grade_command,omitempty"`
 	// Workspaces is the user's workspace launcher list. Each workspace is a
 	// root directory holding one or more projects. Cross-project, so it lives
 	// at user level rather than in any single repo's .cc-handoff.toml.

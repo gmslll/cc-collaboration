@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +26,10 @@ import (
 // empty excerpt.
 const defaultLogTailLines = 200
 
+// defaultErrorRe is the compiled built-in error pattern, reused by the push
+// path to find the signature line inside an alert body.
+var defaultErrorRe = regexp.MustCompile(config.DefaultLogErrorPattern)
+
 func runLogs(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	wsName := fs.String("workspace", "", "narrow the project lookup to this workspace")
@@ -31,10 +38,11 @@ func runLogs(ctx context.Context, args []string) error {
 	contextN := fs.Int("context", 0, "lines of context on each side of the latest match (overrides the log source; default: 20)")
 	open := fs.Bool("open", false, "after fetching, launch the agent in the project to analyze (in-place exec; --window for a new terminal)")
 	window := fs.Bool("window", false, "with --open, open a new terminal window instead of replacing the current shell")
-	if err := fs.Parse(args); err != nil {
+	noGrade := fs.Bool("no-grade", false, "skip the configured local-AI severity grader for this run")
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
 		return err
 	}
-	pos := fs.Args()
 	if len(pos) != 1 {
 		return fmt.Errorf("usage: cc-handoff logs <project> [--workspace NAME] [--grep RE] [--context N] [-lines N] [--open [--window]]")
 	}
@@ -69,16 +77,28 @@ func runLogs(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	excerpt := extractLatestError(raw, re, ctxLines, *lines)
+	excerpt, matchLine := extractLatestError(raw, re, ctxLines, *lines)
 	if strings.TrimSpace(excerpt) == "" {
 		return fmt.Errorf("log source returned no output (command: %s)", p.Log.Command)
 	}
 
-	file, err := writeLogTriage(p.Path, p.Name, p.Log, excerpt, pattern)
-	if err != nil {
-		return err
+	// Dedup before grading so a recurring error doesn't burn a (slow) grader call.
+	file, dup := logTriageTarget(p.Path, cmp.Or(matchLine, excerpt))
+	if dup {
+		fmt.Printf("duplicate error, already backed up — %s\n", file)
+	} else {
+		var level string
+		if u.GradeCommand != "" && !*noGrade {
+			if level = gradeSeverity(ctx, u.GradeCommand, excerpt); level != "" {
+				fmt.Printf("severity: %s\n", level)
+			}
+		}
+		body := logTriageMarkdown(p.Name, logSourceLabel(p.Log), time.Now().Format(time.RFC3339), pattern, level, excerpt)
+		if err := writeTriageFile(file, body); err != nil {
+			return err
+		}
+		fmt.Printf("wrote %s\n", file)
 	}
-	fmt.Printf("wrote %s\n", file)
 
 	if !*open {
 		fmt.Printf("analyze it with: cc-handoff logs %s --open\n", p.Name)
@@ -98,17 +118,32 @@ func fetchLogSource(ctx context.Context, src *config.LogSource) (string, error) 
 	if strings.TrimSpace(src.Host) != "" {
 		return runCapture(ctx, "ssh", src.Host, src.Command)
 	}
+	name, args := localShell(src.Command)
+	return runCapture(ctx, name, args...)
+}
+
+// localShell returns the platform invocation that runs command as a single
+// string: `sh -c` on Unix, `cmd /c` on Windows. Shared by the log fetcher and
+// the severity grader.
+func localShell(command string) (name string, args []string) {
 	if runtime.GOOS == "windows" {
-		return runCapture(ctx, "cmd", "/c", src.Command)
+		return "cmd", []string{"/c", command}
 	}
-	return runCapture(ctx, "sh", "-c", src.Command)
+	return "sh", []string{"-c", command}
 }
 
 // runCapture runs a command and returns its stdout, folding stderr into the
 // error on failure. Mirrors internal/sources/git's run() so the failure
 // message is actionable (which command, what it printed).
 func runCapture(ctx context.Context, name string, args ...string) (string, error) {
+	return runCaptureIn(ctx, nil, name, args...)
+}
+
+// runCaptureIn is runCapture with an optional stdin reader (nil = no stdin) —
+// used by the grader to pipe the prompt in.
+func runCaptureIn(ctx context.Context, stdin io.Reader, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -118,11 +153,12 @@ func runCapture(ctx context.Context, name string, args ...string) (string, error
 	return stdout.String(), nil
 }
 
-// extractLatestError returns the most relevant slice of raw log output: the
-// LAST line matching re plus contextN lines on each side. When nothing matches,
-// it falls back to the trailing tailN lines so the caller still sees recent
-// output. Pure — the unit tests pin its boundary behavior.
-func extractLatestError(raw string, re *regexp.Regexp, contextN, tailN int) string {
+// extractLatestError returns the most relevant slice of raw log output — the
+// LAST line matching re plus contextN lines on each side — along with that
+// matched line itself (used as the stable dedup signature). When nothing
+// matches, it falls back to the trailing tailN lines and an empty matchLine.
+// Pure — the unit tests pin its boundary behavior.
+func extractLatestError(raw string, re *regexp.Regexp, contextN, tailN int) (excerpt, matchLine string) {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
 	last := -1
 	for i, ln := range lines {
@@ -134,7 +170,7 @@ func extractLatestError(raw string, re *regexp.Regexp, contextN, tailN int) stri
 		if tailN > 0 && len(lines) > tailN {
 			lines = lines[len(lines)-tailN:]
 		}
-		return strings.Join(lines, "\n")
+		return strings.Join(lines, "\n"), ""
 	}
 	start := last - contextN
 	if start < 0 {
@@ -144,27 +180,77 @@ func extractLatestError(raw string, re *regexp.Regexp, contextN, tailN int) stri
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(lines[start:end], "\n")
+	return strings.Join(lines[start:end], "\n"), lines[last]
 }
 
-// writeLogTriage writes the fetched excerpt as a triage prompt under the
-// project's .cc-handoff/logs dir and returns the file path. The file doubles as
-// the prompt fed to the agent on --open.
-func writeLogTriage(projectDir, project string, src *config.LogSource, excerpt, pattern string) (string, error) {
-	source := "local: " + src.Command
-	if strings.TrimSpace(src.Host) != "" {
-		source = "ssh " + src.Host + ": " + src.Command
+// errorFingerprint reduces an error line to a stable signature so the same
+// failure recurring with a different timestamp / id / address / line number
+// dedups to one backup. It normalizes the volatile parts, then hashes — see
+// fingerprintNormalize for what's collapsed.
+func errorFingerprint(line string) string {
+	sum := sha256.Sum256([]byte(fingerprintNormalize(line)))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+var (
+	fpHex  = regexp.MustCompile(`0x[0-9a-fA-F]+`)
+	fpUUID = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
+	fpNum  = regexp.MustCompile(`\d+`)
+	fpWS   = regexp.MustCompile(`\s+`)
+)
+
+// fingerprintNormalize strips the parts of an error line that vary between
+// otherwise-identical occurrences: hex addresses, UUIDs, and digit runs
+// (timestamps, ids, line numbers, ports), then collapses whitespace. Order
+// matters — UUIDs and hex are masked before the digit pass so they aren't
+// partially eaten.
+func fingerprintNormalize(line string) string {
+	line = fpUUID.ReplaceAllString(line, "UUID")
+	line = fpHex.ReplaceAllString(line, "0xHEX")
+	line = fpNum.ReplaceAllString(line, "0")
+	return strings.TrimSpace(fpWS.ReplaceAllString(line, " "))
+}
+
+// logTriageTarget returns the triage file path for an error signature and
+// whether that file already exists — i.e. the same error has already been
+// backed up. Path is <projectDir>/.cc-handoff/logs/<fingerprint>.md. Callers
+// check exists to dedup (and to skip the slow grader on repeats) before writing.
+func logTriageTarget(projectDir, signature string) (path string, exists bool) {
+	path = filepath.Join(projectDir, ".cc-handoff", "logs", errorFingerprint(signature)+".md")
+	_, err := os.Stat(path)
+	return path, err == nil
+}
+
+// writeTriageFile writes body to path (a logTriageTarget result), creating the
+// logs dir. Dedup is the caller's call via logTriageTarget; this always writes.
+func writeTriageFile(path, body string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
-	body := logTriageMarkdown(project, source, time.Now().Format(time.RFC3339), pattern, excerpt)
-	return writeLogTriageFile(projectDir, body)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
-// logTriageMarkdown renders the triage prompt: provenance header, the fenced
-// log excerpt, and the troubleshooting task. Shared shape so the manual `logs`
-// path and the pushed log.alert path produce comparable prompts.
-func logTriageMarkdown(project, source, fetchedAt, pattern, excerpt string) string {
+// logSourceLabel renders a LogSource's provenance line for the triage header.
+func logSourceLabel(src *config.LogSource) string {
+	if strings.TrimSpace(src.Host) != "" {
+		return "ssh " + src.Host + ": " + src.Command
+	}
+	return "local: " + src.Command
+}
+
+// logTriageMarkdown renders the triage prompt: provenance header (with the
+// graded severity when present), the fenced log excerpt, and the
+// troubleshooting task. Shared shape so the manual `logs` path and the pushed
+// log.alert path produce comparable prompts.
+func logTriageMarkdown(project, source, fetchedAt, pattern, level, excerpt string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# 日志排查 — %s\n\n", project)
+	if level != "" {
+		fmt.Fprintf(&b, "- 严重等级: %s\n", level)
+	}
 	fmt.Fprintf(&b, "- 来源: %s\n", source)
 	fmt.Fprintf(&b, "- 抓取时间: %s\n", fetchedAt)
 	if pattern != "" {
@@ -175,18 +261,4 @@ func logTriageMarkdown(project, source, fetchedAt, pattern, excerpt string) stri
 	b.WriteString("\n```\n\n## 任务\n\n")
 	b.WriteString("请分析上面的日志,定位最新错误的根因;必要时读取相关源码,给出修复方案或直接修复。\n")
 	return b.String()
-}
-
-// writeLogTriageFile writes body to <projectDir>/.cc-handoff/logs/<ts>.md and
-// returns the path. Shared by the manual and pushed log paths.
-func writeLogTriageFile(projectDir, body string) (string, error) {
-	dir := filepath.Join(projectDir, ".cc-handoff", "logs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create %s: %w", dir, err)
-	}
-	file := filepath.Join(dir, time.Now().Format("20060102-150405")+".md")
-	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
-		return "", fmt.Errorf("write %s: %w", file, err)
-	}
-	return file, nil
 }
