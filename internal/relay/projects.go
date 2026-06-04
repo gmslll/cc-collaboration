@@ -1,0 +1,219 @@
+package relay
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/cc-collaboration/internal/handoff"
+	"github.com/cc-collaboration/internal/relay/auth"
+	"github.com/cc-collaboration/internal/relay/store"
+)
+
+// requireAdmin gates a handler to effective admins (seed or DB-flagged).
+func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if s.isAdmin(r.Context(), auth.Identity(r.Context())) {
+		return true
+	}
+	http.Error(w, "admin only", http.StatusForbidden)
+	return false
+}
+
+// requireProjectRole gates a handler to a global admin, or a project member
+// whose role satisfies ok(role). Writes a 403 and returns false otherwise.
+func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, projectID string, ok func(role string) bool) bool {
+	identity := auth.Identity(r.Context())
+	if s.isAdmin(r.Context(), identity) {
+		return true
+	}
+	if role, found, err := s.Store.MemberRole(r.Context(), projectID, identity); err == nil && found && ok(role) {
+		return true
+	}
+	http.Error(w, "forbidden", http.StatusForbidden)
+	return false
+}
+
+// requireProjectOwner gates a handler to the project's owner or a global admin.
+func (s *Server) requireProjectOwner(w http.ResponseWriter, r *http.Request, projectID string) bool {
+	return s.requireProjectRole(w, r, projectID, func(role string) bool { return role == store.RoleOwner })
+}
+
+// requireProjectMember gates a handler to any member of the project (or admin).
+func (s *Server) requireProjectMember(w http.ResponseWriter, r *http.Request, projectID string) bool {
+	return s.requireProjectRole(w, r, projectID, func(string) bool { return true })
+}
+
+// createProject is self-service: any authenticated user creates a project and
+// becomes its owner.
+func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC()
+	id := handoff.NewID(now)
+	if err := s.Store.CreateProject(r.Context(), id, req.Name, identity, now); err != nil {
+		http.Error(w, "create project: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, store.Project{ID: id, Name: req.Name, OwnerIdentity: identity, CreatedAt: now})
+}
+
+// listProjects returns all projects for an admin, else the caller's projects.
+func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	var (
+		ps  []store.Project
+		err error
+	)
+	if s.isAdmin(r.Context(), identity) {
+		ps, err = s.Store.ListProjects(r.Context())
+	} else {
+		ps, err = s.Store.ListProjectsForIdentity(r.Context(), identity)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": ps})
+}
+
+// getProject returns a project with its repos + members (any member or admin).
+func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireProjectMember(w, r, id) {
+		return
+	}
+	p, err := s.Store.GetProject(r.Context(), id)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	repos, _ := s.Store.ListProjectRepos(r.Context(), id)
+	members, _ := s.Store.ListMembers(r.Context(), id)
+	writeJSON(w, http.StatusOK, map[string]any{"project": p, "repos": repos, "members": members})
+}
+
+func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireProjectOwner(w, r, id) {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.RenameProject(r.Context(), id, req.Name); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireProjectOwner(w, r, id) {
+		return
+	}
+	if err := s.Store.DeleteProject(r.Context(), id); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) mapRepo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireProjectOwner(w, r, id) {
+		return
+	}
+	var req struct {
+		RepoName string `json:"repo_name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || strings.TrimSpace(req.RepoName) == "" {
+		http.Error(w, "repo_name required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.MapRepo(r.Context(), req.RepoName, id); err != nil {
+		http.Error(w, "map repo: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// unmapRepo takes the repo name as a query param (repo names can contain "/",
+// which would break a path segment).
+func (s *Server) unmapRepo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireProjectOwner(w, r, id) {
+		return
+	}
+	repo := r.URL.Query().Get("repo_name")
+	if repo == "" {
+		http.Error(w, "repo_name query param required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.UnmapRepo(r.Context(), repo); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireProjectOwner(w, r, id) {
+		return
+	}
+	var req struct {
+		Identity string `json:"identity"`
+		Role     string `json:"role"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Identity) == "" || !store.ValidRole(req.Role) {
+		http.Error(w, "identity and role (owner|member|viewer) required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.AddMember(r.Context(), id, req.Identity, req.Role); err != nil {
+		http.Error(w, "add member: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireProjectOwner(w, r, id) {
+		return
+	}
+	if err := s.Store.RemoveMember(r.Context(), id, r.PathValue("identity")); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// writeStoreErr maps store.ErrNotFound to 404, anything else to 500.
+func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+}

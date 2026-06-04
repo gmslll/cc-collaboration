@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,11 @@ type Server struct {
 	Store  *store.Store
 	Tokens *auth.Tokens
 	Hub    *sse.Hub
+	// SeedAdmins are operator-configured admin identities (from -admins /
+	// RELAY_ADMINS). They are always admin even without a users row, so an
+	// operator can never be locked out. Effective admin = SeedAdmins ∪
+	// users.is_admin.
+	SeedAdmins []string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -66,8 +72,38 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/events", s.events)
 	api.HandleFunc("GET /v1/users/online", s.listOnlineUsers)
 	api.HandleFunc("POST /v1/alerts", s.postAlert)
+	// Account endpoints (authenticated): logout / whoami / change own password.
+	api.HandleFunc("POST /v1/logout", s.logout)
+	api.HandleFunc("GET /v1/me", s.me)
+	api.HandleFunc("POST /v1/password", s.changePassword)
+	// Account management (admin only).
+	api.HandleFunc("GET /v1/users", s.listUsers)
+	api.HandleFunc("POST /v1/users", s.createUser)
+	api.HandleFunc("POST /v1/users/{id}/admin", s.setUserAdmin)
+	api.HandleFunc("POST /v1/users/{id}/disable", s.setUserDisabled)
+	api.HandleFunc("POST /v1/users/{id}/reset-password", s.resetUserPassword)
+	// Projects: self-service create + owner/admin management.
+	api.HandleFunc("GET /v1/projects", s.listProjects)
+	api.HandleFunc("POST /v1/projects", s.createProject)
+	api.HandleFunc("GET /v1/projects/{id}", s.getProject)
+	api.HandleFunc("PATCH /v1/projects/{id}", s.renameProject)
+	api.HandleFunc("DELETE /v1/projects/{id}", s.deleteProject)
+	api.HandleFunc("POST /v1/projects/{id}/repos", s.mapRepo)
+	api.HandleFunc("DELETE /v1/projects/{id}/repos", s.unmapRepo)
+	api.HandleFunc("POST /v1/projects/{id}/members", s.addMember)
+	api.HandleFunc("DELETE /v1/projects/{id}/members/{identity}", s.removeMember)
+	// Self-service machine tokens (any authenticated user, own tokens only).
+	api.HandleFunc("GET /v1/tokens", s.listTokens)
+	api.HandleFunc("POST /v1/tokens", s.createToken)
+	api.HandleFunc("DELETE /v1/tokens/{id}", s.deleteToken)
 
-	mux.Handle("/v1/", s.Tokens.Middleware(api))
+	// Login is the one /v1 route that must NOT require a bearer (you don't have
+	// one yet); registering it on the outer mux makes the more-specific pattern
+	// win over the "/v1/" catch-all, so it bypasses the auth middleware.
+	mux.HandleFunc("POST /v1/login", s.login)
+
+	resolver := &bearerResolver{store: s.Store, seed: s.Tokens}
+	mux.Handle("/v1/", auth.Middleware(resolver)(api))
 	return logging(mux)
 }
 
@@ -192,6 +228,52 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Project-scoped / admin-wide listing surfaces handoffs the caller isn't a
+	// party to (unlike ?as=, which is anchored to the caller). scope=project
+	// lists every handoff in the caller's projects, or one named project they
+	// belong to; scope=all is admin-only and lists everything.
+	switch r.URL.Query().Get("scope") {
+	case "all":
+		if !s.isAdmin(r.Context(), identity) {
+			http.Error(w, "admin only", http.StatusForbidden)
+			return
+		}
+		items, err := s.Store.ListAll(r.Context(), limit)
+		if err != nil {
+			http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		return
+	case "project":
+		var (
+			repos []string
+			err   error
+		)
+		if pid := r.URL.Query().Get("project"); pid != "" {
+			if !s.isAdmin(r.Context(), identity) {
+				if _, ok, _ := s.Store.MemberRole(r.Context(), pid, identity); !ok {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+			}
+			repos, err = s.Store.ListProjectRepos(r.Context(), pid)
+		} else {
+			repos, err = s.Store.VisibleRepoNames(r.Context(), identity)
+		}
+		if err != nil {
+			http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items, err := s.Store.ListByRepos(r.Context(), repos, limit)
+		if err != nil {
+			http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		return
+	}
+
 	// ?as=sender lists handoffs the caller sent (any state, newest-first);
 	// ?as=recipient (default, also matches old ?recipient= queries) lists
 	// caller's pending inbox; ?as=history lists caller's already-picked
@@ -248,7 +330,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !s.callerCanView(r.Context(), pkg, identity) {
+	if !s.canViewPackage(r.Context(), pkg, identity) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -306,6 +388,47 @@ func (s *Server) packageParticipants(ctx context.Context, pkg *handoffschema.Pac
 func (s *Server) callerCanView(ctx context.Context, pkg *handoffschema.Package, identity string) bool {
 	for _, p := range s.packageParticipants(ctx, pkg) {
 		if p == identity {
+			return true
+		}
+	}
+	return false
+}
+
+// canViewPackage is the single read-authorization gate, layering project/admin
+// visibility on top of the legacy participant rule (all additive, so 2-party
+// flows with no projects behave exactly as before):
+//   - a global admin sees everything;
+//   - a participant (sender / recipient / bug-group) sees it, as always;
+//   - any member (owner/member/viewer) of the project owning the handoff's repo
+//     sees every handoff in that project.
+func (s *Server) canViewPackage(ctx context.Context, pkg *handoffschema.Package, identity string) bool {
+	if s.isAdmin(ctx, identity) {
+		return true
+	}
+	if s.callerCanView(ctx, pkg, identity) {
+		return true
+	}
+	if repo := pkg.Repo.Name; repo != "" {
+		if _, ok, err := s.Store.RepoVisibleTo(ctx, repo, identity); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
+// canComment gates comment-posting given the already-computed participant set
+// (so we don't re-query the bug group that postComment already needs for SSE
+// fan-out): admins and participants always can; a project member can unless
+// they're a read-only viewer.
+func (s *Server) canComment(ctx context.Context, pkg *handoffschema.Package, identity string, participants []string) bool {
+	if s.isAdmin(ctx, identity) {
+		return true
+	}
+	if slices.Contains(participants, identity) {
+		return true
+	}
+	if repo := pkg.Repo.Name; repo != "" {
+		if role, ok, err := s.Store.RepoVisibleTo(ctx, repo, identity); err == nil && ok && role != store.RoleViewer {
 			return true
 		}
 	}
@@ -392,7 +515,7 @@ func (s *Server) requireParticipant(w http.ResponseWriter, r *http.Request) (*ha
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil, ""
 	}
-	if !s.callerCanView(r.Context(), pkg, identity) {
+	if !s.canViewPackage(r.Context(), pkg, identity) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return nil, ""
 	}
@@ -411,17 +534,10 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// One BugGroupParticipants query covers both auth and SSE fan-out — the
-	// shared helper means we don't pay twice on the bug-group hot path.
+	// Compute participants once (also needed for SSE fan-out below) and gate on
+	// them — open to participants, admins, and project owner/member (not viewer).
 	participants := s.packageParticipants(r.Context(), pkg)
-	caller := false
-	for _, p := range participants {
-		if p == identity {
-			caller = true
-			break
-		}
-	}
-	if !caller {
+	if !s.canComment(r.Context(), pkg, identity, participants) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -599,27 +715,19 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	allowed := st.Sender == identity || st.Recipient == identity
-	if !allowed {
-		for _, rec := range st.Recipients {
-			if rec == identity {
-				allowed = true
-				break
-			}
-		}
+	// Authorize via the shared gate (one extra PK lookup for the repo +
+	// participants). Replaces the previously-inlined participant check so admin
+	// / project visibility applies here too.
+	pkg, _, err := s.Store.Get(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
 	}
-	if !allowed && st.BugGroupID != "" {
-		participants, err := s.Store.BugGroupParticipants(r.Context(), st.BugGroupID)
-		if err == nil {
-			for _, p := range participants {
-				if p == identity {
-					allowed = true
-					break
-				}
-			}
-		}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	if !allowed {
+	if !s.canViewPackage(r.Context(), pkg, identity) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

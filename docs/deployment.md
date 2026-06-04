@@ -252,6 +252,42 @@ curl -N -H "Authorization: Bearer $TOK_BACK" \
 
 如果第 4 步要等很久才出 `: connected`，反向代理的 buffering 没关 — 回 1.2 检查。
 
+### 1.5 多用户 / 账号 / 角色（共享 relay,可选)
+
+如果这台 relay 是**多团队 / 多人共享**,relay 支持**账号 + 密码登录 + 角色 + 项目**(单租户的纯 token 用法不受影响,可继续用 1.3 的 `tokens.json`)。三种身份解析在中间件里统一:**UI 登录会话** + **DB 机器 token**(UI 自助生成)+ **`tokens.json`**(运维管理,向后兼容),都映射到同一个 identity。
+
+> ⚠️ **必须走 HTTPS**:登录会传密码、会话 token。务必在 1.2 的 TLS 反代之后使用,别用 1.2.alt 的明文直连。
+
+**引导第一个管理员**(鸡生蛋,在 VPS 上跑):
+
+```bash
+# 建一个 admin 账号并设/打印初始密码(留空 --password 则自动生成并打印一次)
+sudo -u cc-handoff /usr/local/bin/cc-relay useradd \
+  -db /var/lib/cc-handoff/relay.db -identity you@backend -admin -password '改我'
+# 输出: created account "you@backend" (admin=true)
+```
+
+**种子管理员**(可选,永不被锁死):给 relay 的 systemd 单元 `ExecStart` 加 `-admins you@backend`(逗号分隔多个),或设环境变量 `RELAY_ADMINS=you@backend`。`isAdmin = 种子 ∪ DB 里 is_admin`。
+
+**之后全在 Web UI 里**(`https://handoff.your-domain.com/ui/`):
+
+- 用账密登录(`you@backend` + 上面的密码);
+- **Admin** 标签:建其他账号(初始密码生成后回显一次)、设/取消 admin、停用、重置密码;
+- **Projects** 标签:任何人可自助建项目(自己成 owner)、绑定 repo、加成员并配角色(`owner`/`member`/`viewer`);成员能看到所属项目的**所有** handoff,admin 看全部,viewer 只读不可评论;
+- **Account** 标签:改密码、**自助生成机器 token**(只回显一次)粘进客户端的 `cc-handoff init`(取代手改 `tokens.json`)、随时吊销。
+
+**角色与可见性**(读授权;ack/撤回/转交仍只限当事人):
+
+| 角色 | 看 handoff | 评论 | 管项目 | 看全部项目 |
+|---|---|---|---|---|
+| admin(全局) | 全部 | ✓ | 全部 | ✓ |
+| owner(项目) | 本项目全部 | ✓ | 本项目 | ✗ |
+| member | 本项目全部 | ✓ | ✗ | ✗ |
+| viewer | 本项目全部 | ✗ | ✗ | ✗ |
+| 参与者(sender/recipient) | 该 handoff | ✓ | ✗ | ✗ |
+
+**迁移 / 兼容**:新表全部 `CREATE TABLE IF NOT EXISTS`,旧 `relay.db` 原地升级;旧 `tokens.json` 的 bearer token 继续认。不用账号体系的话,什么都不配,relay 行为与升级前逐字一致。
+
 ---
 
 ## 第二步：客户端安装（前后端各一次）

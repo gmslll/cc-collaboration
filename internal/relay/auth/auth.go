@@ -2,8 +2,6 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,6 +12,12 @@ import (
 	"strings"
 	"sync"
 )
+
+// Resolver maps a raw bearer credential to an authenticated identity. The relay
+// composes one over login sessions + DB machine tokens + the file registry.
+type Resolver interface {
+	Resolve(ctx context.Context, raw string) (identity string, ok bool)
+}
 
 type identityKey struct{}
 type identityHolderKey struct{}
@@ -65,7 +69,7 @@ func (t *Tokens) LoadFile(path string) error {
 			log.Printf("tokens[%d]: skipping entry with empty token or identity", i)
 			continue
 		}
-		next[hash(e.Token)] = e.Identity
+		next[HashToken(e.Token)] = e.Identity
 	}
 	t.mu.Lock()
 	t.m = next
@@ -75,9 +79,14 @@ func (t *Tokens) LoadFile(path string) error {
 
 func (t *Tokens) lookup(raw string) (string, bool) {
 	t.mu.RLock()
-	id, ok := t.m[hash(raw)]
+	id, ok := t.m[HashToken(raw)]
 	t.mu.RUnlock()
 	return id, ok
+}
+
+// Resolve implements Resolver against the in-memory file registry.
+func (t *Tokens) Resolve(_ context.Context, raw string) (string, bool) {
+	return t.lookup(raw)
 }
 
 func (t *Tokens) Count() int {
@@ -98,32 +107,37 @@ func (t *Tokens) Identities() []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
-// Middleware returns an http middleware that requires Authorization: Bearer <token>
-// and attaches the resolved identity to the request context.
-func (t *Tokens) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hdr := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if !strings.HasPrefix(hdr, prefix) {
-			http.Error(w, "missing bearer token", http.StatusUnauthorized)
-			return
-		}
-		raw := strings.TrimPrefix(hdr, prefix)
-		id, ok := t.lookup(raw)
-		if !ok {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
-		ctx := r.Context()
-		if holder, ok := ctx.Value(identityHolderKey{}).(*string); ok {
-			*holder = id
-		}
-		ctx = context.WithValue(ctx, identityKey{}, id)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+// Middleware returns an http middleware that requires Authorization: Bearer
+// <token>, resolves it to an identity via r, and attaches the identity to the
+// request context (and to any installed WithIdentityHolder).
+func Middleware(r Resolver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			hdr := req.Header.Get("Authorization")
+			const prefix = "Bearer "
+			if !strings.HasPrefix(hdr, prefix) {
+				http.Error(w, "missing bearer token", http.StatusUnauthorized)
+				return
+			}
+			raw := strings.TrimPrefix(hdr, prefix)
+			id, ok := r.Resolve(req.Context(), raw)
+			if !ok {
+				http.Error(w, "invalid token", http.StatusUnauthorized)
+				return
+			}
+			ctx := req.Context()
+			if holder, ok := ctx.Value(identityHolderKey{}).(*string); ok {
+				*holder = id
+			}
+			ctx = context.WithValue(ctx, identityKey{}, id)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	}
 }
 
-func hash(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
+// Middleware (method) keeps the original *Tokens call site working: it resolves
+// against the file registry only. The relay composes a richer Resolver and uses
+// the package-level Middleware directly.
+func (t *Tokens) Middleware(next http.Handler) http.Handler {
+	return Middleware(t)(next)
 }

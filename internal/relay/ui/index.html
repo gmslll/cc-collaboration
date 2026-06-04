@@ -19,19 +19,29 @@
         </button>
       </div>
 
-      <form id="auth-form" class="auth-panel">
-        <label for="token-input">Relay token</label>
-        <div class="token-row">
-          <input id="token-input" type="password" autocomplete="current-password" placeholder="Bearer token">
-          <button type="submit">Connect</button>
-        </div>
+      <form id="login-form" class="auth-panel">
+        <label for="login-identity">Sign in</label>
+        <input id="login-identity" type="text" autocomplete="username" placeholder="identity (e.g. you@backend)">
+        <input id="login-password" type="password" autocomplete="current-password" placeholder="password">
+        <button type="submit">Sign in</button>
         <p id="auth-message" class="muted">Stored locally in this browser.</p>
+        <details class="token-advanced">
+          <summary>Use a machine token instead</summary>
+          <div class="token-row">
+            <input id="token-input" type="password" autocomplete="off" placeholder="Bearer token">
+            <button id="token-connect" type="button" class="secondary">Use token</button>
+          </div>
+        </details>
+        <button id="signout-button" type="button" class="secondary hidden">Sign out</button>
       </form>
 
       <nav class="view-tabs" aria-label="Handoff views">
         <button class="tab-button active" type="button" data-view="recipient">Inbox</button>
         <button class="tab-button" type="button" data-view="sender">Sent</button>
         <button class="tab-button" type="button" data-view="history">History</button>
+        <button id="tab-projects" class="tab-button hidden" type="button" data-view="projects">Projects</button>
+        <button id="tab-account" class="tab-button hidden" type="button" data-view="account">Account</button>
+        <button id="tab-admin" class="tab-button hidden" type="button" data-view="admin">Admin</button>
         <button id="tab-workspaces" class="tab-button hidden" type="button" data-view="workspaces">Workspaces</button>
       </nav>
 
@@ -161,6 +171,56 @@
           </div>
         </div>
         <div id="workspace-list" class="workspace-list"></div>
+      </section>
+
+      <section id="projects-pane" class="aux-pane hidden" aria-labelledby="projects-title">
+        <div class="pane-header">
+          <div>
+            <h2 id="projects-title">Projects</h2>
+            <p class="muted">创建并管理你的项目；选一个项目查看它的所有 handoff。</p>
+          </div>
+        </div>
+        <form id="new-project-form" class="inline-form">
+          <input id="new-project-name" type="text" placeholder="新项目名称">
+          <button type="submit">新建项目</button>
+        </form>
+        <div id="projects-list" class="aux-list"></div>
+      </section>
+
+      <section id="account-pane" class="aux-pane hidden" aria-labelledby="account-title">
+        <div class="pane-header">
+          <div>
+            <h2 id="account-title">Account</h2>
+            <p class="muted">改密码、生成 / 吊销机器 token（给 CLI / watch / MCP 用）。</p>
+          </div>
+        </div>
+        <form id="password-form" class="inline-form">
+          <input id="password-old" type="password" autocomplete="current-password" placeholder="当前密码">
+          <input id="password-new" type="password" autocomplete="new-password" placeholder="新密码（≥8 位）">
+          <button type="submit">改密码</button>
+        </form>
+        <div class="section-title"><h3>机器 token</h3></div>
+        <form id="new-token-form" class="inline-form">
+          <input id="new-token-label" type="text" placeholder="标签（如 laptop）">
+          <button type="submit">生成 token</button>
+        </form>
+        <div id="tokens-list" class="aux-list"></div>
+      </section>
+
+      <section id="admin-pane" class="aux-pane hidden" aria-labelledby="admin-title">
+        <div class="pane-header">
+          <div>
+            <h2 id="admin-title">Admin · Accounts</h2>
+            <p class="muted">创建账号、设管理员 / 停用、重置密码。</p>
+          </div>
+        </div>
+        <form id="new-user-form" class="inline-form">
+          <input id="new-user-identity" type="text" placeholder="identity（如 alex@frontend）">
+          <input id="new-user-password" type="text" placeholder="初始密码（留空自动生成）">
+          <label class="check"><input id="new-user-admin" type="checkbox"> admin</label>
+          <button type="submit">创建账号</button>
+        </form>
+        <div id="users-list" class="aux-list"></div>
       </section>
     </main>
   </div>

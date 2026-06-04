@@ -6,6 +6,17 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-05
+
+### Added
+
+- Multi-tenant relay — the relay grows user **accounts + password login + roles + projects** so one shared instance can serve many teams. The bearer-auth middleware becomes a `Resolver` that accepts, in order, a **UI login session**, a **DB-minted machine token**, or the legacy **`tokens.json`** — all resolving to one identity, so the existing CLI / watch / MCP data plane is unchanged and a relay can run with no tokens file at all. New schema (all `CREATE TABLE IF NOT EXISTS`, idempotent in-place upgrade): `users` (bcrypt password, `is_admin`, `disabled`), `sessions`, `machine_tokens`, `projects`, `project_repos` (a repo belongs to one project), `project_members` (role `owner`/`member`/`viewer`). Adds `golang.org/x/crypto` (pure-Go bcrypt; `CGO_ENABLED=0` preserved).
+- Accounts & sessions — `POST /v1/login` (issues a session token used as a normal Bearer), `/v1/logout`, `GET /v1/me` (identity + admin flag + project roles), `POST /v1/password`. Admins manage accounts via `GET/POST /v1/users` and `POST /v1/users/{id}/admin|disable|reset-password` (generated passwords shown once). First-admin bootstrap is the `cc-relay useradd --identity <id> --admin [--password P]` host subcommand; operator-seeded admins come from `-admins` / `RELAY_ADMINS` (effective admin = seed ∪ `users.is_admin`, so an operator can't be locked out).
+- Projects & self-service — any signed-in user `POST /v1/projects` (becomes `owner`) and manages their own project's repos + members via `PATCH/DELETE /v1/projects/{id}`, `.../repos`, `.../members`; admins manage all. `GET /v1/projects` returns your projects (all for admins).
+- Project-scoped read authorization — a single `canViewPackage` gate (admin ‖ legacy participant ‖ member of the project owning the handoff's repo) now backs `GET /v1/handoffs/{id}`, `/status` (de-duping its previously-inlined check), `/prompt`, `/comments`; project members see every handoff in their projects via `GET /v1/handoffs?scope=project[&project=<id>]` (or `?scope=all` for admins). Comment-posting widens to owner/member (not `viewer`); ack / retract / reassign stay restricted to the actual recipient/sender. All additive — a relay with no projects behaves exactly as before.
+- Self-service machine tokens — `GET/POST/DELETE /v1/tokens` let any user mint (raw value shown once) and revoke their own bearer tokens for CLI / watch / MCP, replacing hand-edited `tokens.json` entries (which still work). Revocation is owner-scoped.
+- Relay Web UI — password login (replacing the paste-a-token form; machine-token paste kept as an advanced option) + sign-out, and role-aware tabs driven by `/v1/me`: **Projects** (create + manage members/repos, browse a project's handoffs), **Account** (change password, mint/revoke machine tokens), **Admin** (account management, admins only). Requires HTTPS (passwords/sessions). See `docs/deployment.md` §1.5.
+
 ## [0.2.0] - 2026-06-03
 
 ### Added
@@ -95,7 +106,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gmslll/cc-collaboration/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gmslll/cc-collaboration/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/gmslll/cc-collaboration/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/gmslll/cc-collaboration/compare/v0.1.0...v0.1.1

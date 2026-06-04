@@ -83,6 +83,52 @@ CREATE TABLE IF NOT EXISTS handoff_recipients (
 );
 CREATE INDEX IF NOT EXISTS idx_handoff_recipients_recipient_state
   ON handoff_recipients(recipient, state);
+
+CREATE TABLE IF NOT EXISTS users (
+  identity      TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL DEFAULT '',
+  display_name  TEXT NOT NULL DEFAULT '',
+  is_admin      INTEGER NOT NULL DEFAULT 0,
+  disabled      INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash  TEXT PRIMARY KEY,
+  identity    TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_identity ON sessions(identity);
+
+CREATE TABLE IF NOT EXISTS machine_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  identity    TEXT NOT NULL,
+  label       TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_machine_tokens_identity ON machine_tokens(identity);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  owner_identity TEXT NOT NULL,
+  created_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_repos (
+  repo_name   TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_project_repos_project ON project_repos(project_id);
+
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  identity    TEXT NOT NULL,
+  role        TEXT NOT NULL,
+  PRIMARY KEY (project_id, identity)
+);
+CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(identity);
 `); err != nil {
 		return err
 	}

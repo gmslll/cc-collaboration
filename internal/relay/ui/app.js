@@ -14,6 +14,9 @@ if (typeof window.ccHandoffPickup === "function") {
 const state = {
   token: localStorage.getItem("cc-handoff-token") || "",
   defaultRepo: localStorage.getItem("cc-handoff-default-repo") || "",
+  me: null, // { identity, is_admin, projects: [{id,name,role}] }
+  projects: [], // loaded in the Projects pane (GET /v1/projects)
+  projectID: "", // selected project for the scope=project handoff view
   view: "recipient",
   items: [],
   selectedID: "",
@@ -36,10 +39,34 @@ function parseWorkspaces(raw) {
 }
 
 const els = {
-  authForm: document.querySelector("#auth-form"),
+  loginForm: document.querySelector("#login-form"),
+  loginIdentity: document.querySelector("#login-identity"),
+  loginPassword: document.querySelector("#login-password"),
+  tokenConnect: document.querySelector("#token-connect"),
+  signoutButton: document.querySelector("#signout-button"),
   tokenInput: document.querySelector("#token-input"),
   authMessage: document.querySelector("#auth-message"),
   sessionLabel: document.querySelector("#session-label"),
+  tabProjects: document.querySelector("#tab-projects"),
+  tabAccount: document.querySelector("#tab-account"),
+  tabAdmin: document.querySelector("#tab-admin"),
+  projectsPane: document.querySelector("#projects-pane"),
+  projectsList: document.querySelector("#projects-list"),
+  newProjectForm: document.querySelector("#new-project-form"),
+  newProjectName: document.querySelector("#new-project-name"),
+  accountPane: document.querySelector("#account-pane"),
+  passwordForm: document.querySelector("#password-form"),
+  passwordOld: document.querySelector("#password-old"),
+  passwordNew: document.querySelector("#password-new"),
+  newTokenForm: document.querySelector("#new-token-form"),
+  newTokenLabel: document.querySelector("#new-token-label"),
+  tokensList: document.querySelector("#tokens-list"),
+  adminPane: document.querySelector("#admin-pane"),
+  newUserForm: document.querySelector("#new-user-form"),
+  newUserIdentity: document.querySelector("#new-user-identity"),
+  newUserPassword: document.querySelector("#new-user-password"),
+  newUserAdmin: document.querySelector("#new-user-admin"),
+  usersList: document.querySelector("#users-list"),
   refreshButton: document.querySelector("#refresh-button"),
   tabs: document.querySelectorAll(".tab-button"),
   searchInput: document.querySelector("#search-input"),
@@ -91,13 +118,12 @@ const els = {
   workspaceList: document.querySelector("#workspace-list"),
 };
 
-els.tokenInput.value = state.token;
 setConnectedLabel();
 setupWorkspacesTab();
 wireEvents();
 renderList();
 if (state.token) {
-  refreshAll();
+  onConnected();
 }
 
 // The Workspaces tab only makes sense in desktop mode (the only place the list
@@ -108,39 +134,24 @@ function setupWorkspacesTab() {
 }
 
 function wireEvents() {
-  els.authForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    state.token = els.tokenInput.value.trim();
-    if (state.token) {
-      localStorage.setItem("cc-handoff-token", state.token);
-    } else {
-      localStorage.removeItem("cc-handoff-token");
-    }
-    setConnectedLabel();
-    refreshAll();
-  });
+  els.loginForm.addEventListener("submit", onLogin);
+  els.tokenConnect.addEventListener("click", onUseToken);
+  els.signoutButton.addEventListener("click", onSignout);
+  els.newProjectForm.addEventListener("submit", onCreateProject);
+  els.passwordForm.addEventListener("submit", onChangePassword);
+  els.newTokenForm.addEventListener("submit", onCreateToken);
+  els.newUserForm.addEventListener("submit", onCreateUser);
+  els.projectsList.addEventListener("click", onProjectsListClick);
+  els.projectsList.addEventListener("submit", onProjectsListSubmit);
+  els.tokensList.addEventListener("click", onTokensListClick);
+  els.usersList.addEventListener("click", onUsersListClick);
 
   els.refreshButton.addEventListener("click", refreshAll);
   els.limitSelect.addEventListener("change", refreshAll);
   els.searchInput.addEventListener("input", renderList);
 
   els.tabs.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.view = button.dataset.view;
-      state.selectedID = "";
-      state.selectedPackage = null;
-      state.selectedStatus = null;
-      state.comments = [];
-      els.tabs.forEach((tab) => tab.classList.toggle("active", tab === button));
-      if (state.view === "workspaces") {
-        applyWorkspacesView(true);
-        renderWorkspaces();
-        return;
-      }
-      applyWorkspacesView(false);
-      renderDetail();
-      refreshAll();
-    });
+    button.addEventListener("click", () => switchView(button.dataset.view));
   });
 
   els.workspaceList.addEventListener("click", (event) => {
@@ -319,7 +330,15 @@ async function refreshAll() {
 async function loadList() {
   try {
     const limit = encodeURIComponent(els.limitSelect.value);
-    const data = await api(`/v1/handoffs?as=${encodeURIComponent(state.view)}&limit=${limit}`);
+    let q;
+    if (state.view === "project" && state.projectID) {
+      q = `scope=project&project=${encodeURIComponent(state.projectID)}`;
+    } else if (state.view === "all") {
+      q = "scope=all";
+    } else {
+      q = `as=${encodeURIComponent(state.view)}`;
+    }
+    const data = await api(`/v1/handoffs?${q}&limit=${limit}`);
     state.items = data.items || [];
     renderList();
   } catch (err) {
@@ -458,13 +477,36 @@ function renderOnline(users) {
   `).join("");
 }
 
-// applyWorkspacesView toggles between the handoff panes and the workspaces
-// pane. The handoff list/detail share the main grid; the workspaces pane
-// replaces them when active.
-function applyWorkspacesView(active) {
-  els.listPane.classList.toggle("hidden", active);
-  els.detailPane.classList.toggle("hidden", active);
-  els.workspacesPane.classList.toggle("hidden", !active);
+const HANDOFF_VIEWS = ["recipient", "sender", "history", "project", "all"];
+
+// switchView is the single entry point for tab/pane changes: it resets the
+// selection, highlights the tab, swaps the visible pane, and kicks the right
+// loader. Handoff views (incl. the project-scoped + admin-all lists) share the
+// list/detail grid; projects/account/admin/workspaces each have their own pane.
+function switchView(view) {
+  state.view = view;
+  state.selectedID = "";
+  state.selectedPackage = null;
+  state.selectedStatus = null;
+  state.comments = [];
+  els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
+  applyMainView(view);
+  if (view === "workspaces") return renderWorkspaces();
+  if (view === "projects") return loadProjects();
+  if (view === "account") return loadAccount();
+  if (view === "admin") return loadAdmin();
+  renderDetail();
+  refreshAll();
+}
+
+function applyMainView(view) {
+  const handoff = HANDOFF_VIEWS.includes(view);
+  els.listPane.classList.toggle("hidden", !handoff);
+  els.detailPane.classList.toggle("hidden", !handoff);
+  els.workspacesPane.classList.toggle("hidden", view !== "workspaces");
+  els.projectsPane.classList.toggle("hidden", view !== "projects");
+  els.accountPane.classList.toggle("hidden", view !== "account");
+  els.adminPane.classList.toggle("hidden", view !== "admin");
 }
 
 function renderWorkspaces() {
@@ -602,8 +644,9 @@ function renderComments() {
 }
 
 function setConnectedLabel() {
-  els.sessionLabel.textContent = state.token ? "Token configured" : "Not connected";
-  els.authMessage.textContent = state.token ? "Token saved in local storage." : "Stored locally in this browser.";
+  const connected = Boolean(state.token);
+  els.sessionLabel.textContent = connected ? (state.me?.identity || "connected") : "Not connected";
+  els.signoutButton.classList.toggle("hidden", !connected);
 }
 
 function authError(err) {
@@ -693,4 +736,399 @@ function escapeHTML(value) {
 
 function escapeAttr(value) {
   return escapeHTML(value);
+}
+
+// --- auth: login / token / signout ---
+
+function setToken(tok) {
+  state.token = tok || "";
+  if (state.token) {
+    localStorage.setItem("cc-handoff-token", state.token);
+  } else {
+    localStorage.removeItem("cc-handoff-token");
+  }
+}
+
+async function onLogin(event) {
+  event.preventDefault();
+  const identity = els.loginIdentity.value.trim();
+  const password = els.loginPassword.value;
+  if (!identity || !password) {
+    toast("请输入 identity 和密码");
+    return;
+  }
+  try {
+    const resp = await fetch("/v1/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identity, password }),
+    });
+    if (!resp.ok) {
+      els.authMessage.textContent = "登录失败：identity 或密码错误。";
+      toast("登录失败");
+      return;
+    }
+    const data = await resp.json();
+    setToken(data.token);
+    els.loginPassword.value = "";
+    await onConnected();
+  } catch (err) {
+    toast(`登录失败：${err.message || err}`);
+  }
+}
+
+function onUseToken() {
+  const tok = els.tokenInput.value.trim();
+  if (!tok) {
+    toast("请粘贴机器 token");
+    return;
+  }
+  setToken(tok);
+  els.tokenInput.value = "";
+  onConnected();
+}
+
+async function onSignout() {
+  try {
+    if (state.token) await api("/v1/logout", { method: "POST" });
+  } catch {
+    // ignore — clearing the local token is what matters.
+  }
+  setToken("");
+  state.me = null;
+  state.items = [];
+  setupRoleTabs();
+  setConnectedLabel();
+  switchView("recipient");
+  renderList();
+  renderOnline([]);
+}
+
+// onConnected runs once a token is established (login or paste): learn who we
+// are, reveal role-appropriate tabs, then load the default view.
+async function onConnected() {
+  try {
+    state.me = await api("/v1/me");
+  } catch (err) {
+    state.me = null;
+    setupRoleTabs();
+    setConnectedLabel();
+    authError(err);
+    return;
+  }
+  els.authMessage.textContent = `已登录为 ${state.me.identity}`;
+  setupRoleTabs();
+  setConnectedLabel();
+  refreshAll();
+}
+
+// setupRoleTabs reveals Projects (members or admins), Admin (admins), and
+// Account (anyone signed in) based on /v1/me; hides them again when signed out.
+function setupRoleTabs() {
+  const me = state.me;
+  els.tabProjects.classList.toggle("hidden", !(me && (me.is_admin || (me.projects && me.projects.length))));
+  els.tabAdmin.classList.toggle("hidden", !(me && me.is_admin));
+  els.tabAccount.classList.toggle("hidden", !me);
+}
+
+// --- projects pane ---
+
+async function loadProjects() {
+  if (!state.token) return;
+  try {
+    const data = await api("/v1/projects");
+    state.projects = data.projects || [];
+    renderProjects();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function projectRole(id) {
+  const p = (state.me?.projects || []).find((pr) => pr.id === id);
+  if (p) return p.role;
+  return state.me?.is_admin ? "admin" : "member";
+}
+
+function renderProjects() {
+  if (!state.projects.length) {
+    els.projectsList.innerHTML = `<div class="empty-list">还没有项目。用上面的表单新建一个。</div>`;
+    return;
+  }
+  els.projectsList.innerHTML = state.projects.map((p) => {
+    const role = projectRole(p.id);
+    const canManage = role === "owner" || state.me?.is_admin;
+    return `
+      <div class="aux-card" data-project="${escapeAttr(p.id)}">
+        <div class="aux-card-head">
+          <div><strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(role)}</span></div>
+          <div class="aux-card-actions">
+            <button class="secondary" type="button" data-action="browse">查看 handoff</button>
+            ${canManage ? `<button class="secondary" type="button" data-action="manage">管理</button>` : ""}
+          </div>
+        </div>
+        <div class="aux-card-body hidden" data-body></div>
+      </div>`;
+  }).join("");
+}
+
+async function onProjectsListClick(event) {
+  const card = event.target.closest("[data-project]");
+  if (!card) return;
+  const id = card.dataset.project;
+  const body = card.querySelector("[data-body]");
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  try {
+    if (action === "browse") {
+      state.projectID = id;
+      switchView("project");
+      return;
+    }
+    if (action === "manage") {
+      if (!body.classList.contains("hidden")) {
+        body.classList.add("hidden");
+        return;
+      }
+      await renderProjectManage(id, body);
+      body.classList.remove("hidden");
+      return;
+    }
+    const repo = event.target.closest("[data-unmap]")?.dataset.unmap;
+    if (repo !== undefined) {
+      await api(`/v1/projects/${encodeURIComponent(id)}/repos?repo_name=${encodeURIComponent(repo)}`, { method: "DELETE" });
+      toast("已移除 repo");
+      await renderProjectManage(id, body);
+      return;
+    }
+    const member = event.target.closest("[data-remove-member]")?.dataset.removeMember;
+    if (member !== undefined) {
+      await api(`/v1/projects/${encodeURIComponent(id)}/members/${encodeURIComponent(member)}`, { method: "DELETE" });
+      toast("已移除成员");
+      await renderProjectManage(id, body);
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function onProjectsListSubmit(event) {
+  event.preventDefault();
+  const form = event.target;
+  const card = form.closest("[data-project]");
+  if (!card) return;
+  const id = card.dataset.project;
+  try {
+    if (form.dataset.form === "repo") {
+      const name = form.querySelector("input").value.trim();
+      if (!name) return;
+      await api(`/v1/projects/${encodeURIComponent(id)}/repos`, { method: "POST", body: JSON.stringify({ repo_name: name }) });
+      toast("已绑定 repo");
+    } else if (form.dataset.form === "member") {
+      const identity = form.querySelector("[name=identity]").value.trim();
+      const role = form.querySelector("[name=role]").value;
+      if (!identity) return;
+      await api(`/v1/projects/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
+      toast("已添加成员");
+    }
+    await renderProjectManage(id, card.querySelector("[data-body]"));
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function renderProjectManage(id, body) {
+  try {
+    const data = await api(`/v1/projects/${encodeURIComponent(id)}`);
+    const repos = data.repos || [];
+    const members = data.members || [];
+    body.innerHTML = `
+      <div class="manage-block">
+        <h4>Repos</h4>
+        <div class="chip-row">
+          ${repos.length ? repos.map((r) => `<span class="chip">${escapeHTML(r)}<button type="button" data-unmap="${escapeAttr(r)}" title="移除">×</button></span>`).join("") : `<span class="muted">无</span>`}
+        </div>
+        <form class="inline-form" data-form="repo">
+          <input type="text" placeholder="repo 名（如 kunlun-backend）">
+          <button type="submit" class="secondary">绑定 repo</button>
+        </form>
+      </div>
+      <div class="manage-block">
+        <h4>成员</h4>
+        <div class="member-rows">
+          ${members.map((m) => `<div class="member-row"><span>${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span><button type="button" class="link-danger" data-remove-member="${escapeAttr(m.identity)}">移除</button></div>`).join("")}
+        </div>
+        <form class="inline-form" data-form="member">
+          <input type="text" name="identity" placeholder="identity">
+          <select name="role"><option value="member">member</option><option value="viewer">viewer</option><option value="owner">owner</option></select>
+          <button type="submit" class="secondary">加成员</button>
+        </form>
+      </div>`;
+  } catch (err) {
+    body.innerHTML = `<p class="muted">${escapeHTML(err.message)}</p>`;
+  }
+}
+
+async function onCreateProject(event) {
+  event.preventDefault();
+  const name = els.newProjectName.value.trim();
+  if (!name) return;
+  try {
+    await api("/v1/projects", { method: "POST", body: JSON.stringify({ name }) });
+    els.newProjectName.value = "";
+    toast("项目已创建");
+    state.me = await api("/v1/me");
+    setupRoleTabs();
+    await loadProjects();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+// --- account pane: password + machine tokens ---
+
+async function loadAccount() {
+  if (!state.token) return;
+  try {
+    const data = await api("/v1/tokens");
+    renderTokens(data.tokens || []);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function renderTokens(tokens) {
+  if (!tokens.length) {
+    els.tokensList.innerHTML = `<div class="empty-list">还没有机器 token。</div>`;
+    return;
+  }
+  els.tokensList.innerHTML = tokens.map((t) => `
+    <div class="aux-card">
+      <div class="aux-card-head">
+        <div><strong>${escapeHTML(t.label || "(no label)")}</strong> <span class="muted">${escapeHTML(formatDate(t.created_at))}</span></div>
+        <button class="link-danger" type="button" data-revoke="${escapeAttr(t.id)}">吊销</button>
+      </div>
+    </div>`).join("");
+}
+
+async function onTokensListClick(event) {
+  const id = event.target.closest("[data-revoke]")?.dataset.revoke;
+  if (id === undefined) return;
+  if (!window.confirm("吊销这个 token？用它的机器会立即失效。")) return;
+  try {
+    await api(`/v1/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast("已吊销");
+    await loadAccount();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function onCreateToken(event) {
+  event.preventDefault();
+  try {
+    const data = await api("/v1/tokens", { method: "POST", body: JSON.stringify({ label: els.newTokenLabel.value.trim() }) });
+    els.newTokenLabel.value = "";
+    await copyToClipboard(data.token, "token 已复制（只显示这一次！粘进 cc-handoff init）");
+    await loadAccount();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function onChangePassword(event) {
+  event.preventDefault();
+  if (els.passwordNew.value.length < 8) {
+    toast("新密码至少 8 位");
+    return;
+  }
+  try {
+    await api("/v1/password", { method: "POST", body: JSON.stringify({ old: els.passwordOld.value, new: els.passwordNew.value }) });
+    els.passwordOld.value = "";
+    els.passwordNew.value = "";
+    toast("密码已更新");
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+// --- admin pane: accounts ---
+
+async function loadAdmin() {
+  if (!state.token) return;
+  try {
+    const data = await api("/v1/users");
+    renderUsers(data.users || []);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function renderUsers(users) {
+  if (!users.length) {
+    els.usersList.innerHTML = `<div class="empty-list">没有账号。</div>`;
+    return;
+  }
+  els.usersList.innerHTML = users.map((u) => `
+    <div class="aux-card" data-user="${escapeAttr(u.identity)}" data-admin="${u.is_admin ? "1" : "0"}" data-disabled="${u.disabled ? "1" : "0"}">
+      <div class="aux-card-head">
+        <div>
+          <strong>${escapeHTML(u.identity)}</strong>
+          ${u.is_admin ? `<span class="badge">admin</span>` : ""}
+          ${u.disabled ? `<span class="badge expired">disabled</span>` : ""}
+        </div>
+        <div class="aux-card-actions">
+          <button class="secondary" type="button" data-uaction="admin">${u.is_admin ? "取消 admin" : "设为 admin"}</button>
+          <button class="secondary" type="button" data-uaction="disable">${u.disabled ? "启用" : "停用"}</button>
+          <button class="secondary" type="button" data-uaction="reset">重置密码</button>
+        </div>
+      </div>
+    </div>`).join("");
+}
+
+async function onUsersListClick(event) {
+  const card = event.target.closest("[data-user]");
+  const action = event.target.closest("[data-uaction]")?.dataset.uaction;
+  if (!card || !action) return;
+  const id = card.dataset.user;
+  try {
+    if (action === "admin") {
+      await api(`/v1/users/${encodeURIComponent(id)}/admin`, { method: "POST", body: JSON.stringify({ is_admin: card.dataset.admin !== "1" }) });
+      toast("已更新");
+    } else if (action === "disable") {
+      await api(`/v1/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: JSON.stringify({ disabled: card.dataset.disabled !== "1" }) });
+      toast("已更新");
+    } else if (action === "reset") {
+      const data = await api(`/v1/users/${encodeURIComponent(id)}/reset-password`, { method: "POST" });
+      await copyToClipboard(data.password, `新密码已复制（只显示这一次）：${data.password}`);
+    }
+    await loadAdmin();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function onCreateUser(event) {
+  event.preventDefault();
+  const identity = els.newUserIdentity.value.trim();
+  if (!identity) {
+    toast("请填 identity");
+    return;
+  }
+  try {
+    const body = { identity, is_admin: els.newUserAdmin.checked };
+    const pw = els.newUserPassword.value.trim();
+    if (pw) body.password = pw;
+    const data = await api("/v1/users", { method: "POST", body: JSON.stringify(body) });
+    els.newUserIdentity.value = "";
+    els.newUserPassword.value = "";
+    els.newUserAdmin.checked = false;
+    if (data.password) {
+      await copyToClipboard(data.password, `账号已建，初始密码已复制（只显示这一次）：${data.password}`);
+    } else {
+      toast("账号已创建");
+    }
+    await loadAdmin();
+  } catch (err) {
+    toast(err.message);
+  }
 }
