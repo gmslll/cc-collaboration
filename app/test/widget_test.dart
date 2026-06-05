@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:app/api/models.dart';
+import 'package:app/local/repo_config.dart';
 import 'package:app/widgets.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -91,5 +94,41 @@ void main() {
     expect(errorText(forbidden), contains('权限'));
 
     expect(errorText('boom'), 'boom');
+  });
+
+  test('RepoConfig save→load round-trips (.cc-handoff.toml)', () async {
+    final dir = await Directory.systemTemp.createTemp('repocfg');
+    try {
+      final c = RepoConfig(
+        raw: const {},
+        partner: 'alex@frontend',
+        partners: 'a@x, b@y',
+        base: 'origin/main',
+        autoLaunch: true,
+        terminalApp: 'iterm2',
+        linearEnabled: true,
+        teamKey: 'ENG',
+        types: 'mention',
+        rules: [
+          RuleCfg(
+              whenPathMatches: '^x/', suggestEdit: 'a.ts, b.ts', suggestCreate: true)
+        ],
+      );
+      await c.save(dir.path);
+      final back = await RepoConfig.load(dir.path);
+      expect(back.partner, 'alex@frontend');
+      expect(back.partners, 'a@x, b@y');
+      expect(back.base, 'origin/main');
+      expect(back.autoLaunch, isTrue);
+      expect(back.terminalApp, 'iterm2');
+      expect(back.linearEnabled, isTrue);
+      expect(back.teamKey, 'ENG');
+      expect(back.types, 'mention');
+      expect(back.rules.length, 1);
+      expect(back.rules.first.whenPathMatches, '^x/');
+      expect(back.rules.first.suggestCreate, isTrue);
+    } finally {
+      await dir.delete(recursive: true);
+    }
   });
 }

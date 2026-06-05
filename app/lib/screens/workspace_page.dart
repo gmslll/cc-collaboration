@@ -9,6 +9,7 @@ import '../local/worktrees.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'handoff_detail_view.dart';
+import 'repo_config_page.dart';
 import 'terminal_deck.dart';
 import 'terminal_pane.dart';
 
@@ -752,6 +753,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               _openAgent(p, p.path, v, ws.preLaunch);
             case 'worktree':
               _newWorktree(ws, p);
+            case 'config':
+              _openRepoConfig(p);
             case 'remove':
               _removeProject(ws, p);
           }
@@ -760,9 +763,16 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           ..._agentItems(ws.agent),
           const PopupMenuDivider(),
           const PopupMenuItem(value: 'worktree', child: Text('新建 worktree')),
+          const PopupMenuItem(value: 'config', child: Text('项目配置')),
           const PopupMenuItem(value: 'remove', child: Text('移除项目')),
         ],
       );
+
+  void _openRepoConfig(ProjectCfg p) {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) =>
+            RepoConfigPage(projectPath: p.path, projectName: p.name)));
+  }
 
   Widget _worktreeMenu(WorkspaceCfg ws, ProjectCfg p, Worktree w) =>
       PopupMenuButton<String>(
