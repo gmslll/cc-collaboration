@@ -3,12 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/zserge/lorca"
@@ -74,14 +72,7 @@ func runDesktop(ctx context.Context, args []string) error {
 	// shelled-out `cc-handoff pickup` uses --repo and isn't pinned to the
 	// child's inherited cwd. Empty when the launch dir isn't a configured
 	// repo — pickup then falls back to its own cwd-based behavior.
-	defaultRepo := ""
-	if cwd, err := os.Getwd(); err == nil {
-		if cfgPath := config.RepoConfigPath(cwd); cfgPath != "" {
-			if _, statErr := os.Stat(cfgPath); statErr == nil {
-				defaultRepo = filepath.Dir(cfgPath)
-			}
-		}
-	}
+	defaultRepo := config.DiscoverRepo()
 
 	// Two-load dance: Lorca opens on a data: URL where localStorage is
 	// disabled. First Load gets us onto the relay origin; Eval injects token
@@ -95,7 +86,7 @@ func runDesktop(ctx context.Context, args []string) error {
 	// Workspaces are local-only, so the desktop process resolves them here and
 	// hands the UI a ready-to-copy launch command per project. The relay never
 	// sees these paths. Best-effort: an empty list just hides the tab.
-	wsJSON := workspacesJSON(user)
+	wsJSON := config.WorkspacesJSON(user)
 	bootstrap := fmt.Sprintf(
 		`localStorage.setItem(%q,%q);localStorage.setItem(%q,%q);localStorage.setItem(%q,%q);`,
 		"cc-handoff-token", user.Token,
@@ -114,35 +105,6 @@ func runDesktop(ctx context.Context, args []string) error {
 	case <-ctx.Done():
 	}
 	return nil
-}
-
-// workspacesJSON flattens the user's workspaces into a per-project list the UI
-// can render directly: {workspace, name, path, command}. command is the same
-// copyable launch string `cc-handoff workspace list` prints. Returns "[]" on
-// any error so the caller can inject it unconditionally.
-func workspacesJSON(user *config.User) string {
-	type wsItem struct {
-		Workspace string `json:"workspace"`
-		Name      string `json:"name"`
-		Path      string `json:"path"`
-		Command   string `json:"command"`
-	}
-	items := []wsItem{}
-	for _, ws := range user.Workspaces {
-		for _, p := range config.ListProjects(user, ws) {
-			items = append(items, wsItem{
-				Workspace: ws.Name,
-				Name:      p.Name,
-				Path:      p.Path,
-				Command:   config.BuildLaunchCommand(user, ws, p),
-			})
-		}
-	}
-	b, err := json.Marshal(items)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
 }
 
 // pickupHandler shells out to `cc-handoff pickup <id>` so the JS-driven

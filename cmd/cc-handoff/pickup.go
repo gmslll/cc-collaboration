@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,15 @@ import (
 	"github.com/cc-collaboration/internal/transport"
 )
 
+// pickupJSON is the --json output: a stable machine contract the GUI front-end
+// (the Flutter app) depends on, so it's a typed struct rather than a map literal.
+type pickupJSON struct {
+	WorktreeDir    string `json:"worktree_dir"`
+	MaterializeDir string `json:"materialize_dir"`
+	AgentCmd       string `json:"agent_cmd"`
+	Acked          bool   `json:"acked"`
+}
+
 func runPickup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("pickup", flag.ContinueOnError)
 	noAck := fs.Bool("no-ack", false, "do not mark as picked on the relay")
@@ -20,6 +30,7 @@ func runPickup(ctx context.Context, args []string) error {
 	worktree := fs.Bool("worktree", false, "create an isolated git worktree for this handoff (under <repo>/.worktrees) and materialize into it, so you integrate on a dedicated branch")
 	open := fs.Bool("open", false, "with --worktree, launch the agent in the new worktree (in-place; replaces this shell)")
 	window := fs.Bool("window", false, "with --open, open a new terminal window instead of replacing this shell")
+	asJSON := fs.Bool("json", false, "output machine-readable JSON (worktree_dir, materialize_dir, agent_cmd, acked) and skip the human text — for GUI front-ends")
 	pos, err := parseFlexible(fs, args)
 	if err != nil {
 		return err
@@ -60,7 +71,9 @@ func runPickup(ctx context.Context, args []string) error {
 		if err := gitsrc.CarveWorktree(ctx, repoRoot, worktreeDir, branch, ""); err != nil {
 			return err
 		}
-		fmt.Printf("✓ created worktree %s\n", worktreeDir)
+		if !*asJSON {
+			fmt.Printf("✓ created worktree %s\n", worktreeDir)
+		}
 		materializeRoot = worktreeDir
 	}
 
@@ -68,18 +81,37 @@ func runPickup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✓ materialized %s\n", mat.Dir)
+	if !*asJSON {
+		fmt.Printf("✓ materialized %s\n", mat.Dir)
+	}
 
 	if err := inbox.DownloadAttachments(ctx, client, mat.Dir, pkg); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: download attachments: %v\n", err)
 	}
 
+	acked := false
 	if !*noAck {
 		if err := client.Ack(ctx, id); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: ack failed: %v\n", err)
 		} else {
-			fmt.Println("✓ acked on relay")
+			acked = true
+			if !*asJSON {
+				fmt.Println("✓ acked on relay")
+			}
 		}
+	}
+
+	if *asJSON {
+		// Machine-readable output for GUI front-ends (e.g. the Flutter app): the
+		// worktree dir + the interactive agent command to run in an embedded
+		// terminal. stdout stays pure JSON (progress/warnings go to stderr).
+		agentCmd := res.Agent.POSIXPromptCmd(materializeRoot, "", "", true)
+		return json.NewEncoder(os.Stdout).Encode(pickupJSON{
+			WorktreeDir:    worktreeDir,
+			MaterializeDir: mat.Dir,
+			AgentCmd:       agentCmd,
+			Acked:          acked,
+		})
 	}
 
 	if *worktree && *open {
