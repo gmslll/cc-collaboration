@@ -165,23 +165,29 @@ class _HomeShellState extends State<HomeShell> {
     if (_isDesktop) {
       return Scaffold(
         appBar: _appBar(),
-        body: Row(children: [
-          NavigationRail(
-            selectedIndex: _index,
-            onDestinationSelected: (i) => setState(() => _index = i),
-            labelType: NavigationRailLabelType.all,
-            backgroundColor: CcColors.panel,
-            minWidth: 84,
-            groupAlignment: -0.9,
-            destinations: dests
-                .map((d) => NavigationRailDestination(
-                    icon: Icon(d.icon),
-                    selectedIcon: Icon(d.selected),
-                    label: Text(d.label)))
-                .toList(),
+        body: Column(children: [
+          Expanded(
+            child: Row(children: [
+              NavigationRail(
+                selectedIndex: _index,
+                onDestinationSelected: (i) => setState(() => _index = i),
+                labelType: NavigationRailLabelType.all,
+                backgroundColor: CcColors.panel,
+                minWidth: 84,
+                groupAlignment: -0.9,
+                destinations: dests
+                    .map((d) => NavigationRailDestination(
+                        icon: Icon(d.icon),
+                        selectedIcon: Icon(d.selected),
+                        label: Text(d.label)))
+                    .toList(),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                  child: DecoratedBox(decoration: appGradient, child: body)),
+            ]),
           ),
-          const VerticalDivider(width: 1),
-          Expanded(child: DecoratedBox(decoration: appGradient, child: body)),
+          _statusBar(dests),
         ]),
       );
     }
@@ -199,6 +205,35 @@ class _HomeShellState extends State<HomeShell> {
                 label: d.label))
             .toList(),
       ),
+    );
+  }
+
+  // _statusBar is a tmux/vim-style footer (desktop): host · identity on the
+  // left, the active view as a "mode" on the right. Mono, terminal feel.
+  Widget _statusBar(List<_Dest> dests) {
+    final page = dests[_index.clamp(0, dests.length - 1)].label;
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: const BoxDecoration(
+        color: CcColors.panel,
+        border: Border(top: BorderSide(color: CcColors.border)),
+      ),
+      child: Row(children: [
+        Text('❯', style: CcType.code(size: 12, color: CcColors.ok)),
+        const SizedBox(width: 6),
+        Text(hostOf(_cfg!.relayUrl),
+            style: CcType.code(size: 11.5, color: CcColors.muted)),
+        Text('  ·  ', style: CcType.code(size: 11.5, color: CcColors.subtle)),
+        Text(_cfg!.identity,
+            style: CcType.code(size: 11.5, color: CcColors.muted)),
+        const Spacer(),
+        statusDot(CcColors.ok, size: 6, glow: true),
+        const SizedBox(width: 6),
+        Text(page,
+            style: CcType.code(
+                size: 11, color: CcColors.subtle, weight: FontWeight.w600)),
+      ]),
     );
   }
 

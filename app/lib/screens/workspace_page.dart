@@ -398,22 +398,34 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   Widget _termArea() {
     if (terms.isEmpty) {
+      final ws = _cfg.workspaces.isNotEmpty &&
+              _cfg.workspaces.first.name.isNotEmpty
+          ? _cfg.workspaces.first.name
+          : 'workspace';
       return DecoratedBox(
         decoration: appGradient,
         child: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: const [
-            Icon(Icons.terminal_outlined, size: 40, color: CcColors.subtle),
-            SizedBox(height: 14),
-            Text('从右侧工作区,在项目或 worktree 上起一个会话',
-                style: TextStyle(color: CcColors.muted)),
-            SizedBox(height: 6),
-            Text('claude · codex',
-                style: TextStyle(
-                    fontFamily: CcType.mono,
-                    color: CcColors.subtle,
-                    fontSize: 12,
-                    letterSpacing: 0.5)),
-          ]),
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('~/$ws',
+                      style: CcType.code(size: 14.5, color: CcColors.ok)),
+                  const SizedBox(width: 8),
+                  Text('❯',
+                      style: CcType.code(
+                          size: 14.5, color: CcColors.accentBright)),
+                  const SizedBox(width: 8),
+                  const BlinkingCaret(),
+                ]),
+                const SizedBox(height: 18),
+                const Text('在右侧的项目或 worktree 上,起一个会话',
+                    style: TextStyle(color: CcColors.muted)),
+                const SizedBox(height: 8),
+                Text('# claude · codex',
+                    style: CcType.code(size: 12.5, color: CcColors.subtle)),
+              ]),
         ),
       );
     }
@@ -560,11 +572,15 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           ),
           child: ListTile(
             visualDensity: _tileDensity,
-            contentPadding: const EdgeInsets.only(left: 10, right: 2),
+            contentPadding: const EdgeInsets.only(left: 12, right: 2),
+            horizontalTitleGap: 8,
             selected: active,
-            leading: Icon(Icons.terminal,
-                size: 18,
-                color: active ? CcColors.accentBright : CcColors.muted),
+            leading: Text('❯',
+                style: TextStyle(
+                    fontFamily: CcType.mono,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: active ? CcColors.accentBright : CcColors.muted)),
             title: Text(display,
                 style: TextStyle(
                     fontFamily: CcType.mono,
@@ -872,14 +888,14 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           message: '起 $label',
           child: InkWell(
             onTap: onTap,
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(3),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
                 color: CcColors.accent.withValues(alpha: 0.14),
                 border:
                     Border.all(color: CcColors.accent.withValues(alpha: 0.35)),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(3),
               ),
               child: Text(label,
                   style: const TextStyle(

@@ -72,7 +72,7 @@ Widget tag(String label, Color color, {bool bold = false}) => Container(
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
         border: Border.all(color: color.withValues(alpha: 0.30)),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(3),
       ),
       child: Text(label,
           style: TextStyle(
@@ -89,7 +89,7 @@ Widget chip(String text) => Container(
       decoration: BoxDecoration(
         color: CcColors.panelHigh,
         border: Border.all(color: CcColors.border),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(3),
       ),
       child: Text(text,
           style: const TextStyle(
@@ -273,6 +273,48 @@ Widget resizeHandle({
       onDelta: (dx) => set((get() + (invert ? -dx : dx)).clamp(min, max)),
       onEnd: () => Prefs.setDouble(prefKey, get()),
     );
+
+// BlinkingCaret is a terminal-style block cursor — blinks ~1s on/off, honors
+// reduced-motion (stays solid). Used in the empty-terminal "prompt" placeholder.
+class BlinkingCaret extends StatefulWidget {
+  final Color color;
+  final double width;
+  final double height;
+  const BlinkingCaret(
+      {super.key,
+      this.color = CcColors.accentBright,
+      this.width = 8,
+      this.height = 17});
+
+  @override
+  State<BlinkingCaret> createState() => _BlinkingCaretState();
+}
+
+class _BlinkingCaretState extends State<BlinkingCaret>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1060))
+    ..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final box = Container(
+        width: widget.width, height: widget.height, color: widget.color);
+    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) return box;
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, child) =>
+          Opacity(opacity: _c.value < 0.5 ? 1 : 0, child: child),
+      child: box,
+    );
+  }
+}
 
 // HoverLift wraps a card-like surface: on hover it lifts slightly, brightens its
 // border and casts a soft accent glow (200ms). Use for clickable cards.
