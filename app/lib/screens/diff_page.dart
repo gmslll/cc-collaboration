@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/repo_config.dart';
 import '../widgets.dart';
+import 'diff_view.dart';
 
 // DiffPage shows a project/worktree's git diff with a toggle between uncommitted
 // changes (working tree vs HEAD) and the branch vs its base ref (.cc-handoff.toml
-// paths.base, default origin/main). Rendered in-app via diffText.
+// paths.base, default origin/main). Rendered GoLand-style via DiffView (changed
+// files tree + side-by-side / unified).
 class DiffPage extends StatefulWidget {
   final String path;
   final String name;
@@ -19,7 +22,7 @@ class DiffPage extends StatefulWidget {
 class _DiffPageState extends State<DiffPage> {
   int _mode = 0; // 0 = uncommitted, 1 = vs base
   String _base = 'origin/main';
-  String? _diff;
+  List<FileDiff> _files = const [];
   String? _error;
   bool _loading = true;
 
@@ -46,7 +49,7 @@ class _DiffPageState extends State<DiffPage> {
           : await gitDiffBase(widget.path, _base);
       if (!mounted) return;
       setState(() {
-        _diff = diff;
+        _files = parseUnifiedDiff(diff);
         _loading = false;
       });
     } catch (e) {
@@ -105,12 +108,8 @@ class _DiffPageState extends State<DiffPage> {
         loading: _loading,
         error: _error,
         onRetry: _load,
-        child: () {
-          final d = _diff ?? '';
-          if (d.trim().isEmpty) {
-            return centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异');
-          }
-          return DecoratedBox(decoration: appGradient, child: diffText(d));
-        },
+        child: () => _files.isEmpty
+            ? centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异')
+            : DiffView(files: _files),
       );
 }

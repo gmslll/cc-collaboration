@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../api/github_client.dart';
 import '../local/config.dart';
+import '../local/diff_parse.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'diff_view.dart';
 
 // GitHubPrPage lists a project's open PRs (parsed from its github URL) and opens
 // a PR's changed files + diffs. The token comes from config.toml github_token
@@ -126,7 +128,7 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
   }
 }
 
-// _PrDiffPage shows one PR's changed files, each expandable to its diff.
+// _PrDiffPage shows one PR's changed files (tree) + side-by-side diff via DiffView.
 class _PrDiffPage extends StatefulWidget {
   final GitHubClient client;
   final String slug;
@@ -139,7 +141,7 @@ class _PrDiffPage extends StatefulWidget {
 }
 
 class _PrDiffPageState extends State<_PrDiffPage> {
-  List<PrFile>? _files;
+  List<FileDiff>? _files;
   String? _error;
   bool _loading = true;
 
@@ -158,7 +160,10 @@ class _PrDiffPageState extends State<_PrDiffPage> {
       final f = await widget.client.pullFiles(widget.slug, widget.pr.number);
       if (!mounted) return;
       setState(() {
-        _files = f;
+        _files = [
+          for (final p in f)
+            FileDiff(p.filename, p.status, p.additions, p.deletions, p.patch)
+        ];
         _loading = false;
       });
     } catch (e) {
@@ -176,55 +181,11 @@ class _PrDiffPageState extends State<_PrDiffPage> {
       appBar: AppBar(
           title: Text('#${widget.pr.number}  ${widget.pr.title}',
               maxLines: 1, overflow: TextOverflow.ellipsis)),
-      body: _body(),
-    );
-  }
-
-  Widget _body() => asyncBody(
+      body: asyncBody(
         loading: _loading,
         error: _error,
         onRetry: _load,
-        child: _filesView,
-      );
-
-  Widget _filesView() {
-    final files = _files ?? const [];
-    if (files.isEmpty) return centerMsg('没有文件改动');
-    return DecoratedBox(
-      decoration: appGradient,
-      child: ListView.builder(
-        itemCount: files.length,
-        itemBuilder: (_, i) {
-          final f = files[i];
-          return Theme(
-            data: Theme.of(context)
-                .copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              initiallyExpanded: files.length <= 3,
-              tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-              title: Text(f.filename,
-                  style:
-                      const TextStyle(fontFamily: CcType.mono, fontSize: 13),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-              subtitle: Text('${f.status} · +${f.additions} −${f.deletions}',
-                  style: const TextStyle(color: CcColors.muted, fontSize: 11.5)),
-              children: [
-                if (f.patch.trim().isEmpty)
-                  const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text('(无 diff —— 二进制或过大)',
-                              style: TextStyle(color: CcColors.subtle))))
-                else
-                  ColoredBox(
-                      color: CcColors.bg,
-                      child: diffText(f.patch, scrollable: false)),
-              ],
-            ),
-          );
-        },
+        child: () => DiffView(files: _files ?? const []),
       ),
     );
   }

@@ -2,12 +2,58 @@ import 'dart:io';
 
 import 'package:app/api/github_client.dart';
 import 'package:app/api/models.dart';
+import 'package:app/local/diff_parse.dart';
 import 'package:app/local/repo_config.dart';
 import 'package:app/widgets.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _sampleDiff = '''
+diff --git a/lib/a.dart b/lib/a.dart
+index 1111111..2222222 100644
+--- a/lib/a.dart
++++ b/lib/a.dart
+@@ -1,3 +1,3 @@
+ context1
+-old line
++new line
+ context2
+diff --git a/lib/new.dart b/lib/new.dart
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/lib/new.dart
+@@ -0,0 +1,2 @@
++added1
++added2
+''';
+
 void main() {
+  test('parseUnifiedDiff splits files + counts; parseRows aligns', () {
+    final files = parseUnifiedDiff(_sampleDiff);
+    expect(files.length, 2);
+    expect(files[0].path, 'lib/a.dart');
+    expect(files[0].status, 'modified');
+    expect(files[0].adds, 1);
+    expect(files[0].dels, 1);
+    expect(files[1].path, 'lib/new.dart');
+    expect(files[1].status, 'added');
+
+    final rows = parseRows(files[0].raw).where((r) => !r.isHunk).toList();
+    // context1 | (old↔new paired) | context2
+    expect(rows.length, 3);
+    expect(rows[0].leftKind, DiffKind.context);
+    expect(rows[1].leftKind, DiffKind.removed);
+    expect(rows[1].rightKind, DiffKind.added);
+    expect(rows[1].left, 'old line');
+    expect(rows[1].right, 'new line');
+
+    final added = parseRows(files[1].raw).where((r) => !r.isHunk).toList();
+    expect(added.length, 2);
+    expect(added[0].leftKind, DiffKind.empty); // new file → left blank
+    expect(added[0].rightKind, DiffKind.added);
+  });
+
   test('GitHubClient.parseSlug handles https / git@ / path / non-github', () {
     expect(GitHubClient.parseSlug('https://github.com/owner/repo.git'),
         'owner/repo');
