@@ -47,5 +47,52 @@ class Cli {
     );
   }
 
+  // run executes `cc-handoff <args>` via the login shell and returns trimmed
+  // stdout; throws CliException(stderr) on non-zero exit. Each arg is
+  // single-quoted so paths / branches with spaces are safe.
+  static Future<String> run(List<String> args) async {
+    final cmd = 'cc-handoff ${args.map((a) => "'${_esc(a)}'").join(' ')}';
+    final res = await Process.run(_shell(), ['-lc', cmd]);
+    if (res.exitCode != 0) {
+      final err = (res.stderr as String).trim();
+      throw CliException(err.isNotEmpty ? err : '命令失败 (exit ${res.exitCode})');
+    }
+    return (res.stdout as String).trim();
+  }
+
+  // --- workspace / project management (config.toml round-trips via SaveUser) ---
+
+  static Future<void> workspaceCreate(String name, {String? path}) => run([
+        'workspace', 'create', name,
+        if (path != null && path.trim().isNotEmpty) ...['--path', path.trim()],
+      ]);
+
+  static Future<void> workspaceAdd(String name, String source) =>
+      run(['workspace', 'add', name, source]);
+
+  static Future<void> workspaceRemove(String name) =>
+      run(['workspace', 'remove', name]);
+
+  static Future<void> projectRemove(String wsName, String projName) =>
+      run(['workspace', 'remove', wsName, projName]);
+
+  // --- worktree management (pure git; project resolved by name + workspace) ---
+
+  static Future<void> worktreeAdd(String project, String branch,
+          {String? workspace, String? start}) =>
+      run([
+        'worktree', 'add', project, branch,
+        if (workspace != null && workspace.isNotEmpty) ...['--workspace', workspace],
+        if (start != null && start.trim().isNotEmpty) ...['--start', start.trim()],
+      ]);
+
+  static Future<void> worktreeRemove(String project, String branch,
+          {String? workspace, bool force = false}) =>
+      run([
+        'worktree', 'remove', project, branch,
+        if (workspace != null && workspace.isNotEmpty) ...['--workspace', workspace],
+        if (force) '--force',
+      ]);
+
   static String _esc(String s) => s.replaceAll("'", "'\\''");
 }

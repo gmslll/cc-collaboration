@@ -204,8 +204,12 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
 
   Widget _onlineRoster() => Container(
         constraints: const BoxConstraints(maxHeight: 130),
-        decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: CcColors.border))),
+        margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        decoration: BoxDecoration(
+          color: CcColors.panelHigh.withValues(alpha: 0.45),
+          border: Border.all(color: CcColors.border),
+          borderRadius: BorderRadius.circular(8),
+        ),
         child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -267,7 +271,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
             leading: Icon(Icons.circle,
                 size: 10,
                 color:
-                    it.urgency == 'urgent' ? CcColors.danger : CcColors.muted),
+                    it.urgency == 'urgent' ? CcColors.danger : _kindColor(it.kind)),
             title: Text(it.sender,
                 style: const TextStyle(fontWeight: FontWeight.w600)),
             subtitle: Text(
@@ -276,12 +280,27 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: CcColors.muted),
             ),
-            trailing: Text(relativeTime(it.createdAt),
-                style: const TextStyle(color: CcColors.muted, fontSize: 12)),
+            trailing: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(relativeTime(it.createdAt),
+                    style:
+                        const TextStyle(color: CcColors.muted, fontSize: 12)),
+                const SizedBox(height: 4),
+                kindBadge(it.kind),
+              ],
+            ),
             onTap: () => setState(() => _selected = it),
           );
         },
       ),
     );
+  }
+
+  Color _kindColor(String kind) {
+    if (kind == 'bug') return CcColors.danger;
+    if (kind == 'request') return CcColors.warning;
+    return CcColors.accent;
   }
 }

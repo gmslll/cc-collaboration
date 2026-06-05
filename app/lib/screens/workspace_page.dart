@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../api/relay_client.dart';
+import '../local/cli.dart';
 import '../local/config.dart';
 import '../local/worktrees.dart';
 import '../theme.dart';
@@ -12,7 +13,8 @@ import 'terminal_deck.dart';
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
 // (left, primary) + a Workspace → Project → (Worktrees + Tasks) tree (right).
 // Launch a claude/codex session in any project or worktree; tap a task for its
-// 对接文档. Workspaces/projects come from config.toml; worktrees from git.
+// 对接文档; create/remove workspaces, projects and worktrees (shells the CLI).
+// Open agent sessions persist and reopen next launch (TerminalHost.persistKey).
 class WorkspacePage extends StatefulWidget {
   final RelayClient client;
   final AppConfig config;
@@ -23,15 +25,21 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
+  late AppConfig _cfg = widget.config; // reloaded after config mutations
   Map<String, List<ListItem>> _tasksByRepo = const {};
   // project path -> worktrees. Key absent = not loaded; value null = loading;
   // value list = loaded (possibly empty).
   final Map<String, List<Worktree>?> _worktrees = {};
+  bool _busy = false;
+
+  @override
+  String? get persistKey => 'workspace_sessions';
 
   @override
   void initState() {
     super.initState();
     _loadTasks();
+    restoreTerms();
   }
 
   @override
@@ -39,6 +47,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     disposeTerms();
     super.dispose();
   }
+
+  // ---------------------------------------------------------------- data ----
 
   Future<void> _loadTasks() async {
     try {
@@ -65,9 +75,172 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     if (mounted) setState(() => _worktrees[path] = wts);
   }
 
+  Future<void> _reloadConfig() async {
+    final cfg = await AppConfig.load();
+    if (cfg != null && mounted) setState(() => _cfg = cfg);
+  }
+
+  Future<void> _reloadWorktrees(String path) async {
+    setState(() => _worktrees.remove(path));
+    await _ensureWorktrees(path);
+  }
+
   Future<void> _refresh() async {
     setState(() => _worktrees.clear());
+    await _reloadConfig();
     await _loadTasks();
+  }
+
+  void _snack(String s) {
+    if (mounted) snack(context, s);
+  }
+
+  // _runCli runs a CLI mutation with a busy indicator + friendly errors, then an
+  // optional refresh (reload config / worktrees).
+  Future<void> _runCli(Future<void> Function() action, String okMsg,
+      {Future<void> Function()? after}) async {
+    setState(() => _busy = true);
+    try {
+      await action();
+      if (after != null) await after();
+      _snack(okMsg);
+    } catch (e) {
+      _snack(errorText(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _launch(String dir, String agent, String preLaunch) {
+    final pl = preLaunch.trim();
+    addTerm(dir, pl.isEmpty ? agent : '$pl && $agent');
+  }
+
+  // ----------------------------------------------------------- mutations ----
+
+  Future<void> _newWorkspace() async {
+    final v = await _fieldsDialog('新建工作区', '创建', [
+      (label: '名称', hint: 'kunlun', required: true),
+      (label: '根目录(可选)', hint: '默认 ~/cc-handoff-workspaces/<名>', required: false),
+    ]);
+    if (v == null) return;
+    await _runCli(
+        () => Cli.workspaceCreate(v[0], path: v[1].isEmpty ? null : v[1]),
+        '已建工作区 ${v[0]}',
+        after: _reloadConfig);
+  }
+
+  Future<void> _addProject(WorkspaceCfg ws) async {
+    final v = await _fieldsDialog('给「${ws.name}」添加项目', '添加', [
+      (
+        label: 'GitHub URL 或本地路径',
+        hint: 'https://github.com/org/repo.git',
+        required: true
+      ),
+    ]);
+    if (v == null) return;
+    await _runCli(() => Cli.workspaceAdd(ws.name, v[0]), '已添加(URL 会先 clone)',
+        after: _reloadConfig);
+  }
+
+  Future<void> _removeWorkspace(WorkspaceCfg ws) async {
+    if (!await _confirm('删除工作区「${ws.name}」?', '只从 config 移除,磁盘文件保留。')) return;
+    await _runCli(
+        () => Cli.workspaceRemove(ws.name), '已删除', after: _reloadConfig);
+  }
+
+  Future<void> _removeProject(WorkspaceCfg ws, ProjectCfg p) async {
+    if (!await _confirm('从「${ws.name}」移除项目「${p.name}」?', '只从 config 移除,磁盘文件保留。')) {
+      return;
+    }
+    await _runCli(() => Cli.projectRemove(ws.name, p.name), '已移除',
+        after: _reloadConfig);
+  }
+
+  Future<void> _newWorktree(WorkspaceCfg ws, ProjectCfg p) async {
+    final v = await _fieldsDialog('在「${p.name}」新建 worktree', '创建', [
+      (label: '分支名', hint: 'feature/x', required: true),
+      (label: '起点 ref(可选)', hint: '默认当前 HEAD', required: false),
+    ]);
+    if (v == null) return;
+    await _runCli(
+        () => Cli.worktreeAdd(p.name, v[0],
+            workspace: ws.name, start: v[1].isEmpty ? null : v[1]),
+        '已建 worktree',
+        after: () => _reloadWorktrees(p.path));
+  }
+
+  Future<void> _deleteWorktree(
+      WorkspaceCfg ws, ProjectCfg p, Worktree w) async {
+    final br = w.branch.isEmpty ? w.name : w.branch;
+    if (!await _confirm('删除 worktree「$br」?', '会执行 git worktree remove --force。')) {
+      return;
+    }
+    await _runCli(
+        () => Cli.worktreeRemove(p.name, br, workspace: ws.name, force: true),
+        '已删除',
+        after: () => _reloadWorktrees(p.path));
+  }
+
+  // ------------------------------------------------------------- dialogs ----
+
+  Future<List<String>?> _fieldsDialog(String title, String okLabel,
+      List<({String label, String? hint, bool required})> fields) async {
+    final ctls = [for (final _ in fields) TextEditingController()];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          for (var i = 0; i < fields.length; i++)
+            Padding(
+              padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
+              child: TextField(
+                controller: ctls[i],
+                autofocus: i == 0,
+                decoration: InputDecoration(
+                    labelText: fields[i].label, hintText: fields[i].hint),
+              ),
+            ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true), child: Text(okLabel)),
+        ],
+      ),
+    );
+    if (ok != true) return null;
+    final vals = [for (final c in ctls) c.text.trim()];
+    for (var i = 0; i < fields.length; i++) {
+      if (fields[i].required && vals[i].isEmpty) {
+        _snack('${fields[i].label} 不能为空');
+        return null;
+      }
+    }
+    return vals;
+  }
+
+  Future<bool> _confirm(String title, String message) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确定')),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   void _openTask(ListItem it) {
@@ -78,7 +251,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           constraints: const BoxConstraints(maxWidth: 760, maxHeight: 660),
           child: HandoffDetailView(
             client: widget.client,
-            config: widget.config,
+            config: _cfg,
             item: it,
             onOpenTerminal: (wt, cmd) {
               addTerm(wt, cmd);
@@ -91,6 +264,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       ),
     );
   }
+
+  // ---------------------------------------------------------------- view ----
 
   @override
   Widget build(BuildContext context) {
@@ -109,7 +284,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   }
 
   Widget _sidebar() {
-    final wss = widget.config.workspaces;
+    final wss = _cfg.workspaces;
     return Column(children: [
       Container(
         height: 44,
@@ -117,18 +292,23 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: CcColors.border))),
         child: Row(children: [
-          const Text('工作区',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          sectionTitle('工作区',
+              meta: '${wss.length}', icon: Icons.workspaces_outlined),
           const Spacer(),
           IconButton(
-              onPressed: _refresh,
+              onPressed: _busy ? null : _newWorkspace,
+              tooltip: '新建工作区',
+              icon: const Icon(Icons.add, size: 18)),
+          IconButton(
+              onPressed: _busy ? null : _refresh,
               tooltip: '刷新',
               icon: const Icon(Icons.refresh, size: 18)),
         ]),
       ),
+      if (_busy) const LinearProgressIndicator(minHeight: 2),
       Expanded(
         child: wss.isEmpty
-            ? centerMsg('config.toml 里没有 workspace / project')
+            ? centerMsg('config.toml 里没有 workspace —— 点右上 + 新建,或 `cc-handoff workspace create`')
             : ListView(
                 children: wss
                     .map((ws) => ExpansionTile(
@@ -136,6 +316,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                               style:
                                   const TextStyle(fontWeight: FontWeight.w600)),
                           leading: const Icon(Icons.workspaces_outline, size: 18),
+                          trailing: _workspaceMenu(ws),
                           initiallyExpanded: true,
                           shape: const Border(),
                           children:
@@ -151,7 +332,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     return ExpansionTile(
       title: Text(p.name, style: const TextStyle(fontSize: 14)),
       leading: const Icon(Icons.folder_outlined, size: 18),
-      trailing: _agentMenu(ws, p.path),
+      trailing: _projectMenu(ws, p),
       tilePadding: const EdgeInsets.only(left: 16, right: 4),
       childrenPadding: const EdgeInsets.only(left: 16),
       shape: const Border(),
@@ -207,7 +388,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                 ? const Text('handoff',
                     style: TextStyle(color: CcColors.accent, fontSize: 10))
                 : null,
-            trailing: _agentMenu(ws, w.path),
+            trailing: _worktreeMenu(ws, p, w),
           )),
     ];
   }
@@ -235,25 +416,71 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     ];
   }
 
-  Widget _agentMenu(WorkspaceCfg ws, String dir) {
-    final def = ws.agent;
-    return PopupMenuButton<String>(
-      icon: const Icon(Icons.more_vert, size: 18),
-      tooltip: '起 agent',
-      onSelected: (a) {
-        final pl = ws.preLaunch.trim();
-        addTerm(dir, pl.isEmpty ? a : '$pl && $a');
-      },
-      itemBuilder: (_) => [
+  // ------------------------------------------------------------- menus ----
+
+  List<PopupMenuEntry<String>> _agentItems(String def) => [
         PopupMenuItem(
             value: 'claude',
             child: Text('起 claude${def == 'claude' ? '  (默认)' : ''}')),
         PopupMenuItem(
             value: 'codex',
             child: Text('起 codex${def == 'codex' ? '  (默认)' : ''}')),
-      ],
-    );
-  }
+      ];
+
+  Widget _workspaceMenu(WorkspaceCfg ws) => PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert, size: 18),
+        tooltip: '工作区操作',
+        onSelected: (v) {
+          if (v == 'add') _addProject(ws);
+          if (v == 'remove') _removeWorkspace(ws);
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'add', child: Text('添加项目')),
+          PopupMenuItem(value: 'remove', child: Text('删除工作区')),
+        ],
+      );
+
+  Widget _projectMenu(WorkspaceCfg ws, ProjectCfg p) => PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert, size: 18),
+        tooltip: '项目操作',
+        onSelected: (v) {
+          switch (v) {
+            case 'claude':
+            case 'codex':
+              _launch(p.path, v, ws.preLaunch);
+            case 'worktree':
+              _newWorktree(ws, p);
+            case 'remove':
+              _removeProject(ws, p);
+          }
+        },
+        itemBuilder: (_) => [
+          ..._agentItems(ws.agent),
+          const PopupMenuDivider(),
+          const PopupMenuItem(value: 'worktree', child: Text('新建 worktree')),
+          const PopupMenuItem(value: 'remove', child: Text('移除项目')),
+        ],
+      );
+
+  Widget _worktreeMenu(WorkspaceCfg ws, ProjectCfg p, Worktree w) =>
+      PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert, size: 18),
+        tooltip: 'worktree 操作',
+        onSelected: (v) {
+          switch (v) {
+            case 'claude':
+            case 'codex':
+              _launch(w.path, v, ws.preLaunch);
+            case 'delete':
+              _deleteWorktree(ws, p, w);
+          }
+        },
+        itemBuilder: (_) => [
+          ..._agentItems(ws.agent),
+          const PopupMenuDivider(),
+          const PopupMenuItem(value: 'delete', child: Text('删除 worktree')),
+        ],
+      );
 
   Widget _sectionLabel(String s) => Padding(
         padding: const EdgeInsets.fromLTRB(8, 6, 0, 2),

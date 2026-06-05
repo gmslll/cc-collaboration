@@ -66,12 +66,17 @@ class _ProjectsPageState extends State<ProjectsPage> {
             child: TextField(
               controller: _name,
               decoration: const InputDecoration(
-                  hintText: '新项目名称', isDense: true, border: OutlineInputBorder()),
+                  hintText: '新项目名称',
+                  isDense: true,
+                  prefixIcon: Icon(Icons.create_new_folder_outlined)),
               onSubmitted: (_) => _create(),
             ),
           ),
           const SizedBox(width: 8),
-          FilledButton(onPressed: _create, child: const Text('新建项目')),
+          FilledButton.icon(
+              onPressed: _create,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('新建项目')),
         ]),
         const SizedBox(height: 16),
         Expanded(child: _body()),
@@ -93,10 +98,12 @@ class _ProjectsPageState extends State<ProjectsPage> {
     }
     return ListView(
       children: _projects!
-          .map((p) => Card(
+            .map((p) => Card(
                 child: ListTile(
+                  leading:
+                      const Icon(Icons.folder_outlined, color: CcColors.accent),
                   title: Text(p.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text('owner: ${p.ownerIdentity}',
                       style: const TextStyle(color: CcColors.muted)),
                   trailing: const Icon(Icons.chevron_right, color: CcColors.muted),

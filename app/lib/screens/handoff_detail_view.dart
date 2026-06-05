@@ -309,12 +309,12 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : const Icon(Icons.download),
-                label: Text(_picking ? '接收中…' : '接收并物化 → 开终端'),
+                label: Text(_picking ? '接收中…' : '接收并开终端'),
               ),
             OutlinedButton.icon(
               onPressed: _ack,
               icon: const Icon(Icons.check, size: 18),
-              label: const Text('仅标记已接收'),
+              label: const Text('标记接收'),
             ),
             if (p.sender == _cfg.identity && _status?.state == 'pending')
               OutlinedButton.icon(

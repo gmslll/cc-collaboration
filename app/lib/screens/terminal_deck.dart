@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../theme.dart';
 import 'terminal_pane.dart';
@@ -6,15 +11,22 @@ import 'terminal_pane.dart';
 // TerminalHost owns the terminal-session list + active index + lifecycle, shared
 // by the inbox cockpit and the workspace cockpit (both add sessions on pickup /
 // agent launch). Mix into a State and render terminalDeck().
+//
+// Override [persistKey] to persist the open sessions (workdir + command) to disk
+// and restore them next launch via restoreTerms() — used by the workspace
+// cockpit so agent sessions reopen automatically.
 mixin TerminalHost<T extends StatefulWidget> on State<T> {
   final List<TerminalSession> terms = [];
   int activeTerm = 0;
+
+  String? get persistKey => null;
 
   void addTerm(String workdir, String command) {
     setState(() {
       terms.add(TerminalSession(workdir, command));
       activeTerm = terms.length - 1;
     });
+    unawaited(_save());
   }
 
   void closeTerm(int i) {
@@ -25,12 +37,53 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         activeTerm = terms.isEmpty ? 0 : terms.length - 1;
       }
     });
+    unawaited(_save());
   }
 
   void disposeTerms() {
     for (final s in terms) {
       s.dispose();
     }
+  }
+
+  // restoreTerms reopens persisted sessions (skipping any whose worktree dir is
+  // gone). Call from the host's initState. No-op unless persistKey is set.
+  Future<void> restoreTerms() async {
+    final key = persistKey;
+    if (key == null) return;
+    try {
+      final f = File(await _persistPath(key));
+      if (!await f.exists()) return;
+      final data = jsonDecode(await f.readAsString());
+      if (data is! List) return;
+      final restored = <TerminalSession>[];
+      for (final e in data) {
+        if (e is! Map) continue;
+        final wd = (e['workdir'] ?? '').toString();
+        final cmd = (e['command'] ?? '').toString();
+        if (wd.isEmpty || cmd.isEmpty || !Directory(wd).existsSync()) continue;
+        restored.add(TerminalSession(wd, cmd));
+      }
+      if (restored.isEmpty || !mounted) return;
+      setState(() {
+        terms.addAll(restored);
+        activeTerm = 0;
+      });
+    } catch (_) {}
+  }
+
+  Future<String> _persistPath(String key) async =>
+      '${(await getApplicationSupportDirectory()).path}/$key.json';
+
+  Future<void> _save() async {
+    final key = persistKey;
+    if (key == null) return;
+    try {
+      final f = File(await _persistPath(key));
+      await f.writeAsString(jsonEncode(terms
+          .map((s) => {'workdir': s.workdir, 'command': s.command})
+          .toList()));
+    } catch (_) {}
   }
 
   // sendToTerminal is the "发送到终端" wiring for HandoffDetailView — null when

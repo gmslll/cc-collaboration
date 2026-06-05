@@ -53,10 +53,13 @@ Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Text(text,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: CcColors.muted)),
+              style: const TextStyle(color: CcColors.muted, height: 1.35)),
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            OutlinedButton(onPressed: onRetry, child: const Text('重试')),
+            OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('重试')),
           ],
         ]),
       ),
@@ -66,7 +69,8 @@ Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
 Widget tag(String label, Color color, {bool bold = false}) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.2),
+        color: color.withValues(alpha: 0.16),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(label,
@@ -81,6 +85,7 @@ Widget chip(String text) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: CcColors.panelHigh,
+        border: Border.all(color: CcColors.border),
         borderRadius: BorderRadius.circular(6),
       ),
       child:
@@ -112,3 +117,18 @@ String hostOf(String url) {
   if (i >= 0) s = s.substring(i + 3);
   return s.replaceAll(RegExp(r'/+$'), '');
 }
+
+Widget sectionTitle(String title, {String? meta, IconData? icon}) => Row(
+      children: [
+        if (icon != null) ...[
+          Icon(icon, size: 17, color: CcColors.accent),
+          const SizedBox(width: 8),
+        ],
+        Text(title,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        if (meta != null) ...[
+          const SizedBox(width: 8),
+          Text(meta, style: const TextStyle(color: CcColors.muted, fontSize: 12)),
+        ],
+      ],
+    );

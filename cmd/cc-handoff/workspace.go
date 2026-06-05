@@ -26,6 +26,8 @@ func runWorkspace(ctx context.Context, args []string) error {
 		return runWorkspaceCreate(ctx, rest)
 	case "add":
 		return runWorkspaceAdd(ctx, rest)
+	case "remove", "rm", "delete":
+		return runWorkspaceRemove(ctx, rest)
 	case "open":
 		return runWorkspaceOpen(ctx, rest)
 	case "help", "-h", "--help":
@@ -47,6 +49,9 @@ func workspaceUsage() {
   cc-handoff workspace add <name> <github-url|local-path>
         add a project; a git URL is cloned into the workspace dir, a local
         path is just registered
+  cc-handoff workspace remove <name> [project]
+        drop a workspace (or one project from it) from config; files on disk
+        are left untouched
   cc-handoff workspace open <project> [--workspace NAME] [--window]
         launch the agent in a project: in-place (replaces this shell) by
         default, or in a new terminal window with --window
@@ -221,6 +226,62 @@ func runWorkspaceAdd(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("added project %q to workspace %q\n", proj.Name, name)
 	fmt.Printf("launch with: %s\n", config.BuildLaunchCommand(u, *ws, proj))
+	return nil
+}
+
+// runWorkspaceRemove drops a workspace, or one project from it, from config.
+// Config-only: files on disk are left untouched (we never rm -rf a user's repo).
+func runWorkspaceRemove(_ context.Context, args []string) error {
+	fs := flag.NewFlagSet("workspace remove", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 && fs.NArg() != 2 {
+		return fmt.Errorf("usage: cc-handoff workspace remove <name> [project]")
+	}
+	name := fs.Arg(0)
+
+	u, err := loadUserOrFail()
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i := range u.Workspaces {
+		if u.Workspaces[i].Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("workspace %q not found", name)
+	}
+
+	if fs.NArg() == 2 {
+		proj := fs.Arg(1)
+		ws := &u.Workspaces[idx]
+		pidx := -1
+		for i := range ws.Projects {
+			if ws.Projects[i].Name == proj {
+				pidx = i
+				break
+			}
+		}
+		if pidx < 0 {
+			return fmt.Errorf("project %q not found in workspace %q", proj, name)
+		}
+		ws.Projects = append(ws.Projects[:pidx], ws.Projects[pidx+1:]...)
+		if _, err := config.SaveUser(u); err != nil {
+			return err
+		}
+		fmt.Printf("removed project %q from workspace %q (files left on disk)\n", proj, name)
+		return nil
+	}
+
+	u.Workspaces = append(u.Workspaces[:idx], u.Workspaces[idx+1:]...)
+	if _, err := config.SaveUser(u); err != nil {
+		return err
+	}
+	fmt.Printf("removed workspace %q (files left on disk)\n", name)
 	return nil
 }
 
