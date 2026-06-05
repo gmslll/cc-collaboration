@@ -8,8 +8,20 @@ import 'editor_page.dart';
 
 // dirs/files never worth browsing — skipped in the file tree.
 const _ignore = {
-  '.git', 'node_modules', 'build', '.dart_tool', '.idea', 'dist', 'vendor',
-  'target', '.gradle', 'Pods', '.next', '__pycache__', '.venv', '.DS_Store',
+  '.git',
+  'node_modules',
+  'build',
+  '.dart_tool',
+  '.idea',
+  'dist',
+  'vendor',
+  'target',
+  '.gradle',
+  'Pods',
+  '.next',
+  '__pycache__',
+  '.venv',
+  '.DS_Store',
 };
 
 // FileBrowserPage is a lazy file tree of a project root; tapping a file opens it
@@ -28,7 +40,13 @@ class FileBrowserPage extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.symmetric(vertical: 4),
           children: [
-            _DirTile(dir: root, label: name, depth: 0, initiallyExpanded: true),
+            FileTree(
+              root: root,
+              label: name,
+              onOpenFile: (path) => Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => EditorPage(path: path))),
+            ),
           ],
         ),
       ),
@@ -36,23 +54,47 @@ class FileBrowserPage extends StatelessWidget {
   }
 }
 
-class _DirTile extends StatefulWidget {
+class FileTree extends StatelessWidget {
+  final String root;
+  final String label;
+  final ValueChanged<String> onOpenFile;
+  const FileTree({
+    super.key,
+    required this.root,
+    required this.label,
+    required this.onOpenFile,
+  });
+
+  @override
+  Widget build(BuildContext context) => DirTile(
+    dir: root,
+    label: label,
+    depth: 0,
+    initiallyExpanded: true,
+    onOpenFile: onOpenFile,
+  );
+}
+
+class DirTile extends StatefulWidget {
   final String dir;
   final String label;
   final int depth;
   final bool initiallyExpanded;
-  const _DirTile({
+  final ValueChanged<String> onOpenFile;
+  const DirTile({
+    super.key,
     required this.dir,
     required this.label,
     required this.depth,
+    required this.onOpenFile,
     this.initiallyExpanded = false,
   });
 
   @override
-  State<_DirTile> createState() => _DirTileState();
+  State<DirTile> createState() => _DirTileState();
 }
 
-class _DirTileState extends State<_DirTile> {
+class _DirTileState extends State<DirTile> {
   List<FileSystemEntity>? _children; // null = not loaded yet
   bool _loading = false;
 
@@ -102,11 +144,17 @@ class _DirTileState extends State<_DirTile> {
       childrenPadding: EdgeInsets.zero,
       shape: const Border(),
       collapsedShape: const Border(),
-      leading: const Icon(Icons.folder_rounded, size: 16, color: CcColors.muted),
-      title: Text(widget.label,
-          style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis),
+      leading: const Icon(
+        Icons.folder_rounded,
+        size: 16,
+        color: CcColors.muted,
+      ),
+      title: Text(
+        widget.label,
+        style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       children: _childWidgets(),
     );
   }
@@ -115,10 +163,17 @@ class _DirTileState extends State<_DirTile> {
     if (_children == null) {
       return [
         Padding(
-          padding: EdgeInsets.only(left: 12.0 + widget.depth * 12, top: 2, bottom: 4),
+          padding: EdgeInsets.only(
+            left: 12.0 + widget.depth * 12,
+            top: 2,
+            bottom: 4,
+          ),
           child: _loading
               ? const SizedBox(
-                  width: 80, height: 2, child: LinearProgressIndicator())
+                  width: 80,
+                  height: 2,
+                  child: LinearProgressIndicator(),
+                )
               : const SizedBox.shrink(),
         ),
       ];
@@ -127,24 +182,33 @@ class _DirTileState extends State<_DirTile> {
     return [
       for (final e in _children!)
         if (e is Directory)
-          _DirTile(dir: e.path, label: e.path.split('/').last, depth: d)
+          DirTile(
+            dir: e.path,
+            label: e.path.split('/').last,
+            depth: d,
+            onOpenFile: widget.onOpenFile,
+          )
         else
           _fileTile(e.path, e.path.split('/').last, d),
     ];
   }
 
   Widget _fileTile(String path, String name, int depth) => ListTile(
-        dense: true,
-        visualDensity: const VisualDensity(vertical: -2),
-        contentPadding: EdgeInsets.only(left: 12.0 + depth * 12, right: 8),
-        horizontalTitleGap: 6,
-        leading: const Icon(Icons.description_rounded,
-            size: 15, color: CcColors.subtle),
-        title: Text(name,
-            style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis),
-        onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => EditorPage(path: path))),
-      );
+    dense: true,
+    visualDensity: const VisualDensity(vertical: -2),
+    contentPadding: EdgeInsets.only(left: 12.0 + depth * 12, right: 8),
+    horizontalTitleGap: 6,
+    leading: const Icon(
+      Icons.description_rounded,
+      size: 15,
+      color: CcColors.subtle,
+    ),
+    title: Text(
+      name,
+      style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    ),
+    onTap: () => widget.onOpenFile(path),
+  );
 }

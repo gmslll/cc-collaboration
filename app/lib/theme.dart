@@ -4,26 +4,28 @@ import 'package:flutter/material.dart';
 // clear hierarchy, indigo accent) with tasteful technical accents — JetBrains
 // Mono for code/paths/terminal, subtle gradients, soft accent glow, 200ms hover.
 class CcColors {
-  static const bg = Color(0xFF0A0E1A);
-  static const bgGradTop = Color(0xFF0E1626); // top of the subtle app gradient
-  static const panel = Color(0xFF111726);
-  static const panelHigh = Color(0xFF18213A);
-  static const border = Color(0xFF222C42);
-  static const borderSoft = Color(0xFF2D3950);
-  static const text = Color(0xFFE6EAF2);
-  static const muted = Color(0xFF98A2B8);
-  static const subtle = Color(0xFF727D94); // ≥4.5:1 on bg (WCAG AA)
-  static const accent = Color(0xFF818CF8); // indigo — primary
-  static const accentBright = Color(0xFFA5B4FC); // hover / glow highlight
-  static const danger = Color(0xFFF87171);
-  static const warning = Color(0xFFFBBF24);
-  static const ok = Color(0xFF34D399); // run / online / launch
+  static const bg = Color(0xFF1E1F22);
+  static const bgGradTop = Color(0xFF24262B);
+  static const editor = Color(0xFF1E1F22);
+  static const editorTabBar = Color(0xFF2B2D30);
+  static const toolbar = Color(0xFF2B2D30);
+  static const panel = Color(0xFF25272B);
+  static const panelHigh = Color(0xFF313338);
+  static const border = Color(0xFF3C3F44);
+  static const borderSoft = Color(0xFF474A50);
+  static const text = Color(0xFFDADADA);
+  static const muted = Color(0xFFA8ADB7);
+  static const subtle = Color(0xFF7D838C);
+  static const accent = Color(0xFF4F8DFF);
+  static const accentBright = Color(0xFF7EB1FF);
+  static const danger = Color(0xFFFF6B68);
+  static const warning = Color(0xFFFFC66D);
+  static const ok = Color(0xFF6AAB73);
 }
 
 class CcRadius {
-  // softened a touch from the hard near-square pass — still crisp, less rigid.
-  static const sm = 6.0;
-  static const md = 10.0;
+  static const sm = 4.0;
+  static const md = 6.0;
   static const pill = 999.0;
 }
 
@@ -32,34 +34,45 @@ class CcRadius {
 class CcType {
   static const mono = 'JetBrainsMono';
 
-  static TextStyle code(
-          {double size = 13, Color color = CcColors.text, FontWeight? weight}) =>
-      TextStyle(
-        fontFamily: mono,
-        fontSize: size,
-        height: 1.4,
-        color: color,
-        fontWeight: weight ?? FontWeight.w400,
-      );
+  static TextStyle code({
+    double size = 13,
+    Color color = CcColors.text,
+    FontWeight? weight,
+  }) => TextStyle(
+    fontFamily: mono,
+    fontSize: size,
+    height: 1.4,
+    color: color,
+    fontWeight: weight ?? FontWeight.w400,
+  );
 }
 
 ThemeData ccTheme() {
-  final scheme = ColorScheme.fromSeed(
-    seedColor: CcColors.accent,
-    brightness: Brightness.dark,
-  ).copyWith(
-    primary: CcColors.accent,
-    surface: CcColors.panel,
-    onSurface: CcColors.text,
-    outline: CcColors.border,
-    error: CcColors.danger,
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: CcColors.accent,
+        brightness: Brightness.dark,
+      ).copyWith(
+        primary: CcColors.accent,
+        surface: CcColors.panel,
+        onSurface: CcColors.text,
+        outline: CcColors.border,
+        error: CcColors.danger,
+      );
 
   const t = CcColors.text;
   final textTheme = const TextTheme(
-    titleLarge:
-        TextStyle(fontSize: 22, fontWeight: FontWeight.w700, height: 1.25, letterSpacing: -0.3),
-    titleMedium: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w600, height: 1.3),
+    titleLarge: TextStyle(
+      fontSize: 22,
+      fontWeight: FontWeight.w700,
+      height: 1.25,
+      letterSpacing: -0.3,
+    ),
+    titleMedium: TextStyle(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w600,
+      height: 1.3,
+    ),
     titleSmall: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
     bodyLarge: TextStyle(fontSize: 15.5, height: 1.5),
     bodyMedium: TextStyle(fontSize: 14.5, height: 1.5),
@@ -67,13 +80,17 @@ ThemeData ccTheme() {
     labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
     labelMedium: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
     labelSmall: TextStyle(
-        fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 0.3, color: CcColors.muted),
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      letterSpacing: 0.3,
+      color: CcColors.muted,
+    ),
   ).apply(bodyColor: t, displayColor: t);
 
   OutlineInputBorder inputBorder(Color c, [double w = 1]) => OutlineInputBorder(
-        borderRadius: BorderRadius.circular(CcRadius.sm),
-        borderSide: BorderSide(color: c, width: w),
-      );
+    borderRadius: BorderRadius.circular(CcRadius.sm),
+    borderSide: BorderSide(color: c, width: w),
+  );
 
   return ThemeData(
     useMaterial3: true,
@@ -83,12 +100,17 @@ ThemeData ccTheme() {
     canvasColor: CcColors.bg,
     dividerColor: CcColors.border,
     hoverColor: CcColors.accent.withValues(alpha: 0.06),
-    focusColor: CcColors.accent.withValues(alpha: 0.20), // visible keyboard focus
+    focusColor: CcColors.accent.withValues(
+      alpha: 0.20,
+    ), // visible keyboard focus
     splashColor: CcColors.accent.withValues(alpha: 0.08),
     dividerTheme: const DividerThemeData(color: CcColors.border, thickness: 1),
     scrollbarTheme: ScrollbarThemeData(
-      thumbColor: WidgetStateProperty.resolveWith((s) =>
-          s.contains(WidgetState.hovered) ? CcColors.subtle : CcColors.borderSoft),
+      thumbColor: WidgetStateProperty.resolveWith(
+        (s) => s.contains(WidgetState.hovered)
+            ? CcColors.subtle
+            : CcColors.borderSoft,
+      ),
       thickness: const WidgetStatePropertyAll(9),
       radius: const Radius.circular(8),
       crossAxisMargin: 3,
@@ -112,33 +134,45 @@ ThemeData ccTheme() {
     navigationRailTheme: NavigationRailThemeData(
       backgroundColor: CcColors.panel,
       indicatorColor: CcColors.accent.withValues(alpha: 0.16),
-      indicatorShape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      selectedIconTheme:
-          const IconThemeData(color: CcColors.accentBright, size: 26),
+      indicatorShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+      ),
+      selectedIconTheme: const IconThemeData(
+        color: CcColors.accentBright,
+        size: 26,
+      ),
       unselectedIconTheme: const IconThemeData(color: CcColors.muted, size: 24),
       selectedLabelTextStyle: const TextStyle(
-          color: CcColors.text, fontSize: 12.5, fontWeight: FontWeight.w600),
-      unselectedLabelTextStyle:
-          const TextStyle(color: CcColors.muted, fontSize: 12.5),
+        color: CcColors.text,
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+      ),
+      unselectedLabelTextStyle: const TextStyle(
+        color: CcColors.muted,
+        fontSize: 12.5,
+      ),
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: CcColors.panel,
       indicatorColor: CcColors.accent.withValues(alpha: 0.16),
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      labelTextStyle: WidgetStateProperty.resolveWith((s) => TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: s.contains(WidgetState.selected)
-                ? CcColors.text
-                : CcColors.muted,
-          )),
-      iconTheme: WidgetStateProperty.resolveWith((s) => IconThemeData(
-            color: s.contains(WidgetState.selected)
-                ? CcColors.accentBright
-                : CcColors.muted,
-          )),
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (s) => TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
+          color: s.contains(WidgetState.selected)
+              ? CcColors.text
+              : CcColors.muted,
+        ),
+      ),
+      iconTheme: WidgetStateProperty.resolveWith(
+        (s) => IconThemeData(
+          color: s.contains(WidgetState.selected)
+              ? CcColors.accentBright
+              : CcColors.muted,
+        ),
+      ),
     ),
     listTileTheme: const ListTileThemeData(
       selectedTileColor: CcColors.panelHigh,
@@ -171,12 +205,12 @@ ThemeData ccTheme() {
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: CcColors.accent,
-        foregroundColor: CcColors.bg,
-        elevation: 3,
-        shadowColor: CcColors.accent.withValues(alpha: 0.45),
-        minimumSize: const Size(44, 42),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(CcRadius.sm)),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        minimumSize: const Size(44, 34),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(CcRadius.sm),
+        ),
         textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
       ),
     ),
@@ -184,9 +218,10 @@ ThemeData ccTheme() {
       style: OutlinedButton.styleFrom(
         foregroundColor: CcColors.text,
         side: const BorderSide(color: CcColors.borderSoft),
-        minimumSize: const Size(44, 42),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(CcRadius.sm)),
+        minimumSize: const Size(44, 34),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(CcRadius.sm),
+        ),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
@@ -197,23 +232,30 @@ ThemeData ccTheme() {
     ),
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
-        backgroundColor: WidgetStateProperty.resolveWith((states) =>
-            states.contains(WidgetState.selected)
-                ? CcColors.accent.withValues(alpha: 0.16)
-                : Colors.transparent),
-        foregroundColor: WidgetStateProperty.resolveWith((states) =>
-            states.contains(WidgetState.selected)
-                ? CcColors.accentBright
-                : CcColors.muted),
-        side: WidgetStateProperty.resolveWith((states) => BorderSide(
-              color: states.contains(WidgetState.selected)
-                  ? CcColors.accent.withValues(alpha: 0.55)
-                  : CcColors.border,
-            )),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? CcColors.accent.withValues(alpha: 0.16)
+              : Colors.transparent,
+        ),
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? CcColors.accentBright
+              : CcColors.muted,
+        ),
+        side: WidgetStateProperty.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.selected)
+                ? CcColors.accent.withValues(alpha: 0.55)
+                : CcColors.border,
+          ),
+        ),
         textStyle: const WidgetStatePropertyAll(
-            TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+          TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+        ),
         shape: WidgetStateProperty.all(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(CcRadius.sm)),
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(CcRadius.sm),
+          ),
         ),
       ),
     ),
@@ -223,7 +265,10 @@ ThemeData ccTheme() {
       labelColor: CcColors.text,
       unselectedLabelColor: CcColors.muted,
       labelStyle: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-      unselectedLabelStyle: TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+      unselectedLabelStyle: TextStyle(
+        fontWeight: FontWeight.w500,
+        fontSize: 13,
+      ),
       indicatorSize: TabBarIndicatorSize.label,
       overlayColor: WidgetStatePropertyAll(Colors.transparent),
     ),

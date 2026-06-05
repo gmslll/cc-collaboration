@@ -27,17 +27,16 @@ import 'package:re_highlight/styles/atom-one-dark.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-// EditorPage edits a local file with syntax highlighting (re_editor) and saves
-// back to disk. Used from the diff view's "编辑" and the project file browser.
-class EditorPage extends StatefulWidget {
+class CodeEditorPane extends StatefulWidget {
   final String path;
-  const EditorPage({super.key, required this.path});
+  final ValueChanged<bool>? onDirtyChanged;
+  const CodeEditorPane({super.key, required this.path, this.onDirtyChanged});
 
   @override
-  State<EditorPage> createState() => _EditorPageState();
+  State<CodeEditorPane> createState() => CodeEditorPaneState();
 }
 
-class _EditorPageState extends State<EditorPage> {
+class CodeEditorPaneState extends State<CodeEditorPane> {
   CodeLineEditingController? _ctl;
   String _original = '';
   bool _crlf = false; // file used CRLF endings — re-apply them on save
@@ -46,17 +45,36 @@ class _EditorPageState extends State<EditorPage> {
   bool _saving = false;
   String? _error;
 
+  bool get dirty => _dirty;
+  bool get saving => _saving;
+
   @override
   void initState() {
     super.initState();
     _load();
   }
 
+  @override
+  void didUpdateWidget(CodeEditorPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path) {
+      _ctl?.dispose();
+      _ctl = null;
+      _original = '';
+      _dirty = false;
+      _loading = true;
+      _saving = false;
+      _error = null;
+      _load();
+    }
+  }
+
   Future<void> _load() async {
     try {
       final content = await File(widget.path).readAsString();
       _crlf = content.contains('\r\n');
-      _ctl = CodeLineEditingController.fromText(content)..addListener(_onChange);
+      _ctl = CodeLineEditingController.fromText(content)
+        ..addListener(_onChange);
       // re_editor normalises EOLs to LF internally; baseline against that so a
       // CRLF file doesn't open already-dirty.
       _original = _ctl!.text;
@@ -73,10 +91,13 @@ class _EditorPageState extends State<EditorPage> {
 
   void _onChange() {
     final d = _ctl!.text != _original;
-    if (d != _dirty && mounted) setState(() => _dirty = d);
+    if (d != _dirty && mounted) {
+      setState(() => _dirty = d);
+      widget.onDirtyChanged?.call(d);
+    }
   }
 
-  Future<void> _save() async {
+  Future<void> save() async {
     final ctl = _ctl;
     if (ctl == null) return;
     setState(() => _saving = true);
@@ -89,6 +110,7 @@ class _EditorPageState extends State<EditorPage> {
           _dirty = false;
           _saving = false;
         });
+        widget.onDirtyChanged?.call(false);
         snack(context, '已保存');
       }
     } catch (e) {
@@ -99,26 +121,6 @@ class _EditorPageState extends State<EditorPage> {
     }
   }
 
-  Future<bool> _confirmDiscard() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('未保存的修改'),
-        content: const Text('放弃修改并离开?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('放弃')),
-        ],
-      ),
-    );
-    return ok ?? false;
-  }
-
   @override
   void dispose() {
     _ctl?.dispose();
@@ -127,40 +129,6 @@ class _EditorPageState extends State<EditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.path.split('/').last;
-    return PopScope(
-      canPop: !_dirty,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        final nav = Navigator.of(context);
-        if (await _confirmDiscard() && mounted) nav.pop();
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text('${_dirty ? '● ' : ''}$name',
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          actions: [
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilledButton.icon(
-                onPressed: (_dirty && !_saving) ? _save : null,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.save_rounded, size: 18),
-                label: const Text('保存'),
-              ),
-            ),
-          ],
-        ),
-        body: _body(),
-      ),
-    );
-  }
-
-  Widget _body() {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return centerMsg(_error!);
     return CodeEditor(
@@ -172,10 +140,96 @@ class _EditorPageState extends State<EditorPage> {
         backgroundColor: CcColors.bg,
         codeTheme: _themeFor(widget.path),
       ),
-      indicatorBuilder: (context, editingController, chunkController, notifier) =>
-          DefaultCodeLineNumber(
-              controller: editingController, notifier: notifier),
+      indicatorBuilder:
+          (context, editingController, chunkController, notifier) =>
+              DefaultCodeLineNumber(
+                controller: editingController,
+                notifier: notifier,
+              ),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    );
+  }
+}
+
+// EditorPage edits a local file with syntax highlighting (re_editor) and saves
+// back to disk. Used from the diff view's "编辑" and the project file browser.
+class EditorPage extends StatefulWidget {
+  final String path;
+  const EditorPage({super.key, required this.path});
+
+  @override
+  State<EditorPage> createState() => _EditorPageState();
+}
+
+class _EditorPageState extends State<EditorPage> {
+  final _editorKey = GlobalKey<CodeEditorPaneState>();
+  bool _dirty = false;
+
+  Future<bool> _confirmDiscard() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('未保存的修改'),
+        content: const Text('放弃修改并离开?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('放弃'),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.path.split('/').last;
+    final saving = _editorKey.currentState?.saving ?? false;
+    return PopScope(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final nav = Navigator.of(context);
+        if (await _confirmDiscard() && mounted) nav.pop();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            '${_dirty ? '● ' : ''}$name',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton.icon(
+                onPressed: (_dirty && !saving)
+                    ? _editorKey.currentState?.save
+                    : null,
+                icon: saving
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_rounded, size: 18),
+                label: const Text('保存'),
+              ),
+            ),
+          ],
+        ),
+        body: CodeEditorPane(
+          key: _editorKey,
+          path: widget.path,
+          onDirtyChanged: (v) => setState(() => _dirty = v),
+        ),
+      ),
     );
   }
 }
@@ -190,24 +244,24 @@ CodeHighlightTheme? _themeFor(String path) {
 }
 
 Mode? _modeForExt(String ext) => switch (ext) {
-      'dart' => langDart,
-      'go' => langGo,
-      'ts' || 'tsx' => langTypescript,
-      'js' || 'jsx' || 'mjs' => langJavascript,
-      'py' => langPython,
-      'json' => langJson,
-      'yaml' || 'yml' => langYaml,
-      'md' || 'markdown' => langMarkdown,
-      'sh' || 'bash' || 'zsh' => langBash,
-      'xml' || 'html' || 'htm' => langXml,
-      'css' => langCss,
-      'java' => langJava,
-      'kt' || 'kts' => langKotlin,
-      'rs' => langRust,
-      'c' || 'cc' || 'cpp' || 'cxx' || 'h' || 'hpp' => langCpp,
-      'sql' => langSql,
-      'rb' => langRuby,
-      'php' => langPhp,
-      'toml' || 'ini' || 'cfg' || 'conf' || 'properties' => langIni,
-      _ => null,
-    };
+  'dart' => langDart,
+  'go' => langGo,
+  'ts' || 'tsx' => langTypescript,
+  'js' || 'jsx' || 'mjs' => langJavascript,
+  'py' => langPython,
+  'json' => langJson,
+  'yaml' || 'yml' => langYaml,
+  'md' || 'markdown' => langMarkdown,
+  'sh' || 'bash' || 'zsh' => langBash,
+  'xml' || 'html' || 'htm' => langXml,
+  'css' => langCss,
+  'java' => langJava,
+  'kt' || 'kts' => langKotlin,
+  'rs' => langRust,
+  'c' || 'cc' || 'cpp' || 'cxx' || 'h' || 'hpp' => langCpp,
+  'sql' => langSql,
+  'rb' => langRuby,
+  'php' => langPhp,
+  'toml' || 'ini' || 'cfg' || 'conf' || 'properties' => langIni,
+  _ => null,
+};

@@ -39,6 +39,16 @@ class Prefs {
     _save();
   }
 
+  static String getString(String key, {required String def}) {
+    final v = _data[key];
+    return v is String ? v : def;
+  }
+
+  static void setString(String key, String value) {
+    _data[key] = value;
+    _save();
+  }
+
   static Future<void> _save() async {
     final p = _path;
     if (p == null) return;
