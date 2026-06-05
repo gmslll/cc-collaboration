@@ -19,6 +19,10 @@ class RuleCfg {
 // config has no secrets and isn't shared, so we read/write it directly). List
 // fields (partners / suggest_edit / labels / types) are comma-separated in the
 // form and split on save.
+//
+// This mirrors Go's `internal/config/config.go` Repo struct — keep the fields in
+// sync: a field added to the Go struct won't surface here until added below
+// (unknown keys are preserved via `raw`, just not editable).
 class RepoConfig {
   // [identity]
   String me, partner, partners;
@@ -142,16 +146,15 @@ class RepoConfig {
     final m = Map<String, dynamic>.from(raw);
 
     final id = <String, dynamic>{};
-    if (me.isNotEmpty) id['me'] = me;
-    if (partner.isNotEmpty) id['partner'] = partner;
-    final partnersList = _split(partners);
-    if (partnersList.isNotEmpty) id['partners'] = partnersList;
+    _putStr(id, 'me', me);
+    _putStr(id, 'partner', partner);
+    _putList(id, 'partners', partners);
     _section(m, 'identity', id);
 
     final p = <String, dynamic>{};
-    if (swagger.isNotEmpty) p['swagger'] = swagger;
-    if (base.isNotEmpty) p['base'] = base;
-    if (repo.isNotEmpty) p['repo'] = repo;
+    _putStr(p, 'swagger', swagger);
+    _putStr(p, 'base', base);
+    _putStr(p, 'repo', repo);
     _section(m, 'paths', p);
 
     final ruleList = rules
@@ -160,8 +163,7 @@ class RepoConfig {
       final rm = <String, dynamic>{
         'when_path_matches': r.whenPathMatches.trim()
       };
-      final se = _split(r.suggestEdit);
-      if (se.isNotEmpty) rm['suggest_edit'] = se;
+      _putList(rm, 'suggest_edit', r.suggestEdit);
       if (r.suggestCreate) rm['suggest_create_if_missing'] = true;
       return rm;
     }).toList();
@@ -171,16 +173,17 @@ class RepoConfig {
       m.remove('partner_mapping');
     }
 
+    // auto_launch has no omitempty in Go — always write it; the rest omit.
     final tr = <String, dynamic>{'auto_launch': autoLaunch};
-    if (autoLaunchNormal) tr['auto_launch_normal'] = true;
-    if (wakeOnComment) tr['wake_on_comment'] = true;
-    if (muteUserPresence) tr['mute_user_presence'] = true;
-    if (launchInteractive) tr['launch_interactive'] = true;
-    if (autoLaunchOnAlert) tr['auto_launch_on_alert'] = true;
-    if (terminalApp.isNotEmpty) tr['terminal_app'] = terminalApp;
-    if (launchMode.isNotEmpty) tr['launch_mode'] = launchMode;
-    if (ackOnLaunch.isNotEmpty) tr['ack_on_launch'] = ackOnLaunch;
-    if (preLaunch.isNotEmpty) tr['pre_launch'] = preLaunch;
+    _putBool(tr, 'auto_launch_normal', autoLaunchNormal);
+    _putBool(tr, 'wake_on_comment', wakeOnComment);
+    _putBool(tr, 'mute_user_presence', muteUserPresence);
+    _putBool(tr, 'launch_interactive', launchInteractive);
+    _putBool(tr, 'auto_launch_on_alert', autoLaunchOnAlert);
+    _putStr(tr, 'terminal_app', terminalApp);
+    _putStr(tr, 'launch_mode', launchMode);
+    _putStr(tr, 'ack_on_launch', ackOnLaunch);
+    _putStr(tr, 'pre_launch', preLaunch);
     m['triggers'] = tr;
 
     if (inboxDir.isNotEmpty) {
@@ -190,19 +193,17 @@ class RepoConfig {
     }
 
     final lin = <String, dynamic>{};
-    if (linearEnabled) lin['enabled'] = true;
-    if (teamKey.isNotEmpty) lin['team_key'] = teamKey;
-    final labels = _split(defaultLabels);
-    if (labels.isNotEmpty) lin['default_labels'] = labels;
-    if (mcpPrefix.isNotEmpty) lin['mcp_prefix'] = mcpPrefix;
-    if (syncOnSubmit) lin['sync_on_submit'] = true;
-    if (syncOnPickup) lin['sync_on_pickup'] = true;
-    if (syncOnComment) lin['sync_on_comment'] = true;
-    if (syncOnRetract) lin['sync_on_retract'] = true;
+    _putBool(lin, 'enabled', linearEnabled);
+    _putStr(lin, 'team_key', teamKey);
+    _putList(lin, 'default_labels', defaultLabels);
+    _putStr(lin, 'mcp_prefix', mcpPrefix);
+    _putBool(lin, 'sync_on_submit', syncOnSubmit);
+    _putBool(lin, 'sync_on_pickup', syncOnPickup);
+    _putBool(lin, 'sync_on_comment', syncOnComment);
+    _putBool(lin, 'sync_on_retract', syncOnRetract);
     final notif = <String, dynamic>{};
-    if (pollInterval.isNotEmpty) notif['poll_interval'] = pollInterval;
-    final typesList = _split(types);
-    if (typesList.isNotEmpty) notif['types'] = typesList;
+    _putStr(notif, 'poll_interval', pollInterval);
+    _putList(notif, 'types', types);
     if (notif.isNotEmpty) lin['notifications'] = notif;
     if (lin.isNotEmpty) {
       m['integrations'] = {'linear': lin};
@@ -221,6 +222,20 @@ void _section(Map<String, dynamic> m, String key, Map<String, dynamic> sec) {
   } else {
     m[key] = sec;
   }
+}
+
+// _putStr/_putBool/_putList apply Go's omitempty: only write non-default values.
+void _putStr(Map<String, dynamic> m, String k, String v) {
+  if (v.isNotEmpty) m[k] = v;
+}
+
+void _putBool(Map<String, dynamic> m, String k, bool v) {
+  if (v) m[k] = true;
+}
+
+void _putList(Map<String, dynamic> m, String k, String csv) {
+  final l = _split(csv);
+  if (l.isNotEmpty) m[k] = l;
 }
 
 String _s(dynamic v) => (v ?? '').toString();

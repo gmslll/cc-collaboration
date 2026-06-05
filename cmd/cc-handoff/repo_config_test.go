@@ -10,7 +10,9 @@ import (
 
 // goldenRepoToml is a full-featured .cc-handoff.toml in the standard-TOML shape
 // the Flutter GUI writes (array-of-tables + nested integrations.linear). This
-// guards the toml.dart ↔ BurntSushi interop: LoadRepo must parse it back.
+// guards the Go side of the toml.dart ↔ BurntSushi interop: LoadRepo must parse
+// this structure. (The Dart side — that toml.dart actually emits this shape —
+// is covered by the RepoConfig save→load round-trip test in app/test.)
 const goldenRepoToml = `
 [identity]
 me = "me@backend"
