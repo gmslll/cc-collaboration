@@ -8,7 +8,7 @@ VERSION     := $(shell cat VERSION)
 LDFLAGS     := -X 'github.com/cc-collaboration/internal/version.Version=$(VERSION)'
 INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows install test e2e deploy clean version release-tag
+.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-apk install test e2e deploy clean version release-tag
 
 all: build
 
@@ -46,6 +46,18 @@ mcp-windows-arm64:
 
 # Aggregate: build all Windows binaries (amd64 + arm64) for cli and mcp.
 windows: cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64
+
+# GUI client (Flutter, in app/). It's a separate Dart project that talks to the
+# relay over HTTP and shells the cc-handoff CLI for local ops — build/run it from
+# app/ with the flutter tool; these are convenience wrappers. See app/README.md.
+app-run:
+	cd app && flutter run -d macos
+
+app-macos:
+	cd app && flutter build macos --release
+
+app-apk:
+	cd app && flutter build apk --release
 
 install: cli mcp
 	install -m 755 bin/cc-handoff $(INSTALL_DIR)/cc-handoff

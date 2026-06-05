@@ -1,5 +1,7 @@
 bin/
+/build/
 *.exe
+*.apk
 *.test
 *.out
 .DS_Store
