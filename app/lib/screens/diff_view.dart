@@ -52,18 +52,35 @@ class _DiffViewState extends State<DiffView> {
   void didUpdateWidget(DiffView old) {
     super.didUpdateWidget(old);
     if (!identical(old.files, widget.files)) {
+      // a re-diff (after edit/revert) rebuilds the list — keep the user on the
+      // same file by path rather than snapping back to the first one.
+      final keep = _selected?.path;
       _root = _buildTree(widget.files);
-      _selectFirst();
+      _reselect(keep);
     }
   }
 
-  void _selectFirst() {
+  void _selectFirst() => _reselect(null);
+
+  void _reselect(String? path) {
     if (widget.files.isEmpty) {
-      _selected = null;
-      _rows = const [];
-    } else {
-      _select(widget.files.first);
+      setState(() {
+        _selected = null;
+        _rows = const [];
+        _editingNewNo = null;
+      });
+      return;
     }
+    var target = widget.files.first;
+    if (path != null) {
+      for (final f in widget.files) {
+        if (f.path == path) {
+          target = f;
+          break;
+        }
+      }
+    }
+    _select(target);
   }
 
   void _select(FileDiff f) {
@@ -91,7 +108,12 @@ class _DiffViewState extends State<DiffView> {
     try {
       final file = File('$root/${f.path}');
       final lines = (await file.readAsString()).split('\n');
-      if (newNo - 1 < 0 || newNo - 1 >= lines.length) return;
+      // guard against a stale line number: the diff said this line is `r.right`;
+      // if the file changed under us, refuse rather than clobber another line.
+      if (newNo - 1 < 0 || newNo - 1 >= lines.length || lines[newNo - 1] != r.right) {
+        if (mounted) snack(context, '文件已变,请刷新后再改');
+        return;
+      }
       lines[newNo - 1] = _editCtl.text;
       await file.writeAsString(lines.join('\n'));
       widget.onChanged?.call();

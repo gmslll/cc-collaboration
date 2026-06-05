@@ -40,6 +40,7 @@ class EditorPage extends StatefulWidget {
 class _EditorPageState extends State<EditorPage> {
   CodeLineEditingController? _ctl;
   String _original = '';
+  bool _crlf = false; // file used CRLF endings — re-apply them on save
   bool _dirty = false;
   bool _loading = true;
   bool _saving = false;
@@ -54,8 +55,11 @@ class _EditorPageState extends State<EditorPage> {
   Future<void> _load() async {
     try {
       final content = await File(widget.path).readAsString();
-      _original = content;
+      _crlf = content.contains('\r\n');
       _ctl = CodeLineEditingController.fromText(content)..addListener(_onChange);
+      // re_editor normalises EOLs to LF internally; baseline against that so a
+      // CRLF file doesn't open already-dirty.
+      _original = _ctl!.text;
       if (mounted) setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
@@ -77,7 +81,8 @@ class _EditorPageState extends State<EditorPage> {
     if (ctl == null) return;
     setState(() => _saving = true);
     try {
-      await File(widget.path).writeAsString(ctl.text);
+      final out = _crlf ? ctl.text.replaceAll('\n', '\r\n') : ctl.text;
+      await File(widget.path).writeAsString(out);
       _original = ctl.text;
       if (mounted) {
         setState(() {
