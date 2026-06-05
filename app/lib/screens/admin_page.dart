@@ -62,7 +62,7 @@ class _AdminPageState extends State<AdminPage> {
         _showSecret('账号 $id 的初始密码', pw);
       }
     } catch (e) {
-      if (mounted) snack(context, '创建失败: $e');
+      if (mounted) snack(context, '创建失败: ${errorText(e)}');
     }
   }
 
@@ -71,7 +71,7 @@ class _AdminPageState extends State<AdminPage> {
       await f();
       await _load();
     } catch (e) {
-      if (mounted) snack(context, '$e');
+      if (mounted) snack(context, errorText(e));
     }
   }
 

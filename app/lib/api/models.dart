@@ -31,21 +31,100 @@ class Repo {
 }
 
 class Package {
-  final String id, kind, sender, recipient, summaryMd, noteMd, prdMd;
+  final String id, kind, sender, recipient, urgency, summaryMd, noteMd, prdMd;
   final Repo repo;
   final List<String> modulePaths;
+  final List<Attachment> attachments;
+  final Git? git;
+  final ApiDelta? apiDelta;
 
   Package.fromJson(Map<String, dynamic> j)
       : id = _s(j['id']),
         kind = _s(j['kind']).isEmpty ? 'delivery' : _s(j['kind']),
         sender = _s(j['sender']),
         recipient = _s(j['recipient']),
+        urgency = _s(j['urgency']).isEmpty ? 'normal' : _s(j['urgency']),
         summaryMd = _s(j['summary_md']),
         noteMd = _s(j['note_md']),
         prdMd = _s(j['prd_md']),
         repo = Repo.fromJson(j['repo'] as Map<String, dynamic>?),
         modulePaths =
-            (j['module_paths'] as List?)?.map((e) => _s(e)).toList() ?? const [];
+            (j['module_paths'] as List?)?.map((e) => _s(e)).toList() ?? const [],
+        attachments = (j['attachments'] as List?)
+                ?.map((e) => Attachment.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
+        git = j['git'] is Map
+            ? Git.fromJson(j['git'] as Map<String, dynamic>)
+            : null,
+        apiDelta = j['api_delta'] is Map
+            ? ApiDelta.fromJson(j['api_delta'] as Map<String, dynamic>)
+            : null;
+}
+
+class Attachment {
+  final String name, sha256;
+  final int size;
+  Attachment.fromJson(Map<String, dynamic> j)
+      : name = _s(j['name']),
+        sha256 = _s(j['sha256']),
+        size = j['size'] is int ? j['size'] as int : int.tryParse(_s(j['size'])) ?? 0;
+}
+
+class Commit {
+  final String sha, subject, body;
+  Commit.fromJson(Map<String, dynamic> j)
+      : sha = _s(j['sha']),
+        subject = _s(j['subject']),
+        body = _s(j['body']);
+}
+
+class Git {
+  final List<Commit> commits;
+  final List<String> changedPaths;
+  Git.fromJson(Map<String, dynamic> j)
+      : commits = (j['commits'] as List?)
+                ?.map((e) => Commit.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
+        changedPaths =
+            (j['changed_paths'] as List?)?.map(_s).toList() ?? const [];
+}
+
+// ApiOp keeps only the summary fields the detail view shows (method/path/
+// summary) — mirrors the web UI's API-delta rendering.
+class ApiOp {
+  final String method, path, summary;
+  ApiOp.fromJson(Map<String, dynamic> j)
+      : method = _s(j['method']),
+        path = _s(j['path']),
+        summary = _s(j['summary']);
+}
+
+class ApiDelta {
+  final List<ApiOp> added, changed, removed;
+  ApiDelta.fromJson(Map<String, dynamic> j)
+      : added = _ops(j['added']),
+        changed = _ops(j['changed']),
+        removed = _ops(j['removed']);
+  static List<ApiOp> _ops(dynamic v) =>
+      (v as List?)?.map((e) => ApiOp.fromJson(e as Map<String, dynamic>)).toList() ??
+      const [];
+  bool get isEmpty => added.isEmpty && changed.isEmpty && removed.isEmpty;
+}
+
+class Status {
+  final String state, sender, recipient;
+  final DateTime createdAt;
+  final DateTime? pickedAt;
+  final int commentCount;
+  Status.fromJson(Map<String, dynamic> j)
+      : state = _s(j['state']),
+        sender = _s(j['sender']),
+        recipient = _s(j['recipient']),
+        createdAt = _t(j['created_at']),
+        pickedAt = j['picked_at'] == null ? null : _t(j['picked_at']),
+        commentCount = j['comment_count'] is int ? j['comment_count'] as int : 0;
 }
 
 class Comment {
@@ -106,6 +185,14 @@ class ProjectDetail {
                 ?.map((e) => ProjectMember.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [];
+}
+
+class OnlineUser {
+  final String identity;
+  final bool online;
+  OnlineUser.fromJson(Map<String, dynamic> j)
+      : identity = _s(j['identity']),
+        online = j['online'] == true;
 }
 
 class MachineToken {

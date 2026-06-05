@@ -28,6 +28,25 @@ class RelayClient {
     return Package.fromJson(r.data as Map<String, dynamic>);
   }
 
+  Future<Status> status(String id) async {
+    final r = await _dio.get('/v1/handoffs/$id/status');
+    return Status.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  // prompt returns the server pre-rendered full pickup prompt (markdown text).
+  Future<String> prompt(String id) async {
+    final r = await _dio.get('/v1/handoffs/$id/prompt',
+        options: Options(responseType: ResponseType.plain));
+    return r.data?.toString() ?? '';
+  }
+
+  Future<List<int>> attachment(String id, String name) async {
+    final r = await _dio.get(
+        '/v1/handoffs/$id/attachments/${Uri.encodeComponent(name)}',
+        options: Options(responseType: ResponseType.bytes));
+    return (r.data as List).cast<int>();
+  }
+
   Future<List<Comment>> comments(String id) async {
     final r = await _dio.get('/v1/handoffs/$id/comments');
     return _asList(r.data, 'comments')
@@ -53,6 +72,13 @@ class RelayClient {
   Future<Me> me() async {
     final r = await _dio.get('/v1/me');
     return Me.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  Future<List<OnlineUser>> onlineUsers() async {
+    final r = await _dio.get('/v1/users/online');
+    return _asList(r.data, 'users')
+        .map((e) => OnlineUser.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<List<Project>> projects() async {

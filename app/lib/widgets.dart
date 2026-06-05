@@ -1,8 +1,44 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
 // Small UI helpers shared across screens (deduped from per-page copies).
+
+// errorText maps an exception (esp. DioException) to a short friendly message
+// instead of leaking a raw stack/JSON string to the user.
+String errorText(Object e) {
+  if (e is DioException) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return '网络超时,请重试';
+      case DioExceptionType.connectionError:
+        return '连不上 relay(检查网络 / 地址)';
+      case DioExceptionType.badResponse:
+        final code = e.response?.statusCode;
+        final body = e.response?.data;
+        final msg = body is Map
+            ? (body['error'] ?? body['message'])?.toString()
+            : body?.toString();
+        switch (code) {
+          case 401:
+            return '未授权(登录可能失效)';
+          case 403:
+            return '没有权限';
+          case 404:
+            return '不存在';
+          case 409:
+            return (msg?.isNotEmpty ?? false) ? msg! : '冲突(可能已被处理)';
+        }
+        return (msg?.isNotEmpty ?? false) ? msg! : '请求失败($code)';
+      default:
+        return e.message ?? '网络错误';
+    }
+  }
+  return '$e';
+}
 
 void snack(BuildContext context, String message) {
   ScaffoldMessenger.of(context).showSnackBar(

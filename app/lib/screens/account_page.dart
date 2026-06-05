@@ -40,7 +40,7 @@ class _AccountPageState extends State<AccountPage> {
       final t = await widget.client.tokens();
       if (mounted) setState(() => _tokens = t);
     } catch (e) {
-      if (mounted) snack(context, '$e');
+      if (mounted) snack(context, errorText(e));
     }
   }
 
@@ -55,7 +55,7 @@ class _AccountPageState extends State<AccountPage> {
       _newPw.clear();
       if (mounted) snack(context, '密码已更新');
     } catch (e) {
-      if (mounted) snack(context, '改密码失败: $e');
+      if (mounted) snack(context, '改密码失败: ${errorText(e)}');
     }
   }
 
@@ -68,7 +68,7 @@ class _AccountPageState extends State<AccountPage> {
       await _loadTokens();
       if (mounted) _showToken(raw);
     } catch (e) {
-      if (mounted) snack(context, '生成失败: $e');
+      if (mounted) snack(context, '生成失败: ${errorText(e)}');
     }
   }
 

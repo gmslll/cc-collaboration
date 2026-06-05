@@ -52,7 +52,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
       _name.clear();
       await _load();
     } catch (e) {
-      if (mounted) snack(context, '创建失败: $e');
+      if (mounted) snack(context, '创建失败: ${errorText(e)}');
     }
   }
 
@@ -148,7 +148,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
       final d = await widget.client.project(widget.id);
       if (mounted) setState(() => _d = d);
     } catch (e) {
-      if (mounted) snack(context, '$e');
+      if (mounted) snack(context, errorText(e));
     }
   }
 
@@ -158,7 +158,54 @@ class _ProjectSheetState extends State<_ProjectSheet> {
       await _load();
       widget.onChanged();
     } catch (e) {
-      if (mounted) snack(context, '$e');
+      if (mounted) snack(context, errorText(e));
+    }
+  }
+
+  Future<void> _rename(String current) async {
+    final ctl = TextEditingController(text: current);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名项目'),
+        content: TextField(controller: ctl, autofocus: true),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (ok != true || ctl.text.trim().isEmpty) return;
+    await _do(() => widget.client.renameProject(widget.id, ctl.text.trim()));
+  }
+
+  Future<void> _delete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除项目?'),
+        content: const Text('删除后不可恢复(repo / 成员映射一并删除)。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.client.deleteProject(widget.id);
+      widget.onChanged();
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
     }
   }
 
@@ -179,10 +226,23 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                  Text(d.project.name,
-                      style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(
+                      child: Text(d.project.name,
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                    IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        tooltip: '重命名',
+                        onPressed: () => _rename(d.project.name)),
+                    IconButton(
+                        icon: const Icon(Icons.delete_outline,
+                            size: 18, color: CcColors.danger),
+                        tooltip: '删除',
+                        onPressed: _delete),
+                  ]),
+                  const SizedBox(height: 8),
                   const Text('Repos', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Wrap(
