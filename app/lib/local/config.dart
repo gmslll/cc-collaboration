@@ -17,10 +17,11 @@ class WorkspaceCfg {
   final String name;
   final String path; // absolute (may be empty)
   final String agent;
+  final String editor;
   final String preLaunch;
   final List<ProjectCfg> projects;
-  const WorkspaceCfg(
-      this.name, this.path, this.agent, this.preLaunch, this.projects);
+  const WorkspaceCfg(this.name, this.path, this.agent, this.editor,
+      this.preLaunch, this.projects);
 }
 
 // AppConfig reads the same ~/.config/cc-handoff/config.toml the CLI uses, so the
@@ -37,8 +38,18 @@ class AppConfig {
   /// the full workspace → project tree (for the workspace cockpit).
   final List<WorkspaceCfg> workspaces;
 
+  // user-level settings (for the in-app config editor).
+  final String agent;
+  final String workspaceRoot;
+  final String gradeCommand;
+  final String linearToken;
+
   AppConfig(this.relayUrl, this.token, this.identity, this.repos,
-      [this.workspaces = const []]);
+      [this.workspaces = const [],
+      this.agent = '',
+      this.workspaceRoot = '',
+      this.gradeCommand = '',
+      this.linearToken = '']);
 
   String? repoPath(String name) => repos[name];
 
@@ -55,6 +66,9 @@ class AppConfig {
     if (relay.isEmpty || token.isEmpty) return null;
 
     final userAgent = (map['agent'] ?? '').toString();
+    final wsRoot = (map['workspace_root'] ?? '').toString();
+    final grade = (map['grade_command'] ?? '').toString();
+    final linear = (map['linear_personal_token'] ?? '').toString();
     final repos = <String, String>{};
     final wsList = <WorkspaceCfg>[];
 
@@ -66,6 +80,7 @@ class AppConfig {
       final agent = wsAgent.isNotEmpty
           ? wsAgent
           : (userAgent.isNotEmpty ? userAgent : 'claude');
+      final editor = (ws['editor'] ?? '').toString();
       final preLaunch = (ws['pre_launch'] ?? '').toString();
       final base = wsPath.isNotEmpty
           ? wsPath
@@ -82,10 +97,12 @@ class AppConfig {
         repos.putIfAbsent(name, () => path);
         projCfgs.add(ProjectCfg(name, path));
       }
-      wsList.add(WorkspaceCfg(wsName, wsPath, agent, preLaunch, projCfgs));
+      wsList.add(
+          WorkspaceCfg(wsName, wsPath, agent, editor, preLaunch, projCfgs));
     }
 
-    return AppConfig(relay, token, identity, repos, wsList);
+    return AppConfig(relay, token, identity, repos, wsList, userAgent, wsRoot,
+        grade, linear);
   }
 }
 

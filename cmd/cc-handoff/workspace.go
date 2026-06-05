@@ -28,6 +28,8 @@ func runWorkspace(ctx context.Context, args []string) error {
 		return runWorkspaceAdd(ctx, rest)
 	case "remove", "rm", "delete":
 		return runWorkspaceRemove(ctx, rest)
+	case "set":
+		return runWorkspaceSet(ctx, rest)
 	case "open":
 		return runWorkspaceOpen(ctx, rest)
 	case "help", "-h", "--help":
@@ -52,6 +54,8 @@ func workspaceUsage() {
   cc-handoff workspace remove <name> [project]
         drop a workspace (or one project from it) from config; files on disk
         are left untouched
+  cc-handoff workspace set <name> [--pre-launch X] [--editor Y] [--agent Z]
+        set per-workspace launch settings (only the flags you pass change)
   cc-handoff workspace open <project> [--workspace NAME] [--window]
         launch the agent in a project: in-place (replaces this shell) by
         default, or in a new terminal window with --window
@@ -282,6 +286,56 @@ func runWorkspaceRemove(_ context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("removed workspace %q (files left on disk)\n", name)
+	return nil
+}
+
+// runWorkspaceSet sets per-workspace launch fields (pre_launch / editor / agent),
+// changing only the flags passed and preserving the rest of the config.
+func runWorkspaceSet(_ context.Context, args []string) error {
+	fs := flag.NewFlagSet("workspace set", flag.ContinueOnError)
+	preLaunch := fs.String("pre-launch", "", "shell snippet run before the agent")
+	editor := fs.String("editor", "", "editor launch command")
+	agent := fs.String("agent", "", "agent override: claude|codex|manual")
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: cc-handoff workspace set <name> [--pre-launch X] [--editor Y] [--agent Z]")
+	}
+
+	u, err := loadUserOrFail()
+	if err != nil {
+		return err
+	}
+	ws := findWorkspace(u, pos[0])
+	if ws == nil {
+		return fmt.Errorf("workspace %q not found", pos[0])
+	}
+
+	var setErr error
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "pre-launch":
+			ws.PreLaunch = *preLaunch
+		case "editor":
+			ws.Editor = *editor
+		case "agent":
+			if !validAgent(*agent) {
+				setErr = fmt.Errorf("invalid agent %q (claude|codex|manual)", *agent)
+				return
+			}
+			ws.Agent = *agent
+		}
+	})
+	if setErr != nil {
+		return setErr
+	}
+
+	if _, err := config.SaveUser(u); err != nil {
+		return err
+	}
+	fmt.Printf("workspace %q updated\n", pos[0])
 	return nil
 }
 

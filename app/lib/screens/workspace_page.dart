@@ -668,14 +668,79 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         icon: const Icon(Icons.more_vert, size: 18),
         tooltip: '工作区操作',
         onSelected: (v) {
-          if (v == 'add') _addProject(ws);
-          if (v == 'remove') _removeWorkspace(ws);
+          switch (v) {
+            case 'add':
+              _addProject(ws);
+            case 'settings':
+              _workspaceSettings(ws);
+            case 'remove':
+              _removeWorkspace(ws);
+          }
         },
         itemBuilder: (_) => const [
           PopupMenuItem(value: 'add', child: Text('添加项目')),
+          PopupMenuItem(value: 'settings', child: Text('工作区设置')),
           PopupMenuItem(value: 'remove', child: Text('删除工作区')),
         ],
       );
+
+  Future<void> _workspaceSettings(WorkspaceCfg ws) async {
+    final pre = TextEditingController(text: ws.preLaunch);
+    final editor = TextEditingController(text: ws.editor);
+    var agent =
+        (ws.agent == 'codex' || ws.agent == 'manual') ? ws.agent : 'claude';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('「${ws.name.isEmpty ? '默认' : ws.name}」工作区设置'),
+        content: StatefulBuilder(
+          builder: (ctx, setLocal) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                    controller: pre,
+                    decoration: const InputDecoration(
+                        labelText: 'pre_launch(起 agent 前跑)',
+                        hintText: 'nvm use 18')),
+                const SizedBox(height: 8),
+                TextField(
+                    controller: editor,
+                    decoration: const InputDecoration(
+                        labelText: 'editor(编辑器命令)', hintText: 'code .')),
+                const SizedBox(height: 8),
+                Row(children: [
+                  const Text('agent', style: TextStyle(color: CcColors.muted)),
+                  const Spacer(),
+                  DropdownButton<String>(
+                    value: agent,
+                    items: const [
+                      DropdownMenuItem(value: 'claude', child: Text('claude')),
+                      DropdownMenuItem(value: 'codex', child: Text('codex')),
+                      DropdownMenuItem(value: 'manual', child: Text('manual')),
+                    ],
+                    onChanged: (v) => setLocal(() => agent = v ?? 'claude'),
+                  ),
+                ]),
+              ]),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _runCli(
+      () => Cli.workspaceSet(ws.name,
+          preLaunch: pre.text.trim(), editor: editor.text.trim(), agent: agent),
+      '已保存',
+      after: _reloadConfig,
+    );
+  }
 
   Widget _projectMenu(WorkspaceCfg ws, ProjectCfg p) => PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert, size: 18),

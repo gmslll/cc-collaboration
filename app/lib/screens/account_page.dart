@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api/models.dart';
 import '../api/relay_client.dart';
+import '../local/cli.dart';
+import '../local/config.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -21,10 +25,25 @@ class _AccountPageState extends State<AccountPage> {
   final _label = TextEditingController();
   List<MachineToken>? _tokens;
 
+  // local config.toml editor (desktop only).
+  AppConfig? _cfg;
+  final _relay = TextEditingController();
+  final _cfgIdentity = TextEditingController();
+  final _token = TextEditingController();
+  String _agent = 'claude';
+  final _wsRoot = TextEditingController();
+  final _grade = TextEditingController();
+  final _linear = TextEditingController();
+  bool _savingCfg = false;
+
+  bool get _isDesktop =>
+      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+
   @override
   void initState() {
     super.initState();
     _loadTokens();
+    _loadLocalConfig();
   }
 
   @override
@@ -32,7 +51,50 @@ class _AccountPageState extends State<AccountPage> {
     _oldPw.dispose();
     _newPw.dispose();
     _label.dispose();
+    _relay.dispose();
+    _cfgIdentity.dispose();
+    _token.dispose();
+    _wsRoot.dispose();
+    _grade.dispose();
+    _linear.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadLocalConfig() async {
+    if (!_isDesktop) return;
+    final c = await AppConfig.load();
+    if (c == null || !mounted) return;
+    setState(() {
+      _cfg = c;
+      _relay.text = c.relayUrl;
+      _cfgIdentity.text = c.identity;
+      _token.text = c.token;
+      _agent = c.agent.isEmpty ? 'claude' : c.agent;
+      _wsRoot.text = c.workspaceRoot;
+      _grade.text = c.gradeCommand;
+      _linear.text = c.linearToken;
+    });
+  }
+
+  Future<void> _saveLocalConfig() async {
+    setState(() => _savingCfg = true);
+    try {
+      await Cli.configSet(
+        relayUrl: _relay.text.trim(),
+        identity: _cfgIdentity.text.trim(),
+        token: _token.text.trim(),
+        agent: _agent,
+        workspaceRoot: _wsRoot.text.trim(),
+        gradeCommand: _grade.text.trim(),
+        linearToken: _linear.text.trim(),
+      );
+      await _loadLocalConfig();
+      if (mounted) snack(context, '已保存到 config.toml');
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    } finally {
+      if (mounted) setState(() => _savingCfg = false);
+    }
   }
 
   Future<void> _loadTokens() async {
@@ -166,6 +228,83 @@ class _AccountPageState extends State<AccountPage> {
           ]),
         ),
       ),
+      if (_isDesktop && _cfg != null) ...[
+        const SizedBox(height: 16),
+        _localConfigCard(),
+      ],
     ]);
   }
+
+  Widget _localConfigCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('本地配置 · config.toml',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          Row(children: [
+            const Text('默认 agent',
+                style: TextStyle(color: CcColors.muted, fontSize: 13)),
+            const Spacer(),
+            DropdownButton<String>(
+              value: _agent,
+              items: const [
+                DropdownMenuItem(value: 'claude', child: Text('claude')),
+                DropdownMenuItem(value: 'codex', child: Text('codex')),
+                DropdownMenuItem(value: 'manual', child: Text('manual')),
+              ],
+              onChanged: (v) => setState(() => _agent = v ?? 'claude'),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          _cfgField(_wsRoot, 'workspace_root(工作区根目录)'),
+          const SizedBox(height: 10),
+          _cfgField(_grade, 'grade_command(日志分级命令)'),
+          const Divider(height: 26),
+          const Text('连接',
+              style: TextStyle(
+                  color: CcColors.muted, fontSize: 12, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          _cfgField(_relay, 'relay_url'),
+          const SizedBox(height: 10),
+          _cfgField(_cfgIdentity, 'identity'),
+          const SizedBox(height: 10),
+          _cfgField(_token, 'token', obscure: true),
+          const SizedBox(height: 6),
+          const Text('改连接只写进 config.toml;当前会话需登出重登才生效。',
+              style: TextStyle(color: CcColors.subtle, fontSize: 11)),
+          const Divider(height: 26),
+          const Text('集成',
+              style: TextStyle(
+                  color: CcColors.muted, fontSize: 12, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          _cfgField(_linear, 'linear_personal_token', obscure: true),
+          const SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              onPressed: _savingCfg ? null : _saveLocalConfig,
+              child: _savingCfg
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('保存到 config.toml'),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _cfgField(TextEditingController c, String label,
+          {bool obscure = false}) =>
+      TextField(
+        controller: c,
+        obscureText: obscure,
+        autocorrect: false,
+        style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
+        decoration: InputDecoration(labelText: label, isDense: true),
+      );
 }

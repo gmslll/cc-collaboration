@@ -94,5 +94,38 @@ class Cli {
         if (force) '--force',
       ]);
 
+  // --- config editing (user-level + per-workspace; round-trips via SaveUser) ---
+
+  // configSet writes the user-level config fields. Pass only what you want to
+  // change (null = leave; '' = clear). One atomic `config set` per call.
+  static Future<void> configSet({
+    String? relayUrl,
+    String? token,
+    String? identity,
+    String? agent,
+    String? workspaceRoot,
+    String? gradeCommand,
+    String? linearToken,
+  }) =>
+      run([
+        'config', 'set',
+        if (relayUrl != null) ...['--relay-url', relayUrl],
+        if (token != null) ...['--token', token],
+        if (identity != null) ...['--identity', identity],
+        if (agent != null) ...['--agent', agent],
+        if (workspaceRoot != null) ...['--workspace-root', workspaceRoot],
+        if (gradeCommand != null) ...['--grade-command', gradeCommand],
+        if (linearToken != null) ...['--linear-token', linearToken],
+      ]);
+
+  static Future<void> workspaceSet(String name,
+          {String? preLaunch, String? editor, String? agent}) =>
+      run([
+        'workspace', 'set', name,
+        if (preLaunch != null) ...['--pre-launch', preLaunch],
+        if (editor != null) ...['--editor', editor],
+        if (agent != null) ...['--agent', agent],
+      ]);
+
   static String _esc(String s) => s.replaceAll("'", "'\\''");
 }

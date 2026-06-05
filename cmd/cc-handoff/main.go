@@ -61,6 +61,8 @@ func main() {
 		err = runWorkspace(ctx, args)
 	case "worktree", "wt":
 		err = runWorktree(ctx, args)
+	case "config":
+		err = runConfig(ctx, args)
 	case "logs":
 		err = runLogs(ctx, args)
 	case "alert":
