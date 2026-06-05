@@ -214,7 +214,7 @@ class _AccountPageState extends State<AccountPage> {
                         style: const TextStyle(
                             color: CcColors.muted, fontSize: 11)),
                     trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 20),
+                      icon: const Icon(Icons.delete_rounded, size: 20),
                       onPressed: () async {
                         try {
                           await widget.client.deleteToken(t.id);

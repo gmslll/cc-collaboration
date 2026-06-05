@@ -37,9 +37,13 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   // its project to reveal the new session node.
   final Map<String, ExpansibleController> _proj = {};
   bool _busy = false;
-  bool _leftCollapsed = Prefs.getBool('ws.left');
-  bool _rightCollapsed = Prefs.getBool('ws.right');
-  double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 380);
+  // Layout B — the terminal fills the canvas; the workspace tree (left) and a
+  // task's 对接文档 (right) are slide-over drawers, both closeable → pure
+  // terminal focus. Drawers open via the top-bar buttons / task tap.
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+  ListItem? _detailItem; // non-null → the right detail drawer shows this task
+  final double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 380);
+  final double _detailWidth = Prefs.getDouble('ws.detailWidth', def: 560);
   // shared comfortable-but-compact density for the tree's leaf rows.
   static const _tileDensity = VisualDensity(vertical: -1);
 
@@ -282,119 +286,97 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   }
 
   void _openTask(ListItem it) {
-    showDialog(
-      context: context,
-      builder: (dctx) => Dialog(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760, maxHeight: 660),
+    setState(() => _detailItem = it);
+    // build the endDrawer (gated on _detailItem) first, then open it next frame.
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _scaffoldKey.currentState?.openEndDrawer());
+  }
+
+  // ---------------------------------------------------------------- view ----
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: Colors.transparent,
+      // open only via the buttons (edge-swipe would fight terminal selection).
+      drawerEnableOpenDragGesture: false,
+      endDrawerEnableOpenDragGesture: false,
+      onEndDrawerChanged: (open) {
+        if (!open && _detailItem != null) setState(() => _detailItem = null);
+      },
+      drawer: Drawer(
+        width: _treeWidth,
+        backgroundColor: CcColors.panel,
+        shape: const RoundedRectangleBorder(),
+        child: _sidebar(),
+      ),
+      endDrawer: _detailItem == null
+          ? null
+          : Drawer(
+              width: _detailWidth,
+              backgroundColor: CcColors.panel,
+              shape: const RoundedRectangleBorder(),
+              child: _detailPanel(_detailItem!),
+            ),
+      body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _topBar(),
+        Expanded(child: _termArea()),
+      ]),
+    );
+  }
+
+  // _topBar = the slim terminal chrome: a ≡ button to open the workspace tree
+  // drawer, then the session tabs.
+  Widget _topBar() => TerminalTabBar(
+        terms: terms,
+        active: activeTerm,
+        onSwitch: (i) => setState(() => activeTerm = i),
+        onClose: closeTerm,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 4, right: 2),
+          child: IconButton(
+            icon: const Icon(Icons.menu_rounded, size: 18),
+            tooltip: '工作区',
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+        ),
+      );
+
+  // _detailPanel hosts a task's 对接文档 inside the right drawer.
+  Widget _detailPanel(ListItem it) => Column(children: [
+        Container(
+          height: 44,
+          padding: const EdgeInsets.only(left: 14, right: 4),
+          decoration: const BoxDecoration(
+            color: CcColors.panel,
+            border: Border(bottom: BorderSide(color: CcColors.border)),
+          ),
+          child: Row(children: [
+            const Expanded(
+                child: Text('对接文档',
+                    style: TextStyle(fontWeight: FontWeight.w600))),
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 18),
+              tooltip: '关闭',
+              onPressed: () => _scaffoldKey.currentState?.closeEndDrawer(),
+            ),
+          ]),
+        ),
+        Expanded(
           child: HandoffDetailView(
             client: widget.client,
             config: _cfg,
             item: it,
             onOpenTerminal: (wt, cmd) {
               addTerm(wt, cmd);
-              Navigator.pop(dctx);
+              _scaffoldKey.currentState?.closeEndDrawer();
             },
             onSendToTerminal: sendToTerminal,
             onChanged: _loadTasks,
           ),
         ),
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------- view ----
-
-  void _setLeft(bool v) {
-    setState(() {
-      _leftCollapsed = v;
-      if (v && _rightCollapsed) _rightCollapsed = false; // keep one side visible
-    });
-    Prefs.setBool('ws.left', _leftCollapsed);
-    Prefs.setBool('ws.right', _rightCollapsed);
-  }
-
-  void _setRight(bool v) {
-    setState(() {
-      _rightCollapsed = v;
-      if (v && _leftCollapsed) _leftCollapsed = false;
-    });
-    Prefs.setBool('ws.left', _leftCollapsed);
-    Prefs.setBool('ws.right', _rightCollapsed);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // both panes open → the divider is a drag handle to resize the tree.
-    final resizable = !_leftCollapsed && !_rightCollapsed;
-    return Row(children: [
-      if (!_leftCollapsed)
-        Expanded(child: _termColumn())
-      else
-        collapseRail(
-            icon: Icons.chevron_right,
-            tooltip: '展开终端',
-            label: '终端',
-            onExpand: () => _setLeft(false)),
-      if (resizable)
-        // tree is on the right: dragging the handle left widens it (invert).
-        resizeHandle(
-            prefKey: 'ws.treeWidth',
-            get: () => _treeWidth,
-            set: (v) => setState(() => _treeWidth = v),
-            min: 300,
-            max: 640,
-            invert: true)
-      else
-        const VerticalDivider(width: 1),
-      if (!_rightCollapsed)
-        (_leftCollapsed
-            ? Expanded(child: _sidebar())
-            : SizedBox(width: _treeWidth, child: _sidebar()))
-      else
-        collapseRail(
-            icon: Icons.chevron_left,
-            tooltip: '展开工作区',
-            label: '工作区',
-            onExpand: () => _setRight(false)),
-    ]);
-  }
-
-  Widget _termColumn() {
-    final label = terms.isEmpty
-        ? null
-        : terms[activeTerm.clamp(0, terms.length - 1)].label;
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Container(
-        height: 34,
-        padding: const EdgeInsets.only(left: 2, right: 8),
-        decoration: const BoxDecoration(
-          color: CcColors.panel,
-          border: Border(bottom: BorderSide(color: CcColors.border)),
-        ),
-        child: Row(children: [
-          IconButton(
-              icon: const Icon(Icons.chevron_left, size: 18),
-              tooltip: '收起终端',
-              onPressed: () => _setLeft(true)),
-          const SizedBox(width: 2),
-          if (label != null)
-            Expanded(
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontFamily: CcType.mono,
-                      fontSize: 12.5,
-                      color: CcColors.text)),
-            )
-          else
-            const Spacer(),
-        ]),
-      ),
-      Expanded(child: _termArea()),
-    ]);
-  }
+      ]);
 
   Widget _termArea() {
     if (terms.isEmpty) {
@@ -420,7 +402,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   const BlinkingCaret(),
                 ]),
                 const SizedBox(height: 18),
-                const Text('在右侧的项目或 worktree 上,起一个会话',
+                const Text('点左上角打开工作区,在项目 / worktree 上起会话',
                     style: TextStyle(color: CcColors.muted)),
                 const SizedBox(height: 8),
                 Text('# claude · codex',
@@ -448,20 +430,20 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         ),
         child: Row(children: [
           sectionTitle('工作区',
-              meta: '${wss.length}', icon: Icons.workspaces_outlined),
+              meta: '${wss.length}', icon: Icons.workspaces_rounded),
           const Spacer(),
           IconButton(
               onPressed: _busy ? null : _newWorkspace,
               tooltip: '新建工作区',
-              icon: const Icon(Icons.add, size: 18)),
+              icon: const Icon(Icons.add_rounded, size: 18)),
           IconButton(
               onPressed: _busy ? null : _refresh,
               tooltip: '刷新',
-              icon: const Icon(Icons.refresh, size: 18)),
+              icon: const Icon(Icons.refresh_rounded, size: 18)),
           IconButton(
-              onPressed: () => _setRight(true),
-              tooltip: '收起工作区',
-              icon: const Icon(Icons.chevron_right, size: 18)),
+              onPressed: () => _scaffoldKey.currentState?.closeDrawer(),
+              tooltip: '收起',
+              icon: const Icon(Icons.chevron_left_rounded, size: 18)),
         ]),
       ),
       if (_busy) const LinearProgressIndicator(minHeight: 2),
@@ -475,7 +457,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                               style: const TextStyle(
                                   fontSize: 15.5, fontWeight: FontWeight.w700)),
                           leading:
-                              const Icon(Icons.workspaces_outline, size: 20),
+                              const Icon(Icons.workspaces_rounded, size: 20),
                           trailing: _workspaceMenu(ws),
                           initiallyExpanded: true,
                           shape: const Border(),
@@ -504,7 +486,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               menu: _projectMenu(ws, p)),
         ]),
       ),
-      leading: const Icon(Icons.folder_outlined, size: 19),
+      leading: const Icon(Icons.folder_rounded, size: 19),
       controller: _ctlFor(p.path),
       tilePadding: const EdgeInsets.only(left: 16, right: 8),
       childrenPadding: const EdgeInsets.only(left: 14),
@@ -596,7 +578,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                     padding: const EdgeInsets.only(right: 2),
                     child: statusDot(CcColors.ok, size: 7, glow: true)),
               PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert,
+                icon: const Icon(Icons.more_vert_rounded,
                     size: 18, color: CcColors.muted),
                 tooltip: '会话操作',
                 onSelected: (v) {
@@ -660,7 +642,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             builder: (h) => ListTile(
               visualDensity: _tileDensity,
               contentPadding: const EdgeInsets.only(left: 10, right: 2),
-              leading: Icon(Icons.account_tree_outlined,
+              leading: Icon(Icons.account_tree_rounded,
                   size: 18,
                   color: w.isHandoff ? CcColors.accent : CcColors.muted),
               title: Text(w.branch.isEmpty ? w.name : w.branch,
@@ -721,7 +703,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       ];
 
   Widget _workspaceMenu(WorkspaceCfg ws) => PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert, size: 18),
+        icon: const Icon(Icons.more_vert_rounded, size: 18),
         tooltip: '工作区操作',
         onSelected: (v) {
           switch (v) {
@@ -799,7 +781,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   }
 
   Widget _projectMenu(WorkspaceCfg ws, ProjectCfg p) => PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert, size: 18),
+        icon: const Icon(Icons.more_vert_rounded, size: 18),
         tooltip: '项目操作',
         onSelected: (v) {
           switch (v) {
@@ -831,7 +813,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   Widget _worktreeMenu(WorkspaceCfg ws, ProjectCfg p, Worktree w) =>
       PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert, size: 18),
+        icon: const Icon(Icons.more_vert_rounded, size: 18),
         tooltip: 'worktree 操作',
         onSelected: (v) {
           switch (v) {
@@ -867,7 +849,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(4, 12, 0, 5),
         child: Row(children: [
-          Icon(collapsed ? Icons.chevron_right : Icons.expand_more,
+          Icon(collapsed ? Icons.chevron_right_rounded : Icons.expand_more_rounded,
               size: 16, color: CcColors.muted),
           const SizedBox(width: 4),
           Text(label,
@@ -888,14 +870,14 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           message: '起 $label',
           child: InkWell(
             onTap: onTap,
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(5),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
                 color: CcColors.accent.withValues(alpha: 0.14),
                 border:
                     Border.all(color: CcColors.accent.withValues(alpha: 0.35)),
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: BorderRadius.circular(5),
               ),
               child: Text(label,
                   style: const TextStyle(

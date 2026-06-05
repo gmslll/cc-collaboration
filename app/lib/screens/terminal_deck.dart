@@ -151,53 +151,17 @@ class TerminalDeck extends StatelessWidget {
     if (terms.isEmpty) return const SizedBox.shrink();
     final idx = active.clamp(0, terms.length - 1);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Container(
-        color: CcColors.panel,
-        height: 38,
-        child: Row(children: [
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: terms.length,
-              itemBuilder: (_, i) {
-            final isActive = i == idx;
-            return InkWell(
-              onTap: () => onSwitch(i),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  border: Border(
-                      bottom: BorderSide(
-                          color: isActive ? CcColors.accent : Colors.transparent,
-                          width: 2)),
-                ),
-                child: Row(children: [
-                  Icon(Icons.terminal,
-                      size: 14,
-                      color: isActive ? CcColors.accent : CcColors.muted),
-                  const SizedBox(width: 6),
-                  Text(terms[i].label,
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: isActive ? CcColors.text : CcColors.muted)),
-                  const SizedBox(width: 6),
-                  InkWell(
-                    onTap: () => onClose(i),
-                    child:
-                        const Icon(Icons.close, size: 14, color: CcColors.muted),
-                  ),
-                ]),
-              ),
-            );
-              },
-            ),
-          ),
-          if (onCollapse != null)
-            IconButton(
-                icon: const Icon(Icons.chevron_right, size: 16),
+      TerminalTabBar(
+        terms: terms,
+        active: active,
+        onSwitch: onSwitch,
+        onClose: onClose,
+        trailing: onCollapse != null
+            ? IconButton(
+                icon: const Icon(Icons.chevron_right_rounded, size: 16),
                 tooltip: '收起终端',
-                onPressed: onCollapse),
-        ]),
+                onPressed: onCollapse)
+            : null,
       ),
       Expanded(
         child: ColoredBox(
@@ -211,5 +175,78 @@ class TerminalDeck extends StatelessWidget {
         ),
       ),
     ]);
+  }
+}
+
+// TerminalTabBar is the horizontal session-tab strip (one tab per terminal,
+// active underlined, × to close). Reused by TerminalDeck (inbox) and the
+// workspace cockpit's top bar. Optional [leading]/[trailing] for chrome.
+class TerminalTabBar extends StatelessWidget {
+  final List<TerminalSession> terms;
+  final int active;
+  final ValueChanged<int> onSwitch;
+  final ValueChanged<int> onClose;
+  final Widget? leading;
+  final Widget? trailing;
+  const TerminalTabBar({
+    super.key,
+    required this.terms,
+    required this.active,
+    required this.onSwitch,
+    required this.onClose,
+    this.leading,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final idx = terms.isEmpty ? 0 : active.clamp(0, terms.length - 1);
+    return Container(
+      color: CcColors.panel,
+      height: 38,
+      child: Row(children: [
+        ?leading,
+        Expanded(
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: terms.length,
+            itemBuilder: (_, i) {
+              final isActive = i == idx;
+              return InkWell(
+                onTap: () => onSwitch(i),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    border: Border(
+                        bottom: BorderSide(
+                            color:
+                                isActive ? CcColors.accent : Colors.transparent,
+                            width: 2)),
+                  ),
+                  child: Row(children: [
+                    Icon(Icons.terminal_rounded,
+                        size: 14,
+                        color: isActive ? CcColors.accent : CcColors.muted),
+                    const SizedBox(width: 6),
+                    Text(terms[i].label,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                isActive ? CcColors.text : CcColors.muted)),
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: () => onClose(i),
+                      child: const Icon(Icons.close_rounded,
+                          size: 14, color: CcColors.muted),
+                    ),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+        ?trailing,
+      ]),
+    );
   }
 }

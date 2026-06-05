@@ -67,7 +67,7 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.save, size: 18),
+                    : const Icon(Icons.save_rounded, size: 18),
                 label: const Text('保存'),
               ),
             ),
@@ -251,7 +251,7 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                                 style: TextStyle(
                                     fontSize: 12, color: CcColors.muted))),
                         IconButton(
-                          icon: const Icon(Icons.close, size: 18),
+                          icon: const Icon(Icons.close_rounded, size: 18),
                           tooltip: '删除规则',
                           onPressed: () => setState(
                               () => c.rules = c.rules.where((x) => x != r).toList()),
@@ -292,7 +292,7 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             onPressed: () => setState(() => c.rules = [...c.rules, RuleCfg()]),
-            icon: const Icon(Icons.add, size: 16),
+            icon: const Icon(Icons.add_rounded, size: 16),
             label: const Text('加规则'),
           ),
         ),

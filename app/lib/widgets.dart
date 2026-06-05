@@ -59,7 +59,7 @@ Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
             const SizedBox(height: 12),
             OutlinedButton.icon(
                 onPressed: onRetry,
-                icon: const Icon(Icons.refresh, size: 16),
+                icon: const Icon(Icons.refresh_rounded, size: 16),
                 label: const Text('重试')),
           ],
         ]),
@@ -72,7 +72,7 @@ Widget tag(String label, Color color, {bool bold = false}) => Container(
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
         border: Border.all(color: color.withValues(alpha: 0.30)),
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Text(label,
           style: TextStyle(
@@ -89,7 +89,7 @@ Widget chip(String text) => Container(
       decoration: BoxDecoration(
         color: CcColors.panelHigh,
         border: Border.all(color: CcColors.border),
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Text(text,
           style: const TextStyle(

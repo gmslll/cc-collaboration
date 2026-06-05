@@ -145,7 +145,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         SizedBox(width: _listWidth, child: _leftPane())
       else
         collapseRail(
-            icon: Icons.chevron_right,
+            icon: Icons.chevron_right_rounded,
             tooltip: '展开列表',
             label: '收件箱',
             onExpand: () => _setListCollapsed(false)),
@@ -175,7 +175,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         ] else ...[
           const VerticalDivider(width: 1),
           collapseRail(
-              icon: Icons.chevron_left,
+              icon: Icons.chevron_left_rounded,
               tooltip: '展开终端',
               label: '终端',
               onExpand: () => _setTermCollapsed(false)),
@@ -215,7 +215,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
           padding: const EdgeInsets.fromLTRB(2, 6, 8, 0),
           child: Row(children: [
             IconButton(
-                icon: const Icon(Icons.chevron_left, size: 18),
+                icon: const Icon(Icons.chevron_left_rounded, size: 18),
                 tooltip: '收起列表',
                 visualDensity: VisualDensity.compact,
                 onPressed: () => _setListCollapsed(true)),
@@ -249,7 +249,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
             decoration: const InputDecoration(
                 hintText: '搜索 发送人 / repo / 标题',
                 isDense: true,
-                prefixIcon: Icon(Icons.search, size: 18)),
+                prefixIcon: Icon(Icons.search_rounded, size: 18)),
             onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
           ),
         ),

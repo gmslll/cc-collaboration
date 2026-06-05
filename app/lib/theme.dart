@@ -21,9 +21,9 @@ class CcColors {
 }
 
 class CcRadius {
-  // crisp, near-square corners for a terminal/TUI feel.
-  static const sm = 4.0;
-  static const md = 6.0;
+  // softened a touch from the hard near-square pass — still crisp, less rigid.
+  static const sm = 6.0;
+  static const md = 10.0;
   static const pill = 999.0;
 }
 

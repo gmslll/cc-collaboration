@@ -84,7 +84,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               blurRadius: 18)
                         ],
                       ),
-                      child: const Icon(Icons.sync_alt,
+                      child: const Icon(Icons.sync_alt_rounded,
                           size: 26, color: CcColors.bg),
                     ),
                   ),
@@ -108,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     decoration: const InputDecoration(
                         labelText: 'relay 地址',
                         hintText: 'https://relay.example.com',
-                        prefixIcon: Icon(Icons.dns_outlined),
+                        prefixIcon: Icon(Icons.dns_rounded),
                         isDense: true),
                   ),
                   const SizedBox(height: 12),
@@ -118,7 +118,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     decoration: const InputDecoration(
                         labelText: 'identity',
                         hintText: 'you@backend',
-                        prefixIcon: Icon(Icons.badge_outlined),
+                        prefixIcon: Icon(Icons.badge_rounded),
                         isDense: true),
                   ),
                   const SizedBox(height: 12),
@@ -128,7 +128,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     onSubmitted: (_) => _busy ? null : _submit(),
                     decoration: const InputDecoration(
                         labelText: '密码',
-                        prefixIcon: Icon(Icons.lock_outline),
+                        prefixIcon: Icon(Icons.lock_rounded),
                         isDense: true),
                   ),
                   if (_error != null) ...[
@@ -154,7 +154,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             height: 18,
                             width: 18,
                             child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.arrow_forward, size: 18),
+                        : const Icon(Icons.arrow_forward_rounded, size: 18),
                     label: Text(_busy ? '登录中' : '登录'),
                   ),
                 ],

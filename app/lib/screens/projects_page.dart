@@ -68,14 +68,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
               decoration: const InputDecoration(
                   hintText: '新项目名称',
                   isDense: true,
-                  prefixIcon: Icon(Icons.create_new_folder_outlined)),
+                  prefixIcon: Icon(Icons.create_new_folder_rounded)),
               onSubmitted: (_) => _create(),
             ),
           ),
           const SizedBox(width: 8),
           FilledButton.icon(
               onPressed: _create,
-              icon: const Icon(Icons.add, size: 18),
+              icon: const Icon(Icons.add_rounded, size: 18),
               label: const Text('新建项目')),
         ]),
         const SizedBox(height: 16),
@@ -109,7 +109,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                         client: widget.client, id: p.id, onChanged: _load),
                   ),
                   child: Row(children: [
-                    const Icon(Icons.folder_outlined,
+                    const Icon(Icons.folder_rounded,
                         color: CcColors.accent, size: 20),
                     const SizedBox(width: 12),
                     Expanded(
@@ -127,7 +127,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                                     fontSize: 12)),
                           ]),
                     ),
-                    const Icon(Icons.chevron_right, color: CcColors.subtle),
+                    const Icon(Icons.chevron_right_rounded, color: CcColors.subtle),
                   ]),
                 ),
               ))
@@ -256,11 +256,11 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                               fontSize: 18, fontWeight: FontWeight.bold)),
                     ),
                     IconButton(
-                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        icon: const Icon(Icons.edit_rounded, size: 18),
                         tooltip: '重命名',
                         onPressed: () => _rename(d.project.name)),
                     IconButton(
-                        icon: const Icon(Icons.delete_outline,
+                        icon: const Icon(Icons.delete_rounded,
                             size: 18, color: CcColors.danger),
                         tooltip: '删除',
                         onPressed: _delete),
@@ -307,7 +307,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           Text(m.role,
                               style: const TextStyle(color: CcColors.muted)),
                           IconButton(
-                              icon: const Icon(Icons.close, size: 18),
+                              icon: const Icon(Icons.close_rounded, size: 18),
                               onPressed: () => _do(() =>
                                   widget.client.removeMember(widget.id, m.identity))),
                         ]),

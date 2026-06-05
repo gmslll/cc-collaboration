@@ -142,11 +142,11 @@ class _HomeShellState extends State<HomeShell> {
     // terminals. Both lists share the same `if (_isDesktop)` so they align.
     final dests = <_Dest>[
       if (_isDesktop)
-        const _Dest('工作区', Icons.workspaces_outline, Icons.workspaces),
-      const _Dest('收件箱', Icons.inbox_outlined, Icons.inbox),
-      const _Dest('项目', Icons.folder_outlined, Icons.folder),
-      const _Dest('账号', Icons.person_outline, Icons.person),
-      if (isAdmin) const _Dest('Admin', Icons.shield_outlined, Icons.shield),
+        const _Dest('工作区', Icons.workspaces_rounded, Icons.workspaces_rounded),
+      const _Dest('收件箱', Icons.inbox_rounded, Icons.inbox_rounded),
+      const _Dest('项目', Icons.folder_rounded, Icons.folder_rounded),
+      const _Dest('账号', Icons.person_rounded, Icons.person_rounded),
+      if (isAdmin) const _Dest('Admin', Icons.shield_rounded, Icons.shield_rounded),
     ];
     if (_index >= dests.length) _index = 0;
 
@@ -252,7 +252,7 @@ class _HomeShellState extends State<HomeShell> {
                     blurRadius: 8)
               ],
             ),
-            child: const Icon(Icons.sync_alt, size: 13, color: CcColors.bg),
+            child: const Icon(Icons.sync_alt_rounded, size: 13, color: CcColors.bg),
           ),
           const SizedBox(width: 10),
           const Text('cc-handoff',
@@ -274,7 +274,7 @@ class _HomeShellState extends State<HomeShell> {
         actions: [
           PopupMenuButton<String>(
             tooltip: '账号',
-            icon: const Icon(Icons.account_circle_outlined),
+            icon: const Icon(Icons.account_circle_rounded),
             onSelected: (v) {
               if (v == 'logout') _logout();
             },
@@ -282,7 +282,7 @@ class _HomeShellState extends State<HomeShell> {
               PopupMenuItem(
                 value: 'logout',
                 child: Row(children: [
-                  Icon(Icons.logout, size: 16),
+                  Icon(Icons.logout_rounded, size: 16),
                   SizedBox(width: 8),
                   Text('登出'),
                 ]),

@@ -308,24 +308,24 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.download),
+                    : const Icon(Icons.download_rounded),
                 label: Text(_picking ? '接收中…' : '接收并开终端'),
               ),
             OutlinedButton.icon(
               onPressed: _ack,
-              icon: const Icon(Icons.check, size: 18),
+              icon: const Icon(Icons.check_rounded, size: 18),
               label: const Text('标记接收'),
             ),
             if (p.sender == _cfg.identity && _status?.state == 'pending')
               OutlinedButton.icon(
                 onPressed: () => _retract(p),
-                icon: const Icon(Icons.undo, size: 18),
+                icon: const Icon(Icons.undo_rounded, size: 18),
                 label: const Text('撤回'),
               ),
             if (p.kind == 'bug' && _status?.state == 'pending')
               OutlinedButton.icon(
                 onPressed: () => _reassign(p),
-                icon: const Icon(Icons.swap_horiz, size: 18),
+                icon: const Icon(Icons.swap_horiz_rounded, size: 18),
                 label: const Text('转交'),
               ),
           ]),
@@ -373,7 +373,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
               Clipboard.setData(ClipboardData(text: _prompt!));
               _snack('已复制 Prompt');
             },
-            icon: const Icon(Icons.copy, size: 16),
+            icon: const Icon(Icons.copy_rounded, size: 16),
             label: const Text('复制 Prompt'),
           ),
           TextButton.icon(
@@ -382,7 +382,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                   ClipboardData(text: 'cc-handoff pickup $_id --worktree'));
               _snack('已复制 pickup 命令');
             },
-            icon: const Icon(Icons.terminal, size: 16),
+            icon: const Icon(Icons.terminal_rounded, size: 16),
             label: const Text('复制 pickup 命令'),
           ),
           if (widget.onSendToTerminal != null)
@@ -391,7 +391,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                 widget.onSendToTerminal!(_prompt!);
                 _snack('已发送到终端');
               },
-              icon: const Icon(Icons.keyboard_return, size: 16),
+              icon: const Icon(Icons.keyboard_return_rounded, size: 16),
               label: const Text('发送到终端'),
             ),
         ]),
@@ -447,19 +447,19 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     if (p.modulePaths.isNotEmpty) {
       children.add(_filesHeader('模块路径'));
       children.addAll(
-          p.modulePaths.map((m) => _fileRow(m, Icons.folder_outlined)));
+          p.modulePaths.map((m) => _fileRow(m, Icons.folder_rounded)));
     }
     if (p.attachments.isNotEmpty) {
       children.add(_filesHeader('附件'));
       children.addAll(p.attachments.map((a) => ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.attach_file, size: 18),
+            leading: const Icon(Icons.attach_file_rounded, size: 18),
             title: Text(a.name),
             subtitle: Text(_fmtBytes(a.size),
                 style: const TextStyle(color: CcColors.muted, fontSize: 11)),
             trailing: IconButton(
-              icon: const Icon(Icons.download, size: 20),
+              icon: const Icon(Icons.download_rounded, size: 20),
               onPressed: () => _downloadAttachment(a.name),
             ),
           )));
@@ -481,7 +481,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     if (git != null && git.changedPaths.isNotEmpty) {
       children.add(_filesHeader('变更文件 (${git.changedPaths.length})'));
       children.addAll(git.changedPaths
-          .map((f) => _fileRow(f, Icons.insert_drive_file_outlined)));
+          .map((f) => _fileRow(f, Icons.description_rounded)));
     }
     if (children.isEmpty) return centerMsg('无文件 / 模块信息');
     return ListView(padding: const EdgeInsets.all(16), children: children);
@@ -514,7 +514,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
             IconButton(
                 onPressed: reloadComments,
                 tooltip: '刷新',
-                icon: const Icon(Icons.refresh, size: 18)),
+                icon: const Icon(Icons.refresh_rounded, size: 18)),
           ]),
           if (_comments.isEmpty)
             const Padding(
@@ -553,7 +553,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
               ),
             ),
             IconButton(
-                onPressed: _postComment, icon: const Icon(Icons.send, size: 20)),
+                onPressed: _postComment, icon: const Icon(Icons.send_rounded, size: 20)),
           ]),
         ]),
       ),
