@@ -231,6 +231,7 @@ class _DragHandleState extends State<DragHandle> {
 
   @override
   Widget build(BuildContext context) {
+    final noMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
       onEnter: (_) => setState(() => _active = true),
@@ -243,7 +244,8 @@ class _DragHandleState extends State<DragHandle> {
           width: 8,
           child: Center(
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
+              duration:
+                  noMotion ? Duration.zero : const Duration(milliseconds: 120),
               width: _active ? 2 : 1,
               color: _active ? CcColors.accent : CcColors.border,
             ),
@@ -294,6 +296,7 @@ class _HoverLiftState extends State<HoverLift> {
 
   @override
   Widget build(BuildContext context) {
+    final noMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     return MouseRegion(
       cursor:
           widget.onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
@@ -302,7 +305,8 @@ class _HoverLiftState extends State<HoverLift> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
+          duration:
+              noMotion ? Duration.zero : const Duration(milliseconds: 180),
           curve: Curves.easeOut,
           transform: Matrix4.translationValues(0, _h ? -1.5 : 0, 0),
           padding: widget.padding,

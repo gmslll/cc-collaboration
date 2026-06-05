@@ -12,7 +12,7 @@ class CcColors {
   static const borderSoft = Color(0xFF2D3950);
   static const text = Color(0xFFE6EAF2);
   static const muted = Color(0xFF98A2B8);
-  static const subtle = Color(0xFF5E6A82);
+  static const subtle = Color(0xFF727D94); // ≥4.5:1 on bg (WCAG AA)
   static const accent = Color(0xFF818CF8); // indigo — primary
   static const accentBright = Color(0xFFA5B4FC); // hover / glow highlight
   static const danger = Color(0xFFF87171);
@@ -82,7 +82,7 @@ ThemeData ccTheme() {
     canvasColor: CcColors.bg,
     dividerColor: CcColors.border,
     hoverColor: CcColors.accent.withValues(alpha: 0.06),
-    focusColor: CcColors.accent.withValues(alpha: 0.12),
+    focusColor: CcColors.accent.withValues(alpha: 0.20), // visible keyboard focus
     splashColor: CcColors.accent.withValues(alpha: 0.08),
     dividerTheme: const DividerThemeData(color: CcColors.border, thickness: 1),
     scrollbarTheme: ScrollbarThemeData(
