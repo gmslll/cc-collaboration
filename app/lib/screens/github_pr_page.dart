@@ -162,7 +162,10 @@ class _PrDiffPageState extends State<_PrDiffPage> {
       setState(() {
         _files = [
           for (final p in f)
-            FileDiff(p.filename, p.status, p.additions, p.deletions, p.patch)
+            // normalise GitHub's 'removed' to git's 'deleted' at the boundary
+            // so DiffView only deals with git statuses.
+            FileDiff(p.filename, p.status == 'removed' ? 'deleted' : p.status,
+                p.additions, p.deletions, p.patch)
         ];
         _loading = false;
       });

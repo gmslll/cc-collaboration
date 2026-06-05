@@ -21,17 +21,22 @@ class _DiffViewState extends State<DiffView> {
   List<DiffRow> _rows = const [];
   bool _split = Prefs.getBool('diff.split', def: true);
   double _treeW = Prefs.getDouble('diff.treeW', def: 300);
+  late _Dir _root; // the dir tree — built once per file list (not per build)
 
   @override
   void initState() {
     super.initState();
+    _root = _buildTree(widget.files);
     _selectFirst();
   }
 
   @override
   void didUpdateWidget(DiffView old) {
     super.didUpdateWidget(old);
-    if (!identical(old.files, widget.files)) _selectFirst();
+    if (!identical(old.files, widget.files)) {
+      _root = _buildTree(widget.files);
+      _selectFirst();
+    }
   }
 
   void _selectFirst() {
@@ -74,7 +79,7 @@ class _DiffViewState extends State<DiffView> {
         ),
         child: ListView(
           padding: const EdgeInsets.symmetric(vertical: 4),
-          children: _treeChildren(_buildTree(widget.files), '', 0),
+          children: _treeChildren(_root, '', 0),
         ),
       );
 
@@ -188,6 +193,8 @@ class _DiffViewState extends State<DiffView> {
   Widget _diffBody() {
     final f = _selected;
     if (f == null) return centerMsg('选择左侧文件查看对比');
+    // rename/mode-only files have no hunks → split shows nothing; the tree still
+    // carries the status + counts. Binary/oversized files have empty raw.
     if (f.raw.trim().isEmpty) {
       return centerMsg('(无 diff —— 二进制或过大)');
     }
@@ -284,14 +291,14 @@ _Dir _buildTree(List<FileDiff> files) {
 
 Color _statusColor(String s) => switch (s) {
       'added' => CcColors.ok,
-      'deleted' || 'removed' => CcColors.danger,
+      'deleted' => CcColors.danger,
       'renamed' => CcColors.warning,
       _ => CcColors.accent,
     };
 
 String _statusChar(String s) => switch (s) {
       'added' => 'A',
-      'deleted' || 'removed' => 'D',
+      'deleted' => 'D',
       'renamed' => 'R',
       _ => 'M',
     };

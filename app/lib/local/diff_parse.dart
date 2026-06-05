@@ -103,7 +103,10 @@ String _strip(String p) {
   return (p.startsWith('a/') || p.startsWith('b/')) ? p.substring(2) : p;
 }
 
-// parseRows turns a unified diff/patch into aligned side-by-side rows.
+// parseRows turns a unified diff/patch into aligned side-by-side rows. The
+// removed/added pairing is for the split view specifically (the unified view
+// renders `raw` directly); if other pairing strategies appear, move this into
+// the widget. A file with no hunks (rename/mode-only) yields no line rows.
 List<DiffRow> parseRows(String raw) {
   final rows = <DiffRow>[];
   var oldNo = 0, newNo = 0;
