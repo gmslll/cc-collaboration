@@ -10,7 +10,9 @@ class ProjectCfg {
 }
 
 // A workspace from config.toml [[workspace]]: its projects + the resolved agent
-// (workspace.agent → user.agent → claude) and optional pre_launch snippet.
+// and optional pre_launch snippet. Agent precedence (workspace.agent →
+// user.agent → claude) mirrors Go's internal/config/workspace.go
+// BuildLaunchCommand — keep the two in sync.
 class WorkspaceCfg {
   final String name;
   final String path; // absolute (may be empty)

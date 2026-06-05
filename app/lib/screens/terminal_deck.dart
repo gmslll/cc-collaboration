@@ -3,6 +3,49 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import 'terminal_pane.dart';
 
+// TerminalHost owns the terminal-session list + active index + lifecycle, shared
+// by the inbox cockpit and the workspace cockpit (both add sessions on pickup /
+// agent launch). Mix into a State and render terminalDeck().
+mixin TerminalHost<T extends StatefulWidget> on State<T> {
+  final List<TerminalSession> terms = [];
+  int activeTerm = 0;
+
+  void addTerm(String workdir, String command) {
+    setState(() {
+      terms.add(TerminalSession(workdir, command));
+      activeTerm = terms.length - 1;
+    });
+  }
+
+  void closeTerm(int i) {
+    terms[i].dispose();
+    setState(() {
+      terms.removeAt(i);
+      if (activeTerm >= terms.length) {
+        activeTerm = terms.isEmpty ? 0 : terms.length - 1;
+      }
+    });
+  }
+
+  void disposeTerms() {
+    for (final s in terms) {
+      s.dispose();
+    }
+  }
+
+  // sendToTerminal is the "发送到终端" wiring for HandoffDetailView — null when
+  // there's no active session (so the button hides).
+  void Function(String)? get sendToTerminal =>
+      terms.isEmpty ? null : (t) => terms[activeTerm].sendText(t);
+
+  Widget terminalDeck() => TerminalDeck(
+        terms: terms,
+        active: activeTerm,
+        onSwitch: (i) => setState(() => activeTerm = i),
+        onClose: closeTerm,
+      );
+}
+
 // TerminalDeck renders a row of session tabs + the active terminal. The host
 // owns the session list + active index (so both the inbox cockpit and the
 // workspace cockpit can add sessions on pickup / agent launch).

@@ -5,9 +5,9 @@ import '../api/relay_client.dart';
 import '../local/config.dart';
 import '../local/worktrees.dart';
 import '../theme.dart';
+import '../widgets.dart';
 import 'handoff_detail_view.dart';
 import 'terminal_deck.dart';
-import 'terminal_pane.dart';
 
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
 // (left, primary) + a Workspace → Project → (Worktrees + Tasks) tree (right).
@@ -22,12 +22,11 @@ class WorkspacePage extends StatefulWidget {
   State<WorkspacePage> createState() => _WorkspacePageState();
 }
 
-class _WorkspacePageState extends State<WorkspacePage> {
-  final List<TerminalSession> _terms = [];
-  int _activeTerm = 0;
+class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   Map<String, List<ListItem>> _tasksByRepo = const {};
-  final Map<String, List<Worktree>> _worktrees = {};
-  final Set<String> _wtLoading = {};
+  // project path -> worktrees. Key absent = not loaded; value null = loading;
+  // value list = loaded (possibly empty).
+  final Map<String, List<Worktree>?> _worktrees = {};
 
   @override
   void initState() {
@@ -37,18 +36,18 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   void dispose() {
-    for (final s in _terms) {
-      s.dispose();
-    }
+    disposeTerms();
     super.dispose();
   }
 
   Future<void> _loadTasks() async {
     try {
-      final recv = await widget.client.handoffs(as: 'recipient');
-      final sent = await widget.client.handoffs(as: 'sender');
+      final lists = await Future.wait([
+        widget.client.handoffs(as: 'recipient'),
+        widget.client.handoffs(as: 'sender'),
+      ]);
       final byId = <String, ListItem>{};
-      for (final it in [...recv, ...sent]) {
+      for (final it in [...lists[0], ...lists[1]]) {
         byId[it.id] = it;
       }
       final byRepo = <String, List<ListItem>>{};
@@ -60,49 +59,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   Future<void> _ensureWorktrees(String path) async {
-    if (_worktrees.containsKey(path) || _wtLoading.contains(path)) return;
-    setState(() => _wtLoading.add(path));
+    if (_worktrees.containsKey(path)) return;
+    setState(() => _worktrees[path] = null); // mark loading
     final wts = await listWorktrees(path);
-    if (mounted) {
-      setState(() {
-        _worktrees[path] = wts;
-        _wtLoading.remove(path);
-      });
-    }
+    if (mounted) setState(() => _worktrees[path] = wts);
   }
 
   Future<void> _refresh() async {
-    setState(() {
-      _worktrees.clear();
-      _wtLoading.clear();
-    });
+    setState(() => _worktrees.clear());
     await _loadTasks();
-  }
-
-  void _launch(String dir, String agent, String preLaunch) {
-    final pl = preLaunch.trim();
-    final cmd = pl.isEmpty ? agent : '$pl && $agent';
-    setState(() {
-      _terms.add(TerminalSession(dir, cmd));
-      _activeTerm = _terms.length - 1;
-    });
-  }
-
-  void _addTerm(String workdir, String command) {
-    setState(() {
-      _terms.add(TerminalSession(workdir, command));
-      _activeTerm = _terms.length - 1;
-    });
-  }
-
-  void _closeTerm(int i) {
-    _terms[i].dispose();
-    setState(() {
-      _terms.removeAt(i);
-      if (_activeTerm >= _terms.length) {
-        _activeTerm = _terms.isEmpty ? 0 : _terms.length - 1;
-      }
-    });
   }
 
   void _openTask(ListItem it) {
@@ -116,11 +81,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
             config: widget.config,
             item: it,
             onOpenTerminal: (wt, cmd) {
-              _addTerm(wt, cmd);
+              addTerm(wt, cmd);
               Navigator.pop(dctx);
             },
-            onSendToTerminal:
-                _terms.isNotEmpty ? (t) => _terms[_activeTerm].sendText(t) : null,
+            onSendToTerminal: sendToTerminal,
             onChanged: _loadTasks,
           ),
         ),
@@ -138,22 +102,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   Widget _termArea() {
-    if (_terms.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text('从右侧工作区,在项目或 worktree 上起一个 claude / codex 会话',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: CcColors.muted)),
-        ),
-      );
+    if (terms.isEmpty) {
+      return centerMsg('从右侧工作区,在项目或 worktree 上起一个 claude / codex 会话');
     }
-    return TerminalDeck(
-      terms: _terms,
-      active: _activeTerm,
-      onSwitch: (i) => setState(() => _activeTerm = i),
-      onClose: _closeTerm,
-    );
+    return terminalDeck();
   }
 
   Widget _sidebar() {
@@ -176,14 +128,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       ),
       Expanded(
         child: wss.isEmpty
-            ? const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text('config.toml 里没有 workspace / project',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: CcColors.muted)),
-                ),
-              )
+            ? centerMsg('config.toml 里没有 workspace / project')
             : ListView(
                 children: wss
                     .map((ws) => ExpansionTile(
@@ -216,8 +161,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       children: [
         ..._worktreeNodes(ws, p),
         ..._taskNodes(p),
-        if (_worktrees[p.path]?.isEmpty == true &&
-            (_tasksByRepo[p.name]?.isEmpty ?? true))
+        if (_projectEmpty(p))
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
             child: Text('无 worktree / 任务',
@@ -227,18 +171,26 @@ class _WorkspacePageState extends State<WorkspacePage> {
     );
   }
 
+  // The empty hint shows only once worktrees have LOADED empty and there are no
+  // tasks — not while still loading or before the tile is expanded.
+  bool _projectEmpty(ProjectCfg p) {
+    final wts = _worktrees[p.path];
+    final wtLoadedEmpty =
+        _worktrees.containsKey(p.path) && wts != null && wts.isEmpty;
+    return wtLoadedEmpty && (_tasksByRepo[p.name]?.isEmpty ?? true);
+  }
+
   List<Widget> _worktreeNodes(WorkspaceCfg ws, ProjectCfg p) {
-    if (!_worktrees.containsKey(p.path)) {
-      return _wtLoading.contains(p.path)
-          ? const [
-              ListTile(
-                  dense: true,
-                  title: Text('worktrees 加载中…',
-                      style: TextStyle(color: CcColors.muted, fontSize: 12)))
-            ]
-          : const [];
+    if (!_worktrees.containsKey(p.path)) return const [];
+    final wts = _worktrees[p.path];
+    if (wts == null) {
+      return const [
+        ListTile(
+            dense: true,
+            title: Text('worktrees 加载中…',
+                style: TextStyle(color: CcColors.muted, fontSize: 12)))
+      ];
     }
-    final wts = _worktrees[p.path]!;
     if (wts.isEmpty) return const [];
     return [
       _sectionLabel('WORKTREES'),
@@ -288,7 +240,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, size: 18),
       tooltip: '起 agent',
-      onSelected: (a) => _launch(dir, a, ws.preLaunch),
+      onSelected: (a) {
+        final pl = ws.preLaunch.trim();
+        addTerm(dir, pl.isEmpty ? a : '$pl && $a');
+      },
       itemBuilder: (_) => [
         PopupMenuItem(
             value: 'claude',

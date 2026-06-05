@@ -12,7 +12,6 @@ import '../theme.dart';
 import '../widgets.dart';
 import 'handoff_detail_view.dart';
 import 'terminal_deck.dart';
-import 'terminal_pane.dart';
 
 // HandoffsPage is the inbox cockpit: list (inbox/sent/history) → 对接文档
 // (HandoffDetailView) → pickup → embedded agent terminals (TerminalDeck).
@@ -32,15 +31,13 @@ class HandoffsPage extends StatefulWidget {
   State<HandoffsPage> createState() => _HandoffsPageState();
 }
 
-class _HandoffsPageState extends State<HandoffsPage> {
+class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   String? _error;
   bool _loading = true;
   String _view = 'recipient'; // recipient | sender | history
   String _query = '';
   List<ListItem> _inbox = const [];
   ListItem? _selected;
-  final List<TerminalSession> _terms = [];
-  int _activeTerm = 0;
   StreamSubscription<SseEvent>? _sse;
   Set<String> _online = {};
   final _detailKey = GlobalKey<HandoffDetailViewState>();
@@ -70,9 +67,7 @@ class _HandoffsPageState extends State<HandoffsPage> {
   @override
   void dispose() {
     _sse?.cancel();
-    for (final s in _terms) {
-      s.dispose();
-    }
+    disposeTerms();
     super.dispose();
   }
 
@@ -134,43 +129,18 @@ class _HandoffsPageState extends State<HandoffsPage> {
     }
   }
 
-  void _addTerm(String workdir, String command) {
-    setState(() {
-      _terms.add(TerminalSession(workdir, command));
-      _activeTerm = _terms.length - 1;
-    });
-  }
-
-  void _closeTerm(int i) {
-    _terms[i].dispose();
-    setState(() {
-      _terms.removeAt(i);
-      if (_activeTerm >= _terms.length) {
-        _activeTerm = _terms.isEmpty ? 0 : _terms.length - 1;
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_error != null && _inbox.isEmpty) {
-      return _centerMsg(_error!, onRetry: _refresh);
+      return centerMsg(_error!, onRetry: _refresh);
     }
     return Row(children: [
       SizedBox(width: 320, child: _leftPane()),
       const VerticalDivider(width: 1),
       Expanded(flex: 4, child: _buildDetail()),
-      if (widget.showTerminal && _terms.isNotEmpty) ...[
+      if (widget.showTerminal && terms.isNotEmpty) ...[
         const VerticalDivider(width: 1),
-        Expanded(
-          flex: 5,
-          child: TerminalDeck(
-            terms: _terms,
-            active: _activeTerm,
-            onSwitch: (i) => setState(() => _activeTerm = i),
-            onClose: _closeTerm,
-          ),
-        ),
+        Expanded(flex: 5, child: terminalDeck()),
       ],
     ]);
   }
@@ -178,16 +148,15 @@ class _HandoffsPageState extends State<HandoffsPage> {
   Widget _buildDetail() {
     final sel = _selected;
     if (sel == null) {
-      return _centerMsg('从左侧选择一个 handoff,查看对接文档');
+      return centerMsg('从左侧选择一个 handoff,查看对接文档');
     }
     return HandoffDetailView(
       key: _detailKey,
       client: _client,
       config: _cfg,
       item: sel,
-      onOpenTerminal: widget.showTerminal ? _addTerm : null,
-      onSendToTerminal:
-          _terms.isNotEmpty ? (t) => _terms[_activeTerm].sendText(t) : null,
+      onOpenTerminal: widget.showTerminal ? addTerm : null,
+      onSendToTerminal: sendToTerminal,
       onChanged: _refresh,
     );
   }
@@ -284,7 +253,7 @@ class _HandoffsPageState extends State<HandoffsPage> {
                 .contains(_query))
             .toList();
     if (items.isEmpty) {
-      return _centerMsg(_inbox.isEmpty ? '空' : '无匹配', onRetry: _refresh);
+      return centerMsg(_inbox.isEmpty ? '空' : '无匹配', onRetry: _refresh);
     }
     return RefreshIndicator(
       onRefresh: _refresh,
@@ -315,19 +284,4 @@ class _HandoffsPageState extends State<HandoffsPage> {
       ),
     );
   }
-
-  Widget _centerMsg(String s, {VoidCallback? onRetry}) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(s,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: CcColors.muted)),
-            if (onRetry != null) ...[
-              const SizedBox(height: 12),
-              OutlinedButton(onPressed: onRetry, child: const Text('重试')),
-            ],
-          ]),
-        ),
-      );
 }

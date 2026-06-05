@@ -155,6 +155,9 @@ class _HomeShellState extends State<HomeShell> {
       AccountPage(client: _client!, identity: _cfg!.identity),
       if (isAdmin) AdminPage(client: _client!),
     ];
+    // dests and pages are built with matching `if (_isDesktop)` / `if (isAdmin)`
+    // guards; keep them index-aligned for IndexedStack + the nav rail.
+    assert(dests.length == pages.length, 'nav dests/pages must align');
     final body = IndexedStack(index: _index, children: pages);
 
     if (_isDesktop) {

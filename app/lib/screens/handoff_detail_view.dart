@@ -273,7 +273,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
             _tabApi(p),
             _tabFiles(p),
             SingleChildScrollView(
-                padding: const EdgeInsets.all(16), child: _comments_()),
+                padding: const EdgeInsets.all(16), child: _commentsSection()),
           ]),
         ),
       ]),
@@ -409,7 +409,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
 
   Widget _tabApi(Package p) {
     final d = p.apiDelta;
-    if (d == null || d.isEmpty) return _centerMsg('无 API 变更');
+    if (d == null || d.isEmpty) return centerMsg('无 API 变更');
     return ListView(padding: const EdgeInsets.all(16), children: [
       ..._apiSection('新增', d.added, CcColors.ok),
       ..._apiSection('变更', d.changed, CcColors.warning),
@@ -483,7 +483,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       children.addAll(git.changedPaths
           .map((f) => _fileRow(f, Icons.insert_drive_file_outlined)));
     }
-    if (children.isEmpty) return _centerMsg('无文件 / 模块信息');
+    if (children.isEmpty) return centerMsg('无文件 / 模块信息');
     return ListView(padding: const EdgeInsets.all(16), children: children);
   }
 
@@ -503,7 +503,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         ]),
       );
 
-  Widget _comments_() {
+  Widget _commentsSection() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -580,12 +580,4 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     }
   }
 
-  Widget _centerMsg(String s) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(s,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: CcColors.muted)),
-        ),
-      );
 }

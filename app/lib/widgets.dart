@@ -46,6 +46,22 @@ void snack(BuildContext context, String message) {
   );
 }
 
+// centerMsg is the shared muted empty/placeholder state, optionally with a retry.
+Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: CcColors.muted)),
+          if (onRetry != null) ...[
+            const SizedBox(height: 12),
+            OutlinedButton(onPressed: onRetry, child: const Text('重试')),
+          ],
+        ]),
+      ),
+    );
+
 // tag is a small rounded pill: alpha-tinted [color] background + [color] text.
 Widget tag(String label, Color color, {bool bold = false}) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
