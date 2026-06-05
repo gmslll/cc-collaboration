@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../local/diff_parse.dart';
@@ -30,12 +32,20 @@ class _DiffViewState extends State<DiffView> {
   bool _split = Prefs.getBool('diff.split', def: true);
   double _treeW = Prefs.getDouble('diff.treeW', def: 300);
   late _Dir _root; // the dir tree — built once per file list (not per build)
+  int? _editingNewNo; // the new-side line number currently being inline-edited
+  final _editCtl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _root = _buildTree(widget.files);
     _selectFirst();
+  }
+
+  @override
+  void dispose() {
+    _editCtl.dispose();
+    super.dispose();
   }
 
   @override
@@ -60,7 +70,48 @@ class _DiffViewState extends State<DiffView> {
     setState(() {
       _selected = f;
       _rows = parseRows(f.raw);
+      _editingNewNo = null;
     });
+  }
+
+  // ---- line-level edit + per-hunk revert (local diff only) ----
+
+  void _startEdit(DiffRow r) {
+    _editCtl.text = r.right;
+    setState(() => _editingNewNo = r.newNo);
+  }
+
+  void _cancelEdit() => setState(() => _editingNewNo = null);
+
+  // _commitEdit replaces line [r.newNo] in the working file with the edited text.
+  Future<void> _commitEdit(DiffRow r) async {
+    final newNo = r.newNo, root = widget.editRoot, f = _selected;
+    setState(() => _editingNewNo = null);
+    if (newNo == null || root == null || f == null) return;
+    try {
+      final file = File('$root/${f.path}');
+      final lines = (await file.readAsString()).split('\n');
+      if (newNo - 1 < 0 || newNo - 1 >= lines.length) return;
+      lines[newNo - 1] = _editCtl.text;
+      await file.writeAsString(lines.join('\n'));
+      widget.onChanged?.call();
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
+  }
+
+  // _revertHunk reverts just hunk [i] in the working file via git apply -R.
+  Future<void> _revertHunk(int i) async {
+    final root = widget.editRoot, f = _selected;
+    if (root == null || f == null) return;
+    final (header, hunks) = splitHunks(f.raw);
+    if (i < 0 || i >= hunks.length) return;
+    try {
+      await gitApplyReverse(root, '$header\n${hunks[i]}\n');
+      widget.onChanged?.call();
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
   }
 
   Future<void> _edit() async {
@@ -270,14 +321,29 @@ class _DiffViewState extends State<DiffView> {
   Widget _rowWidget(DiffRow r) {
     if (r.isHunk) {
       return Container(
-        width: double.infinity,
         color: CcColors.accent.withValues(alpha: 0.10),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        child: Text(r.hunkText,
-            style: const TextStyle(
-                fontFamily: CcType.mono,
-                fontSize: 12,
-                color: CcColors.accentBright)),
+        padding: const EdgeInsets.only(left: 8, right: 4),
+        child: Row(children: [
+          Expanded(
+            child: Text(r.hunkText,
+                style: const TextStyle(
+                    fontFamily: CcType.mono,
+                    fontSize: 12,
+                    color: CcColors.accentBright),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+          if (widget.editRoot != null)
+            TextButton.icon(
+              onPressed: () => _revertHunk(r.hunkIndex),
+              icon: const Icon(Icons.undo_rounded, size: 14),
+              label: const Text('还原', style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(
+                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  visualDensity: VisualDensity.compact),
+            ),
+        ]),
       );
     }
     return IntrinsicHeight(
@@ -286,9 +352,48 @@ class _DiffViewState extends State<DiffView> {
         Expanded(child: _cell(r.left, r.leftKind)),
         const VerticalDivider(width: 1),
         _gutter(r.newNo),
-        Expanded(child: _cell(r.right, r.rightKind)),
+        Expanded(child: _rightCell(r)),
       ]),
     );
+  }
+
+  // _rightCell is the editable new-side cell: inline TextField while editing,
+  // else the text with a pencil on hover (when editing is allowed).
+  Widget _rightCell(DiffRow r) {
+    if (_editingNewNo != null && _editingNewNo == r.newNo) {
+      return ColoredBox(
+        color: CcColors.panelHigh,
+        child: Row(children: [
+          Expanded(
+            child: TextField(
+              controller: _editCtl,
+              autofocus: true,
+              style: const TextStyle(
+                  fontFamily: CcType.mono, fontSize: 12.5, color: CcColors.text),
+              decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
+              onSubmitted: (_) => _commitEdit(r),
+            ),
+          ),
+          IconButton(
+              icon: const Icon(Icons.check_rounded, size: 16, color: CcColors.ok),
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _commitEdit(r)),
+          IconButton(
+              icon: const Icon(Icons.close_rounded, size: 16),
+              visualDensity: VisualDensity.compact,
+              onPressed: _cancelEdit),
+        ]),
+      );
+    }
+    final editable = widget.editRoot != null &&
+        r.newNo != null &&
+        r.rightKind != DiffKind.empty;
+    if (!editable) return _cell(r.right, r.rightKind);
+    return _EditableCell(
+        text: r.right, kind: r.rightKind, onEdit: () => _startEdit(r));
   }
 
   Widget _gutter(int? no) => Container(
@@ -301,27 +406,58 @@ class _DiffViewState extends State<DiffView> {
                 fontFamily: CcType.mono, fontSize: 11, color: CcColors.subtle)),
       );
 
-  Widget _cell(String text, DiffKind kind) {
-    Color? bg;
-    switch (kind) {
-      case DiffKind.added:
-        bg = CcColors.ok.withValues(alpha: 0.10);
-      case DiffKind.removed:
-        bg = CcColors.danger.withValues(alpha: 0.10);
-      case DiffKind.empty:
-        bg = CcColors.bgGradTop.withValues(alpha: 0.5); // padding cell, dimmed
-      case DiffKind.context:
-        bg = null;
-    }
-    return Container(
-      color: bg,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-      child: Text(text,
-          style: const TextStyle(
-              fontFamily: CcType.mono,
-              fontSize: 12.5,
-              height: 1.4,
-              color: CcColors.text)),
+  Widget _cell(String text, DiffKind kind) => Container(
+        color: _cellBg(kind),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+        child: Text(text, style: _cellStyle),
+      );
+}
+
+const _cellStyle = TextStyle(
+    fontFamily: CcType.mono, fontSize: 12.5, height: 1.4, color: CcColors.text);
+
+Color? _cellBg(DiffKind kind) => switch (kind) {
+      DiffKind.added => CcColors.ok.withValues(alpha: 0.10),
+      DiffKind.removed => CcColors.danger.withValues(alpha: 0.10),
+      DiffKind.empty => CcColors.bgGradTop.withValues(alpha: 0.5),
+      DiffKind.context => null,
+    };
+
+// _EditableCell shows a new-side line with a pencil on hover; tapping it asks the
+// parent to switch the cell into an inline editor.
+class _EditableCell extends StatefulWidget {
+  final String text;
+  final DiffKind kind;
+  final VoidCallback onEdit;
+  const _EditableCell(
+      {required this.text, required this.kind, required this.onEdit});
+
+  @override
+  State<_EditableCell> createState() => _EditableCellState();
+}
+
+class _EditableCellState extends State<_EditableCell> {
+  bool _h = false;
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _h = true),
+      onExit: (_) => setState(() => _h = false),
+      child: Container(
+        color: _cellBg(widget.kind),
+        padding: const EdgeInsets.only(left: 8, right: 2, top: 1, bottom: 1),
+        child: Row(children: [
+          Expanded(child: Text(widget.text, style: _cellStyle)),
+          if (_h)
+            InkWell(
+              onTap: widget.onEdit,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 2),
+                child: Icon(Icons.edit_rounded, size: 13, color: CcColors.muted),
+              ),
+            ),
+        ]),
+      ),
     );
   }
 }

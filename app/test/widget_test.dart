@@ -54,6 +54,21 @@ void main() {
     expect(added[0].rightKind, DiffKind.added);
   });
 
+  test('splitHunks separates header + hunks; hunk rows are numbered', () {
+    final files = parseUnifiedDiff(_sampleDiff);
+    final (header, hunks) = splitHunks(files[0].raw);
+    expect(header.contains('diff --git a/lib/a.dart b/lib/a.dart'), isTrue);
+    expect(header.contains('+++ b/lib/a.dart'), isTrue);
+    expect(hunks.length, 1);
+    expect(hunks[0].startsWith('@@'), isTrue);
+    expect(hunks[0].contains('-old line'), isTrue);
+    expect(hunks[0].contains('+new line'), isTrue);
+
+    final hunkRows = parseRows(files[0].raw).where((r) => r.isHunk).toList();
+    expect(hunkRows.length, 1);
+    expect(hunkRows.first.hunkIndex, 0);
+  });
+
   test('GitHubClient.parseSlug handles https / git@ / path / non-github', () {
     expect(GitHubClient.parseSlug('https://github.com/owner/repo.git'),
         'owner/repo');

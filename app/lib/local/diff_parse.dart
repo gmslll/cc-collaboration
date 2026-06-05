@@ -9,6 +9,7 @@ enum DiffKind { context, added, removed, empty }
 class DiffRow {
   final bool isHunk;
   final String hunkText;
+  final int hunkIndex; // 0-based index among the file's hunks (hunk rows only)
   final int? oldNo;
   final int? newNo;
   final String left;
@@ -24,9 +25,10 @@ class DiffRow {
     this.right = '',
     this.rightKind = DiffKind.empty,
   })  : isHunk = false,
-        hunkText = '';
+        hunkText = '',
+        hunkIndex = -1;
 
-  const DiffRow.hunk(this.hunkText)
+  const DiffRow.hunk(this.hunkText, this.hunkIndex)
       : isHunk = true,
         oldNo = null,
         newNo = null,
@@ -109,7 +111,7 @@ String _strip(String p) {
 // the widget. A file with no hunks (rename/mode-only) yields no line rows.
 List<DiffRow> parseRows(String raw) {
   final rows = <DiffRow>[];
-  var oldNo = 0, newNo = 0;
+  var oldNo = 0, newNo = 0, hunkIdx = -1;
   final removed = <(int, String)>[];
   final added = <(int, String)>[];
 
@@ -140,7 +142,8 @@ List<DiffRow> parseRows(String raw) {
         oldNo = int.parse(m.group(1)!);
         newNo = int.parse(m.group(2)!);
       }
-      rows.add(DiffRow.hunk(line));
+      hunkIdx++;
+      rows.add(DiffRow.hunk(line, hunkIdx));
     } else if (line.startsWith('+') && !line.startsWith('+++')) {
       added.add((newNo, line.substring(1)));
       newNo++;
@@ -166,4 +169,36 @@ List<DiffRow> parseRows(String raw) {
   }
   flush();
   return rows;
+}
+
+// splitHunks separates a file's unified diff (FileDiff.raw from `git diff`) into
+// its header (the `diff --git`/index/---/+++ lines before the first hunk) and
+// each `@@` hunk block (its `@@` line + body). Used to build a single-hunk
+// reverse patch (header + one hunk) for per-hunk revert. ('', []) if no hunks.
+(String, List<String>) splitHunks(String raw) {
+  final header = <String>[];
+  final hunks = <String>[];
+  final cur = <String>[];
+  var inHunk = false;
+  void flush() {
+    while (cur.isNotEmpty && cur.last.isEmpty) {
+      cur.removeLast(); // drop the trailing split artifact
+    }
+    if (cur.isNotEmpty) hunks.add(cur.join('\n'));
+    cur.clear();
+  }
+
+  for (final l in raw.split('\n')) {
+    if (l.startsWith('@@')) {
+      flush();
+      cur.add(l);
+      inHunk = true;
+    } else if (inHunk) {
+      cur.add(l);
+    } else {
+      header.add(l);
+    }
+  }
+  flush();
+  return (header.join('\n'), hunks);
 }

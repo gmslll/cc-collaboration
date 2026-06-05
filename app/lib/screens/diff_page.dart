@@ -110,7 +110,11 @@ class _DiffPageState extends State<DiffPage> {
         onRetry: _load,
         child: () => _files.isEmpty
             ? centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异')
+            // edit/discard only in uncommitted mode — there the new side IS the
+            // working file, so line numbers + git checkout/apply line up.
             : DiffView(
-                files: _files, editRoot: widget.path, onChanged: _load),
+                files: _files,
+                editRoot: _mode == 0 ? widget.path : null,
+                onChanged: _load),
       );
 }

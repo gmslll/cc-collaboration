@@ -40,3 +40,17 @@ Future<String> gitStatus(String dir) => _git(dir, 'status --porcelain');
 Future<void> gitRestore(String dir, String file) async {
   await _git(dir, 'checkout -- ${shQuote(file)}');
 }
+
+// gitApplyReverse reverts a single-hunk patch (a file header + one `@@` hunk)
+// against the working tree — `git apply -R --recount`. Used for per-hunk
+// discard. Throws GitException if the hunk no longer applies.
+Future<void> gitApplyReverse(String dir, String patch) async {
+  final tmpDir = await Directory.systemTemp.createTemp('cc-revert');
+  try {
+    final tmp = File('${tmpDir.path}/p.patch');
+    await tmp.writeAsString(patch.endsWith('\n') ? patch : '$patch\n');
+    await _git(dir, 'apply -R --recount ${shQuote(tmp.path)}');
+  } finally {
+    await tmpDir.delete(recursive: true);
+  }
+}
