@@ -304,7 +304,7 @@ class _AccountPageState extends State<AccountPage> {
         controller: c,
         obscureText: obscure,
         autocorrect: false,
-        style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
-        decoration: InputDecoration(labelText: label, isDense: true),
+        style: const TextStyle(fontFamily: CcType.mono, fontSize: 14),
+        decoration: InputDecoration(labelText: label),
       );
 }

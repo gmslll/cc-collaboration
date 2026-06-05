@@ -39,6 +39,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   bool _busy = false;
   bool _leftCollapsed = Prefs.getBool('ws.left');
   bool _rightCollapsed = Prefs.getBool('ws.right');
+  double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 380);
 
   @override
   String? get persistKey => 'workspace_sessions';
@@ -320,8 +321,15 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     Prefs.setBool('ws.right', _rightCollapsed);
   }
 
+  void _resizeTree(double delta) {
+    // tree is on the right: dragging the handle left (negative dx) widens it.
+    setState(() => _treeWidth = (_treeWidth + delta).clamp(300.0, 640.0));
+  }
+
   @override
   Widget build(BuildContext context) {
+    // both panes open → the divider is a drag handle to resize the tree.
+    final resizable = !_leftCollapsed && !_rightCollapsed;
     return Row(children: [
       if (!_leftCollapsed)
         Expanded(child: _termColumn())
@@ -331,11 +339,17 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             tooltip: '展开终端',
             label: '终端',
             onExpand: () => _setLeft(false)),
-      const VerticalDivider(width: 1),
+      if (resizable)
+        DragHandle(
+          onDelta: (dx) => _resizeTree(-dx),
+          onEnd: () => Prefs.setDouble('ws.treeWidth', _treeWidth),
+        )
+      else
+        const VerticalDivider(width: 1),
       if (!_rightCollapsed)
         (_leftCollapsed
             ? Expanded(child: _sidebar())
-            : SizedBox(width: 340, child: _sidebar()))
+            : SizedBox(width: _treeWidth, child: _sidebar()))
       else
         collapseRail(
             icon: Icons.chevron_left,
@@ -445,9 +459,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                 children: wss
                     .map((ws) => ExpansionTile(
                           title: Text(ws.name.isEmpty ? '(默认)' : ws.name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w600)),
-                          leading: const Icon(Icons.workspaces_outline, size: 18),
+                              style: const TextStyle(
+                                  fontSize: 15.5, fontWeight: FontWeight.w700)),
+                          leading:
+                              const Icon(Icons.workspaces_outline, size: 20),
                           trailing: _workspaceMenu(ws),
                           initiallyExpanded: true,
                           shape: const Border(),
@@ -462,12 +477,24 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   Widget _projectTile(WorkspaceCfg ws, ProjectCfg p) {
     return ExpansionTile(
-      title: Text(p.name, style: const TextStyle(fontSize: 14)),
-      leading: const Icon(Icons.folder_outlined, size: 18),
-      trailing: _projectMenu(ws, p),
+      title: _HoverZone(
+        builder: (h) => Row(children: [
+          Expanded(
+              child: Text(p.name,
+                  style:
+                      const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis)),
+          _rowActions(h,
+              onClaude: () => _openAgent(p, p.path, 'claude', ws.preLaunch),
+              onCodex: () => _openAgent(p, p.path, 'codex', ws.preLaunch),
+              menu: _projectMenu(ws, p)),
+        ]),
+      ),
+      leading: const Icon(Icons.folder_outlined, size: 19),
       controller: _ctlFor(p.path),
-      tilePadding: const EdgeInsets.only(left: 16, right: 4),
-      childrenPadding: const EdgeInsets.only(left: 16),
+      tilePadding: const EdgeInsets.only(left: 16, right: 8),
+      childrenPadding: const EdgeInsets.only(left: 14),
       shape: const Border(),
       onExpansionChanged: (open) {
         if (open) _ensureWorktrees(p.path);
@@ -524,22 +551,23 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             (e.s.name?.isNotEmpty ?? false) ? e.s.name! : '$agent · ${e.s.title}';
         return Container(
           decoration: BoxDecoration(
+            color: active ? CcColors.accent.withValues(alpha: 0.08) : null,
             border: Border(
                 left: BorderSide(
                     color: active ? CcColors.accent : Colors.transparent,
-                    width: 2)),
+                    width: 2.5)),
           ),
           child: ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.only(left: 8, right: 0),
+            visualDensity: const VisualDensity(vertical: -1),
+            contentPadding: const EdgeInsets.only(left: 10, right: 2),
             selected: active,
             leading: Icon(Icons.terminal,
-                size: 16,
+                size: 18,
                 color: active ? CcColors.accentBright : CcColors.muted),
             title: Text(display,
                 style: TextStyle(
                     fontFamily: CcType.mono,
-                    fontSize: 12.5,
+                    fontSize: 13.5,
                     color: active ? CcColors.text : CcColors.muted,
                     fontWeight: active ? FontWeight.w600 : FontWeight.normal),
                 maxLines: 1,
@@ -552,7 +580,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                     child: statusDot(CcColors.ok, size: 7, glow: true)),
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert,
-                    size: 16, color: CcColors.muted),
+                    size: 18, color: CcColors.muted),
                 tooltip: '会话操作',
                 onSelected: (v) {
                   if (v == 'rename') _renameSession(e.s);
@@ -611,20 +639,27 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     if (_secCollapsed(p.path, 'worktrees')) return [header];
     return [
       header,
-      ...wts.map((w) => ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.only(left: 8, right: 0),
-            leading: Icon(Icons.account_tree_outlined,
-                size: 16, color: w.isHandoff ? CcColors.accent : CcColors.muted),
-            title: Text(w.branch.isEmpty ? w.name : w.branch,
-                style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
-            subtitle: w.isHandoff
-                ? const Text('handoff',
-                    style: TextStyle(color: CcColors.accent, fontSize: 10))
-                : null,
-            trailing: _worktreeMenu(ws, p, w),
+      ...wts.map((w) => _HoverZone(
+            builder: (h) => ListTile(
+              visualDensity: const VisualDensity(vertical: -1),
+              contentPadding: const EdgeInsets.only(left: 10, right: 2),
+              leading: Icon(Icons.account_tree_outlined,
+                  size: 18,
+                  color: w.isHandoff ? CcColors.accent : CcColors.muted),
+              title: Text(w.branch.isEmpty ? w.name : w.branch,
+                  style:
+                      const TextStyle(fontFamily: CcType.mono, fontSize: 13.5),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+              subtitle: w.isHandoff
+                  ? const Text('handoff',
+                      style: TextStyle(color: CcColors.accent, fontSize: 11))
+                  : null,
+              trailing: _rowActions(h,
+                  onClaude: () => _openAgent(p, w.path, 'claude', ws.preLaunch),
+                  onCodex: () => _openAgent(p, w.path, 'codex', ws.preLaunch),
+                  menu: _worktreeMenu(ws, p, w)),
+            ),
           )),
     ];
   }
@@ -637,18 +672,21 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     return [
       header,
       ...ts.map((it) => ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.only(left: 8, right: 8),
-            leading: Icon(Icons.circle,
-                size: 8,
-                color:
-                    it.urgency == 'urgent' ? CcColors.danger : CcColors.muted),
+            visualDensity: const VisualDensity(vertical: -1),
+            contentPadding: const EdgeInsets.only(left: 12, right: 8),
+            leading: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: statusDot(
+                  it.urgency == 'urgent' ? CcColors.danger : CcColors.muted,
+                  size: 9,
+                  glow: it.urgency == 'urgent'),
+            ),
             title: Text(it.headline.isNotEmpty ? it.headline : it.sender,
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontSize: 14),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis),
             subtitle: Text('${it.sender} · ${it.state}',
-                style: const TextStyle(color: CcColors.muted, fontSize: 10)),
+                style: const TextStyle(color: CcColors.muted, fontSize: 11.5)),
             onTap: () => _openTask(it),
           )),
     ];
@@ -810,20 +848,80 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     return InkWell(
       onTap: () => _toggleSec(path, kind),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 8, 0, 2),
+        padding: const EdgeInsets.fromLTRB(4, 12, 0, 5),
         child: Row(children: [
           Icon(collapsed ? Icons.chevron_right : Icons.expand_more,
-              size: 14, color: CcColors.subtle),
-          const SizedBox(width: 2),
+              size: 16, color: CcColors.muted),
+          const SizedBox(width: 4),
           Text(label,
               style: const TextStyle(
                   fontFamily: CcType.mono,
-                  color: CcColors.subtle,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.6)),
+                  color: CcColors.muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5)),
         ]),
       ),
     );
   }
+
+  Widget _quickBtn(String label, VoidCallback onTap) => Padding(
+        padding: const EdgeInsets.only(right: 3),
+        child: Tooltip(
+          message: '起 $label',
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: CcColors.accent.withValues(alpha: 0.14),
+                border:
+                    Border.all(color: CcColors.accent.withValues(alpha: 0.35)),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(label,
+                  style: const TextStyle(
+                      fontFamily: CcType.mono,
+                      fontSize: 11.5,
+                      color: CcColors.accentBright,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ),
+      );
+
+  // _rowActions surfaces the common 起 claude/codex buttons on hover, keeping the
+  // ⋮ menu for everything else.
+  Widget _rowActions(bool hovered,
+          {required VoidCallback onClaude,
+          required VoidCallback onCodex,
+          required Widget menu}) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        if (hovered) ...[
+          _quickBtn('claude', onClaude),
+          _quickBtn('codex', onCodex),
+        ],
+        menu,
+      ]);
+}
+
+// _HoverZone exposes hover state to its builder — used to reveal a row's quick
+// actions only while the pointer is over it.
+class _HoverZone extends StatefulWidget {
+  final Widget Function(bool hovered) builder;
+  const _HoverZone({required this.builder});
+
+  @override
+  State<_HoverZone> createState() => _HoverZoneState();
+}
+
+class _HoverZoneState extends State<_HoverZone> {
+  bool _h = false;
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+        onEnter: (_) => setState(() => _h = true),
+        onExit: (_) => setState(() => _h = false),
+        child: widget.builder(_h),
+      );
 }

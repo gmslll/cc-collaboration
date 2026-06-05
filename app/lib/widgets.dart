@@ -124,16 +124,18 @@ String hostOf(String url) {
 Widget sectionTitle(String title, {String? meta, IconData? icon}) => Row(
       children: [
         if (icon != null) ...[
-          Icon(icon, size: 17, color: CcColors.accent),
+          Icon(icon, size: 18, color: CcColors.accent),
           const SizedBox(width: 8),
         ],
         Text(title,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
         if (meta != null) ...[
           const SizedBox(width: 8),
           Text(meta,
               style: const TextStyle(
-                  fontFamily: CcType.mono, color: CcColors.muted, fontSize: 12)),
+                  fontFamily: CcType.mono,
+                  color: CcColors.muted,
+                  fontSize: 12.5)),
         ],
       ],
     );
@@ -209,6 +211,47 @@ const panelGradient = BoxDecoration(
     colors: [CcColors.panelHigh, CcColors.panel],
   ),
 );
+
+// DragHandle is a thin vertical divider the user drags to resize an adjacent
+// pane. It reports the horizontal drag delta; the parent clamps + persists the
+// new width. Shows a resize cursor and an accent line on hover/drag. (8px hit
+// area for an easy grab; the visible line stays 1–2px.)
+class DragHandle extends StatefulWidget {
+  final ValueChanged<double> onDelta;
+  final VoidCallback? onEnd; // e.g. persist the new width once, on release
+  const DragHandle({super.key, required this.onDelta, this.onEnd});
+
+  @override
+  State<DragHandle> createState() => _DragHandleState();
+}
+
+class _DragHandleState extends State<DragHandle> {
+  bool _active = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _active = true),
+      onExit: (_) => setState(() => _active = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (d) => widget.onDelta(d.delta.dx),
+        onHorizontalDragEnd: (_) => widget.onEnd?.call(),
+        child: SizedBox(
+          width: 8,
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              width: _active ? 2 : 1,
+              color: _active ? CcColors.accent : CcColors.border,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 // HoverLift wraps a card-like surface: on hover it lifts slightly, brightens its
 // border and casts a soft accent glow (200ms). Use for clickable cards.

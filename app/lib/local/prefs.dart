@@ -29,6 +29,16 @@ class Prefs {
     _save();
   }
 
+  static double getDouble(String key, {required double def}) {
+    final v = _data[key];
+    return v is num ? v.toDouble() : def;
+  }
+
+  static void setDouble(String key, double value) {
+    _data[key] = value;
+    _save();
+  }
+
   static Future<void> _save() async {
     final p = _path;
     if (p == null) return;

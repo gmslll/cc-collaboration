@@ -171,6 +171,8 @@ class _HomeShellState extends State<HomeShell> {
             onDestinationSelected: (i) => setState(() => _index = i),
             labelType: NavigationRailLabelType.all,
             backgroundColor: CcColors.panel,
+            minWidth: 84,
+            groupAlignment: -0.9,
             destinations: dests
                 .map((d) => NavigationRailDestination(
                     icon: Icon(d.icon),

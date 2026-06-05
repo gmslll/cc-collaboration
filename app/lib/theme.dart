@@ -26,6 +26,16 @@ class CcRadius {
   static const pill = 999.0;
 }
 
+// CcSpace — one spacing scale so gaps/padding stay consistent app-wide.
+class CcSpace {
+  static const xs = 4.0;
+  static const sm = 8.0;
+  static const md = 12.0;
+  static const lg = 16.0;
+  static const xl = 20.0;
+  static const xxl = 24.0;
+}
+
 // CcType.mono is the bundled JetBrains Mono — for code, paths, branches,
 // terminal and badges. UI text stays on the system sans (zero bundle weight).
 class CcType {
@@ -57,16 +67,16 @@ ThemeData ccTheme() {
   const t = CcColors.text;
   final textTheme = const TextTheme(
     titleLarge:
-        TextStyle(fontSize: 20, fontWeight: FontWeight.w700, height: 1.2, letterSpacing: -0.2),
-    titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, height: 1.25),
-    titleSmall: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-    bodyLarge: TextStyle(fontSize: 15, height: 1.45),
-    bodyMedium: TextStyle(fontSize: 14, height: 1.45),
-    bodySmall: TextStyle(fontSize: 12.5, height: 1.4, color: CcColors.muted),
-    labelLarge: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-    labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        TextStyle(fontSize: 22, fontWeight: FontWeight.w700, height: 1.25, letterSpacing: -0.3),
+    titleMedium: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w600, height: 1.3),
+    titleSmall: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    bodyLarge: TextStyle(fontSize: 15.5, height: 1.5),
+    bodyMedium: TextStyle(fontSize: 14.5, height: 1.5),
+    bodySmall: TextStyle(fontSize: 13, height: 1.45, color: CcColors.muted),
+    labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    labelMedium: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
     labelSmall: TextStyle(
-        fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.4, color: CcColors.muted),
+        fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 0.3, color: CcColors.muted),
   ).apply(bodyColor: t, displayColor: t);
 
   OutlineInputBorder inputBorder(Color c, [double w = 1]) => OutlineInputBorder(
@@ -88,9 +98,9 @@ ThemeData ccTheme() {
     scrollbarTheme: ScrollbarThemeData(
       thumbColor: WidgetStateProperty.resolveWith((s) =>
           s.contains(WidgetState.hovered) ? CcColors.subtle : CcColors.borderSoft),
-      thickness: const WidgetStatePropertyAll(6),
-      radius: const Radius.circular(6),
-      crossAxisMargin: 2,
+      thickness: const WidgetStatePropertyAll(9),
+      radius: const Radius.circular(8),
+      crossAxisMargin: 3,
     ),
     cardTheme: CardThemeData(
       color: CcColors.panel,
@@ -114,12 +124,12 @@ ThemeData ccTheme() {
       indicatorShape:
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       selectedIconTheme:
-          const IconThemeData(color: CcColors.accentBright, size: 24),
-      unselectedIconTheme: const IconThemeData(color: CcColors.muted, size: 22),
+          const IconThemeData(color: CcColors.accentBright, size: 26),
+      unselectedIconTheme: const IconThemeData(color: CcColors.muted, size: 24),
       selectedLabelTextStyle: const TextStyle(
-          color: CcColors.text, fontSize: 11, fontWeight: FontWeight.w600),
+          color: CcColors.text, fontSize: 12.5, fontWeight: FontWeight.w600),
       unselectedLabelTextStyle:
-          const TextStyle(color: CcColors.muted, fontSize: 11),
+          const TextStyle(color: CcColors.muted, fontSize: 12.5),
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: CcColors.panel,
@@ -127,7 +137,7 @@ ThemeData ccTheme() {
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       labelTextStyle: WidgetStateProperty.resolveWith((s) => TextStyle(
-            fontSize: 11,
+            fontSize: 12.5,
             fontWeight: FontWeight.w600,
             color: s.contains(WidgetState.selected)
                 ? CcColors.text
@@ -143,6 +153,8 @@ ThemeData ccTheme() {
       selectedTileColor: CcColors.panelHigh,
       iconColor: CcColors.muted,
       selectedColor: CcColors.text,
+      minVerticalPadding: 10,
+      horizontalTitleGap: 10,
     ),
     tooltipTheme: TooltipThemeData(
       decoration: BoxDecoration(
@@ -160,7 +172,7 @@ ThemeData ccTheme() {
       labelStyle: const TextStyle(color: CcColors.muted),
       floatingLabelStyle: const TextStyle(color: CcColors.accentBright),
       prefixIconColor: CcColors.muted,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       border: inputBorder(CcColors.border),
       enabledBorder: inputBorder(CcColors.border),
       focusedBorder: inputBorder(CcColors.accent, 1.4),
@@ -171,17 +183,17 @@ ThemeData ccTheme() {
         foregroundColor: CcColors.bg,
         elevation: 3,
         shadowColor: CcColors.accent.withValues(alpha: 0.45),
-        minimumSize: const Size(44, 38),
+        minimumSize: const Size(44, 42),
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(CcRadius.sm)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+        textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: CcColors.text,
         side: const BorderSide(color: CcColors.borderSoft),
-        minimumSize: const Size(44, 38),
+        minimumSize: const Size(44, 42),
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(CcRadius.sm)),
       ),

@@ -122,8 +122,10 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 15.5, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 12),
                   ...children,
                 ]),
           ),
@@ -138,9 +140,8 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
           initialValue: initial,
           onChanged: onChanged,
           autocorrect: false,
-          style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
-          decoration:
-              InputDecoration(labelText: label, hintText: hint, isDense: true),
+          style: const TextStyle(fontFamily: CcType.mono, fontSize: 14),
+          decoration: InputDecoration(labelText: label, hintText: hint),
         ),
       );
 

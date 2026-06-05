@@ -43,6 +43,8 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   Set<String> _online = {};
   bool _listCollapsed = Prefs.getBool('inbox.list');
   bool _termCollapsed = Prefs.getBool('inbox.term');
+  double _listWidth = Prefs.getDouble('inbox.listWidth', def: 340);
+  double _termWidth = Prefs.getDouble('inbox.termWidth', def: 560);
   final _detailKey = GlobalKey<HandoffDetailViewState>();
 
   RelayClient get _client => widget.client;
@@ -137,32 +139,48 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     if (_error != null && _inbox.isEmpty) {
       return centerMsg(_error!, onRetry: _refresh);
     }
+    final termOpen = widget.showTerminal && terms.isNotEmpty && !_termCollapsed;
     return Row(children: [
       if (!_listCollapsed)
-        SizedBox(width: 320, child: _leftPane())
+        SizedBox(width: _listWidth, child: _leftPane())
       else
         collapseRail(
             icon: Icons.chevron_right,
             tooltip: '展开列表',
             label: '收件箱',
             onExpand: () => _setListCollapsed(false)),
-      const VerticalDivider(width: 1),
-      Expanded(flex: 4, child: _buildDetail()),
-      if (widget.showTerminal && terms.isNotEmpty) ...[
+      if (!_listCollapsed)
+        DragHandle(
+            onDelta: _resizeList,
+            onEnd: () => Prefs.setDouble('inbox.listWidth', _listWidth))
+      else
         const VerticalDivider(width: 1),
-        if (!_termCollapsed)
-          Expanded(
-              flex: 5,
-              child: terminalDeck(onCollapse: () => _setTermCollapsed(true)))
-        else
+      Expanded(child: _buildDetail()),
+      if (widget.showTerminal && terms.isNotEmpty) ...[
+        if (termOpen) ...[
+          DragHandle(
+              onDelta: (dx) => _resizeTerm(-dx),
+              onEnd: () => Prefs.setDouble('inbox.termWidth', _termWidth)),
+          SizedBox(
+              width: _termWidth,
+              child: terminalDeck(onCollapse: () => _setTermCollapsed(true))),
+        ] else ...[
+          const VerticalDivider(width: 1),
           collapseRail(
               icon: Icons.chevron_left,
               tooltip: '展开终端',
               label: '终端',
               onExpand: () => _setTermCollapsed(false)),
+        ],
       ],
     ]);
   }
+
+  void _resizeList(double d) => setState(
+      () => _listWidth = (_listWidth + d).clamp(260.0, 520.0));
+
+  void _resizeTerm(double d) => setState(
+      () => _termWidth = (_termWidth + d).clamp(360.0, 920.0));
 
   void _setListCollapsed(bool v) {
     setState(() => _listCollapsed = v);
@@ -309,10 +327,11 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
           final urgent = it.urgency == 'urgent';
           return Container(
             decoration: BoxDecoration(
+              color: sel ? CcColors.accent.withValues(alpha: 0.07) : null,
               border: Border(
                   left: BorderSide(
                       color: sel ? CcColors.accent : Colors.transparent,
-                      width: 2)),
+                      width: 2.5)),
             ),
             child: ListTile(
               selected: sel,
