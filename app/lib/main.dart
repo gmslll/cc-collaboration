@@ -177,14 +177,14 @@ class _HomeShellState extends State<HomeShell> {
                 .toList(),
           ),
           const VerticalDivider(width: 1),
-          Expanded(child: body),
+          Expanded(child: DecoratedBox(decoration: appGradient, child: body)),
         ]),
       );
     }
 
     return Scaffold(
       appBar: _appBar(),
-      body: body,
+      body: DecoratedBox(decoration: appGradient, child: body),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
@@ -201,26 +201,56 @@ class _HomeShellState extends State<HomeShell> {
   PreferredSizeWidget _appBar() => AppBar(
         titleSpacing: 16,
         title: Row(children: [
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: CcColors.accent,
+              borderRadius: BorderRadius.circular(6),
+              boxShadow: [
+                BoxShadow(
+                    color: CcColors.accent.withValues(alpha: 0.45),
+                    blurRadius: 8)
+              ],
+            ),
+            child: const Icon(Icons.sync_alt, size: 13, color: CcColors.bg),
+          ),
+          const SizedBox(width: 10),
           const Text('cc-handoff',
               style: TextStyle(
-                  color: CcColors.accent, fontWeight: FontWeight.bold)),
+                  color: CcColors.text,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2)),
           const SizedBox(width: 12),
           Flexible(
             child: Text('${hostOf(_cfg!.relayUrl)} · ${_cfg!.identity}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: CcColors.muted, fontSize: 12)),
+                style: const TextStyle(
+                    fontFamily: CcType.mono,
+                    color: CcColors.muted,
+                    fontSize: 12)),
           ),
         ]),
         actions: [
           PopupMenuButton<String>(
+            tooltip: '账号',
+            icon: const Icon(Icons.account_circle_outlined),
             onSelected: (v) {
               if (v == 'logout') _logout();
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(value: 'logout', child: Text('登出')),
+              PopupMenuItem(
+                value: 'logout',
+                child: Row(children: [
+                  Icon(Icons.logout, size: 16),
+                  SizedBox(width: 8),
+                  Text('登出'),
+                ]),
+              ),
             ],
           ),
+          const SizedBox(width: 4),
         ],
       );
 }

@@ -65,22 +65,24 @@ Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
       ),
     );
 
-// tag is a small rounded pill: alpha-tinted [color] background + [color] text.
+// tag is a small mono pill: alpha-tinted [color] background + [color] text.
 Widget tag(String label, Color color, {bool bold = false}) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.16),
-        border: Border.all(color: color.withValues(alpha: 0.28)),
+        color: color.withValues(alpha: 0.15),
+        border: Border.all(color: color.withValues(alpha: 0.30)),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(label,
           style: TextStyle(
-              fontSize: 12,
+              fontFamily: CcType.mono,
+              fontSize: 11.5,
+              letterSpacing: 0.2,
               color: color,
-              fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
+              fontWeight: bold ? FontWeight.w600 : FontWeight.w400)),
     );
 
-// chip is a neutral pill (panel bg, normal text), e.g. repo @ branch.
+// chip is a neutral mono pill (panel bg), e.g. repo @ branch.
 Widget chip(String text) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -88,8 +90,9 @@ Widget chip(String text) => Container(
         border: Border.all(color: CcColors.border),
         borderRadius: BorderRadius.circular(6),
       ),
-      child:
-          Text(text, style: const TextStyle(fontSize: 12, color: CcColors.text)),
+      child: Text(text,
+          style: const TextStyle(
+              fontFamily: CcType.mono, fontSize: 12, color: CcColors.text)),
     );
 
 // kindBadge colors a handoff kind (delivery / request / bug).
@@ -128,7 +131,102 @@ Widget sectionTitle(String title, {String? meta, IconData? icon}) => Row(
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
         if (meta != null) ...[
           const SizedBox(width: 8),
-          Text(meta, style: const TextStyle(color: CcColors.muted, fontSize: 12)),
+          Text(meta,
+              style: const TextStyle(
+                  fontFamily: CcType.mono, color: CcColors.muted, fontSize: 12)),
         ],
       ],
     );
+
+// statusDot is a small filled circle, optionally with a soft glow (for online /
+// active / urgent indicators).
+Widget statusDot(Color color, {double size = 8, bool glow = false}) => Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: glow
+            ? [
+                BoxShadow(
+                    color: color.withValues(alpha: 0.7),
+                    blurRadius: 6,
+                    spreadRadius: 0.5)
+              ]
+            : null,
+      ),
+    );
+
+// Subtle gradients for surfaces (the "稍多表现力" lift, kept understated).
+const appGradient = BoxDecoration(
+  gradient: LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [CcColors.bgGradTop, CcColors.bg],
+  ),
+);
+
+const panelGradient = BoxDecoration(
+  gradient: LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [CcColors.panelHigh, CcColors.panel],
+  ),
+);
+
+// HoverLift wraps a card-like surface: on hover it lifts slightly, brightens its
+// border and casts a soft accent glow (200ms). Use for clickable cards.
+class HoverLift extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final EdgeInsetsGeometry padding;
+  const HoverLift({
+    super.key,
+    required this.child,
+    this.onTap,
+    this.padding = const EdgeInsets.all(14),
+  });
+
+  @override
+  State<HoverLift> createState() => _HoverLiftState();
+}
+
+class _HoverLiftState extends State<HoverLift> {
+  bool _h = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor:
+          widget.onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
+      onEnter: (_) => setState(() => _h = true),
+      onExit: (_) => setState(() => _h = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          transform: Matrix4.translationValues(0, _h ? -1.5 : 0, 0),
+          padding: widget.padding,
+          decoration: BoxDecoration(
+            color: CcColors.panel,
+            borderRadius: BorderRadius.circular(CcRadius.md),
+            border: Border.all(
+                color: _h
+                    ? CcColors.accent.withValues(alpha: 0.5)
+                    : CcColors.borderSoft),
+            boxShadow: _h
+                ? [
+                    BoxShadow(
+                        color: CcColors.accent.withValues(alpha: 0.16),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4))
+                  ]
+                : null,
+          ),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}

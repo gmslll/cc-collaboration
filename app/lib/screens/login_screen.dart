@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/relay_client.dart';
 import '../local/session.dart';
 import '../theme.dart';
+import '../widgets.dart';
 
 class LoginScreen extends StatefulWidget {
   final String? initialRelayUrl;
@@ -58,7 +59,9 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
+      body: DecoratedBox(
+        decoration: appGradient,
+        child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 380),
           child: Card(
@@ -68,12 +71,31 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Center(
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: CcColors.accent,
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                              color: CcColors.accent.withValues(alpha: 0.5),
+                              blurRadius: 18)
+                        ],
+                      ),
+                      child: const Icon(Icons.sync_alt,
+                          size: 26, color: CcColors.bg),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                   const Text('cc-handoff',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: CcColors.accent)),
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.3,
+                          color: CcColors.text)),
                   const SizedBox(height: 4),
                   const Text('登录',
                       textAlign: TextAlign.center,
@@ -140,6 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

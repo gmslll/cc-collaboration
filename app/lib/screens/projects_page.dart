@@ -97,22 +97,38 @@ class _ProjectsPageState extends State<ProjectsPage> {
           child: Text('还没有项目', style: TextStyle(color: CcColors.muted)));
     }
     return ListView(
+      padding: const EdgeInsets.only(bottom: 8),
       children: _projects!
-            .map((p) => Card(
-                child: ListTile(
-                  leading:
-                      const Icon(Icons.folder_outlined, color: CcColors.accent),
-                  title: Text(p.name,
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text('owner: ${p.ownerIdentity}',
-                      style: const TextStyle(color: CcColors.muted)),
-                  trailing: const Icon(Icons.chevron_right, color: CcColors.muted),
+          .map((p) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: HoverLift(
                   onTap: () => showModalBottomSheet(
                     context: context,
                     isScrollControlled: true,
                     builder: (_) => _ProjectSheet(
                         client: widget.client, id: p.id, onChanged: _load),
                   ),
+                  child: Row(children: [
+                    const Icon(Icons.folder_outlined,
+                        color: CcColors.accent, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(p.name,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700, fontSize: 15)),
+                            const SizedBox(height: 2),
+                            Text('owner · ${p.ownerIdentity}',
+                                style: const TextStyle(
+                                    fontFamily: CcType.mono,
+                                    color: CcColors.muted,
+                                    fontSize: 12)),
+                          ]),
+                    ),
+                    const Icon(Icons.chevron_right, color: CcColors.subtle),
+                  ]),
                 ),
               ))
           .toList(),

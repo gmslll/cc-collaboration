@@ -77,7 +77,7 @@ class _AccountPageState extends State<AccountPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('机器 token(只显示一次)'),
-        content: SelectableText(raw, style: const TextStyle(fontFamily: 'monospace')),
+        content: SelectableText(raw, style: const TextStyle(fontFamily: CcType.mono)),
         actions: [
           TextButton(
               onPressed: () => Clipboard.setData(ClipboardData(text: raw)),

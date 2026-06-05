@@ -309,7 +309,24 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   Widget _termArea() {
     if (terms.isEmpty) {
-      return centerMsg('从右侧工作区,在项目或 worktree 上起一个 claude / codex 会话');
+      return DecoratedBox(
+        decoration: appGradient,
+        child: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: const [
+            Icon(Icons.terminal_outlined, size: 40, color: CcColors.subtle),
+            SizedBox(height: 14),
+            Text('从右侧工作区,在项目或 worktree 上起一个会话',
+                style: TextStyle(color: CcColors.muted)),
+            SizedBox(height: 6),
+            Text('claude · codex',
+                style: TextStyle(
+                    fontFamily: CcType.mono,
+                    color: CcColors.subtle,
+                    fontSize: 12,
+                    letterSpacing: 0.5)),
+          ]),
+        ),
+      );
     }
     return terminalBody();
   }
@@ -321,7 +338,13 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         height: 44,
         padding: const EdgeInsets.only(left: 12, right: 4),
         decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: CcColors.border))),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [CcColors.panelHigh, CcColors.panel],
+          ),
+          border: Border(bottom: BorderSide(color: CcColors.border)),
+        ),
         child: Row(children: [
           sectionTitle('工作区',
               meta: '${wss.length}', icon: Icons.workspaces_outlined),
@@ -417,24 +440,40 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       ...ss.map((e) {
         final active = e.idx == activeTerm;
         final agent = e.s.command.contains('codex') ? 'codex' : 'claude';
-        return ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 8, right: 0),
-          selected: active,
-          leading: Icon(Icons.terminal,
-              size: 16, color: active ? CcColors.accent : CcColors.muted),
-          title: Text('$agent · ${e.s.title}',
-              style: TextStyle(
-                  fontSize: 13,
-                  color: active ? CcColors.text : CcColors.muted,
-                  fontWeight: active ? FontWeight.w600 : FontWeight.normal),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis),
-          onTap: () => setState(() => activeTerm = e.idx),
-          trailing: IconButton(
-            icon: const Icon(Icons.close, size: 16, color: CcColors.muted),
-            tooltip: '关闭会话',
-            onPressed: () => closeTerm(e.idx),
+        return Container(
+          decoration: BoxDecoration(
+            border: Border(
+                left: BorderSide(
+                    color: active ? CcColors.accent : Colors.transparent,
+                    width: 2)),
+          ),
+          child: ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.only(left: 8, right: 0),
+            selected: active,
+            leading: Icon(Icons.terminal,
+                size: 16,
+                color: active ? CcColors.accentBright : CcColors.muted),
+            title: Text('$agent · ${e.s.title}',
+                style: TextStyle(
+                    fontFamily: CcType.mono,
+                    fontSize: 12.5,
+                    color: active ? CcColors.text : CcColors.muted,
+                    fontWeight: active ? FontWeight.w600 : FontWeight.normal),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+            onTap: () => setState(() => activeTerm = e.idx),
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (active)
+                Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: statusDot(CcColors.ok, size: 7, glow: true)),
+              IconButton(
+                icon: const Icon(Icons.close, size: 16, color: CcColors.muted),
+                tooltip: '关闭会话',
+                onPressed: () => closeTerm(e.idx),
+              ),
+            ]),
           ),
         );
       }),
@@ -461,7 +500,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             leading: Icon(Icons.account_tree_outlined,
                 size: 16, color: w.isHandoff ? CcColors.accent : CcColors.muted),
             title: Text(w.branch.isEmpty ? w.name : w.branch,
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis),
             subtitle: w.isHandoff
@@ -563,11 +602,13 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       );
 
   Widget _sectionLabel(String s) => Padding(
-        padding: const EdgeInsets.fromLTRB(8, 6, 0, 2),
+        padding: const EdgeInsets.fromLTRB(8, 8, 0, 2),
         child: Text(s,
             style: const TextStyle(
-                color: CcColors.muted,
+                fontFamily: CcType.mono,
+                color: CcColors.subtle,
                 fontSize: 10,
-                fontWeight: FontWeight.bold)),
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.6)),
       );
 }

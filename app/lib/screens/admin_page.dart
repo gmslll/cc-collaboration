@@ -81,7 +81,7 @@ class _AdminPageState extends State<AdminPage> {
       builder: (_) => AlertDialog(
         title: Text(title),
         content:
-            SelectableText(secret, style: const TextStyle(fontFamily: 'monospace')),
+            SelectableText(secret, style: const TextStyle(fontFamily: CcType.mono)),
         actions: [
           TextButton(
               onPressed: () => Clipboard.setData(ClipboardData(text: secret)),

@@ -433,7 +433,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
               Expanded(
                 child: SelectableText(
                   op.summary.isNotEmpty ? '${op.path}  ·  ${op.summary}' : op.path,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                  style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
                 ),
               ),
             ]),
@@ -474,7 +474,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
             subtitle: Text(c.sha.length > 8 ? c.sha.substring(0, 8) : c.sha,
                 style: const TextStyle(
                     color: CcColors.muted,
-                    fontFamily: 'monospace',
+                    fontFamily: CcType.mono,
                     fontSize: 11)),
           )));
     }
@@ -499,7 +499,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           const SizedBox(width: 8),
           Expanded(
               child: Text(s,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13))),
+                  style: const TextStyle(fontFamily: CcType.mono, fontSize: 13))),
         ]),
       );
 

@@ -230,11 +230,14 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 12, vertical: 3),
                             child: Row(children: [
-                              const Icon(Icons.circle, size: 8, color: CcColors.ok),
+                              statusDot(CcColors.ok, size: 8, glow: true),
                               const SizedBox(width: 8),
                               Expanded(
                                   child: Text(u,
-                                      style: const TextStyle(fontSize: 12),
+                                      style: const TextStyle(
+                                          fontFamily: CcType.mono,
+                                          fontSize: 11.5,
+                                          color: CcColors.muted),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis)),
                             ]),
@@ -266,32 +269,44 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (_, i) {
           final it = items[i];
-          return ListTile(
-            selected: _selected?.id == it.id,
-            leading: Icon(Icons.circle,
-                size: 10,
-                color:
-                    it.urgency == 'urgent' ? CcColors.danger : _kindColor(it.kind)),
-            title: Text(it.sender,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(
-              it.headline.isNotEmpty ? it.headline : it.repoName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: CcColors.muted),
+          final sel = _selected?.id == it.id;
+          final urgent = it.urgency == 'urgent';
+          return Container(
+            decoration: BoxDecoration(
+              border: Border(
+                  left: BorderSide(
+                      color: sel ? CcColors.accent : Colors.transparent,
+                      width: 2)),
             ),
-            trailing: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(relativeTime(it.createdAt),
-                    style:
-                        const TextStyle(color: CcColors.muted, fontSize: 12)),
-                const SizedBox(height: 4),
-                kindBadge(it.kind),
-              ],
+            child: ListTile(
+              selected: sel,
+              leading: statusDot(
+                  urgent ? CcColors.danger : _kindColor(it.kind),
+                  size: 9,
+                  glow: urgent),
+              title: Text(it.sender,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                it.headline.isNotEmpty ? it.headline : it.repoName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: CcColors.muted),
+              ),
+              trailing: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(relativeTime(it.createdAt),
+                      style: const TextStyle(
+                          fontFamily: CcType.mono,
+                          color: CcColors.subtle,
+                          fontSize: 11)),
+                  const SizedBox(height: 4),
+                  kindBadge(it.kind),
+                ],
+              ),
+              onTap: () => setState(() => _selected = it),
             ),
-            onTap: () => setState(() => _selected = it),
           );
         },
       ),
