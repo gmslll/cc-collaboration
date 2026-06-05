@@ -43,6 +43,8 @@ dependencies:
   path_provider: ^2.1.5
   open_filex: ^4.7.0
   flutter_local_notifications: ^21.0.0
+  re_editor: ^0.9.0
+  re_highlight: ^0.0.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

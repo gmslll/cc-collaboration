@@ -9,6 +9,7 @@ import '../local/worktrees.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'diff_page.dart';
+import 'file_browser_page.dart';
 import 'github_pr_page.dart';
 import 'handoff_detail_view.dart';
 import 'repo_config_page.dart';
@@ -800,6 +801,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               _newWorktree(ws, p);
             case 'diff':
               _openDiff(p.path, p.name);
+            case 'files':
+              _openFiles(p.path, p.name);
             case 'pr':
               _openPrs(p);
             case 'config':
@@ -812,6 +815,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           ..._agentItems(ws.agent),
           const PopupMenuDivider(),
           const PopupMenuItem(value: 'diff', child: Text('看变动')),
+          const PopupMenuItem(value: 'files', child: Text('文件')),
           if (p.github.isNotEmpty)
             const PopupMenuItem(value: 'pr', child: Text('GitHub PR')),
           const PopupMenuItem(value: 'worktree', child: Text('新建 worktree')),
@@ -831,6 +835,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         MaterialPageRoute(builder: (_) => DiffPage(path: path, name: name)));
   }
 
+  void _openFiles(String path, String name) {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => FileBrowserPage(root: path, name: name)));
+  }
+
   void _openPrs(ProjectCfg p) {
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => GitHubPrPage(githubUrl: p.github, name: p.name)));
@@ -847,6 +856,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               _openAgent(p, w.path, v, ws.preLaunch);
             case 'diff':
               _openDiff(w.path, w.branch.isEmpty ? w.name : w.branch);
+            case 'files':
+              _openFiles(w.path, w.branch.isEmpty ? w.name : w.branch);
             case 'delete':
               _deleteWorktree(ws, p, w);
           }
@@ -855,6 +866,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           ..._agentItems(ws.agent),
           const PopupMenuDivider(),
           const PopupMenuItem(value: 'diff', child: Text('看变动')),
+          const PopupMenuItem(value: 'files', child: Text('文件')),
           const PopupMenuItem(value: 'delete', child: Text('删除 worktree')),
         ],
       );

@@ -110,6 +110,7 @@ class _DiffPageState extends State<DiffPage> {
         onRetry: _load,
         child: () => _files.isEmpty
             ? centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异')
-            : DiffView(files: _files),
+            : DiffView(
+                files: _files, editRoot: widget.path, onChanged: _load),
       );
 }

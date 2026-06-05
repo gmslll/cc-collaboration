@@ -1,16 +1,24 @@
 import 'package:flutter/material.dart';
 
 import '../local/diff_parse.dart';
+import '../local/git.dart';
 import '../local/prefs.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'editor_page.dart';
 
 // DiffView is the GoLand-style diff: a changed-files tree (left) + the selected
 // file's diff (right), toggleable between side-by-side (split) and unified.
-// Shared by the local git diff page and the GitHub PR diff page.
+// Shared by the local git diff page and the GitHub PR diff page. When [editRoot]
+// is set (local diff), the selected file can be edited or its changes discarded;
+// [onChanged] re-runs the diff afterward. PR diffs leave editRoot null (remote,
+// read-only).
 class DiffView extends StatefulWidget {
   final List<FileDiff> files;
-  const DiffView({super.key, required this.files});
+  final String? editRoot;
+  final VoidCallback? onChanged;
+  const DiffView(
+      {super.key, required this.files, this.editRoot, this.onChanged});
 
   @override
   State<DiffView> createState() => _DiffViewState();
@@ -53,6 +61,44 @@ class _DiffViewState extends State<DiffView> {
       _selected = f;
       _rows = parseRows(f.raw);
     });
+  }
+
+  Future<void> _edit() async {
+    final f = _selected;
+    final root = widget.editRoot;
+    if (f == null || root == null) return;
+    await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => EditorPage(path: '$root/${f.path}')));
+    widget.onChanged?.call();
+  }
+
+  Future<void> _discard() async {
+    final f = _selected;
+    final root = widget.editRoot;
+    if (f == null || root == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('丢弃改动?'),
+        content: Text('${f.path}\n\ngit checkout -- 丢弃未提交改动,不可撤销。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('丢弃')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await gitRestore(root, f.path);
+      widget.onChanged?.call();
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
   }
 
   @override
@@ -173,6 +219,17 @@ class _DiffViewState extends State<DiffView> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis),
             ),
+            if (widget.editRoot != null && _selected != null) ...[
+              TextButton.icon(
+                  onPressed: _edit,
+                  icon: const Icon(Icons.edit_rounded, size: 16),
+                  label: const Text('编辑')),
+              TextButton.icon(
+                  onPressed: _discard,
+                  icon: const Icon(Icons.undo_rounded, size: 16),
+                  label: const Text('丢弃')),
+              const SizedBox(width: 8),
+            ],
             SegmentedButton<bool>(
               segments: const [
                 ButtonSegment(value: true, label: Text('并排')),

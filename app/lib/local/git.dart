@@ -34,3 +34,9 @@ Future<String> gitDiffBase(String dir, String base) {
 
 // gitStatus is the short porcelain status (for a quick "anything changed?").
 Future<String> gitStatus(String dir) => _git(dir, 'status --porcelain');
+
+// gitRestore discards a file's uncommitted changes (git checkout -- <file>),
+// taking it back to HEAD/index. [file] is relative to [dir].
+Future<void> gitRestore(String dir, String file) async {
+  await _git(dir, 'checkout -- ${shQuote(file)}');
+}
