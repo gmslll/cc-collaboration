@@ -62,7 +62,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         final wd = (e['workdir'] ?? '').toString();
         final cmd = (e['command'] ?? '').toString();
         if (wd.isEmpty || cmd.isEmpty || !Directory(wd).existsSync()) continue;
-        restored.add(TerminalSession(wd, cmd));
+        final ts = TerminalSession(wd, cmd);
+        final nm = (e['name'] ?? '').toString();
+        if (nm.isNotEmpty) ts.name = nm;
+        restored.add(ts);
       }
       if (restored.isEmpty || !mounted) return;
       setState(() {
@@ -75,13 +78,21 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   Future<String> _persistPath(String key) async =>
       '${(await getApplicationSupportDirectory()).path}/$key.json';
 
+  // persistTerms re-saves the session list (e.g. after a rename). No-op unless
+  // persistKey is set.
+  void persistTerms() => unawaited(_save());
+
   Future<void> _save() async {
     final key = persistKey;
     if (key == null) return;
     try {
       final f = File(await _persistPath(key));
       await f.writeAsString(jsonEncode(terms
-          .map((s) => {'workdir': s.workdir, 'command': s.command})
+          .map((s) => {
+                'workdir': s.workdir,
+                'command': s.command,
+                if (s.name?.isNotEmpty ?? false) 'name': s.name,
+              })
           .toList()));
     } catch (_) {}
   }
@@ -91,11 +102,12 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   void Function(String)? get sendToTerminal =>
       terms.isEmpty ? null : (t) => terms[activeTerm].sendText(t);
 
-  Widget terminalDeck() => TerminalDeck(
+  Widget terminalDeck({VoidCallback? onCollapse}) => TerminalDeck(
         terms: terms,
         active: activeTerm,
         onSwitch: (i) => setState(() => activeTerm = i),
         onClose: closeTerm,
+        onCollapse: onCollapse,
       );
 
   // terminalBody is just the active terminal (no tab bar) — for hosts that put
@@ -124,12 +136,14 @@ class TerminalDeck extends StatelessWidget {
   final int active;
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
+  final VoidCallback? onCollapse;
   const TerminalDeck({
     super.key,
     required this.terms,
     required this.active,
     required this.onSwitch,
     required this.onClose,
+    this.onCollapse,
   });
 
   @override
@@ -140,10 +154,12 @@ class TerminalDeck extends StatelessWidget {
       Container(
         color: CcColors.panel,
         height: 38,
-        child: ListView.builder(
-          scrollDirection: Axis.horizontal,
-          itemCount: terms.length,
-          itemBuilder: (_, i) {
+        child: Row(children: [
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: terms.length,
+              itemBuilder: (_, i) {
             final isActive = i == idx;
             return InkWell(
               onTap: () => onSwitch(i),
@@ -160,7 +176,7 @@ class TerminalDeck extends StatelessWidget {
                       size: 14,
                       color: isActive ? CcColors.accent : CcColors.muted),
                   const SizedBox(width: 6),
-                  Text(terms[i].title,
+                  Text(terms[i].label,
                       style: TextStyle(
                           fontSize: 12,
                           color: isActive ? CcColors.text : CcColors.muted)),
@@ -173,8 +189,15 @@ class TerminalDeck extends StatelessWidget {
                 ]),
               ),
             );
-          },
-        ),
+              },
+            ),
+          ),
+          if (onCollapse != null)
+            IconButton(
+                icon: const Icon(Icons.chevron_right, size: 16),
+                tooltip: '收起终端',
+                onPressed: onCollapse),
+        ]),
       ),
       Expanded(
         child: ColoredBox(

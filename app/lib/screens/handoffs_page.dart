@@ -7,6 +7,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/sse.dart';
 import '../local/config.dart';
+import '../local/prefs.dart';
 import '../notifications.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -40,6 +41,8 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   ListItem? _selected;
   StreamSubscription<SseEvent>? _sse;
   Set<String> _online = {};
+  bool _listCollapsed = Prefs.getBool('inbox.list');
+  bool _termCollapsed = Prefs.getBool('inbox.term');
   final _detailKey = GlobalKey<HandoffDetailViewState>();
 
   RelayClient get _client => widget.client;
@@ -135,14 +138,40 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       return centerMsg(_error!, onRetry: _refresh);
     }
     return Row(children: [
-      SizedBox(width: 320, child: _leftPane()),
+      if (!_listCollapsed)
+        SizedBox(width: 320, child: _leftPane())
+      else
+        collapseRail(
+            icon: Icons.chevron_right,
+            tooltip: '展开列表',
+            label: '收件箱',
+            onExpand: () => _setListCollapsed(false)),
       const VerticalDivider(width: 1),
       Expanded(flex: 4, child: _buildDetail()),
       if (widget.showTerminal && terms.isNotEmpty) ...[
         const VerticalDivider(width: 1),
-        Expanded(flex: 5, child: terminalDeck()),
+        if (!_termCollapsed)
+          Expanded(
+              flex: 5,
+              child: terminalDeck(onCollapse: () => _setTermCollapsed(true)))
+        else
+          collapseRail(
+              icon: Icons.chevron_left,
+              tooltip: '展开终端',
+              label: '终端',
+              onExpand: () => _setTermCollapsed(false)),
       ],
     ]);
+  }
+
+  void _setListCollapsed(bool v) {
+    setState(() => _listCollapsed = v);
+    Prefs.setBool('inbox.list', v);
+  }
+
+  void _setTermCollapsed(bool v) {
+    setState(() => _termCollapsed = v);
+    Prefs.setBool('inbox.term', v);
   }
 
   Widget _buildDetail() {
@@ -163,29 +192,36 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
 
   Widget _leftPane() => Column(children: [
         Padding(
-          padding: const EdgeInsets.all(8),
-          child: SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'recipient', label: Text('收件箱')),
-                ButtonSegment(value: 'sender', label: Text('已发')),
-                ButtonSegment(value: 'history', label: Text('历史')),
-              ],
-              selected: {_view},
-              showSelectedIcon: false,
-              style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-              onSelectionChanged: (s) {
-                setState(() {
-                  _view = s.first;
-                  _selected = null;
-                });
-                _refresh();
-              },
+          padding: const EdgeInsets.fromLTRB(2, 6, 8, 0),
+          child: Row(children: [
+            IconButton(
+                icon: const Icon(Icons.chevron_left, size: 18),
+                tooltip: '收起列表',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _setListCollapsed(true)),
+            const SizedBox(width: 2),
+            Expanded(
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'recipient', label: Text('收件箱')),
+                  ButtonSegment(value: 'sender', label: Text('已发')),
+                  ButtonSegment(value: 'history', label: Text('历史')),
+                ],
+                selected: {_view},
+                showSelectedIcon: false,
+                style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                onSelectionChanged: (s) {
+                  setState(() {
+                    _view = s.first;
+                    _selected = null;
+                  });
+                  _refresh();
+                },
+              ),
             ),
-          ),
+          ]),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),

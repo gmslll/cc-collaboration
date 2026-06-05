@@ -12,6 +12,7 @@ class TerminalSession {
   final String workdir;
   final String command;
   final String title;
+  String? name; // user-given label; overrides the derived title when set
   final Terminal terminal = Terminal(maxLines: 10000);
   Pty? _pty;
   bool _started = false;
@@ -20,6 +21,9 @@ class TerminalSession {
       : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
             ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
             : workdir;
+
+  // label is what the UI shows: the user-given name, else the derived title.
+  String get label => (name != null && name!.isNotEmpty) ? name! : title;
 
   void start() {
     if (_started) return;

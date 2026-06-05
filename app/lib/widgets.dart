@@ -138,6 +138,42 @@ Widget sectionTitle(String title, {String? meta, IconData? icon}) => Row(
       ],
     );
 
+// collapseRail is the thin (~40px) bar shown in place of a collapsed panel: an
+// expand button + an optional vertical label. Click to bring the panel back.
+Widget collapseRail({
+  required IconData icon,
+  required String tooltip,
+  required VoidCallback onExpand,
+  String? label,
+}) =>
+    Container(
+      width: 40,
+      decoration: const BoxDecoration(
+        color: CcColors.panel,
+        border: Border(right: BorderSide(color: CcColors.border)),
+      ),
+      child: Column(children: [
+        const SizedBox(height: 6),
+        IconButton(
+            icon: Icon(icon, size: 18), tooltip: tooltip, onPressed: onExpand),
+        if (label != null)
+          Expanded(
+            child: RotatedBox(
+              quarterTurns: 1,
+              child: Center(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: CcColors.muted,
+                        fontSize: 11,
+                        letterSpacing: 1.5)),
+              ),
+            ),
+          ),
+      ]),
+    );
+
 // statusDot is a small filled circle, optionally with a soft glow (for online /
 // active / urgent indicators).
 Widget statusDot(Color color, {double size = 8, bool glow = false}) => Container(

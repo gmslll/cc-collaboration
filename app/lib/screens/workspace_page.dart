@@ -4,6 +4,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
+import '../local/prefs.dart';
 import '../local/worktrees.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -35,6 +36,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   // its project to reveal the new session node.
   final Map<String, ExpansibleController> _proj = {};
   bool _busy = false;
+  bool _leftCollapsed = Prefs.getBool('ws.left');
+  bool _rightCollapsed = Prefs.getBool('ws.right');
 
   @override
   String? get persistKey => 'workspace_sessions';
@@ -298,12 +301,82 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   // ---------------------------------------------------------------- view ----
 
+  void _setLeft(bool v) {
+    setState(() {
+      _leftCollapsed = v;
+      if (v && _rightCollapsed) _rightCollapsed = false; // keep one side visible
+    });
+    Prefs.setBool('ws.left', _leftCollapsed);
+    Prefs.setBool('ws.right', _rightCollapsed);
+  }
+
+  void _setRight(bool v) {
+    setState(() {
+      _rightCollapsed = v;
+      if (v && _leftCollapsed) _leftCollapsed = false;
+    });
+    Prefs.setBool('ws.left', _leftCollapsed);
+    Prefs.setBool('ws.right', _rightCollapsed);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(children: [
-      Expanded(child: _termArea()),
+      if (!_leftCollapsed)
+        Expanded(child: _termColumn())
+      else
+        collapseRail(
+            icon: Icons.chevron_right,
+            tooltip: '展开终端',
+            label: '终端',
+            onExpand: () => _setLeft(false)),
       const VerticalDivider(width: 1),
-      SizedBox(width: 340, child: _sidebar()),
+      if (!_rightCollapsed)
+        (_leftCollapsed
+            ? Expanded(child: _sidebar())
+            : SizedBox(width: 340, child: _sidebar()))
+      else
+        collapseRail(
+            icon: Icons.chevron_left,
+            tooltip: '展开工作区',
+            label: '工作区',
+            onExpand: () => _setRight(false)),
+    ]);
+  }
+
+  Widget _termColumn() {
+    final label = terms.isEmpty
+        ? null
+        : terms[activeTerm.clamp(0, terms.length - 1)].label;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Container(
+        height: 34,
+        padding: const EdgeInsets.only(left: 2, right: 8),
+        decoration: const BoxDecoration(
+          color: CcColors.panel,
+          border: Border(bottom: BorderSide(color: CcColors.border)),
+        ),
+        child: Row(children: [
+          IconButton(
+              icon: const Icon(Icons.chevron_left, size: 18),
+              tooltip: '收起终端',
+              onPressed: () => _setLeft(true)),
+          const SizedBox(width: 2),
+          if (label != null)
+            Expanded(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontFamily: CcType.mono,
+                      fontSize: 12.5,
+                      color: CcColors.text)),
+            )
+          else
+            const Spacer(),
+        ]),
+      ),
+      Expanded(child: _termArea()),
     ]);
   }
 
@@ -357,6 +430,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               onPressed: _busy ? null : _refresh,
               tooltip: '刷新',
               icon: const Icon(Icons.refresh, size: 18)),
+          IconButton(
+              onPressed: () => _setRight(true),
+              tooltip: '收起工作区',
+              icon: const Icon(Icons.chevron_right, size: 18)),
         ]),
       ),
       if (_busy) const LinearProgressIndicator(minHeight: 2),
@@ -435,11 +512,15 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   List<Widget> _sessionNodes(ProjectCfg p) {
     final ss = _sessionsFor(p);
     if (ss.isEmpty) return const [];
+    final header = _sectionHeader(p.path, 'sessions', '会话 (${ss.length})');
+    if (_secCollapsed(p.path, 'sessions')) return [header];
     return [
-      _sectionLabel('会话 (${ss.length})'),
+      header,
       ...ss.map((e) {
         final active = e.idx == activeTerm;
         final agent = e.s.command.contains('codex') ? 'codex' : 'claude';
+        final display =
+            (e.s.name?.isNotEmpty ?? false) ? e.s.name! : '$agent · ${e.s.title}';
         return Container(
           decoration: BoxDecoration(
             border: Border(
@@ -454,7 +535,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             leading: Icon(Icons.terminal,
                 size: 16,
                 color: active ? CcColors.accentBright : CcColors.muted),
-            title: Text('$agent · ${e.s.title}',
+            title: Text(display,
                 style: TextStyle(
                     fontFamily: CcType.mono,
                     fontSize: 12.5,
@@ -466,18 +547,51 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               if (active)
                 Padding(
-                    padding: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.only(right: 2),
                     child: statusDot(CcColors.ok, size: 7, glow: true)),
-              IconButton(
-                icon: const Icon(Icons.close, size: 16, color: CcColors.muted),
-                tooltip: '关闭会话',
-                onPressed: () => closeTerm(e.idx),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert,
+                    size: 16, color: CcColors.muted),
+                tooltip: '会话操作',
+                onSelected: (v) {
+                  if (v == 'rename') _renameSession(e.s);
+                  if (v == 'close') closeTerm(e.idx);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'rename', child: Text('重命名')),
+                  PopupMenuItem(value: 'close', child: Text('关闭会话')),
+                ],
               ),
             ]),
           ),
         );
       }),
     ];
+  }
+
+  Future<void> _renameSession(TerminalSession s) async {
+    final ctl = TextEditingController(text: s.name ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名会话'),
+        content: TextField(
+            controller: ctl,
+            autofocus: true,
+            decoration: InputDecoration(labelText: '名称(留空 = 默认)', hintText: s.title)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final v = ctl.text.trim();
+    setState(() => s.name = v.isEmpty ? null : v);
+    persistTerms();
   }
 
   List<Widget> _worktreeNodes(WorkspaceCfg ws, ProjectCfg p) {
@@ -492,8 +606,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       ];
     }
     if (wts.isEmpty) return const [];
+    final header = _sectionHeader(p.path, 'worktrees', 'WORKTREES (${wts.length})');
+    if (_secCollapsed(p.path, 'worktrees')) return [header];
     return [
-      _sectionLabel('WORKTREES'),
+      header,
       ...wts.map((w) => ListTile(
             dense: true,
             contentPadding: const EdgeInsets.only(left: 8, right: 0),
@@ -515,8 +631,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   List<Widget> _taskNodes(ProjectCfg p) {
     final ts = _tasksByRepo[p.name] ?? const [];
     if (ts.isEmpty) return const [];
+    final header = _sectionHeader(p.path, 'tasks', '任务 (${ts.length})');
+    if (_secCollapsed(p.path, 'tasks')) return [header];
     return [
-      _sectionLabel('任务 (${ts.length})'),
+      header,
       ...ts.map((it) => ListTile(
             dense: true,
             contentPadding: const EdgeInsets.only(left: 8, right: 8),
@@ -601,14 +719,36 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         ],
       );
 
-  Widget _sectionLabel(String s) => Padding(
-        padding: const EdgeInsets.fromLTRB(8, 8, 0, 2),
-        child: Text(s,
-            style: const TextStyle(
-                fontFamily: CcType.mono,
-                color: CcColors.subtle,
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.6)),
-      );
+  bool _secCollapsed(String path, String kind) =>
+      Prefs.getBool('ws.sec.$path.$kind');
+
+  void _toggleSec(String path, String kind) {
+    final k = 'ws.sec.$path.$kind';
+    Prefs.setBool(k, !Prefs.getBool(k));
+    setState(() {});
+  }
+
+  // _sectionHeader is a collapsible group header (会话 / WORKTREES / 任务) — tap
+  // to fold/unfold; state remembered via Prefs.
+  Widget _sectionHeader(String path, String kind, String label) {
+    final collapsed = _secCollapsed(path, kind);
+    return InkWell(
+      onTap: () => _toggleSec(path, kind),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 8, 0, 2),
+        child: Row(children: [
+          Icon(collapsed ? Icons.chevron_right : Icons.expand_more,
+              size: 14, color: CcColors.subtle),
+          const SizedBox(width: 2),
+          Text(label,
+              style: const TextStyle(
+                  fontFamily: CcType.mono,
+                  color: CcColors.subtle,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.6)),
+        ]),
+      ),
+    );
+  }
 }

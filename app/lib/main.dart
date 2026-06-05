@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'api/models.dart';
 import 'api/relay_client.dart';
 import 'local/config.dart';
+import 'local/prefs.dart';
 import 'local/session.dart';
 import 'notifications.dart';
 import 'screens/account_page.dart';
@@ -16,8 +17,9 @@ import 'screens/workspace_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Prefs.load();
   Notifications.init();
   runApp(const CcApp());
 }
