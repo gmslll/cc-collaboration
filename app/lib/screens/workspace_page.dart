@@ -42,6 +42,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   // terminal focus. Drawers open via the top-bar buttons / task tap.
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   ListItem? _detailItem; // non-null → the right detail drawer shows this task
+  // drawer widths — a Prefs config knob (not drag-resizable in drawer mode), so
+  // it also honours any width persisted by the old resizable-pane layout.
   final double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 380);
   final double _detailWidth = Prefs.getDouble('ws.detailWidth', def: 560);
   // shared comfortable-but-compact density for the tree's leaf rows.
@@ -343,16 +345,28 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         ),
       );
 
+  // _panelHeader is the shared 44px drawer header chrome (bottom border, optional
+  // gradient); pass the Row children (title + action buttons).
+  Widget _panelHeader(
+          {required EdgeInsetsGeometry padding,
+          bool gradient = false,
+          required List<Widget> children}) =>
+      Container(
+        height: 44,
+        padding: padding,
+        decoration: BoxDecoration(
+          color: gradient ? null : CcColors.panel,
+          gradient: gradient ? panelGradient.gradient : null,
+          border: const Border(bottom: BorderSide(color: CcColors.border)),
+        ),
+        child: Row(children: children),
+      );
+
   // _detailPanel hosts a task's 对接文档 inside the right drawer.
   Widget _detailPanel(ListItem it) => Column(children: [
-        Container(
-          height: 44,
+        _panelHeader(
           padding: const EdgeInsets.only(left: 14, right: 4),
-          decoration: const BoxDecoration(
-            color: CcColors.panel,
-            border: Border(bottom: BorderSide(color: CcColors.border)),
-          ),
-          child: Row(children: [
+          children: [
             const Expanded(
                 child: Text('对接文档',
                     style: TextStyle(fontWeight: FontWeight.w600))),
@@ -361,7 +375,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               tooltip: '关闭',
               onPressed: () => _scaffoldKey.currentState?.closeEndDrawer(),
             ),
-          ]),
+          ],
         ),
         Expanded(
           child: HandoffDetailView(
@@ -417,18 +431,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   Widget _sidebar() {
     final wss = _cfg.workspaces;
     return Column(children: [
-      Container(
-        height: 44,
+      _panelHeader(
         padding: const EdgeInsets.only(left: 12, right: 4),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [CcColors.panelHigh, CcColors.panel],
-          ),
-          border: Border(bottom: BorderSide(color: CcColors.border)),
-        ),
-        child: Row(children: [
+        gradient: true,
+        children: [
           sectionTitle('工作区',
               meta: '${wss.length}', icon: Icons.workspaces_rounded),
           const Spacer(),
@@ -444,7 +450,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               onPressed: () => _scaffoldKey.currentState?.closeDrawer(),
               tooltip: '收起',
               icon: const Icon(Icons.chevron_left_rounded, size: 18)),
-        ]),
+        ],
       ),
       if (_busy) const LinearProgressIndicator(minHeight: 2),
       Expanded(
