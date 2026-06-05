@@ -8,6 +8,8 @@ import '../local/prefs.dart';
 import '../local/worktrees.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'diff_page.dart';
+import 'github_pr_page.dart';
 import 'handoff_detail_view.dart';
 import 'repo_config_page.dart';
 import 'terminal_deck.dart';
@@ -796,6 +798,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               _openAgent(p, p.path, v, ws.preLaunch);
             case 'worktree':
               _newWorktree(ws, p);
+            case 'diff':
+              _openDiff(p.path, p.name);
+            case 'pr':
+              _openPrs(p);
             case 'config':
               _openRepoConfig(p);
             case 'remove':
@@ -805,6 +811,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         itemBuilder: (_) => [
           ..._agentItems(ws.agent),
           const PopupMenuDivider(),
+          const PopupMenuItem(value: 'diff', child: Text('看变动')),
+          if (p.github.isNotEmpty)
+            const PopupMenuItem(value: 'pr', child: Text('GitHub PR')),
           const PopupMenuItem(value: 'worktree', child: Text('新建 worktree')),
           const PopupMenuItem(value: 'config', child: Text('项目配置')),
           const PopupMenuItem(value: 'remove', child: Text('移除项目')),
@@ -817,6 +826,16 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             RepoConfigPage(projectPath: p.path, projectName: p.name)));
   }
 
+  void _openDiff(String path, String name) {
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => DiffPage(path: path, name: name)));
+  }
+
+  void _openPrs(ProjectCfg p) {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => GitHubPrPage(githubUrl: p.github, name: p.name)));
+  }
+
   Widget _worktreeMenu(WorkspaceCfg ws, ProjectCfg p, Worktree w) =>
       PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert_rounded, size: 18),
@@ -826,6 +845,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             case 'claude':
             case 'codex':
               _openAgent(p, w.path, v, ws.preLaunch);
+            case 'diff':
+              _openDiff(w.path, w.branch.isEmpty ? w.name : w.branch);
             case 'delete':
               _deleteWorktree(ws, p, w);
           }
@@ -833,6 +854,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         itemBuilder: (_) => [
           ..._agentItems(ws.agent),
           const PopupMenuDivider(),
+          const PopupMenuItem(value: 'diff', child: Text('看变动')),
           const PopupMenuItem(value: 'delete', child: Text('删除 worktree')),
         ],
       );

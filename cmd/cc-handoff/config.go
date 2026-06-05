@@ -33,6 +33,7 @@ func configUsage() {
   cc-handoff config set [--relay-url URL] [--token TOK] [--identity ID]
                         [--agent claude|codex|manual] [--workspace-root DIR]
                         [--grade-command CMD] [--linear-token TOK]
+                        [--github-token TOK]
         set one or more user-level fields; only the flags you pass are changed,
         the rest of the config (workspaces etc.) is preserved.
 `)
@@ -49,6 +50,7 @@ func runConfigSet(_ context.Context, args []string) error {
 	wsRoot := fs.String("workspace-root", "", "base dir for workspaces")
 	grade := fs.String("grade-command", "", "local AI severity grader command")
 	linear := fs.String("linear-token", "", "Linear personal API token")
+	github := fs.String("github-token", "", "GitHub personal access token (read PRs)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -79,6 +81,8 @@ func runConfigSet(_ context.Context, args []string) error {
 			u.GradeCommand = *grade
 		case "linear-token":
 			u.LinearPersonalToken = *linear
+		case "github-token":
+			u.GitHubToken = *github
 		}
 	})
 	if setErr != nil {

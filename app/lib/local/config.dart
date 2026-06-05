@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:toml/toml.dart';
 
-// A project inside a workspace: a name + its absolute local path.
+// A project inside a workspace: a name + its absolute local path + the GitHub
+// URL it was cloned from (empty if added by local path), used for the PR view.
 class ProjectCfg {
   final String name;
   final String path; // absolute
-  const ProjectCfg(this.name, this.path);
+  final String github;
+  const ProjectCfg(this.name, this.path, [this.github = '']);
 }
 
 // A workspace from config.toml [[workspace]]: its projects + the resolved agent
@@ -43,13 +45,15 @@ class AppConfig {
   final String workspaceRoot;
   final String gradeCommand;
   final String linearToken;
+  final String githubToken;
 
   AppConfig(this.relayUrl, this.token, this.identity, this.repos,
       [this.workspaces = const [],
       this.agent = '',
       this.workspaceRoot = '',
       this.gradeCommand = '',
-      this.linearToken = '']);
+      this.linearToken = '',
+      this.githubToken = '']);
 
   String? repoPath(String name) => repos[name];
 
@@ -69,6 +73,7 @@ class AppConfig {
     final wsRoot = (map['workspace_root'] ?? '').toString();
     final grade = (map['grade_command'] ?? '').toString();
     final linear = (map['linear_personal_token'] ?? '').toString();
+    final githubToken = (map['github_token'] ?? '').toString();
     final repos = <String, String>{};
     final wsList = <WorkspaceCfg>[];
 
@@ -94,15 +99,16 @@ class AppConfig {
         var path = _expand((p['path'] ?? '').toString());
         if (path.isNotEmpty && !path.startsWith('/')) path = '$base/$path';
         if (path.isEmpty) continue;
+        final github = (p['github'] ?? '').toString();
         repos.putIfAbsent(name, () => path);
-        projCfgs.add(ProjectCfg(name, path));
+        projCfgs.add(ProjectCfg(name, path, github));
       }
       wsList.add(
           WorkspaceCfg(wsName, wsPath, agent, editor, preLaunch, projCfgs));
     }
 
     return AppConfig(relay, token, identity, repos, wsList, userAgent, wsRoot,
-        grade, linear);
+        grade, linear, githubToken);
   }
 }
 

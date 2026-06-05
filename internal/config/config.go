@@ -25,6 +25,10 @@ type User struct {
 	// pull notifications. Lives at user-level (not repo-level) so the secret
 	// stays out of git. Empty disables the linear-sync feature.
 	LinearPersonalToken string `toml:"linear_personal_token,omitempty"`
+	// GitHubToken is a personal access token the GUI uses to read GitHub pull
+	// requests + their diffs for a project. User-level (kept out of git), read
+	// only by the app. Empty disables the in-app GitHub PR view.
+	GitHubToken string `toml:"github_token,omitempty"`
 	// WorkspaceRoot is the base directory under which `workspace create`/`add`
 	// carve a new workspace dir when no explicit path is given. Empty falls
 	// back to ~/cc-handoff-workspaces. Supports a leading ~ for the home dir.

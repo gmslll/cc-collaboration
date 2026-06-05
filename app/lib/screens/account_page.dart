@@ -34,6 +34,7 @@ class _AccountPageState extends State<AccountPage> {
   final _wsRoot = TextEditingController();
   final _grade = TextEditingController();
   final _linear = TextEditingController();
+  final _github = TextEditingController();
   bool _savingCfg = false;
 
   bool get _isDesktop =>
@@ -57,6 +58,7 @@ class _AccountPageState extends State<AccountPage> {
     _wsRoot.dispose();
     _grade.dispose();
     _linear.dispose();
+    _github.dispose();
     super.dispose();
   }
 
@@ -73,6 +75,7 @@ class _AccountPageState extends State<AccountPage> {
       _wsRoot.text = c.workspaceRoot;
       _grade.text = c.gradeCommand;
       _linear.text = c.linearToken;
+      _github.text = c.githubToken;
     });
   }
 
@@ -87,6 +90,7 @@ class _AccountPageState extends State<AccountPage> {
         workspaceRoot: _wsRoot.text.trim(),
         gradeCommand: _grade.text.trim(),
         linearToken: _linear.text.trim(),
+        githubToken: _github.text.trim(),
       );
       await _loadLocalConfig();
       if (mounted) snack(context, '已保存到 config.toml');
@@ -280,6 +284,8 @@ class _AccountPageState extends State<AccountPage> {
                   color: CcColors.muted, fontSize: 12, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           _cfgField(_linear, 'linear_personal_token', obscure: true),
+          const SizedBox(height: 10),
+          _cfgField(_github, 'github_token(看 PR / diff)', obscure: true),
           const SizedBox(height: 14),
           Align(
             alignment: Alignment.centerRight,

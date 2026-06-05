@@ -196,6 +196,54 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) => Container
       ),
     );
 
+// diffText renders a unified-diff string with +/− line coloring (mono), lazily
+// via ListView so big diffs stay smooth. Shared by the local git diff viewer
+// and the GitHub PR view (PR file `patch`). Pass [scrollable]=false to embed in
+// an outer scroll (renders a non-lazy Column instead).
+Widget diffText(String diff, {bool scrollable = true}) {
+  final lines = diff.split('\n');
+  if (!scrollable) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [for (final l in lines) _diffLine(l)],
+    );
+  }
+  return ListView.builder(
+    itemCount: lines.length,
+    itemBuilder: (_, i) => _diffLine(lines[i]),
+  );
+}
+
+Widget _diffLine(String line) {
+  Color fg = CcColors.text; // context
+  Color? bg;
+  if (line.startsWith('@@')) {
+    fg = CcColors.accentBright;
+  } else if (line.startsWith('+++') ||
+      line.startsWith('---') ||
+      line.startsWith('diff ') ||
+      line.startsWith('index ') ||
+      line.startsWith('new file') ||
+      line.startsWith('deleted file') ||
+      line.startsWith('similarity ') ||
+      line.startsWith('rename ')) {
+    fg = CcColors.subtle; // file headers
+  } else if (line.startsWith('+')) {
+    fg = CcColors.ok;
+    bg = CcColors.ok.withValues(alpha: 0.06);
+  } else if (line.startsWith('-')) {
+    fg = CcColors.danger;
+    bg = CcColors.danger.withValues(alpha: 0.06);
+  }
+  return Container(
+    color: bg,
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+    child: Text(line.isEmpty ? ' ' : line,
+        style: TextStyle(
+            fontFamily: CcType.mono, fontSize: 12.5, height: 1.4, color: fg)),
+  );
+}
+
 // Subtle gradients for surfaces (the "稍多表现力" lift, kept understated).
 const appGradient = BoxDecoration(
   gradient: LinearGradient(

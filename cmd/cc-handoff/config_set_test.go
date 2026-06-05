@@ -47,6 +47,22 @@ func TestConfigSet_InvalidAgent(t *testing.T) {
 	}
 }
 
+func TestConfigSet_GitHubToken(t *testing.T) {
+	seedUser(t)
+	if err := runConfigSet(context.Background(),
+		[]string{"--github-token", "ghp_abc"}); err != nil {
+		t.Fatal(err)
+	}
+	u := reload(t)
+	if u.GitHubToken != "ghp_abc" {
+		t.Fatalf("github token not set: %+v", u)
+	}
+	// unrelated secrets/fields preserved.
+	if u.Token != "tok-keepme" || u.Identity != "me@backend" {
+		t.Fatalf("other fields clobbered: %+v", u)
+	}
+}
+
 func TestWorkspaceSet(t *testing.T) {
 	seedUser(t)
 	if err := runWorkspaceSet(context.Background(),

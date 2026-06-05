@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:app/api/github_client.dart';
 import 'package:app/api/models.dart';
 import 'package:app/local/repo_config.dart';
 import 'package:app/widgets.dart';
@@ -7,6 +8,17 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('GitHubClient.parseSlug handles https / git@ / path / non-github', () {
+    expect(GitHubClient.parseSlug('https://github.com/owner/repo.git'),
+        'owner/repo');
+    expect(GitHubClient.parseSlug('https://github.com/owner/repo'), 'owner/repo');
+    expect(GitHubClient.parseSlug('git@github.com:owner/repo.git'), 'owner/repo');
+    expect(GitHubClient.parseSlug('https://github.com/owner/repo/pull/5'),
+        'owner/repo');
+    expect(GitHubClient.parseSlug('/just/a/local/path'), isNull);
+    expect(GitHubClient.parseSlug(''), isNull);
+  });
+
   test('ListItem.fromJson parses fields + defaults kind', () {
     final it = ListItem.fromJson({
       'id': 'h1',
