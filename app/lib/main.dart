@@ -12,6 +12,7 @@ import 'screens/admin_page.dart';
 import 'screens/handoffs_page.dart';
 import 'screens/login_screen.dart';
 import 'screens/projects_page.dart';
+import 'screens/workspace_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -97,7 +98,7 @@ class _HomeShellState extends State<HomeShell> {
     if (!mounted) return;
     setState(() {
       _cfg = AppConfig(session.relayUrl, session.token, session.identity,
-          cfg?.repos ?? const {});
+          cfg?.repos ?? const {}, cfg?.workspaces ?? const []);
       _client = client;
       _me = me;
       _relayHint = session.relayUrl;
@@ -135,7 +136,11 @@ class _HomeShellState extends State<HomeShell> {
     }
 
     final isAdmin = _me?.isAdmin ?? false;
+    // 工作区 (project-centric cockpit) is desktop-only — it needs local fs +
+    // terminals. Both lists share the same `if (_isDesktop)` so they align.
     final dests = <_Dest>[
+      if (_isDesktop)
+        const _Dest('工作区', Icons.workspaces_outline, Icons.workspaces),
       const _Dest('收件箱', Icons.inbox_outlined, Icons.inbox),
       const _Dest('项目', Icons.folder_outlined, Icons.folder),
       const _Dest('账号', Icons.person_outline, Icons.person),
@@ -144,6 +149,7 @@ class _HomeShellState extends State<HomeShell> {
     if (_index >= dests.length) _index = 0;
 
     final pages = <Widget>[
+      if (_isDesktop) WorkspacePage(client: _client!, config: _cfg!),
       HandoffsPage(client: _client!, config: _cfg!, showTerminal: _isDesktop),
       ProjectsPage(client: _client!),
       AccountPage(client: _client!, identity: _cfg!.identity),
