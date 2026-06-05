@@ -97,6 +97,23 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         onSwitch: (i) => setState(() => activeTerm = i),
         onClose: closeTerm,
       );
+
+  // terminalBody is just the active terminal (no tab bar) — for hosts that put
+  // the session list elsewhere (the workspace tree shows sessions under their
+  // project). All sessions stay alive via IndexedStack.
+  Widget terminalBody() {
+    if (terms.isEmpty) return const SizedBox.shrink();
+    final idx = activeTerm.clamp(0, terms.length - 1);
+    return ColoredBox(
+      color: CcColors.bg,
+      child: IndexedStack(
+        index: idx,
+        children: terms
+            .map((s) => TerminalPane(key: ValueKey(s), session: s))
+            .toList(),
+      ),
+    );
+  }
 }
 
 // TerminalDeck renders a row of session tabs + the active terminal. The host

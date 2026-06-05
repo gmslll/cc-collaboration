@@ -9,6 +9,7 @@ import '../theme.dart';
 import '../widgets.dart';
 import 'handoff_detail_view.dart';
 import 'terminal_deck.dart';
+import 'terminal_pane.dart';
 
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
 // (left, primary) + a Workspace → Project → (Worktrees + Tasks) tree (right).
@@ -30,6 +31,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   // project path -> worktrees. Key absent = not loaded; value null = loading;
   // value list = loaded (possibly empty).
   final Map<String, List<Worktree>?> _worktrees = {};
+  // expansion controllers per project path, so launching a session can expand
+  // its project to reveal the new session node.
+  final Map<String, ExpansibleController> _proj = {};
   bool _busy = false;
 
   @override
@@ -39,8 +43,17 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   void initState() {
     super.initState();
     _loadTasks();
-    restoreTerms();
+    // After restoring persisted sessions, expand the projects that own them so
+    // the session tabs are visible in the tree.
+    restoreTerms().then((_) {
+      if (!mounted) return;
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _expandWithSessions());
+    });
   }
+
+  ExpansibleController _ctlFor(String path) =>
+      _proj.putIfAbsent(path, ExpansibleController.new);
 
   @override
   void dispose() {
@@ -114,6 +127,24 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   void _launch(String dir, String agent, String preLaunch) {
     final pl = preLaunch.trim();
     addTerm(dir, pl.isEmpty ? agent : '$pl && $agent');
+  }
+
+  // _openAgent launches a session in [dir] under project [p], then expands the
+  // project so its new session node (the "tab") is visible in the tree.
+  void _openAgent(ProjectCfg p, String dir, String agent, String preLaunch) {
+    _launch(dir, agent, preLaunch);
+    final ctl = _ctlFor(p.path);
+    if (!ctl.isExpanded) ctl.expand();
+  }
+
+  void _expandWithSessions() {
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (_sessionsFor(p).isEmpty) continue;
+        final ctl = _ctlFor(p.path);
+        if (!ctl.isExpanded) ctl.expand();
+      }
+    }
   }
 
   // ----------------------------------------------------------- mutations ----
@@ -280,7 +311,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     if (terms.isEmpty) {
       return centerMsg('从右侧工作区,在项目或 worktree 上起一个 claude / codex 会话');
     }
-    return terminalDeck();
+    return terminalBody();
   }
 
   Widget _sidebar() {
@@ -333,6 +364,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       title: Text(p.name, style: const TextStyle(fontSize: 14)),
       leading: const Icon(Icons.folder_outlined, size: 18),
       trailing: _projectMenu(ws, p),
+      controller: _ctlFor(p.path),
       tilePadding: const EdgeInsets.only(left: 16, right: 4),
       childrenPadding: const EdgeInsets.only(left: 16),
       shape: const Border(),
@@ -340,6 +372,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         if (open) _ensureWorktrees(p.path);
       },
       children: [
+        ..._sessionNodes(p),
         ..._worktreeNodes(ws, p),
         ..._taskNodes(p),
         if (_projectEmpty(p))
@@ -358,7 +391,54 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     final wts = _worktrees[p.path];
     final wtLoadedEmpty =
         _worktrees.containsKey(p.path) && wts != null && wts.isEmpty;
-    return wtLoadedEmpty && (_tasksByRepo[p.name]?.isEmpty ?? true);
+    return wtLoadedEmpty &&
+        (_tasksByRepo[p.name]?.isEmpty ?? true) &&
+        _sessionsFor(p).isEmpty;
+  }
+
+  // _sessionsFor returns the open terminal sessions whose workdir is this
+  // project's root or one of its worktrees, paired with their index in `terms`.
+  List<({int idx, TerminalSession s})> _sessionsFor(ProjectCfg p) {
+    final out = <({int idx, TerminalSession s})>[];
+    for (var i = 0; i < terms.length; i++) {
+      final wd = terms[i].workdir;
+      if (wd == p.path || wd.startsWith('${p.path}/.worktrees/')) {
+        out.add((idx: i, s: terms[i]));
+      }
+    }
+    return out;
+  }
+
+  List<Widget> _sessionNodes(ProjectCfg p) {
+    final ss = _sessionsFor(p);
+    if (ss.isEmpty) return const [];
+    return [
+      _sectionLabel('会话 (${ss.length})'),
+      ...ss.map((e) {
+        final active = e.idx == activeTerm;
+        final agent = e.s.command.contains('codex') ? 'codex' : 'claude';
+        return ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.only(left: 8, right: 0),
+          selected: active,
+          leading: Icon(Icons.terminal,
+              size: 16, color: active ? CcColors.accent : CcColors.muted),
+          title: Text('$agent · ${e.s.title}',
+              style: TextStyle(
+                  fontSize: 13,
+                  color: active ? CcColors.text : CcColors.muted,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.normal),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          onTap: () => setState(() => activeTerm = e.idx),
+          trailing: IconButton(
+            icon: const Icon(Icons.close, size: 16, color: CcColors.muted),
+            tooltip: '关闭会话',
+            onPressed: () => closeTerm(e.idx),
+          ),
+        );
+      }),
+    ];
   }
 
   List<Widget> _worktreeNodes(WorkspaceCfg ws, ProjectCfg p) {
@@ -447,7 +527,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           switch (v) {
             case 'claude':
             case 'codex':
-              _launch(p.path, v, ws.preLaunch);
+              _openAgent(p, p.path, v, ws.preLaunch);
             case 'worktree':
               _newWorktree(ws, p);
             case 'remove':
@@ -470,7 +550,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           switch (v) {
             case 'claude':
             case 'codex':
-              _launch(w.path, v, ws.preLaunch);
+              _openAgent(p, w.path, v, ws.preLaunch);
             case 'delete':
               _deleteWorktree(ws, p, w);
           }
