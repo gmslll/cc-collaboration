@@ -66,6 +66,19 @@ Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
       ),
     );
 
+// asyncBody renders the standard loading → spinner / error → retry / else
+// content switch the data screens share.
+Widget asyncBody({
+  required bool loading,
+  required String? error,
+  required VoidCallback onRetry,
+  required Widget Function() child,
+}) {
+  if (loading) return const Center(child: CircularProgressIndicator());
+  if (error != null) return centerMsg(error, onRetry: onRetry);
+  return child();
+}
+
 // tag is a small mono pill: alpha-tinted [color] background + [color] text.
 Widget tag(String label, Color color, {bool bold = false}) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),

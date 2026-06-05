@@ -88,9 +88,14 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
     );
   }
 
-  Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return centerMsg(_error!, onRetry: _load);
+  Widget _body() => asyncBody(
+        loading: _loading,
+        error: _error,
+        onRetry: _load,
+        child: _list,
+      );
+
+  Widget _list() {
     final pulls = _pulls ?? const [];
     if (pulls.isEmpty) return centerMsg('没有 open PR');
     return DecoratedBox(
@@ -175,9 +180,14 @@ class _PrDiffPageState extends State<_PrDiffPage> {
     );
   }
 
-  Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return centerMsg(_error!, onRetry: _load);
+  Widget _body() => asyncBody(
+        loading: _loading,
+        error: _error,
+        onRetry: _load,
+        child: _filesView,
+      );
+
+  Widget _filesView() {
     final files = _files ?? const [];
     if (files.isEmpty) return centerMsg('没有文件改动');
     return DecoratedBox(

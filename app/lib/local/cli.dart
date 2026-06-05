@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'shell.dart';
+
 class PickupResult {
   final String worktreeDir;
   final String materializeDir;
@@ -26,7 +28,7 @@ class Cli {
   // worktree dir + the interactive agent command to run in the terminal.
   static Future<PickupResult> pickup(String id, String repoPath) async {
     final cmd =
-        "cc-handoff pickup '${_esc(id)}' --repo '${_esc(repoPath)}' --worktree --json";
+        'cc-handoff pickup ${shQuote(id)} --repo ${shQuote(repoPath)} --worktree --json';
     final res = await Process.run(_shell(), ['-lc', cmd]);
     if (res.exitCode != 0) {
       final err = (res.stderr as String).trim();
@@ -51,7 +53,7 @@ class Cli {
   // stdout; throws CliException(stderr) on non-zero exit. Each arg is
   // single-quoted so paths / branches with spaces are safe.
   static Future<String> run(List<String> args) async {
-    final cmd = 'cc-handoff ${args.map((a) => "'${_esc(a)}'").join(' ')}';
+    final cmd = 'cc-handoff ${args.map(shQuote).join(' ')}';
     final res = await Process.run(_shell(), ['-lc', cmd]);
     if (res.exitCode != 0) {
       final err = (res.stderr as String).trim();
@@ -128,6 +130,4 @@ class Cli {
         if (editor != null) ...['--editor', editor],
         if (agent != null) ...['--agent', agent],
       ]);
-
-  static String _esc(String s) => s.replaceAll("'", "'\\''");
 }

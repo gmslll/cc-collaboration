@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'shell.dart';
+
 class GitException implements Exception {
   final String message;
   GitException(this.message);
@@ -12,7 +14,7 @@ class GitException implements Exception {
 // GitException(stderr) on a non-zero exit.
 Future<String> _git(String dir, String args) async {
   final shell = Platform.environment['SHELL'] ?? '/bin/sh';
-  final r = await Process.run(shell, ['-lc', 'git -C ${_q(dir)} $args']);
+  final r = await Process.run(shell, ['-lc', 'git -C ${shQuote(dir)} $args']);
   if (r.exitCode != 0) {
     final err = (r.stderr as String).trim();
     throw GitException(err.isNotEmpty ? err : 'git 失败 (exit ${r.exitCode})');
@@ -27,10 +29,8 @@ Future<String> gitDiffWorking(String dir) => _git(dir, 'diff HEAD');
 // `git diff <base>...HEAD` (the merge-base diff).
 Future<String> gitDiffBase(String dir, String base) {
   final b = base.trim().isEmpty ? 'origin/main' : base.trim();
-  return _git(dir, 'diff ${_q(b)}...HEAD');
+  return _git(dir, 'diff ${shQuote(b)}...HEAD');
 }
 
 // gitStatus is the short porcelain status (for a quick "anything changed?").
 Future<String> gitStatus(String dir) => _git(dir, 'status --porcelain');
-
-String _q(String s) => "'${s.replaceAll("'", r"'\''")}'";

@@ -101,13 +101,16 @@ class _DiffPageState extends State<DiffPage> {
     );
   }
 
-  Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return centerMsg(_error!, onRetry: _load);
-    final d = _diff ?? '';
-    if (d.trim().isEmpty) {
-      return centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异');
-    }
-    return DecoratedBox(decoration: appGradient, child: diffText(d));
-  }
+  Widget _body() => asyncBody(
+        loading: _loading,
+        error: _error,
+        onRetry: _load,
+        child: () {
+          final d = _diff ?? '';
+          if (d.trim().isEmpty) {
+            return centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异');
+          }
+          return DecoratedBox(decoration: appGradient, child: diffText(d));
+        },
+      );
 }

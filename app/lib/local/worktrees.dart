@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'shell.dart';
+
 class Worktree {
   final String path;
   final String branch; // short branch; empty when detached
@@ -19,7 +21,7 @@ Future<List<Worktree>> listWorktrees(String projectPath) async {
   try {
     final shell = Platform.environment['SHELL'] ?? '/bin/sh';
     final r = await Process.run(shell,
-        ['-lc', 'git -C ${_q(projectPath)} worktree list --porcelain']);
+        ['-lc', 'git -C ${shQuote(projectPath)} worktree list --porcelain']);
     if (r.exitCode != 0) return const [];
 
     final res = <Worktree>[];
@@ -42,5 +44,3 @@ Future<List<Worktree>> listWorktrees(String projectPath) async {
     return const [];
   }
 }
-
-String _q(String s) => "'${s.replaceAll("'", r"'\''")}'";
