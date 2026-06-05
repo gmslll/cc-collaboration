@@ -150,17 +150,25 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
             label: '收件箱',
             onExpand: () => _setListCollapsed(false)),
       if (!_listCollapsed)
-        DragHandle(
-            onDelta: _resizeList,
-            onEnd: () => Prefs.setDouble('inbox.listWidth', _listWidth))
+        resizeHandle(
+            prefKey: 'inbox.listWidth',
+            get: () => _listWidth,
+            set: (v) => setState(() => _listWidth = v),
+            min: 260,
+            max: 520)
       else
         const VerticalDivider(width: 1),
       Expanded(child: _buildDetail()),
       if (widget.showTerminal && terms.isNotEmpty) ...[
         if (termOpen) ...[
-          DragHandle(
-              onDelta: (dx) => _resizeTerm(-dx),
-              onEnd: () => Prefs.setDouble('inbox.termWidth', _termWidth)),
+          // terminal is on the right: dragging left widens it (invert).
+          resizeHandle(
+              prefKey: 'inbox.termWidth',
+              get: () => _termWidth,
+              set: (v) => setState(() => _termWidth = v),
+              min: 360,
+              max: 920,
+              invert: true),
           SizedBox(
               width: _termWidth,
               child: terminalDeck(onCollapse: () => _setTermCollapsed(true))),
@@ -175,12 +183,6 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       ],
     ]);
   }
-
-  void _resizeList(double d) => setState(
-      () => _listWidth = (_listWidth + d).clamp(260.0, 520.0));
-
-  void _resizeTerm(double d) => setState(
-      () => _termWidth = (_termWidth + d).clamp(360.0, 920.0));
 
   void _setListCollapsed(bool v) {
     setState(() => _listCollapsed = v);

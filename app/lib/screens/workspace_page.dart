@@ -40,6 +40,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   bool _leftCollapsed = Prefs.getBool('ws.left');
   bool _rightCollapsed = Prefs.getBool('ws.right');
   double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 380);
+  // shared comfortable-but-compact density for the tree's leaf rows.
+  static const _tileDensity = VisualDensity(vertical: -1);
 
   @override
   String? get persistKey => 'workspace_sessions';
@@ -321,11 +323,6 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     Prefs.setBool('ws.right', _rightCollapsed);
   }
 
-  void _resizeTree(double delta) {
-    // tree is on the right: dragging the handle left (negative dx) widens it.
-    setState(() => _treeWidth = (_treeWidth + delta).clamp(300.0, 640.0));
-  }
-
   @override
   Widget build(BuildContext context) {
     // both panes open → the divider is a drag handle to resize the tree.
@@ -340,10 +337,14 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             label: '终端',
             onExpand: () => _setLeft(false)),
       if (resizable)
-        DragHandle(
-          onDelta: (dx) => _resizeTree(-dx),
-          onEnd: () => Prefs.setDouble('ws.treeWidth', _treeWidth),
-        )
+        // tree is on the right: dragging the handle left widens it (invert).
+        resizeHandle(
+            prefKey: 'ws.treeWidth',
+            get: () => _treeWidth,
+            set: (v) => setState(() => _treeWidth = v),
+            min: 300,
+            max: 640,
+            invert: true)
       else
         const VerticalDivider(width: 1),
       if (!_rightCollapsed)
@@ -558,7 +559,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                     width: 2.5)),
           ),
           child: ListTile(
-            visualDensity: const VisualDensity(vertical: -1),
+            visualDensity: _tileDensity,
             contentPadding: const EdgeInsets.only(left: 10, right: 2),
             selected: active,
             leading: Icon(Icons.terminal,
@@ -641,7 +642,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       header,
       ...wts.map((w) => _HoverZone(
             builder: (h) => ListTile(
-              visualDensity: const VisualDensity(vertical: -1),
+              visualDensity: _tileDensity,
               contentPadding: const EdgeInsets.only(left: 10, right: 2),
               leading: Icon(Icons.account_tree_outlined,
                   size: 18,
@@ -672,7 +673,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     return [
       header,
       ...ts.map((it) => ListTile(
-            visualDensity: const VisualDensity(vertical: -1),
+            visualDensity: _tileDensity,
             contentPadding: const EdgeInsets.only(left: 12, right: 8),
             leading: Padding(
               padding: const EdgeInsets.only(top: 4),

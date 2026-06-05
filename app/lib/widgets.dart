@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
+import 'local/prefs.dart';
 import 'theme.dart';
 
 // Small UI helpers shared across screens (deduped from per-page copies).
@@ -252,6 +253,24 @@ class _DragHandleState extends State<DragHandle> {
     );
   }
 }
+
+// resizeHandle is a DragHandle pre-wired to clamp + persist a pane width: it
+// reads/writes the width via [get]/[set] (set should setState), clamps to
+// [min]/[max], and persists to Prefs[prefKey] on release. [invert] flips the
+// drag direction for a pane sitting to the LEFT of the handle (drag toward it =
+// wider). Collapses the per-cockpit resize boilerplate to one call per handle.
+Widget resizeHandle({
+  required String prefKey,
+  required double Function() get,
+  required ValueChanged<double> set,
+  required double min,
+  required double max,
+  bool invert = false,
+}) =>
+    DragHandle(
+      onDelta: (dx) => set((get() + (invert ? -dx : dx)).clamp(min, max)),
+      onEnd: () => Prefs.setDouble(prefKey, get()),
+    );
 
 // HoverLift wraps a card-like surface: on hover it lifts slightly, brightens its
 // border and casts a soft accent glow (200ms). Use for clickable cards.
