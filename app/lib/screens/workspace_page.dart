@@ -25,7 +25,7 @@ import 'terminal_pane.dart';
 
 enum _BottomTool { terminal, git }
 
-enum _GitView { changes, log, stash }
+enum _GitView { changes, log, branches, stash }
 
 const _searchSkipDirs = {
   '.git',
@@ -54,6 +54,31 @@ class _OpenFile {
   String get name => path.split('/').last;
 }
 
+class _CodeSymbol {
+  final String name;
+  final String kind;
+  final int line;
+  final int indent;
+  final IconData icon;
+
+  const _CodeSymbol({
+    required this.name,
+    required this.kind,
+    required this.line,
+    required this.indent,
+    required this.icon,
+  });
+}
+
+class _CodeLocation {
+  final String path;
+  final int? line;
+
+  const _CodeLocation(this.path, {this.line});
+
+  bool sameAs(_CodeLocation other) => path == other.path && line == other.line;
+}
+
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
 // (left, primary) + a Workspace → Project → (Worktrees + Tasks) tree (right).
 // Launch a claude/codex session in any project or worktree; tap a task for its
@@ -80,6 +105,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   bool _busy = false;
   ListItem? _detailItem;
   final List<_OpenFile> _codeFiles = [];
+  final List<_CodeLocation> _codeBackStack = [];
+  final List<_CodeLocation> _codeForwardStack = [];
   int _activeFile = -1;
   _BottomTool _bottomTool =
       Prefs.getString('ws.bottomTool', def: 'terminal') == 'git'
@@ -91,6 +118,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   List<FileDiff> _gitFiles = const [];
   List<GitChange> _gitChanges = const [];
   List<GitCommit> _gitLog = const [];
+  List<GitBranch> _gitBranches = const [];
   List<GitStash> _gitStashes = const [];
   List<FileDiff> _commitFiles = const [];
   List<FileDiff> _stashFiles = const [];
@@ -255,6 +283,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       final changes = await gitChanges(p.path);
       final diff = await gitDiffWorking(p.path);
       final log = await gitLog(p.path);
+      final branches = await gitBranches(p.path);
       final stashes = await gitStashes(p.path);
       if (!mounted) return;
       setState(() {
@@ -266,6 +295,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         );
         _gitFiles = parseUnifiedDiff(diff);
         _gitLog = log;
+        _gitBranches = branches;
         _gitStashes = stashes;
         if (_selectedStash == null ||
             !stashes.any((s) => s.ref == _selectedStash)) {
@@ -291,7 +321,29 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     }
   }
 
-  void _openCodeFile(String path, {int? line}) {
+  _CodeLocation? get _activeLocation {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) return null;
+    final file = _codeFiles[_activeFile];
+    return _CodeLocation(file.path, line: file.line);
+  }
+
+  void _pushNavigationHistory() {
+    final current = _activeLocation;
+    if (current == null) return;
+    if (_codeBackStack.isNotEmpty && _codeBackStack.last.sameAs(current)) {
+      return;
+    }
+    _codeBackStack.add(current);
+    if (_codeBackStack.length > 80) _codeBackStack.removeAt(0);
+    _codeForwardStack.clear();
+  }
+
+  void _openCodeFile(String path, {int? line, bool recordHistory = true}) {
+    final target = _CodeLocation(path, line: line);
+    final current = _activeLocation;
+    if (recordHistory && current != null && !current.sameAs(target)) {
+      _pushNavigationHistory();
+    }
     final existing = _codeFiles.indexWhere((f) => f.path == path);
     setState(() {
       if (existing >= 0) {
@@ -307,6 +359,26 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         _recentFiles.removeRange(12, _recentFiles.length);
       }
     });
+  }
+
+  void _navigateBack() {
+    if (_codeBackStack.isEmpty) return;
+    final current = _activeLocation;
+    final target = _codeBackStack.removeLast();
+    if (current != null && !current.sameAs(target)) {
+      _codeForwardStack.add(current);
+    }
+    _openCodeFile(target.path, line: target.line, recordHistory: false);
+  }
+
+  void _navigateForward() {
+    if (_codeForwardStack.isEmpty) return;
+    final current = _activeLocation;
+    final target = _codeForwardStack.removeLast();
+    if (current != null && !current.sameAs(target)) {
+      _codeBackStack.add(current);
+    }
+    _openCodeFile(target.path, line: target.line, recordHistory: false);
   }
 
   Future<void> _closeCodeFile(int i) async {
@@ -490,6 +562,29 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     if (line != null) _openCodeFile(file.path, line: line);
   }
 
+  Future<void> _showFileStructure() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
+      _snack('没有打开的文件');
+      return;
+    }
+    final file = _codeFiles[_activeFile];
+    final text = file.key.currentState?.text;
+    if (text == null) {
+      _snack('文件仍在加载');
+      return;
+    }
+    final symbols = _extractCodeSymbols(file.path, text);
+    if (symbols.isEmpty) {
+      _snack('没有可跳转的结构符号');
+      return;
+    }
+    final symbol = await showDialog<_CodeSymbol>(
+      context: context,
+      builder: (_) => _FileStructureDialog(path: file.path, symbols: symbols),
+    );
+    if (symbol != null) _openCodeFile(file.path, line: symbol.line);
+  }
+
   Future<void> _showShortcuts() async {
     final isMac = Platform.isMacOS;
     final mod = isMac ? 'Cmd' : 'Ctrl';
@@ -497,6 +592,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       ('$mod+O', '快速打开文件'),
       ('$mod+F', '当前文件查找'),
       ('$mod+G', '跳转行号'),
+      ('$mod+F12', '文件结构'),
+      ('$mod+Alt+←/→', '代码导航后退/前进'),
       ('$mod+Shift+F', '全文搜索'),
       ('$mod+E', '最近文件'),
       ('$mod+1', '切换 Project'),
@@ -742,6 +839,30 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             _showGoToLine,
         const SingleActivator(LogicalKeyboardKey.keyG, control: true):
             _showGoToLine,
+        const SingleActivator(LogicalKeyboardKey.f12, meta: true):
+            _showFileStructure,
+        const SingleActivator(LogicalKeyboardKey.f12, control: true):
+            _showFileStructure,
+        const SingleActivator(
+          LogicalKeyboardKey.arrowLeft,
+          meta: true,
+          alt: true,
+        ): _navigateBack,
+        const SingleActivator(
+          LogicalKeyboardKey.arrowLeft,
+          control: true,
+          alt: true,
+        ): _navigateBack,
+        const SingleActivator(
+          LogicalKeyboardKey.arrowRight,
+          meta: true,
+          alt: true,
+        ): _navigateForward,
+        const SingleActivator(
+          LogicalKeyboardKey.arrowRight,
+          control: true,
+          alt: true,
+        ): _navigateForward,
         const SingleActivator(LogicalKeyboardKey.keyF, meta: true, shift: true):
             _showFindInFiles,
         const SingleActivator(
@@ -866,6 +987,18 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             onPressed: () => _setBottomTool(_BottomTool.git),
           ),
           const VerticalDivider(width: 14),
+          _toolButton(
+            icon: Icons.arrow_back_rounded,
+            tooltip: '代码导航后退',
+            selected: false,
+            onPressed: _codeBackStack.isEmpty ? null : _navigateBack,
+          ),
+          _toolButton(
+            icon: Icons.arrow_forward_rounded,
+            tooltip: '代码导航前进',
+            selected: false,
+            onPressed: _codeForwardStack.isEmpty ? null : _navigateForward,
+          ),
           _toolButton(
             icon: Icons.file_open_outlined,
             tooltip: '快速打开文件',
@@ -1106,6 +1239,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     );
     final changeCount = _gitChanges.length;
     final sessionCount = terms.length;
+    final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
     return Container(
       width: 50,
       decoration: const BoxDecoration(
@@ -1153,6 +1287,12 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             icon: Icons.manage_search_rounded,
             label: 'Search',
             onTap: _showFindInFiles,
+          ),
+          _leftActionButton(
+            icon: Icons.account_tree_rounded,
+            label: 'Structure',
+            enabled: hasActiveFile,
+            onTap: _showFileStructure,
           ),
           _leftActionButton(
             icon: Icons.history_rounded,
@@ -1275,15 +1415,22 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     required IconData icon,
     required String label,
     required VoidCallback onTap,
+    bool enabled = true,
   }) => Tooltip(
     message: label,
     preferBelow: false,
     child: InkWell(
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       child: SizedBox(
         width: 50,
         height: 38,
-        child: Icon(icon, size: 18, color: CcColors.muted),
+        child: Icon(
+          icon,
+          size: 18,
+          color: enabled
+              ? CcColors.muted
+              : CcColors.subtle.withValues(alpha: 0.45),
+        ),
       ),
     ),
   );
@@ -1459,6 +1606,24 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             ),
           const Spacer(),
           if (hasActiveFile) ...[
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded, size: 17),
+              tooltip: 'Back',
+              visualDensity: VisualDensity.compact,
+              onPressed: _codeBackStack.isEmpty ? null : _navigateBack,
+            ),
+            IconButton(
+              icon: const Icon(Icons.arrow_forward_rounded, size: 17),
+              tooltip: 'Forward',
+              visualDensity: VisualDensity.compact,
+              onPressed: _codeForwardStack.isEmpty ? null : _navigateForward,
+            ),
+            IconButton(
+              icon: const Icon(Icons.account_tree_rounded, size: 17),
+              tooltip: 'File Structure',
+              visualDensity: VisualDensity.compact,
+              onPressed: _showFileStructure,
+            ),
             IconButton(
               icon: const Icon(Icons.search_rounded, size: 17),
               tooltip: 'Find in File',
@@ -2188,6 +2353,12 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               onTap: () => setState(() => _gitView = _GitView.log),
             ),
             _bottomTab(
+              icon: Icons.account_tree_rounded,
+              label: 'Branches',
+              selected: _gitView == _GitView.branches,
+              onTap: () => setState(() => _gitView = _GitView.branches),
+            ),
+            _bottomTab(
               icon: Icons.inventory_2_outlined,
               label: 'Stash',
               selected: _gitView == _GitView.stash,
@@ -2293,6 +2464,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   Widget _gitToolBody(ProjectCfg p) {
     if (_gitView == _GitView.stash) return _stashView(p);
+    if (_gitView == _GitView.branches) return _branchesView(p);
     if (_gitView == _GitView.log) {
       if (_compareTitle == null &&
           _commitFiles.isEmpty &&
@@ -2311,6 +2483,38 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         ? centerMsg('Working tree clean')
         : _localChangesView(p);
   }
+
+  Widget _branchesView(ProjectCfg p) => _BranchListPane(
+    project: p,
+    branches: _gitBranches,
+    loading: _gitLoading,
+    error: _gitError,
+    embedded: true,
+    onRefresh: _refreshGit,
+    onCheckout: (branch) async {
+      await gitCheckoutBranch(p.path, branch);
+      await _refreshGit();
+      _snack('切换到 ${branch.localName ?? branch.name}');
+    },
+    onCreate: (branch, start) async {
+      await gitCreateBranch(p.path, branch, start: start);
+      await _refreshGit();
+      _snack('创建并切换到 $branch');
+    },
+    onRename: (oldName, newName) async {
+      await gitRenameBranch(p.path, oldName, newName);
+      await _refreshGit();
+      _snack('分支已重命名');
+    },
+    onDelete: (branch, force) async {
+      await gitDeleteBranch(p.path, branch, force: force);
+      await _refreshGit();
+      _snack(force ? '分支已强制删除' : '分支已删除');
+    },
+    onCompare: (branch) async => _compareBranch(p, branch),
+    onMerge: (branch) async => _mergeBranchIntoCurrent(p, branch),
+    onRebase: (branch) async => _rebaseCurrentOntoBranch(p, branch),
+  );
 
   Widget _localChangesView(ProjectCfg p) {
     final selected = _selectedGitPath == null
@@ -2416,51 +2620,88 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     );
   }
 
-  Widget _localChangesList(ProjectCfg p) => DecoratedBox(
-    decoration: const BoxDecoration(color: CcColors.panel),
-    child: Column(
-      children: [
-        Container(
-          height: 32,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: const BoxDecoration(
-            color: CcColors.editorTabBar,
-            border: Border(bottom: BorderSide(color: CcColors.border)),
+  Widget _localChangesList(ProjectCfg p) {
+    final stageableSelected = _gitChanges
+        .where((c) => _selectedChangePaths.contains(c.path) && c.unstaged)
+        .length;
+    final unstageableSelected = _gitChanges
+        .where((c) => _selectedChangePaths.contains(c.path) && c.staged)
+        .length;
+    final rollbackableSelected = _gitChanges
+        .where((c) => _selectedChangePaths.contains(c.path) && !c.conflicted)
+        .length;
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: CcColors.panel),
+      child: Column(
+        children: [
+          Container(
+            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: const BoxDecoration(
+              color: CcColors.editorTabBar,
+              border: Border(bottom: BorderSide(color: CcColors.border)),
+            ),
+            child: Row(
+              children: [
+                const Text(
+                  'Local Changes',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                ),
+                if (_selectedChangePaths.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  tag(
+                    '${_selectedChangePaths.length} selected',
+                    CcColors.accentBright,
+                  ),
+                ],
+                const Spacer(),
+                TextButton(
+                  onPressed: _gitLoading || stageableSelected == 0
+                      ? null
+                      : () => _gitStageSelectedCurrent(p),
+                  child: const Text('Stage'),
+                ),
+                TextButton(
+                  onPressed: _gitLoading || unstageableSelected == 0
+                      ? null
+                      : () => _gitUnstageSelectedCurrent(p),
+                  child: const Text('Unstage'),
+                ),
+                TextButton(
+                  onPressed: _gitLoading || rollbackableSelected == 0
+                      ? null
+                      : () => _gitDiscardSelectedCurrent(p),
+                  style: TextButton.styleFrom(foregroundColor: CcColors.danger),
+                  child: const Text('Rollback'),
+                ),
+                TextButton(
+                  onPressed: _gitChanges.isEmpty
+                      ? null
+                      : () => setState(() {
+                          _selectedChangePaths
+                            ..clear()
+                            ..addAll(_gitChanges.map((c) => c.path));
+                        }),
+                  child: const Text('All'),
+                ),
+                TextButton(
+                  onPressed: _selectedChangePaths.isEmpty
+                      ? null
+                      : () => setState(() => _selectedChangePaths.clear()),
+                  child: const Text('None'),
+                ),
+                Text(
+                  '${_gitChanges.length}',
+                  style: CcType.code(size: 11, color: CcColors.subtle),
+                ),
+              ],
+            ),
           ),
-          child: Row(
-            children: [
-              const Text(
-                'Local Changes',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: _gitChanges.isEmpty
-                    ? null
-                    : () => setState(() {
-                        _selectedChangePaths
-                          ..clear()
-                          ..addAll(_gitChanges.map((c) => c.path));
-                      }),
-                child: const Text('All'),
-              ),
-              TextButton(
-                onPressed: _selectedChangePaths.isEmpty
-                    ? null
-                    : () => setState(() => _selectedChangePaths.clear()),
-                child: const Text('None'),
-              ),
-              Text(
-                '${_gitChanges.length}',
-                style: CcType.code(size: 11, color: CcColors.subtle),
-              ),
-            ],
-          ),
-        ),
-        Expanded(child: ListView(children: _changeGroups(p))),
-      ],
-    ),
-  );
+          Expanded(child: ListView(children: _changeGroups(p))),
+        ],
+      ),
+    );
+  }
 
   List<Widget> _changeGroups(ProjectCfg p) {
     final conflicts = _gitChanges.where((c) => c.conflicted).toList();
@@ -3282,12 +3523,92 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     }
   }
 
+  Future<void> _gitStageSelectedCurrent(ProjectCfg p) async {
+    final files =
+        _gitChanges
+            .where((c) => _selectedChangePaths.contains(c.path) && c.unstaged)
+            .map((c) => c.path)
+            .toList()
+          ..sort();
+    if (files.isEmpty) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitStageFiles(p.path, files);
+      await _refreshGit();
+      _snack('Stage ${files.length} files 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _gitUnstageSelectedCurrent(ProjectCfg p) async {
+    final files =
+        _gitChanges
+            .where((c) => _selectedChangePaths.contains(c.path) && c.staged)
+            .map((c) => c.path)
+            .toList()
+          ..sort();
+    if (files.isEmpty) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitUnstageFiles(p.path, files);
+      await _refreshGit();
+      _snack('Unstage ${files.length} files 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
   Future<void> _gitDiscardFileCurrent(ProjectCfg p, String file) async {
     if (!await _confirm('丢弃文件改动?', '$file\n\n这会恢复工作区文件。')) return;
     setState(() => _gitLoading = true);
     try {
-      await gitRestore(p.path, file);
+      final changes = _gitChanges.where((c) => c.path == file).toList();
+      if (changes.isEmpty) {
+        await gitRestore(p.path, file);
+      } else {
+        await gitRestoreChanges(p.path, changes);
+      }
       await _refreshGit();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _gitDiscardSelectedCurrent(ProjectCfg p) async {
+    final changes =
+        _gitChanges
+            .where(
+              (c) => _selectedChangePaths.contains(c.path) && !c.conflicted,
+            )
+            .toList()
+          ..sort((a, b) => a.path.compareTo(b.path));
+    if (changes.isEmpty) return;
+    final files = changes.map((c) => c.path).toList();
+    final preview =
+        files.take(8).join('\n') +
+        (files.length > 8 ? '\n...and ${files.length - 8} more' : '');
+    if (!await _confirm(
+      'Rollback selected changes?',
+      '$preview\n\n这会恢复 ${files.length} 个文件的工作区改动。',
+    )) {
+      return;
+    }
+    setState(() => _gitLoading = true);
+    try {
+      await gitRestoreChanges(p.path, changes);
+      _selectedChangePaths.removeAll(files);
+      await _refreshGit();
+      _snack('Rollback ${files.length} files 完成');
     } catch (e) {
       if (mounted) {
         setState(() => _gitLoading = false);
@@ -4417,7 +4738,6 @@ class _BranchDialog extends StatefulWidget {
 
 class _BranchDialogState extends State<_BranchDialog> {
   List<GitBranch> _branches = const [];
-  String _query = '';
   bool _loading = true;
   String? _error;
 
@@ -4448,25 +4768,160 @@ class _BranchDialogState extends State<_BranchDialog> {
     }
   }
 
-  Future<void> _checkout(GitBranch b) async {
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: SizedBox(
+        width: 760,
+        height: 660,
+        child: Column(
+          children: [
+            Container(
+              height: 42,
+              padding: const EdgeInsets.only(left: 14, right: 6),
+              decoration: const BoxDecoration(
+                color: CcColors.panel,
+                border: Border(bottom: BorderSide(color: CcColors.border)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.account_tree_rounded,
+                    size: 17,
+                    color: CcColors.muted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Branches · ${widget.project.name}',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    tooltip: '刷新分支',
+                    onPressed: _load,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _BranchListPane(
+                project: widget.project,
+                branches: _branches,
+                loading: _loading,
+                error: _error,
+                onRefresh: _load,
+                onCheckout: (branch) async {
+                  await widget.onCheckout(branch);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                onCreate: widget.onCreate,
+                onRename: widget.onRename,
+                onDelete: widget.onDelete,
+                onCompare: widget.onCompare,
+                onMerge: (branch) async {
+                  await widget.onMerge(branch);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                onRebase: (branch) async {
+                  await widget.onRebase(branch);
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BranchListPane extends StatefulWidget {
+  final ProjectCfg project;
+  final List<GitBranch> branches;
+  final bool loading;
+  final String? error;
+  final bool embedded;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(GitBranch branch) onCheckout;
+  final Future<void> Function(String branch, String? start) onCreate;
+  final Future<void> Function(String oldName, String newName) onRename;
+  final Future<void> Function(String branch, bool force) onDelete;
+  final Future<void> Function(GitBranch branch) onCompare;
+  final Future<void> Function(GitBranch branch) onMerge;
+  final Future<void> Function(GitBranch branch) onRebase;
+
+  const _BranchListPane({
+    required this.project,
+    required this.branches,
+    required this.loading,
+    required this.error,
+    required this.onRefresh,
+    required this.onCheckout,
+    required this.onCreate,
+    required this.onRename,
+    required this.onDelete,
+    required this.onCompare,
+    required this.onMerge,
+    required this.onRebase,
+    this.embedded = false,
+  });
+
+  @override
+  State<_BranchListPane> createState() => _BranchListPaneState();
+}
+
+class _BranchListPaneState extends State<_BranchListPane> {
+  final _queryCtl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _queryCtl.dispose();
+    super.dispose();
+  }
+
+  List<GitBranch> get _filteredBranches {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return widget.branches;
+    return widget.branches.where((b) {
+      final fields = [
+        b.name,
+        b.remoteName ?? '',
+        b.localName ?? '',
+        b.remote ? 'remote' : 'local',
+      ];
+      return fields.any((f) => f.toLowerCase().contains(q));
+    }).toList();
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
     try {
-      await widget.onCheckout(b);
-      if (mounted) Navigator.pop(context);
+      await action();
+      if (mounted) await widget.onRefresh();
     } catch (e) {
       if (mounted) snack(context, errorText(e));
     }
   }
 
+  Future<void> _checkout(GitBranch b) async {
+    if (b.current) return;
+    await _run(() => widget.onCheckout(b));
+  }
+
   Future<void> _createBranch() async {
     final ctl = TextEditingController(text: _query.trim());
-    String? start;
-    for (final b in _branches) {
-      if (b.current) {
-        start = b.name;
-        break;
-      }
-    }
-    final startCtl = TextEditingController(text: start ?? '');
+    final current = widget.branches
+        .where((b) => b.current)
+        .map((b) => b.name)
+        .firstOrNull;
+    final startCtl = TextEditingController(text: current ?? '');
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -4504,15 +4959,12 @@ class _BranchDialogState extends State<_BranchDialog> {
       if (mounted) snack(context, '分支名不能为空');
       return;
     }
-    try {
-      await widget.onCreate(
+    await _run(
+      () => widget.onCreate(
         branch,
         startCtl.text.trim().isEmpty ? null : startCtl.text.trim(),
-      );
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      if (mounted) snack(context, errorText(e));
-    }
+      ),
+    );
   }
 
   Future<void> _renameBranch(GitBranch b) async {
@@ -4542,12 +4994,7 @@ class _BranchDialogState extends State<_BranchDialog> {
     if (ok != true) return;
     final next = ctl.text.trim();
     if (next.isEmpty || next == b.name) return;
-    try {
-      await widget.onRename(b.name, next);
-      await _load();
-    } catch (e) {
-      if (mounted) snack(context, errorText(e));
-    }
+    await _run(() => widget.onRename(b.name, next));
   }
 
   Future<void> _deleteBranch(GitBranch b, {bool force = false}) async {
@@ -4573,54 +5020,17 @@ class _BranchDialogState extends State<_BranchDialog> {
       ),
     );
     if (ok != true) return;
-    try {
-      await widget.onDelete(b.name, force);
-      await _load();
-    } catch (e) {
-      if (mounted) snack(context, errorText(e));
-    }
-  }
-
-  Future<void> _compareBranch(GitBranch b) async {
-    try {
-      await widget.onCompare(b);
-    } catch (e) {
-      if (mounted) snack(context, errorText(e));
-    }
+    await _run(() => widget.onDelete(b.name, force));
   }
 
   Future<void> _mergeBranch(GitBranch b) async {
     if (b.current) return;
-    try {
-      await widget.onMerge(b);
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      if (mounted) snack(context, errorText(e));
-    }
+    await _run(() => widget.onMerge(b));
   }
 
   Future<void> _rebaseBranch(GitBranch b) async {
     if (b.current) return;
-    try {
-      await widget.onRebase(b);
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      if (mounted) snack(context, errorText(e));
-    }
-  }
-
-  List<GitBranch> get _filteredBranches {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _branches;
-    return _branches.where((b) {
-      final fields = [
-        b.name,
-        b.remoteName ?? '',
-        b.localName ?? '',
-        b.remote ? 'remote' : 'local',
-      ];
-      return fields.any((f) => f.toLowerCase().contains(q));
-    }).toList();
+    await _run(() => widget.onRebase(b));
   }
 
   Widget _branchSection(String label, List<GitBranch> branches, IconData icon) {
@@ -4668,6 +5078,7 @@ class _BranchDialogState extends State<_BranchDialog> {
         : b.remote
         ? 'remote · checkout creates ${b.localName ?? b.name}'
         : 'local branch';
+    final compact = widget.embedded;
     return Material(
       color: b.current
           ? CcColors.accent.withValues(alpha: 0.08)
@@ -4676,7 +5087,7 @@ class _BranchDialogState extends State<_BranchDialog> {
         onTap: b.current ? null : () => _checkout(b),
         onDoubleTap: b.current ? null : () => _checkout(b),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 50),
+          constraints: BoxConstraints(minHeight: compact ? 44 : 50),
           padding: const EdgeInsets.only(left: 12, right: 6),
           decoration: BoxDecoration(
             border: Border(
@@ -4710,7 +5121,7 @@ class _BranchDialogState extends State<_BranchDialog> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: CcType.code(
-                              size: 13,
+                              size: compact ? 12.5 : 13,
                               color: b.current ? CcColors.text : CcColors.muted,
                               weight: b.current
                                   ? FontWeight.w700
@@ -4740,13 +5151,13 @@ class _BranchDialogState extends State<_BranchDialog> {
                   onPressed: () => _checkout(b),
                   child: const Text('Checkout'),
                 ),
-              if (!b.current)
+              if (!b.current && !compact)
                 TextButton(
                   onPressed: () => _mergeBranch(b),
                   child: const Text('Merge'),
                 ),
               TextButton(
-                onPressed: () => _compareBranch(b),
+                onPressed: () => _run(() => widget.onCompare(b)),
                 child: const Text('Compare'),
               ),
               PopupMenuButton<String>(
@@ -4754,7 +5165,7 @@ class _BranchDialogState extends State<_BranchDialog> {
                 tooltip: '分支操作',
                 onSelected: (v) {
                   if (v == 'checkout') _checkout(b);
-                  if (v == 'compare') _compareBranch(b);
+                  if (v == 'compare') _run(() => widget.onCompare(b));
                   if (v == 'merge') _mergeBranch(b);
                   if (v == 'rebase') _rebaseBranch(b);
                   if (v == 'rename') _renameBranch(b);
@@ -4809,102 +5220,77 @@ class _BranchDialogState extends State<_BranchDialog> {
     final branches = _filteredBranches;
     final locals = branches.where((b) => !b.remote).toList();
     final remotes = branches.where((b) => b.remote).toList();
-    return Dialog(
-      child: SizedBox(
-        width: 760,
-        height: 660,
-        child: Column(
-          children: [
-            Container(
-              height: 42,
-              padding: const EdgeInsets.only(left: 14, right: 6),
-              decoration: const BoxDecoration(
-                color: CcColors.panel,
-                border: Border(bottom: BorderSide(color: CcColors.border)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.account_tree_rounded,
-                    size: 17,
-                    color: CcColors.muted,
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+          decoration: const BoxDecoration(
+            color: CcColors.panel,
+            border: Border(bottom: BorderSide(color: CcColors.border)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _queryCtl,
+                  autofocus: !widget.embedded,
+                  decoration: const InputDecoration(
+                    hintText: '搜索或输入新分支名',
+                    isDense: true,
+                    prefixIcon: Icon(Icons.search_rounded, size: 18),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Branches · ${widget.project.name}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.add_rounded, size: 18),
-                    tooltip: '新建分支',
-                    onPressed: _createBranch,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    tooltip: '刷新分支',
-                    onPressed: _load,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-              child: TextField(
-                autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: '搜索或输入新分支名',
-                  isDense: true,
-                  prefixIcon: Icon(Icons.search_rounded, size: 18),
-                ),
-                onChanged: (v) => setState(() => _query = v),
-                onSubmitted: (_) {
-                  GitBranch? exact;
-                  for (final b in branches) {
-                    if (b.name == _query.trim()) {
-                      exact = b;
-                      break;
+                  onChanged: (v) => setState(() => _query = v),
+                  onSubmitted: (_) {
+                    final q = _query.trim();
+                    final exact = branches
+                        .where((b) => b.name == q || b.localName == q)
+                        .firstOrNull;
+                    if (exact != null) {
+                      _checkout(exact);
+                    } else {
+                      _createBranch();
                     }
-                  }
-                  if (exact != null) {
-                    _checkout(exact);
-                  } else {
-                    _createBranch();
-                  }
-                },
+                  },
+                ),
               ),
-            ),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                  ? centerMsg(_error!, onRetry: _load)
-                  : branches.isEmpty
-                  ? centerMsg('没有匹配分支')
-                  : ListView(
-                      children: [
-                        _branchSection(
-                          'Local Branches',
-                          locals,
-                          Icons.account_tree_rounded,
-                        ),
-                        _branchSection(
-                          'Remote Branches',
-                          remotes,
-                          Icons.cloud_queue_rounded,
-                        ),
-                      ],
-                    ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _createBranch,
+                icon: const Icon(Icons.add_rounded, size: 16),
+                label: const Text('New Branch'),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                tooltip: '刷新分支',
+                onPressed: widget.onRefresh,
+              ),
+            ],
+          ),
         ),
-      ),
+        Expanded(
+          child: widget.loading
+              ? const Center(child: CircularProgressIndicator())
+              : widget.error != null
+              ? centerMsg(widget.error!, onRetry: widget.onRefresh)
+              : branches.isEmpty
+              ? centerMsg('没有匹配分支')
+              : ListView(
+                  children: [
+                    _branchSection(
+                      'Local Branches',
+                      locals,
+                      Icons.account_tree_rounded,
+                    ),
+                    _branchSection(
+                      'Remote Branches',
+                      remotes,
+                      Icons.cloud_queue_rounded,
+                    ),
+                  ],
+                ),
+        ),
+      ],
     );
   }
 }
@@ -5091,6 +5477,209 @@ class _SearchHit {
     required this.text,
   });
 }
+
+List<_CodeSymbol> _extractCodeSymbols(String path, String text) {
+  final ext = path.split('.').last.toLowerCase();
+  final symbols = <_CodeSymbol>[];
+  final lines = text.split('\n');
+  final markdown = ext == 'md' || ext == 'markdown';
+
+  for (var i = 0; i < lines.length; i++) {
+    final raw = lines[i];
+    final trimmed = raw.trimLeft();
+    if (trimmed.isEmpty) continue;
+    if (!markdown &&
+        (trimmed.startsWith('//') ||
+            trimmed.startsWith('#') ||
+            trimmed.startsWith('*'))) {
+      continue;
+    }
+    final indent = raw.length - trimmed.length;
+    _CodeSymbol? symbol;
+    switch (ext) {
+      case 'go':
+        symbol = _goSymbol(trimmed, i + 1, indent);
+      case 'dart':
+        symbol = _dartLikeSymbol(trimmed, i + 1, indent);
+      case 'js':
+      case 'jsx':
+      case 'ts':
+      case 'tsx':
+        symbol = _jsLikeSymbol(trimmed, i + 1, indent);
+      case 'py':
+        symbol = _pythonSymbol(trimmed, i + 1, indent);
+      case 'java':
+      case 'kt':
+      case 'kts':
+        symbol = _jvmSymbol(trimmed, i + 1, indent);
+      case 'rs':
+        symbol = _rustSymbol(trimmed, i + 1, indent);
+      case 'md':
+      case 'markdown':
+        symbol = _markdownSymbol(trimmed, i + 1, indent);
+      default:
+        symbol = _genericSymbol(trimmed, i + 1, indent);
+    }
+    if (symbol != null) symbols.add(symbol);
+    if (symbols.length >= 500) break;
+  }
+  return symbols;
+}
+
+_CodeSymbol? _goSymbol(String line, int lineNo, int indent) {
+  var m = RegExp(
+    r'^(?:func\s+\([^)]*\)\s*)?func\s+([A-Za-z_][\w]*)\s*\(',
+  ).firstMatch(line);
+  if (m != null) {
+    return _symbol(m.group(1)!, 'func', lineNo, indent, Icons.functions);
+  }
+  m = RegExp(
+    r'^type\s+([A-Za-z_][\w]*)\s+(struct|interface)\b',
+  ).firstMatch(line);
+  if (m != null) {
+    final kind = m.group(2)!;
+    return _symbol(
+      m.group(1)!,
+      kind,
+      lineNo,
+      indent,
+      kind == 'interface' ? Icons.hub_outlined : Icons.data_object_rounded,
+    );
+  }
+  return null;
+}
+
+_CodeSymbol? _dartLikeSymbol(String line, int lineNo, int indent) {
+  var m = RegExp(
+    r'^(?:abstract\s+|base\s+|final\s+|sealed\s+|mixin\s+)*'
+    r'(class|mixin|enum|extension)\s+([A-Za-z_][\w]*)',
+  ).firstMatch(line);
+  if (m != null) {
+    return _symbol(m.group(2)!, m.group(1)!, lineNo, indent, Icons.category);
+  }
+  m = RegExp(
+    r'^(?:static\s+)?(?:Future<[^>]+>|[\w<>?,\s]+)\s+'
+    r'([A-Za-z_][\w]*)\s*\([^;]*\)\s*(?:async\s*)?[{=>]?',
+  ).firstMatch(line);
+  if (m != null && !_controlWords.contains(m.group(1))) {
+    return _symbol(m.group(1)!, 'method', lineNo, indent, Icons.functions);
+  }
+  return null;
+}
+
+_CodeSymbol? _jsLikeSymbol(String line, int lineNo, int indent) {
+  var m = RegExp(
+    r'^(?:export\s+default\s+|export\s+)?class\s+([\w$]+)',
+  ).firstMatch(line);
+  if (m != null) {
+    return _symbol(m.group(1)!, 'class', lineNo, indent, Icons.category);
+  }
+  m = RegExp(
+    r'^(?:export\s+)?(?:async\s+)?function\s+([\w$]+)\s*\(',
+  ).firstMatch(line);
+  if (m != null) {
+    return _symbol(m.group(1)!, 'function', lineNo, indent, Icons.functions);
+  }
+  m = RegExp(
+    r'^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s*)?'
+    r'(?:\([^)]*\)|[\w$]+)?\s*=>',
+  ).firstMatch(line);
+  if (m != null) {
+    return _symbol(m.group(1)!, 'function', lineNo, indent, Icons.functions);
+  }
+  m = RegExp(r'^([\w$]+)\s*\([^)]*\)\s*\{').firstMatch(line);
+  if (m != null && !_controlWords.contains(m.group(1))) {
+    return _symbol(m.group(1)!, 'method', lineNo, indent, Icons.functions);
+  }
+  return null;
+}
+
+_CodeSymbol? _pythonSymbol(String line, int lineNo, int indent) {
+  final m = RegExp(
+    r'^(class|def|async\s+def)\s+([A-Za-z_][\w]*)',
+  ).firstMatch(line);
+  if (m == null) return null;
+  final kind = m.group(1)!.replaceAll('async ', '');
+  return _symbol(
+    m.group(2)!,
+    kind,
+    lineNo,
+    indent,
+    kind == 'class' ? Icons.category : Icons.functions,
+  );
+}
+
+_CodeSymbol? _jvmSymbol(String line, int lineNo, int indent) {
+  var m = RegExp(
+    r'^(?:[\w\s]+)?(class|interface|enum|object)\s+([\w$]+)',
+  ).firstMatch(line);
+  if (m != null) {
+    return _symbol(m.group(2)!, m.group(1)!, lineNo, indent, Icons.category);
+  }
+  m = RegExp(
+    r'^(?:public|private|protected|internal|static|final|open|override|'
+    r'suspend|fun|\s)+[\w<>\[\]?,\s.]*\s+([\w$]+)\s*\(',
+  ).firstMatch(line);
+  if (m != null && !_controlWords.contains(m.group(1))) {
+    return _symbol(m.group(1)!, 'method', lineNo, indent, Icons.functions);
+  }
+  return null;
+}
+
+_CodeSymbol? _rustSymbol(String line, int lineNo, int indent) {
+  final m = RegExp(
+    r'^(?:pub\s+)?(struct|enum|trait|impl|fn)\s+([A-Za-z_][\w]*)?',
+  ).firstMatch(line);
+  if (m == null) return null;
+  final kind = m.group(1)!;
+  final name = m.group(2) ?? 'impl';
+  return _symbol(
+    name,
+    kind,
+    lineNo,
+    indent,
+    kind == 'fn' ? Icons.functions : Icons.category,
+  );
+}
+
+_CodeSymbol? _markdownSymbol(String line, int lineNo, int indent) {
+  final m = RegExp(r'^(#{1,6})\s+(.+)$').firstMatch(line);
+  if (m == null) return null;
+  return _symbol(
+    m.group(2)!.trim(),
+    'h${m.group(1)!.length}',
+    lineNo,
+    indent + (m.group(1)!.length - 1) * 2,
+    Icons.notes_rounded,
+  );
+}
+
+_CodeSymbol? _genericSymbol(String line, int lineNo, int indent) {
+  final m = RegExp(
+    r'^(?:class|interface|enum|func|function|def)\s+([A-Za-z_][\w]*)',
+  ).firstMatch(line);
+  if (m == null) return null;
+  return _symbol(m.group(1)!, 'symbol', lineNo, indent, Icons.account_tree);
+}
+
+_CodeSymbol _symbol(
+  String name,
+  String kind,
+  int line,
+  int indent,
+  IconData icon,
+) =>
+    _CodeSymbol(name: name, kind: kind, line: line, indent: indent, icon: icon);
+
+const _controlWords = {
+  'if',
+  'for',
+  'while',
+  'switch',
+  'catch',
+  'return',
+  'else',
+};
 
 class _FindInFilesDialog extends StatefulWidget {
   final List<WorkspaceCfg> workspaces;
@@ -5347,6 +5936,158 @@ class _FileLineHit {
   final String text;
 
   const _FileLineHit({required this.line, required this.text});
+}
+
+class _FileStructureDialog extends StatefulWidget {
+  final String path;
+  final List<_CodeSymbol> symbols;
+  const _FileStructureDialog({required this.path, required this.symbols});
+
+  @override
+  State<_FileStructureDialog> createState() => _FileStructureDialogState();
+}
+
+class _FileStructureDialogState extends State<_FileStructureDialog> {
+  final _ctl = TextEditingController();
+  String _query = '';
+
+  List<_CodeSymbol> get _filtered {
+    final q = _query.toLowerCase();
+    if (q.isEmpty) return widget.symbols;
+    return widget.symbols
+        .where(
+          (s) =>
+              s.name.toLowerCase().contains(q) ||
+              s.kind.toLowerCase().contains(q),
+        )
+        .toList();
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.path.split('/').last;
+    final symbols = _filtered;
+    return Dialog(
+      child: SizedBox(
+        width: 680,
+        height: 620,
+        child: Column(
+          children: [
+            Container(
+              height: 42,
+              padding: const EdgeInsets.only(left: 14, right: 6),
+              decoration: const BoxDecoration(
+                color: CcColors.panel,
+                border: Border(bottom: BorderSide(color: CcColors.border)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.account_tree_rounded,
+                    size: 17,
+                    color: CcColors.muted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'File Structure · $name',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  Text(
+                    '${symbols.length}/${widget.symbols.length}',
+                    style: CcType.code(size: 11.5, color: CcColors.subtle),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: TextField(
+                controller: _ctl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Search symbols',
+                  isDense: true,
+                  prefixIcon: Icon(Icons.filter_list_rounded, size: 18),
+                ),
+                onChanged: (v) => setState(() => _query = v.trim()),
+                onSubmitted: (_) {
+                  if (symbols.isNotEmpty) Navigator.pop(context, symbols.first);
+                },
+              ),
+            ),
+            Expanded(
+              child: symbols.isEmpty
+                  ? centerMsg('没有匹配符号')
+                  : ListView.separated(
+                      itemCount: symbols.length,
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 1, color: CcColors.border),
+                      itemBuilder: (_, i) {
+                        final s = symbols[i];
+                        final level = (s.indent ~/ 2).clamp(0, 8).toDouble();
+                        return ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.only(
+                            left: 14 + level * 14,
+                            right: 12,
+                          ),
+                          leading: Icon(
+                            s.icon,
+                            size: 18,
+                            color: CcColors.accentBright,
+                          ),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  s.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: CcType.code(size: 12.5),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                s.kind,
+                                style: CcType.code(
+                                  size: 10.5,
+                                  color: CcColors.subtle,
+                                ),
+                              ),
+                            ],
+                          ),
+                          trailing: Text(
+                            '${s.line}',
+                            style: CcType.code(
+                              size: 11,
+                              color: CcColors.subtle,
+                            ),
+                          ),
+                          onTap: () => Navigator.pop(context, s),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _FindInCurrentFileDialog extends StatefulWidget {
