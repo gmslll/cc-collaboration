@@ -59,12 +59,16 @@ class FileTree extends StatelessWidget {
   final String label;
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
+  final Widget Function(String path)? fileMenuBuilder;
+  final Widget Function(String path)? pathStatusBuilder;
   const FileTree({
     super.key,
     required this.root,
     required this.label,
     required this.onOpenFile,
     this.selectedPath,
+    this.fileMenuBuilder,
+    this.pathStatusBuilder,
   });
 
   @override
@@ -75,6 +79,8 @@ class FileTree extends StatelessWidget {
     initiallyExpanded: true,
     onOpenFile: onOpenFile,
     selectedPath: selectedPath,
+    fileMenuBuilder: fileMenuBuilder,
+    pathStatusBuilder: pathStatusBuilder,
   );
 }
 
@@ -85,6 +91,8 @@ class DirTile extends StatefulWidget {
   final bool initiallyExpanded;
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
+  final Widget Function(String path)? fileMenuBuilder;
+  final Widget Function(String path)? pathStatusBuilder;
   const DirTile({
     super.key,
     required this.dir,
@@ -93,6 +101,8 @@ class DirTile extends StatefulWidget {
     required this.onOpenFile,
     this.initiallyExpanded = false,
     this.selectedPath,
+    this.fileMenuBuilder,
+    this.pathStatusBuilder,
   });
 
   @override
@@ -153,30 +163,66 @@ class _DirTileState extends State<DirTile> {
   @override
   Widget build(BuildContext context) {
     final selectedInDir = _containsSelectedPath;
-    return ExpansionTile(
-      key: PageStorageKey('fb-${widget.dir}'),
-      initiallyExpanded: widget.initiallyExpanded || selectedInDir,
-      onExpansionChanged: (open) {
-        if (open) _loadChildren();
-      },
-      dense: true,
-      visualDensity: const VisualDensity(vertical: -2),
-      tilePadding: EdgeInsets.only(left: 8.0 + widget.depth * 12, right: 8),
-      childrenPadding: EdgeInsets.zero,
-      shape: const Border(),
-      collapsedShape: const Border(),
-      leading: const Icon(
-        Icons.folder_rounded,
-        size: 16,
-        color: CcColors.muted,
+    final selected = widget.selectedPath == widget.dir;
+    final ancestor = selectedInDir && !selected;
+    return Container(
+      decoration: BoxDecoration(
+        color: selected
+            ? CcColors.accent.withValues(alpha: 0.10)
+            : Colors.transparent,
+        border: Border(
+          left: BorderSide(
+            color: selected ? CcColors.accent : Colors.transparent,
+            width: 2,
+          ),
+        ),
       ),
-      title: Text(
-        widget.label,
-        style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      child: ExpansionTile(
+        key: PageStorageKey('fb-${widget.dir}'),
+        initiallyExpanded: widget.initiallyExpanded || selectedInDir,
+        onExpansionChanged: (open) {
+          if (open) _loadChildren();
+        },
+        dense: true,
+        visualDensity: const VisualDensity(vertical: -2),
+        tilePadding: EdgeInsets.only(left: 8.0 + widget.depth * 12, right: 8),
+        childrenPadding: EdgeInsets.zero,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: Icon(
+          Icons.folder_rounded,
+          size: 16,
+          color: selected
+              ? CcColors.accentBright
+              : ancestor
+              ? CcColors.muted
+              : CcColors.subtle,
+        ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  fontFamily: CcType.mono,
+                  fontSize: 12.5,
+                  color: selected ? CcColors.text : null,
+                  fontWeight: selected || ancestor
+                      ? FontWeight.w700
+                      : FontWeight.w400,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (widget.pathStatusBuilder != null) ...[
+              const SizedBox(width: 6),
+              widget.pathStatusBuilder!(widget.dir),
+            ],
+          ],
+        ),
+        children: _childWidgets(),
       ),
-      children: _childWidgets(),
     );
   }
 
@@ -209,6 +255,8 @@ class _DirTileState extends State<DirTile> {
             depth: d,
             onOpenFile: widget.onOpenFile,
             selectedPath: widget.selectedPath,
+            fileMenuBuilder: widget.fileMenuBuilder,
+            pathStatusBuilder: widget.pathStatusBuilder,
           )
         else
           _fileTile(e.path, e.path.split('/').last, d),
@@ -251,6 +299,21 @@ class _DirTileState extends State<DirTile> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
+        trailing:
+            widget.pathStatusBuilder == null && widget.fileMenuBuilder == null
+            ? null
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.pathStatusBuilder != null)
+                    widget.pathStatusBuilder!(path),
+                  if (widget.pathStatusBuilder != null &&
+                      widget.fileMenuBuilder != null)
+                    const SizedBox(width: 2),
+                  if (widget.fileMenuBuilder != null)
+                    widget.fileMenuBuilder!(path),
+                ],
+              ),
         onTap: () => widget.onOpenFile(path),
       ),
     );

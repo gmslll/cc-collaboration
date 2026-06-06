@@ -29,6 +29,10 @@ enum _GitView { changes, log, branches, stash }
 
 enum _LeftToolView { project, structure }
 
+enum _ChangeFilter { all, staged, unstaged, untracked, conflicts }
+
+enum _BranchFilter { all, local, remote, current, unpublished, diverged }
+
 const _searchSkipDirs = {
   '.git',
   'node_modules',
@@ -143,6 +147,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   final List<_CodeLocation> _recentLocations = [];
   String _structureQuery = '';
   String _changesQuery = '';
+  _ChangeFilter _changesFilter = _ChangeFilter.all;
   String _logQuery = '';
   String _logAuthorFilter = '';
   String _logPathFilter = '';
@@ -616,6 +621,22 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     _revealFileInProject(_codeFiles[_activeFile].path);
   }
 
+  void _revealBreadcrumbTarget(
+    ({ProjectCfg project, String rel})? hit,
+    String fallbackPath,
+    int partIndex,
+    List<String> parts,
+  ) {
+    if (hit == null) {
+      _revealFileInProject(fallbackPath);
+      return;
+    }
+    final target = partIndex < 0
+        ? hit.project.path
+        : '${hit.project.path}/${parts.take(partIndex + 1).join('/')}';
+    _revealFileInProject(target);
+  }
+
   Future<void> _showRecentFiles() async {
     if (_recentFiles.isEmpty) {
       _snack('暂无最近文件');
@@ -704,11 +725,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       _snack('没有可搜索的项目');
       return;
     }
-    final path = await showDialog<String>(
+    final loc = await showDialog<_CodeLocation>(
       context: context,
       builder: (_) => _QuickOpenDialog(workspaces: _cfg.workspaces),
     );
-    if (path != null) _openCodeFile(path);
+    if (loc != null) _openCodeFile(loc.path, line: loc.line);
   }
 
   Future<void> _showFindInFiles() async {
@@ -1308,6 +1329,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   void _openTerminalShortcut() => _setBottomTool(_BottomTool.terminal);
 
+  String _shortcutModLabel() => Platform.isMacOS ? 'Cmd' : 'Ctrl';
+
   void _saveActiveFile() {
     if (_activeFile < 0 || _activeFile >= _codeFiles.length) return;
     _codeFiles[_activeFile].key.currentState?.save();
@@ -1766,6 +1789,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   }
 
   Widget _leftToolWindowBar() {
+    final mod = _shortcutModLabel();
     final projectCount = _cfg.workspaces.fold<int>(
       0,
       (sum, ws) => sum + ws.projects.length,
@@ -1775,8 +1799,13 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     final commitCount = _gitLog.length;
     final sessionCount = terms.length;
     final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
+    final gitPulse = _gitStatus == null
+        ? null
+        : _gitStatus!.clean
+        ? 'clean'
+        : '${_gitStatus!.staged + _gitStatus!.modified + _gitStatus!.untracked + _gitStatus!.conflicted}';
     return Container(
-      width: 50,
+      width: 46,
       decoration: const BoxDecoration(
         color: CcColors.toolbar,
         border: Border(right: BorderSide(color: CcColors.border)),
@@ -1792,6 +1821,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   _leftToolButton(
                     icon: Icons.account_tree_outlined,
                     label: 'Project',
+                    tooltip: 'Project · $mod+1',
                     selected:
                         !_projectCollapsed &&
                         _leftToolView == _LeftToolView.project,
@@ -1808,6 +1838,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   _leftToolButton(
                     icon: Icons.schema_rounded,
                     label: 'Structure',
+                    tooltip: hasActiveFile
+                        ? 'Structure · $mod+7'
+                        : 'Structure · 打开文件后可用',
                     selected:
                         !_projectCollapsed &&
                         _leftToolView == _LeftToolView.structure,
@@ -1821,9 +1854,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                       }
                     },
                   ),
+                  _leftToolSeparator('Git'),
                   _leftToolButton(
                     icon: Icons.alt_route_rounded,
                     label: 'Commit',
+                    tooltip: 'Commit · $mod+K / $mod+9',
                     selected:
                         !_terminalCollapsed &&
                         _bottomTool == _BottomTool.git &&
@@ -1835,6 +1870,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   _leftToolButton(
                     icon: Icons.account_tree_rounded,
                     label: 'Branches',
+                    tooltip: 'Branches · $mod+Shift+9',
                     selected:
                         !_terminalCollapsed &&
                         _bottomTool == _BottomTool.git &&
@@ -1846,6 +1882,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   _leftToolButton(
                     icon: Icons.history_rounded,
                     label: 'Log',
+                    tooltip: 'Git Log · $mod+Alt+9',
                     selected:
                         !_terminalCollapsed &&
                         _bottomTool == _BottomTool.git &&
@@ -1854,9 +1891,12 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                     badgeColor: CcColors.ok,
                     onTap: () => _openGitView(_GitView.log),
                   ),
+                  _leftToolSeparator('Run'),
                   _leftToolButton(
                     icon: Icons.terminal_rounded,
                     label: 'Terminal',
+                    tooltip:
+                        'Terminal · ${Platform.isMacOS ? 'Option' : 'Alt'}+F12',
                     selected:
                         !_terminalCollapsed &&
                         _bottomTool == _BottomTool.terminal,
@@ -1867,6 +1907,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   _leftToolButton(
                     icon: Icons.description_outlined,
                     label: 'Handoff',
+                    tooltip: _detailItem == null
+                        ? 'Handoff · 选择任务后可用'
+                        : 'Handoff',
                     selected: _detailItem != null && !_detailCollapsed,
                     enabled: _detailItem != null,
                     badge: _detailItem == null ? null : '1',
@@ -1879,23 +1922,28 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           ),
           const Divider(height: 13, indent: 8, endIndent: 8),
           _leftActionButton(
+            icon: Icons.file_open_outlined,
+            label: 'Quick Open · $mod+O',
+            onTap: _showQuickOpen,
+          ),
+          _leftActionButton(
             icon: Icons.manage_search_rounded,
-            label: 'Search',
+            label: 'Search · $mod+Shift+F',
             onTap: _showFindInFiles,
           ),
           _leftActionButton(
             icon: Icons.data_object_rounded,
-            label: 'Symbols',
+            label: 'Symbols · $mod+Alt+O',
             onTap: _showGoToSymbol,
           ),
           _leftActionButton(
             icon: Icons.history_rounded,
-            label: 'Recent Files',
+            label: 'Recent Files · $mod+E',
             onTap: _showRecentFiles,
           ),
           _leftActionButton(
             icon: Icons.location_history_rounded,
-            label: 'Recent Locations',
+            label: 'Recent Locations · $mod+Shift+E',
             onTap: _showRecentLocations,
           ),
           _leftActionButton(
@@ -1908,28 +1956,80 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             label: 'Refresh',
             onTap: _refresh,
           ),
+          if (gitPulse != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 3, bottom: 2),
+              child: Tooltip(
+                message: _gitStatus!.clean
+                    ? '${_gitStatus!.branch} · clean'
+                    : '${_gitStatus!.branch} · working tree changes',
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 26),
+                  height: 18,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: (_gitStatus!.clean ? CcColors.ok : CcColors.warning)
+                        .withValues(alpha: 0.12),
+                    border: Border.all(
+                      color:
+                          (_gitStatus!.clean ? CcColors.ok : CcColors.warning)
+                              .withValues(alpha: 0.45),
+                    ),
+                    borderRadius: BorderRadius.circular(CcRadius.pill),
+                  ),
+                  child: Text(
+                    gitPulse,
+                    style: CcType.code(
+                      size: 9.5,
+                      color: _gitStatus!.clean ? CcColors.ok : CcColors.warning,
+                      weight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           const SizedBox(height: 6),
         ],
       ),
     );
   }
 
+  Widget _leftToolSeparator(String label) => Padding(
+    padding: const EdgeInsets.fromLTRB(7, 8, 7, 5),
+    child: Row(
+      children: [
+        const Expanded(child: Divider(height: 1, color: CcColors.borderSoft)),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: CcType.code(
+            size: 8.5,
+            color: CcColors.subtle,
+            weight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _leftToolButton({
     required IconData icon,
     required String label,
+    required String tooltip,
     required bool selected,
     required VoidCallback onTap,
     bool enabled = true,
     String? badge,
     Color badgeColor = CcColors.accentBright,
   }) => Tooltip(
-    message: label,
+    message: tooltip,
     preferBelow: false,
     child: InkWell(
       onTap: enabled ? onTap : null,
       child: Container(
-        width: 50,
-        height: 74,
+        width: 46,
+        height: 70,
         decoration: BoxDecoration(
           color: selected
               ? CcColors.accent.withValues(alpha: 0.14)
@@ -1951,7 +2051,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   children: [
                     Icon(
                       icon,
-                      size: 15,
+                      size: 14,
                       color: !enabled
                           ? CcColors.subtle.withValues(alpha: 0.55)
                           : selected
@@ -1969,7 +2069,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                             : selected
                             ? CcColors.text
                             : CcColors.muted,
-                        fontSize: 10.8,
+                        fontSize: 10.4,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -2020,8 +2120,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     child: InkWell(
       onTap: enabled ? onTap : null,
       child: SizedBox(
-        width: 50,
-        height: 34,
+        width: 46,
+        height: 32,
         child: Icon(
           icon,
           size: 17,
@@ -2063,15 +2163,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           Icon(_iconForFile(file.path), size: 15, color: CcColors.muted),
           const SizedBox(width: 8),
           if (hit != null) ...[
-            Text(
-              hit.project.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: CcType.code(
-                size: 11.5,
-                color: CcColors.accentBright,
-                weight: FontWeight.w700,
-              ),
+            _breadcrumbPart(
+              label: hit.project.name,
+              selected: parts.isEmpty,
+              accent: true,
+              onTap: () => _revealBreadcrumbTarget(hit, file.path, -1, parts),
             ),
             if (parts.isNotEmpty)
               const Padding(
@@ -2089,17 +2185,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               child: Row(
                 children: [
                   for (var i = 0; i < parts.length; i++) ...[
-                    Text(
-                      parts[i],
-                      style: CcType.code(
-                        size: 11.5,
-                        color: i == parts.length - 1
-                            ? CcColors.text
-                            : CcColors.muted,
-                        weight: i == parts.length - 1
-                            ? FontWeight.w700
-                            : FontWeight.w400,
-                      ),
+                    _breadcrumbPart(
+                      label: parts[i],
+                      selected: i == parts.length - 1,
+                      onTap: () =>
+                          _revealBreadcrumbTarget(hit, file.path, i, parts),
                     ),
                     if (i != parts.length - 1)
                       const Padding(
@@ -2147,6 +2237,39 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           if (byteText.isNotEmpty)
             _editorMetaChip(Icons.data_object_rounded, byteText),
         ],
+      ),
+    );
+  }
+
+  Widget _breadcrumbPart({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    bool accent = false,
+  }) {
+    final color = accent
+        ? CcColors.accentBright
+        : selected
+        ? CcColors.text
+        : CcColors.muted;
+    return Tooltip(
+      message: 'Reveal $label in Project',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 3),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CcType.code(
+              size: 11.5,
+              color: color,
+              weight: selected || accent ? FontWeight.w700 : FontWeight.w400,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -3405,6 +3528,46 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               onChanged: (v) => setState(() => _changesQuery = v),
             ),
           ),
+          SizedBox(
+            height: 34,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  _changeFilterChip(
+                    _ChangeFilter.all,
+                    'All',
+                    _gitChanges.length,
+                  ),
+                  _changeFilterChip(
+                    _ChangeFilter.staged,
+                    'Staged',
+                    _gitChanges.where((c) => c.staged && !c.conflicted).length,
+                  ),
+                  _changeFilterChip(
+                    _ChangeFilter.unstaged,
+                    'Unstaged',
+                    _gitChanges
+                        .where(
+                          (c) => c.unstaged && !c.untracked && !c.conflicted,
+                        )
+                        .length,
+                  ),
+                  _changeFilterChip(
+                    _ChangeFilter.untracked,
+                    'Untracked',
+                    _gitChanges.where((c) => c.untracked).length,
+                  ),
+                  _changeFilterChip(
+                    _ChangeFilter.conflicts,
+                    'Conflicts',
+                    _gitChanges.where((c) => c.conflicted).length,
+                  ),
+                ],
+              ),
+            ),
+          ),
           Expanded(
             child: visibleChanges.isEmpty
                 ? centerMsg(_gitChanges.isEmpty ? '没有变更' : '没有匹配变更')
@@ -3415,10 +3578,32 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     );
   }
 
+  Widget _changeFilterChip(_ChangeFilter filter, String label, int count) {
+    final selected = _changesFilter == filter;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: FilterChip(
+        selected: selected,
+        showCheckmark: false,
+        visualDensity: VisualDensity.compact,
+        label: Text('$label $count'),
+        onSelected: (_) => setState(() => _changesFilter = filter),
+      ),
+    );
+  }
+
   List<GitChange> get _filteredGitChanges {
     final q = _changesQuery.trim().toLowerCase();
-    if (q.isEmpty) return _gitChanges;
     return _gitChanges.where((c) {
+      final matchesKind = switch (_changesFilter) {
+        _ChangeFilter.all => true,
+        _ChangeFilter.staged => c.staged && !c.conflicted,
+        _ChangeFilter.unstaged => c.unstaged && !c.untracked && !c.conflicted,
+        _ChangeFilter.untracked => c.untracked,
+        _ChangeFilter.conflicts => c.conflicted,
+      };
+      if (!matchesKind) return false;
+      if (q.isEmpty) return true;
       return c.path.toLowerCase().contains(q) ||
           (c.oldPath ?? '').toLowerCase().contains(q) ||
           c.status.toLowerCase().contains(q) ||
@@ -5591,8 +5776,81 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             initiallyExpanded: false,
             onOpenFile: _openCodeFile,
             selectedPath: _revealedProjectFilePath,
+            fileMenuBuilder: (path) => _projectFileMenu(p, path),
+            pathStatusBuilder: (path) => _projectPathStatus(p, path),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _projectPathStatus(ProjectCfg project, String path) {
+    final rel = path == project.path
+        ? ''
+        : path.substring(project.path.length + 1);
+    final isDir = FileSystemEntity.isDirectorySync(path);
+    final changes = isDir
+        ? _gitChanges
+              .where(
+                (c) =>
+                    rel.isEmpty ||
+                    c.path.startsWith('$rel/') ||
+                    (c.oldPath?.startsWith('$rel/') ?? false),
+              )
+              .toList()
+        : _gitChanges.where((c) => c.path == rel || c.oldPath == rel).toList();
+    if (changes.isEmpty) return const SizedBox.shrink();
+    final severity = changes.firstWhere(
+      (c) => c.conflicted,
+      orElse: () => changes.firstWhere(
+        (c) => c.untracked,
+        orElse: () =>
+            changes.firstWhere((c) => c.staged, orElse: () => changes.first),
+      ),
+    );
+    final label = isDir
+        ? '${changes.length}'
+        : severity.conflicted
+        ? '!'
+        : severity.untracked
+        ? 'A'
+        : severity.staged
+        ? 'S'
+        : 'M';
+    final target = rel.isEmpty ? project.name : rel;
+    return Tooltip(
+      message: isDir
+          ? '$target · ${changes.length} changed files'
+          : '${severity.status} · $target',
+      child: tag(label, _changeColor(severity), bold: true),
+    );
+  }
+
+  PopupMenuButton<String> _projectFileMenu(ProjectCfg project, String path) {
+    final rel = path == project.path
+        ? ''
+        : path.substring(project.path.length + 1);
+    return PopupMenuButton<String>(
+      tooltip: 'File actions',
+      icon: const Icon(Icons.more_vert_rounded, size: 16),
+      padding: EdgeInsets.zero,
+      onOpened: () => setState(() => _revealedProjectFilePath = path),
+      onSelected: (v) {
+        if (v == 'open') _openCodeFile(path);
+        if (v == 'copyPath') _copyFilePath(path);
+        if (v == 'reveal') _revealFileInProject(path);
+        if (v == 'compare') _compareProjectFileWithHead(project, rel);
+        if (v == 'history') _showFileHistoryForProjectFile(project, rel);
+        if (v == 'annotate') _showBlameForProjectFile(project, rel);
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'open', child: Text('Open')),
+        PopupMenuItem(value: 'copyPath', child: Text('Copy Path')),
+        PopupMenuItem(value: 'reveal', child: Text('Reveal in Project')),
+        PopupMenuDivider(),
+        PopupMenuItem(value: 'compare', child: Text('Compare with HEAD')),
+        PopupMenuItem(value: 'history', child: Text('File History')),
+        PopupMenuItem(value: 'annotate', child: Text('Annotate / Blame')),
       ],
     );
   }
@@ -6320,6 +6578,7 @@ class _BranchListPane extends StatefulWidget {
 class _BranchListPaneState extends State<_BranchListPane> {
   final _queryCtl = TextEditingController();
   String _query = '';
+  _BranchFilter _filter = _BranchFilter.all;
 
   @override
   void dispose() {
@@ -6329,8 +6588,17 @@ class _BranchListPaneState extends State<_BranchListPane> {
 
   List<GitBranch> get _filteredBranches {
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return widget.branches;
     return widget.branches.where((b) {
+      final matchesFilter = switch (_filter) {
+        _BranchFilter.all => true,
+        _BranchFilter.local => !b.remote,
+        _BranchFilter.remote => b.remote,
+        _BranchFilter.current => b.current,
+        _BranchFilter.unpublished => !b.remote && b.upstream.isEmpty,
+        _BranchFilter.diverged => b.ahead > 0 || b.behind > 0,
+      };
+      if (!matchesFilter) return false;
+      if (q.isEmpty) return true;
       final fields = [
         b.name,
         b.remoteName ?? '',
@@ -6339,9 +6607,25 @@ class _BranchListPaneState extends State<_BranchListPane> {
         b.lastHash,
         b.lastSubject,
         b.remote ? 'remote' : 'local',
+        if (b.current) 'current',
+        if (!b.remote && b.upstream.isEmpty) 'unpublished',
+        if (b.ahead > 0 || b.behind > 0) 'diverged ahead behind',
       ];
       return fields.any((f) => f.toLowerCase().contains(q));
     }).toList();
+  }
+
+  int _countBranches(_BranchFilter filter) {
+    return widget.branches.where((b) {
+      return switch (filter) {
+        _BranchFilter.all => true,
+        _BranchFilter.local => !b.remote,
+        _BranchFilter.remote => b.remote,
+        _BranchFilter.current => b.current,
+        _BranchFilter.unpublished => !b.remote && b.upstream.isEmpty,
+        _BranchFilter.diverged => b.ahead > 0 || b.behind > 0,
+      };
+    }).length;
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -6529,6 +6813,79 @@ class _BranchListPaneState extends State<_BranchListPane> {
   Future<void> _rebaseBranch(GitBranch b) async {
     if (b.current) return;
     await _run(() => widget.onRebase(b));
+  }
+
+  Widget _branchScopeChip(_BranchFilter filter, String label) {
+    final selected = _filter == filter;
+    final count = _countBranches(filter);
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: FilterChip(
+        selected: selected,
+        showCheckmark: false,
+        visualDensity: VisualDensity.compact,
+        label: Text('$label $count'),
+        onSelected: (_) => setState(() => _filter = filter),
+      ),
+    );
+  }
+
+  Widget _branchesSummary() {
+    final current = widget.branches.where((b) => b.current).firstOrNull;
+    final localCount = _countBranches(_BranchFilter.local);
+    final remoteCount = _countBranches(_BranchFilter.remote);
+    final unpublishedCount = _countBranches(_BranchFilter.unpublished);
+    final divergedCount = _countBranches(_BranchFilter.diverged);
+    final currentLabel = current == null
+        ? 'No current branch'
+        : [
+            current.name,
+            if (current.upstream.isNotEmpty) current.upstream,
+            if (current.ahead > 0 || current.behind > 0)
+              '↑${current.ahead} ↓${current.behind}',
+          ].join(' · ');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 7),
+      decoration: const BoxDecoration(
+        color: CcColors.editor,
+        border: Border(bottom: BorderSide(color: CcColors.border)),
+      ),
+      child: Wrap(
+        spacing: 7,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          tag(currentLabel, current == null ? CcColors.muted : CcColors.ok),
+          tag('$localCount local', CcColors.muted),
+          tag('$remoteCount remote', CcColors.muted),
+          if (unpublishedCount > 0)
+            tag('$unpublishedCount unpublished', CcColors.warning),
+          if (divergedCount > 0)
+            tag('$divergedCount ahead/behind', CcColors.warning),
+        ],
+      ),
+    );
+  }
+
+  Widget _branchScopeBar() {
+    return SizedBox(
+      height: 36,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            _branchScopeChip(_BranchFilter.all, 'All'),
+            _branchScopeChip(_BranchFilter.local, 'Local'),
+            _branchScopeChip(_BranchFilter.remote, 'Remote'),
+            _branchScopeChip(_BranchFilter.current, 'Current'),
+            _branchScopeChip(_BranchFilter.unpublished, 'Unpublished'),
+            _branchScopeChip(_BranchFilter.diverged, 'Ahead/Behind'),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _branchSection(String label, List<GitBranch> branches, IconData icon) {
@@ -6825,13 +7182,15 @@ class _BranchListPaneState extends State<_BranchListPane> {
             ],
           ),
         ),
+        _branchesSummary(),
+        _branchScopeBar(),
         Expanded(
           child: widget.loading
               ? const Center(child: CircularProgressIndicator())
               : widget.error != null
               ? centerMsg(widget.error!, onRetry: widget.onRefresh)
               : branches.isEmpty
-              ? centerMsg('没有匹配分支')
+              ? centerMsg(widget.branches.isEmpty ? '没有分支' : '没有匹配分支')
               : ListView(
                   children: [
                     _branchSection(
@@ -6925,9 +7284,21 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
     }
   }
 
+  ({String query, int? line}) _parseQuery(String raw) {
+    final trimmed = raw.trim();
+    final match = RegExp(r'^(.*):(\d+)$').firstMatch(trimmed);
+    if (match == null) return (query: trimmed, line: null);
+    return (query: match.group(1)!.trim(), line: int.tryParse(match.group(2)!));
+  }
+
+  void _openMatch(({String label, String path}) file, int? line) {
+    Navigator.pop(context, _CodeLocation(file.path, line: line));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final q = _query.trim().toLowerCase();
+    final parsed = _parseQuery(_query);
+    final q = parsed.query.toLowerCase();
     final filtered = q.isEmpty
         ? _files.take(80).toList()
         : _files
@@ -6974,14 +7345,14 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
                 controller: _ctl,
                 autofocus: true,
                 decoration: const InputDecoration(
-                  hintText: '输入文件名或路径',
+                  hintText: '输入文件名、路径或 file:line',
                   isDense: true,
                   prefixIcon: Icon(Icons.search_rounded, size: 18),
                 ),
                 onChanged: (v) => setState(() => _query = v),
                 onSubmitted: (_) {
                   if (filtered.isNotEmpty) {
-                    Navigator.pop(context, filtered.first.path);
+                    _openMatch(filtered.first, parsed.line);
                   }
                 },
               ),
@@ -7007,7 +7378,10 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
                             overflow: TextOverflow.ellipsis,
                             style: CcType.code(size: 12.5),
                           ),
-                          onTap: () => Navigator.pop(context, f.path),
+                          trailing: parsed.line == null
+                              ? null
+                              : tag('line ${parsed.line}', CcColors.accent),
+                          onTap: () => _openMatch(f, parsed.line),
                         );
                       },
                     ),
