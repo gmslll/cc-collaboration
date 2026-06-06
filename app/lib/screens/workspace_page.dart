@@ -1671,6 +1671,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             selected: !_terminalCollapsed && _bottomTool == _BottomTool.git,
             onPressed: () => _openGitView(_GitView.changes),
           ),
+          _vcsOperationsMenu(),
           const VerticalDivider(width: 14),
           _toolButton(
             icon: Icons.arrow_back_rounded,
@@ -1817,6 +1818,238 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       ),
     ),
   );
+
+  PopupMenuButton<String> _vcsOperationsMenu() {
+    final p = _gitProject ?? _defaultProject()?.project;
+    final status = p == null ? null : _gitStatus;
+    final dirtyTotal = status == null
+        ? 0
+        : status.staged +
+              status.modified +
+              status.untracked +
+              status.conflicted;
+    final canStageAll =
+        status == null || status.modified > 0 || status.untracked > 0;
+    final canUnstageAll = status == null || status.staged > 0;
+    final canRollbackAll = status == null || dirtyTotal > 0;
+    final mod = _shortcutModLabel();
+    return PopupMenuButton<String>(
+      tooltip: p == null ? 'VCS Operations · 没有项目' : 'VCS Operations',
+      enabled: p != null,
+      padding: EdgeInsets.zero,
+      icon: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Icon(Icons.hub_rounded, size: 18),
+          if (dirtyTotal > 0)
+            Positioned(
+              right: -4,
+              top: -4,
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 15),
+                height: 15,
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: status?.conflicted == 0
+                      ? CcColors.warning
+                      : CcColors.danger,
+                  borderRadius: BorderRadius.circular(CcRadius.pill),
+                ),
+                child: Text(
+                  '$dirtyTotal',
+                  style: CcType.code(
+                    size: 8.5,
+                    color: CcColors.bg,
+                    weight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      onOpened: () {
+        if (p != null) _selectGitProject(p);
+      },
+      onSelected: (v) {
+        if (p == null) return;
+        _selectGitProject(p);
+        if (v == 'changes') _openLeftTool(_LeftToolView.changes);
+        if (v == 'workingDiff') _showWorkingTreeDiff(p);
+        if (v == 'commit') _openCommitFlow(p);
+        if (v == 'log') _openLeftTool(_LeftToolView.log);
+        if (v == 'branches') _openLeftTool(_LeftToolView.branches);
+        if (v == 'stash') _openLeftTool(_LeftToolView.stash);
+        if (v == 'branchPopup') _showBranchDialog();
+        if (v == 'newBranch') _showCreateBranchQuick(p);
+        if (v == 'fetch') _gitFetchCurrent(p);
+        if (v == 'fetchPrune') _gitFetchCurrent(p, prune: true);
+        if (v == 'pull') _gitPullCurrent(p);
+        if (v == 'pullRebase') _gitPullRebaseCurrent(p);
+        if (v == 'push') _gitPushCurrent(p);
+        if (v == 'stageAll') _gitStageAllCurrent(p);
+        if (v == 'unstageAll') _gitUnstageAllCurrent(p);
+        if (v == 'stashPush') _stashPushCurrent(p);
+        if (v == 'rollbackAll') _gitDiscardAllCurrent(p);
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem<String>(
+          enabled: false,
+          child: Row(
+            children: [
+              const Icon(
+                Icons.account_tree_rounded,
+                size: 16,
+                color: CcColors.muted,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  status == null
+                      ? p?.name ?? 'No Git project'
+                      : '${status.branch} · ${status.clean ? 'clean' : '$dirtyTotal changes'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 12, color: CcColors.text),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        _vcsMenuItem(
+          value: 'changes',
+          icon: Icons.list_alt_rounded,
+          label: 'Open Changes',
+          shortcut: '$mod+9',
+        ),
+        _vcsMenuItem(
+          value: 'workingDiff',
+          icon: Icons.difference_rounded,
+          label: 'Show Working Tree Diff',
+        ),
+        _vcsMenuItem(
+          value: 'commit',
+          icon: Icons.check_circle_outline_rounded,
+          label: 'Commit...',
+          shortcut: '$mod+K',
+        ),
+        _vcsMenuItem(
+          value: 'log',
+          icon: Icons.history_rounded,
+          label: 'Open Git Log',
+          shortcut: '$mod+Alt+9',
+        ),
+        _vcsMenuItem(
+          value: 'branches',
+          icon: Icons.account_tree_rounded,
+          label: 'Open Branches',
+          shortcut: '$mod+Shift+9',
+        ),
+        _vcsMenuItem(
+          value: 'stash',
+          icon: Icons.inventory_2_outlined,
+          label: 'Open Stash',
+        ),
+        const PopupMenuDivider(),
+        _vcsMenuItem(
+          value: 'branchPopup',
+          icon: Icons.call_split_rounded,
+          label: 'Branches Popup...',
+        ),
+        _vcsMenuItem(
+          value: 'newBranch',
+          icon: Icons.add_rounded,
+          label: 'New Branch...',
+        ),
+        const PopupMenuDivider(),
+        _vcsMenuItem(value: 'fetch', icon: Icons.sync_rounded, label: 'Fetch'),
+        _vcsMenuItem(
+          value: 'fetchPrune',
+          icon: Icons.cleaning_services_outlined,
+          label: 'Fetch --prune',
+        ),
+        _vcsMenuItem(
+          value: 'pull',
+          icon: Icons.call_received_rounded,
+          label: 'Pull --ff-only',
+        ),
+        _vcsMenuItem(
+          value: 'pullRebase',
+          icon: Icons.vertical_align_top_rounded,
+          label: 'Pull --rebase',
+        ),
+        _vcsMenuItem(
+          value: 'push',
+          icon: Icons.upload_rounded,
+          label: 'Push',
+          shortcut: '$mod+Shift+K',
+        ),
+        const PopupMenuDivider(),
+        _vcsMenuItem(
+          value: canStageAll ? 'stageAll' : null,
+          icon: Icons.add_task_rounded,
+          label: 'Stage All',
+        ),
+        _vcsMenuItem(
+          value: canUnstageAll ? 'unstageAll' : null,
+          icon: Icons.remove_done_rounded,
+          label: 'Unstage All',
+        ),
+        _vcsMenuItem(
+          value: 'stashPush',
+          icon: Icons.archive_outlined,
+          label: 'Stash Changes...',
+        ),
+        _vcsMenuItem(
+          value: canRollbackAll ? 'rollbackAll' : null,
+          icon: Icons.restore_rounded,
+          label: 'Rollback All...',
+          danger: true,
+        ),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _vcsMenuItem({
+    required String? value,
+    required IconData icon,
+    required String label,
+    String? shortcut,
+    bool danger = false,
+  }) {
+    final enabled = value != null;
+    final color = !enabled
+        ? CcColors.subtle
+        : danger
+        ? CcColors.danger
+        : CcColors.muted;
+    return PopupMenuItem<String>(
+      value: value,
+      enabled: enabled,
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: danger && enabled
+                  ? const TextStyle(color: CcColors.danger)
+                  : null,
+            ),
+          ),
+          if (shortcut != null) ...[
+            const SizedBox(width: 18),
+            Text(
+              shortcut,
+              style: CcType.code(size: 11, color: CcColors.subtle),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   Widget _runChip(String label, IconData icon, VoidCallback onPressed) =>
       Padding(
