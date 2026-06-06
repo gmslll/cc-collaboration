@@ -27,11 +27,13 @@ enum _BottomTool { terminal, git }
 
 enum _GitView { changes, log, branches, stash }
 
-enum _LeftToolView { project, structure }
+enum _LeftToolView { project, structure, changes, branches, log, stash }
 
 enum _ChangeFilter { all, staged, unstaged, untracked, conflicts }
 
 enum _BranchFilter { all, local, remote, current, unpublished, diverged }
+
+const _workingTreeDiffSelection = '__working_tree_diff__';
 
 const _searchSkipDirs = {
   '.git',
@@ -161,10 +163,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     'ws.projectAutoscrollFromSource',
   );
   String? _revealedProjectFilePath;
-  _LeftToolView _leftToolView =
-      Prefs.getString('ws.leftTool', def: 'project') == 'structure'
-      ? _LeftToolView.structure
-      : _LeftToolView.project;
+  _LeftToolView _leftToolView = _leftToolViewFromPref(
+    Prefs.getString('ws.leftTool', def: 'project'),
+  );
   bool _detailCollapsed = Prefs.getBool('ws.detailCollapsed');
   bool _terminalCollapsed = Prefs.getBool('ws.terminalCollapsed');
   double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 340);
@@ -175,6 +176,32 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   @override
   String? get persistKey => 'workspace_sessions';
+
+  static _LeftToolView _leftToolViewFromPref(String value) => switch (value) {
+    'structure' => _LeftToolView.structure,
+    'changes' => _LeftToolView.changes,
+    'branches' => _LeftToolView.branches,
+    'log' => _LeftToolView.log,
+    'stash' => _LeftToolView.stash,
+    _ => _LeftToolView.project,
+  };
+
+  static String _leftToolPref(_LeftToolView view) => switch (view) {
+    _LeftToolView.project => 'project',
+    _LeftToolView.structure => 'structure',
+    _LeftToolView.changes => 'changes',
+    _LeftToolView.branches => 'branches',
+    _LeftToolView.log => 'log',
+    _LeftToolView.stash => 'stash',
+  };
+
+  static _GitView? _gitViewForLeftTool(_LeftToolView view) => switch (view) {
+    _LeftToolView.changes => _GitView.changes,
+    _LeftToolView.branches => _GitView.branches,
+    _LeftToolView.log => _GitView.log,
+    _LeftToolView.stash => _GitView.stash,
+    _ => null,
+  };
 
   @override
   void initState() {
@@ -354,8 +381,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         if (_selectedCommit == null && log.isNotEmpty) {
           _selectedCommit = log.first.hash;
         }
-        if (_selectedGitPath == null ||
-            !_gitFiles.any((f) => f.path == _selectedGitPath)) {
+        if (_selectedGitPath != _workingTreeDiffSelection &&
+            (_selectedGitPath == null ||
+                !_gitFiles.any((f) => f.path == _selectedGitPath))) {
           _selectedGitPath = _gitFiles.isEmpty ? null : _gitFiles.first.path;
         }
         _gitLoading = false;
@@ -885,6 +913,33 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     if (hit != null) _openCodeFile(hit.path, line: hit.line);
   }
 
+  Future<void> _showFindUsagesForActiveFile() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
+      _snack('没有打开的文件');
+      return;
+    }
+    final file = _codeFiles[_activeFile];
+    final text = file.key.currentState?.text;
+    if (text == null) {
+      _snack('文件仍在加载');
+      return;
+    }
+    final symbols = _extractCodeSymbols(file.path, text);
+    if (symbols.isEmpty) {
+      _snack('当前文件没有可搜索的结构符号');
+      return;
+    }
+    final hit = await showDialog<_SearchHit>(
+      context: context,
+      builder: (_) => _FindUsagesDialog(
+        workspaces: _cfg.workspaces,
+        sourcePath: file.path,
+        symbols: symbols,
+      ),
+    );
+    if (hit != null) _openCodeFile(hit.path, line: hit.line);
+  }
+
   Future<void> _showShortcuts() async {
     final isMac = Platform.isMacOS;
     final mod = isMac ? 'Cmd' : 'Ctrl';
@@ -894,6 +949,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       ('$mod+G', '跳转行号'),
       ('$mod+F12', '文件结构'),
       ('$mod+Alt+O', '跳转符号'),
+      ('$mod+Alt+F7', '查找当前文件符号引用'),
+      ('$mod+Alt+H', '打开当前文件 Git Log'),
+      ('$mod+Alt+D', '打开当前文件工作区 Diff'),
       ('$mod+Alt+←/→', '代码导航后退/前进'),
       ('$mod+Shift+[/]', '切换编辑器 tab'),
       ('$mod+W', '关闭当前编辑器 tab'),
@@ -1161,6 +1219,24 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           control: true,
           alt: true,
         ): _showGoToSymbol,
+        const SingleActivator(LogicalKeyboardKey.f7, meta: true, alt: true):
+            _showFindUsagesForActiveFile,
+        const SingleActivator(LogicalKeyboardKey.f7, control: true, alt: true):
+            _showFindUsagesForActiveFile,
+        const SingleActivator(LogicalKeyboardKey.keyH, meta: true, alt: true):
+            _openActiveFileGitLog,
+        const SingleActivator(
+          LogicalKeyboardKey.keyH,
+          control: true,
+          alt: true,
+        ): _openActiveFileGitLog,
+        const SingleActivator(LogicalKeyboardKey.keyD, meta: true, alt: true):
+            _openActiveFileWorkingTreeDiff,
+        const SingleActivator(
+          LogicalKeyboardKey.keyD,
+          control: true,
+          alt: true,
+        ): _openActiveFileWorkingTreeDiff,
         const SingleActivator(
           LogicalKeyboardKey.arrowLeft,
           meta: true,
@@ -1314,11 +1390,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   void _openStructureShortcut() => _openLeftTool(_LeftToolView.structure);
 
-  void _openGitShortcut() => _openGitView(_GitView.changes);
+  void _openGitShortcut() => _openLeftTool(_LeftToolView.changes);
 
-  void _openBranchesShortcut() => _openGitView(_GitView.branches);
+  void _openBranchesShortcut() => _openLeftTool(_LeftToolView.branches);
 
-  void _openLogShortcut() => _openGitView(_GitView.log);
+  void _openLogShortcut() => _openLeftTool(_LeftToolView.log);
 
   void _pushShortcut() {
     final p = _gitProject ?? _defaultProject()?.project;
@@ -1397,6 +1473,75 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       context: context,
       builder: (_) => _FileHistoryDialog(project: project, relPath: relPath),
     );
+  }
+
+  Future<void> _openActiveFileGitLog() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
+      _snack('没有打开的文件');
+      return;
+    }
+    await _openFileGitLog(_codeFiles[_activeFile].path);
+  }
+
+  Future<void> _openFileGitLog(String path) async {
+    final hit = _projectForFile(path);
+    if (hit == null || hit.rel.isEmpty) {
+      _snack('找不到文件所属项目');
+      return;
+    }
+    setState(() {
+      _gitProject = hit.project;
+      _gitView = _GitView.log;
+      _bottomTool = _BottomTool.git;
+      _terminalCollapsed = false;
+      _logPathFilter = hit.rel;
+      _compareTitle = null;
+      _compareFiles = const [];
+      _commitFiles = const [];
+      _selectedCommit = null;
+    });
+    Prefs.setString('ws.bottomTool', 'git');
+    Prefs.setBool('ws.terminalCollapsed', false);
+    await _refreshGit();
+  }
+
+  Future<void> _openActiveFileWorkingTreeDiff() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
+      _snack('没有打开的文件');
+      return;
+    }
+    await _openFileWorkingTreeDiff(_codeFiles[_activeFile].path);
+  }
+
+  Future<void> _openFileWorkingTreeDiff(String path) async {
+    final hit = _projectForFile(path);
+    if (hit == null || hit.rel.isEmpty) {
+      _snack('找不到文件所属项目');
+      return;
+    }
+    setState(() {
+      _gitProject = hit.project;
+      _gitView = _GitView.changes;
+      _bottomTool = _BottomTool.git;
+      _terminalCollapsed = false;
+      _selectedGitPath = hit.rel;
+      _selectedChangePaths
+        ..clear()
+        ..add(hit.rel);
+    });
+    Prefs.setString('ws.bottomTool', 'git');
+    Prefs.setBool('ws.terminalCollapsed', false);
+    await _refreshGit();
+    if (!mounted) return;
+    final hasDiff = _gitFiles.any((f) => f.path == hit.rel);
+    final hasChange = _gitChanges.any(
+      (c) => c.path == hit.rel || c.oldPath == hit.rel,
+    );
+    if (!hasDiff && !hasChange) {
+      _snack('当前文件没有工作区改动');
+    } else {
+      setState(() => _selectedGitPath = hit.rel);
+    }
   }
 
   Future<void> _compareActiveFileWithHead() async {
@@ -1603,13 +1748,13 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   void _openLeftTool(_LeftToolView view) {
     setState(() {
       _leftToolView = view;
+      final gitView = _gitViewForLeftTool(view);
+      if (gitView != null) _gitView = gitView;
       _projectCollapsed = false;
     });
-    Prefs.setString(
-      'ws.leftTool',
-      view == _LeftToolView.structure ? 'structure' : 'project',
-    );
+    Prefs.setString('ws.leftTool', _leftToolPref(view));
     Prefs.setBool('ws.projectCollapsed', false);
+    if (_gitViewForLeftTool(view) != null) _refreshGit();
   }
 
   void _setDetailCollapsed(bool v) {
@@ -1862,36 +2007,72 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                     label: 'Commit',
                     tooltip: 'Commit · $mod+K / $mod+9',
                     selected:
-                        !_terminalCollapsed &&
-                        _bottomTool == _BottomTool.git &&
-                        _gitView == _GitView.changes,
+                        !_projectCollapsed &&
+                        _leftToolView == _LeftToolView.changes,
                     badge: changeCount == 0 ? null : '$changeCount',
                     badgeColor: CcColors.warning,
-                    onTap: () => _openGitView(_GitView.changes),
+                    onTap: () {
+                      if (!_projectCollapsed &&
+                          _leftToolView == _LeftToolView.changes) {
+                        _setProjectCollapsed(true);
+                      } else {
+                        _openLeftTool(_LeftToolView.changes);
+                      }
+                    },
                   ),
                   _leftToolButton(
                     icon: Icons.account_tree_rounded,
                     label: 'Branches',
                     tooltip: 'Branches · $mod+Shift+9',
                     selected:
-                        !_terminalCollapsed &&
-                        _bottomTool == _BottomTool.git &&
-                        _gitView == _GitView.branches,
+                        !_projectCollapsed &&
+                        _leftToolView == _LeftToolView.branches,
                     badge: branchCount == 0 ? null : '$branchCount',
                     badgeColor: CcColors.accentBright,
-                    onTap: () => _openGitView(_GitView.branches),
+                    onTap: () {
+                      if (!_projectCollapsed &&
+                          _leftToolView == _LeftToolView.branches) {
+                        _setProjectCollapsed(true);
+                      } else {
+                        _openLeftTool(_LeftToolView.branches);
+                      }
+                    },
                   ),
                   _leftToolButton(
                     icon: Icons.history_rounded,
                     label: 'Log',
                     tooltip: 'Git Log · $mod+Alt+9',
                     selected:
-                        !_terminalCollapsed &&
-                        _bottomTool == _BottomTool.git &&
-                        _gitView == _GitView.log,
+                        !_projectCollapsed &&
+                        _leftToolView == _LeftToolView.log,
                     badge: commitCount == 0 ? null : '$commitCount',
                     badgeColor: CcColors.ok,
-                    onTap: () => _openGitView(_GitView.log),
+                    onTap: () {
+                      if (!_projectCollapsed &&
+                          _leftToolView == _LeftToolView.log) {
+                        _setProjectCollapsed(true);
+                      } else {
+                        _openLeftTool(_LeftToolView.log);
+                      }
+                    },
+                  ),
+                  _leftToolButton(
+                    icon: Icons.inventory_2_outlined,
+                    label: 'Stash',
+                    tooltip: 'Stash',
+                    selected:
+                        !_projectCollapsed &&
+                        _leftToolView == _LeftToolView.stash,
+                    badge: _gitStashes.isEmpty ? null : '${_gitStashes.length}',
+                    badgeColor: CcColors.accentBright,
+                    onTap: () {
+                      if (!_projectCollapsed &&
+                          _leftToolView == _LeftToolView.stash) {
+                        _setProjectCollapsed(true);
+                      } else {
+                        _openLeftTool(_LeftToolView.stash);
+                      }
+                    },
                   ),
                   _leftToolSeparator('Run'),
                   _leftToolButton(
@@ -2153,6 +2334,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     final parts = rel.split('/').where((p) => p.isNotEmpty).toList();
     final bytes = state?.fileBytes;
     final byteText = bytes == null ? '' : _formatBytes(bytes);
+    final change = _fileGitChange(file.path);
     return Container(
       height: 32,
       padding: const EdgeInsets.only(left: 10, right: 8),
@@ -2208,6 +2390,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             ),
           ),
           const SizedBox(width: 8),
+          if (change != null) ...[
+            tag(_gitChangeLongLabel(change), _changeColor(change), bold: true),
+            const SizedBox(width: 6),
+          ],
           if (file.dirty) tag('modified', CcColors.warning),
           if (file.line != null)
             tag('line ${file.line}', CcColors.accentBright),
@@ -2311,15 +2497,18 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               itemCount: _codeFiles.length,
-              itemBuilder: (_, i) => _editorTab(
-                icon: _iconForFile(_codeFiles[i].path),
-                label:
-                    '${_codeFiles[i].dirty ? '● ' : ''}${_codeFiles[i].name}',
-                active: i == _activeFile,
-                onTap: () => _activateCodeTab(i),
-                onClose: () => _closeCodeFile(i),
-                tabMenu: _editorFileTabMenu(i),
-              ),
+              itemBuilder: (_, i) {
+                final file = _codeFiles[i];
+                return _editorTab(
+                  icon: _iconForFile(file.path),
+                  label: '${file.dirty ? '● ' : ''}${file.name}',
+                  active: i == _activeFile,
+                  change: _fileGitChange(file.path),
+                  onTap: () => _activateCodeTab(i),
+                  onClose: () => _closeCodeFile(i),
+                  tabMenu: _editorFileTabMenu(i),
+                );
+              },
             ),
           ),
           if (_detailItem != null)
@@ -2359,16 +2548,34 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               onPressed: _showFindInCurrentFile,
             ),
             IconButton(
+              icon: const Icon(Icons.travel_explore_rounded, size: 17),
+              tooltip: 'Find Usages',
+              visualDensity: VisualDensity.compact,
+              onPressed: _showFindUsagesForActiveFile,
+            ),
+            IconButton(
               icon: const Icon(Icons.compare_arrows_rounded, size: 17),
               tooltip: 'Compare with HEAD',
               visualDensity: VisualDensity.compact,
               onPressed: _compareActiveFileWithHead,
             ),
             IconButton(
+              icon: const Icon(Icons.difference_rounded, size: 17),
+              tooltip: 'Open File Working Tree Diff',
+              visualDensity: VisualDensity.compact,
+              onPressed: _openActiveFileWorkingTreeDiff,
+            ),
+            IconButton(
               icon: const Icon(Icons.history_rounded, size: 17),
               tooltip: 'File History',
               visualDensity: VisualDensity.compact,
               onPressed: _showFileHistoryForActiveFile,
+            ),
+            IconButton(
+              icon: const Icon(Icons.manage_history_rounded, size: 17),
+              tooltip: 'Open File Git Log',
+              visualDensity: VisualDensity.compact,
+              onPressed: _openActiveFileGitLog,
             ),
             IconButton(
               icon: const Icon(Icons.person_search_rounded, size: 17),
@@ -2403,6 +2610,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     required VoidCallback onTap,
     VoidCallback? onClose,
     PopupMenuButton<String>? tabMenu,
+    GitChange? change,
   }) => InkWell(
     onTap: onTap,
     onSecondaryTap: () {
@@ -2431,6 +2639,33 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             color: active ? CcColors.accentBright : CcColors.muted,
           ),
           const SizedBox(width: 7),
+          if (change != null) ...[
+            Tooltip(
+              message: _gitChangeLongLabel(change),
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 16),
+                height: 16,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _changeColor(change).withValues(alpha: 0.14),
+                  border: Border.all(
+                    color: _changeColor(change).withValues(alpha: 0.45),
+                  ),
+                  borderRadius: BorderRadius.circular(CcRadius.pill),
+                ),
+                child: Text(
+                  _gitChangeShortLabel(change),
+                  style: CcType.code(
+                    size: 9.5,
+                    color: _changeColor(change),
+                    weight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           Flexible(
             child: Text(
               label,
@@ -2474,6 +2709,24 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       onSelected: (v) {
         if (v == 'copyPath') _copyFilePath(file.path);
         if (v == 'reveal') _revealFileInProject(file.path);
+        if (v == 'workingDiff') _openFileWorkingTreeDiff(file.path);
+        if (v == 'fileLog') _openFileGitLog(file.path);
+        if (v == 'history') {
+          final hit = _projectForFile(file.path);
+          if (hit == null || hit.rel.isEmpty) {
+            _snack('找不到文件所属项目');
+          } else {
+            _showFileHistoryForProjectFile(hit.project, hit.rel);
+          }
+        }
+        if (v == 'annotate') {
+          final hit = _projectForFile(file.path);
+          if (hit == null || hit.rel.isEmpty) {
+            _snack('找不到文件所属项目');
+          } else {
+            _showBlameForProjectFile(hit.project, hit.rel);
+          }
+        }
         if (v == 'close') _closeCodeFile(index);
         if (v == 'closeOthers') _closeOtherCodeFiles(index);
         if (v == 'closeRight') _closeCodeFilesToRight(index);
@@ -2483,6 +2736,14 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       itemBuilder: (_) => [
         const PopupMenuItem(value: 'copyPath', child: Text('Copy Path')),
         const PopupMenuItem(value: 'reveal', child: Text('Reveal in Project')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'workingDiff',
+          child: Text('Open File Working Tree Diff'),
+        ),
+        const PopupMenuItem(value: 'fileLog', child: Text('Open File Git Log')),
+        const PopupMenuItem(value: 'history', child: Text('File History')),
+        const PopupMenuItem(value: 'annotate', child: Text('Annotate / Blame')),
         const PopupMenuDivider(),
         const PopupMenuItem(value: 'close', child: Text('Close')),
         const PopupMenuItem(value: 'closeOthers', child: Text('Close Others')),
@@ -2828,10 +3089,22 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   void _openCommitFlow(ProjectCfg project) {
     _selectGitProject(project);
-    _openGitView(_GitView.changes);
+    _openLeftTool(_LeftToolView.changes);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _commitFocus.requestFocus();
     });
+  }
+
+  Future<void> _showWorkingTreeDiff(ProjectCfg project) async {
+    _selectGitProject(project);
+    _openGitView(_GitView.changes);
+    await _refreshGit();
+    if (!mounted) return;
+    if (_gitFiles.isEmpty && _gitChanges.isEmpty) {
+      _snack('Working tree clean');
+      return;
+    }
+    setState(() => _selectedGitPath = _workingTreeDiffSelection);
   }
 
   Future<void> _selectCommit(ProjectCfg p, GitCommit c) async {
@@ -3256,9 +3529,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     );
   }
 
-  Widget _gitToolBody(ProjectCfg p) {
-    if (_gitView == _GitView.stash) return _stashView(p);
-    if (_gitView == _GitView.branches) return _branchesView(p);
+  Widget _gitToolBody(ProjectCfg p, {bool compact = false}) {
+    if (_gitView == _GitView.stash) {
+      return compact ? _compactStashView(p) : _stashView(p);
+    }
+    if (_gitView == _GitView.branches) return _branchesView(p, compact);
     if (_gitView == _GitView.log) {
       if (_compareTitle == null &&
           _commitFiles.isEmpty &&
@@ -3271,19 +3546,25 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           });
         }
       }
+      if (compact) return _compactGitLogView(p);
       return _gitLogView(p);
+    }
+    if (compact) {
+      return _gitFiles.isEmpty && _gitChanges.isEmpty
+          ? centerMsg('Working tree clean')
+          : _localChangesList(p);
     }
     return _gitFiles.isEmpty && _gitChanges.isEmpty
         ? centerMsg('Working tree clean')
         : _localChangesView(p);
   }
 
-  Widget _branchesView(ProjectCfg p) => _BranchListPane(
+  Widget _branchesView(ProjectCfg p, bool compact) => _BranchListPane(
     project: p,
     branches: _gitBranches,
     loading: _gitLoading,
     error: _gitError,
-    embedded: true,
+    embedded: compact,
     onRefresh: _refreshGit,
     onCheckout: (branch) => _checkoutBranchCurrent(p, branch),
     onCreate: (branch, start) => _createBranchCurrent(p, branch, start: start),
@@ -3304,13 +3585,16 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     onMerge: (branch) async => _mergeBranchIntoCurrent(p, branch),
     onRebase: (branch) async => _rebaseCurrentOntoBranch(p, branch),
     onFetch: ({prune = false}) => _gitFetchCurrent(p, prune: prune),
+    onPull: () => _gitPullCurrent(p),
+    onPush: () => _gitPushCurrent(p),
   );
 
   Widget _localChangesView(ProjectCfg p) {
-    final selected = _selectedGitPath == null
+    final showingWorkingTree = _selectedGitPath == _workingTreeDiffSelection;
+    final selected = _selectedGitPath == null || showingWorkingTree
         ? const <FileDiff>[]
         : _gitFiles.where((f) => f.path == _selectedGitPath).toList();
-    final selectedChange = _selectedGitPath == null
+    final selectedChange = _selectedGitPath == null || showingWorkingTree
         ? null
         : _gitChanges.where((c) => c.path == _selectedGitPath).firstOrNull;
     return Row(
@@ -3318,9 +3602,63 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         SizedBox(width: 320, child: _localChangesList(p)),
         const VerticalDivider(width: 1),
         Expanded(
-          child: selected.isEmpty
+          child: showingWorkingTree
+              ? _workingTreeDiffPanel(p)
+              : selected.isEmpty
               ? centerMsg('选择一个变更文件')
               : _selectedChangeDiffPanel(p, selected, selectedChange),
+        ),
+      ],
+    );
+  }
+
+  Widget _workingTreeDiffPanel(ProjectCfg p) {
+    if (_gitFiles.isEmpty) return centerMsg('Working tree clean');
+    return Column(
+      children: [
+        Container(
+          height: 34,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: const BoxDecoration(
+            color: CcColors.editorTabBar,
+            border: Border(bottom: BorderSide(color: CcColors.border)),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.difference_rounded,
+                size: 16,
+                color: CcColors.muted,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Working Tree · ${_gitFiles.length} files',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 12, color: CcColors.muted),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
+                icon: const Icon(Icons.add_task_rounded, size: 14),
+                label: const Text('Stage All'),
+              ),
+              TextButton.icon(
+                onPressed: _gitLoading ? null : () => _gitDiscardAllCurrent(p),
+                icon: const Icon(Icons.undo_rounded, size: 14),
+                label: const Text('Rollback All'),
+                style: TextButton.styleFrom(foregroundColor: CcColors.danger),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: DiffView(
+            files: _gitFiles,
+            editRoot: p.path,
+            onChanged: _refreshGit,
+          ),
         ),
       ],
     );
@@ -3780,9 +4118,189 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     return CcColors.warning;
   }
 
+  GitChange? _fileGitChange(String path) {
+    final hit = _projectForFile(path);
+    if (hit == null || hit.rel.isEmpty) return null;
+    return _gitChanges
+        .where((c) => c.path == hit.rel || c.oldPath == hit.rel)
+        .firstOrNull;
+  }
+
+  String _gitChangeShortLabel(GitChange c) {
+    if (c.conflicted) return '!';
+    if (c.untracked) return 'A';
+    if (c.staged) return 'S';
+    return 'M';
+  }
+
+  String _gitChangeLongLabel(GitChange c) {
+    if (c.conflicted) return 'conflict ${c.status}';
+    if (c.untracked) return 'untracked';
+    if (c.staged && c.unstaged) return 'staged + modified';
+    if (c.staged) return 'staged ${c.status}';
+    return 'modified ${c.status}';
+  }
+
+  List<GitCommit> get _filteredGitLog {
+    final q = _logQuery.trim().toLowerCase();
+    final authors = _gitLog.map((c) => c.author).toSet();
+    final effectiveAuthor = authors.contains(_logAuthorFilter)
+        ? _logAuthorFilter
+        : '';
+    return _gitLog.where((c) {
+      final matchesQuery =
+          q.isEmpty ||
+          c.subject.toLowerCase().contains(q) ||
+          c.author.toLowerCase().contains(q) ||
+          c.hash.toLowerCase().contains(q) ||
+          c.shortHash.toLowerCase().contains(q) ||
+          c.refs.toLowerCase().contains(q);
+      final matchesAuthor =
+          effectiveAuthor.isEmpty || c.author == effectiveAuthor;
+      return matchesQuery && matchesAuthor;
+    }).toList();
+  }
+
+  Widget _compactGitLogView(ProjectCfg p) {
+    if (_gitLog.isEmpty) return centerMsg('没有 commit');
+    final commits = _filteredGitLog;
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: CcColors.panel),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 7, 8, 6),
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: 'Filter log',
+                isDense: true,
+                prefixIcon: Icon(Icons.search_rounded, size: 17),
+              ),
+              onChanged: (v) => setState(() => _logQuery = v),
+            ),
+          ),
+          Container(
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _logPathFilter.isEmpty
+                        ? '${commits.length}/${_gitLog.length} commits'
+                        : '$_logPathFilter · ${commits.length}/${_gitLog.length}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 10.8, color: CcColors.subtle),
+                  ),
+                ),
+                Tooltip(
+                  message: _gitLogAllBranches
+                      ? 'Showing all branches'
+                      : 'Showing current branch',
+                  child: FilterChip(
+                    selected: _gitLogAllBranches,
+                    showCheckmark: false,
+                    visualDensity: VisualDensity.compact,
+                    label: const Text('All'),
+                    onSelected: (v) {
+                      setState(() {
+                        _gitLogAllBranches = v;
+                        if (v) _gitLogRefFilter = '';
+                      });
+                      Prefs.setBool('ws.gitLogAllBranches', v);
+                      _refreshGit();
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: commits.isEmpty
+                ? centerMsg('没有匹配 commit')
+                : ListView.separated(
+                    itemCount: commits.length,
+                    separatorBuilder: (_, _) =>
+                        const Divider(height: 1, color: CcColors.border),
+                    itemBuilder: (_, i) {
+                      final c = commits[i];
+                      final sel =
+                          c.hash == _selectedCommit && _compareTitle == null;
+                      final age = c.date.millisecondsSinceEpoch == 0
+                          ? ''
+                          : relativeTime(c.date);
+                      return Material(
+                        color: sel
+                            ? CcColors.accent.withValues(alpha: 0.10)
+                            : Colors.transparent,
+                        child: InkWell(
+                          onTap: () {
+                            _selectCommit(p, c);
+                            _openGitView(_GitView.log);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.commit_rounded,
+                                  size: 16,
+                                  color: sel
+                                      ? CcColors.accentBright
+                                      : CcColors.muted,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        c.subject,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: sel
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        '${c.shortHash} · ${c.author}${age.isEmpty ? '' : ' · $age'}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: CcType.code(
+                                          size: 10.8,
+                                          color: CcColors.subtle,
+                                        ),
+                                      ),
+                                      if (c.refs.isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        tag(c.refs, CcColors.accentBright),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                _commitActionsMenu(p, c, compact: true),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _gitLogView(ProjectCfg p) {
     if (_gitLog.isEmpty) return centerMsg('没有 commit');
-    final q = _logQuery.trim().toLowerCase();
     final authors = _gitLog.map((c) => c.author).toSet().toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     final logRefs = _gitBranches.map((b) => b.name).toSet().toList()
@@ -3798,18 +4316,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     final effectiveAuthor = authors.contains(_logAuthorFilter)
         ? _logAuthorFilter
         : '';
-    final commits = _gitLog.where((c) {
-      final matchesQuery =
-          q.isEmpty ||
-          c.subject.toLowerCase().contains(q) ||
-          c.author.toLowerCase().contains(q) ||
-          c.hash.toLowerCase().contains(q) ||
-          c.shortHash.toLowerCase().contains(q) ||
-          c.refs.toLowerCase().contains(q);
-      final matchesAuthor =
-          effectiveAuthor.isEmpty || c.author == effectiveAuthor;
-      return matchesQuery && matchesAuthor;
-    }).toList();
+    final commits = _filteredGitLog;
     final selected = _compareTitle != null
         ? _compareFiles
         : _commitFiles.isNotEmpty
@@ -4153,6 +4660,145 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       const PopupMenuItem(value: 'revert', child: Text('Revert')),
     ],
   );
+
+  Widget _compactStashView(ProjectCfg p) {
+    return Column(
+      children: [
+        Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: const BoxDecoration(
+            color: CcColors.panel,
+            border: Border(bottom: BorderSide(color: CcColors.border)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${_gitStashes.length} stashes',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 11.5, color: CcColors.subtle),
+                ),
+              ),
+              IconButton(
+                onPressed: _gitLoading ? null : () => _stashPushCurrent(p),
+                icon: const Icon(Icons.archive_outlined, size: 16),
+                tooltip: 'Stash Changes',
+                visualDensity: VisualDensity.compact,
+              ),
+              IconButton(
+                onPressed: _refreshGit,
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                tooltip: 'Refresh',
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _gitStashes.isEmpty
+              ? centerMsg('没有 stash')
+              : ListView.separated(
+                  itemCount: _gitStashes.length,
+                  separatorBuilder: (_, _) =>
+                      const Divider(height: 1, color: CcColors.border),
+                  itemBuilder: (_, i) {
+                    final s = _gitStashes[i];
+                    final isSelected = s.ref == _selectedStash;
+                    return Material(
+                      color: isSelected
+                          ? CcColors.accent.withValues(alpha: 0.10)
+                          : Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
+                          _selectStash(p, s);
+                          _openGitView(_GitView.stash);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.inventory_2_outlined,
+                                    size: 17,
+                                    color: isSelected
+                                        ? CcColors.accentBright
+                                        : CcColors.muted,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      s.subject.isEmpty ? s.ref : s.subject,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        color: isSelected
+                                            ? CcColors.text
+                                            : CcColors.muted,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                s.branch.isEmpty
+                                    ? s.ref
+                                    : '${s.ref} · ${s.branch}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: CcType.code(
+                                  size: 10.8,
+                                  color: CcColors.subtle,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 4,
+                                runSpacing: 2,
+                                children: [
+                                  TextButton(
+                                    onPressed: _gitLoading
+                                        ? null
+                                        : () => _stashApplyCurrent(p, s),
+                                    child: const Text('Apply'),
+                                  ),
+                                  TextButton(
+                                    onPressed: _gitLoading
+                                        ? null
+                                        : () => _stashPopCurrent(p, s),
+                                    child: const Text('Pop'),
+                                  ),
+                                  TextButton(
+                                    onPressed: _gitLoading
+                                        ? null
+                                        : () => _stashDropCurrent(p, s),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: CcColors.danger,
+                                    ),
+                                    child: const Text('Drop'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
 
   Widget _stashView(ProjectCfg p) {
     final selected = _gitStashes
@@ -5459,8 +6105,134 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
 
   Widget _leftToolPanel() {
     if (_leftToolView == _LeftToolView.structure) return _structureSidebar();
+    if (_gitViewForLeftTool(_leftToolView) != null) return _leftGitPanel();
     return _sidebar();
   }
+
+  Widget _leftGitPanel() {
+    final p = _gitProject ?? _defaultProject()?.project;
+    final status = _gitStatus;
+    final viewLabel = switch (_gitView) {
+      _GitView.changes => 'Commit',
+      _GitView.branches => 'Branches',
+      _GitView.log => 'Git Log',
+      _GitView.stash => 'Stash',
+    };
+    final viewIcon = switch (_gitView) {
+      _GitView.changes => Icons.alt_route_rounded,
+      _GitView.branches => Icons.account_tree_rounded,
+      _GitView.log => Icons.history_rounded,
+      _GitView.stash => Icons.inventory_2_outlined,
+    };
+    return Column(
+      children: [
+        _panelHeader(
+          padding: const EdgeInsets.only(left: 10, right: 4),
+          gradient: true,
+          children: [
+            Icon(viewIcon, size: 16, color: CcColors.muted),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                p == null ? viewLabel : '$viewLabel · ${p.name}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: CcColors.text,
+                ),
+              ),
+            ),
+            if (p != null) ...[
+              _branchButton(status?.branch ?? 'branch'),
+              const SizedBox(width: 4),
+            ],
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded, size: 17),
+              tooltip: '刷新 Git',
+              visualDensity: VisualDensity.compact,
+              onPressed: _refreshGit,
+            ),
+            IconButton(
+              onPressed: () => _setProjectCollapsed(true),
+              tooltip: '收起',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.chevron_left_rounded, size: 17),
+            ),
+          ],
+        ),
+        if (p != null) _leftGitActionBar(p, status),
+        if (_gitLoading) const LinearProgressIndicator(minHeight: 2),
+        if (p == null)
+          Expanded(child: centerMsg('没有可用项目'))
+        else if (_gitError != null)
+          Expanded(child: centerMsg(_gitError!, onRetry: _refreshGit))
+        else
+          Expanded(
+            child: Column(
+              children: [
+                _gitSummaryBar(status),
+                if (_gitOperation != null) _gitOperationBar(p, _gitOperation!),
+                if (_gitView == _GitView.changes) _commitBox(p, status),
+                Expanded(child: _gitToolBody(p, compact: true)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _leftGitActionBar(ProjectCfg p, GitStatusSummary? status) => Container(
+    height: 34,
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+    decoration: const BoxDecoration(
+      color: CcColors.editor,
+      border: Border(bottom: BorderSide(color: CcColors.border)),
+    ),
+    child: Row(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.add_task_rounded, size: 16),
+          tooltip: 'Stage All',
+          visualDensity: VisualDensity.compact,
+          onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
+        ),
+        IconButton(
+          icon: const Icon(Icons.remove_done_rounded, size: 16),
+          tooltip: 'Unstage All',
+          visualDensity: VisualDensity.compact,
+          onPressed: _gitLoading || (status?.staged ?? 0) == 0
+              ? null
+              : () => _gitUnstageAllCurrent(p),
+        ),
+        IconButton(
+          icon: const Icon(Icons.upload_rounded, size: 16),
+          tooltip: 'Push',
+          visualDensity: VisualDensity.compact,
+          onPressed: _gitLoading ? null : () => _gitPushCurrent(p),
+        ),
+        IconButton(
+          icon: const Icon(Icons.call_received_rounded, size: 16),
+          tooltip: 'Pull --ff-only',
+          visualDensity: VisualDensity.compact,
+          onPressed: _gitLoading ? null : () => _gitPullCurrent(p),
+        ),
+        IconButton(
+          icon: const Icon(Icons.sync_rounded, size: 16),
+          tooltip: 'Fetch',
+          visualDensity: VisualDensity.compact,
+          onPressed: _gitLoading ? null : () => _gitFetchCurrent(p),
+        ),
+        const Spacer(),
+        TextButton.icon(
+          onPressed: _gitLoading ? null : () => _showBranchDialog(),
+          icon: const Icon(Icons.account_tree_rounded, size: 14),
+          label: const Text('Branches'),
+        ),
+      ],
+    ),
+  );
 
   Widget _structureSidebar() {
     final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
@@ -5827,11 +6599,12 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       onOpened: () => _selectGitProject(project),
       onSelected: (v) {
         _selectGitProject(project);
-        if (v == 'changes') _openGitView(_GitView.changes);
+        if (v == 'changes') _openLeftTool(_LeftToolView.changes);
+        if (v == 'workingDiff') _showWorkingTreeDiff(project);
         if (v == 'commit') _openCommitFlow(project);
-        if (v == 'log') _openGitView(_GitView.log);
-        if (v == 'branches') _openGitView(_GitView.branches);
-        if (v == 'stash') _openGitView(_GitView.stash);
+        if (v == 'log') _openLeftTool(_LeftToolView.log);
+        if (v == 'branches') _openLeftTool(_LeftToolView.branches);
+        if (v == 'stash') _openLeftTool(_LeftToolView.stash);
         if (v == 'branchPopup') _showBranchDialog();
         if (v == 'newBranch') _showCreateBranchQuick(project);
         if (v == 'fetch') _gitFetchCurrent(project);
@@ -5846,6 +6619,10 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       },
       itemBuilder: (_) => [
         const PopupMenuItem(value: 'changes', child: Text('Open Changes')),
+        const PopupMenuItem(
+          value: 'workingDiff',
+          child: Text('Show Working Tree Diff'),
+        ),
         const PopupMenuItem(value: 'commit', child: Text('Commit...')),
         const PopupMenuItem(value: 'log', child: Text('Open Log')),
         const PopupMenuItem(value: 'branches', child: Text('Open Branches')),
@@ -5930,15 +6707,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             changes.firstWhere((c) => c.staged, orElse: () => changes.first),
       ),
     );
-    final label = isDir
-        ? '${changes.length}'
-        : severity.conflicted
-        ? '!'
-        : severity.untracked
-        ? 'A'
-        : severity.staged
-        ? 'S'
-        : 'M';
+    final label = isDir ? '${changes.length}' : _gitChangeShortLabel(severity);
     final target = rel.isEmpty ? project.name : rel;
     return Tooltip(
       message: isDir
@@ -6673,6 +7442,8 @@ class _BranchListPane extends StatefulWidget {
   final Future<void> Function(GitBranch branch) onMerge;
   final Future<void> Function(GitBranch branch) onRebase;
   final Future<void> Function({bool prune}) onFetch;
+  final Future<void> Function()? onPull;
+  final Future<void> Function()? onPush;
 
   const _BranchListPane({
     required this.project,
@@ -6690,6 +7461,8 @@ class _BranchListPane extends StatefulWidget {
     required this.onMerge,
     required this.onRebase,
     required this.onFetch,
+    this.onPull,
+    this.onPush,
     this.embedded = false,
   });
 
@@ -6937,6 +7710,116 @@ class _BranchListPaneState extends State<_BranchListPane> {
     await _run(() => widget.onRebase(b));
   }
 
+  Widget _branchToolbarButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+  }) => IconButton(
+    icon: Icon(icon, size: 18),
+    tooltip: tooltip,
+    visualDensity: VisualDensity.compact,
+    onPressed: onPressed,
+  );
+
+  Widget _branchesHeader(List<GitBranch> branches) {
+    final compact = widget.embedded;
+    return Container(
+      padding: EdgeInsets.fromLTRB(12, 8, 8, compact ? 6 : 8),
+      decoration: const BoxDecoration(
+        color: CcColors.panel,
+        border: Border(bottom: BorderSide(color: CcColors.border)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _queryCtl,
+                  autofocus: !widget.embedded,
+                  decoration: const InputDecoration(
+                    hintText: '搜索或输入新分支名',
+                    isDense: true,
+                    prefixIcon: Icon(Icons.search_rounded, size: 18),
+                  ),
+                  onChanged: (v) => setState(() => _query = v),
+                  onSubmitted: (_) {
+                    final q = _query.trim();
+                    final exact = branches
+                        .where((b) => b.name == q || b.localName == q)
+                        .firstOrNull;
+                    if (exact != null) {
+                      _checkout(exact);
+                    } else {
+                      _createBranch();
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (!compact)
+                FilledButton.icon(
+                  onPressed: _createBranch,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('New Branch'),
+                )
+              else
+                _branchToolbarButton(
+                  icon: Icons.add_rounded,
+                  tooltip: 'New Branch',
+                  onPressed: _createBranch,
+                ),
+            ],
+          ),
+          SizedBox(height: compact ? 5 : 6),
+          Row(
+            children: [
+              _branchToolbarButton(
+                icon: Icons.sync_rounded,
+                tooltip: 'Fetch',
+                onPressed: widget.loading
+                    ? null
+                    : () => _run(() => widget.onFetch()),
+              ),
+              _branchToolbarButton(
+                icon: Icons.cleaning_services_outlined,
+                tooltip: 'Fetch --prune',
+                onPressed: widget.loading
+                    ? null
+                    : () => _run(() => widget.onFetch(prune: true)),
+              ),
+              _branchToolbarButton(
+                icon: Icons.call_received_rounded,
+                tooltip: 'Pull --ff-only',
+                onPressed: widget.loading || widget.onPull == null
+                    ? null
+                    : () => _run(widget.onPull!),
+              ),
+              _branchToolbarButton(
+                icon: Icons.upload_rounded,
+                tooltip: 'Push',
+                onPressed: widget.loading || widget.onPush == null
+                    ? null
+                    : () => _run(widget.onPush!),
+              ),
+              const Spacer(),
+              if (compact)
+                Text(
+                  '${branches.length}/${widget.branches.length}',
+                  style: CcType.code(size: 10.8, color: CcColors.subtle),
+                ),
+              _branchToolbarButton(
+                icon: Icons.refresh_rounded,
+                tooltip: '刷新分支',
+                onPressed: widget.onRefresh,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _branchScopeChip(_BranchFilter filter, String label) {
     final selected = _filter == filter;
     final count = _countBranches(filter);
@@ -7138,17 +8021,24 @@ class _BranchListPaneState extends State<_BranchListPane> {
                 ),
               ),
               const SizedBox(width: 8),
-              if (!b.current)
+              if (compact && !b.current)
+                IconButton(
+                  onPressed: () => _checkout(b),
+                  icon: const Icon(Icons.login_rounded, size: 17),
+                  tooltip: 'Checkout',
+                  visualDensity: VisualDensity.compact,
+                ),
+              if (!compact && !b.current)
                 TextButton(
                   onPressed: () => _checkout(b),
                   child: const Text('Checkout'),
                 ),
-              if (!b.remote && b.upstream.isEmpty)
+              if (!compact && !b.remote && b.upstream.isEmpty)
                 TextButton(
                   onPressed: () => _pushBranch(b, publish: true),
                   child: const Text('Publish'),
                 ),
-              if (!b.remote && b.upstream.isNotEmpty && b.ahead > 0)
+              if (!compact && !b.remote && b.upstream.isNotEmpty && b.ahead > 0)
                 TextButton(
                   onPressed: () => _pushBranch(b),
                   child: const Text('Push'),
@@ -7158,10 +8048,11 @@ class _BranchListPaneState extends State<_BranchListPane> {
                   onPressed: () => _mergeBranch(b),
                   child: const Text('Merge'),
                 ),
-              TextButton(
-                onPressed: () => _run(() => widget.onCompare(b)),
-                child: const Text('Compare'),
-              ),
+              if (!compact)
+                TextButton(
+                  onPressed: () => _run(() => widget.onCompare(b)),
+                  child: const Text('Compare'),
+                ),
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert_rounded, size: 18),
                 tooltip: '分支操作',
@@ -7244,66 +8135,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
     final remotes = branches.where((b) => b.remote).toList();
     return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-          decoration: const BoxDecoration(
-            color: CcColors.panel,
-            border: Border(bottom: BorderSide(color: CcColors.border)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _queryCtl,
-                  autofocus: !widget.embedded,
-                  decoration: const InputDecoration(
-                    hintText: '搜索或输入新分支名',
-                    isDense: true,
-                    prefixIcon: Icon(Icons.search_rounded, size: 18),
-                  ),
-                  onChanged: (v) => setState(() => _query = v),
-                  onSubmitted: (_) {
-                    final q = _query.trim();
-                    final exact = branches
-                        .where((b) => b.name == q || b.localName == q)
-                        .firstOrNull;
-                    if (exact != null) {
-                      _checkout(exact);
-                    } else {
-                      _createBranch();
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: _createBranch,
-                icon: const Icon(Icons.add_rounded, size: 16),
-                label: const Text('New Branch'),
-              ),
-              const SizedBox(width: 6),
-              IconButton(
-                icon: const Icon(Icons.sync_rounded, size: 18),
-                tooltip: 'Fetch',
-                onPressed: widget.loading
-                    ? null
-                    : () => _run(() => widget.onFetch()),
-              ),
-              IconButton(
-                icon: const Icon(Icons.cleaning_services_outlined, size: 18),
-                tooltip: 'Fetch --prune',
-                onPressed: widget.loading
-                    ? null
-                    : () => _run(() => widget.onFetch(prune: true)),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                tooltip: '刷新分支',
-                onPressed: widget.onRefresh,
-              ),
-            ],
-          ),
-        ),
+        _branchesHeader(branches),
         _branchesSummary(),
         _branchScopeBar(),
         Expanded(
@@ -8224,6 +9056,387 @@ class _FindInFilesDialogState extends State<_FindInFilesDialog> {
       ),
     ),
   );
+}
+
+class _FindUsagesDialog extends StatefulWidget {
+  final List<WorkspaceCfg> workspaces;
+  final String sourcePath;
+  final List<_CodeSymbol> symbols;
+
+  const _FindUsagesDialog({
+    required this.workspaces,
+    required this.sourcePath,
+    required this.symbols,
+  });
+
+  @override
+  State<_FindUsagesDialog> createState() => _FindUsagesDialogState();
+}
+
+class _FindUsagesDialogState extends State<_FindUsagesDialog> {
+  _CodeSymbol? _symbol;
+  List<_SearchHit> _hits = const [];
+  bool _loading = false;
+  String? _error;
+  int _searchId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _symbol = widget.symbols.firstOrNull;
+    final initial = _symbol;
+    if (initial != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _search(initial));
+    }
+  }
+
+  Future<void> _search(_CodeSymbol symbol) async {
+    final id = ++_searchId;
+    setState(() {
+      _symbol = symbol;
+      _hits = const [];
+      _error = null;
+      _loading = true;
+    });
+    try {
+      final out = <_SearchHit>[];
+      for (final ws in widget.workspaces) {
+        for (final p in ws.projects) {
+          await _searchDir(Directory(p.path), p.path, p.name, symbol.name, out);
+          if (out.length >= 300 || id != _searchId) break;
+        }
+        if (out.length >= 300 || id != _searchId) break;
+      }
+      if (!mounted || id != _searchId) return;
+      setState(() {
+        _hits = out;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted || id != _searchId) return;
+      setState(() {
+        _error = errorText(e);
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _searchDir(
+    Directory dir,
+    String root,
+    String project,
+    String symbolName,
+    List<_SearchHit> out,
+  ) async {
+    if (out.length >= 300) return;
+    List<FileSystemEntity> entries;
+    try {
+      entries = await dir.list(followLinks: false).toList();
+    } catch (_) {
+      return;
+    }
+    entries.sort((a, b) => a.path.compareTo(b.path));
+    for (final e in entries) {
+      if (out.length >= 300) return;
+      final entryName = e.path.split('/').last;
+      if (_searchSkipDirs.contains(entryName)) continue;
+      if (e is Directory) {
+        await _searchDir(e, root, project, symbolName, out);
+      } else if (e is File) {
+        await _searchFile(e, root, project, symbolName, out);
+      }
+    }
+  }
+
+  Future<void> _searchFile(
+    File file,
+    String root,
+    String project,
+    String symbolName,
+    List<_SearchHit> out,
+  ) async {
+    if (out.length >= 300) return;
+    final name = file.path.split('/').last;
+    if (_looksBinaryOrHuge(file, name)) return;
+    String content;
+    try {
+      content = await file.readAsString();
+    } catch (_) {
+      return;
+    }
+    final rel = file.path.startsWith('$root/')
+        ? file.path.substring(root.length + 1)
+        : file.path;
+    final lines = content.split('\n');
+    for (var i = 0; i < lines.length && out.length < 300; i++) {
+      final line = lines[i];
+      if (!_lineContainsIdentifier(line, symbolName)) continue;
+      out.add(
+        _SearchHit(
+          project: project,
+          path: file.path,
+          rel: rel,
+          line: i + 1,
+          text: line.trim(),
+        ),
+      );
+    }
+  }
+
+  bool _lineContainsIdentifier(String line, String name) {
+    var start = 0;
+    while (true) {
+      final index = line.indexOf(name, start);
+      if (index < 0) return false;
+      final before = index == 0 ? null : line.codeUnitAt(index - 1);
+      final afterIndex = index + name.length;
+      final after = afterIndex >= line.length
+          ? null
+          : line.codeUnitAt(afterIndex);
+      if (!_isIdentifierCode(before) && !_isIdentifierCode(after)) return true;
+      start = index + name.length;
+    }
+  }
+
+  bool _isIdentifierCode(int? code) {
+    if (code == null) return false;
+    return code == 95 ||
+        (code >= 48 && code <= 57) ||
+        (code >= 65 && code <= 90) ||
+        (code >= 97 && code <= 122);
+  }
+
+  bool _looksBinaryOrHuge(File file, String name) {
+    try {
+      if (file.lengthSync() > 700 * 1024) return true;
+    } catch (_) {
+      return true;
+    }
+    final ext = name.split('.').last.toLowerCase();
+    const binary = {
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'ico',
+      'pdf',
+      'zip',
+      'gz',
+      'tar',
+      'jar',
+      'class',
+      'so',
+      'dylib',
+      'a',
+      'o',
+      'mp4',
+      'mov',
+      'mp3',
+    };
+    return binary.contains(ext);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final symbol = _symbol;
+    return Dialog(
+      child: SizedBox(
+        width: 940,
+        height: 680,
+        child: Column(
+          children: [
+            Container(
+              height: 42,
+              padding: const EdgeInsets.only(left: 14, right: 6),
+              decoration: const BoxDecoration(
+                color: CcColors.panel,
+                border: Border(bottom: BorderSide(color: CcColors.border)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.travel_explore_rounded,
+                    size: 17,
+                    color: CcColors.muted,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Find Usages',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (symbol != null)
+                    Text(
+                      '${symbol.name} · ${_hits.length} results',
+                      style: CcType.code(size: 11.5, color: CcColors.subtle),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 280,
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        color: CcColors.panel,
+                        border: Border(
+                          right: BorderSide(color: CcColors.border),
+                        ),
+                      ),
+                      child: ListView.separated(
+                        itemCount: widget.symbols.length,
+                        separatorBuilder: (_, _) =>
+                            const Divider(height: 1, color: CcColors.border),
+                        itemBuilder: (_, i) {
+                          final s = widget.symbols[i];
+                          final selected = s == symbol;
+                          return Material(
+                            color: selected
+                                ? CcColors.accent.withValues(alpha: 0.10)
+                                : Colors.transparent,
+                            child: ListTile(
+                              dense: true,
+                              leading: Icon(
+                                s.icon,
+                                size: 17,
+                                color: selected
+                                    ? CcColors.accentBright
+                                    : CcColors.muted,
+                              ),
+                              title: Text(
+                                s.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: CcType.code(size: 12.5),
+                              ),
+                              subtitle: Text(
+                                '${s.kind} · line ${s.line}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: CcType.code(
+                                  size: 10.8,
+                                  color: CcColors.subtle,
+                                ),
+                              ),
+                              onTap: () => _search(s),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Container(
+                          height: 36,
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          decoration: const BoxDecoration(
+                            color: CcColors.editor,
+                            border: Border(
+                              bottom: BorderSide(color: CcColors.border),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  symbol == null
+                                      ? widget.sourcePath
+                                      : '${symbol.kind} ${symbol.name}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: CcType.code(
+                                    size: 11.5,
+                                    color: CcColors.muted,
+                                  ),
+                                ),
+                              ),
+                              if (_loading)
+                                const SizedBox(
+                                  width: 110,
+                                  child: LinearProgressIndicator(minHeight: 2),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: _error != null
+                              ? centerMsg(
+                                  _error!,
+                                  onRetry: symbol == null
+                                      ? null
+                                      : () => _search(symbol),
+                                )
+                              : symbol == null
+                              ? centerMsg('选择一个符号')
+                              : !_loading && _hits.isEmpty
+                              ? centerMsg('没有找到引用')
+                              : ListView.separated(
+                                  itemCount: _hits.length,
+                                  separatorBuilder: (_, _) => const Divider(
+                                    height: 1,
+                                    color: CcColors.border,
+                                  ),
+                                  itemBuilder: (_, i) {
+                                    final h = _hits[i];
+                                    final isDeclaration =
+                                        h.path == widget.sourcePath &&
+                                        h.line == symbol.line;
+                                    return ListTile(
+                                      dense: true,
+                                      leading: Icon(
+                                        isDeclaration
+                                            ? Icons.flag_rounded
+                                            : Icons.manage_search_rounded,
+                                        size: 18,
+                                        color: isDeclaration
+                                            ? CcColors.accentBright
+                                            : CcColors.muted,
+                                      ),
+                                      title: Text(
+                                        h.text.isEmpty ? ' ' : h.text,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: CcType.code(size: 12.5),
+                                      ),
+                                      subtitle: Text(
+                                        '${h.project}/${h.rel}:${h.line}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: CcType.code(
+                                          size: 11,
+                                          color: CcColors.subtle,
+                                        ),
+                                      ),
+                                      trailing: isDeclaration
+                                          ? tag('declaration', CcColors.ok)
+                                          : null,
+                                      onTap: () => Navigator.pop(context, h),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _FileLineHit {
