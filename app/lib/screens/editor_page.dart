@@ -29,8 +29,16 @@ import '../widgets.dart';
 
 class CodeEditorPane extends StatefulWidget {
   final String path;
+  final int? initialLine;
   final ValueChanged<bool>? onDirtyChanged;
-  const CodeEditorPane({super.key, required this.path, this.onDirtyChanged});
+  final VoidCallback? onLoaded;
+  const CodeEditorPane({
+    super.key,
+    required this.path,
+    this.initialLine,
+    this.onDirtyChanged,
+    this.onLoaded,
+  });
 
   @override
   State<CodeEditorPane> createState() => CodeEditorPaneState();
@@ -38,6 +46,7 @@ class CodeEditorPane extends StatefulWidget {
 
 class CodeEditorPaneState extends State<CodeEditorPane> {
   CodeLineEditingController? _ctl;
+  final _scrollCtl = CodeScrollController();
   String _original = '';
   bool _crlf = false; // file used CRLF endings — re-apply them on save
   bool _dirty = false;
@@ -47,6 +56,21 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
 
   bool get dirty => _dirty;
   bool get saving => _saving;
+  String get text => _ctl?.text ?? '';
+  int get lineCount => text.isEmpty ? 0 : text.split('\n').length;
+  String get eol => _crlf ? 'CRLF' : 'LF';
+  String get languageLabel {
+    final ext = widget.path.split('.').last.toLowerCase();
+    return _languageLabelForExt(ext);
+  }
+
+  int? get fileBytes {
+    try {
+      return File(widget.path).lengthSync();
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   void initState() {
@@ -66,6 +90,8 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
       _saving = false;
       _error = null;
       _load();
+    } else if (oldWidget.initialLine != widget.initialLine) {
+      _jumpToInitialLine();
     }
   }
 
@@ -78,7 +104,11 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
       // re_editor normalises EOLs to LF internally; baseline against that so a
       // CRLF file doesn't open already-dirty.
       _original = _ctl!.text;
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        _jumpToInitialLine();
+        widget.onLoaded?.call();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -87,6 +117,20 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
         });
       }
     }
+  }
+
+  void _jumpToInitialLine() {
+    final ctl = _ctl;
+    final line = widget.initialLine;
+    if (ctl == null || line == null || line <= 0) return;
+    final index = (line - 1).clamp(0, lineCount == 0 ? 0 : lineCount - 1);
+    ctl.selection = CodeLineSelection.collapsed(index: index, offset: 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scrollCtl.makeCenterIfInvisible(
+        CodeLinePosition(index: index, offset: 0),
+      );
+    });
   }
 
   void _onChange() {
@@ -124,6 +168,7 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   @override
   void dispose() {
     _ctl?.dispose();
+    _scrollCtl.dispose();
     super.dispose();
   }
 
@@ -133,6 +178,7 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     if (_error != null) return centerMsg(_error!);
     return CodeEditor(
       controller: _ctl!,
+      scrollController: _scrollCtl,
       wordWrap: false,
       style: CodeEditorStyle(
         fontSize: 13,
@@ -264,4 +310,28 @@ Mode? _modeForExt(String ext) => switch (ext) {
   'php' => langPhp,
   'toml' || 'ini' || 'cfg' || 'conf' || 'properties' => langIni,
   _ => null,
+};
+
+String _languageLabelForExt(String ext) => switch (ext) {
+  'dart' => 'Dart',
+  'go' => 'Go',
+  'ts' || 'tsx' => 'TypeScript',
+  'js' || 'jsx' || 'mjs' => 'JavaScript',
+  'py' => 'Python',
+  'json' => 'JSON',
+  'yaml' || 'yml' => 'YAML',
+  'md' || 'markdown' => 'Markdown',
+  'sh' || 'bash' || 'zsh' => 'Shell',
+  'xml' || 'html' || 'htm' => 'XML/HTML',
+  'css' => 'CSS',
+  'java' => 'Java',
+  'kt' || 'kts' => 'Kotlin',
+  'rs' => 'Rust',
+  'c' || 'cc' || 'cpp' || 'cxx' || 'h' || 'hpp' => 'C/C++',
+  'sql' => 'SQL',
+  'rb' => 'Ruby',
+  'php' => 'PHP',
+  'toml' => 'TOML',
+  'ini' || 'cfg' || 'conf' || 'properties' => 'Config',
+  _ => ext.isEmpty ? 'Plain Text' : ext.toUpperCase(),
 };

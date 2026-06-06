@@ -101,6 +101,50 @@ class GitChange {
       : '$indexStatus$worktreeStatus'.trim();
 }
 
+class GitBlameLine {
+  final int line;
+  final String hash;
+  final String author;
+  final DateTime date;
+  final String summary;
+  final String content;
+
+  const GitBlameLine({
+    required this.line,
+    required this.hash,
+    required this.author,
+    required this.date,
+    required this.summary,
+    required this.content,
+  });
+}
+
+class GitStash {
+  final String ref;
+  final String branch;
+  final String subject;
+
+  const GitStash({
+    required this.ref,
+    required this.branch,
+    required this.subject,
+  });
+}
+
+class GitOperationState {
+  final String kind;
+  final String label;
+  final bool canContinue;
+  final bool canAbort;
+
+  const GitOperationState({
+    required this.kind,
+    required this.label,
+    required this.canContinue,
+    required this.canAbort,
+  });
+}
+
 // gitDiffWorking = all uncommitted changes (working tree + staged) vs HEAD.
 Future<String> gitDiffWorking(String dir) => _git(dir, 'diff HEAD');
 
@@ -191,6 +235,51 @@ Future<GitStatusSummary> gitStatusSummary(String dir) async {
     ahead: ahead,
     behind: behind,
   );
+}
+
+Future<GitOperationState?> gitOperationState(String dir) async {
+  final gitDir = (await _git(dir, 'rev-parse --git-dir')).trim();
+  final root = Directory(dir);
+  final stateDir = gitDir.startsWith('/')
+      ? Directory(gitDir)
+      : Directory('${root.path}/$gitDir');
+  bool exists(String name) => File('${stateDir.path}/$name').existsSync();
+  bool dirExists(String name) =>
+      Directory('${stateDir.path}/$name').existsSync();
+
+  if (dirExists('rebase-merge') || dirExists('rebase-apply')) {
+    return const GitOperationState(
+      kind: 'rebase',
+      label: 'Rebase in progress',
+      canContinue: true,
+      canAbort: true,
+    );
+  }
+  if (exists('MERGE_HEAD')) {
+    return const GitOperationState(
+      kind: 'merge',
+      label: 'Merge in progress',
+      canContinue: true,
+      canAbort: true,
+    );
+  }
+  if (exists('CHERRY_PICK_HEAD')) {
+    return const GitOperationState(
+      kind: 'cherry-pick',
+      label: 'Cherry-pick in progress',
+      canContinue: true,
+      canAbort: true,
+    );
+  }
+  if (exists('REVERT_HEAD')) {
+    return const GitOperationState(
+      kind: 'revert',
+      label: 'Revert in progress',
+      canContinue: true,
+      canAbort: true,
+    );
+  }
+  return null;
 }
 
 Future<List<GitBranch>> gitBranches(String dir) async {
@@ -286,6 +375,18 @@ Future<void> gitDeleteBranch(
   await _git(dir, 'branch ${force ? '-D' : '-d'} ${shQuote(branch)}');
 }
 
+Future<void> gitMergeBranch(String dir, String branch) async {
+  final b = branch.trim();
+  if (b.isEmpty) throw GitException('branch 不能为空');
+  await _git(dir, 'merge --no-ff ${shQuote(b)}');
+}
+
+Future<void> gitRebaseOnto(String dir, String branch) async {
+  final b = branch.trim();
+  if (b.isEmpty) throw GitException('branch 不能为空');
+  await _git(dir, 'rebase ${shQuote(b)}');
+}
+
 Future<void> gitPull(String dir) async {
   await _git(dir, 'pull --ff-only');
 }
@@ -328,6 +429,62 @@ Future<void> gitCommit(String dir, String message) async {
   await _git(dir, 'commit -m ${shQuote(msg)}');
 }
 
+Future<void> gitCommitAmend(String dir, String message) async {
+  final msg = message.trim();
+  if (msg.isEmpty) {
+    await _git(dir, 'commit --amend --no-edit');
+    return;
+  }
+  await _git(dir, 'commit --amend -m ${shQuote(msg)}');
+}
+
+Future<List<GitStash>> gitStashes(String dir) async {
+  final out = await _git(dir, 'stash list --format=%gd%x1f%gs');
+  final stashes = <GitStash>[];
+  for (final line in out.split('\n')) {
+    if (line.trim().isEmpty) continue;
+    final parts = line.split('\x1f');
+    final ref = parts.first.trim();
+    final subject = parts.length > 1 ? parts.sublist(1).join('\x1f') : '';
+    var branch = '';
+    final m = RegExp(r'^On ([^:]+):\s*(.*)$').firstMatch(subject);
+    if (m != null) branch = m.group(1) ?? '';
+    stashes.add(GitStash(ref: ref, branch: branch, subject: subject));
+  }
+  return stashes;
+}
+
+Future<void> gitStashPush(
+  String dir,
+  String message, {
+  bool includeUntracked = true,
+}) async {
+  final msg = message.trim();
+  final include = includeUntracked ? '-u ' : '';
+  await _git(
+    dir,
+    'stash push $include-m ${shQuote(msg.isEmpty ? 'WIP' : msg)}',
+  );
+}
+
+Future<String> gitStashShow(String dir, String ref) async {
+  final r = ref.trim();
+  if (r.isEmpty) throw GitException('stash ref 不能为空');
+  return _git(dir, 'stash show -p --find-renames ${shQuote(r)}');
+}
+
+Future<void> gitStashApply(String dir, String ref) async {
+  await _git(dir, 'stash apply ${shQuote(ref)}');
+}
+
+Future<void> gitStashPop(String dir, String ref) async {
+  await _git(dir, 'stash pop ${shQuote(ref)}');
+}
+
+Future<void> gitStashDrop(String dir, String ref) async {
+  await _git(dir, 'stash drop ${shQuote(ref)}');
+}
+
 Future<List<GitCommit>> gitLog(String dir, {int max = 80}) async {
   final out = await _git(
     dir,
@@ -357,6 +514,87 @@ Future<List<GitCommit>> gitLog(String dir, {int max = 80}) async {
 Future<String> gitShowCommit(String dir, String hash) {
   if (hash.trim().isEmpty) throw GitException('commit hash 不能为空');
   return _git(dir, 'show --format= --find-renames ${shQuote(hash)}');
+}
+
+Future<void> gitCherryPick(String dir, String hash) async {
+  final h = hash.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  await _git(dir, 'cherry-pick ${shQuote(h)}');
+}
+
+Future<void> gitRevertCommit(String dir, String hash) async {
+  final h = hash.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  await _git(dir, 'revert --no-edit ${shQuote(h)}');
+}
+
+Future<void> gitContinueOperation(String dir, String kind) async {
+  switch (kind) {
+    case 'rebase':
+      await _git(dir, 'rebase --continue');
+    case 'merge':
+      await _git(dir, 'merge --continue');
+    case 'cherry-pick':
+      await _git(dir, 'cherry-pick --continue');
+    case 'revert':
+      await _git(dir, 'revert --continue');
+    default:
+      throw GitException('$kind 不支持 continue');
+  }
+}
+
+Future<void> gitAbortOperation(String dir, String kind) async {
+  switch (kind) {
+    case 'rebase':
+      await _git(dir, 'rebase --abort');
+    case 'merge':
+      await _git(dir, 'merge --abort');
+    case 'cherry-pick':
+      await _git(dir, 'cherry-pick --abort');
+    case 'revert':
+      await _git(dir, 'revert --abort');
+    default:
+      throw GitException('$kind 不支持 abort');
+  }
+}
+
+Future<List<GitBlameLine>> gitBlame(String dir, String file) async {
+  final out = await _git(dir, 'blame --line-porcelain -- ${shQuote(file)}');
+  final lines = <GitBlameLine>[];
+  String hash = '';
+  var lineNo = 0;
+  var author = '';
+  var time = 0;
+  var summary = '';
+  for (final raw in out.split('\n')) {
+    if (raw.isEmpty) continue;
+    final header = RegExp(r'^([0-9a-f]{40}) \d+ (\d+)').firstMatch(raw);
+    if (header != null) {
+      hash = header.group(1)!;
+      lineNo = int.tryParse(header.group(2)!) ?? 0;
+      author = '';
+      time = 0;
+      summary = '';
+    } else if (raw.startsWith('author ')) {
+      author = raw.substring('author '.length);
+    } else if (raw.startsWith('author-time ')) {
+      time = int.tryParse(raw.substring('author-time '.length)) ?? 0;
+    } else if (raw.startsWith('summary ')) {
+      summary = raw.substring('summary '.length);
+    } else if (raw.startsWith('\t')) {
+      lines.add(
+        GitBlameLine(
+          line: lineNo,
+          hash: hash,
+          author: author,
+          date: DateTime.fromMillisecondsSinceEpoch(time * 1000),
+          summary: summary,
+          content: raw.substring(1),
+        ),
+      );
+    }
+  }
+  return lines;
 }
 
 // gitRestore discards a file's uncommitted changes (git checkout -- <file>),

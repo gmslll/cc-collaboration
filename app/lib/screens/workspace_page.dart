@@ -25,14 +25,31 @@ import 'terminal_pane.dart';
 
 enum _BottomTool { terminal, git }
 
-enum _GitView { changes, log }
+enum _GitView { changes, log, stash }
+
+const _searchSkipDirs = {
+  '.git',
+  'node_modules',
+  'build',
+  '.dart_tool',
+  '.idea',
+  'dist',
+  'vendor',
+  'target',
+  '.gradle',
+  'Pods',
+  '.next',
+  '__pycache__',
+  '.venv',
+};
 
 class _OpenFile {
   final String path;
+  int? line;
   bool dirty = false;
   final GlobalKey<CodeEditorPaneState> key = GlobalKey<CodeEditorPaneState>();
 
-  _OpenFile(this.path);
+  _OpenFile(this.path, {this.line});
 
   String get name => path.split('/').last;
 }
@@ -70,11 +87,16 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       : _BottomTool.terminal;
   ProjectCfg? _gitProject;
   GitStatusSummary? _gitStatus;
+  GitOperationState? _gitOperation;
   List<FileDiff> _gitFiles = const [];
   List<GitChange> _gitChanges = const [];
   List<GitCommit> _gitLog = const [];
+  List<GitStash> _gitStashes = const [];
   List<FileDiff> _commitFiles = const [];
+  List<FileDiff> _stashFiles = const [];
   String? _selectedCommit;
+  String? _selectedStash;
+  String? _stashPreviewRef;
   String? _compareTitle;
   List<FileDiff> _compareFiles = const [];
   String? _selectedGitPath;
@@ -229,18 +251,28 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     });
     try {
       final status = await gitStatusSummary(p.path);
+      final operation = await gitOperationState(p.path);
       final changes = await gitChanges(p.path);
       final diff = await gitDiffWorking(p.path);
       final log = await gitLog(p.path);
+      final stashes = await gitStashes(p.path);
       if (!mounted) return;
       setState(() {
         _gitStatus = status;
+        _gitOperation = operation;
         _gitChanges = changes;
         _selectedChangePaths.removeWhere(
           (path) => !changes.any((c) => c.path == path),
         );
         _gitFiles = parseUnifiedDiff(diff);
         _gitLog = log;
+        _gitStashes = stashes;
+        if (_selectedStash == null ||
+            !stashes.any((s) => s.ref == _selectedStash)) {
+          _selectedStash = stashes.isEmpty ? null : stashes.first.ref;
+          _stashFiles = const [];
+          _stashPreviewRef = null;
+        }
         if (_selectedCommit == null && log.isNotEmpty) {
           _selectedCommit = log.first.hash;
         }
@@ -259,13 +291,14 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     }
   }
 
-  void _openCodeFile(String path) {
+  void _openCodeFile(String path, {int? line}) {
     final existing = _codeFiles.indexWhere((f) => f.path == path);
     setState(() {
       if (existing >= 0) {
+        _codeFiles[existing].line = line;
         _activeFile = existing;
       } else {
-        _codeFiles.add(_OpenFile(path));
+        _codeFiles.add(_OpenFile(path, line: line));
         _activeFile = _codeFiles.length - 1;
       }
       _recentFiles.remove(path);
@@ -296,6 +329,65 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         _activeFile--;
       }
     });
+  }
+
+  Future<void> _closeOtherCodeFiles(int keep) async {
+    if (keep < 0 || keep >= _codeFiles.length) return;
+    final dirty = _codeFiles
+        .asMap()
+        .entries
+        .where((e) => e.key != keep && e.value.dirty)
+        .map((e) => e.value.path)
+        .toList();
+    if (dirty.isNotEmpty) {
+      final ok = await _confirm(
+        '关闭其他未保存文件?',
+        dirty.take(5).join('\n') +
+            (dirty.length > 5 ? '\n...and ${dirty.length - 5} more' : ''),
+      );
+      if (!ok) return;
+    }
+    final kept = _codeFiles[keep];
+    setState(() {
+      _codeFiles
+        ..clear()
+        ..add(kept);
+      _activeFile = 0;
+    });
+  }
+
+  Future<void> _closeAllCodeFiles() async {
+    final dirty = _codeFiles.where((f) => f.dirty).map((f) => f.path).toList();
+    if (dirty.isNotEmpty) {
+      final ok = await _confirm(
+        '关闭所有未保存文件?',
+        dirty.take(5).join('\n') +
+            (dirty.length > 5 ? '\n...and ${dirty.length - 5} more' : ''),
+      );
+      if (!ok) return;
+    }
+    setState(() {
+      _codeFiles.clear();
+      _activeFile = -1;
+    });
+  }
+
+  void _copyFilePath(String path) {
+    Clipboard.setData(ClipboardData(text: path));
+    _snack('已复制路径');
+  }
+
+  void _revealFileInProject(String path) {
+    final hit = _projectForFile(path);
+    if (hit == null) {
+      _snack('找不到文件所属项目');
+      return;
+    }
+    _ctlFor(hit.project.path).expand();
+    Prefs.setBool('ws.sec.${hit.project.path}.files', false);
+    _selectGitProject(hit.project);
+    _setProjectCollapsed(false);
+    _snack('已展开 Project · ${hit.rel}');
   }
 
   Future<void> _showRecentFiles() async {
@@ -345,11 +437,67 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     if (path != null) _openCodeFile(path);
   }
 
+  Future<void> _showFindInFiles() async {
+    final d = _defaultProject();
+    if (d == null) {
+      _snack('没有可搜索的项目');
+      return;
+    }
+    final hit = await showDialog<_SearchHit>(
+      context: context,
+      builder: (_) => _FindInFilesDialog(workspaces: _cfg.workspaces),
+    );
+    if (hit != null) _openCodeFile(hit.path, line: hit.line);
+  }
+
+  Future<void> _showFindInCurrentFile() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
+      _snack('没有打开的文件');
+      return;
+    }
+    final file = _codeFiles[_activeFile];
+    final text = file.key.currentState?.text;
+    if (text == null) {
+      _snack('文件仍在加载');
+      return;
+    }
+    final line = await showDialog<int>(
+      context: context,
+      builder: (_) => _FindInCurrentFileDialog(path: file.path, text: text),
+    );
+    if (line != null) _openCodeFile(file.path, line: line);
+  }
+
+  Future<void> _showGoToLine() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
+      _snack('没有打开的文件');
+      return;
+    }
+    final file = _codeFiles[_activeFile];
+    final lineCount = file.key.currentState?.lineCount ?? 0;
+    if (lineCount <= 0) {
+      _snack('文件仍在加载');
+      return;
+    }
+    final line = await showDialog<int>(
+      context: context,
+      builder: (_) => _GoToLineDialog(
+        fileName: file.name,
+        lineCount: lineCount,
+        initialLine: file.line,
+      ),
+    );
+    if (line != null) _openCodeFile(file.path, line: line);
+  }
+
   Future<void> _showShortcuts() async {
     final isMac = Platform.isMacOS;
     final mod = isMac ? 'Cmd' : 'Ctrl';
     final rows = [
       ('$mod+O', '快速打开文件'),
+      ('$mod+F', '当前文件查找'),
+      ('$mod+G', '跳转行号'),
+      ('$mod+Shift+F', '全文搜索'),
       ('$mod+E', '最近文件'),
       ('$mod+1', '切换 Project'),
       ('$mod+9', '打开 Git / Commit'),
@@ -586,6 +734,21 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             _showQuickOpen,
         const SingleActivator(LogicalKeyboardKey.keyO, control: true):
             _showQuickOpen,
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true):
+            _showFindInCurrentFile,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            _showFindInCurrentFile,
+        const SingleActivator(LogicalKeyboardKey.keyG, meta: true):
+            _showGoToLine,
+        const SingleActivator(LogicalKeyboardKey.keyG, control: true):
+            _showGoToLine,
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true, shift: true):
+            _showFindInFiles,
+        const SingleActivator(
+          LogicalKeyboardKey.keyF,
+          control: true,
+          shift: true,
+        ): _showFindInFiles,
         const SingleActivator(LogicalKeyboardKey.keyE, meta: true):
             _showRecentFiles,
         const SingleActivator(LogicalKeyboardKey.keyE, control: true):
@@ -633,6 +796,34 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     _codeFiles[_activeFile].key.currentState?.save();
   }
 
+  ({ProjectCfg project, String rel})? _projectForFile(String path) {
+    ProjectCfg? best;
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (path == p.path || path.startsWith('${p.path}/')) {
+          if (best == null || p.path.length > best.path.length) best = p;
+        }
+      }
+    }
+    if (best == null) return null;
+    final rel = path == best.path ? '' : path.substring(best.path.length + 1);
+    return (project: best, rel: rel);
+  }
+
+  Future<void> _showBlameForActiveFile() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) return;
+    final file = _codeFiles[_activeFile].path;
+    final hit = _projectForFile(file);
+    if (hit == null || hit.rel.isEmpty) {
+      _snack('找不到文件所属项目');
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (_) => _BlameDialog(project: hit.project, relPath: hit.rel),
+    );
+  }
+
   Widget _ideToolbar() {
     final projects = _cfg.workspaces.fold<int>(
       0,
@@ -676,10 +867,16 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           ),
           const VerticalDivider(width: 14),
           _toolButton(
-            icon: Icons.search_rounded,
+            icon: Icons.file_open_outlined,
             tooltip: '快速打开文件',
             selected: false,
             onPressed: _showQuickOpen,
+          ),
+          _toolButton(
+            icon: Icons.manage_search_rounded,
+            tooltip: '全文搜索',
+            selected: false,
+            onPressed: _showFindInFiles,
           ),
           _toolButton(
             icon: Icons.history_rounded,
@@ -902,63 +1099,82 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     );
   }
 
-  Widget _leftToolWindowBar() => Container(
-    width: 38,
-    decoration: const BoxDecoration(
-      color: CcColors.toolbar,
-      border: Border(right: BorderSide(color: CcColors.border)),
-    ),
-    child: Column(
-      children: [
-        const SizedBox(height: 6),
-        _leftToolButton(
-          icon: Icons.account_tree_outlined,
-          label: 'Project',
-          selected: !_projectCollapsed,
-          onTap: () => _setProjectCollapsed(!_projectCollapsed),
-        ),
-        _leftToolButton(
-          icon: Icons.alt_route_rounded,
-          label: 'Commit',
-          selected: !_terminalCollapsed && _bottomTool == _BottomTool.git,
-          onTap: () => _setBottomTool(_BottomTool.git),
-        ),
-        _leftToolButton(
-          icon: Icons.terminal_rounded,
-          label: 'Terminal',
-          selected: !_terminalCollapsed && _bottomTool == _BottomTool.terminal,
-          onTap: () => _setBottomTool(_BottomTool.terminal),
-        ),
-        _leftToolButton(
-          icon: Icons.description_outlined,
-          label: 'Handoff',
-          selected: _detailItem != null && !_detailCollapsed,
-          enabled: _detailItem != null,
-          onTap: () => _setDetailCollapsed(!_detailCollapsed),
-        ),
-        _leftToolButton(
-          icon: Icons.search_rounded,
-          label: 'Search',
-          selected: false,
-          onTap: _showQuickOpen,
-        ),
-        const Spacer(),
-        _leftToolButton(
-          icon: Icons.keyboard_command_key_rounded,
-          label: 'Shortcuts',
-          selected: false,
-          onTap: _showShortcuts,
-        ),
-        _leftToolButton(
-          icon: Icons.refresh_rounded,
-          label: 'Refresh',
-          selected: false,
-          onTap: _refresh,
-        ),
-        const SizedBox(height: 6),
-      ],
-    ),
-  );
+  Widget _leftToolWindowBar() {
+    final projectCount = _cfg.workspaces.fold<int>(
+      0,
+      (sum, ws) => sum + ws.projects.length,
+    );
+    final changeCount = _gitChanges.length;
+    final sessionCount = terms.length;
+    return Container(
+      width: 50,
+      decoration: const BoxDecoration(
+        color: CcColors.toolbar,
+        border: Border(right: BorderSide(color: CcColors.border)),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 6),
+          _leftToolButton(
+            icon: Icons.account_tree_outlined,
+            label: 'Project',
+            selected: !_projectCollapsed,
+            badge: projectCount == 0 ? null : '$projectCount',
+            onTap: () => _setProjectCollapsed(!_projectCollapsed),
+          ),
+          _leftToolButton(
+            icon: Icons.alt_route_rounded,
+            label: 'Commit',
+            selected: !_terminalCollapsed && _bottomTool == _BottomTool.git,
+            badge: changeCount == 0 ? null : '$changeCount',
+            badgeColor: CcColors.warning,
+            onTap: () => _setBottomTool(_BottomTool.git),
+          ),
+          _leftToolButton(
+            icon: Icons.terminal_rounded,
+            label: 'Terminal',
+            selected:
+                !_terminalCollapsed && _bottomTool == _BottomTool.terminal,
+            badge: sessionCount == 0 ? null : '$sessionCount',
+            badgeColor: CcColors.ok,
+            onTap: () => _setBottomTool(_BottomTool.terminal),
+          ),
+          _leftToolButton(
+            icon: Icons.description_outlined,
+            label: 'Handoff',
+            selected: _detailItem != null && !_detailCollapsed,
+            enabled: _detailItem != null,
+            badge: _detailItem == null ? null : '1',
+            badgeColor: CcColors.accentBright,
+            onTap: () => _setDetailCollapsed(!_detailCollapsed),
+          ),
+          const Divider(height: 13, indent: 8, endIndent: 8),
+          _leftActionButton(
+            icon: Icons.manage_search_rounded,
+            label: 'Search',
+            onTap: _showFindInFiles,
+          ),
+          _leftActionButton(
+            icon: Icons.history_rounded,
+            label: 'Recent Files',
+            onTap: _showRecentFiles,
+          ),
+          const Spacer(),
+          _leftActionButton(
+            icon: Icons.keyboard_command_key_rounded,
+            label: 'Shortcuts',
+            onTap: _showShortcuts,
+          ),
+          _leftActionButton(
+            icon: Icons.refresh_rounded,
+            label: 'Refresh',
+            onTap: _refresh,
+          ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    );
+  }
 
   Widget _leftToolButton({
     required IconData icon,
@@ -966,14 +1182,16 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     required bool selected,
     required VoidCallback onTap,
     bool enabled = true,
+    String? badge,
+    Color badgeColor = CcColors.accentBright,
   }) => Tooltip(
     message: label,
     preferBelow: false,
     child: InkWell(
       onTap: enabled ? onTap : null,
       child: Container(
-        width: 38,
-        height: 42,
+        width: 50,
+        height: 96,
         decoration: BoxDecoration(
           color: selected
               ? CcColors.accent.withValues(alpha: 0.14)
@@ -985,15 +1203,87 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             ),
           ),
         ),
-        child: Icon(
-          icon,
-          size: 18,
-          color: !enabled
-              ? CcColors.subtle.withValues(alpha: 0.55)
-              : selected
-              ? CcColors.accentBright
-              : CcColors.muted,
+        child: Stack(
+          children: [
+            Center(
+              child: RotatedBox(
+                quarterTurns: 3,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 16,
+                      color: !enabled
+                          ? CcColors.subtle.withValues(alpha: 0.55)
+                          : selected
+                          ? CcColors.accentBright
+                          : CcColors.muted,
+                    ),
+                    const SizedBox(width: 7),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: !enabled
+                            ? CcColors.subtle.withValues(alpha: 0.55)
+                            : selected
+                            ? CcColors.text
+                            : CcColors.muted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (badge != null)
+              Positioned(
+                top: 5,
+                right: 4,
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 17),
+                  height: 17,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: selected ? 0.22 : 0.14),
+                    border: Border.all(
+                      color: badgeColor.withValues(alpha: 0.55),
+                    ),
+                    borderRadius: BorderRadius.circular(CcRadius.pill),
+                  ),
+                  child: Text(
+                    badge,
+                    style: CcType.code(
+                      size: 9.5,
+                      color: selected ? CcColors.text : badgeColor,
+                      weight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
+      ),
+    ),
+  );
+
+  Widget _leftActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) => Tooltip(
+    message: label,
+    preferBelow: false,
+    child: InkWell(
+      onTap: onTap,
+      child: SizedBox(
+        width: 50,
+        height: 38,
+        child: Icon(icon, size: 18, color: CcColors.muted),
       ),
     ),
   );
@@ -1001,8 +1291,131 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   Widget _editorArea() => Column(
     children: [
       _editorTabs(),
+      _editorHeader(),
       Expanded(child: _editorCanvas()),
     ],
+  );
+
+  Widget _editorHeader() {
+    final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
+    if (!hasActiveFile) return const SizedBox.shrink();
+    final file = _codeFiles[_activeFile];
+    final state = file.key.currentState;
+    final hit = _projectForFile(file.path);
+    final rel = hit?.rel.isNotEmpty == true ? hit!.rel : file.path;
+    final parts = rel.split('/').where((p) => p.isNotEmpty).toList();
+    final bytes = state?.fileBytes;
+    final byteText = bytes == null ? '' : _formatBytes(bytes);
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.only(left: 10, right: 8),
+      decoration: const BoxDecoration(
+        color: CcColors.editor,
+        border: Border(bottom: BorderSide(color: CcColors.border)),
+      ),
+      child: Row(
+        children: [
+          Icon(_iconForFile(file.path), size: 15, color: CcColors.muted),
+          const SizedBox(width: 8),
+          if (hit != null) ...[
+            Text(
+              hit.project.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CcType.code(
+                size: 11.5,
+                color: CcColors.accentBright,
+                weight: FontWeight.w700,
+              ),
+            ),
+            if (parts.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6),
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  size: 14,
+                  color: CcColors.subtle,
+                ),
+              ),
+          ],
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < parts.length; i++) ...[
+                    Text(
+                      parts[i],
+                      style: CcType.code(
+                        size: 11.5,
+                        color: i == parts.length - 1
+                            ? CcColors.text
+                            : CcColors.muted,
+                        weight: i == parts.length - 1
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                      ),
+                    ),
+                    if (i != parts.length - 1)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 5),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          size: 13,
+                          color: CcColors.subtle,
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (file.dirty) tag('modified', CcColors.warning),
+          if (file.line != null)
+            tag('line ${file.line}', CcColors.accentBright),
+          TextButton.icon(
+            onPressed: _showGoToLine,
+            icon: const Icon(Icons.format_list_numbered_rounded, size: 14),
+            label: const Text('Go To'),
+          ),
+          TextButton.icon(
+            onPressed: () => _revealFileInProject(file.path),
+            icon: const Icon(Icons.my_location_rounded, size: 14),
+            label: const Text('Reveal'),
+          ),
+          if (state?.saving == true) ...[
+            const SizedBox(width: 8),
+            const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ],
+          const SizedBox(width: 10),
+          _editorMetaChip(
+            Icons.notes_rounded,
+            '${state?.lineCount ?? 0} lines',
+          ),
+          _editorMetaChip(Icons.code_rounded, state?.languageLabel ?? 'Text'),
+          _editorMetaChip(Icons.keyboard_return_rounded, state?.eol ?? 'LF'),
+          if (byteText.isNotEmpty)
+            _editorMetaChip(Icons.data_object_rounded, byteText),
+        ],
+      ),
+    );
+  }
+
+  Widget _editorMetaChip(IconData icon, String label) => Padding(
+    padding: const EdgeInsets.only(left: 6),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: CcColors.subtle),
+        const SizedBox(width: 4),
+        Text(label, style: CcType.code(size: 10.5, color: CcColors.subtle)),
+      ],
+    ),
   );
 
   Widget _editorTabs() {
@@ -1031,6 +1444,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               active: i == _activeFile,
               onTap: () => setState(() => _activeFile = i),
               onClose: () => _closeCodeFile(i),
+              tabMenu: _editorFileTabMenu(i),
             ),
           if (_detailItem != null)
             _editorTab(
@@ -1044,7 +1458,19 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               onClose: () => setState(() => _detailItem = null),
             ),
           const Spacer(),
-          if (hasActiveFile)
+          if (hasActiveFile) ...[
+            IconButton(
+              icon: const Icon(Icons.search_rounded, size: 17),
+              tooltip: 'Find in File',
+              visualDensity: VisualDensity.compact,
+              onPressed: _showFindInCurrentFile,
+            ),
+            IconButton(
+              icon: const Icon(Icons.person_search_rounded, size: 17),
+              tooltip: 'Annotate / Blame',
+              visualDensity: VisualDensity.compact,
+              onPressed: _showBlameForActiveFile,
+            ),
             IconButton(
               icon: const Icon(Icons.save_rounded, size: 17),
               tooltip: '保存',
@@ -1053,6 +1479,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                   ? _codeFiles[_activeFile].key.currentState?.save
                   : null,
             ),
+          ],
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 17),
             tooltip: '刷新',
@@ -1070,12 +1497,16 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     required bool active,
     required VoidCallback onTap,
     VoidCallback? onClose,
+    PopupMenuButton<String>? tabMenu,
   }) => InkWell(
     onTap: onTap,
+    onSecondaryTap: () {
+      if (tabMenu != null) onTap();
+    },
     child: Container(
-      constraints: const BoxConstraints(maxWidth: 240),
+      constraints: const BoxConstraints(maxWidth: 260),
       height: 36,
-      padding: const EdgeInsets.only(left: 12, right: 6),
+      padding: const EdgeInsets.only(left: 12, right: 4),
       decoration: BoxDecoration(
         color: active ? CcColors.editor : CcColors.editorTabBar,
         border: Border(
@@ -1107,8 +1538,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               ),
             ),
           ),
+          if (tabMenu != null) ...[const SizedBox(width: 3), tabMenu],
           if (onClose != null) ...[
-            const SizedBox(width: 6),
+            const SizedBox(width: 2),
             InkWell(
               onTap: onClose,
               borderRadius: BorderRadius.circular(4),
@@ -1127,15 +1559,45 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     ),
   );
 
+  PopupMenuButton<String> _editorFileTabMenu(int index) {
+    final file = _codeFiles[index];
+    return PopupMenuButton<String>(
+      tooltip: 'Tab actions',
+      icon: const Icon(Icons.more_vert_rounded, size: 15),
+      padding: EdgeInsets.zero,
+      onOpened: () => setState(() => _activeFile = index),
+      onSelected: (v) {
+        if (v == 'copyPath') _copyFilePath(file.path);
+        if (v == 'reveal') _revealFileInProject(file.path);
+        if (v == 'close') _closeCodeFile(index);
+        if (v == 'closeOthers') _closeOtherCodeFiles(index);
+        if (v == 'closeAll') _closeAllCodeFiles();
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'copyPath', child: Text('Copy Path')),
+        const PopupMenuItem(value: 'reveal', child: Text('Reveal in Project')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'close', child: Text('Close')),
+        const PopupMenuItem(value: 'closeOthers', child: Text('Close Others')),
+        const PopupMenuItem(value: 'closeAll', child: Text('Close All')),
+      ],
+    );
+  }
+
   Widget _editorCanvas() {
     if (_activeFile >= 0 && _activeFile < _codeFiles.length) {
       final f = _codeFiles[_activeFile];
       return CodeEditorPane(
         key: f.key,
         path: f.path,
+        initialLine: f.line,
         onDirtyChanged: (v) {
           if (!mounted) return;
           setState(() => f.dirty = v);
+        },
+        onLoaded: () {
+          if (!mounted) return;
+          setState(() {});
         },
       );
     }
@@ -1152,6 +1614,14 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       'json' || 'yaml' || 'yml' || 'toml' => Icons.tune_rounded,
       _ => Icons.insert_drive_file_outlined,
     };
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
+    final mb = kb / 1024;
+    return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
   }
 
   Widget _workspaceWelcome() {
@@ -1484,6 +1954,131 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     }
   }
 
+  void _copyCommitHash(GitCommit c) {
+    Clipboard.setData(ClipboardData(text: c.hash));
+    _snack('已复制 ${c.shortHash}');
+  }
+
+  Future<void> _createBranchFromCommit(ProjectCfg p, GitCommit c) async {
+    final safeSubject = c.subject
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    final ctl = TextEditingController(
+      text: safeSubject.isEmpty
+          ? 'branch-${c.shortHash}'
+          : '${safeSubject.length > 32 ? safeSubject.substring(0, 32) : safeSubject}-${c.shortHash}',
+    );
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('New Branch from Commit'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${c.shortHash} · ${c.subject}',
+              style: CcType.code(size: 12, color: CcColors.muted),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctl,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Branch name'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Create and Checkout'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final branch = ctl.text.trim();
+    if (branch.isEmpty) {
+      _snack('分支名不能为空');
+      return;
+    }
+    setState(() => _gitLoading = true);
+    try {
+      await gitCreateBranch(p.path, branch, start: c.hash);
+      await _refreshGit();
+      _snack('已从 ${c.shortHash} 创建分支');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _cherryPickCommit(ProjectCfg p, GitCommit c) async {
+    final ok = await _confirm(
+      'Cherry-pick commit?',
+      '${c.shortHash} · ${c.subject}\n\n这会把该提交应用到当前分支。',
+    );
+    if (!ok) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitCherryPick(p.path, c.hash);
+      await _refreshGit();
+      _snack('Cherry-pick 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _revertCommit(ProjectCfg p, GitCommit c) async {
+    final ok = await _confirm(
+      'Revert commit?',
+      '${c.shortHash} · ${c.subject}\n\n这会创建一个反向提交。',
+    );
+    if (!ok) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitRevertCommit(p.path, c.hash);
+      await _refreshGit();
+      _snack('Revert 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _selectStash(ProjectCfg p, GitStash s) async {
+    setState(() {
+      _selectedStash = s.ref;
+      _gitLoading = true;
+    });
+    try {
+      final diff = await gitStashShow(p.path, s.ref);
+      if (!mounted) return;
+      setState(() {
+        _stashFiles = parseUnifiedDiff(diff);
+        _stashPreviewRef = s.ref;
+        _gitLoading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
   Widget _terminalToolWindow() {
     if (_bottomTool == _BottomTool.git) return _gitToolWindow();
     return Column(
@@ -1592,6 +2187,12 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               selected: _gitView == _GitView.log,
               onTap: () => setState(() => _gitView = _GitView.log),
             ),
+            _bottomTab(
+              icon: Icons.inventory_2_outlined,
+              label: 'Stash',
+              selected: _gitView == _GitView.stash,
+              onTap: () => setState(() => _gitView = _GitView.stash),
+            ),
             const SizedBox(width: 10),
             if (p != null)
               Expanded(
@@ -1680,6 +2281,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             child: Column(
               children: [
                 _gitSummaryBar(status),
+                if (_gitOperation != null) _gitOperationBar(p, _gitOperation!),
                 if (_gitView == _GitView.changes) _commitBox(p, status),
                 Expanded(child: _gitToolBody(p)),
               ],
@@ -1690,6 +2292,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   }
 
   Widget _gitToolBody(ProjectCfg p) {
+    if (_gitView == _GitView.stash) return _stashView(p);
     if (_gitView == _GitView.log) {
       if (_compareTitle == null &&
           _commitFiles.isEmpty &&
@@ -1713,6 +2316,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     final selected = _selectedGitPath == null
         ? const <FileDiff>[]
         : _gitFiles.where((f) => f.path == _selectedGitPath).toList();
+    final selectedChange = _selectedGitPath == null
+        ? null
+        : _gitChanges.where((c) => c.path == _selectedGitPath).firstOrNull;
     return Row(
       children: [
         SizedBox(width: 320, child: _localChangesList(p)),
@@ -1720,11 +2326,91 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         Expanded(
           child: selected.isEmpty
               ? centerMsg('选择一个变更文件')
-              : DiffView(
-                  files: selected,
-                  editRoot: p.path,
-                  onChanged: _refreshGit,
+              : _selectedChangeDiffPanel(p, selected, selectedChange),
+        ),
+      ],
+    );
+  }
+
+  Widget _selectedChangeDiffPanel(
+    ProjectCfg p,
+    List<FileDiff> selected,
+    GitChange? change,
+  ) {
+    final file = change?.path ?? selected.first.path;
+    final canStage = change?.unstaged == true;
+    final canUnstage = change?.staged == true;
+    final canRollback = change != null && !change.conflicted;
+    return Column(
+      children: [
+        Container(
+          height: 34,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: const BoxDecoration(
+            color: CcColors.editorTabBar,
+            border: Border(bottom: BorderSide(color: CcColors.border)),
+          ),
+          child: Row(
+            children: [
+              Icon(_iconForFile(file), size: 16, color: CcColors.muted),
+              const SizedBox(width: 8),
+              if (change != null) ...[
+                Text(
+                  change.status,
+                  style: CcType.code(
+                    size: 11.5,
+                    color: _changeColor(change),
+                    weight: FontWeight.w800,
+                  ),
                 ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  file,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 12, color: CcColors.muted),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _gitLoading
+                    ? null
+                    : () => _openCodeFile('${p.path}/$file'),
+                icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                label: const Text('Open'),
+              ),
+              TextButton.icon(
+                onPressed: !_gitLoading && canStage
+                    ? () => _gitStageFileCurrent(p, file)
+                    : null,
+                icon: const Icon(Icons.add_task_rounded, size: 14),
+                label: const Text('Stage'),
+              ),
+              TextButton.icon(
+                onPressed: !_gitLoading && canUnstage
+                    ? () => _gitUnstageFileCurrent(p, file)
+                    : null,
+                icon: const Icon(Icons.remove_done_rounded, size: 14),
+                label: const Text('Unstage'),
+              ),
+              TextButton.icon(
+                onPressed: !_gitLoading && canRollback
+                    ? () => _gitDiscardFileCurrent(p, file)
+                    : null,
+                icon: const Icon(Icons.undo_rounded, size: 14),
+                label: const Text('Rollback'),
+                style: TextButton.styleFrom(foregroundColor: CcColors.danger),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: DiffView(
+            files: selected,
+            editRoot: p.path,
+            onChanged: _refreshGit,
+          ),
         ),
       ],
     );
@@ -1898,7 +2584,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                 const PopupMenuItem(value: 'stage', child: Text('Stage')),
               if (c.staged)
                 const PopupMenuItem(value: 'unstage', child: Text('Unstage')),
-              const PopupMenuItem(value: 'discard', child: Text('Discard')),
+              const PopupMenuItem(value: 'discard', child: Text('Rollback')),
             ],
           ),
           onTap: () => setState(() => _selectedGitPath = c.path),
@@ -1934,6 +2620,9 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         : _commitFiles.isNotEmpty
         ? _commitFiles
         : const <FileDiff>[];
+    final selectedCommit = _compareTitle == null && _selectedCommit != null
+        ? _gitLog.where((c) => c.hash == _selectedCommit).firstOrNull
+        : null;
     return Row(
       children: [
         SizedBox(
@@ -2012,6 +2701,11 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                                     color: CcColors.muted,
                                   ),
                                 ),
+                                trailing: _commitActionsMenu(
+                                  p,
+                                  c,
+                                  compact: true,
+                                ),
                                 onTap: () => _selectCommit(p, c),
                               ),
                             );
@@ -2059,6 +2753,23 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
                         }),
                         child: const Text('Commit Log'),
                       ),
+                    if (selectedCommit != null) ...[
+                      TextButton.icon(
+                        onPressed: _gitLoading
+                            ? null
+                            : () => _copyCommitHash(selectedCommit),
+                        icon: const Icon(Icons.content_copy_rounded, size: 14),
+                        label: const Text('Copy'),
+                      ),
+                      TextButton.icon(
+                        onPressed: _gitLoading
+                            ? null
+                            : () => _createBranchFromCommit(p, selectedCommit),
+                        icon: const Icon(Icons.call_split_rounded, size: 14),
+                        label: const Text('Branch'),
+                      ),
+                      _commitActionsMenu(p, selectedCommit),
+                    ],
                   ],
                 ),
               ),
@@ -2069,6 +2780,245 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _commitActionsMenu(
+    ProjectCfg p,
+    GitCommit c, {
+    bool compact = false,
+  }) => PopupMenuButton<String>(
+    icon: Icon(
+      compact ? Icons.more_vert_rounded : Icons.more_horiz_rounded,
+      size: compact ? 18 : 17,
+    ),
+    tooltip: 'Commit actions',
+    enabled: !_gitLoading,
+    onSelected: (v) {
+      if (v == 'copy') _copyCommitHash(c);
+      if (v == 'branch') _createBranchFromCommit(p, c);
+      if (v == 'cherryPick') _cherryPickCommit(p, c);
+      if (v == 'revert') _revertCommit(p, c);
+      if (v == 'compare') _selectCommit(p, c);
+    },
+    itemBuilder: (_) => [
+      const PopupMenuItem(value: 'copy', child: Text('Copy Hash')),
+      const PopupMenuItem(value: 'branch', child: Text('New Branch from Here')),
+      const PopupMenuItem(value: 'compare', child: Text('Show Commit Diff')),
+      const PopupMenuDivider(),
+      const PopupMenuItem(value: 'cherryPick', child: Text('Cherry-pick')),
+      const PopupMenuItem(value: 'revert', child: Text('Revert')),
+    ],
+  );
+
+  Widget _stashView(ProjectCfg p) {
+    final selected = _gitStashes
+        .where((s) => s.ref == _selectedStash)
+        .cast<GitStash?>()
+        .firstOrNull;
+    if (selected != null && _stashPreviewRef != selected.ref && !_gitLoading) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _selectStash(p, selected);
+      });
+    }
+
+    return Column(
+      children: [
+        Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: const BoxDecoration(
+            color: CcColors.panel,
+            border: Border(bottom: BorderSide(color: CcColors.border)),
+          ),
+          child: Row(
+            children: [
+              FilledButton.icon(
+                onPressed: _gitLoading ? null : () => _stashPushCurrent(p),
+                icon: const Icon(Icons.archive_outlined, size: 16),
+                label: const Text('Stash Changes'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _refreshGit,
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Refresh'),
+              ),
+              const Spacer(),
+              Text(
+                '${_gitStashes.length} shelves',
+                style: CcType.code(size: 11.5, color: CcColors.subtle),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _gitStashes.isEmpty
+              ? centerMsg('没有 stash')
+              : Row(
+                  children: [
+                    SizedBox(
+                      width: 370,
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: CcColors.panel,
+                          border: Border(
+                            right: BorderSide(color: CcColors.border),
+                          ),
+                        ),
+                        child: ListView.separated(
+                          itemCount: _gitStashes.length,
+                          separatorBuilder: (_, _) =>
+                              const Divider(height: 1, color: CcColors.border),
+                          itemBuilder: (_, i) {
+                            final s = _gitStashes[i];
+                            final isSelected = s.ref == _selectedStash;
+                            return Material(
+                              color: isSelected
+                                  ? CcColors.panelHigh
+                                  : Colors.transparent,
+                              child: InkWell(
+                                onTap: () => _selectStash(p, s),
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    8,
+                                    8,
+                                    8,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.inventory_2_outlined,
+                                            size: 18,
+                                            color: isSelected
+                                                ? CcColors.accentBright
+                                                : CcColors.muted,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              s.subject.isEmpty
+                                                  ? s.ref
+                                                  : s.subject,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: isSelected
+                                                    ? CcColors.text
+                                                    : CcColors.muted,
+                                                fontWeight: isSelected
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 5),
+                                      Text(
+                                        s.branch.isEmpty
+                                            ? s.ref
+                                            : '${s.ref} · ${s.branch}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: CcType.code(
+                                          size: 11.5,
+                                          color: CcColors.subtle,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Wrap(
+                                        spacing: 4,
+                                        runSpacing: 2,
+                                        children: [
+                                          TextButton(
+                                            onPressed: _gitLoading
+                                                ? null
+                                                : () =>
+                                                      _stashApplyCurrent(p, s),
+                                            child: const Text('Apply'),
+                                          ),
+                                          TextButton(
+                                            onPressed: _gitLoading
+                                                ? null
+                                                : () => _stashPopCurrent(p, s),
+                                            child: const Text('Pop'),
+                                          ),
+                                          TextButton(
+                                            onPressed: _gitLoading
+                                                ? null
+                                                : () => _stashDropCurrent(p, s),
+                                            child: const Text('Drop'),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Container(
+                            height: 34,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            decoration: const BoxDecoration(
+                              color: CcColors.editorTabBar,
+                              border: Border(
+                                bottom: BorderSide(color: CcColors.border),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.difference_outlined,
+                                  size: 16,
+                                  color: CcColors.muted,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    selected == null
+                                        ? 'Stash diff'
+                                        : '${selected.ref} patch',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: CcType.code(
+                                      size: 12,
+                                      color: CcColors.muted,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: selected == null
+                                ? centerMsg('选择 stash 查看 diff')
+                                : _gitLoading &&
+                                      _stashPreviewRef != selected.ref
+                                ? centerMsg('正在加载 stash diff...')
+                                : _stashFiles.isEmpty
+                                ? centerMsg('这个 stash 没有文本 diff')
+                                : DiffView(files: _stashFiles),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ],
     );
@@ -2113,10 +3063,72 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     );
   }
 
+  Widget _gitOperationBar(ProjectCfg p, GitOperationState op) => Container(
+    height: 40,
+    padding: const EdgeInsets.symmetric(horizontal: 10),
+    decoration: BoxDecoration(
+      color: CcColors.warning.withValues(alpha: 0.10),
+      border: Border(
+        bottom: const BorderSide(color: CcColors.border),
+        left: BorderSide(
+          color: CcColors.warning.withValues(alpha: 0.65),
+          width: 3,
+        ),
+      ),
+    ),
+    child: Row(
+      children: [
+        const Icon(
+          Icons.warning_amber_rounded,
+          size: 17,
+          color: CcColors.warning,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          op.label,
+          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'Resolve conflicts, stage files, then continue or abort.',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CcType.code(size: 11, color: CcColors.subtle),
+          ),
+        ),
+        TextButton.icon(
+          onPressed: !_gitLoading && op.canContinue
+              ? () => _gitContinueCurrentOperation(p, op)
+              : null,
+          icon: const Icon(Icons.play_arrow_rounded, size: 15),
+          label: const Text('Continue'),
+        ),
+        TextButton.icon(
+          onPressed: !_gitLoading && op.canAbort
+              ? () => _gitAbortCurrentOperation(p, op)
+              : null,
+          icon: const Icon(Icons.stop_circle_outlined, size: 15),
+          label: const Text('Abort'),
+          style: TextButton.styleFrom(foregroundColor: CcColors.danger),
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded, size: 17),
+          tooltip: '刷新 Git',
+          visualDensity: VisualDensity.compact,
+          onPressed: _refreshGit,
+        ),
+      ],
+    ),
+  );
+
   Widget _commitBox(ProjectCfg p, GitStatusSummary? status) {
     final canCommit = (status?.staged ?? 0) > 0 && !_gitLoading;
     final selected = _selectedChangePaths.length;
     final canCommitSelected = selected > 0 && !_gitLoading;
+    final hasCommitText = _commitCtl.text.trim().isNotEmpty;
+    final canAmend =
+        !_gitLoading && ((status?.staged ?? 0) > 0 || hasCommitText);
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: const BoxDecoration(
@@ -2138,6 +3150,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               onSubmitted: (_) {
                 if (canCommit) _gitCommitCurrent(p);
               },
+              onChanged: (_) => setState(() {}),
             ),
           ),
           const SizedBox(width: 8),
@@ -2147,10 +3160,22 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
             label: const Text('Commit'),
           ),
           const SizedBox(width: 6),
+          FilledButton.tonalIcon(
+            onPressed: canCommit ? () => _gitCommitAndPushCurrent(p) : null,
+            icon: const Icon(Icons.upload_rounded, size: 16),
+            label: const Text('Commit & Push'),
+          ),
+          const SizedBox(width: 6),
           FilledButton.icon(
             onPressed: canCommitSelected ? () => _gitCommitSelected(p) : null,
             icon: const Icon(Icons.checklist_rounded, size: 16),
             label: Text(selected == 0 ? 'Commit Selected' : 'Commit $selected'),
+          ),
+          const SizedBox(width: 6),
+          OutlinedButton.icon(
+            onPressed: canAmend ? () => _gitCommitAmendCurrent(p) : null,
+            icon: const Icon(Icons.edit_note_rounded, size: 16),
+            label: const Text('Amend'),
           ),
           const SizedBox(width: 6),
           OutlinedButton.icon(
@@ -2271,6 +3296,43 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     }
   }
 
+  Future<void> _gitContinueCurrentOperation(
+    ProjectCfg p,
+    GitOperationState op,
+  ) async {
+    setState(() => _gitLoading = true);
+    try {
+      await gitContinueOperation(p.path, op.kind);
+      await _refreshGit();
+      _snack('${op.kind} continue 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _gitAbortCurrentOperation(
+    ProjectCfg p,
+    GitOperationState op,
+  ) async {
+    if (!await _confirm('Abort ${op.kind}?', '这会中止当前 ${op.kind} 操作。')) {
+      return;
+    }
+    setState(() => _gitLoading = true);
+    try {
+      await gitAbortOperation(p.path, op.kind);
+      await _refreshGit();
+      _snack('${op.kind} abort 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
   Future<void> _gitCommitCurrent(ProjectCfg p) async {
     setState(() => _gitLoading = true);
     try {
@@ -2278,6 +3340,47 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
       _commitCtl.clear();
       await _refreshGit();
       _snack('Commit 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _gitCommitAndPushCurrent(ProjectCfg p) async {
+    setState(() => _gitLoading = true);
+    try {
+      await gitCommit(p.path, _commitCtl.text);
+      _commitCtl.clear();
+      final pushed = await _gitPushWithUpstreamFallback(p);
+      if (!pushed) {
+        await _refreshGit();
+        _snack('Commit 完成，Push 已取消');
+        return;
+      }
+      await _refreshGit();
+      _snack('Commit & Push 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _gitCommitAmendCurrent(ProjectCfg p) async {
+    final message = _commitCtl.text.trim();
+    final detail = message.isEmpty
+        ? '将 staged changes 合入上一条 commit，并沿用上一条 commit message。'
+        : '将 staged changes 合入上一条 commit，并用当前输入框内容替换上一条 commit message。';
+    if (!await _confirm('Amend 上一条 commit?', detail)) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitCommitAmend(p.path, _commitCtl.text);
+      _commitCtl.clear();
+      await _refreshGit();
+      _snack('Amend 完成');
     } catch (e) {
       if (mounted) {
         setState(() => _gitLoading = false);
@@ -2306,33 +3409,133 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     }
   }
 
+  Future<void> _stashPushCurrent(ProjectCfg p) async {
+    final ctl = TextEditingController(
+      text: 'WIP ${DateTime.now().toIso8601String()}',
+    );
+    var includeUntracked = true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Stash Changes'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctl,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Message'),
+              ),
+              CheckboxListTile(
+                value: includeUntracked,
+                onChanged: (v) => setLocal(() => includeUntracked = v ?? true),
+                title: const Text('Include untracked files'),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Stash'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitStashPush(p.path, ctl.text, includeUntracked: includeUntracked);
+      await _refreshGit();
+      _snack('Stash 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _stashApplyCurrent(ProjectCfg p, GitStash s) async {
+    setState(() => _gitLoading = true);
+    try {
+      await gitStashApply(p.path, s.ref);
+      await _refreshGit();
+      _snack('Stash apply 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _stashPopCurrent(ProjectCfg p, GitStash s) async {
+    setState(() => _gitLoading = true);
+    try {
+      await gitStashPop(p.path, s.ref);
+      await _refreshGit();
+      _snack('Stash pop 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _stashDropCurrent(ProjectCfg p, GitStash s) async {
+    if (!await _confirm('Drop stash?', s.ref)) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitStashDrop(p.path, s.ref);
+      await _refreshGit();
+      _snack('Stash drop 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
   Future<void> _gitPushCurrent(ProjectCfg p) async {
     setState(() => _gitLoading = true);
     try {
-      await gitPush(p.path);
+      final pushed = await _gitPushWithUpstreamFallback(p);
+      if (!pushed) return;
       await _refreshGit();
       _snack('Push 完成');
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _gitLoading = false);
-      final msg = errorText(e);
-      if (msg.contains('upstream') || msg.contains('no upstream')) {
-        final ok = await _confirm('设置 upstream 并 push?', msg);
-        if (!ok) return;
-        setState(() => _gitLoading = true);
-        try {
-          await gitPush(p.path, setUpstream: true);
-          await _refreshGit();
-          _snack('Push 完成');
-        } catch (e2) {
-          if (mounted) {
-            setState(() => _gitLoading = false);
-            _snack(errorText(e2));
-          }
-        }
-      } else {
-        _snack(msg);
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
       }
+    }
+  }
+
+  Future<bool> _gitPushWithUpstreamFallback(ProjectCfg p) async {
+    try {
+      await gitPush(p.path);
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      final msg = errorText(e);
+      if (!msg.contains('upstream') && !msg.contains('no upstream')) {
+        rethrow;
+      }
+      setState(() => _gitLoading = false);
+      final ok = await _confirm('设置 upstream 并 push?', msg);
+      if (!ok) return false;
+      setState(() => _gitLoading = true);
+      await gitPush(p.path, setUpstream: true);
+      return true;
     }
   }
 
@@ -2360,8 +3563,50 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           await _refreshGit();
         },
         onCompare: (branch) async => _compareBranch(p, branch),
+        onMerge: (branch) async => _mergeBranchIntoCurrent(p, branch),
+        onRebase: (branch) async => _rebaseCurrentOntoBranch(p, branch),
       ),
     );
+  }
+
+  Future<void> _mergeBranchIntoCurrent(ProjectCfg p, GitBranch branch) async {
+    final current = _gitStatus?.branch ?? 'current';
+    final ok = await _confirm(
+      'Merge into current branch?',
+      '${branch.name}\n\n会执行 `git merge --no-ff ${branch.name}`，把它合并到 $current。',
+    );
+    if (!ok) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitMergeBranch(p.path, branch.name);
+      await _refreshGit();
+      _snack('Merge 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _rebaseCurrentOntoBranch(ProjectCfg p, GitBranch branch) async {
+    final current = _gitStatus?.branch ?? 'current';
+    final ok = await _confirm(
+      'Rebase current branch?',
+      '$current -> ${branch.name}\n\n会执行 `git rebase ${branch.name}`，把当前分支变基到选中分支。',
+    );
+    if (!ok) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitRebaseOnto(p.path, branch.name);
+      await _refreshGit();
+      _snack('Rebase 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+      }
+      rethrow;
+    }
   }
 
   Widget _termArea() {
@@ -3153,6 +4398,8 @@ class _BranchDialog extends StatefulWidget {
   final Future<void> Function(String oldName, String newName) onRename;
   final Future<void> Function(String branch, bool force) onDelete;
   final Future<void> Function(GitBranch branch) onCompare;
+  final Future<void> Function(GitBranch branch) onMerge;
+  final Future<void> Function(GitBranch branch) onRebase;
   const _BranchDialog({
     required this.project,
     required this.onCheckout,
@@ -3160,6 +4407,8 @@ class _BranchDialog extends StatefulWidget {
     required this.onRename,
     required this.onDelete,
     required this.onCompare,
+    required this.onMerge,
+    required this.onRebase,
   });
 
   @override
@@ -3340,16 +4589,230 @@ class _BranchDialogState extends State<_BranchDialog> {
     }
   }
 
+  Future<void> _mergeBranch(GitBranch b) async {
+    if (b.current) return;
+    try {
+      await widget.onMerge(b);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
+  }
+
+  Future<void> _rebaseBranch(GitBranch b) async {
+    if (b.current) return;
+    try {
+      await widget.onRebase(b);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
+  }
+
+  List<GitBranch> get _filteredBranches {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return _branches;
+    return _branches.where((b) {
+      final fields = [
+        b.name,
+        b.remoteName ?? '',
+        b.localName ?? '',
+        b.remote ? 'remote' : 'local',
+      ];
+      return fields.any((f) => f.toLowerCase().contains(q));
+    }).toList();
+  }
+
+  Widget _branchSection(String label, List<GitBranch> branches, IconData icon) {
+    if (branches.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          height: 30,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: const BoxDecoration(
+            color: CcColors.editorTabBar,
+            border: Border(
+              top: BorderSide(color: CcColors.border),
+              bottom: BorderSide(color: CcColors.border),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 15, color: CcColors.muted),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                '${branches.length}',
+                style: CcType.code(size: 11, color: CcColors.subtle),
+              ),
+            ],
+          ),
+        ),
+        for (final b in branches) _branchRow(b),
+      ],
+    );
+  }
+
+  Widget _branchRow(GitBranch b) {
+    final subtitle = b.current
+        ? 'current branch'
+        : b.remote
+        ? 'remote · checkout creates ${b.localName ?? b.name}'
+        : 'local branch';
+    return Material(
+      color: b.current
+          ? CcColors.accent.withValues(alpha: 0.08)
+          : Colors.transparent,
+      child: InkWell(
+        onTap: b.current ? null : () => _checkout(b),
+        onDoubleTap: b.current ? null : () => _checkout(b),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 50),
+          padding: const EdgeInsets.only(left: 12, right: 6),
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                color: b.current ? CcColors.accent : Colors.transparent,
+                width: 2,
+              ),
+              bottom: const BorderSide(color: CcColors.border, width: 0.5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                b.remote
+                    ? Icons.cloud_queue_rounded
+                    : Icons.account_tree_rounded,
+                size: 17,
+                color: b.current ? CcColors.accentBright : CcColors.muted,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            b.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: CcType.code(
+                              size: 13,
+                              color: b.current ? CcColors.text : CcColors.muted,
+                              weight: b.current
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        if (b.current) ...[
+                          const SizedBox(width: 8),
+                          tag('current', CcColors.ok),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11.5, color: CcColors.subtle),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (!b.current)
+                TextButton(
+                  onPressed: () => _checkout(b),
+                  child: const Text('Checkout'),
+                ),
+              if (!b.current)
+                TextButton(
+                  onPressed: () => _mergeBranch(b),
+                  child: const Text('Merge'),
+                ),
+              TextButton(
+                onPressed: () => _compareBranch(b),
+                child: const Text('Compare'),
+              ),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert_rounded, size: 18),
+                tooltip: '分支操作',
+                onSelected: (v) {
+                  if (v == 'checkout') _checkout(b);
+                  if (v == 'compare') _compareBranch(b);
+                  if (v == 'merge') _mergeBranch(b);
+                  if (v == 'rebase') _rebaseBranch(b);
+                  if (v == 'rename') _renameBranch(b);
+                  if (v == 'delete') _deleteBranch(b);
+                  if (v == 'forceDelete') _deleteBranch(b, force: true);
+                },
+                itemBuilder: (_) => [
+                  if (!b.current)
+                    const PopupMenuItem(
+                      value: 'checkout',
+                      child: Text('Checkout'),
+                    ),
+                  const PopupMenuItem(
+                    value: 'compare',
+                    child: Text('Compare with Current'),
+                  ),
+                  if (!b.current) ...[
+                    const PopupMenuItem(
+                      value: 'merge',
+                      child: Text('Merge into Current'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'rebase',
+                      child: Text('Rebase Current onto Selected'),
+                    ),
+                  ],
+                  if (!b.remote) ...[
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    if (!b.current)
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete'),
+                      ),
+                    if (!b.current)
+                      const PopupMenuItem(
+                        value: 'forceDelete',
+                        child: Text('Force Delete'),
+                      ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final q = _query.toLowerCase();
-    final branches = q.isEmpty
-        ? _branches
-        : _branches.where((b) => b.name.toLowerCase().contains(q)).toList();
+    final branches = _filteredBranches;
+    final locals = branches.where((b) => !b.remote).toList();
+    final remotes = branches.where((b) => b.remote).toList();
     return Dialog(
       child: SizedBox(
-        width: 560,
-        height: 620,
+        width: 760,
+        height: 660,
         child: Column(
           children: [
             Container(
@@ -3379,6 +4842,11 @@ class _BranchDialogState extends State<_BranchDialog> {
                     onPressed: _createBranch,
                   ),
                   IconButton(
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    tooltip: '刷新分支',
+                    onPressed: _load,
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.close_rounded, size: 18),
                     tooltip: '关闭',
                     onPressed: () => Navigator.pop(context),
@@ -3399,7 +4867,7 @@ class _BranchDialogState extends State<_BranchDialog> {
                 onSubmitted: (_) {
                   GitBranch? exact;
                   for (final b in branches) {
-                    if (b.name == _query) {
+                    if (b.name == _query.trim()) {
                       exact = b;
                       break;
                     }
@@ -3417,80 +4885,21 @@ class _BranchDialogState extends State<_BranchDialog> {
                   ? const Center(child: CircularProgressIndicator())
                   : _error != null
                   ? centerMsg(_error!, onRetry: _load)
-                  : ListView.builder(
-                      itemCount: branches.length,
-                      itemBuilder: (_, i) {
-                        final b = branches[i];
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            b.remote
-                                ? Icons.cloud_queue_rounded
-                                : Icons.account_tree_rounded,
-                            size: 17,
-                            color: b.current
-                                ? CcColors.accentBright
-                                : CcColors.muted,
-                          ),
-                          title: Text(
-                            b.name,
-                            style: const TextStyle(
-                              fontFamily: CcType.mono,
-                              fontSize: 13,
-                            ),
-                          ),
-                          subtitle: Text(
-                            b.current
-                                ? 'current'
-                                : b.remote
-                                ? 'remote · checkout creates ${b.localName ?? b.name}'
-                                : 'local',
-                          ),
-                          trailing: b.current
-                              ? statusDot(CcColors.ok, size: 7, glow: true)
-                              : PopupMenuButton<String>(
-                                  icon: const Icon(
-                                    Icons.more_vert_rounded,
-                                    size: 18,
-                                  ),
-                                  tooltip: '分支操作',
-                                  onSelected: (v) {
-                                    if (v == 'checkout') _checkout(b);
-                                    if (v == 'compare') _compareBranch(b);
-                                    if (v == 'rename') _renameBranch(b);
-                                    if (v == 'delete') _deleteBranch(b);
-                                    if (v == 'forceDelete') {
-                                      _deleteBranch(b, force: true);
-                                    }
-                                  },
-                                  itemBuilder: (_) => [
-                                    const PopupMenuItem(
-                                      value: 'checkout',
-                                      child: Text('Checkout'),
-                                    ),
-                                    const PopupMenuItem(
-                                      value: 'compare',
-                                      child: Text('Compare with Current'),
-                                    ),
-                                    if (!b.remote) ...[
-                                      const PopupMenuItem(
-                                        value: 'rename',
-                                        child: Text('Rename'),
-                                      ),
-                                      const PopupMenuItem(
-                                        value: 'delete',
-                                        child: Text('Delete'),
-                                      ),
-                                      const PopupMenuItem(
-                                        value: 'forceDelete',
-                                        child: Text('Force Delete'),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                          onTap: b.current ? null : () => _checkout(b),
-                        );
-                      },
+                  : branches.isEmpty
+                  ? centerMsg('没有匹配分支')
+                  : ListView(
+                      children: [
+                        _branchSection(
+                          'Local Branches',
+                          locals,
+                          Icons.account_tree_rounded,
+                        ),
+                        _branchSection(
+                          'Remote Branches',
+                          remotes,
+                          Icons.cloud_queue_rounded,
+                        ),
+                      ],
                     ),
             ),
           ],
@@ -3513,22 +4922,6 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
   List<({String label, String path})> _files = const [];
   bool _loading = true;
   String _query = '';
-
-  static const _skip = {
-    '.git',
-    'node_modules',
-    'build',
-    '.dart_tool',
-    '.idea',
-    'dist',
-    'vendor',
-    'target',
-    '.gradle',
-    'Pods',
-    '.next',
-    '__pycache__',
-    '.venv',
-  };
 
   @override
   void initState() {
@@ -3577,7 +4970,7 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
     for (final e in entries) {
       if (out.length >= 1600) return;
       final name = e.path.split('/').last;
-      if (_skip.contains(name)) continue;
+      if (_searchSkipDirs.contains(name)) continue;
       if (e is Directory) {
         await _scanDir(e, root, project, out);
       } else if (e is File) {
@@ -3681,4 +5074,719 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
       ),
     );
   }
+}
+
+class _SearchHit {
+  final String project;
+  final String path;
+  final String rel;
+  final int line;
+  final String text;
+
+  const _SearchHit({
+    required this.project,
+    required this.path,
+    required this.rel,
+    required this.line,
+    required this.text,
+  });
+}
+
+class _FindInFilesDialog extends StatefulWidget {
+  final List<WorkspaceCfg> workspaces;
+  const _FindInFilesDialog({required this.workspaces});
+
+  @override
+  State<_FindInFilesDialog> createState() => _FindInFilesDialogState();
+}
+
+class _FindInFilesDialogState extends State<_FindInFilesDialog> {
+  final _ctl = TextEditingController();
+  List<_SearchHit> _hits = const [];
+  bool _loading = false;
+  String _query = '';
+  String? _error;
+  int _searchId = 0;
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search(String value) async {
+    final query = value.trim();
+    final id = ++_searchId;
+    setState(() {
+      _query = query;
+      _error = null;
+      _hits = const [];
+      _loading = query.length >= 2;
+    });
+    if (query.length < 2) return;
+    try {
+      final out = <_SearchHit>[];
+      for (final ws in widget.workspaces) {
+        for (final p in ws.projects) {
+          await _searchDir(Directory(p.path), p.path, p.name, query, out);
+          if (out.length >= 300 || id != _searchId) break;
+        }
+        if (out.length >= 300 || id != _searchId) break;
+      }
+      if (!mounted || id != _searchId) return;
+      setState(() {
+        _hits = out;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted || id != _searchId) return;
+      setState(() {
+        _error = errorText(e);
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _searchDir(
+    Directory dir,
+    String root,
+    String project,
+    String query,
+    List<_SearchHit> out,
+  ) async {
+    if (out.length >= 300) return;
+    List<FileSystemEntity> entries;
+    try {
+      entries = await dir.list(followLinks: false).toList();
+    } catch (_) {
+      return;
+    }
+    entries.sort((a, b) => a.path.compareTo(b.path));
+    for (final e in entries) {
+      if (out.length >= 300) return;
+      final name = e.path.split('/').last;
+      if (_searchSkipDirs.contains(name)) continue;
+      if (e is Directory) {
+        await _searchDir(e, root, project, query, out);
+      } else if (e is File) {
+        await _searchFile(e, root, project, query, out);
+      }
+    }
+  }
+
+  Future<void> _searchFile(
+    File file,
+    String root,
+    String project,
+    String query,
+    List<_SearchHit> out,
+  ) async {
+    if (out.length >= 300) return;
+    final name = file.path.split('/').last;
+    if (_looksBinaryOrHuge(file, name)) return;
+    String content;
+    try {
+      content = await file.readAsString();
+    } catch (_) {
+      return;
+    }
+    final lower = query.toLowerCase();
+    final rel = file.path.startsWith('$root/')
+        ? file.path.substring(root.length + 1)
+        : file.path;
+    final lines = content.split('\n');
+    for (var i = 0; i < lines.length && out.length < 300; i++) {
+      final line = lines[i];
+      if (!line.toLowerCase().contains(lower)) continue;
+      out.add(
+        _SearchHit(
+          project: project,
+          path: file.path,
+          rel: rel,
+          line: i + 1,
+          text: line.trim(),
+        ),
+      );
+    }
+  }
+
+  bool _looksBinaryOrHuge(File file, String name) {
+    try {
+      if (file.lengthSync() > 700 * 1024) return true;
+    } catch (_) {
+      return true;
+    }
+    final ext = name.split('.').last.toLowerCase();
+    const binary = {
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'ico',
+      'pdf',
+      'zip',
+      'gz',
+      'tar',
+      'jar',
+      'class',
+      'so',
+      'dylib',
+      'a',
+      'o',
+      'mp4',
+      'mov',
+      'mp3',
+    };
+    return binary.contains(ext);
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    child: SizedBox(
+      width: 860,
+      height: 680,
+      child: Column(
+        children: [
+          Container(
+            height: 42,
+            padding: const EdgeInsets.only(left: 14, right: 6),
+            decoration: const BoxDecoration(
+              color: CcColors.panel,
+              border: Border(bottom: BorderSide(color: CcColors.border)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.search_rounded,
+                  size: 17,
+                  color: CcColors.muted,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Find in Files',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                if (_hits.isNotEmpty)
+                  Text(
+                    '${_hits.length} results',
+                    style: CcType.code(size: 11.5, color: CcColors.subtle),
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            child: TextField(
+              controller: _ctl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: 'Search text in project files',
+                isDense: true,
+                prefixIcon: Icon(Icons.search_rounded, size: 18),
+              ),
+              onChanged: _search,
+              onSubmitted: (_) {
+                if (_hits.isNotEmpty) Navigator.pop(context, _hits.first);
+              },
+            ),
+          ),
+          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          Expanded(
+            child: _error != null
+                ? centerMsg(_error!, onRetry: () => _search(_query))
+                : _query.length < 2
+                ? centerMsg('输入至少 2 个字符开始搜索')
+                : !_loading && _hits.isEmpty
+                ? centerMsg('没有匹配结果')
+                : ListView.separated(
+                    itemCount: _hits.length,
+                    separatorBuilder: (_, _) =>
+                        const Divider(height: 1, color: CcColors.border),
+                    itemBuilder: (_, i) {
+                      final h = _hits[i];
+                      return ListTile(
+                        dense: true,
+                        leading: const Icon(
+                          Icons.manage_search_rounded,
+                          size: 18,
+                          color: CcColors.muted,
+                        ),
+                        title: Text(
+                          h.text.isEmpty ? ' ' : h.text,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CcType.code(size: 12.5),
+                        ),
+                        subtitle: Text(
+                          '${h.project}/${h.rel}:${h.line}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CcType.code(size: 11, color: CcColors.subtle),
+                        ),
+                        onTap: () => Navigator.pop(context, h),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _FileLineHit {
+  final int line;
+  final String text;
+
+  const _FileLineHit({required this.line, required this.text});
+}
+
+class _FindInCurrentFileDialog extends StatefulWidget {
+  final String path;
+  final String text;
+  const _FindInCurrentFileDialog({required this.path, required this.text});
+
+  @override
+  State<_FindInCurrentFileDialog> createState() =>
+      _FindInCurrentFileDialogState();
+}
+
+class _FindInCurrentFileDialogState extends State<_FindInCurrentFileDialog> {
+  final _ctl = TextEditingController();
+  List<_FileLineHit> _hits = const [];
+  String _query = '';
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _search(String value) {
+    final query = value.trim();
+    final out = <_FileLineHit>[];
+    if (query.isNotEmpty) {
+      final lower = query.toLowerCase();
+      final lines = widget.text.split('\n');
+      for (var i = 0; i < lines.length && out.length < 300; i++) {
+        final line = lines[i];
+        if (!line.toLowerCase().contains(lower)) continue;
+        out.add(_FileLineHit(line: i + 1, text: line.trim()));
+      }
+    }
+    setState(() {
+      _query = query;
+      _hits = out;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.path.split('/').last;
+    return Dialog(
+      child: SizedBox(
+        width: 760,
+        height: 560,
+        child: Column(
+          children: [
+            Container(
+              height: 42,
+              padding: const EdgeInsets.only(left: 14, right: 6),
+              decoration: const BoxDecoration(
+                color: CcColors.panel,
+                border: Border(bottom: BorderSide(color: CcColors.border)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.search_rounded,
+                    size: 17,
+                    color: CcColors.muted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Find in File · $name',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (_hits.isNotEmpty)
+                    Text(
+                      '${_hits.length} matches',
+                      style: CcType.code(size: 11.5, color: CcColors.subtle),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: TextField(
+                controller: _ctl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Search in current file',
+                  isDense: true,
+                  prefixIcon: Icon(Icons.search_rounded, size: 18),
+                ),
+                onChanged: _search,
+                onSubmitted: (_) {
+                  if (_hits.isNotEmpty) {
+                    Navigator.pop(context, _hits.first.line);
+                  }
+                },
+              ),
+            ),
+            Expanded(
+              child: _query.isEmpty
+                  ? centerMsg('输入内容查找当前文件')
+                  : _hits.isEmpty
+                  ? centerMsg('没有匹配结果')
+                  : ListView.separated(
+                      itemCount: _hits.length,
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 1, color: CcColors.border),
+                      itemBuilder: (_, i) {
+                        final h = _hits[i];
+                        return ListTile(
+                          dense: true,
+                          leading: Text(
+                            '${h.line}',
+                            textAlign: TextAlign.right,
+                            style: CcType.code(
+                              size: 11,
+                              color: CcColors.subtle,
+                            ),
+                          ),
+                          title: Text(
+                            h.text.isEmpty ? ' ' : h.text,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: CcType.code(size: 12.5),
+                          ),
+                          onTap: () => Navigator.pop(context, h.line),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GoToLineDialog extends StatefulWidget {
+  final String fileName;
+  final int lineCount;
+  final int? initialLine;
+  const _GoToLineDialog({
+    required this.fileName,
+    required this.lineCount,
+    this.initialLine,
+  });
+
+  @override
+  State<_GoToLineDialog> createState() => _GoToLineDialogState();
+}
+
+class _GoToLineDialogState extends State<_GoToLineDialog> {
+  late final TextEditingController _ctl;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = TextEditingController(text: '${widget.initialLine ?? ''}');
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final line = int.tryParse(_ctl.text.trim());
+    if (line == null || line < 1 || line > widget.lineCount) {
+      setState(() => _error = '请输入 1-${widget.lineCount} 之间的行号');
+      return;
+    }
+    Navigator.pop(context, line);
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    child: SizedBox(
+      width: 420,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            height: 42,
+            padding: const EdgeInsets.only(left: 14, right: 6),
+            decoration: const BoxDecoration(
+              color: CcColors.panel,
+              border: Border(bottom: BorderSide(color: CcColors.border)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.format_list_numbered_rounded,
+                  size: 17,
+                  color: CcColors.muted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Go to Line · ${widget.fileName}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: _ctl,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Line number',
+                    hintText: '1-${widget.lineCount}',
+                    errorText: _error,
+                  ),
+                  onSubmitted: (_) => _submit(),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Text(
+                      '${widget.lineCount} lines',
+                      style: CcType.code(size: 11.5, color: CcColors.subtle),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('取消'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(onPressed: _submit, child: const Text('Go')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _BlameDialog extends StatefulWidget {
+  final ProjectCfg project;
+  final String relPath;
+  const _BlameDialog({required this.project, required this.relPath});
+
+  @override
+  State<_BlameDialog> createState() => _BlameDialogState();
+}
+
+class _BlameDialogState extends State<_BlameDialog> {
+  List<GitBlameLine> _lines = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final lines = await gitBlame(widget.project.path, widget.relPath);
+      if (!mounted) return;
+      setState(() {
+        _lines = lines;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = errorText(e);
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    child: SizedBox(
+      width: 980,
+      height: 720,
+      child: Column(
+        children: [
+          Container(
+            height: 42,
+            padding: const EdgeInsets.only(left: 14, right: 6),
+            decoration: const BoxDecoration(
+              color: CcColors.panel,
+              border: Border(bottom: BorderSide(color: CcColors.border)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.person_search_rounded,
+                  size: 17,
+                  color: CcColors.muted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Annotate · ${widget.relPath}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  tooltip: '刷新',
+                  onPressed: _load,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          Expanded(
+            child: _error != null
+                ? centerMsg(_error!, onRetry: _load)
+                : _lines.isEmpty && !_loading
+                ? centerMsg('没有 blame 信息')
+                : ListView.builder(
+                    itemCount: _lines.length,
+                    itemBuilder: (_, i) {
+                      final l = _lines[i];
+                      final date = l.date.millisecondsSinceEpoch == 0
+                          ? ''
+                          : relativeTime(l.date);
+                      return Container(
+                        decoration: const BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color: CcColors.border,
+                              width: 0.5,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: 58,
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 5),
+                                child: Text(
+                                  '${l.line}',
+                                  textAlign: TextAlign.right,
+                                  style: CcType.code(
+                                    size: 11,
+                                    color: CcColors.subtle,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            SizedBox(
+                              width: 220,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 4,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${l.hash.substring(0, 8)} · ${l.author}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: CcType.code(
+                                        size: 11.5,
+                                        color: CcColors.muted,
+                                      ),
+                                    ),
+                                    Text(
+                                      date.isEmpty
+                                          ? l.summary
+                                          : '$date · ${l.summary}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: CcColors.subtle,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  10,
+                                  5,
+                                  10,
+                                  5,
+                                ),
+                                child: Text(
+                                  l.content.isEmpty ? ' ' : l.content,
+                                  style: CcType.code(size: 12.5),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
