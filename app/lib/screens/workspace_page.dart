@@ -6565,6 +6565,8 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         onMerge: (branch) async => _mergeBranchIntoCurrent(p, branch),
         onRebase: (branch) async => _rebaseCurrentOntoBranch(p, branch),
         onFetch: ({prune = false}) => _gitFetchCurrent(p, prune: prune),
+        onPull: () => _gitPullCurrent(p),
+        onPush: () => _gitPushCurrent(p),
       ),
     );
   }
@@ -7854,6 +7856,8 @@ class _BranchDialog extends StatefulWidget {
   final Future<void> Function(GitBranch branch) onMerge;
   final Future<void> Function(GitBranch branch) onRebase;
   final Future<void> Function({bool prune}) onFetch;
+  final Future<void> Function()? onPull;
+  final Future<void> Function()? onPush;
   const _BranchDialog({
     required this.project,
     required this.onCheckout,
@@ -7866,6 +7870,8 @@ class _BranchDialog extends StatefulWidget {
     required this.onMerge,
     required this.onRebase,
     required this.onFetch,
+    this.onPull,
+    this.onPush,
   });
 
   @override
@@ -7972,6 +7978,8 @@ class _BranchDialogState extends State<_BranchDialog> {
                   if (context.mounted) Navigator.pop(context);
                 },
                 onFetch: widget.onFetch,
+                onPull: widget.onPull,
+                onPush: widget.onPush,
               ),
             ),
           ],
@@ -8376,6 +8384,129 @@ class _BranchListPaneState extends State<_BranchListPane> {
     );
   }
 
+  Widget _currentBranchHero() {
+    if (widget.embedded) return const SizedBox.shrink();
+    final current = widget.branches.where((b) => b.current).firstOrNull;
+    final currentName = current?.name ?? 'No current branch';
+    final upstream = current?.upstream ?? '';
+    final unpublished = current != null && !current.remote && upstream.isEmpty;
+    final hasSync =
+        current != null && (current.ahead > 0 || current.behind > 0);
+    final meta = [
+      widget.project.name,
+      if (upstream.isNotEmpty) 'tracks $upstream',
+      if (unpublished) 'unpublished',
+      if (hasSync) '↑${current.ahead} ↓${current.behind}',
+    ].join(' · ');
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: const BoxDecoration(
+        color: CcColors.editor,
+        border: Border(bottom: BorderSide(color: CcColors.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: CcColors.panelHigh,
+              border: Border.all(color: CcColors.borderSoft),
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: const Icon(
+              Icons.account_tree_rounded,
+              size: 18,
+              color: CcColors.accentBright,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  currentName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(
+                    size: 13,
+                    color: CcColors.text,
+                    weight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  meta.isEmpty ? 'branch state unavailable' : meta,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 11, color: CcColors.subtle),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          if (current != null && unpublished)
+            _branchHeroButton(
+              icon: Icons.publish_rounded,
+              label: 'Publish',
+              onPressed: widget.loading
+                  ? null
+                  : () =>
+                        _run(() => widget.onPushBranch(current, publish: true)),
+            )
+          else if (current != null && current.ahead > 0)
+            _branchHeroButton(
+              icon: Icons.upload_rounded,
+              label: 'Push ${current.ahead}',
+              onPressed: widget.loading || widget.onPush == null
+                  ? null
+                  : () => _run(widget.onPush!),
+            ),
+          if (current != null && current.behind > 0)
+            _branchHeroButton(
+              icon: Icons.call_received_rounded,
+              label: 'Pull ${current.behind}',
+              onPressed: widget.loading || widget.onPull == null
+                  ? null
+                  : () => _run(widget.onPull!),
+            ),
+          _branchHeroButton(
+            icon: Icons.add_rounded,
+            label: 'New',
+            onPressed: widget.loading ? null : _createBranch,
+          ),
+          _branchHeroButton(
+            icon: Icons.sync_rounded,
+            label: 'Fetch',
+            onPressed: widget.loading
+                ? null
+                : () => _run(() => widget.onFetch()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _branchHeroButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+  }) => Padding(
+    padding: const EdgeInsets.only(left: 6),
+    child: OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 15),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 30),
+        padding: const EdgeInsets.symmetric(horizontal: 9),
+        visualDensity: VisualDensity.compact,
+      ),
+    ),
+  );
+
   Widget _branchScopeChip(_BranchFilter filter, String label) {
     final selected = _filter == filter;
     final count = _countBranches(filter);
@@ -8692,6 +8823,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
     return Column(
       children: [
         _branchesHeader(branches),
+        _currentBranchHero(),
         _branchesSummary(),
         _branchScopeBar(),
         Expanded(
