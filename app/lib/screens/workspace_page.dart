@@ -2547,42 +2547,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
               visualDensity: VisualDensity.compact,
               onPressed: _showFindInCurrentFile,
             ),
-            IconButton(
-              icon: const Icon(Icons.travel_explore_rounded, size: 17),
-              tooltip: 'Find Usages',
-              visualDensity: VisualDensity.compact,
-              onPressed: _showFindUsagesForActiveFile,
-            ),
-            IconButton(
-              icon: const Icon(Icons.compare_arrows_rounded, size: 17),
-              tooltip: 'Compare with HEAD',
-              visualDensity: VisualDensity.compact,
-              onPressed: _compareActiveFileWithHead,
-            ),
-            IconButton(
-              icon: const Icon(Icons.difference_rounded, size: 17),
-              tooltip: 'Open File Working Tree Diff',
-              visualDensity: VisualDensity.compact,
-              onPressed: _openActiveFileWorkingTreeDiff,
-            ),
-            IconButton(
-              icon: const Icon(Icons.history_rounded, size: 17),
-              tooltip: 'File History',
-              visualDensity: VisualDensity.compact,
-              onPressed: _showFileHistoryForActiveFile,
-            ),
-            IconButton(
-              icon: const Icon(Icons.manage_history_rounded, size: 17),
-              tooltip: 'Open File Git Log',
-              visualDensity: VisualDensity.compact,
-              onPressed: _openActiveFileGitLog,
-            ),
-            IconButton(
-              icon: const Icon(Icons.person_search_rounded, size: 17),
-              tooltip: 'Annotate / Blame',
-              visualDensity: VisualDensity.compact,
-              onPressed: _showBlameForActiveFile,
-            ),
+            _activeFileActionsMenu(_codeFiles[_activeFile]),
             IconButton(
               icon: const Icon(Icons.save_rounded, size: 17),
               tooltip: '保存',
@@ -2696,6 +2661,139 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           ],
         ],
       ),
+    ),
+  );
+
+  PopupMenuButton<String> _activeFileActionsMenu(_OpenFile file) {
+    final mod = _shortcutModLabel();
+    return PopupMenuButton<String>(
+      tooltip: 'Code Actions',
+      icon: const Icon(Icons.bolt_rounded, size: 17),
+      padding: EdgeInsets.zero,
+      onSelected: (v) {
+        if (v == 'structure') _showFileStructure();
+        if (v == 'find') _showFindInCurrentFile();
+        if (v == 'usages') _showFindUsagesForActiveFile();
+        if (v == 'reveal') _revealFileInProject(file.path);
+        if (v == 'copyPath') _copyFilePath(file.path);
+        if (v == 'workingDiff') _openActiveFileWorkingTreeDiff();
+        if (v == 'compareHead') _compareActiveFileWithHead();
+        if (v == 'fileLog') _openActiveFileGitLog();
+        if (v == 'history') _showFileHistoryForActiveFile();
+        if (v == 'annotate') _showBlameForActiveFile();
+        if (v == 'save') _saveActiveFile();
+        if (v == 'close') _closeActiveCodeFile();
+        if (v == 'closeOthers') _closeOtherCodeFiles(_activeFile);
+        if (v == 'closeUnmodified') _closeUnmodifiedCodeFiles();
+      },
+      itemBuilder: (_) => [
+        _codeActionMenuItem(
+          value: 'structure',
+          icon: Icons.account_tree_rounded,
+          label: 'File Structure',
+          shortcut: '$mod+F12',
+        ),
+        _codeActionMenuItem(
+          value: 'find',
+          icon: Icons.search_rounded,
+          label: 'Find in File',
+          shortcut: '$mod+F',
+        ),
+        _codeActionMenuItem(
+          value: 'usages',
+          icon: Icons.travel_explore_rounded,
+          label: 'Find Usages',
+          shortcut: '$mod+Alt+F7',
+        ),
+        const PopupMenuDivider(),
+        _codeActionMenuItem(
+          value: 'workingDiff',
+          icon: Icons.difference_rounded,
+          label: 'Working Tree Diff',
+          shortcut: '$mod+Alt+D',
+        ),
+        _codeActionMenuItem(
+          value: 'compareHead',
+          icon: Icons.compare_arrows_rounded,
+          label: 'Compare with HEAD',
+          shortcut: '$mod+Shift+D',
+        ),
+        _codeActionMenuItem(
+          value: 'fileLog',
+          icon: Icons.manage_history_rounded,
+          label: 'Open File Git Log',
+          shortcut: '$mod+Alt+H',
+        ),
+        _codeActionMenuItem(
+          value: 'history',
+          icon: Icons.history_rounded,
+          label: 'File History',
+        ),
+        _codeActionMenuItem(
+          value: 'annotate',
+          icon: Icons.person_search_rounded,
+          label: 'Annotate / Blame',
+        ),
+        const PopupMenuDivider(),
+        _codeActionMenuItem(
+          value: 'reveal',
+          icon: Icons.my_location_rounded,
+          label: 'Reveal in Project',
+          shortcut: '$mod+Shift+1',
+        ),
+        _codeActionMenuItem(
+          value: 'copyPath',
+          icon: Icons.copy_rounded,
+          label: 'Copy Path',
+        ),
+        _codeActionMenuItem(
+          value: 'save',
+          icon: Icons.save_rounded,
+          label: 'Save',
+          shortcut: '$mod+S',
+          enabled: file.dirty,
+        ),
+        const PopupMenuDivider(),
+        _codeActionMenuItem(
+          value: 'close',
+          icon: Icons.close_rounded,
+          label: 'Close',
+          shortcut: '$mod+W',
+        ),
+        _codeActionMenuItem(
+          value: 'closeOthers',
+          icon: Icons.filter_none_rounded,
+          label: 'Close Others',
+          enabled: _codeFiles.length > 1,
+        ),
+        _codeActionMenuItem(
+          value: 'closeUnmodified',
+          icon: Icons.rule_rounded,
+          label: 'Close Unmodified',
+        ),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _codeActionMenuItem({
+    required String value,
+    required IconData icon,
+    required String label,
+    String? shortcut,
+    bool enabled = true,
+  }) => PopupMenuItem<String>(
+    value: value,
+    enabled: enabled,
+    child: Row(
+      children: [
+        Icon(icon, size: 16, color: enabled ? CcColors.muted : CcColors.subtle),
+        const SizedBox(width: 10),
+        Expanded(child: Text(label)),
+        if (shortcut != null) ...[
+          const SizedBox(width: 18),
+          Text(shortcut, style: CcType.code(size: 11, color: CcColors.subtle)),
+        ],
+      ],
     ),
   );
 
@@ -2966,44 +3064,269 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     ),
   );
 
-  Widget _bottomStripe() => InkWell(
-    onTap: () => _setBottomTool(_bottomTool),
-    child: Container(
-      height: 26,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+  Widget _bottomStripe() {
+    final p = _gitProject ?? _defaultProject()?.project;
+    final status = _gitStatus;
+    return Container(
+      height: 28,
       decoration: const BoxDecoration(
         color: CcColors.panel,
         border: Border(top: BorderSide(color: CcColors.border)),
       ),
       child: Row(
         children: [
-          Icon(
-            _bottomTool == _BottomTool.git
+          _statusBarToolSegment(
+            icon: _bottomTool == _BottomTool.git
                 ? Icons.alt_route_rounded
                 : Icons.terminal_rounded,
-            size: 15,
-            color: CcColors.muted,
+            label: _bottomTool == _BottomTool.git ? 'Git' : 'Terminal',
+            detail: _bottomTool == _BottomTool.git
+                ? (status?.branch ?? p?.name ?? '')
+                : '${terms.length}',
+            selected: true,
+            onTap: () => _setBottomTool(_bottomTool),
           ),
-          const SizedBox(width: 8),
+          const VerticalDivider(width: 1),
+          _statusBarToolSegment(
+            icon: Icons.terminal_rounded,
+            label: 'Terminal',
+            detail: '${terms.length}',
+            selected:
+                !_terminalCollapsed && _bottomTool == _BottomTool.terminal,
+            onTap: () => _setBottomTool(_BottomTool.terminal),
+          ),
+          _statusBarToolSegment(
+            icon: Icons.alt_route_rounded,
+            label: 'Commit',
+            detail: status == null ? '' : _gitDirtyLabel(status),
+            selected: !_terminalCollapsed && _bottomTool == _BottomTool.git,
+            color: status == null || status.clean
+                ? CcColors.muted
+                : CcColors.warning,
+            onTap: () => _openGitView(_GitView.changes),
+          ),
+          const Spacer(),
+          if (p != null) ...[
+            _statusGitBranchSegment(status, p),
+            _statusSyncSegment(status, p),
+            _statusIconAction(
+              icon: Icons.sync_rounded,
+              tooltip: 'Fetch',
+              onTap: _gitLoading ? null : () => _gitFetchCurrent(p),
+            ),
+            _statusIconAction(
+              icon: Icons.call_received_rounded,
+              tooltip: 'Pull --ff-only',
+              onTap: _gitLoading ? null : () => _gitPullCurrent(p),
+            ),
+            _statusIconAction(
+              icon: Icons.upload_rounded,
+              tooltip: 'Push',
+              onTap: _gitLoading ? null : () => _gitPushCurrent(p),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _statusBarToolSegment({
+    required IconData icon,
+    required String label,
+    required String detail,
+    required bool selected,
+    required VoidCallback onTap,
+    Color? color,
+  }) => InkWell(
+    onTap: onTap,
+    child: Container(
+      height: 28,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: selected ? CcColors.editorTabBar : Colors.transparent,
+        border: const Border(right: BorderSide(color: CcColors.border)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color ?? CcColors.muted),
+          const SizedBox(width: 6),
           Text(
-            _bottomTool == _BottomTool.git ? 'Git' : 'Terminal',
+            label,
             style: TextStyle(
-              color: CcColors.muted,
-              fontSize: 12,
+              color: selected ? CcColors.text : CcColors.muted,
+              fontSize: 11.5,
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            _bottomTool == _BottomTool.git
-                ? (_gitStatus?.branch ?? '')
-                : '${terms.length}',
-            style: CcType.code(size: 11, color: CcColors.subtle),
-          ),
+          if (detail.isNotEmpty) ...[
+            const SizedBox(width: 7),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: Text(
+                detail,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CcType.code(size: 10.8, color: CcColors.subtle),
+              ),
+            ),
+          ],
         ],
       ),
     ),
   );
+
+  Widget _statusGitBranchSegment(GitStatusSummary? status, ProjectCfg p) {
+    final branch = status?.branch ?? p.name;
+    return InkWell(
+      onTap: _gitLoading ? null : () => _showBranchDialog(),
+      onSecondaryTap: () => _openGitView(_GitView.branches),
+      child: Tooltip(
+        message: 'Branches Popup · secondary click opens Branches tool window',
+        child: Container(
+          height: 28,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: const BoxDecoration(
+            border: Border(left: BorderSide(color: CcColors.border)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.account_tree_rounded,
+                size: 14,
+                color: CcColors.accentBright,
+              ),
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(
+                  branch,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(
+                    size: 11.2,
+                    color: CcColors.text,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 3),
+              const Icon(Icons.arrow_drop_down_rounded, size: 15),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusSyncSegment(GitStatusSummary? status, ProjectCfg p) {
+    if (status == null) return const SizedBox.shrink();
+    final dirty = status.staged + status.modified + status.untracked;
+    final hasSync = status.ahead > 0 || status.behind > 0;
+    final hasConflicts = status.conflicted > 0;
+    if (dirty == 0 && !hasSync && !hasConflicts) {
+      return _statusTextAction(
+        icon: Icons.check_circle_rounded,
+        label: 'clean',
+        color: CcColors.ok,
+        tooltip: 'Working tree clean · Open Git Log',
+        onTap: () => _openGitView(_GitView.log),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (dirty > 0 || hasConflicts)
+          _statusTextAction(
+            icon: hasConflicts
+                ? Icons.report_problem_rounded
+                : Icons.edit_note_rounded,
+            label: hasConflicts
+                ? '${status.conflicted} conflicts'
+                : '$dirty changes',
+            color: hasConflicts ? CcColors.danger : CcColors.warning,
+            tooltip: 'Open Commit changes',
+            onTap: () => _openGitView(_GitView.changes),
+          ),
+        if (status.ahead > 0)
+          _statusTextAction(
+            icon: Icons.north_rounded,
+            label: '${status.ahead}',
+            color: CcColors.warning,
+            tooltip: 'Push ${status.ahead} outgoing commit(s)',
+            onTap: _gitLoading ? null : () => _gitPushCurrent(p),
+          ),
+        if (status.behind > 0)
+          _statusTextAction(
+            icon: Icons.south_rounded,
+            label: '${status.behind}',
+            color: CcColors.accentBright,
+            tooltip: 'Pull ${status.behind} incoming commit(s)',
+            onTap: _gitLoading ? null : () => _gitPullCurrent(p),
+          ),
+      ],
+    );
+  }
+
+  Widget _statusTextAction({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required String tooltip,
+    required VoidCallback? onTap,
+  }) => Tooltip(
+    message: tooltip,
+    child: InkWell(
+      onTap: onTap,
+      child: Container(
+        height: 28,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: CcType.code(
+                size: 10.8,
+                color: color,
+                weight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _statusIconAction({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onTap,
+  }) => Tooltip(
+    message: tooltip,
+    child: InkWell(
+      onTap: onTap,
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: Icon(
+          icon,
+          size: 14,
+          color: onTap == null ? CcColors.subtle : CcColors.muted,
+        ),
+      ),
+    ),
+  );
+
+  String _gitDirtyLabel(GitStatusSummary status) {
+    if (status.clean) return 'clean';
+    final total =
+        status.staged + status.modified + status.untracked + status.conflicted;
+    return '$total changes';
+  }
 
   // _panelHeader is the shared tool-window header chrome.
   Widget _panelHeader({
