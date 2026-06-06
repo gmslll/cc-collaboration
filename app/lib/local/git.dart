@@ -28,6 +28,12 @@ class GitBranch {
   final bool remote;
   final String? remoteName;
   final String? localName;
+  final String upstream;
+  final int ahead;
+  final int behind;
+  final String lastHash;
+  final String lastSubject;
+  final DateTime? lastDate;
 
   const GitBranch({
     required this.name,
@@ -35,6 +41,12 @@ class GitBranch {
     required this.remote,
     this.remoteName,
     this.localName,
+    this.upstream = '',
+    this.ahead = 0,
+    this.behind = 0,
+    this.lastHash = '',
+    this.lastSubject = '',
+    this.lastDate,
   });
 }
 
@@ -148,6 +160,12 @@ class GitOperationState {
 // gitDiffWorking = all uncommitted changes (working tree + staged) vs HEAD.
 Future<String> gitDiffWorking(String dir) => _git(dir, 'diff HEAD');
 
+Future<String> gitDiffFileWorking(String dir, String file) {
+  final f = file.trim();
+  if (f.isEmpty) throw GitException('file path 不能为空');
+  return _git(dir, 'diff HEAD -- ${shQuote(f)}');
+}
+
 // gitDiffBase = what this branch added vs [base] (default origin/main):
 // `git diff <base>...HEAD` (the merge-base diff).
 Future<String> gitDiffBase(String dir, String base) {
@@ -160,6 +178,12 @@ Future<String> gitDiffRefs(String dir, String left, String right) {
   final r = right.trim();
   if (l.isEmpty || r.isEmpty) throw GitException('compare ref 不能为空');
   return _git(dir, 'diff ${shQuote(l)}...${shQuote(r)}');
+}
+
+Future<String> gitDiffRefToWorking(String dir, String ref) {
+  final r = ref.trim();
+  if (r.isEmpty) throw GitException('compare ref 不能为空');
+  return _git(dir, 'diff ${shQuote(r)} --');
 }
 
 // gitStatus is the short porcelain status (for a quick "anything changed?").
@@ -285,7 +309,7 @@ Future<GitOperationState?> gitOperationState(String dir) async {
 Future<List<GitBranch>> gitBranches(String dir) async {
   final out = await _git(
     dir,
-    'branch --all --format="%(HEAD)%09%(refname:short)"',
+    'branch --all --format="%(HEAD)%09%(refname:short)%09%(upstream:short)%09%(ahead-behind:HEAD)%09%(objectname:short)%09%(committerdate:iso-strict)%09%(contents:subject)"',
   );
   final seen = <String>{};
   final branches = <GitBranch>[];
@@ -297,6 +321,21 @@ Future<List<GitBranch>> gitBranches(String dir) async {
     final current = parts[0].trim() == '*';
     var name = parts[1].trim();
     if (name.contains(' -> ')) continue;
+    final upstream = parts.length > 2 ? parts[2].trim() : '';
+    final aheadBehind = parts.length > 3 ? parts[3].trim() : '';
+    var ahead = 0;
+    var behind = 0;
+    final abParts = aheadBehind.split(RegExp(r'\s+'));
+    if (abParts.length >= 2) {
+      ahead = int.tryParse(abParts[0].replaceFirst('+', '')) ?? 0;
+      behind = int.tryParse(abParts[1].replaceFirst('-', '')) ?? 0;
+    }
+    final lastHash = parts.length > 4 ? parts[4].trim() : '';
+    final lastDateText = parts.length > 5 ? parts[5].trim() : '';
+    final lastDate = lastDateText.isEmpty
+        ? null
+        : DateTime.tryParse(lastDateText);
+    final lastSubject = parts.length > 6 ? parts.sublist(6).join('\t') : '';
     final remote = name.startsWith('remotes/');
     String? remoteName;
     String? localName;
@@ -316,6 +355,12 @@ Future<List<GitBranch>> gitBranches(String dir) async {
         remote: remote,
         remoteName: remoteName,
         localName: localName,
+        upstream: upstream,
+        ahead: ahead,
+        behind: behind,
+        lastHash: lastHash,
+        lastSubject: lastSubject,
+        lastDate: lastDate,
       ),
     );
   }
@@ -375,6 +420,16 @@ Future<void> gitDeleteBranch(
   await _git(dir, 'branch ${force ? '-D' : '-d'} ${shQuote(branch)}');
 }
 
+Future<void> gitPushDeleteRemoteBranch(String dir, GitBranch branch) async {
+  if (!branch.remote) throw GitException('只能删除远端分支');
+  final remote = (branch.remoteName ?? '').trim();
+  final local = (branch.localName ?? '').trim();
+  if (remote.isEmpty || local.isEmpty) {
+    throw GitException('远端分支格式不正确');
+  }
+  await _git(dir, 'push ${shQuote(remote)} --delete ${shQuote(local)}');
+}
+
 Future<void> gitMergeBranch(String dir, String branch) async {
   final b = branch.trim();
   if (b.isEmpty) throw GitException('branch 不能为空');
@@ -391,6 +446,10 @@ Future<void> gitPull(String dir) async {
   await _git(dir, 'pull --ff-only');
 }
 
+Future<void> gitPullRebase(String dir) async {
+  await _git(dir, 'pull --rebase');
+}
+
 Future<void> gitFetch(String dir, {bool prune = false}) async {
   await _git(dir, prune ? 'fetch --all --prune' : 'fetch --all');
 }
@@ -403,6 +462,16 @@ Future<void> gitPush(String dir, {bool setUpstream = false}) async {
   final branch = (await _git(dir, 'branch --show-current')).trim();
   if (branch.isEmpty) throw GitException('detached HEAD 无法设置 upstream');
   await _git(dir, 'push -u origin ${shQuote(branch)}');
+}
+
+Future<void> gitPushBranch(
+  String dir,
+  String branch, {
+  bool setUpstream = false,
+}) async {
+  final b = branch.trim();
+  if (b.isEmpty) throw GitException('branch 不能为空');
+  await _git(dir, 'push ${setUpstream ? '-u ' : ''}origin ${shQuote(b)}');
 }
 
 Future<void> gitStageAll(String dir) async {
@@ -458,12 +527,14 @@ Future<void> gitStashPush(
   String dir,
   String message, {
   bool includeUntracked = true,
+  List<String> files = const [],
 }) async {
   final msg = message.trim();
   final include = includeUntracked ? '-u ' : '';
+  final pathspec = files.isEmpty ? '' : ' -- ${files.map(shQuote).join(' ')}';
   await _git(
     dir,
-    'stash push $include-m ${shQuote(msg.isEmpty ? 'WIP' : msg)}',
+    'stash push $include-m ${shQuote(msg.isEmpty ? 'WIP' : msg)}$pathspec',
   );
 }
 
@@ -485,11 +556,39 @@ Future<void> gitStashDrop(String dir, String ref) async {
   await _git(dir, 'stash drop ${shQuote(ref)}');
 }
 
-Future<List<GitCommit>> gitLog(String dir, {int max = 80}) async {
+Future<List<GitCommit>> gitLog(
+  String dir, {
+  int max = 80,
+  bool allBranches = false,
+  String ref = '',
+  String pathFilter = '',
+}) async {
+  final r = ref.trim();
+  final path = pathFilter.trim();
+  final pathspec = path.isEmpty ? '' : ' -- ${shQuote(path)}';
+  final scope = r.isNotEmpty ? '${shQuote(r)} ' : (allBranches ? '--all ' : '');
   final out = await _git(
     dir,
-    'log --date=iso-strict --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%s%x00 -n $max --decorate=short',
+    'log $scope--date=iso-strict --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%s%x00 -n $max --decorate=short$pathspec',
   );
+  return _parseGitLog(out);
+}
+
+Future<List<GitCommit>> gitLogFile(
+  String dir,
+  String file, {
+  int max = 80,
+}) async {
+  final f = file.trim();
+  if (f.isEmpty) throw GitException('file path 不能为空');
+  final out = await _git(
+    dir,
+    'log --follow --date=iso-strict --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%s%x00 -n $max --decorate=short -- ${shQuote(f)}',
+  );
+  return _parseGitLog(out);
+}
+
+List<GitCommit> _parseGitLog(String out) {
   final commits = <GitCommit>[];
   for (final rec in out.split('\x00')) {
     if (rec.trim().isEmpty) continue;
@@ -514,6 +613,17 @@ Future<List<GitCommit>> gitLog(String dir, {int max = 80}) async {
 Future<String> gitShowCommit(String dir, String hash) {
   if (hash.trim().isEmpty) throw GitException('commit hash 不能为空');
   return _git(dir, 'show --format= --find-renames ${shQuote(hash)}');
+}
+
+Future<String> gitShowCommitFile(String dir, String hash, String file) {
+  final h = hash.trim();
+  final f = file.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  if (f.isEmpty) throw GitException('file path 不能为空');
+  return _git(
+    dir,
+    'show --format= --find-renames ${shQuote(h)} -- ${shQuote(f)}',
+  );
 }
 
 Future<void> gitCherryPick(String dir, String hash) async {
@@ -601,6 +711,27 @@ Future<List<GitBlameLine>> gitBlame(String dir, String file) async {
 // taking it back to HEAD/index. [file] is relative to [dir].
 Future<void> gitRestore(String dir, String file) async {
   await _git(dir, 'checkout -- ${shQuote(file)}');
+}
+
+Future<void> gitRestoreChanges(String dir, List<GitChange> changes) async {
+  if (changes.isEmpty) return;
+  final untracked = changes
+      .where((c) => c.untracked)
+      .map((c) => c.path)
+      .toList();
+  final tracked = changes
+      .where((c) => !c.untracked)
+      .map((c) => c.path)
+      .toList();
+  if (tracked.isNotEmpty) {
+    await _git(
+      dir,
+      'restore --staged --worktree -- ${tracked.map(shQuote).join(' ')}',
+    );
+  }
+  if (untracked.isNotEmpty) {
+    await _git(dir, 'clean -f -- ${untracked.map(shQuote).join(' ')}');
+  }
 }
 
 // gitApplyReverse reverts a single-hunk patch (a file header + one `@@` hunk)

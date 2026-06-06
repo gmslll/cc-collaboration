@@ -58,11 +58,13 @@ class FileTree extends StatelessWidget {
   final String root;
   final String label;
   final ValueChanged<String> onOpenFile;
+  final String? selectedPath;
   const FileTree({
     super.key,
     required this.root,
     required this.label,
     required this.onOpenFile,
+    this.selectedPath,
   });
 
   @override
@@ -72,6 +74,7 @@ class FileTree extends StatelessWidget {
     depth: 0,
     initiallyExpanded: true,
     onOpenFile: onOpenFile,
+    selectedPath: selectedPath,
   );
 }
 
@@ -81,6 +84,7 @@ class DirTile extends StatefulWidget {
   final int depth;
   final bool initiallyExpanded;
   final ValueChanged<String> onOpenFile;
+  final String? selectedPath;
   const DirTile({
     super.key,
     required this.dir,
@@ -88,6 +92,7 @@ class DirTile extends StatefulWidget {
     required this.depth,
     required this.onOpenFile,
     this.initiallyExpanded = false,
+    this.selectedPath,
   });
 
   @override
@@ -101,7 +106,22 @@ class _DirTileState extends State<DirTile> {
   @override
   void initState() {
     super.initState();
-    if (widget.initiallyExpanded) _loadChildren();
+    if (widget.initiallyExpanded || _containsSelectedPath) _loadChildren();
+  }
+
+  @override
+  void didUpdateWidget(DirTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedPath != widget.selectedPath &&
+        _containsSelectedPath) {
+      _loadChildren();
+    }
+  }
+
+  bool get _containsSelectedPath {
+    final selected = widget.selectedPath;
+    if (selected == null || selected.isEmpty) return false;
+    return selected == widget.dir || selected.startsWith('${widget.dir}/');
   }
 
   Future<void> _loadChildren() async {
@@ -132,9 +152,10 @@ class _DirTileState extends State<DirTile> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedInDir = _containsSelectedPath;
     return ExpansionTile(
       key: PageStorageKey('fb-${widget.dir}'),
-      initiallyExpanded: widget.initiallyExpanded,
+      initiallyExpanded: widget.initiallyExpanded || selectedInDir,
       onExpansionChanged: (open) {
         if (open) _loadChildren();
       },
@@ -187,28 +208,51 @@ class _DirTileState extends State<DirTile> {
             label: e.path.split('/').last,
             depth: d,
             onOpenFile: widget.onOpenFile,
+            selectedPath: widget.selectedPath,
           )
         else
           _fileTile(e.path, e.path.split('/').last, d),
     ];
   }
 
-  Widget _fileTile(String path, String name, int depth) => ListTile(
-    dense: true,
-    visualDensity: const VisualDensity(vertical: -2),
-    contentPadding: EdgeInsets.only(left: 12.0 + depth * 12, right: 8),
-    horizontalTitleGap: 6,
-    leading: const Icon(
-      Icons.description_rounded,
-      size: 15,
-      color: CcColors.subtle,
-    ),
-    title: Text(
-      name,
-      style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    ),
-    onTap: () => widget.onOpenFile(path),
-  );
+  Widget _fileTile(String path, String name, int depth) {
+    final selected = path == widget.selectedPath;
+    return Container(
+      decoration: BoxDecoration(
+        color: selected
+            ? CcColors.accent.withValues(alpha: 0.10)
+            : Colors.transparent,
+        border: Border(
+          left: BorderSide(
+            color: selected ? CcColors.accent : Colors.transparent,
+            width: 2,
+          ),
+        ),
+      ),
+      child: ListTile(
+        dense: true,
+        selected: selected,
+        visualDensity: const VisualDensity(vertical: -2),
+        contentPadding: EdgeInsets.only(left: 12.0 + depth * 12, right: 8),
+        horizontalTitleGap: 6,
+        leading: Icon(
+          Icons.description_rounded,
+          size: 15,
+          color: selected ? CcColors.accentBright : CcColors.subtle,
+        ),
+        title: Text(
+          name,
+          style: TextStyle(
+            fontFamily: CcType.mono,
+            fontSize: 12.5,
+            color: selected ? CcColors.text : null,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        onTap: () => widget.onOpenFile(path),
+      ),
+    );
+  }
 }
