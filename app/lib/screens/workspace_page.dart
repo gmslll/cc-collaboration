@@ -143,6 +143,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   final _changesQueryCtl = TextEditingController();
   final _structureQueryCtl = TextEditingController();
   final _workspaceFocus = FocusNode(debugLabel: 'workspace-shell');
+  final _commitFocus = FocusNode(debugLabel: 'commit-message');
   final List<String> _recentFiles = [];
   final List<_CodeLocation> _recentLocations = [];
   String _structureQuery = '';
@@ -198,6 +199,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     _changesQueryCtl.dispose();
     _structureQueryCtl.dispose();
     _workspaceFocus.dispose();
+    _commitFocus.dispose();
     disposeTerms();
     super.dispose();
   }
@@ -2824,6 +2826,14 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
   void _openGitView(_GitView view) =>
       _setBottomTool(_BottomTool.git, gitView: view);
 
+  void _openCommitFlow(ProjectCfg project) {
+    _selectGitProject(project);
+    _openGitView(_GitView.changes);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _commitFocus.requestFocus();
+    });
+  }
+
   Future<void> _selectCommit(ProjectCfg p, GitCommit c) async {
     setState(() {
       _selectedCommit = c.hash;
@@ -4572,6 +4582,7 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
           Expanded(
             child: TextField(
               controller: _commitCtl,
+              focusNode: _commitFocus,
               minLines: 1,
               maxLines: 2,
               decoration: const InputDecoration(
@@ -4878,6 +4889,37 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
     if (!await _confirm(
       'Rollback selected changes?',
       '$preview\n\n这会恢复 ${files.length} 个文件的工作区改动。',
+    )) {
+      return;
+    }
+    setState(() => _gitLoading = true);
+    try {
+      await gitRestoreChanges(p.path, changes);
+      _selectedChangePaths.removeAll(files);
+      await _refreshGit();
+      _snack('Rollback ${files.length} files 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  Future<void> _gitDiscardAllCurrent(ProjectCfg p) async {
+    final changes = _gitChanges.where((c) => !c.conflicted).toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    if (changes.isEmpty) {
+      _snack('没有可 rollback 的文件');
+      return;
+    }
+    final files = changes.map((c) => c.path).toList();
+    final preview =
+        files.take(8).join('\n') +
+        (files.length > 8 ? '\n...and ${files.length - 8} more' : '');
+    if (!await _confirm(
+      'Rollback all changes?',
+      '$preview\n\n这会恢复 ${files.length} 个文件的工作区改动；冲突文件不会在这里处理。',
     )) {
       return;
     }
@@ -5750,13 +5792,93 @@ class _WorkspacePageState extends State<WorkspacePage> with TerminalHost {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      trailing: status == null || status.clean
-          ? null
-          : statusDot(
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status != null && !status.clean) ...[
+            statusDot(
               status.conflicted > 0 ? CcColors.danger : CcColors.warning,
               size: 7,
             ),
+            const SizedBox(width: 4),
+          ],
+          _projectGitMenu(p),
+        ],
+      ),
       onTap: () => _selectGitProject(p, openTool: true),
+    );
+  }
+
+  PopupMenuButton<String> _projectGitMenu(ProjectCfg project) {
+    final selected = _gitProject?.path == project.path;
+    final status = selected ? _gitStatus : null;
+    final canStageAll =
+        status == null || status.modified > 0 || status.untracked > 0;
+    final canUnstageAll = status == null || status.staged > 0;
+    final canRollbackAll =
+        status == null ||
+        status.modified > 0 ||
+        status.untracked > 0 ||
+        status.staged > 0;
+    return PopupMenuButton<String>(
+      tooltip: 'Git actions',
+      icon: const Icon(Icons.more_vert_rounded, size: 16),
+      padding: EdgeInsets.zero,
+      onOpened: () => _selectGitProject(project),
+      onSelected: (v) {
+        _selectGitProject(project);
+        if (v == 'changes') _openGitView(_GitView.changes);
+        if (v == 'commit') _openCommitFlow(project);
+        if (v == 'log') _openGitView(_GitView.log);
+        if (v == 'branches') _openGitView(_GitView.branches);
+        if (v == 'stash') _openGitView(_GitView.stash);
+        if (v == 'branchPopup') _showBranchDialog();
+        if (v == 'newBranch') _showCreateBranchQuick(project);
+        if (v == 'fetch') _gitFetchCurrent(project);
+        if (v == 'fetchPrune') _gitFetchCurrent(project, prune: true);
+        if (v == 'pull') _gitPullCurrent(project);
+        if (v == 'pullRebase') _gitPullRebaseCurrent(project);
+        if (v == 'push') _gitPushCurrent(project);
+        if (v == 'stageAll') _gitStageAllCurrent(project);
+        if (v == 'unstageAll') _gitUnstageAllCurrent(project);
+        if (v == 'stashPush') _stashPushCurrent(project);
+        if (v == 'rollbackAll') _gitDiscardAllCurrent(project);
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'changes', child: Text('Open Changes')),
+        const PopupMenuItem(value: 'commit', child: Text('Commit...')),
+        const PopupMenuItem(value: 'log', child: Text('Open Log')),
+        const PopupMenuItem(value: 'branches', child: Text('Open Branches')),
+        const PopupMenuItem(value: 'stash', child: Text('Open Stash')),
+        const PopupMenuItem(
+          value: 'branchPopup',
+          child: Text('Branches Popup...'),
+        ),
+        const PopupMenuItem(value: 'newBranch', child: Text('New Branch...')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'fetch', child: Text('Fetch')),
+        const PopupMenuItem(value: 'fetchPrune', child: Text('Fetch --prune')),
+        const PopupMenuItem(value: 'pull', child: Text('Pull')),
+        const PopupMenuItem(value: 'pullRebase', child: Text('Pull --rebase')),
+        const PopupMenuItem(value: 'push', child: Text('Push')),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: canStageAll ? 'stageAll' : null,
+          child: const Text('Stage All'),
+        ),
+        PopupMenuItem(
+          value: canUnstageAll ? 'unstageAll' : null,
+          child: const Text('Unstage All'),
+        ),
+        const PopupMenuItem(
+          value: 'stashPush',
+          child: Text('Stash Changes...'),
+        ),
+        PopupMenuItem(
+          value: canRollbackAll ? 'rollbackAll' : null,
+          child: const Text('Rollback All...'),
+        ),
+      ],
     );
   }
 
