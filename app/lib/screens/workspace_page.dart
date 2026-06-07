@@ -28,6 +28,7 @@ part 'workspace/navigation_dialogs.dart';
 part 'workspace/search_dialogs.dart';
 part 'workspace/git_history_dialogs.dart';
 part 'workspace/git_mixin.dart';
+part 'workspace/search_mixin.dart';
 
 enum _BottomTool { terminal, git }
 
@@ -111,7 +112,8 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage>
-    with TerminalHost, _GitMixin {
+    with TerminalHost, _GitMixin, _SearchMixin {
+  @override
   late AppConfig _cfg = widget.config; // reloaded after config mutations
   Map<String, List<ListItem>> _tasksByRepo = const {};
   // project path -> worktrees. Key absent = not loaded; value null = loading;
@@ -122,9 +124,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   final Map<String, ExpansibleController> _proj = {};
   bool _busy = false;
   ListItem? _detailItem;
+  @override
   final List<_OpenFile> _codeFiles = [];
   final List<_CodeLocation> _codeBackStack = [];
   final List<_CodeLocation> _codeForwardStack = [];
+  @override
   int _activeFile = -1;
   _BottomTool _bottomTool =
       Prefs.getString('ws.bottomTool', def: 'terminal') == 'git'
@@ -325,6 +329,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     _codeForwardStack.clear();
   }
 
+  @override
   void _openCodeFile(String path, {int? line, bool recordHistory = true}) {
     final target = _CodeLocation(path, line: line);
     final current = _activeLocation;
@@ -660,32 +665,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (loc != null) _openCodeFile(loc.path, line: loc.line);
   }
 
-  Future<void> _showQuickOpen() async {
-    final d = _defaultProject();
-    if (d == null) {
-      _snack('没有可搜索的项目');
-      return;
-    }
-    final loc = await showDialog<_CodeLocation>(
-      context: context,
-      builder: (_) => _QuickOpenDialog(workspaces: _cfg.workspaces),
-    );
-    if (loc != null) _openCodeFile(loc.path, line: loc.line);
-  }
-
-  Future<void> _showFindInFiles() async {
-    final d = _defaultProject();
-    if (d == null) {
-      _snack('没有可搜索的项目');
-      return;
-    }
-    final hit = await showDialog<_SearchHit>(
-      context: context,
-      builder: (_) => _FindInFilesDialog(workspaces: _cfg.workspaces),
-    );
-    if (hit != null) _openCodeFile(hit.path, line: hit.line);
-  }
-
   Future<void> _setGitLogPathFilter() async {
     final p = _gitProject ?? _defaultProject()?.project;
     if (p == null) {
@@ -746,109 +725,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     ctl.dispose();
     setState(() => _logPathFilter = next);
     await _refreshGit();
-  }
-
-  Future<void> _showFindInCurrentFile() async {
-    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
-      _snack('没有打开的文件');
-      return;
-    }
-    final file = _codeFiles[_activeFile];
-    final text = file.key.currentState?.text;
-    if (text == null) {
-      _snack('文件仍在加载');
-      return;
-    }
-    final line = await showDialog<int>(
-      context: context,
-      builder: (_) => _FindInCurrentFileDialog(path: file.path, text: text),
-    );
-    if (line != null) _openCodeFile(file.path, line: line);
-  }
-
-  Future<void> _showGoToLine() async {
-    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
-      _snack('没有打开的文件');
-      return;
-    }
-    final file = _codeFiles[_activeFile];
-    final lineCount = file.key.currentState?.lineCount ?? 0;
-    if (lineCount <= 0) {
-      _snack('文件仍在加载');
-      return;
-    }
-    final line = await showDialog<int>(
-      context: context,
-      builder: (_) => _GoToLineDialog(
-        fileName: file.name,
-        lineCount: lineCount,
-        initialLine: file.line,
-      ),
-    );
-    if (line != null) _openCodeFile(file.path, line: line);
-  }
-
-  Future<void> _showFileStructure() async {
-    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
-      _snack('没有打开的文件');
-      return;
-    }
-    final file = _codeFiles[_activeFile];
-    final text = file.key.currentState?.text;
-    if (text == null) {
-      _snack('文件仍在加载');
-      return;
-    }
-    final symbols = _extractCodeSymbols(file.path, text);
-    if (symbols.isEmpty) {
-      _snack('没有可跳转的结构符号');
-      return;
-    }
-    final symbol = await showDialog<_CodeSymbol>(
-      context: context,
-      builder: (_) => _FileStructureDialog(path: file.path, symbols: symbols),
-    );
-    if (symbol != null) _openCodeFile(file.path, line: symbol.line);
-  }
-
-  Future<void> _showGoToSymbol() async {
-    final d = _defaultProject();
-    if (d == null) {
-      _snack('没有可搜索的项目');
-      return;
-    }
-    final hit = await showDialog<_SymbolHit>(
-      context: context,
-      builder: (_) => _GoToSymbolDialog(workspaces: _cfg.workspaces),
-    );
-    if (hit != null) _openCodeFile(hit.path, line: hit.line);
-  }
-
-  Future<void> _showFindUsagesForActiveFile() async {
-    if (_activeFile < 0 || _activeFile >= _codeFiles.length) {
-      _snack('没有打开的文件');
-      return;
-    }
-    final file = _codeFiles[_activeFile];
-    final text = file.key.currentState?.text;
-    if (text == null) {
-      _snack('文件仍在加载');
-      return;
-    }
-    final symbols = _extractCodeSymbols(file.path, text);
-    if (symbols.isEmpty) {
-      _snack('当前文件没有可搜索的结构符号');
-      return;
-    }
-    final hit = await showDialog<_SearchHit>(
-      context: context,
-      builder: (_) => _FindUsagesDialog(
-        workspaces: _cfg.workspaces,
-        sourcePath: file.path,
-        symbols: symbols,
-      ),
-    );
-    if (hit != null) _openCodeFile(hit.path, line: hit.line);
   }
 
   Future<void> _showShortcuts() async {
