@@ -629,39 +629,16 @@ class _FindInFilesDialogState extends State<_FindInFilesDialog> {
       height: 680,
       child: Column(
         children: [
-          Container(
-            height: 42,
-            padding: const EdgeInsets.only(left: 14, right: 6),
-            decoration: const BoxDecoration(
-              color: CcColors.panel,
-              border: Border(bottom: BorderSide(color: CcColors.border)),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.search_rounded,
-                  size: 17,
-                  color: CcColors.muted,
+          _DialogHeader(
+            icon: Icons.search_rounded,
+            title: 'Find in Files',
+            trailing: [
+              if (_hits.isNotEmpty)
+                Text(
+                  '${_hits.length} results',
+                  style: CcType.code(size: 11.5, color: CcColors.subtle),
                 ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Find in Files',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                if (_hits.isNotEmpty)
-                  Text(
-                    '${_hits.length} results',
-                    style: CcType.code(size: 11.5, color: CcColors.subtle),
-                  ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
+            ],
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
@@ -911,39 +888,16 @@ class _FindUsagesDialogState extends State<_FindUsagesDialog> {
         height: 680,
         child: Column(
           children: [
-            Container(
-              height: 42,
-              padding: const EdgeInsets.only(left: 14, right: 6),
-              decoration: const BoxDecoration(
-                color: CcColors.panel,
-                border: Border(bottom: BorderSide(color: CcColors.border)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.travel_explore_rounded,
-                    size: 17,
-                    color: CcColors.muted,
+            _DialogHeader(
+              icon: Icons.travel_explore_rounded,
+              title: 'Find Usages',
+              trailing: [
+                if (symbol != null)
+                  Text(
+                    '${symbol.name} · ${_hits.length} results',
+                    style: CcType.code(size: 11.5, color: CcColors.subtle),
                   ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Find Usages',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  if (symbol != null)
-                    Text(
-                      '${symbol.name} · ${_hits.length} results',
-                      style: CcType.code(size: 11.5, color: CcColors.subtle),
-                    ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
+              ],
             ),
             Expanded(
               child: Row(
@@ -1152,40 +1106,15 @@ class _FileStructureDialogState extends State<_FileStructureDialog> {
         height: 620,
         child: Column(
           children: [
-            Container(
-              height: 42,
-              padding: const EdgeInsets.only(left: 14, right: 6),
-              decoration: const BoxDecoration(
-                color: CcColors.panel,
-                border: Border(bottom: BorderSide(color: CcColors.border)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.account_tree_rounded,
-                    size: 17,
-                    color: CcColors.muted,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'File Structure · $name',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  Text(
-                    '${symbols.length}/${widget.symbols.length}',
-                    style: CcType.code(size: 11.5, color: CcColors.subtle),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
+            _DialogHeader(
+              icon: Icons.account_tree_rounded,
+              title: 'File Structure · $name',
+              trailing: [
+                Text(
+                  '${symbols.length}/${widget.symbols.length}',
+                  style: CcType.code(size: 11.5, color: CcColors.subtle),
+                ),
+              ],
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
@@ -1311,41 +1240,16 @@ class _FindInCurrentFileDialogState extends State<_FindInCurrentFileDialog> {
         height: 560,
         child: Column(
           children: [
-            Container(
-              height: 42,
-              padding: const EdgeInsets.only(left: 14, right: 6),
-              decoration: const BoxDecoration(
-                color: CcColors.panel,
-                border: Border(bottom: BorderSide(color: CcColors.border)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.search_rounded,
-                    size: 17,
-                    color: CcColors.muted,
+            _DialogHeader(
+              icon: Icons.search_rounded,
+              title: 'Find in File · $name',
+              trailing: [
+                if (_hits.isNotEmpty)
+                  Text(
+                    '${_hits.length} matches',
+                    style: CcType.code(size: 11.5, color: CcColors.subtle),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Find in File · $name',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  if (_hits.isNotEmpty)
-                    Text(
-                      '${_hits.length} matches',
-                      style: CcType.code(size: 11.5, color: CcColors.subtle),
-                    ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
+              ],
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),

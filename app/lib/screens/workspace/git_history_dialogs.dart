@@ -48,41 +48,16 @@ class _BlameDialogState extends State<_BlameDialog> {
       height: 720,
       child: Column(
         children: [
-          Container(
-            height: 42,
-            padding: const EdgeInsets.only(left: 14, right: 6),
-            decoration: const BoxDecoration(
-              color: CcColors.panel,
-              border: Border(bottom: BorderSide(color: CcColors.border)),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.person_search_rounded,
-                  size: 17,
-                  color: CcColors.muted,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Annotate · ${widget.relPath}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
-                  tooltip: '刷新',
-                  onPressed: _load,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
+          _DialogHeader(
+            icon: Icons.person_search_rounded,
+            title: 'Annotate · ${widget.relPath}',
+            trailing: [
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                tooltip: '刷新',
+                onPressed: _load,
+              ),
+            ],
           ),
           if (_loading) const LinearProgressIndicator(minHeight: 2),
           Expanded(
@@ -282,41 +257,16 @@ class _FileHistoryDialogState extends State<_FileHistoryDialog> {
       height: 740,
       child: Column(
         children: [
-          Container(
-            height: 42,
-            padding: const EdgeInsets.only(left: 14, right: 6),
-            decoration: const BoxDecoration(
-              color: CcColors.panel,
-              border: Border(bottom: BorderSide(color: CcColors.border)),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.history_rounded,
-                  size: 17,
-                  color: CcColors.muted,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'File History · ${widget.relPath}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
-                  tooltip: '刷新',
-                  onPressed: _loading ? null : _load,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
+          _DialogHeader(
+            icon: Icons.history_rounded,
+            title: 'File History · ${widget.relPath}',
+            trailing: [
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                tooltip: '刷新',
+                onPressed: _loading ? null : _load,
+              ),
+            ],
           ),
           if (_loading) const LinearProgressIndicator(minHeight: 2),
           Expanded(

@@ -6867,6 +6867,50 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 }
 
+// _DialogHeader is the shared 42px title bar used by the workspace dialogs:
+// leading icon + title, optional trailing widgets (refresh button / result
+// count), and an always-present close button.
+class _DialogHeader extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final List<Widget> trailing;
+  const _DialogHeader({
+    required this.icon,
+    required this.title,
+    this.trailing = const [],
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 42,
+    padding: const EdgeInsets.only(left: 14, right: 6),
+    decoration: const BoxDecoration(
+      color: CcColors.panel,
+      border: Border(bottom: BorderSide(color: CcColors.border)),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, size: 17, color: CcColors.muted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        ...trailing,
+        IconButton(
+          icon: const Icon(Icons.close_rounded, size: 18),
+          tooltip: '关闭',
+          onPressed: () => Navigator.pop(context),
+        ),
+      ],
+    ),
+  );
+}
+
 // _HoverZone exposes hover state to its builder — used to reveal a row's quick
 // actions only while the pointer is over it.
 class _HoverZone extends StatefulWidget {

@@ -74,39 +74,16 @@ class _BranchDialogState extends State<_BranchDialog> {
         height: 660,
         child: Column(
           children: [
-            Container(
-              height: 42,
-              padding: const EdgeInsets.only(left: 14, right: 6),
-              decoration: const BoxDecoration(
-                color: CcColors.panel,
-                border: Border(bottom: BorderSide(color: CcColors.border)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.account_tree_rounded,
-                    size: 17,
-                    color: CcColors.muted,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Branches · ${widget.project.name}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    tooltip: '刷新分支',
-                    onPressed: _load,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
+            _DialogHeader(
+              icon: Icons.account_tree_rounded,
+              title: 'Branches · ${widget.project.name}',
+              trailing: [
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  tooltip: '刷新分支',
+                  onPressed: _load,
+                ),
+              ],
             ),
             Expanded(
               child: _BranchListPane(

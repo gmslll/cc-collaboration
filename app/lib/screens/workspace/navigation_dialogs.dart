@@ -228,36 +228,9 @@ class _GoToLineDialogState extends State<_GoToLineDialog> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            height: 42,
-            padding: const EdgeInsets.only(left: 14, right: 6),
-            decoration: const BoxDecoration(
-              color: CcColors.panel,
-              border: Border(bottom: BorderSide(color: CcColors.border)),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.format_list_numbered_rounded,
-                  size: 17,
-                  color: CcColors.muted,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Go to Line · ${widget.fileName}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
+          _DialogHeader(
+            icon: Icons.format_list_numbered_rounded,
+            title: 'Go to Line · ${widget.fileName}',
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
