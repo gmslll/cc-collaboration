@@ -42,6 +42,11 @@ enum _BranchFilter { all, local, remote, current, unpublished, diverged }
 
 const _workingTreeDiffSelection = '__working_tree_diff__';
 
+// 取前 take 行拼成预览,超出部分加 "...and N more"(用于确认对话框)。
+String _previewList(List<String> items, {int take = 5}) =>
+    items.take(take).join('\n') +
+    (items.length > take ? '\n...and ${items.length - take} more' : '');
+
 const _searchSkipDirs = {
   '.git',
   'node_modules',
@@ -457,11 +462,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         .map((e) => e.value.path)
         .toList();
     if (dirty.isNotEmpty) {
-      final ok = await _confirm(
-        '关闭其他未保存文件?',
-        dirty.take(5).join('\n') +
-            (dirty.length > 5 ? '\n...and ${dirty.length - 5} more' : ''),
-      );
+      final ok = await _confirm('关闭其他未保存文件?', _previewList(dirty));
       if (!ok) return;
     }
     final kept = _codeFiles[keep];
@@ -482,11 +483,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         .map((e) => e.value.path)
         .toList();
     if (dirty.isNotEmpty) {
-      final ok = await _confirm(
-        '关闭右侧未保存文件?',
-        dirty.take(5).join('\n') +
-            (dirty.length > 5 ? '\n...and ${dirty.length - 5} more' : ''),
-      );
+      final ok = await _confirm('关闭右侧未保存文件?', _previewList(dirty));
       if (!ok) return;
     }
     setState(() {
@@ -519,11 +516,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _closeAllCodeFiles() async {
     final dirty = _codeFiles.where((f) => f.dirty).map((f) => f.path).toList();
     if (dirty.isNotEmpty) {
-      final ok = await _confirm(
-        '关闭所有未保存文件?',
-        dirty.take(5).join('\n') +
-            (dirty.length > 5 ? '\n...and ${dirty.length - 5} more' : ''),
-      );
+      final ok = await _confirm('关闭所有未保存文件?', _previewList(dirty));
       if (!ok) return;
     }
     setState(() {
@@ -666,7 +659,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> _setGitLogPathFilter() async {
-    final p = _gitProject ?? _defaultProject()?.project;
+    final p = _currentGitProject;
     if (p == null) {
       _snack('没有可过滤的项目');
       return;
@@ -1185,7 +1178,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   void _openLogShortcut() => _openLeftTool(_LeftToolView.log);
 
   void _pushShortcut() {
-    final p = _gitProject ?? _defaultProject()?.project;
+    final p = _currentGitProject;
     if (p == null) {
       _snack('没有可 push 的项目');
       return;
@@ -1609,7 +1602,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 
   PopupMenuButton<String> _vcsOperationsMenu() {
-    final p = _gitProject ?? _defaultProject()?.project;
+    final p = _currentGitProject;
     final status = p == null ? null : _gitStatus;
     final dirtyTotal = status == null
         ? 0
@@ -3070,7 +3063,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 
   Widget _bottomStripe() {
-    final p = _gitProject ?? _defaultProject()?.project;
+    final p = _currentGitProject;
     final status = _gitStatus;
     return Container(
       height: 28,
@@ -3711,7 +3704,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 
   Widget _gitToolWindow() {
-    final p = _gitProject ?? _defaultProject()?.project;
+    final p = _currentGitProject;
     final status = _gitStatus;
     return Column(
       children: [
@@ -5695,7 +5688,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Widget _leftGitPanel() {
-    final p = _gitProject ?? _defaultProject()?.project;
+    final p = _currentGitProject;
     final status = _gitStatus;
     final viewLabel = switch (_gitView) {
       _GitView.changes => 'Commit',

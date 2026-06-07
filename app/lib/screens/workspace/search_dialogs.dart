@@ -306,16 +306,52 @@ List<_CodeSymbol> _extractCodeSymbols(String path, String text) {
   return symbols;
 }
 
+// 符号解析正则:提为模块级 final,编译一次(原先在逐行循环里每行重建)。
+final _reGoFunc = RegExp(
+  r'^(?:func\s+\([^)]*\)\s*)?func\s+([A-Za-z_][\w]*)\s*\(',
+);
+final _reGoType = RegExp(r'^type\s+([A-Za-z_][\w]*)\s+(struct|interface)\b');
+final _reDartType = RegExp(
+  r'^(?:abstract\s+|base\s+|final\s+|sealed\s+|mixin\s+)*'
+  r'(class|mixin|enum|extension)\s+([A-Za-z_][\w]*)',
+);
+final _reDartMethod = RegExp(
+  r'^(?:static\s+)?(?:Future<[^>]+>|[\w<>?,\s]+)\s+'
+  r'([A-Za-z_][\w]*)\s*\([^;]*\)\s*(?:async\s*)?[{=>]?',
+);
+final _reJsClass = RegExp(
+  r'^(?:export\s+default\s+|export\s+)?class\s+([\w$]+)',
+);
+final _reJsFunc = RegExp(
+  r'^(?:export\s+)?(?:async\s+)?function\s+([\w$]+)\s*\(',
+);
+final _reJsArrow = RegExp(
+  r'^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s*)?'
+  r'(?:\([^)]*\)|[\w$]+)?\s*=>',
+);
+final _reJsMethod = RegExp(r'^([\w$]+)\s*\([^)]*\)\s*\{');
+final _rePy = RegExp(r'^(class|def|async\s+def)\s+([A-Za-z_][\w]*)');
+final _reJvmType = RegExp(
+  r'^(?:[\w\s]+)?(class|interface|enum|object)\s+([\w$]+)',
+);
+final _reJvmMethod = RegExp(
+  r'^(?:public|private|protected|internal|static|final|open|override|'
+  r'suspend|fun|\s)+[\w<>\[\]?,\s.]*\s+([\w$]+)\s*\(',
+);
+final _reRust = RegExp(
+  r'^(?:pub\s+)?(struct|enum|trait|impl|fn)\s+([A-Za-z_][\w]*)?',
+);
+final _reMd = RegExp(r'^(#{1,6})\s+(.+)$');
+final _reGeneric = RegExp(
+  r'^(?:class|interface|enum|func|function|def)\s+([A-Za-z_][\w]*)',
+);
+
 _CodeSymbol? _goSymbol(String line, int lineNo, int indent) {
-  var m = RegExp(
-    r'^(?:func\s+\([^)]*\)\s*)?func\s+([A-Za-z_][\w]*)\s*\(',
-  ).firstMatch(line);
+  var m = _reGoFunc.firstMatch(line);
   if (m != null) {
     return _symbol(m.group(1)!, 'func', lineNo, indent, Icons.functions);
   }
-  m = RegExp(
-    r'^type\s+([A-Za-z_][\w]*)\s+(struct|interface)\b',
-  ).firstMatch(line);
+  m = _reGoType.firstMatch(line);
   if (m != null) {
     final kind = m.group(2)!;
     return _symbol(
@@ -330,17 +366,11 @@ _CodeSymbol? _goSymbol(String line, int lineNo, int indent) {
 }
 
 _CodeSymbol? _dartLikeSymbol(String line, int lineNo, int indent) {
-  var m = RegExp(
-    r'^(?:abstract\s+|base\s+|final\s+|sealed\s+|mixin\s+)*'
-    r'(class|mixin|enum|extension)\s+([A-Za-z_][\w]*)',
-  ).firstMatch(line);
+  var m = _reDartType.firstMatch(line);
   if (m != null) {
     return _symbol(m.group(2)!, m.group(1)!, lineNo, indent, Icons.category);
   }
-  m = RegExp(
-    r'^(?:static\s+)?(?:Future<[^>]+>|[\w<>?,\s]+)\s+'
-    r'([A-Za-z_][\w]*)\s*\([^;]*\)\s*(?:async\s*)?[{=>]?',
-  ).firstMatch(line);
+  m = _reDartMethod.firstMatch(line);
   if (m != null && !_controlWords.contains(m.group(1))) {
     return _symbol(m.group(1)!, 'method', lineNo, indent, Icons.functions);
   }
@@ -348,26 +378,19 @@ _CodeSymbol? _dartLikeSymbol(String line, int lineNo, int indent) {
 }
 
 _CodeSymbol? _jsLikeSymbol(String line, int lineNo, int indent) {
-  var m = RegExp(
-    r'^(?:export\s+default\s+|export\s+)?class\s+([\w$]+)',
-  ).firstMatch(line);
+  var m = _reJsClass.firstMatch(line);
   if (m != null) {
     return _symbol(m.group(1)!, 'class', lineNo, indent, Icons.category);
   }
-  m = RegExp(
-    r'^(?:export\s+)?(?:async\s+)?function\s+([\w$]+)\s*\(',
-  ).firstMatch(line);
+  m = _reJsFunc.firstMatch(line);
   if (m != null) {
     return _symbol(m.group(1)!, 'function', lineNo, indent, Icons.functions);
   }
-  m = RegExp(
-    r'^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s*)?'
-    r'(?:\([^)]*\)|[\w$]+)?\s*=>',
-  ).firstMatch(line);
+  m = _reJsArrow.firstMatch(line);
   if (m != null) {
     return _symbol(m.group(1)!, 'function', lineNo, indent, Icons.functions);
   }
-  m = RegExp(r'^([\w$]+)\s*\([^)]*\)\s*\{').firstMatch(line);
+  m = _reJsMethod.firstMatch(line);
   if (m != null && !_controlWords.contains(m.group(1))) {
     return _symbol(m.group(1)!, 'method', lineNo, indent, Icons.functions);
   }
@@ -375,9 +398,7 @@ _CodeSymbol? _jsLikeSymbol(String line, int lineNo, int indent) {
 }
 
 _CodeSymbol? _pythonSymbol(String line, int lineNo, int indent) {
-  final m = RegExp(
-    r'^(class|def|async\s+def)\s+([A-Za-z_][\w]*)',
-  ).firstMatch(line);
+  final m = _rePy.firstMatch(line);
   if (m == null) return null;
   final kind = m.group(1)!.replaceAll('async ', '');
   return _symbol(
@@ -390,16 +411,11 @@ _CodeSymbol? _pythonSymbol(String line, int lineNo, int indent) {
 }
 
 _CodeSymbol? _jvmSymbol(String line, int lineNo, int indent) {
-  var m = RegExp(
-    r'^(?:[\w\s]+)?(class|interface|enum|object)\s+([\w$]+)',
-  ).firstMatch(line);
+  var m = _reJvmType.firstMatch(line);
   if (m != null) {
     return _symbol(m.group(2)!, m.group(1)!, lineNo, indent, Icons.category);
   }
-  m = RegExp(
-    r'^(?:public|private|protected|internal|static|final|open|override|'
-    r'suspend|fun|\s)+[\w<>\[\]?,\s.]*\s+([\w$]+)\s*\(',
-  ).firstMatch(line);
+  m = _reJvmMethod.firstMatch(line);
   if (m != null && !_controlWords.contains(m.group(1))) {
     return _symbol(m.group(1)!, 'method', lineNo, indent, Icons.functions);
   }
@@ -407,9 +423,7 @@ _CodeSymbol? _jvmSymbol(String line, int lineNo, int indent) {
 }
 
 _CodeSymbol? _rustSymbol(String line, int lineNo, int indent) {
-  final m = RegExp(
-    r'^(?:pub\s+)?(struct|enum|trait|impl|fn)\s+([A-Za-z_][\w]*)?',
-  ).firstMatch(line);
+  final m = _reRust.firstMatch(line);
   if (m == null) return null;
   final kind = m.group(1)!;
   final name = m.group(2) ?? 'impl';
@@ -423,7 +437,7 @@ _CodeSymbol? _rustSymbol(String line, int lineNo, int indent) {
 }
 
 _CodeSymbol? _markdownSymbol(String line, int lineNo, int indent) {
-  final m = RegExp(r'^(#{1,6})\s+(.+)$').firstMatch(line);
+  final m = _reMd.firstMatch(line);
   if (m == null) return null;
   return _symbol(
     m.group(2)!.trim(),
@@ -435,9 +449,7 @@ _CodeSymbol? _markdownSymbol(String line, int lineNo, int indent) {
 }
 
 _CodeSymbol? _genericSymbol(String line, int lineNo, int indent) {
-  final m = RegExp(
-    r'^(?:class|interface|enum|func|function|def)\s+([A-Za-z_][\w]*)',
-  ).firstMatch(line);
+  final m = _reGeneric.firstMatch(line);
   if (m == null) return null;
   return _symbol(m.group(1)!, 'symbol', lineNo, indent, Icons.account_tree);
 }

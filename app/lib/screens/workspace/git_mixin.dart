@@ -42,8 +42,12 @@ mixin _GitMixin on State<WorkspacePage> {
   String? _gitError;
   final _commitCtl = TextEditingController();
 
+  /// 当前 git 项目:已选中的,否则回退到第一个可用项目。
+  ProjectCfg? get _currentGitProject =>
+      _gitProject ?? _defaultProject()?.project;
+
   Future<void> _refreshGit() async {
-    final p = _gitProject ?? _defaultProject()?.project;
+    final p = _currentGitProject;
     if (p == null) return;
     if (_gitProject == null && mounted) setState(() => _gitProject = p);
     setState(() {
@@ -337,9 +341,7 @@ mixin _GitMixin on State<WorkspacePage> {
           ..sort((a, b) => a.path.compareTo(b.path));
     if (changes.isEmpty) return;
     final files = changes.map((c) => c.path).toList();
-    final preview =
-        files.take(8).join('\n') +
-        (files.length > 8 ? '\n...and ${files.length - 8} more' : '');
+    final preview = _previewList(files, take: 8);
     if (!await _confirm(
       'Rollback selected changes?',
       '$preview\n\n这会恢复 ${files.length} 个文件的工作区改动。',
@@ -369,9 +371,7 @@ mixin _GitMixin on State<WorkspacePage> {
       return;
     }
     final files = changes.map((c) => c.path).toList();
-    final preview =
-        files.take(8).join('\n') +
-        (files.length > 8 ? '\n...and ${files.length - 8} more' : '');
+    final preview = _previewList(files, take: 8);
     if (!await _confirm(
       'Rollback all changes?',
       '$preview\n\n这会恢复 ${files.length} 个文件的工作区改动；冲突文件不会在这里处理。',
