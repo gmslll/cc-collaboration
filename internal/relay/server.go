@@ -34,6 +34,10 @@ type Server struct {
 	Store  *store.Store
 	Tokens *auth.Tokens
 	Hub    *sse.Hub
+	// WsBroker pipes opaque frames between a user's own devices (a desktop host
+	// and a phone client) for the remote-workspace feature. Lazily created in
+	// Handler if nil. In-memory/transient like the Hub.
+	WsBroker *wsBroker
 	// SeedAdmins are operator-configured admin identities (from -admins /
 	// RELAY_ADMINS). They are always admin even without a users row, so an
 	// operator can never be locked out. Effective admin = SeedAdmins ∪
@@ -47,6 +51,9 @@ func (s *Server) Handler() http.Handler {
 	// Handler is called once per Server with a fresh Hub).
 	if s.Hub != nil && s.Hub.OnPresenceChange == nil {
 		s.Hub.OnPresenceChange = s.broadcastPresence
+	}
+	if s.WsBroker == nil {
+		s.WsBroker = newWsBroker()
 	}
 
 	mux := http.NewServeMux()
@@ -70,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/handoffs/{id}/attachments/{name}", s.putAttachment)
 	api.HandleFunc("GET /v1/handoffs/{id}/attachments/{name}", s.getAttachment)
 	api.HandleFunc("GET /v1/events", s.events)
+	api.HandleFunc("GET /v1/ws", s.ws)
 	api.HandleFunc("GET /v1/users/online", s.listOnlineUsers)
 	api.HandleFunc("POST /v1/alerts", s.postAlert)
 	// Account endpoints (authenticated): logout / whoami / change own password.

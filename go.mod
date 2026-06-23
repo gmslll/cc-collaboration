@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/coder/websocket v1.8.15
 	github.com/zserge/lorca v0.1.10
 	golang.org/x/crypto v0.52.0
 	gopkg.in/yaml.v3 v3.0.1

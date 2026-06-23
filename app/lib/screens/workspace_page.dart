@@ -11,6 +11,7 @@ import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/prefs.dart';
 import '../local/worktrees.dart';
+import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'diff_page.dart';
@@ -120,6 +121,22 @@ class _WorkspacePageState extends State<WorkspacePage>
     with TerminalHost, _GitMixin, _SearchMixin {
   @override
   late AppConfig _cfg = widget.config; // reloaded after config mutations
+
+  // Shares this workspace (terminals + project files) to the user's phone via
+  // the relay. Opt-in — off until the toolbar "cast" toggle. See lib/remote.
+  late final RemoteHost _remoteHost = RemoteHost(
+    relayUrl: _cfg.relayUrl,
+    token: _cfg.token,
+    sessions: () => terms,
+    roots: () => [
+      for (final ws in _cfg.workspaces)
+        for (final p in ws.projects) RemoteRoot(p.name, p.path),
+    ],
+  );
+  void _onRemoteChange() {
+    if (mounted) setState(() {});
+  }
+
   Map<String, List<ListItem>> _tasksByRepo = const {};
   // project path -> worktrees. Key absent = not loaded; value null = loading;
   // value list = loaded (possibly empty).
@@ -195,6 +212,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   @override
   void initState() {
     super.initState();
+    _remoteHost.addListener(_onRemoteChange);
     _loadTasks();
     // After restoring persisted sessions, expand the projects that own them so
     // the session tabs are visible in the tree.
@@ -216,6 +234,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     _structureQueryCtl.dispose();
     _workspaceFocus.dispose();
     _commitFocus.dispose();
+    _remoteHost.removeListener(_onRemoteChange);
+    _remoteHost.dispose();
     disposeTerms();
     super.dispose();
   }
@@ -1496,6 +1516,24 @@ class _WorkspacePageState extends State<WorkspacePage>
             selected: false,
             onPressed: _showShortcuts,
           ),
+          _toolButton(
+            icon: _remoteHost.sharing
+                ? (_remoteHost.clientCount > 0
+                      ? Icons.cast_connected_rounded
+                      : Icons.cast_rounded)
+                : Icons.cast_outlined,
+            tooltip: _remoteHost.sharing
+                ? '手机远程：${_remoteHost.connected ? (_remoteHost.clientCount > 0 ? '${_remoteHost.clientCount} 台已连' : '等待手机') : '连接中…'}（点击关闭共享）'
+                : '把工作区共享给手机（远程办公）',
+            selected: _remoteHost.sharing,
+            onPressed: () {
+              if (_remoteHost.sharing) {
+                _remoteHost.disable();
+              } else {
+                _remoteHost.enable();
+              }
+            },
+          ),
           _runChip('Claude', Icons.play_arrow_rounded, _launchDefaultClaude),
           _runChip('Codex', Icons.smart_toy_outlined, _launchDefaultCodex),
         ],
@@ -1954,20 +1992,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Widget _leftToolWindowBar() {
     final mod = _shortcutModLabel();
-    final projectCount = _cfg.workspaces.fold<int>(
-      0,
-      (sum, ws) => sum + ws.projects.length,
-    );
-    final changeCount = _gitChanges.length;
-    final branchCount = _gitBranches.length;
-    final commitCount = _gitLog.length;
-    final sessionCount = terms.length;
     final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
-    final gitPulse = _gitStatus == null
-        ? null
-        : _gitStatus!.clean
-        ? 'clean'
-        : '${_gitStatus!.staged + _gitStatus!.modified + _gitStatus!.untracked + _gitStatus!.conflicted}';
     return Container(
       width: 46,
       decoration: const BoxDecoration(
@@ -1988,7 +2013,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     selected:
                         !_projectCollapsed &&
                         _leftToolView == _LeftToolView.project,
-                    badge: projectCount == 0 ? null : '$projectCount',
                     onTap: () {
                       if (!_projectCollapsed &&
                           _leftToolView == _LeftToolView.project) {
@@ -2022,8 +2046,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     selected:
                         !_projectCollapsed &&
                         _leftToolView == _LeftToolView.changes,
-                    badge: changeCount == 0 ? null : '$changeCount',
-                    badgeColor: CcColors.warning,
                     onTap: () {
                       if (!_projectCollapsed &&
                           _leftToolView == _LeftToolView.changes) {
@@ -2039,8 +2061,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     selected:
                         !_projectCollapsed &&
                         _leftToolView == _LeftToolView.branches,
-                    badge: branchCount == 0 ? null : '$branchCount',
-                    badgeColor: CcColors.accentBright,
                     onTap: () {
                       if (!_projectCollapsed &&
                           _leftToolView == _LeftToolView.branches) {
@@ -2056,8 +2076,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     selected:
                         !_projectCollapsed &&
                         _leftToolView == _LeftToolView.log,
-                    badge: commitCount == 0 ? null : '$commitCount',
-                    badgeColor: CcColors.ok,
                     onTap: () {
                       if (!_projectCollapsed &&
                           _leftToolView == _LeftToolView.log) {
@@ -2073,8 +2091,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     selected:
                         !_projectCollapsed &&
                         _leftToolView == _LeftToolView.stash,
-                    badge: _gitStashes.isEmpty ? null : '${_gitStashes.length}',
-                    badgeColor: CcColors.accentBright,
                     onTap: () {
                       if (!_projectCollapsed &&
                           _leftToolView == _LeftToolView.stash) {
@@ -2091,8 +2107,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     selected:
                         !_terminalCollapsed &&
                         _bottomTool == _BottomTool.terminal,
-                    badge: sessionCount == 0 ? null : '$sessionCount',
-                    badgeColor: CcColors.ok,
                     onTap: () => _setBottomTool(_BottomTool.terminal),
                   ),
                   _leftToolButton(
@@ -2102,8 +2116,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                         : 'Handoff',
                     selected: _detailItem != null && !_detailCollapsed,
                     enabled: _detailItem != null,
-                    badge: _detailItem == null ? null : '1',
-                    badgeColor: CcColors.accentBright,
                     onTap: () => _setDetailCollapsed(!_detailCollapsed),
                   ),
                   const Divider(height: 13, indent: 8, endIndent: 8),
@@ -2142,46 +2154,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     label: 'Refresh',
                     onTap: _refresh,
                   ),
-                  if (gitPulse != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3, bottom: 2),
-                      child: Tooltip(
-                        message: _gitStatus!.clean
-                            ? '${_gitStatus!.branch} · clean'
-                            : '${_gitStatus!.branch} · working tree changes',
-                        child: Container(
-                          constraints: const BoxConstraints(minWidth: 26),
-                          height: 18,
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color:
-                                (_gitStatus!.clean
-                                        ? CcColors.ok
-                                        : CcColors.warning)
-                                    .withValues(alpha: 0.12),
-                            border: Border.all(
-                              color:
-                                  (_gitStatus!.clean
-                                          ? CcColors.ok
-                                          : CcColors.warning)
-                                      .withValues(alpha: 0.45),
-                            ),
-                            borderRadius: BorderRadius.circular(CcRadius.pill),
-                          ),
-                          child: Text(
-                            gitPulse,
-                            style: CcType.code(
-                              size: 9.5,
-                              color: _gitStatus!.clean
-                                  ? CcColors.ok
-                                  : CcColors.warning,
-                              weight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -2198,8 +2170,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     required bool selected,
     required VoidCallback onTap,
     bool enabled = true,
-    String? badge,
-    Color badgeColor = CcColors.accentBright,
   }) => Tooltip(
     message: tooltip,
     preferBelow: false,
@@ -2219,46 +2189,16 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
           ),
         ),
-        child: Stack(
-          children: [
-            Center(
-              child: Icon(
-                icon,
-                size: 18,
-                color: !enabled
-                    ? CcColors.subtle.withValues(alpha: 0.55)
-                    : selected
-                    ? CcColors.accentBright
-                    : CcColors.muted,
-              ),
-            ),
-            if (badge != null)
-              Positioned(
-                top: 5,
-                right: 3,
-                child: Container(
-                  constraints: const BoxConstraints(minWidth: 16),
-                  height: 16,
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: badgeColor.withValues(alpha: selected ? 0.22 : 0.14),
-                    border: Border.all(
-                      color: badgeColor.withValues(alpha: 0.55),
-                    ),
-                    borderRadius: BorderRadius.circular(CcRadius.pill),
-                  ),
-                  child: Text(
-                    badge,
-                    style: CcType.code(
-                      size: 9.5,
-                      color: selected ? CcColors.text : badgeColor,
-                      weight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-          ],
+        child: Center(
+          child: Icon(
+            icon,
+            size: 18,
+            color: !enabled
+                ? CcColors.subtle.withValues(alpha: 0.55)
+                : selected
+                ? CcColors.accentBright
+                : CcColors.muted,
+          ),
         ),
       ),
     ),
@@ -5620,12 +5560,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                 icon: const Icon(Icons.edit_note_rounded, size: 16),
                 label: const Text('Amend'),
               ),
-              const SizedBox(width: 6),
-              OutlinedButton.icon(
-                onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
-                icon: const Icon(Icons.add_rounded, size: 16),
-                label: const Text('Stage All'),
-              ),
             ],
           ),
         ],
@@ -5786,20 +5720,24 @@ class _WorkspacePageState extends State<WorkspacePage>
     ),
     child: scrollableBar(
       scrolling: [
-        IconButton(
-          icon: const Icon(Icons.add_task_rounded, size: 16),
-          tooltip: 'Stage All',
-          visualDensity: VisualDensity.compact,
-          onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
-        ),
-        IconButton(
-          icon: const Icon(Icons.remove_done_rounded, size: 16),
-          tooltip: 'Unstage All',
-          visualDensity: VisualDensity.compact,
-          onPressed: _gitLoading || (status?.staged ?? 0) == 0
-              ? null
-              : () => _gitUnstageAllCurrent(p),
-        ),
+        // Stage/Unstage only matter in the Changes view; Push/Pull/Fetch are
+        // repo-wide so they stay across all left-panel git views.
+        if (_gitView == _GitView.changes) ...[
+          IconButton(
+            icon: const Icon(Icons.add_task_rounded, size: 16),
+            tooltip: 'Stage All',
+            visualDensity: VisualDensity.compact,
+            onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
+          ),
+          IconButton(
+            icon: const Icon(Icons.remove_done_rounded, size: 16),
+            tooltip: 'Unstage All',
+            visualDensity: VisualDensity.compact,
+            onPressed: _gitLoading || (status?.staged ?? 0) == 0
+                ? null
+                : () => _gitUnstageAllCurrent(p),
+          ),
+        ],
         IconButton(
           icon: const Icon(Icons.upload_rounded, size: 16),
           tooltip: 'Push',

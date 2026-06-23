@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'api/models.dart';
 import 'api/relay_client.dart';
@@ -13,8 +14,10 @@ import 'screens/admin_page.dart';
 import 'screens/handoffs_page.dart';
 import 'screens/login_screen.dart';
 import 'screens/projects_page.dart';
+import 'screens/remote_workspace_page.dart';
 import 'screens/workspace_page.dart';
 import 'theme.dart';
+import 'ui_scale.dart';
 import 'widgets.dart';
 
 void main() async {
@@ -22,6 +25,16 @@ void main() async {
   await Prefs.load();
   Notifications.init();
   runApp(const CcApp());
+}
+
+// Zoom the whole UI in/out (⌘+ / ⌘- / ⌘0) — see ui_scale.dart.
+class _ZoomIntent extends Intent {
+  final double delta;
+  const _ZoomIntent(this.delta);
+}
+
+class _ZoomResetIntent extends Intent {
+  const _ZoomResetIntent();
 }
 
 class CcApp extends StatelessWidget {
@@ -33,6 +46,47 @@ class CcApp extends StatelessWidget {
       title: 'cc-handoff',
       debugShowCheckedModeBanner: false,
       theme: ccTheme(),
+      shortcuts: <ShortcutActivator, Intent>{
+        ...WidgetsApp.defaultShortcuts,
+        const SingleActivator(LogicalKeyboardKey.equal, meta: true):
+            const _ZoomIntent(uiScaleStep),
+        const SingleActivator(
+          LogicalKeyboardKey.equal,
+          meta: true,
+          shift: true,
+        ): const _ZoomIntent(
+          uiScaleStep,
+        ),
+        const SingleActivator(LogicalKeyboardKey.minus, meta: true):
+            const _ZoomIntent(-uiScaleStep),
+        const SingleActivator(LogicalKeyboardKey.digit0, meta: true):
+            const _ZoomResetIntent(),
+        const SingleActivator(LogicalKeyboardKey.equal, control: true):
+            const _ZoomIntent(uiScaleStep),
+        const SingleActivator(LogicalKeyboardKey.minus, control: true):
+            const _ZoomIntent(-uiScaleStep),
+        const SingleActivator(LogicalKeyboardKey.digit0, control: true):
+            const _ZoomResetIntent(),
+      },
+      actions: <Type, Action<Intent>>{
+        ...WidgetsApp.defaultActions,
+        _ZoomIntent: CallbackAction<_ZoomIntent>(
+          onInvoke: (i) {
+            nudgeUiScale(i.delta);
+            return null;
+          },
+        ),
+        _ZoomResetIntent: CallbackAction<_ZoomResetIntent>(
+          onInvoke: (_) {
+            resetUiScale();
+            return null;
+          },
+        ),
+      },
+      builder: (context, child) => ValueListenableBuilder<double>(
+        valueListenable: uiScale,
+        builder: (_, scale, _) => UiScaler(scale: scale, child: child!),
+      ),
       home: const HomeShell(),
     );
   }
@@ -157,6 +211,8 @@ class _HomeShellState extends State<HomeShell> {
     final dests = <_Dest>[
       if (_isDesktop)
         const _Dest('工作区', Icons.workspaces_rounded, Icons.workspaces_rounded),
+      if (!_isDesktop)
+        const _Dest('远程', Icons.cast_rounded, Icons.cast_connected_rounded),
       const _Dest('收件箱', Icons.inbox_rounded, Icons.inbox_rounded),
       const _Dest('项目', Icons.folder_rounded, Icons.folder_rounded),
       const _Dest('账号', Icons.person_rounded, Icons.person_rounded),
@@ -167,6 +223,8 @@ class _HomeShellState extends State<HomeShell> {
 
     final pages = <Widget>[
       if (_isDesktop) WorkspacePage(client: _client!, config: _cfg!),
+      if (!_isDesktop)
+        RemoteWorkspacePage(relayUrl: _cfg!.relayUrl, token: _cfg!.token),
       HandoffsPage(client: _client!, config: _cfg!, showTerminal: _isDesktop),
       ProjectsPage(client: _client!),
       AccountPage(client: _client!, identity: _cfg!.identity),

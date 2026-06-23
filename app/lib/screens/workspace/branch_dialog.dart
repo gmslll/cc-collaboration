@@ -471,13 +471,16 @@ class _BranchListPaneState extends State<_BranchListPane> {
           SizedBox(height: compact ? 5 : 6),
           Row(
             children: [
-              _branchToolbarButton(
-                icon: Icons.sync_rounded,
-                tooltip: 'Fetch',
-                onPressed: widget.loading
-                    ? null
-                    : () => _run(() => widget.onFetch()),
-              ),
+              // In the embedded left panel, Fetch/Pull/Push already live in
+              // _leftGitActionBar above — keep only branch-specific actions here.
+              if (!widget.embedded)
+                _branchToolbarButton(
+                  icon: Icons.sync_rounded,
+                  tooltip: 'Fetch',
+                  onPressed: widget.loading
+                      ? null
+                      : () => _run(() => widget.onFetch()),
+                ),
               _branchToolbarButton(
                 icon: Icons.cleaning_services_outlined,
                 tooltip: 'Fetch --prune',
@@ -485,20 +488,22 @@ class _BranchListPaneState extends State<_BranchListPane> {
                     ? null
                     : () => _run(() => widget.onFetch(prune: true)),
               ),
-              _branchToolbarButton(
-                icon: Icons.call_received_rounded,
-                tooltip: 'Pull --ff-only',
-                onPressed: widget.loading || widget.onPull == null
-                    ? null
-                    : () => _run(widget.onPull!),
-              ),
-              _branchToolbarButton(
-                icon: Icons.upload_rounded,
-                tooltip: 'Push',
-                onPressed: widget.loading || widget.onPush == null
-                    ? null
-                    : () => _run(widget.onPush!),
-              ),
+              if (!widget.embedded) ...[
+                _branchToolbarButton(
+                  icon: Icons.call_received_rounded,
+                  tooltip: 'Pull --ff-only',
+                  onPressed: widget.loading || widget.onPull == null
+                      ? null
+                      : () => _run(widget.onPull!),
+                ),
+                _branchToolbarButton(
+                  icon: Icons.upload_rounded,
+                  tooltip: 'Push',
+                  onPressed: widget.loading || widget.onPush == null
+                      ? null
+                      : () => _run(widget.onPush!),
+                ),
+              ],
               const Spacer(),
               if (compact)
                 Text(

@@ -9,6 +9,8 @@ import 'package:xterm/xterm.dart';
 // these (one per pickup/worktree) for multi-session tabs and can sendText into
 // the active one (e.g. paste the materialized prompt).
 class TerminalSession {
+  static int _seq = 0;
+  final String id = 'ts${_seq++}'; // stable per-run id (for remote addressing)
   final String workdir;
   final String command;
   final String title;
@@ -17,10 +19,14 @@ class TerminalSession {
   Pty? _pty;
   bool _started = false;
 
+  // remoteSink, when set, also receives this terminal's (utf8-decoded) PTY
+  // output so a remote phone client can mirror it. Null when nobody's watching.
+  void Function(String chunk)? remoteSink;
+
   TerminalSession(this.workdir, this.command)
-      : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
-            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
-            : workdir;
+    : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
+          ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
+          : workdir;
 
   // label is what the UI shows: the user-given name, else the derived title.
   String get label => (name != null && name!.isNotEmpty) ? name! : title;
@@ -40,14 +46,23 @@ class TerminalSession {
     pty.output
         .cast<List<int>>()
         .transform(const Utf8Decoder(allowMalformed: true))
-        .listen(terminal.write);
-    pty.exitCode
-        .then((code) => terminal.write('\r\n\x1b[90m[已退出: $code]\x1b[0m\r\n'));
+        .listen((chunk) {
+          terminal.write(chunk);
+          remoteSink?.call(chunk);
+        });
+    pty.exitCode.then(
+      (code) => terminal.write('\r\n\x1b[90m[已退出: $code]\x1b[0m\r\n'),
+    );
     terminal.onOutput = (data) => pty.write(const Utf8Encoder().convert(data));
     terminal.onResize = (w, h, pw, ph) => pty.resize(h, w);
   }
 
   void sendText(String s) => _pty?.write(const Utf8Encoder().convert(s));
+
+  // resizeFromRemote lets a connected phone size the PTY to its viewport.
+  void resizeFromRemote(int rows, int cols) {
+    if (rows > 0 && cols > 0) _pty?.resize(rows, cols);
+  }
 
   void dispose() => _pty?.kill();
 }
