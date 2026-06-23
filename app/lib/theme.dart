@@ -94,6 +94,10 @@ ThemeData ccTheme() {
 
   return ThemeData(
     useMaterial3: true,
+    // 桌面密集横条（编辑器头部 32px、底部状态条 28px 等）不需要为触摸优化的
+    // 40/48px 最小点击区。不设它时按钮被强制 ~40px 高，塞进固定高度横条会
+    // 产生几像素的垂直 RenderFlex 溢出（全屏下沿整条宽度显示为黄红斜纹）。
+    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
     colorScheme: scheme,
     textTheme: textTheme,
     scaffoldBackgroundColor: CcColors.bg,

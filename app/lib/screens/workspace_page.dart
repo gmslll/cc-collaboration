@@ -1423,8 +1423,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         color: CcColors.toolbar,
         border: Border(bottom: BorderSide(color: CcColors.border)),
       ),
-      child: Row(
-        children: [
+      child: scrollableBar(
+        scrolling: [
           _toolButton(
             icon: Icons.account_tree_outlined,
             tooltip: _projectCollapsed ? '展开 Project' : '收起 Project',
@@ -1498,7 +1498,8 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
           _runChip('Claude', Icons.play_arrow_rounded, _launchDefaultClaude),
           _runChip('Codex', Icons.smart_toy_outlined, _launchDefaultCodex),
-          const Spacer(),
+        ],
+        pinnedTrailing: [
           if (_busy)
             const SizedBox(
               width: 130,
@@ -1882,54 +1883,69 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Widget _ideBody() {
     final terminalOpen = !_terminalCollapsed;
-    return Column(
-      children: [
-        Expanded(
-          child: Row(
-            children: [
-              _leftToolWindowBar(),
-              if (!_projectCollapsed) ...[
-                SizedBox(width: _treeWidth, child: _leftToolPanel()),
-                resizeHandle(
-                  prefKey: 'ws.treeWidth',
-                  get: () => _treeWidth,
-                  set: (v) => setState(() => _treeWidth = v),
-                  min: 260,
-                  max: 520,
-                ),
-              ],
-              Expanded(child: _editorArea()),
-              if (_detailItem != null) ...[
-                if (!_detailCollapsed) ...[
-                  resizeHandle(
-                    prefKey: 'ws.detailWidth',
-                    get: () => _detailWidth,
-                    set: (v) => setState(() => _detailWidth = v),
-                    min: 360,
-                    max: 820,
-                    invert: true,
-                  ),
-                  SizedBox(
-                    width: _detailWidth,
-                    child: _detailPanel(_detailItem!),
-                  ),
-                ] else
-                  _toolStripe(
-                    icon: Icons.description_outlined,
-                    label: 'Handoff',
-                    right: true,
-                    onTap: () => _setDetailCollapsed(false),
-                  ),
-              ],
-            ],
-          ),
-        ),
-        if (terminalOpen) ...[
-          _horizontalResizeHandle(),
-          SizedBox(height: _terminalHeight, child: _terminalToolWindow()),
-        ] else
-          _bottomStripe(),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Clamp the bottom tool window to the height actually available so it can
+        // never shrink the editor below zero and overflow the column (the
+        // "BOTTOM OVERFLOWED BY N PIXELS" hazard stripe on short windows / when a
+        // large persisted _terminalHeight exceeds the current viewport).
+        const minEditor = 120.0;
+        const handle = 7.0;
+        final maxTerm = (constraints.maxHeight - handle - minEditor).clamp(
+          120.0,
+          double.infinity,
+        );
+        final termHeight = _terminalHeight.clamp(120.0, maxTerm);
+        return Column(
+          children: [
+            Expanded(
+              child: Row(
+                children: [
+                  _leftToolWindowBar(),
+                  if (!_projectCollapsed) ...[
+                    SizedBox(width: _treeWidth, child: _leftToolPanel()),
+                    resizeHandle(
+                      prefKey: 'ws.treeWidth',
+                      get: () => _treeWidth,
+                      set: (v) => setState(() => _treeWidth = v),
+                      min: 260,
+                      max: 520,
+                    ),
+                  ],
+                  Expanded(child: _editorArea()),
+                  if (_detailItem != null) ...[
+                    if (!_detailCollapsed) ...[
+                      resizeHandle(
+                        prefKey: 'ws.detailWidth',
+                        get: () => _detailWidth,
+                        set: (v) => setState(() => _detailWidth = v),
+                        min: 360,
+                        max: 820,
+                        invert: true,
+                      ),
+                      SizedBox(
+                        width: _detailWidth,
+                        child: _detailPanel(_detailItem!),
+                      ),
+                    ] else
+                      _toolStripe(
+                        icon: Icons.description_outlined,
+                        label: 'Handoff',
+                        right: true,
+                        onTap: () => _setDetailCollapsed(false),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+            if (terminalOpen) ...[
+              _horizontalResizeHandle(maxTerm),
+              SizedBox(height: termHeight, child: _terminalToolWindow()),
+            ] else
+              _bottomStripe(),
+          ],
+        );
+      },
     );
   }
 
@@ -3042,13 +3058,18 @@ class _WorkspacePageState extends State<WorkspacePage>
     ),
   );
 
-  Widget _horizontalResizeHandle() => MouseRegion(
+  Widget _horizontalResizeHandle(double maxTerm) => MouseRegion(
     cursor: SystemMouseCursors.resizeRow,
     child: GestureDetector(
       behavior: HitTestBehavior.translucent,
       onVerticalDragUpdate: (d) {
         setState(() {
-          _terminalHeight = (_terminalHeight - d.delta.dy).clamp(220.0, 620.0);
+          // Upper bound is the space actually available (not a fixed 620), so
+          // dragging can't push the panel past the viewport and overflow.
+          _terminalHeight = (_terminalHeight - d.delta.dy).clamp(
+            120.0,
+            maxTerm,
+          );
         });
       },
       onVerticalDragEnd: (_) =>
@@ -3711,66 +3732,80 @@ class _WorkspacePageState extends State<WorkspacePage>
         _panelHeader(
           padding: const EdgeInsets.only(left: 10, right: 4),
           children: [
-            _bottomTab(
-              icon: Icons.terminal_rounded,
-              label: 'Terminal',
-              selected: false,
-              onTap: () => _setBottomTool(_BottomTool.terminal),
-            ),
-            _bottomTab(
-              icon: Icons.alt_route_rounded,
-              label: 'Git',
-              selected: true,
-              onTap: () => _setBottomTool(_BottomTool.git),
-            ),
-            _bottomTab(
-              icon: Icons.list_alt_rounded,
-              label: 'Changes',
-              selected: _gitView == _GitView.changes,
-              onTap: () => setState(() => _gitView = _GitView.changes),
-            ),
-            _bottomTab(
-              icon: Icons.history_rounded,
-              label: 'Log',
-              selected: _gitView == _GitView.log,
-              onTap: () => setState(() => _gitView = _GitView.log),
-            ),
-            _bottomTab(
-              icon: Icons.account_tree_rounded,
-              label: 'Branches',
-              selected: _gitView == _GitView.branches,
-              onTap: () => setState(() => _gitView = _GitView.branches),
-            ),
-            _bottomTab(
-              icon: Icons.inventory_2_outlined,
-              label: 'Stash',
-              selected: _gitView == _GitView.stash,
-              onTap: () => setState(() => _gitView = _GitView.stash),
-            ),
-            const SizedBox(width: 10),
-            if (p != null)
-              Expanded(
+            // Tabs + project/branch scroll horizontally when the panel is
+            // narrow; the action icons stay pinned to the right.
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      p.name,
-                      style: CcType.code(size: 11.5, color: CcColors.muted),
+                    _bottomTab(
+                      icon: Icons.terminal_rounded,
+                      label: 'Terminal',
+                      selected: false,
+                      onTap: () => _setBottomTool(_BottomTool.terminal),
                     ),
-                    const SizedBox(width: 8),
-                    _branchButton(status?.branch ?? 'branch'),
-                    if (status != null &&
-                        (status.ahead > 0 || status.behind > 0)) ...[
-                      const SizedBox(width: 8),
-                      tag(
-                        '↑${status.ahead} ↓${status.behind}',
-                        CcColors.warning,
-                      ),
-                    ],
+                    _bottomTab(
+                      icon: Icons.alt_route_rounded,
+                      label: 'Git',
+                      selected: true,
+                      onTap: () => _setBottomTool(_BottomTool.git),
+                    ),
+                    _bottomTab(
+                      icon: Icons.list_alt_rounded,
+                      label: 'Changes',
+                      selected: _gitView == _GitView.changes,
+                      onTap: () => setState(() => _gitView = _GitView.changes),
+                    ),
+                    _bottomTab(
+                      icon: Icons.history_rounded,
+                      label: 'Log',
+                      selected: _gitView == _GitView.log,
+                      onTap: () => setState(() => _gitView = _GitView.log),
+                    ),
+                    _bottomTab(
+                      icon: Icons.account_tree_rounded,
+                      label: 'Branches',
+                      selected: _gitView == _GitView.branches,
+                      onTap: () => setState(() => _gitView = _GitView.branches),
+                    ),
+                    _bottomTab(
+                      icon: Icons.inventory_2_outlined,
+                      label: 'Stash',
+                      selected: _gitView == _GitView.stash,
+                      onTap: () => setState(() => _gitView = _GitView.stash),
+                    ),
+                    const SizedBox(width: 10),
+                    if (p != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            p.name,
+                            style: CcType.code(
+                              size: 11.5,
+                              color: CcColors.muted,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _branchButton(status?.branch ?? 'branch'),
+                          if (status != null &&
+                              (status.ahead > 0 || status.behind > 0)) ...[
+                            const SizedBox(width: 8),
+                            tag(
+                              '↑${status.ahead} ↓${status.behind}',
+                              CcColors.warning,
+                            ),
+                          ],
+                        ],
+                      )
+                    else
+                      const Text('Git'),
                   ],
                 ),
-              )
-            else
-              const Expanded(child: Text('Git')),
+              ),
+            ),
             IconButton(
               icon: const Icon(Icons.add_task_rounded, size: 17),
               tooltip: 'Stage All',
@@ -3961,16 +3996,34 @@ class _WorkspacePageState extends State<WorkspacePage>
                   style: CcType.code(size: 12, color: CcColors.muted),
                 ),
               ),
-              TextButton.icon(
-                onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
-                icon: const Icon(Icons.add_task_rounded, size: 14),
-                label: const Text('Stage All'),
-              ),
-              TextButton.icon(
-                onPressed: _gitLoading ? null : () => _gitDiscardAllCurrent(p),
-                icon: const Icon(Icons.undo_rounded, size: 14),
-                label: const Text('Rollback All'),
-                style: TextButton.styleFrom(foregroundColor: CcColors.danger),
+              // Buttons scroll horizontally when the pane is too narrow.
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: true,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _gitLoading
+                            ? null
+                            : () => _gitStageAllCurrent(p),
+                        icon: const Icon(Icons.add_task_rounded, size: 14),
+                        label: const Text('Stage All'),
+                      ),
+                      TextButton.icon(
+                        onPressed: _gitLoading
+                            ? null
+                            : () => _gitDiscardAllCurrent(p),
+                        icon: const Icon(Icons.undo_rounded, size: 14),
+                        label: const Text('Rollback All'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: CcColors.danger,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
@@ -4028,52 +4081,70 @@ class _WorkspacePageState extends State<WorkspacePage>
                   style: CcType.code(size: 12, color: CcColors.muted),
                 ),
               ),
-              TextButton.icon(
-                onPressed: _gitLoading
-                    ? null
-                    : () => _openCodeFile('${p.path}/$file'),
-                icon: const Icon(Icons.open_in_new_rounded, size: 14),
-                label: const Text('Open'),
-              ),
-              if (tracked) ...[
-                IconButton(
-                  icon: const Icon(Icons.history_rounded, size: 16),
-                  tooltip: 'File History',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _gitLoading
-                      ? null
-                      : () => _showFileHistoryForProjectFile(p, file),
+              // Action buttons scroll horizontally when the diff pane is too
+              // narrow to fit them; pinned to the right when there's room.
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: true,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _gitLoading
+                            ? null
+                            : () => _openCodeFile('${p.path}/$file'),
+                        icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                        label: const Text('Open'),
+                      ),
+                      if (tracked) ...[
+                        IconButton(
+                          icon: const Icon(Icons.history_rounded, size: 16),
+                          tooltip: 'File History',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _gitLoading
+                              ? null
+                              : () => _showFileHistoryForProjectFile(p, file),
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.person_search_rounded,
+                            size: 16,
+                          ),
+                          tooltip: 'Annotate / Blame',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _gitLoading
+                              ? null
+                              : () => _showBlameForProjectFile(p, file),
+                        ),
+                      ],
+                      TextButton.icon(
+                        onPressed: !_gitLoading && canStage
+                            ? () => _gitStageFileCurrent(p, file)
+                            : null,
+                        icon: const Icon(Icons.add_task_rounded, size: 14),
+                        label: const Text('Stage'),
+                      ),
+                      TextButton.icon(
+                        onPressed: !_gitLoading && canUnstage
+                            ? () => _gitUnstageFileCurrent(p, file)
+                            : null,
+                        icon: const Icon(Icons.remove_done_rounded, size: 14),
+                        label: const Text('Unstage'),
+                      ),
+                      TextButton.icon(
+                        onPressed: !_gitLoading && canRollback
+                            ? () => _gitDiscardFileCurrent(p, file)
+                            : null,
+                        icon: const Icon(Icons.undo_rounded, size: 14),
+                        label: const Text('Rollback'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: CcColors.danger,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.person_search_rounded, size: 16),
-                  tooltip: 'Annotate / Blame',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _gitLoading
-                      ? null
-                      : () => _showBlameForProjectFile(p, file),
-                ),
-              ],
-              TextButton.icon(
-                onPressed: !_gitLoading && canStage
-                    ? () => _gitStageFileCurrent(p, file)
-                    : null,
-                icon: const Icon(Icons.add_task_rounded, size: 14),
-                label: const Text('Stage'),
-              ),
-              TextButton.icon(
-                onPressed: !_gitLoading && canUnstage
-                    ? () => _gitUnstageFileCurrent(p, file)
-                    : null,
-                icon: const Icon(Icons.remove_done_rounded, size: 14),
-                label: const Text('Unstage'),
-              ),
-              TextButton.icon(
-                onPressed: !_gitLoading && canRollback
-                    ? () => _gitDiscardFileCurrent(p, file)
-                    : null,
-                icon: const Icon(Icons.undo_rounded, size: 14),
-                label: const Text('Rollback'),
-                style: TextButton.styleFrom(foregroundColor: CcColors.danger),
               ),
             ],
           ),
@@ -4112,8 +4183,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               color: CcColors.editorTabBar,
               border: Border(bottom: BorderSide(color: CcColors.border)),
             ),
-            child: Row(
-              children: [
+            child: scrollableBar(
+              pinnedLeading: [
                 const Text(
                   'Local Changes',
                   style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
@@ -4125,7 +4196,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                     CcColors.accentBright,
                   ),
                 ],
-                const Spacer(),
+              ],
+              alignScrollEnd: true,
+              scrolling: [
                 TextButton(
                   onPressed: _gitLoading || stageableSelected == 0
                       ? null
@@ -5454,13 +5527,14 @@ class _WorkspacePageState extends State<WorkspacePage>
         color: CcColors.editorTabBar,
         border: Border(bottom: BorderSide(color: CcColors.border)),
       ),
-      child: Row(
-        children: [
+      child: scrollableBar(
+        scrolling: [
           _metricTiny('staged', status.staged, CcColors.ok),
           _metricTiny('modified', status.modified, CcColors.warning),
           _metricTiny('untracked', status.untracked, CcColors.accentBright),
           _metricTiny('conflicts', status.conflicted, CcColors.danger),
-          const Spacer(),
+        ],
+        pinnedTrailing: [
           Text(
             status.clean ? 'clean' : 'uncommitted changes',
             style: CcType.code(
@@ -5545,72 +5619,82 @@ class _WorkspacePageState extends State<WorkspacePage>
         color: CcColors.panel,
         border: Border(bottom: BorderSide(color: CcColors.border)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: TextField(
-              controller: _commitCtl,
-              focusNode: _commitFocus,
-              minLines: 1,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                isDense: true,
-                hintText: 'Commit message',
-                prefixIcon: Icon(Icons.commit_rounded, size: 18),
-              ),
-              onSubmitted: (_) {
-                if (canCommit) _gitCommitCurrent(p);
-              },
-              onChanged: (_) => setState(() {}),
+          TextField(
+            controller: _commitCtl,
+            focusNode: _commitFocus,
+            minLines: 1,
+            maxLines: 2,
+            decoration: const InputDecoration(
+              isDense: true,
+              hintText: 'Commit message',
+              prefixIcon: Icon(Icons.commit_rounded, size: 18),
             ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: canCommit ? () => _gitCommitCurrent(p) : null,
-            icon: const Icon(Icons.check_rounded, size: 16),
-            label: const Text('Commit'),
-          ),
-          const SizedBox(width: 6),
-          FilledButton.tonalIcon(
-            onPressed: canCommit ? () => _gitCommitAndPushCurrent(p) : null,
-            icon: const Icon(Icons.upload_rounded, size: 16),
-            label: const Text('Commit & Push'),
-          ),
-          const SizedBox(width: 6),
-          FilledButton.icon(
-            onPressed: canCommitSelected ? () => _gitCommitSelected(p) : null,
-            icon: const Icon(Icons.checklist_rounded, size: 16),
-            label: Text(selected == 0 ? 'Commit Selected' : 'Commit $selected'),
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Selected commit actions',
-            enabled: canCommitSelected,
-            icon: const Icon(Icons.arrow_drop_down_rounded, size: 18),
-            onSelected: (v) {
-              if (v == 'commitPushSelected') _gitCommitSelectedAndPush(p);
+            onSubmitted: (_) {
+              if (canCommit) _gitCommitCurrent(p);
             },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'commitPushSelected',
-                child: Text(
-                  selected == 0
-                      ? 'Commit Selected & Push'
-                      : 'Commit $selected & Push',
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 8),
+          // Buttons scroll horizontally when the panel is too narrow to fit
+          // them, instead of overflowing to the right.
+          scrollableBar(
+            alignScrollEnd: true,
+            scrolling: [
+              FilledButton.icon(
+                onPressed: canCommit ? () => _gitCommitCurrent(p) : null,
+                icon: const Icon(Icons.check_rounded, size: 16),
+                label: const Text('Commit'),
+              ),
+              const SizedBox(width: 6),
+              FilledButton.tonalIcon(
+                onPressed: canCommit ? () => _gitCommitAndPushCurrent(p) : null,
+                icon: const Icon(Icons.upload_rounded, size: 16),
+                label: const Text('Commit & Push'),
+              ),
+              const SizedBox(width: 6),
+              FilledButton.icon(
+                onPressed: canCommitSelected
+                    ? () => _gitCommitSelected(p)
+                    : null,
+                icon: const Icon(Icons.checklist_rounded, size: 16),
+                label: Text(
+                  selected == 0 ? 'Commit Selected' : 'Commit $selected',
                 ),
               ),
+              PopupMenuButton<String>(
+                tooltip: 'Selected commit actions',
+                enabled: canCommitSelected,
+                icon: const Icon(Icons.arrow_drop_down_rounded, size: 18),
+                onSelected: (v) {
+                  if (v == 'commitPushSelected') _gitCommitSelectedAndPush(p);
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'commitPushSelected',
+                    child: Text(
+                      selected == 0
+                          ? 'Commit Selected & Push'
+                          : 'Commit $selected & Push',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 6),
+              OutlinedButton.icon(
+                onPressed: canAmend ? () => _gitCommitAmendCurrent(p) : null,
+                icon: const Icon(Icons.edit_note_rounded, size: 16),
+                label: const Text('Amend'),
+              ),
+              const SizedBox(width: 6),
+              OutlinedButton.icon(
+                onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
+                icon: const Icon(Icons.add_rounded, size: 16),
+                label: const Text('Stage All'),
+              ),
             ],
-          ),
-          const SizedBox(width: 6),
-          OutlinedButton.icon(
-            onPressed: canAmend ? () => _gitCommitAmendCurrent(p) : null,
-            icon: const Icon(Icons.edit_note_rounded, size: 16),
-            label: const Text('Amend'),
-          ),
-          const SizedBox(width: 6),
-          OutlinedButton.icon(
-            onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
-            icon: const Icon(Icons.add_rounded, size: 16),
-            label: const Text('Stage All'),
           ),
         ],
       ),

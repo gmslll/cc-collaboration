@@ -49,22 +49,28 @@ void snack(BuildContext context, String message) {
 
 // centerMsg is the shared muted empty/placeholder state, optionally with a retry.
 Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(text,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: CcColors.muted, height: 1.35)),
-          if (onRetry != null) ...[
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('重试')),
-          ],
-        ]),
-      ),
-    );
+  child: Padding(
+    padding: const EdgeInsets.all(24),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: CcColors.muted, height: 1.35),
+        ),
+        if (onRetry != null) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded, size: 16),
+            label: const Text('重试'),
+          ),
+        ],
+      ],
+    ),
+  ),
+);
 
 // asyncBody renders the standard loading → spinner / error → retry / else
 // content switch the data screens share.
@@ -81,33 +87,67 @@ Widget asyncBody({
 
 // tag is a small mono pill: alpha-tinted [color] background + [color] text.
 Widget tag(String label, Color color, {bool bold = false}) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        border: Border.all(color: color.withValues(alpha: 0.30)),
-        borderRadius: BorderRadius.circular(5),
+  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+  decoration: BoxDecoration(
+    color: color.withValues(alpha: 0.15),
+    border: Border.all(color: color.withValues(alpha: 0.30)),
+    borderRadius: BorderRadius.circular(5),
+  ),
+  child: Text(
+    label,
+    style: TextStyle(
+      fontFamily: CcType.mono,
+      fontSize: 11.5,
+      letterSpacing: 0.2,
+      color: color,
+      fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+    ),
+  ),
+);
+
+// scrollableBar is a dense horizontal toolbar that scrolls left/right when its
+// [scrolling] children don't fit, instead of overflowing (the yellow/black
+// hazard stripes). [pinnedLeading]/[pinnedTrailing] stay fixed at the edges and
+// never scroll. Set [alignScrollEnd] (reverse) so a trailing button cluster
+// stays pinned to the right when there IS room, and reveals via scroll when not.
+// NOTE: the [scrolling] list must not contain Expanded/Spacer — inside a
+// horizontal scroll view the width is unbounded and flex children would throw.
+Widget scrollableBar({
+  List<Widget> pinnedLeading = const [],
+  required List<Widget> scrolling,
+  List<Widget> pinnedTrailing = const [],
+  bool alignScrollEnd = false,
+}) => Row(
+  children: [
+    ...pinnedLeading,
+    Expanded(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        reverse: alignScrollEnd,
+        child: Row(mainAxisSize: MainAxisSize.min, children: scrolling),
       ),
-      child: Text(label,
-          style: TextStyle(
-              fontFamily: CcType.mono,
-              fontSize: 11.5,
-              letterSpacing: 0.2,
-              color: color,
-              fontWeight: bold ? FontWeight.w600 : FontWeight.w400)),
-    );
+    ),
+    ...pinnedTrailing,
+  ],
+);
 
 // chip is a neutral mono pill (panel bg), e.g. repo @ branch.
 Widget chip(String text) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: CcColors.panelHigh,
-        border: Border.all(color: CcColors.border),
-        borderRadius: BorderRadius.circular(5),
-      ),
-      child: Text(text,
-          style: const TextStyle(
-              fontFamily: CcType.mono, fontSize: 12, color: CcColors.text)),
-    );
+  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+  decoration: BoxDecoration(
+    color: CcColors.panelHigh,
+    border: Border.all(color: CcColors.border),
+    borderRadius: BorderRadius.circular(5),
+  ),
+  child: Text(
+    text,
+    style: const TextStyle(
+      fontFamily: CcType.mono,
+      fontSize: 12,
+      color: CcColors.text,
+    ),
+  ),
+);
 
 // kindBadge colors a handoff kind (delivery / request / bug).
 Widget kindBadge(String kind) {
@@ -136,23 +176,28 @@ String hostOf(String url) {
 }
 
 Widget sectionTitle(String title, {String? meta, IconData? icon}) => Row(
-      children: [
-        if (icon != null) ...[
-          Icon(icon, size: 18, color: CcColors.accent),
-          const SizedBox(width: 8),
-        ],
-        Text(title,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-        if (meta != null) ...[
-          const SizedBox(width: 8),
-          Text(meta,
-              style: const TextStyle(
-                  fontFamily: CcType.mono,
-                  color: CcColors.muted,
-                  fontSize: 12.5)),
-        ],
-      ],
-    );
+  children: [
+    if (icon != null) ...[
+      Icon(icon, size: 18, color: CcColors.accent),
+      const SizedBox(width: 8),
+    ],
+    Text(
+      title,
+      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+    ),
+    if (meta != null) ...[
+      const SizedBox(width: 8),
+      Text(
+        meta,
+        style: const TextStyle(
+          fontFamily: CcType.mono,
+          color: CcColors.muted,
+          fontSize: 12.5,
+        ),
+      ),
+    ],
+  ],
+);
 
 // collapseRail is the thin (~40px) bar shown in place of a collapsed panel: an
 // expand button + an optional vertical label. Click to bring the panel back.
@@ -161,38 +206,46 @@ Widget collapseRail({
   required String tooltip,
   required VoidCallback onExpand,
   String? label,
-}) =>
-    Container(
-      width: 40,
-      decoration: const BoxDecoration(
-        color: CcColors.panel,
-        border: Border(right: BorderSide(color: CcColors.border)),
+}) => Container(
+  width: 40,
+  decoration: const BoxDecoration(
+    color: CcColors.panel,
+    border: Border(right: BorderSide(color: CcColors.border)),
+  ),
+  child: Column(
+    children: [
+      const SizedBox(height: 6),
+      IconButton(
+        icon: Icon(icon, size: 18),
+        tooltip: tooltip,
+        onPressed: onExpand,
       ),
-      child: Column(children: [
-        const SizedBox(height: 6),
-        IconButton(
-            icon: Icon(icon, size: 18), tooltip: tooltip, onPressed: onExpand),
-        if (label != null)
-          Expanded(
-            child: RotatedBox(
-              quarterTurns: 1,
-              child: Center(
-                child: Text(label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: CcColors.muted,
-                        fontSize: 11,
-                        letterSpacing: 1.5)),
+      if (label != null)
+        Expanded(
+          child: RotatedBox(
+            quarterTurns: 1,
+            child: Center(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: CcColors.muted,
+                  fontSize: 11,
+                  letterSpacing: 1.5,
+                ),
               ),
             ),
           ),
-      ]),
-    );
+        ),
+    ],
+  ),
+);
 
 // statusDot is a small filled circle, optionally with a soft glow (for online /
 // active / urgent indicators).
-Widget statusDot(Color color, {double size = 8, bool glow = false}) => Container(
+Widget statusDot(Color color, {double size = 8, bool glow = false}) =>
+    Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
@@ -201,9 +254,10 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) => Container
         boxShadow: glow
             ? [
                 BoxShadow(
-                    color: color.withValues(alpha: 0.7),
-                    blurRadius: 6,
-                    spreadRadius: 0.5)
+                  color: color.withValues(alpha: 0.7),
+                  blurRadius: 6,
+                  spreadRadius: 0.5,
+                ),
               ]
             : null,
       ),
@@ -251,9 +305,15 @@ Widget _diffLine(String line) {
   return Container(
     color: bg,
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
-    child: Text(line.isEmpty ? ' ' : line,
-        style: TextStyle(
-            fontFamily: CcType.mono, fontSize: 12.5, height: 1.4, color: fg)),
+    child: Text(
+      line.isEmpty ? ' ' : line,
+      style: TextStyle(
+        fontFamily: CcType.mono,
+        fontSize: 12.5,
+        height: 1.4,
+        color: fg,
+      ),
+    ),
   );
 }
 
@@ -305,8 +365,9 @@ class _DragHandleState extends State<DragHandle> {
           width: 8,
           child: Center(
             child: AnimatedContainer(
-              duration:
-                  noMotion ? Duration.zero : const Duration(milliseconds: 120),
+              duration: noMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 120),
               width: _active ? 2 : 1,
               color: _active ? CcColors.accent : CcColors.border,
             ),
@@ -329,11 +390,10 @@ Widget resizeHandle({
   required double min,
   required double max,
   bool invert = false,
-}) =>
-    DragHandle(
-      onDelta: (dx) => set((get() + (invert ? -dx : dx)).clamp(min, max)),
-      onEnd: () => Prefs.setDouble(prefKey, get()),
-    );
+}) => DragHandle(
+  onDelta: (dx) => set((get() + (invert ? -dx : dx)).clamp(min, max)),
+  onEnd: () => Prefs.setDouble(prefKey, get()),
+);
 
 // BlinkingCaret is a terminal-style block cursor — blinks ~1s on/off, honors
 // reduced-motion (stays solid). Used in the empty-terminal "prompt" placeholder.
@@ -341,11 +401,12 @@ class BlinkingCaret extends StatefulWidget {
   final Color color;
   final double width;
   final double height;
-  const BlinkingCaret(
-      {super.key,
-      this.color = CcColors.accentBright,
-      this.width = 8,
-      this.height = 17});
+  const BlinkingCaret({
+    super.key,
+    this.color = CcColors.accentBright,
+    this.width = 8,
+    this.height = 17,
+  });
 
   @override
   State<BlinkingCaret> createState() => _BlinkingCaretState();
@@ -354,8 +415,9 @@ class BlinkingCaret extends StatefulWidget {
 class _BlinkingCaretState extends State<BlinkingCaret>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 1060))
-    ..repeat();
+    vsync: this,
+    duration: const Duration(milliseconds: 1060),
+  )..repeat();
 
   @override
   void dispose() {
@@ -366,7 +428,10 @@ class _BlinkingCaretState extends State<BlinkingCaret>
   @override
   Widget build(BuildContext context) {
     final box = Container(
-        width: widget.width, height: widget.height, color: widget.color);
+      width: widget.width,
+      height: widget.height,
+      color: widget.color,
+    );
     if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) return box;
     return AnimatedBuilder(
       animation: _c,
@@ -401,15 +466,17 @@ class _HoverLiftState extends State<HoverLift> {
   Widget build(BuildContext context) {
     final noMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     return MouseRegion(
-      cursor:
-          widget.onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
+      cursor: widget.onTap != null
+          ? SystemMouseCursors.click
+          : MouseCursor.defer,
       onEnter: (_) => setState(() => _h = true),
       onExit: (_) => setState(() => _h = false),
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration:
-              noMotion ? Duration.zero : const Duration(milliseconds: 180),
+          duration: noMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
           curve: Curves.easeOut,
           transform: Matrix4.translationValues(0, _h ? -1.5 : 0, 0),
           padding: widget.padding,
@@ -417,15 +484,17 @@ class _HoverLiftState extends State<HoverLift> {
             color: CcColors.panel,
             borderRadius: BorderRadius.circular(CcRadius.md),
             border: Border.all(
-                color: _h
-                    ? CcColors.accent.withValues(alpha: 0.5)
-                    : CcColors.borderSoft),
+              color: _h
+                  ? CcColors.accent.withValues(alpha: 0.5)
+                  : CcColors.borderSoft,
+            ),
             boxShadow: _h
                 ? [
                     BoxShadow(
-                        color: CcColors.accent.withValues(alpha: 0.16),
-                        blurRadius: 16,
-                        offset: const Offset(0, 4))
+                      color: CcColors.accent.withValues(alpha: 0.16),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
                   ]
                 : null,
           ),

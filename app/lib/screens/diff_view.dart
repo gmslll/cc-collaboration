@@ -19,8 +19,12 @@ class DiffView extends StatefulWidget {
   final List<FileDiff> files;
   final String? editRoot;
   final VoidCallback? onChanged;
-  const DiffView(
-      {super.key, required this.files, this.editRoot, this.onChanged});
+  const DiffView({
+    super.key,
+    required this.files,
+    this.editRoot,
+    this.onChanged,
+  });
 
   @override
   State<DiffView> createState() => _DiffViewState();
@@ -110,7 +114,9 @@ class _DiffViewState extends State<DiffView> {
       final lines = (await file.readAsString()).split('\n');
       // guard against a stale line number: the diff said this line is `r.right`;
       // if the file changed under us, refuse rather than clobber another line.
-      if (newNo - 1 < 0 || newNo - 1 >= lines.length || lines[newNo - 1] != r.right) {
+      if (newNo - 1 < 0 ||
+          newNo - 1 >= lines.length ||
+          lines[newNo - 1] != r.right) {
         if (mounted) snack(context, '文件已变,请刷新后再改');
         return;
       }
@@ -141,7 +147,8 @@ class _DiffViewState extends State<DiffView> {
     final root = widget.editRoot;
     if (f == null || root == null) return;
     await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => EditorPage(path: '$root/${f.path}')));
+      MaterialPageRoute(builder: (_) => EditorPage(path: '$root/${f.path}')),
+    );
     widget.onChanged?.call();
   }
 
@@ -156,12 +163,14 @@ class _DiffViewState extends State<DiffView> {
         content: Text('${f.path}\n\ngit checkout -- 丢弃未提交改动,不可撤销。'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('丢弃')),
+            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('丢弃'),
+          ),
         ],
       ),
     );
@@ -177,30 +186,33 @@ class _DiffViewState extends State<DiffView> {
   @override
   Widget build(BuildContext context) {
     if (widget.files.isEmpty) return centerMsg('没有变动文件');
-    return Row(children: [
-      SizedBox(width: _treeW, child: _tree()),
-      resizeHandle(
+    return Row(
+      children: [
+        SizedBox(width: _treeW, child: _tree()),
+        resizeHandle(
           prefKey: 'diff.treeW',
           get: () => _treeW,
           set: (v) => setState(() => _treeW = v),
           min: 200,
-          max: 560),
-      Expanded(child: _right()),
-    ]);
+          max: 560,
+        ),
+        Expanded(child: _right()),
+      ],
+    );
   }
 
   // ----------------------------------------------------------- file tree ----
 
   Widget _tree() => DecoratedBox(
-        decoration: const BoxDecoration(
-          color: CcColors.panel,
-          border: Border(right: BorderSide(color: CcColors.border)),
-        ),
-        child: ListView(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          children: _treeChildren(_root, '', 0),
-        ),
-      );
+    decoration: const BoxDecoration(
+      color: CcColors.panel,
+      border: Border(right: BorderSide(color: CcColors.border)),
+    ),
+    child: ListView(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      children: _treeChildren(_root, '', 0),
+    ),
+  );
 
   List<Widget> _treeChildren(_Dir dir, String prefix, int depth) {
     final out = <Widget>[];
@@ -214,22 +226,26 @@ class _DiffViewState extends State<DiffView> {
         sub = sub.dirs[only]!;
       }
       final key = '$prefix/$label';
-      out.add(ExpansionTile(
-        key: PageStorageKey('cc-dir$key'),
-        initiallyExpanded: true,
-        dense: true,
-        visualDensity: const VisualDensity(vertical: -2),
-        tilePadding: EdgeInsets.only(left: 8.0 + depth * 12, right: 8),
-        childrenPadding: EdgeInsets.zero,
-        shape: const Border(),
-        collapsedShape: const Border(),
-        leading: const Icon(Icons.folder_rounded, size: 16),
-        title: Text(label,
+      out.add(
+        ExpansionTile(
+          key: PageStorageKey('cc-dir$key'),
+          initiallyExpanded: true,
+          dense: true,
+          visualDensity: const VisualDensity(vertical: -2),
+          tilePadding: EdgeInsets.only(left: 8.0 + depth * 12, right: 8),
+          childrenPadding: EdgeInsets.zero,
+          shape: const Border(),
+          collapsedShape: const Border(),
+          leading: const Icon(Icons.folder_rounded, size: 16),
+          title: Text(
+            label,
             style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
             maxLines: 1,
-            overflow: TextOverflow.ellipsis),
-        children: _treeChildren(sub, key, depth + 1),
-      ));
+            overflow: TextOverflow.ellipsis,
+          ),
+          children: _treeChildren(sub, key, depth + 1),
+        ),
+      );
     }
     final files = [...dir.files]..sort((a, b) => a.path.compareTo(b.path));
     for (final f in files) {
@@ -245,8 +261,11 @@ class _DiffViewState extends State<DiffView> {
       decoration: BoxDecoration(
         color: sel ? CcColors.accent.withValues(alpha: 0.10) : null,
         border: Border(
-            left: BorderSide(
-                color: sel ? CcColors.accent : Colors.transparent, width: 2.5)),
+          left: BorderSide(
+            color: sel ? CcColors.accent : Colors.transparent,
+            width: 2.5,
+          ),
+        ),
       ),
       child: ListTile(
         dense: true,
@@ -254,19 +273,29 @@ class _DiffViewState extends State<DiffView> {
         selected: sel,
         contentPadding: EdgeInsets.only(left: 8.0 + depth * 12, right: 8),
         horizontalTitleGap: 6,
-        leading: Text(_statusChar(f.status),
-            style: TextStyle(
-                fontFamily: CcType.mono,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: c)),
-        title: Text(fname,
-            style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis),
-        trailing: Text('+${f.adds} −${f.dels}',
-            style: const TextStyle(
-                fontFamily: CcType.mono, fontSize: 11, color: CcColors.muted)),
+        leading: Text(
+          _statusChar(f.status),
+          style: TextStyle(
+            fontFamily: CcType.mono,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: c,
+          ),
+        ),
+        title: Text(
+          fname,
+          style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Text(
+          '+${f.adds} −${f.dels}',
+          style: const TextStyle(
+            fontFamily: CcType.mono,
+            fontSize: 11,
+            color: CcColors.muted,
+          ),
+        ),
         onTap: () => _select(f),
       ),
     );
@@ -274,51 +303,73 @@ class _DiffViewState extends State<DiffView> {
 
   // --------------------------------------------------------- right pane ----
 
-  Widget _right() => Column(children: [
-        Container(
-          height: 40,
-          padding: const EdgeInsets.only(left: 12, right: 8),
-          decoration: const BoxDecoration(
-            color: CcColors.panel,
-            border: Border(bottom: BorderSide(color: CcColors.border)),
-          ),
-          child: Row(children: [
-            Expanded(
-              child: Text(_selected?.path ?? '',
-                  style: const TextStyle(
-                      fontFamily: CcType.mono,
-                      fontSize: 12.5,
-                      color: CcColors.muted),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-            ),
-            if (widget.editRoot != null && _selected != null) ...[
-              TextButton.icon(
-                  onPressed: _edit,
-                  icon: const Icon(Icons.edit_rounded, size: 16),
-                  label: const Text('编辑')),
-              TextButton.icon(
-                  onPressed: _discard,
-                  icon: const Icon(Icons.undo_rounded, size: 16),
-                  label: const Text('丢弃')),
-              const SizedBox(width: 8),
-            ],
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(value: true, label: Text('并排')),
-                ButtonSegment(value: false, label: Text('统一')),
-              ],
-              selected: {_split},
-              onSelectionChanged: (s) {
-                setState(() => _split = s.first);
-                Prefs.setBool('diff.split', _split);
-              },
-              showSelectedIcon: false,
-            ),
-          ]),
+  Widget _right() => Column(
+    children: [
+      Container(
+        height: 40,
+        padding: const EdgeInsets.only(left: 12, right: 8),
+        decoration: const BoxDecoration(
+          color: CcColors.panel,
+          border: Border(bottom: BorderSide(color: CcColors.border)),
         ),
-        Expanded(child: _diffBody()),
-      ]);
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _selected?.path ?? '',
+                style: const TextStyle(
+                  fontFamily: CcType.mono,
+                  fontSize: 12.5,
+                  color: CcColors.muted,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            // Action buttons + view toggle scroll horizontally when the pane is
+            // too narrow to fit them; pinned right when there's room.
+            Flexible(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                reverse: true,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.editRoot != null && _selected != null) ...[
+                      TextButton.icon(
+                        onPressed: _edit,
+                        icon: const Icon(Icons.edit_rounded, size: 16),
+                        label: const Text('编辑'),
+                      ),
+                      TextButton.icon(
+                        onPressed: _discard,
+                        icon: const Icon(Icons.undo_rounded, size: 16),
+                        label: const Text('丢弃'),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: true, label: Text('并排')),
+                        ButtonSegment(value: false, label: Text('统一')),
+                      ],
+                      selected: {_split},
+                      onSelectionChanged: (s) {
+                        setState(() => _split = s.first);
+                        Prefs.setBool('diff.split', _split);
+                      },
+                      showSelectedIcon: false,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      Expanded(child: _diffBody()),
+    ],
+  );
 
   Widget _diffBody() {
     final f = _selected;
@@ -345,37 +396,46 @@ class _DiffViewState extends State<DiffView> {
       return Container(
         color: CcColors.accent.withValues(alpha: 0.10),
         padding: const EdgeInsets.only(left: 8, right: 4),
-        child: Row(children: [
-          Expanded(
-            child: Text(r.hunkText,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                r.hunkText,
                 style: const TextStyle(
-                    fontFamily: CcType.mono,
-                    fontSize: 12,
-                    color: CcColors.accentBright),
+                  fontFamily: CcType.mono,
+                  fontSize: 12,
+                  color: CcColors.accentBright,
+                ),
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis),
-          ),
-          if (widget.editRoot != null)
-            TextButton.icon(
-              onPressed: () => _revertHunk(r.hunkIndex),
-              icon: const Icon(Icons.undo_rounded, size: 14),
-              label: const Text('还原', style: TextStyle(fontSize: 12)),
-              style: TextButton.styleFrom(
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (widget.editRoot != null)
+              TextButton.icon(
+                onPressed: () => _revertHunk(r.hunkIndex),
+                icon: const Icon(Icons.undo_rounded, size: 14),
+                label: const Text('还原', style: TextStyle(fontSize: 12)),
+                style: TextButton.styleFrom(
                   minimumSize: Size.zero,
                   padding: const EdgeInsets.symmetric(horizontal: 6),
-                  visualDensity: VisualDensity.compact),
-            ),
-        ]),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+          ],
+        ),
       );
     }
     return IntrinsicHeight(
-      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _gutter(r.oldNo),
-        Expanded(child: _cell(r.left, r.leftKind)),
-        const VerticalDivider(width: 1),
-        _gutter(r.newNo),
-        Expanded(child: _rightCell(r)),
-      ]),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _gutter(r.oldNo),
+          Expanded(child: _cell(r.left, r.leftKind)),
+          const VerticalDivider(width: 1),
+          _gutter(r.newNo),
+          Expanded(child: _rightCell(r)),
+        ],
+      ),
     );
   }
 
@@ -385,65 +445,93 @@ class _DiffViewState extends State<DiffView> {
     if (_editingNewNo != null && _editingNewNo == r.newNo) {
       return ColoredBox(
         color: CcColors.panelHigh,
-        child: Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _editCtl,
-              autofocus: true,
-              style: const TextStyle(
-                  fontFamily: CcType.mono, fontSize: 12.5, color: CcColors.text),
-              decoration: const InputDecoration(
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _editCtl,
+                autofocus: true,
+                style: const TextStyle(
+                  fontFamily: CcType.mono,
+                  fontSize: 12.5,
+                  color: CcColors.text,
+                ),
+                decoration: const InputDecoration(
                   isDense: true,
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
-              onSubmitted: (_) => _commitEdit(r),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                ),
+                onSubmitted: (_) => _commitEdit(r),
+              ),
             ),
-          ),
-          IconButton(
-              icon: const Icon(Icons.check_rounded, size: 16, color: CcColors.ok),
+            IconButton(
+              icon: const Icon(
+                Icons.check_rounded,
+                size: 16,
+                color: CcColors.ok,
+              ),
               visualDensity: VisualDensity.compact,
-              onPressed: () => _commitEdit(r)),
-          IconButton(
+              onPressed: () => _commitEdit(r),
+            ),
+            IconButton(
               icon: const Icon(Icons.close_rounded, size: 16),
               visualDensity: VisualDensity.compact,
-              onPressed: _cancelEdit),
-        ]),
+              onPressed: _cancelEdit,
+            ),
+          ],
+        ),
       );
     }
-    final editable = widget.editRoot != null &&
+    final editable =
+        widget.editRoot != null &&
         r.newNo != null &&
         r.rightKind != DiffKind.empty;
     if (!editable) return _cell(r.right, r.rightKind);
     return _EditableCell(
-        text: r.right, kind: r.rightKind, onEdit: () => _startEdit(r));
+      text: r.right,
+      kind: r.rightKind,
+      onEdit: () => _startEdit(r),
+    );
   }
 
   Widget _gutter(int? no) => Container(
-        width: 44,
-        alignment: Alignment.topRight,
-        padding: const EdgeInsets.only(right: 6, top: 1),
-        color: CcColors.panel,
-        child: Text(no?.toString() ?? '',
-            style: const TextStyle(
-                fontFamily: CcType.mono, fontSize: 11, color: CcColors.subtle)),
-      );
+    width: 44,
+    alignment: Alignment.topRight,
+    padding: const EdgeInsets.only(right: 6, top: 1),
+    color: CcColors.panel,
+    child: Text(
+      no?.toString() ?? '',
+      style: const TextStyle(
+        fontFamily: CcType.mono,
+        fontSize: 11,
+        color: CcColors.subtle,
+      ),
+    ),
+  );
 
   Widget _cell(String text, DiffKind kind) => Container(
-        color: _cellBg(kind),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-        child: Text(text, style: _cellStyle),
-      );
+    color: _cellBg(kind),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+    child: Text(text, style: _cellStyle),
+  );
 }
 
 const _cellStyle = TextStyle(
-    fontFamily: CcType.mono, fontSize: 12.5, height: 1.4, color: CcColors.text);
+  fontFamily: CcType.mono,
+  fontSize: 12.5,
+  height: 1.4,
+  color: CcColors.text,
+);
 
 Color? _cellBg(DiffKind kind) => switch (kind) {
-      DiffKind.added => CcColors.ok.withValues(alpha: 0.10),
-      DiffKind.removed => CcColors.danger.withValues(alpha: 0.10),
-      DiffKind.empty => CcColors.bgGradTop.withValues(alpha: 0.5),
-      DiffKind.context => null,
-    };
+  DiffKind.added => CcColors.ok.withValues(alpha: 0.10),
+  DiffKind.removed => CcColors.danger.withValues(alpha: 0.10),
+  DiffKind.empty => CcColors.bgGradTop.withValues(alpha: 0.5),
+  DiffKind.context => null,
+};
 
 // _EditableCell shows a new-side line with a pencil on hover; tapping it asks the
 // parent to switch the cell into an inline editor.
@@ -451,8 +539,11 @@ class _EditableCell extends StatefulWidget {
   final String text;
   final DiffKind kind;
   final VoidCallback onEdit;
-  const _EditableCell(
-      {required this.text, required this.kind, required this.onEdit});
+  const _EditableCell({
+    required this.text,
+    required this.kind,
+    required this.onEdit,
+  });
 
   @override
   State<_EditableCell> createState() => _EditableCellState();
@@ -468,17 +559,23 @@ class _EditableCellState extends State<_EditableCell> {
       child: Container(
         color: _cellBg(widget.kind),
         padding: const EdgeInsets.only(left: 8, right: 2, top: 1, bottom: 1),
-        child: Row(children: [
-          Expanded(child: Text(widget.text, style: _cellStyle)),
-          if (_h)
-            InkWell(
-              onTap: widget.onEdit,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 2),
-                child: Icon(Icons.edit_rounded, size: 13, color: CcColors.muted),
+        child: Row(
+          children: [
+            Expanded(child: Text(widget.text, style: _cellStyle)),
+            if (_h)
+              InkWell(
+                onTap: widget.onEdit,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 2),
+                  child: Icon(
+                    Icons.edit_rounded,
+                    size: 13,
+                    color: CcColors.muted,
+                  ),
+                ),
               ),
-            ),
-        ]),
+          ],
+        ),
       ),
     );
   }
@@ -505,15 +602,15 @@ _Dir _buildTree(List<FileDiff> files) {
 }
 
 Color _statusColor(String s) => switch (s) {
-      'added' => CcColors.ok,
-      'deleted' => CcColors.danger,
-      'renamed' => CcColors.warning,
-      _ => CcColors.accent,
-    };
+  'added' => CcColors.ok,
+  'deleted' => CcColors.danger,
+  'renamed' => CcColors.warning,
+  _ => CcColors.accent,
+};
 
 String _statusChar(String s) => switch (s) {
-      'added' => 'A',
-      'deleted' => 'D',
-      'renamed' => 'R',
-      _ => 'M',
-    };
+  'added' => 'A',
+  'deleted' => 'D',
+  'renamed' => 'R',
+  _ => 'M',
+};
