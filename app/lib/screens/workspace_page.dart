@@ -2113,79 +2113,86 @@ class _WorkspacePageState extends State<WorkspacePage>
                     badgeColor: CcColors.accentBright,
                     onTap: () => _setDetailCollapsed(!_detailCollapsed),
                   ),
+                  const Divider(height: 13, indent: 8, endIndent: 8),
+                  _leftActionButton(
+                    icon: Icons.file_open_outlined,
+                    label: 'Quick Open · $mod+O',
+                    onTap: _showQuickOpen,
+                  ),
+                  _leftActionButton(
+                    icon: Icons.manage_search_rounded,
+                    label: 'Search · $mod+Shift+F',
+                    onTap: _showFindInFiles,
+                  ),
+                  _leftActionButton(
+                    icon: Icons.data_object_rounded,
+                    label: 'Symbols · $mod+Alt+O',
+                    onTap: _showGoToSymbol,
+                  ),
+                  _leftActionButton(
+                    icon: Icons.history_rounded,
+                    label: 'Recent Files · $mod+E',
+                    onTap: _showRecentFiles,
+                  ),
+                  _leftActionButton(
+                    icon: Icons.location_history_rounded,
+                    label: 'Recent Locations · $mod+Shift+E',
+                    onTap: _showRecentLocations,
+                  ),
+                  _leftActionButton(
+                    icon: Icons.keyboard_command_key_rounded,
+                    label: 'Shortcuts',
+                    onTap: _showShortcuts,
+                  ),
+                  _leftActionButton(
+                    icon: Icons.refresh_rounded,
+                    label: 'Refresh',
+                    onTap: _refresh,
+                  ),
+                  if (gitPulse != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3, bottom: 2),
+                      child: Tooltip(
+                        message: _gitStatus!.clean
+                            ? '${_gitStatus!.branch} · clean'
+                            : '${_gitStatus!.branch} · working tree changes',
+                        child: Container(
+                          constraints: const BoxConstraints(minWidth: 26),
+                          height: 18,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color:
+                                (_gitStatus!.clean
+                                        ? CcColors.ok
+                                        : CcColors.warning)
+                                    .withValues(alpha: 0.12),
+                            border: Border.all(
+                              color:
+                                  (_gitStatus!.clean
+                                          ? CcColors.ok
+                                          : CcColors.warning)
+                                      .withValues(alpha: 0.45),
+                            ),
+                            borderRadius: BorderRadius.circular(CcRadius.pill),
+                          ),
+                          child: Text(
+                            gitPulse,
+                            style: CcType.code(
+                              size: 9.5,
+                              color: _gitStatus!.clean
+                                  ? CcColors.ok
+                                  : CcColors.warning,
+                              weight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
           ),
-          const Divider(height: 13, indent: 8, endIndent: 8),
-          _leftActionButton(
-            icon: Icons.file_open_outlined,
-            label: 'Quick Open · $mod+O',
-            onTap: _showQuickOpen,
-          ),
-          _leftActionButton(
-            icon: Icons.manage_search_rounded,
-            label: 'Search · $mod+Shift+F',
-            onTap: _showFindInFiles,
-          ),
-          _leftActionButton(
-            icon: Icons.data_object_rounded,
-            label: 'Symbols · $mod+Alt+O',
-            onTap: _showGoToSymbol,
-          ),
-          _leftActionButton(
-            icon: Icons.history_rounded,
-            label: 'Recent Files · $mod+E',
-            onTap: _showRecentFiles,
-          ),
-          _leftActionButton(
-            icon: Icons.location_history_rounded,
-            label: 'Recent Locations · $mod+Shift+E',
-            onTap: _showRecentLocations,
-          ),
-          _leftActionButton(
-            icon: Icons.keyboard_command_key_rounded,
-            label: 'Shortcuts',
-            onTap: _showShortcuts,
-          ),
-          _leftActionButton(
-            icon: Icons.refresh_rounded,
-            label: 'Refresh',
-            onTap: _refresh,
-          ),
-          if (gitPulse != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 3, bottom: 2),
-              child: Tooltip(
-                message: _gitStatus!.clean
-                    ? '${_gitStatus!.branch} · clean'
-                    : '${_gitStatus!.branch} · working tree changes',
-                child: Container(
-                  constraints: const BoxConstraints(minWidth: 26),
-                  height: 18,
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: (_gitStatus!.clean ? CcColors.ok : CcColors.warning)
-                        .withValues(alpha: 0.12),
-                    border: Border.all(
-                      color:
-                          (_gitStatus!.clean ? CcColors.ok : CcColors.warning)
-                              .withValues(alpha: 0.45),
-                    ),
-                    borderRadius: BorderRadius.circular(CcRadius.pill),
-                  ),
-                  child: Text(
-                    gitPulse,
-                    style: CcType.code(
-                      size: 9.5,
-                      color: _gitStatus!.clean ? CcColors.ok : CcColors.warning,
-                      weight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ),
-            ),
           const SizedBox(height: 6),
         ],
       ),
@@ -2924,99 +2931,108 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
     return DecoratedBox(
       decoration: appGradient,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: CcColors.panelHigh,
-                        border: Border.all(color: CcColors.borderSoft),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.terminal_rounded,
-                        color: CcColors.accentBright,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+      // Scroll when the canvas is too short for the content; otherwise the
+      // min-height keeps it vertically centered as before.
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 680),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Text(
-                            ws,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700,
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: CcColors.panelHigh,
+                              border: Border.all(color: CcColors.borderSoft),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.terminal_rounded,
+                              color: CcColors.accentBright,
+                              size: 20,
                             ),
                           ),
-                          Text(
-                            'Project tool window · Terminal · Handoff',
-                            style: CcType.code(
-                              size: 12,
-                              color: CcColors.subtle,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  ws,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Text(
+                                  'Project tool window · Terminal · Handoff',
+                                  style: CcType.code(
+                                    size: 12,
+                                    color: CcColors.subtle,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 22),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _welcomeAction(
+                            'New Workspace',
+                            Icons.add_rounded,
+                            _busy ? null : _newWorkspace,
+                          ),
+                          _welcomeAction(
+                            'Refresh',
+                            Icons.refresh_rounded,
+                            _busy ? null : _refresh,
+                          ),
+                          _welcomeAction(
+                            'Open Project',
+                            Icons.account_tree_outlined,
+                            () => _openLeftTool(_LeftToolView.project),
+                          ),
+                          _welcomeAction(
+                            'Show Terminal',
+                            Icons.terminal_rounded,
+                            () => _setTerminalCollapsed(false),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          _metric('tasks', '$taskCount', CcColors.warning),
+                          const SizedBox(width: 10),
+                          _metric('sessions', '${terms.length}', CcColors.ok),
+                          const SizedBox(width: 10),
+                          _metric(
+                            'workspaces',
+                            '${_cfg.workspaces.length}',
+                            CcColors.accent,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 22),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _welcomeAction(
-                      'New Workspace',
-                      Icons.add_rounded,
-                      _busy ? null : _newWorkspace,
-                    ),
-                    _welcomeAction(
-                      'Refresh',
-                      Icons.refresh_rounded,
-                      _busy ? null : _refresh,
-                    ),
-                    _welcomeAction(
-                      'Open Project',
-                      Icons.account_tree_outlined,
-                      () => _openLeftTool(_LeftToolView.project),
-                    ),
-                    _welcomeAction(
-                      'Show Terminal',
-                      Icons.terminal_rounded,
-                      () => _setTerminalCollapsed(false),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    _metric('tasks', '$taskCount', CcColors.warning),
-                    const SizedBox(width: 10),
-                    _metric('sessions', '${terms.length}', CcColors.ok),
-                    const SizedBox(width: 10),
-                    _metric(
-                      'workspaces',
-                      '${_cfg.workspaces.length}',
-                      CcColors.accent,
-                    ),
-                  ],
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -3092,8 +3108,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         color: CcColors.panel,
         border: Border(top: BorderSide(color: CcColors.border)),
       ),
-      child: Row(
-        children: [
+      child: scrollableBar(
+        scrolling: [
           _statusBarToolSegment(
             icon: _bottomTool == _BottomTool.git
                 ? Icons.alt_route_rounded
@@ -3124,7 +3140,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                 : CcColors.warning,
             onTap: () => _openGitView(_GitView.changes),
           ),
-          const Spacer(),
+        ],
+        pinnedTrailing: [
           if (p != null) ...[
             _statusGitBranchSegment(status, p),
             _statusSyncSegment(status, p),
@@ -3348,11 +3365,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   // _panelHeader is the shared tool-window header chrome.
+  // _panelHeader is the standard 34px panel title bar. [leading] (title/tabs)
+  // scrolls horizontally when the panel is too narrow to fit it; [trailing]
+  // (action icons) stays pinned at the right and never scrolls — so the header
+  // can never overflow (the yellow/black hazard stripe). Keep [leading] free of
+  // Expanded/Spacer (unbounded width inside the scroll would throw).
   Widget _panelHeader({
     required EdgeInsetsGeometry padding,
     bool gradient = false,
     double height = 34,
-    required List<Widget> children,
+    required List<Widget> leading,
+    List<Widget> trailing = const [],
   }) => Container(
     height: height,
     padding: padding,
@@ -3361,7 +3384,17 @@ class _WorkspacePageState extends State<WorkspacePage>
       gradient: gradient ? panelGradient.gradient : null,
       border: const Border(bottom: BorderSide(color: CcColors.border)),
     ),
-    child: Row(children: children),
+    child: Row(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(mainAxisSize: MainAxisSize.min, children: leading),
+          ),
+        ),
+        ...trailing,
+      ],
+    ),
   );
 
   // _detailPanel hosts a task's 对接文档 inside the right tool window.
@@ -3369,19 +3402,15 @@ class _WorkspacePageState extends State<WorkspacePage>
     children: [
       _panelHeader(
         padding: const EdgeInsets.only(left: 10, right: 4),
-        children: [
-          const Icon(
-            Icons.description_outlined,
-            size: 16,
-            color: CcColors.muted,
+        leading: const [
+          Icon(Icons.description_outlined, size: 16, color: CcColors.muted),
+          SizedBox(width: 8),
+          Text(
+            'Handoff',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'Handoff',
-              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-            ),
-          ),
+        ],
+        trailing: [
           IconButton(
             icon: const Icon(Icons.more_horiz_rounded, size: 17),
             tooltip: '收起',
@@ -3654,7 +3683,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       children: [
         _panelHeader(
           padding: const EdgeInsets.only(left: 10, right: 4),
-          children: [
+          leading: [
             _bottomTab(
               icon: Icons.terminal_rounded,
               label: 'Terminal',
@@ -3672,7 +3701,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               '${terms.length}',
               style: CcType.code(size: 11.5, color: CcColors.subtle),
             ),
-            const Spacer(),
+          ],
+          trailing: [
             IconButton(
               icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
               tooltip: '收起 Terminal',
@@ -3731,81 +3761,65 @@ class _WorkspacePageState extends State<WorkspacePage>
       children: [
         _panelHeader(
           padding: const EdgeInsets.only(left: 10, right: 4),
-          children: [
-            // Tabs + project/branch scroll horizontally when the panel is
-            // narrow; the action icons stay pinned to the right.
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _bottomTab(
-                      icon: Icons.terminal_rounded,
-                      label: 'Terminal',
-                      selected: false,
-                      onTap: () => _setBottomTool(_BottomTool.terminal),
-                    ),
-                    _bottomTab(
-                      icon: Icons.alt_route_rounded,
-                      label: 'Git',
-                      selected: true,
-                      onTap: () => _setBottomTool(_BottomTool.git),
-                    ),
-                    _bottomTab(
-                      icon: Icons.list_alt_rounded,
-                      label: 'Changes',
-                      selected: _gitView == _GitView.changes,
-                      onTap: () => setState(() => _gitView = _GitView.changes),
-                    ),
-                    _bottomTab(
-                      icon: Icons.history_rounded,
-                      label: 'Log',
-                      selected: _gitView == _GitView.log,
-                      onTap: () => setState(() => _gitView = _GitView.log),
-                    ),
-                    _bottomTab(
-                      icon: Icons.account_tree_rounded,
-                      label: 'Branches',
-                      selected: _gitView == _GitView.branches,
-                      onTap: () => setState(() => _gitView = _GitView.branches),
-                    ),
-                    _bottomTab(
-                      icon: Icons.inventory_2_outlined,
-                      label: 'Stash',
-                      selected: _gitView == _GitView.stash,
-                      onTap: () => setState(() => _gitView = _GitView.stash),
-                    ),
-                    const SizedBox(width: 10),
-                    if (p != null)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            p.name,
-                            style: CcType.code(
-                              size: 11.5,
-                              color: CcColors.muted,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          _branchButton(status?.branch ?? 'branch'),
-                          if (status != null &&
-                              (status.ahead > 0 || status.behind > 0)) ...[
-                            const SizedBox(width: 8),
-                            tag(
-                              '↑${status.ahead} ↓${status.behind}',
-                              CcColors.warning,
-                            ),
-                          ],
-                        ],
-                      )
-                    else
-                      const Text('Git'),
-                  ],
-                ),
-              ),
+          leading: [
+            _bottomTab(
+              icon: Icons.terminal_rounded,
+              label: 'Terminal',
+              selected: false,
+              onTap: () => _setBottomTool(_BottomTool.terminal),
             ),
+            _bottomTab(
+              icon: Icons.alt_route_rounded,
+              label: 'Git',
+              selected: true,
+              onTap: () => _setBottomTool(_BottomTool.git),
+            ),
+            _bottomTab(
+              icon: Icons.list_alt_rounded,
+              label: 'Changes',
+              selected: _gitView == _GitView.changes,
+              onTap: () => setState(() => _gitView = _GitView.changes),
+            ),
+            _bottomTab(
+              icon: Icons.history_rounded,
+              label: 'Log',
+              selected: _gitView == _GitView.log,
+              onTap: () => setState(() => _gitView = _GitView.log),
+            ),
+            _bottomTab(
+              icon: Icons.account_tree_rounded,
+              label: 'Branches',
+              selected: _gitView == _GitView.branches,
+              onTap: () => setState(() => _gitView = _GitView.branches),
+            ),
+            _bottomTab(
+              icon: Icons.inventory_2_outlined,
+              label: 'Stash',
+              selected: _gitView == _GitView.stash,
+              onTap: () => setState(() => _gitView = _GitView.stash),
+            ),
+            const SizedBox(width: 10),
+            if (p != null)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    p.name,
+                    style: CcType.code(size: 11.5, color: CcColors.muted),
+                  ),
+                  const SizedBox(width: 8),
+                  _branchButton(status?.branch ?? 'branch'),
+                  if (status != null &&
+                      (status.ahead > 0 || status.behind > 0)) ...[
+                    const SizedBox(width: 8),
+                    tag('↑${status.ahead} ↓${status.behind}', CcColors.warning),
+                  ],
+                ],
+              )
+            else
+              const Text('Git'),
+          ],
+          trailing: [
             IconButton(
               icon: const Icon(Icons.add_task_rounded, size: 17),
               tooltip: 'Stage All',
@@ -5215,8 +5229,8 @@ class _WorkspacePageState extends State<WorkspacePage>
             color: CcColors.panel,
             border: Border(bottom: BorderSide(color: CcColors.border)),
           ),
-          child: Row(
-            children: [
+          child: scrollableBar(
+            scrolling: [
               FilledButton.icon(
                 onPressed: _gitLoading ? null : () => _stashPushCurrent(p),
                 icon: const Icon(Icons.archive_outlined, size: 16),
@@ -5228,7 +5242,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                 icon: const Icon(Icons.refresh_rounded, size: 16),
                 label: const Text('Refresh'),
               ),
-              const Spacer(),
+            ],
+            pinnedTrailing: [
               Text(
                 '${_gitStashes.length} shelves',
                 style: CcType.code(size: 11.5, color: CcColors.subtle),
@@ -5791,25 +5806,25 @@ class _WorkspacePageState extends State<WorkspacePage>
         _panelHeader(
           padding: const EdgeInsets.only(left: 10, right: 4),
           gradient: true,
-          children: [
+          leading: [
             Icon(viewIcon, size: 16, color: CcColors.muted),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                p == null ? viewLabel : '$viewLabel · ${p.name}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
-                  color: CcColors.text,
-                ),
+            Text(
+              p == null ? viewLabel : '$viewLabel · ${p.name}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                color: CcColors.text,
               ),
             ),
             if (p != null) ...[
               _branchButton(status?.branch ?? 'branch'),
               const SizedBox(width: 4),
             ],
+          ],
+          trailing: [
             IconButton(
               icon: const Icon(Icons.refresh_rounded, size: 17),
               tooltip: '刷新 Git',
@@ -5852,8 +5867,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       color: CcColors.editor,
       border: Border(bottom: BorderSide(color: CcColors.border)),
     ),
-    child: Row(
-      children: [
+    child: scrollableBar(
+      scrolling: [
         IconButton(
           icon: const Icon(Icons.add_task_rounded, size: 16),
           tooltip: 'Stage All',
@@ -5886,7 +5901,8 @@ class _WorkspacePageState extends State<WorkspacePage>
           visualDensity: VisualDensity.compact,
           onPressed: _gitLoading ? null : () => _gitFetchCurrent(p),
         ),
-        const Spacer(),
+      ],
+      pinnedTrailing: [
         TextButton.icon(
           onPressed: _gitLoading ? null : () => _showBranchDialog(),
           icon: const Icon(Icons.account_tree_rounded, size: 14),
@@ -5918,19 +5934,17 @@ class _WorkspacePageState extends State<WorkspacePage>
         _panelHeader(
           padding: const EdgeInsets.only(left: 10, right: 4),
           gradient: true,
-          children: [
+          leading: [
             const Icon(Icons.schema_rounded, size: 16, color: CcColors.muted),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                file?.name ?? 'Structure',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
-                  color: CcColors.text,
-                ),
+            Text(
+              file?.name ?? 'Structure',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                color: CcColors.text,
               ),
             ),
             const SizedBox(width: 8),
@@ -5940,6 +5954,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                   : '${filteredSymbols.length}/${symbols.length}',
               style: CcType.code(size: 11.5, color: CcColors.subtle),
             ),
+          ],
+          trailing: [
             IconButton(
               onPressed: _showFileStructure,
               tooltip: '结构弹窗',
@@ -6038,7 +6054,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         _panelHeader(
           padding: const EdgeInsets.only(left: 10, right: 4),
           gradient: true,
-          children: [
+          leading: [
             const Icon(
               Icons.account_tree_outlined,
               size: 16,
@@ -6057,7 +6073,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               '${wss.length}',
               style: CcType.code(size: 11.5, color: CcColors.subtle),
             ),
-            const Spacer(),
+          ],
+          trailing: [
             IconButton(
               onPressed: _activeFile >= 0 && _activeFile < _codeFiles.length
                   ? _selectOpenedFileInProject
