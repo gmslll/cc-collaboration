@@ -131,6 +131,18 @@ Widget scrollableBar({
   ],
 );
 
+// scrollableActions is a trailing button cluster for a header row that already
+// has a flexible leading child (e.g. an Expanded filename): the buttons stay
+// pinned to the right when there's room and scroll horizontally when the row is
+// too narrow, instead of overflowing. Drop it in as a sibling of that Expanded.
+Widget scrollableActions(List<Widget> children) => Flexible(
+  child: SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    reverse: true,
+    child: Row(mainAxisSize: MainAxisSize.min, children: children),
+  ),
+);
+
 // chip is a neutral mono pill (panel bg), e.g. repo @ branch.
 Widget chip(String text) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

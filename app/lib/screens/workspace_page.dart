@@ -1883,6 +1883,9 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Widget _ideBody() {
     final terminalOpen = !_terminalCollapsed;
+    // When the AI chat is focused into the editor area, the bottom collapses to
+    // the status strip — the terminal can't render in two places at once.
+    final dockTerminal = terminalOpen && !_aiChatFocused;
     return LayoutBuilder(
       builder: (context, constraints) {
         // Clamp the bottom tool window to the height actually available so it can
@@ -1938,7 +1941,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                 ],
               ),
             ),
-            if (terminalOpen) ...[
+            if (dockTerminal) ...[
               _horizontalResizeHandle(maxTerm),
               SizedBox(height: termHeight, child: _terminalToolWindow()),
             ] else
@@ -1981,7 +1984,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                 children: [
                   _leftToolButton(
                     icon: Icons.account_tree_outlined,
-                    label: 'Project',
                     tooltip: 'Project · $mod+1',
                     selected:
                         !_projectCollapsed &&
@@ -1998,7 +2000,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   _leftToolButton(
                     icon: Icons.schema_rounded,
-                    label: 'Structure',
                     tooltip: hasActiveFile
                         ? 'Structure · $mod+7'
                         : 'Structure · 打开文件后可用',
@@ -2015,10 +2016,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                       }
                     },
                   ),
-                  _leftToolSeparator('Git'),
                   _leftToolButton(
                     icon: Icons.alt_route_rounded,
-                    label: 'Commit',
                     tooltip: 'Commit · $mod+K / $mod+9',
                     selected:
                         !_projectCollapsed &&
@@ -2036,7 +2035,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   _leftToolButton(
                     icon: Icons.account_tree_rounded,
-                    label: 'Branches',
                     tooltip: 'Branches · $mod+Shift+9',
                     selected:
                         !_projectCollapsed &&
@@ -2054,7 +2052,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   _leftToolButton(
                     icon: Icons.history_rounded,
-                    label: 'Log',
                     tooltip: 'Git Log · $mod+Alt+9',
                     selected:
                         !_projectCollapsed &&
@@ -2072,7 +2069,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   _leftToolButton(
                     icon: Icons.inventory_2_outlined,
-                    label: 'Stash',
                     tooltip: 'Stash',
                     selected:
                         !_projectCollapsed &&
@@ -2088,10 +2084,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                       }
                     },
                   ),
-                  _leftToolSeparator('Run'),
                   _leftToolButton(
                     icon: Icons.terminal_rounded,
-                    label: 'Terminal',
                     tooltip:
                         'Terminal · ${Platform.isMacOS ? 'Option' : 'Alt'}+F12',
                     selected:
@@ -2103,7 +2097,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   _leftToolButton(
                     icon: Icons.description_outlined,
-                    label: 'Handoff',
                     tooltip: _detailItem == null
                         ? 'Handoff · 选择任务后可用'
                         : 'Handoff',
@@ -2199,27 +2192,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  Widget _leftToolSeparator(String label) => Padding(
-    padding: const EdgeInsets.fromLTRB(7, 8, 7, 5),
-    child: Row(
-      children: [
-        const Expanded(child: Divider(height: 1, color: CcColors.borderSoft)),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: CcType.code(
-            size: 8.5,
-            color: CcColors.subtle,
-            weight: FontWeight.w800,
-          ),
-        ),
-      ],
-    ),
-  );
-
   Widget _leftToolButton({
     required IconData icon,
-    required String label,
     required String tooltip,
     required bool selected,
     required VoidCallback onTap,
@@ -2233,7 +2207,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       onTap: enabled ? onTap : null,
       child: Container(
         width: 46,
-        height: 70,
+        height: 44,
         decoration: BoxDecoration(
           color: selected
               ? CcColors.accent.withValues(alpha: 0.14)
@@ -2248,37 +2222,14 @@ class _WorkspacePageState extends State<WorkspacePage>
         child: Stack(
           children: [
             Center(
-              child: RotatedBox(
-                quarterTurns: 3,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      icon,
-                      size: 14,
-                      color: !enabled
-                          ? CcColors.subtle.withValues(alpha: 0.55)
-                          : selected
-                          ? CcColors.accentBright
-                          : CcColors.muted,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: !enabled
-                            ? CcColors.subtle.withValues(alpha: 0.55)
-                            : selected
-                            ? CcColors.text
-                            : CcColors.muted,
-                        fontSize: 10.4,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
+              child: Icon(
+                icon,
+                size: 18,
+                color: !enabled
+                    ? CcColors.subtle.withValues(alpha: 0.55)
+                    : selected
+                    ? CcColors.accentBright
+                    : CcColors.muted,
               ),
             ),
             if (badge != null)
@@ -2880,6 +2831,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
+  // 编辑区没开文件、且当前底部工具是终端并有会话时，AI 终端占满编辑区（专注对话）。
+  bool get _aiChatFocused =>
+      (_activeFile < 0 || _activeFile >= _codeFiles.length) &&
+      terms.isNotEmpty &&
+      _bottomTool == _BottomTool.terminal;
+
   Widget _editorCanvas() {
     if (_activeFile >= 0 && _activeFile < _codeFiles.length) {
       final f = _codeFiles[_activeFile];
@@ -2897,7 +2854,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         },
       );
     }
-    if (terms.isNotEmpty && _terminalCollapsed) return terminalBody();
+    if (_aiChatFocused) return terminalDeck();
     return _workspaceWelcome();
   }
 
@@ -3384,17 +3341,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       gradient: gradient ? panelGradient.gradient : null,
       border: const Border(bottom: BorderSide(color: CcColors.border)),
     ),
-    child: Row(
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(mainAxisSize: MainAxisSize.min, children: leading),
-          ),
-        ),
-        ...trailing,
-      ],
-    ),
+    child: scrollableBar(scrolling: leading, pinnedTrailing: trailing),
   );
 
   // _detailPanel hosts a task's 对接文档 inside the right tool window.
@@ -4010,35 +3957,21 @@ class _WorkspacePageState extends State<WorkspacePage>
                   style: CcType.code(size: 12, color: CcColors.muted),
                 ),
               ),
-              // Buttons scroll horizontally when the pane is too narrow.
-              Flexible(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  reverse: true,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton.icon(
-                        onPressed: _gitLoading
-                            ? null
-                            : () => _gitStageAllCurrent(p),
-                        icon: const Icon(Icons.add_task_rounded, size: 14),
-                        label: const Text('Stage All'),
-                      ),
-                      TextButton.icon(
-                        onPressed: _gitLoading
-                            ? null
-                            : () => _gitDiscardAllCurrent(p),
-                        icon: const Icon(Icons.undo_rounded, size: 14),
-                        label: const Text('Rollback All'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: CcColors.danger,
-                        ),
-                      ),
-                    ],
-                  ),
+              scrollableActions([
+                TextButton.icon(
+                  onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
+                  icon: const Icon(Icons.add_task_rounded, size: 14),
+                  label: const Text('Stage All'),
                 ),
-              ),
+                TextButton.icon(
+                  onPressed: _gitLoading
+                      ? null
+                      : () => _gitDiscardAllCurrent(p),
+                  icon: const Icon(Icons.undo_rounded, size: 14),
+                  label: const Text('Rollback All'),
+                  style: TextButton.styleFrom(foregroundColor: CcColors.danger),
+                ),
+              ]),
             ],
           ),
         ),
@@ -4095,71 +4028,55 @@ class _WorkspacePageState extends State<WorkspacePage>
                   style: CcType.code(size: 12, color: CcColors.muted),
                 ),
               ),
-              // Action buttons scroll horizontally when the diff pane is too
-              // narrow to fit them; pinned to the right when there's room.
-              Flexible(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  reverse: true,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton.icon(
-                        onPressed: _gitLoading
-                            ? null
-                            : () => _openCodeFile('${p.path}/$file'),
-                        icon: const Icon(Icons.open_in_new_rounded, size: 14),
-                        label: const Text('Open'),
-                      ),
-                      if (tracked) ...[
-                        IconButton(
-                          icon: const Icon(Icons.history_rounded, size: 16),
-                          tooltip: 'File History',
-                          visualDensity: VisualDensity.compact,
-                          onPressed: _gitLoading
-                              ? null
-                              : () => _showFileHistoryForProjectFile(p, file),
-                        ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.person_search_rounded,
-                            size: 16,
-                          ),
-                          tooltip: 'Annotate / Blame',
-                          visualDensity: VisualDensity.compact,
-                          onPressed: _gitLoading
-                              ? null
-                              : () => _showBlameForProjectFile(p, file),
-                        ),
-                      ],
-                      TextButton.icon(
-                        onPressed: !_gitLoading && canStage
-                            ? () => _gitStageFileCurrent(p, file)
-                            : null,
-                        icon: const Icon(Icons.add_task_rounded, size: 14),
-                        label: const Text('Stage'),
-                      ),
-                      TextButton.icon(
-                        onPressed: !_gitLoading && canUnstage
-                            ? () => _gitUnstageFileCurrent(p, file)
-                            : null,
-                        icon: const Icon(Icons.remove_done_rounded, size: 14),
-                        label: const Text('Unstage'),
-                      ),
-                      TextButton.icon(
-                        onPressed: !_gitLoading && canRollback
-                            ? () => _gitDiscardFileCurrent(p, file)
-                            : null,
-                        icon: const Icon(Icons.undo_rounded, size: 14),
-                        label: const Text('Rollback'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: CcColors.danger,
-                        ),
-                      ),
-                    ],
-                  ),
+              scrollableActions([
+                TextButton.icon(
+                  onPressed: _gitLoading
+                      ? null
+                      : () => _openCodeFile('${p.path}/$file'),
+                  icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                  label: const Text('Open'),
                 ),
-              ),
+                if (tracked) ...[
+                  IconButton(
+                    icon: const Icon(Icons.history_rounded, size: 16),
+                    tooltip: 'File History',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _gitLoading
+                        ? null
+                        : () => _showFileHistoryForProjectFile(p, file),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.person_search_rounded, size: 16),
+                    tooltip: 'Annotate / Blame',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _gitLoading
+                        ? null
+                        : () => _showBlameForProjectFile(p, file),
+                  ),
+                ],
+                TextButton.icon(
+                  onPressed: !_gitLoading && canStage
+                      ? () => _gitStageFileCurrent(p, file)
+                      : null,
+                  icon: const Icon(Icons.add_task_rounded, size: 14),
+                  label: const Text('Stage'),
+                ),
+                TextButton.icon(
+                  onPressed: !_gitLoading && canUnstage
+                      ? () => _gitUnstageFileCurrent(p, file)
+                      : null,
+                  icon: const Icon(Icons.remove_done_rounded, size: 14),
+                  label: const Text('Unstage'),
+                ),
+                TextButton.icon(
+                  onPressed: !_gitLoading && canRollback
+                      ? () => _gitDiscardFileCurrent(p, file)
+                      : null,
+                  icon: const Icon(Icons.undo_rounded, size: 14),
+                  label: const Text('Rollback'),
+                  style: TextButton.styleFrom(foregroundColor: CcColors.danger),
+                ),
+              ]),
             ],
           ),
         ),

@@ -49,13 +49,17 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  AppConfig? _cfg; // active auth (from session) + repos (from config.toml, if any)
+  AppConfig?
+  _cfg; // active auth (from session) + repos (from config.toml, if any)
   RelayClient? _client;
   Me? _me;
   bool _loading = true;
   bool _needLogin = false;
   String? _relayHint;
   int _index = 0;
+  // Top-level nav rail (工作区/收件箱/项目/账号) starts hidden for more canvas
+  // width; toggled from the AppBar, remembered across launches.
+  bool _navRailHidden = Prefs.getBool('nav.railHidden', def: true);
 
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -71,13 +75,18 @@ class _HomeShellState extends State<HomeShell> {
       _loading = true;
       _needLogin = false;
     });
-    final cfg = await AppConfig.load(); // config.toml: auth + repos, or null (mobile)
+    final cfg =
+        await AppConfig.load(); // config.toml: auth + repos, or null (mobile)
     final stored = await SessionStore.load(); // explicit login, or null
 
-    final session = stored ??
+    final session =
+        stored ??
         (cfg != null
             ? Session(
-                relayUrl: cfg.relayUrl, token: cfg.token, identity: cfg.identity)
+                relayUrl: cfg.relayUrl,
+                token: cfg.token,
+                identity: cfg.identity,
+              )
             : null);
 
     if (session == null) {
@@ -99,8 +108,13 @@ class _HomeShellState extends State<HomeShell> {
     }
     if (!mounted) return;
     setState(() {
-      _cfg = AppConfig(session.relayUrl, session.token, session.identity,
-          cfg?.repos ?? const {}, cfg?.workspaces ?? const []);
+      _cfg = AppConfig(
+        session.relayUrl,
+        session.token,
+        session.identity,
+        cfg?.repos ?? const {},
+        cfg?.workspaces ?? const [],
+      );
       _client = client;
       _me = me;
       _relayHint = session.relayUrl;
@@ -146,7 +160,8 @@ class _HomeShellState extends State<HomeShell> {
       const _Dest('收件箱', Icons.inbox_rounded, Icons.inbox_rounded),
       const _Dest('项目', Icons.folder_rounded, Icons.folder_rounded),
       const _Dest('账号', Icons.person_rounded, Icons.person_rounded),
-      if (isAdmin) const _Dest('Admin', Icons.shield_rounded, Icons.shield_rounded),
+      if (isAdmin)
+        const _Dest('Admin', Icons.shield_rounded, Icons.shield_rounded),
     ];
     if (_index >= dests.length) _index = 0;
 
@@ -165,30 +180,40 @@ class _HomeShellState extends State<HomeShell> {
     if (_isDesktop) {
       return Scaffold(
         appBar: _appBar(),
-        body: Column(children: [
-          Expanded(
-            child: Row(children: [
-              NavigationRail(
-                selectedIndex: _index,
-                onDestinationSelected: (i) => setState(() => _index = i),
-                labelType: NavigationRailLabelType.all,
-                backgroundColor: CcColors.panel,
-                minWidth: 84,
-                groupAlignment: -0.9,
-                destinations: dests
-                    .map((d) => NavigationRailDestination(
-                        icon: Icon(d.icon),
-                        selectedIcon: Icon(d.selected),
-                        label: Text(d.label)))
-                    .toList(),
+        body: Column(
+          children: [
+            Expanded(
+              child: Row(
+                children: [
+                  if (!_navRailHidden) ...[
+                    NavigationRail(
+                      selectedIndex: _index,
+                      onDestinationSelected: (i) => setState(() => _index = i),
+                      labelType: NavigationRailLabelType.all,
+                      backgroundColor: CcColors.panel,
+                      minWidth: 84,
+                      groupAlignment: -0.9,
+                      destinations: dests
+                          .map(
+                            (d) => NavigationRailDestination(
+                              icon: Icon(d.icon),
+                              selectedIcon: Icon(d.selected),
+                              label: Text(d.label),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const VerticalDivider(width: 1),
+                  ],
+                  Expanded(
+                    child: DecoratedBox(decoration: appGradient, child: body),
+                  ),
+                ],
               ),
-              const VerticalDivider(width: 1),
-              Expanded(
-                  child: DecoratedBox(decoration: appGradient, child: body)),
-            ]),
-          ),
-          _statusBar(dests),
-        ]),
+            ),
+            _statusBar(dests),
+          ],
+        ),
       );
     }
 
@@ -199,10 +224,13 @@ class _HomeShellState extends State<HomeShell> {
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: dests
-            .map((d) => NavigationDestination(
+            .map(
+              (d) => NavigationDestination(
                 icon: Icon(d.icon),
                 selectedIcon: Icon(d.selected),
-                label: d.label))
+                label: d.label,
+              ),
+            )
             .toList(),
       ),
     );
@@ -219,79 +247,117 @@ class _HomeShellState extends State<HomeShell> {
         color: CcColors.panel,
         border: Border(top: BorderSide(color: CcColors.border)),
       ),
-      child: Row(children: [
-        Text('❯', style: CcType.code(size: 12, color: CcColors.ok)),
-        const SizedBox(width: 6),
-        Text(hostOf(_cfg!.relayUrl),
-            style: CcType.code(size: 11.5, color: CcColors.muted)),
-        Text('  ·  ', style: CcType.code(size: 11.5, color: CcColors.subtle)),
-        Text(_cfg!.identity,
-            style: CcType.code(size: 11.5, color: CcColors.muted)),
-        const Spacer(),
-        statusDot(CcColors.ok, size: 6, glow: true),
-        const SizedBox(width: 6),
-        Text(page,
+      child: Row(
+        children: [
+          Text('❯', style: CcType.code(size: 12, color: CcColors.ok)),
+          const SizedBox(width: 6),
+          Text(
+            hostOf(_cfg!.relayUrl),
+            style: CcType.code(size: 11.5, color: CcColors.muted),
+          ),
+          Text('  ·  ', style: CcType.code(size: 11.5, color: CcColors.subtle)),
+          Text(
+            _cfg!.identity,
+            style: CcType.code(size: 11.5, color: CcColors.muted),
+          ),
+          const Spacer(),
+          statusDot(CcColors.ok, size: 6, glow: true),
+          const SizedBox(width: 6),
+          Text(
+            page,
             style: CcType.code(
-                size: 11, color: CcColors.subtle, weight: FontWeight.w600)),
-      ]),
+              size: 11,
+              color: CcColors.subtle,
+              weight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   PreferredSizeWidget _appBar() => AppBar(
-        titleSpacing: 16,
-        title: Row(children: [
-          Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              color: CcColors.accent,
-              borderRadius: BorderRadius.circular(6),
-              boxShadow: [
-                BoxShadow(
-                    color: CcColors.accent.withValues(alpha: 0.45),
-                    blurRadius: 8)
-              ],
+    leading: _isDesktop
+        ? IconButton(
+            tooltip: _navRailHidden ? '显示导航' : '隐藏导航',
+            icon: Icon(
+              _navRailHidden ? Icons.menu_rounded : Icons.menu_open_rounded,
             ),
-            child: const Icon(Icons.sync_alt_rounded, size: 13, color: CcColors.bg),
-          ),
-          const SizedBox(width: 10),
-          const Text('cc-handoff',
-              style: TextStyle(
-                  color: CcColors.text,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2)),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text('${hostOf(_cfg!.relayUrl)} · ${_cfg!.identity}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontFamily: CcType.mono,
-                    color: CcColors.muted,
-                    fontSize: 12)),
-          ),
-        ]),
-        actions: [
-          PopupMenuButton<String>(
-            tooltip: '账号',
-            icon: const Icon(Icons.account_circle_rounded),
-            onSelected: (v) {
-              if (v == 'logout') _logout();
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: 'logout',
-                child: Row(children: [
-                  Icon(Icons.logout_rounded, size: 16),
-                  SizedBox(width: 8),
-                  Text('登出'),
-                ]),
+            onPressed: () => setState(() {
+              _navRailHidden = !_navRailHidden;
+              Prefs.setBool('nav.railHidden', _navRailHidden);
+            }),
+          )
+        : null,
+    titleSpacing: 16,
+    title: Row(
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: CcColors.accent,
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: [
+              BoxShadow(
+                color: CcColors.accent.withValues(alpha: 0.45),
+                blurRadius: 8,
               ),
             ],
           ),
-          const SizedBox(width: 4),
+          child: const Icon(
+            Icons.sync_alt_rounded,
+            size: 13,
+            color: CcColors.bg,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const Text(
+          'cc-handoff',
+          style: TextStyle(
+            color: CcColors.text,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            '${hostOf(_cfg!.relayUrl)} · ${_cfg!.identity}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: CcType.mono,
+              color: CcColors.muted,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ],
+    ),
+    actions: [
+      PopupMenuButton<String>(
+        tooltip: '账号',
+        icon: const Icon(Icons.account_circle_rounded),
+        onSelected: (v) {
+          if (v == 'logout') _logout();
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(
+            value: 'logout',
+            child: Row(
+              children: [
+                Icon(Icons.logout_rounded, size: 16),
+                SizedBox(width: 8),
+                Text('登出'),
+              ],
+            ),
+          ),
         ],
-      );
+      ),
+      const SizedBox(width: 4),
+    ],
+  );
 }
 
 class _Dest {

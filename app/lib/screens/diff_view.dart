@@ -326,44 +326,33 @@ class _DiffViewState extends State<DiffView> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            // Action buttons + view toggle scroll horizontally when the pane is
-            // too narrow to fit them; pinned right when there's room.
-            Flexible(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                reverse: true,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (widget.editRoot != null && _selected != null) ...[
-                      TextButton.icon(
-                        onPressed: _edit,
-                        icon: const Icon(Icons.edit_rounded, size: 16),
-                        label: const Text('编辑'),
-                      ),
-                      TextButton.icon(
-                        onPressed: _discard,
-                        icon: const Icon(Icons.undo_rounded, size: 16),
-                        label: const Text('丢弃'),
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(value: true, label: Text('并排')),
-                        ButtonSegment(value: false, label: Text('统一')),
-                      ],
-                      selected: {_split},
-                      onSelectionChanged: (s) {
-                        setState(() => _split = s.first);
-                        Prefs.setBool('diff.split', _split);
-                      },
-                      showSelectedIcon: false,
-                    ),
-                  ],
+            scrollableActions([
+              if (widget.editRoot != null && _selected != null) ...[
+                TextButton.icon(
+                  onPressed: _edit,
+                  icon: const Icon(Icons.edit_rounded, size: 16),
+                  label: const Text('编辑'),
                 ),
+                TextButton.icon(
+                  onPressed: _discard,
+                  icon: const Icon(Icons.undo_rounded, size: 16),
+                  label: const Text('丢弃'),
+                ),
+                const SizedBox(width: 8),
+              ],
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: true, label: Text('并排')),
+                  ButtonSegment(value: false, label: Text('统一')),
+                ],
+                selected: {_split},
+                onSelectionChanged: (s) {
+                  setState(() => _split = s.first);
+                  Prefs.setBool('diff.split', _split);
+                },
+                showSelectedIcon: false,
               ),
-            ),
+            ]),
           ],
         ),
       ),

@@ -92,6 +92,7 @@ class AppConfig {
           : '${_home()}/cc-handoff-workspaces/${wsName.isEmpty ? 'default' : wsName}';
 
       final projCfgs = <ProjectCfg>[];
+      final seenProjects = <String>{};
       final projects = (ws['project'] as List?) ?? const [];
       for (final p in projects.whereType<Map>()) {
         final name = (p['name'] ?? '').toString();
@@ -99,6 +100,10 @@ class AppConfig {
         var path = _expand((p['path'] ?? '').toString());
         if (path.isNotEmpty && !path.startsWith('/')) path = '$base/$path';
         if (path.isEmpty) continue;
+        // A project name is its identity within a workspace (repos map, CLI
+        // remove, worktree lookup all key by it). Skip duplicate [[project]]
+        // entries so a doubled config row doesn't show the project twice.
+        if (!seenProjects.add(name)) continue;
         final github = (p['github'] ?? '').toString();
         repos.putIfAbsent(name, () => path);
         projCfgs.add(ProjectCfg(name, path, github));
