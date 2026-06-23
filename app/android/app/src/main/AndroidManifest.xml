@@ -1,9 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for release builds to reach the relay (debug/profile manifests
+         add this automatically, the release one does not). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="cc-handoff"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic: the relay is plain http://; Android 9+ blocks
+             cleartext by default. -->
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
