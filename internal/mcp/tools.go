@@ -229,6 +229,19 @@ func writeAttachmentSummary(sb *strings.Builder, pkg *handoffschema.Package) {
 	fmt.Fprintf(sb, "- attachments: %s\n", strings.Join(names, ", "))
 }
 
+// writeRepoMetaLines emits the branch/head context lines, but only when they
+// exist. Bug/request submissions are best-effort about git (a tester needn't
+// be in a repo), so the package may carry empty branch/HEAD — skip those lines
+// rather than printing bare `- branch: “.
+func writeRepoMetaLines(sb *strings.Builder, pkg *handoffschema.Package) {
+	if pkg.Repo.Branch != "" {
+		fmt.Fprintf(sb, "- branch: `%s`\n", pkg.Repo.Branch)
+	}
+	if pkg.Repo.HeadSHA != "" {
+		fmt.Fprintf(sb, "- head: `%s`\n", handoff.ShortSHA(pkg.Repo.HeadSHA))
+	}
+}
+
 func submitRequestTool() Tool {
 	schema := json.RawMessage(`{
   "type": "object",
@@ -324,8 +337,8 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Submitted request `%s` to `%s`.\n\n", out.ID, recipient)
-	fmt.Fprintf(&sb, "- kind: request\n- branch: `%s`\n- head: `%s`\n",
-		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
+	sb.WriteString("- kind: request\n")
+	writeRepoMetaLines(&sb, pkg)
 	writeAttachmentSummary(&sb, pkg)
 	sb.WriteString("\nThe partner will pick it up via /pickup; their prompt will guide them to design/implement. When they handoff back, the package will carry `responds_to=" + out.ID + "`.")
 	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{
@@ -438,8 +451,8 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Submitted bug `%s` to %s.\n\n", out.ID, formatRecipientList(recipients))
-	fmt.Fprintf(&sb, "- kind: bug\n- branch: `%s`\n- head: `%s`\n",
-		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
+	sb.WriteString("- kind: bug\n")
+	writeRepoMetaLines(&sb, pkg)
 	writeAttachmentSummary(&sb, pkg)
 	sb.WriteString("\n每个收件人 /pickup 后会看到「归属判断决策树」:\n")
 	sb.WriteString("- 是我的 → 修复 + ack\n")

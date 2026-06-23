@@ -82,6 +82,37 @@ func TestBuild_ExtraAttachments(t *testing.T) {
 	}
 }
 
+// TestBuild_Bug_NoGitRepo confirms a tester can file a bug from a plain
+// directory that isn't a git repo: repo meta is best-effort for the bug/request
+// flow, so Build succeeds with empty branch/HEAD instead of erroring out on
+// `git rev-parse HEAD`. Note the deliberate absence of gitInit here.
+func TestBuild_Bug_NoGitRepo(t *testing.T) {
+	dir := t.TempDir() // intentionally NOT a git repo
+
+	inboxDir := filepath.Join(dir, ".cc-handoff", "inbox")
+	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(SummaryDraftPath(inboxDir), []byte("## Bug\nbroken thing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkg, _, err := Build(context.Background(), BuildOptions{
+		RepoRoot:   dir,
+		RepoName:   "demo",
+		Sender:     "tester",
+		Recipients: []string{"backend"},
+		Kind:       handoffschema.KindBug,
+		InboxDir:   inboxDir,
+	})
+	if err != nil {
+		t.Fatalf("Build in non-git dir should succeed for a bug, got: %v", err)
+	}
+	if pkg.Repo.Branch != "" || pkg.Repo.HeadSHA != "" {
+		t.Fatalf("expected empty repo meta without git, got branch=%q head=%q", pkg.Repo.Branch, pkg.Repo.HeadSHA)
+	}
+}
+
 // TestBuild_ExtraAttachment_RejectsSwaggerName: the reserved swagger.yaml
 // slot is owned by Build itself; user-supplied attachments with that name
 // must be rejected so they can't shadow the snapshot.

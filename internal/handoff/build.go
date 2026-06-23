@@ -126,12 +126,12 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 	switch {
 	case skipDiff:
 		// Request / bug flow: there's no diff to ship and no swagger to
-		// compare — the summary IS the body. Still collect repo meta so
-		// the receiver can see who's asking from where.
-		repoMeta, err = git.CollectRepoMeta(ctx, opts.RepoRoot)
-		if err != nil {
-			return nil, nil, fmt.Errorf("collect repo meta: %w", err)
-		}
+		// compare — the summary IS the body. Repo meta (branch + HEAD) is
+		// best-effort context so the receiver can see who's asking from
+		// where; a tester filing a bug needn't be in a git repo at all, so a
+		// failure here is non-fatal — CollectRepoMeta returns an empty Repo,
+		// and we ship without branch/HEAD rather than erroring out.
+		repoMeta, _ = git.CollectRepoMeta(ctx, opts.RepoRoot)
 		if len(opts.ModulePaths) > 0 {
 			modeName := "request"
 			if bugMode {

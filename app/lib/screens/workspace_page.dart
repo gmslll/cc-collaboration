@@ -6056,18 +6056,23 @@ class _WorkspacePageState extends State<WorkspacePage>
                   children: wss
                       .map(
                         (ws) => ExpansionTile(
-                          title: Text(
-                            ws.name.isEmpty ? '(默认)' : ws.name,
-                            style: const TextStyle(
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w700,
+                          title: _ctxMenu(
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                ws.name.isEmpty ? '(默认)' : ws.name,
+                                style: const TextStyle(
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
+                            _workspaceMenu(ws),
                           ),
                           leading: const Icon(
                             Icons.workspaces_rounded,
                             size: 20,
                           ),
-                          trailing: _workspaceMenu(ws),
                           initiallyExpanded: true,
                           shape: const Border(),
                           children: ws.projects
@@ -6084,28 +6089,30 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Widget _projectTile(WorkspaceCfg ws, ProjectCfg p) {
     return ExpansionTile(
-      title: _HoverZone(
-        builder: (h) => Row(
-          children: [
-            Expanded(
-              child: Text(
-                p.name,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
+      title: _ctxMenu(
+        _HoverZone(
+          builder: (h) => Row(
+            children: [
+              Expanded(
+                child: Text(
+                  p.name,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
-            ),
-            _rowActions(
-              h,
-              onClaude: () => _openAgent(p, p.path, 'claude', ws.preLaunch),
-              onCodex: () => _openAgent(p, p.path, 'codex', ws.preLaunch),
-              menu: _projectMenu(ws, p),
-            ),
-          ],
+              _rowActions(
+                h,
+                onClaude: () => _openAgent(p, p.path, 'claude', ws.preLaunch),
+                onCodex: () => _openAgent(p, p.path, 'codex', ws.preLaunch),
+              ),
+            ],
+          ),
         ),
+        _projectMenu(ws, p),
       ),
       leading: const Icon(Icons.folder_rounded, size: 19),
       controller: _ctlFor(p.path),
@@ -6144,36 +6151,38 @@ class _WorkspacePageState extends State<WorkspacePage>
         : status.clean
         ? '${status.branch} · clean'
         : '${status.branch} · ${status.staged + status.modified + status.untracked + status.conflicted} changes';
-    return ListTile(
-      dense: true,
-      visualDensity: _tileDensity,
-      contentPadding: const EdgeInsets.only(left: 12, right: 8),
-      horizontalTitleGap: 8,
-      leading: Icon(
-        Icons.alt_route_rounded,
-        size: 17,
-        color: selected ? CcColors.accentBright : CcColors.muted,
-      ),
-      title: Text(
-        summary,
-        style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (status != null && !status.clean) ...[
-            statusDot(
-              status.conflicted > 0 ? CcColors.danger : CcColors.warning,
-              size: 7,
-            ),
-            const SizedBox(width: 4),
+    return _ctxMenu(
+      ListTile(
+        dense: true,
+        visualDensity: _tileDensity,
+        contentPadding: const EdgeInsets.only(left: 12, right: 8),
+        horizontalTitleGap: 8,
+        leading: Icon(
+          Icons.alt_route_rounded,
+          size: 17,
+          color: selected ? CcColors.accentBright : CcColors.muted,
+        ),
+        title: Text(
+          summary,
+          style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (status != null && !status.clean) ...[
+              statusDot(
+                status.conflicted > 0 ? CcColors.danger : CcColors.warning,
+                size: 7,
+              ),
+              const SizedBox(width: 4),
+            ],
           ],
-          _projectGitMenu(p),
-        ],
+        ),
+        onTap: () => _selectGitProject(p, openTool: true),
       ),
-      onTap: () => _selectGitProject(p, openTool: true),
+      _projectGitMenu(p),
     );
   }
 
@@ -6402,69 +6411,63 @@ class _WorkspacePageState extends State<WorkspacePage>
         final display = (e.s.name?.isNotEmpty ?? false)
             ? e.s.name!
             : '$agent · ${e.s.title}';
-        return Container(
-          decoration: BoxDecoration(
-            color: active ? CcColors.accent.withValues(alpha: 0.08) : null,
-            border: Border(
-              left: BorderSide(
-                color: active ? CcColors.accent : Colors.transparent,
-                width: 2.5,
-              ),
-            ),
-          ),
-          child: ListTile(
-            visualDensity: _tileDensity,
-            contentPadding: const EdgeInsets.only(left: 12, right: 2),
-            horizontalTitleGap: 8,
-            selected: active,
-            leading: Text(
-              '❯',
-              style: TextStyle(
-                fontFamily: CcType.mono,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: active ? CcColors.accentBright : CcColors.muted,
-              ),
-            ),
-            title: Text(
-              display,
-              style: TextStyle(
-                fontFamily: CcType.mono,
-                fontSize: 13.5,
-                color: active ? CcColors.text : CcColors.muted,
-                fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            onTap: () => setState(() => activeTerm = e.idx),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (active)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 2),
-                    child: statusDot(CcColors.ok, size: 7, glow: true),
-                  ),
-                PopupMenuButton<String>(
-                  icon: const Icon(
-                    Icons.more_vert_rounded,
-                    size: 18,
-                    color: CcColors.muted,
-                  ),
-                  tooltip: '会话操作',
-                  onSelected: (v) {
-                    if (v == 'rename') _renameSession(e.s);
-                    if (v == 'close') closeTerm(e.idx);
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'rename', child: Text('重命名')),
-                    PopupMenuItem(value: 'close', child: Text('关闭会话')),
-                  ],
+        final sessionMenu = PopupMenuButton<String>(
+          tooltip: '会话操作',
+          onSelected: (v) {
+            if (v == 'rename') _renameSession(e.s);
+            if (v == 'close') closeTerm(e.idx);
+          },
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'rename', child: Text('重命名')),
+            PopupMenuItem(value: 'close', child: Text('关闭会话')),
+          ],
+        );
+        return _ctxMenu(
+          Container(
+            decoration: BoxDecoration(
+              color: active ? CcColors.accent.withValues(alpha: 0.08) : null,
+              border: Border(
+                left: BorderSide(
+                  color: active ? CcColors.accent : Colors.transparent,
+                  width: 2.5,
                 ),
-              ],
+              ),
+            ),
+            child: ListTile(
+              visualDensity: _tileDensity,
+              contentPadding: const EdgeInsets.only(left: 12, right: 2),
+              horizontalTitleGap: 8,
+              selected: active,
+              leading: Text(
+                '❯',
+                style: TextStyle(
+                  fontFamily: CcType.mono,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: active ? CcColors.accentBright : CcColors.muted,
+                ),
+              ),
+              title: Text(
+                display,
+                style: TextStyle(
+                  fontFamily: CcType.mono,
+                  fontSize: 13.5,
+                  color: active ? CcColors.text : CcColors.muted,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => setState(() => activeTerm = e.idx),
+              trailing: active
+                  ? Padding(
+                      padding: const EdgeInsets.only(right: 2),
+                      child: statusDot(CcColors.ok, size: 7, glow: true),
+                    )
+                  : null,
             ),
           ),
+          sessionMenu,
         );
       }),
     ];
@@ -6526,34 +6529,36 @@ class _WorkspacePageState extends State<WorkspacePage>
     return [
       header,
       ...wts.map(
-        (w) => _HoverZone(
-          builder: (h) => ListTile(
-            visualDensity: _tileDensity,
-            contentPadding: const EdgeInsets.only(left: 10, right: 2),
-            leading: Icon(
-              Icons.account_tree_rounded,
-              size: 18,
-              color: w.isHandoff ? CcColors.accent : CcColors.muted,
-            ),
-            title: Text(
-              w.branch.isEmpty ? w.name : w.branch,
-              style: const TextStyle(fontFamily: CcType.mono, fontSize: 13.5),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: w.isHandoff
-                ? const Text(
-                    'handoff',
-                    style: TextStyle(color: CcColors.accent, fontSize: 11),
-                  )
-                : null,
-            trailing: _rowActions(
-              h,
-              onClaude: () => _openAgent(p, w.path, 'claude', ws.preLaunch),
-              onCodex: () => _openAgent(p, w.path, 'codex', ws.preLaunch),
-              menu: _worktreeMenu(ws, p, w),
+        (w) => _ctxMenu(
+          _HoverZone(
+            builder: (h) => ListTile(
+              visualDensity: _tileDensity,
+              contentPadding: const EdgeInsets.only(left: 10, right: 2),
+              leading: Icon(
+                Icons.account_tree_rounded,
+                size: 18,
+                color: w.isHandoff ? CcColors.accent : CcColors.muted,
+              ),
+              title: Text(
+                w.branch.isEmpty ? w.name : w.branch,
+                style: const TextStyle(fontFamily: CcType.mono, fontSize: 13.5),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: w.isHandoff
+                  ? const Text(
+                      'handoff',
+                      style: TextStyle(color: CcColors.accent, fontSize: 11),
+                    )
+                  : null,
+              trailing: _rowActions(
+                h,
+                onClaude: () => _openAgent(p, w.path, 'claude', ws.preLaunch),
+                onCodex: () => _openAgent(p, w.path, 'codex', ws.preLaunch),
+              ),
             ),
           ),
+          _worktreeMenu(ws, p, w),
         ),
       ),
     ];
@@ -6607,25 +6612,26 @@ class _WorkspacePageState extends State<WorkspacePage>
     ),
   ];
 
-  Widget _workspaceMenu(WorkspaceCfg ws) => PopupMenuButton<String>(
-    icon: const Icon(Icons.more_vert_rounded, size: 18),
-    tooltip: '工作区操作',
-    onSelected: (v) {
-      switch (v) {
-        case 'add':
-          _addProject(ws);
-        case 'settings':
-          _workspaceSettings(ws);
-        case 'remove':
-          _removeWorkspace(ws);
-      }
-    },
-    itemBuilder: (_) => const [
-      PopupMenuItem(value: 'add', child: Text('添加项目')),
-      PopupMenuItem(value: 'settings', child: Text('工作区设置')),
-      PopupMenuItem(value: 'remove', child: Text('删除工作区')),
-    ],
-  );
+  PopupMenuButton<String> _workspaceMenu(WorkspaceCfg ws) =>
+      PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert_rounded, size: 18),
+        tooltip: '工作区操作',
+        onSelected: (v) {
+          switch (v) {
+            case 'add':
+              _addProject(ws);
+            case 'settings':
+              _workspaceSettings(ws);
+            case 'remove':
+              _removeWorkspace(ws);
+          }
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'add', child: Text('添加项目')),
+          PopupMenuItem(value: 'settings', child: Text('工作区设置')),
+          PopupMenuItem(value: 'remove', child: Text('删除工作区')),
+        ],
+      );
 
   Future<void> _workspaceSettings(WorkspaceCfg ws) async {
     final pre = TextEditingController(text: ws.preLaunch);
@@ -6701,40 +6707,41 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  Widget _projectMenu(WorkspaceCfg ws, ProjectCfg p) => PopupMenuButton<String>(
-    icon: const Icon(Icons.more_vert_rounded, size: 18),
-    tooltip: '项目操作',
-    onSelected: (v) {
-      switch (v) {
-        case 'claude':
-        case 'codex':
-          _openAgent(p, p.path, v, ws.preLaunch);
-        case 'worktree':
-          _newWorktree(ws, p);
-        case 'diff':
-          _openDiff(p.path, p.name);
-        case 'files':
-          _openFileBrowser(p.path, p.name);
-        case 'pr':
-          _openPrs(p);
-        case 'config':
-          _openRepoConfig(p);
-        case 'remove':
-          _removeProject(ws, p);
-      }
-    },
-    itemBuilder: (_) => [
-      ..._agentItems(ws.agent),
-      const PopupMenuDivider(),
-      const PopupMenuItem(value: 'diff', child: Text('看变动')),
-      const PopupMenuItem(value: 'files', child: Text('文件')),
-      if (p.github.isNotEmpty)
-        const PopupMenuItem(value: 'pr', child: Text('GitHub PR')),
-      const PopupMenuItem(value: 'worktree', child: Text('新建 worktree')),
-      const PopupMenuItem(value: 'config', child: Text('项目配置')),
-      const PopupMenuItem(value: 'remove', child: Text('移除项目')),
-    ],
-  );
+  PopupMenuButton<String> _projectMenu(WorkspaceCfg ws, ProjectCfg p) =>
+      PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert_rounded, size: 18),
+        tooltip: '项目操作',
+        onSelected: (v) {
+          switch (v) {
+            case 'claude':
+            case 'codex':
+              _openAgent(p, p.path, v, ws.preLaunch);
+            case 'worktree':
+              _newWorktree(ws, p);
+            case 'diff':
+              _openDiff(p.path, p.name);
+            case 'files':
+              _openFileBrowser(p.path, p.name);
+            case 'pr':
+              _openPrs(p);
+            case 'config':
+              _openRepoConfig(p);
+            case 'remove':
+              _removeProject(ws, p);
+          }
+        },
+        itemBuilder: (_) => [
+          ..._agentItems(ws.agent),
+          const PopupMenuDivider(),
+          const PopupMenuItem(value: 'diff', child: Text('看变动')),
+          const PopupMenuItem(value: 'files', child: Text('文件')),
+          if (p.github.isNotEmpty)
+            const PopupMenuItem(value: 'pr', child: Text('GitHub PR')),
+          const PopupMenuItem(value: 'worktree', child: Text('新建 worktree')),
+          const PopupMenuItem(value: 'config', child: Text('项目配置')),
+          const PopupMenuItem(value: 'remove', child: Text('移除项目')),
+        ],
+      );
 
   void _openRepoConfig(ProjectCfg p) {
     Navigator.of(context).push(
@@ -6769,31 +6776,34 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  Widget _worktreeMenu(WorkspaceCfg ws, ProjectCfg p, Worktree w) =>
-      PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert_rounded, size: 18),
-        tooltip: 'worktree 操作',
-        onSelected: (v) {
-          switch (v) {
-            case 'claude':
-            case 'codex':
-              _openAgent(p, w.path, v, ws.preLaunch);
-            case 'diff':
-              _openDiff(w.path, w.branch.isEmpty ? w.name : w.branch);
-            case 'files':
-              _openFileBrowser(w.path, w.branch.isEmpty ? w.name : w.branch);
-            case 'delete':
-              _deleteWorktree(ws, p, w);
-          }
-        },
-        itemBuilder: (_) => [
-          ..._agentItems(ws.agent),
-          const PopupMenuDivider(),
-          const PopupMenuItem(value: 'diff', child: Text('看变动')),
-          const PopupMenuItem(value: 'files', child: Text('文件')),
-          const PopupMenuItem(value: 'delete', child: Text('删除 worktree')),
-        ],
-      );
+  PopupMenuButton<String> _worktreeMenu(
+    WorkspaceCfg ws,
+    ProjectCfg p,
+    Worktree w,
+  ) => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert_rounded, size: 18),
+    tooltip: 'worktree 操作',
+    onSelected: (v) {
+      switch (v) {
+        case 'claude':
+        case 'codex':
+          _openAgent(p, w.path, v, ws.preLaunch);
+        case 'diff':
+          _openDiff(w.path, w.branch.isEmpty ? w.name : w.branch);
+        case 'files':
+          _openFileBrowser(w.path, w.branch.isEmpty ? w.name : w.branch);
+        case 'delete':
+          _deleteWorktree(ws, p, w);
+      }
+    },
+    itemBuilder: (_) => [
+      ..._agentItems(ws.agent),
+      const PopupMenuDivider(),
+      const PopupMenuItem(value: 'diff', child: Text('看变动')),
+      const PopupMenuItem(value: 'files', child: Text('文件')),
+      const PopupMenuItem(value: 'delete', child: Text('删除 worktree')),
+    ],
+  );
 
   bool _secCollapsed(String path, String kind) =>
       Prefs.getBool('ws.sec.$path.$kind');
@@ -6872,7 +6882,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     bool hovered, {
     required VoidCallback onClaude,
     required VoidCallback onCodex,
-    required Widget menu,
   }) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
@@ -6880,9 +6889,31 @@ class _WorkspacePageState extends State<WorkspacePage>
         _quickBtn('claude', onClaude),
         _quickBtn('codex', onCodex),
       ],
-      menu,
     ],
   );
+
+  // _ctxMenu wraps a row so right-clicking it pops [menu]'s items at the cursor
+  // — reusing the PopupMenuButton's itemBuilder/onSelected/onOpened — instead of
+  // hanging a ⋮ button on the row. The [menu] widget itself is never rendered.
+  Widget _ctxMenu(Widget child, PopupMenuButton<String> menu) =>
+      GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onSecondaryTapDown: (d) async {
+          menu.onOpened?.call();
+          final overlay =
+              Overlay.of(context).context.findRenderObject() as RenderBox;
+          final value = await showMenu<String>(
+            context: context,
+            position: RelativeRect.fromRect(
+              d.globalPosition & const Size(1, 1),
+              Offset.zero & overlay.size,
+            ),
+            items: menu.itemBuilder(context),
+          );
+          if (value != null && mounted) menu.onSelected?.call(value);
+        },
+        child: child,
+      );
 }
 
 // _DialogHeader is the shared 42px title bar used by the workspace dialogs:

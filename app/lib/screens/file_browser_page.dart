@@ -59,7 +59,7 @@ class FileTree extends StatelessWidget {
   final String label;
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
-  final Widget Function(String path)? fileMenuBuilder;
+  final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
   const FileTree({
     super.key,
@@ -91,7 +91,7 @@ class DirTile extends StatefulWidget {
   final bool initiallyExpanded;
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
-  final Widget Function(String path)? fileMenuBuilder;
+  final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
   const DirTile({
     super.key,
@@ -265,7 +265,8 @@ class _DirTileState extends State<DirTile> {
 
   Widget _fileTile(String path, String name, int depth) {
     final selected = path == widget.selectedPath;
-    return Container(
+    final menu = widget.fileMenuBuilder?.call(path);
+    final tile = Container(
       decoration: BoxDecoration(
         color: selected
             ? CcColors.accent.withValues(alpha: 0.10)
@@ -299,23 +300,29 @@ class _DirTileState extends State<DirTile> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing:
-            widget.pathStatusBuilder == null && widget.fileMenuBuilder == null
-            ? null
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (widget.pathStatusBuilder != null)
-                    widget.pathStatusBuilder!(path),
-                  if (widget.pathStatusBuilder != null &&
-                      widget.fileMenuBuilder != null)
-                    const SizedBox(width: 2),
-                  if (widget.fileMenuBuilder != null)
-                    widget.fileMenuBuilder!(path),
-                ],
-              ),
+        trailing: widget.pathStatusBuilder?.call(path),
         onTap: () => widget.onOpenFile(path),
       ),
+    );
+    if (menu == null) return tile;
+    // Right-click anywhere on the file row pops the same actions (no ⋮ button).
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapDown: (d) async {
+        menu.onOpened?.call();
+        final overlay =
+            Overlay.of(context).context.findRenderObject() as RenderBox;
+        final value = await showMenu<String>(
+          context: context,
+          position: RelativeRect.fromRect(
+            d.globalPosition & const Size(1, 1),
+            Offset.zero & overlay.size,
+          ),
+          items: menu.itemBuilder(context),
+        );
+        if (value != null && mounted) menu.onSelected?.call(value);
+      },
+      child: tile,
     );
   }
 }

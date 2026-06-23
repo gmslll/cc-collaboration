@@ -285,8 +285,12 @@ func renderSummaryMD(p *handoffschema.Package) string {
 	} else {
 		fmt.Fprintf(&sb, "# Handoff %s\n\n", p.ID)
 	}
-	fmt.Fprintf(&sb, "- From: `%s`\n- To: `%s`\n- Urgency: `%s`\n- Repo: `%s` @ `%s`\n- Created: %s\n",
-		p.Sender, p.Recipient, p.Urgency, p.Repo.Name, p.Repo.Branch, p.CreatedAt.Format("2006-01-02 15:04:05 MST"))
+	repoLine := fmt.Sprintf("`%s`", p.Repo.Name)
+	if p.Repo.Branch != "" {
+		repoLine = fmt.Sprintf("`%s` @ `%s`", p.Repo.Name, p.Repo.Branch)
+	}
+	fmt.Fprintf(&sb, "- From: `%s`\n- To: `%s`\n- Urgency: `%s`\n- Repo: %s\n- Created: %s\n",
+		p.Sender, p.Recipient, p.Urgency, repoLine, p.CreatedAt.Format("2006-01-02 15:04:05 MST"))
 	if p.RespondsTo != "" {
 		fmt.Fprintf(&sb, "- Responds to: `%s`\n", p.RespondsTo)
 	}
