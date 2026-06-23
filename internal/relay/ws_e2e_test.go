@@ -1,0 +1,86 @@
+package relay_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/cc-collaboration/internal/relay"
+	"github.com/cc-collaboration/internal/relay/auth"
+	"github.com/cc-collaboration/internal/relay/sse"
+	"github.com/cc-collaboration/internal/relay/store"
+)
+
+// TestWSUpgradeAndBroker verifies /v1/ws actually upgrades through the full
+// Handler stack — including the logging middleware that wraps the
+// ResponseWriter in statusRecorder. Regression guard: without statusRecorder
+// forwarding Hijack, websocket.Accept returns 501 and both ends fail to connect.
+// It also checks a client frame is brokered to the same identity's host.
+func TestWSUpgradeAndBroker(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[{"token":"tok-a","identity":"a@x"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	wsURL := "ws" + srv.URL[len("http"):] // http(s)://… -> ws(s)://…
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer tok-a"}},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	host, _, err := websocket.Dial(ctx, wsURL+"/v1/ws?role=host", opts)
+	if err != nil {
+		t.Fatalf("host ws upgrade failed (regression: statusRecorder.Hijack missing?): %v", err)
+	}
+	defer host.CloseNow()
+
+	client, _, err := websocket.Dial(ctx, wsURL+"/v1/ws?role=client", opts)
+	if err != nil {
+		t.Fatalf("client ws upgrade failed: %v", err)
+	}
+	defer client.CloseNow()
+
+	if err := client.Write(ctx, websocket.MessageText, []byte(`{"t":"hi","from":0}`)); err != nil {
+		t.Fatal(err)
+	}
+	// The host receives relay control frames (_hello/_peer) first, then the frame.
+	if !waitForText(ctx, host, `"t":"hi"`) {
+		t.Fatal("host never received the client's brokered frame")
+	}
+}
+
+func waitForText(ctx context.Context, c *websocket.Conn, want string) bool {
+	for i := 0; i < 10; i++ {
+		_, data, err := c.Read(ctx)
+		if err != nil {
+			return false
+		}
+		if strings.Contains(string(data), want) {
+			return true
+		}
+	}
+	return false
+}

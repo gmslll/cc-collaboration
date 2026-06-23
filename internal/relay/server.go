@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"embed"
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -860,6 +862,13 @@ type statusRecorder struct {
 	code int
 }
 
+// statusRecorder must forward the optional ResponseWriter interfaces the inner
+// writer supports, or wrapping it here silently disables them.
+var (
+	_ http.Flusher  = (*statusRecorder)(nil)
+	_ http.Hijacker = (*statusRecorder)(nil)
+)
+
 func (s *statusRecorder) WriteHeader(code int) {
 	s.code = code
 	s.ResponseWriter.WriteHeader(code)
@@ -872,6 +881,16 @@ func (s *statusRecorder) Flush() {
 	if f, ok := s.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack delegates to the underlying ResponseWriter so the WebSocket handler
+// (/v1/ws) can take over the connection. Without this the wrapped writer fails
+// the http.Hijacker assertion and websocket.Accept returns 501.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
 }
 
 // auditLogger lazily initializes a JSON slog handler writing to stderr.
