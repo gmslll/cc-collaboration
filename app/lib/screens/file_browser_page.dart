@@ -6,24 +6,6 @@ import '../theme.dart';
 import '../widgets.dart';
 import 'editor_page.dart';
 
-// dirs/files never worth browsing — skipped in the file tree.
-const _ignore = {
-  '.git',
-  'node_modules',
-  'build',
-  '.dart_tool',
-  '.idea',
-  'dist',
-  'vendor',
-  'target',
-  '.gradle',
-  'Pods',
-  '.next',
-  '__pycache__',
-  '.venv',
-  '.DS_Store',
-};
-
 // FileBrowserPage is a lazy file tree of a project root; tapping a file opens it
 // in the editor. Each directory lists its children on first expand.
 class FileBrowserPage extends StatelessWidget {
@@ -140,7 +122,7 @@ class _DirTileState extends State<DirTile> {
     final entries = <FileSystemEntity>[];
     try {
       await for (final e in Directory(widget.dir).list(followLinks: false)) {
-        if (!_ignore.contains(e.path.split('/').last)) entries.add(e);
+        if (!kIgnoredEntries.contains(e.path.split('/').last)) entries.add(e);
       }
     } catch (_) {}
     entries.sort((a, b) {

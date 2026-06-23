@@ -4,6 +4,7 @@ import 'package:xterm/xterm.dart';
 import '../remote/remote_client.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'terminal_pane.dart' show ccTerminalTheme;
 
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
@@ -250,7 +251,7 @@ class _RemoteTerminalScreen extends StatelessWidget {
           Expanded(
             child: TerminalView(
               term,
-              theme: _termTheme,
+              theme: ccTerminalTheme,
               textStyle: const TerminalStyle(
                 fontFamily: 'JetBrainsMono',
                 fontSize: 12.5,
@@ -350,29 +351,3 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
     );
   }
 }
-
-const _termTheme = TerminalTheme(
-  cursor: Color(0xFF818CF8),
-  selection: Color(0x55818CF8),
-  foreground: Color(0xFFE6EAF2),
-  background: Color(0xFF0A0E1A),
-  black: Color(0xFF1E2536),
-  red: Color(0xFFF87171),
-  green: Color(0xFF34D399),
-  yellow: Color(0xFFFBBF24),
-  blue: Color(0xFF60A5FA),
-  magenta: Color(0xFFC084FC),
-  cyan: Color(0xFF22D3EE),
-  white: Color(0xFFE6EAF2),
-  brightBlack: Color(0xFF64748B),
-  brightRed: Color(0xFFFCA5A5),
-  brightGreen: Color(0xFF6EE7B7),
-  brightYellow: Color(0xFFFCD34D),
-  brightBlue: Color(0xFF93C5FD),
-  brightMagenta: Color(0xFFD8B4FE),
-  brightCyan: Color(0xFF67E8F9),
-  brightWhite: Color(0xFFF8FAFC),
-  searchHitBackground: Color(0xFFFBBF24),
-  searchHitBackgroundCurrent: Color(0xFFF59E0B),
-  searchHitForeground: Color(0xFF0A0E1A),
-);

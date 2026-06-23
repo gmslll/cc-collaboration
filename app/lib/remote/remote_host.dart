@@ -1,10 +1,9 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-
 import '../screens/terminal_pane.dart';
+import '../widgets.dart' show kIgnoredEntries;
+import 'remote_channel.dart';
 
 // A project root the host exposes to remote clients.
 class RemoteRoot {
@@ -14,161 +13,68 @@ class RemoteRoot {
 }
 
 // RemoteHost shares this desktop's workspace (terminal sessions + project files)
-// to the user's phone, brokered by the relay's /v1/ws. Opt-in: nothing is
-// exposed until [enable]. The relay only pipes between the SAME identity, so
-// only the user's own devices can ever connect. File access is hard-scoped to
-// the advertised project roots (path traversal is normalized away and rejected).
-class RemoteHost extends ChangeNotifier {
-  final String relayUrl;
-  final String token;
+// to the user's phone, brokered by the relay (see RemoteChannel for transport).
+// Opt-in: nothing is exposed until [enable]. The relay only pipes between the
+// SAME identity, so only the user's own devices can connect. File access is
+// hard-scoped to the advertised project roots (traversal is normalized away).
+class RemoteHost extends RemoteChannel {
   final List<TerminalSession> Function() sessions;
   final List<RemoteRoot> Function() roots;
 
   RemoteHost({
-    required this.relayUrl,
-    required this.token,
+    required super.relayUrl,
+    required super.token,
     required this.sessions,
     required this.roots,
-  });
+  }) : super(role: 'host');
 
-  WebSocket? _ws;
-  bool _sharing = false;
-  bool _connected = false;
-  final Set<int> _clients = {}; // connected phone connIds
+  int _clients = 0;
   final Map<String, Set<int>> _watchers = {}; // session id -> watching clients
   static const int _maxRead = 2 * 1024 * 1024; // 2MB file-read cap
-  static const _ignore = {
-    '.git',
-    'node_modules',
-    'build',
-    '.dart_tool',
-    '.idea',
-    '.gradle',
-    'Pods',
-    '.DS_Store',
-    '.next',
-    'dist',
-    'target',
-    '.venv',
-    '__pycache__',
-  };
 
-  bool get sharing => _sharing;
-  bool get connected => _connected;
-  int get clientCount => _clients.length;
+  bool get sharing => active;
+  int get clientCount => _clients;
 
-  Future<void> enable() async {
-    if (_sharing) return;
-    _sharing = true;
-    notifyListeners();
-    unawaited(_connectLoop());
+  Future<void> enable() async => start();
+  void disable() => stop();
+
+  @override
+  void onDisconnected() {
+    _clients = 0;
+    _detachAllSessions();
   }
 
-  void disable() {
-    _sharing = false;
-    _clients.clear();
-    _detachAllSessions();
-    _ws?.close();
-    _ws = null;
-    _connected = false;
+  @override
+  void onPeer(int connId, String role, bool connected) {
+    if (role != 'client') return;
+    if (connected) {
+      _clients++;
+    } else {
+      _clients--;
+      _dropClient(connId);
+    }
     notifyListeners();
   }
 
   @override
-  void dispose() {
-    disable();
-    super.dispose();
-  }
-
-  static Uri _wsUri(String relayUrl) {
-    var u = relayUrl.trim().replaceAll(RegExp(r'/+$'), '');
-    if (u.startsWith('https://')) {
-      u = 'wss://${u.substring(8)}';
-    } else if (u.startsWith('http://')) {
-      u = 'ws://${u.substring(7)}';
-    } else if (!u.startsWith('ws://') && !u.startsWith('wss://')) {
-      u = 'ws://$u';
-    }
-    return Uri.parse('$u/v1/ws?role=host');
-  }
-
-  Future<void> _connectLoop() async {
-    while (_sharing) {
-      try {
-        final ws = await WebSocket.connect(
-          _wsUri(relayUrl).toString(),
-          headers: {'Authorization': 'Bearer $token'},
-        );
-        _ws = ws;
-        _connected = true;
-        notifyListeners();
-        await for (final msg in ws) {
-          if (msg is String) _onFrame(msg);
-        }
-      } catch (_) {
-        // fall through to reconnect
-      }
-      _ws = null;
-      _connected = false;
-      _clients.clear();
-      _detachAllSessions();
-      notifyListeners();
-      if (!_sharing) break;
-      await Future<void>.delayed(const Duration(seconds: 3));
-    }
-  }
-
-  void _send(Map<String, dynamic> frame) {
-    final ws = _ws;
-    if (ws == null) return;
-    try {
-      ws.add(jsonEncode(frame));
-    } catch (_) {}
-  }
-
-  void _onFrame(String raw) {
-    Map<String, dynamic> f;
-    try {
-      f = jsonDecode(raw) as Map<String, dynamic>;
-    } catch (_) {
-      return;
-    }
-    final t = f['t'] as String?;
-    switch (t) {
-      case '_peer':
-        final connId = (f['connId'] as num?)?.toInt();
-        final role = f['role'] as String?;
-        if (connId == null || role != 'client') break;
-        if (f['event'] == 'connect') {
-          _clients.add(connId);
-        } else {
-          _clients.remove(connId);
-          _dropClient(connId);
-        }
-        notifyListeners();
-        break;
+  void onFrame(Map<String, dynamic> f) {
+    switch (f['t']) {
       case 'list':
         final from = (f['from'] as num?)?.toInt();
         if (from != null) _replyList(from);
-        break;
       case 'term.open':
         _termOpen(f);
-        break;
       case 'term.input':
         _sessionById(f['sid'] as String?)?.sendText((f['d'] as String?) ?? '');
-        break;
       case 'term.resize':
         _sessionById(f['sid'] as String?)?.resizeFromRemote(
           (f['rows'] as num?)?.toInt() ?? 0,
           (f['cols'] as num?)?.toInt() ?? 0,
         );
-        break;
       case 'fs.list':
         _fsList(f);
-        break;
       case 'fs.read':
         _fsRead(f);
-        break;
     }
   }
 
@@ -184,8 +90,8 @@ class RemoteHost extends ChangeNotifier {
         )
         .toList();
     final rs = roots().map((r) => {'name': r.name, 'path': r.path}).toList();
-    _send({'t': 'sessions', 'to': to, 'items': sess});
-    _send({'t': 'roots', 'to': to, 'items': rs});
+    send({'t': 'sessions', 'to': to, 'items': sess});
+    send({'t': 'roots', 'to': to, 'items': rs});
   }
 
   TerminalSession? _sessionById(String? sid) {
@@ -204,7 +110,7 @@ class RemoteHost extends ChangeNotifier {
     (_watchers[s.id] ??= {}).add(from);
     s.remoteSink = (chunk) {
       for (final c in _watchers[s.id] ?? const <int>{}) {
-        _send({'t': 'term.output', 'to': c, 'sid': s.id, 'd': chunk});
+        send({'t': 'term.output', 'to': c, 'sid': s.id, 'd': chunk});
       }
     };
   }
@@ -255,14 +161,14 @@ class RemoteHost extends ChangeNotifier {
     final path = _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
-      _send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
+      send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
       return;
     }
     final entries = <Map<String, dynamic>>[];
     try {
       await for (final e in Directory(path).list(followLinks: false)) {
         final name = e.path.split('/').last;
-        if (_ignore.contains(name)) continue;
+        if (kIgnoredEntries.contains(name)) continue;
         final isDir = e is Directory;
         var size = 0;
         if (!isDir) {
@@ -273,7 +179,7 @@ class RemoteHost extends ChangeNotifier {
         entries.add({'name': name, 'dir': isDir, 'size': size});
       }
     } catch (e) {
-      _send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '$e'});
+      send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '$e'});
       return;
     }
     entries.sort((a, b) {
@@ -283,7 +189,7 @@ class RemoteHost extends ChangeNotifier {
         (b['name'] as String).toLowerCase(),
       );
     });
-    _send({'t': 'fs.list.ok', 'to': to, 'path': path, 'entries': entries});
+    send({'t': 'fs.list.ok', 'to': to, 'path': path, 'entries': entries});
   }
 
   Future<void> _fsRead(Map<String, dynamic> f) async {
@@ -291,21 +197,21 @@ class RemoteHost extends ChangeNotifier {
     final path = _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
-      _send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
+      send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
       return;
     }
     try {
       final file = File(path);
       final len = await file.length();
       if (len > _maxRead) {
-        _send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '文件过大'});
+        send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '文件过大'});
         return;
       }
       final bytes = await file.readAsBytes();
       final content = const Utf8Decoder(allowMalformed: true).convert(bytes);
-      _send({'t': 'fs.read.ok', 'to': to, 'path': path, 'content': content});
+      send({'t': 'fs.read.ok', 'to': to, 'path': path, 'content': content});
     } catch (e) {
-      _send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '$e'});
+      send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '$e'});
     }
   }
 }

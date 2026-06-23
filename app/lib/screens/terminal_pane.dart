@@ -87,7 +87,7 @@ class _TerminalPaneState extends State<TerminalPane> {
   Widget build(BuildContext context) {
     return TerminalView(
       widget.session.terminal,
-      theme: _ccTerminalTheme,
+      theme: ccTerminalTheme,
       textStyle: const TerminalStyle(fontFamily: 'JetBrainsMono', fontSize: 13),
       backgroundOpacity: 1,
       padding: const EdgeInsets.all(10),
@@ -97,7 +97,7 @@ class _TerminalPaneState extends State<TerminalPane> {
 
 // Terminal palette aligned with the app: indigo cursor, our bg/fg, and semantic
 // red/green/amber ANSI hues (VS Code-derived) so agent TUIs look cohesive.
-const _ccTerminalTheme = TerminalTheme(
+const ccTerminalTheme = TerminalTheme(
   cursor: Color(0xFF818CF8),
   selection: Color(0x55818CF8),
   foreground: Color(0xFFE6EAF2),

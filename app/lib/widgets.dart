@@ -6,6 +6,25 @@ import 'theme.dart';
 
 // Small UI helpers shared across screens (deduped from per-page copies).
 
+// kIgnoredEntries are dirs/files never worth browsing — skipped by the local
+// file tree and the remote-workspace file server alike.
+const kIgnoredEntries = {
+  '.git',
+  'node_modules',
+  'build',
+  '.dart_tool',
+  '.idea',
+  'dist',
+  'vendor',
+  'target',
+  '.gradle',
+  'Pods',
+  '.next',
+  '__pycache__',
+  '.venv',
+  '.DS_Store',
+};
+
 // errorText maps an exception (esp. DioException) to a short friendly message
 // instead of leaking a raw stack/JSON string to the user.
 String errorText(Object e) {
