@@ -130,11 +130,51 @@ class _WorkspacePageState extends State<WorkspacePage>
     sessions: () => terms,
     roots: () => [
       for (final ws in _cfg.workspaces)
-        for (final p in ws.projects) RemoteRoot(p.name, p.path),
+        for (final p in ws.projects) RemoteRoot(p.name, p.path, ws.name),
     ],
+    onNewSession: _remoteNewSession,
+    onCloseSession: _remoteCloseSession,
+    onRenameSession: _remoteRenameSession,
+    onConfigAction: _remoteConfigAction,
   );
+  bool _remoteWasConnected = false;
+  int _remoteLastClients = 0;
+  String? _remoteShownErr;
   void _onRemoteChange() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final h = _remoteHost;
+    if (h.connected && !_remoteWasConnected) {
+      _remoteSnack('已连接 relay · 在手机端打开「远程」标签即可操作');
+      _remoteShownErr = null;
+    }
+    if (h.clientCount > _remoteLastClients) {
+      _remoteSnack('手机已连接（${h.clientCount}）');
+    }
+    final err = h.lastError;
+    if (h.sharing && !h.connected && err != null && err != _remoteShownErr) {
+      _remoteShownErr = err;
+      _remoteSnack('共享连接失败：$err', error: true);
+    }
+    _remoteWasConnected = h.connected;
+    _remoteLastClients = h.clientCount;
+    setState(() {});
+  }
+
+  void _remoteSnack(String msg, {bool error = false}) => snack(
+    context,
+    msg,
+    background: error ? CcColors.danger : null,
+    duration: Duration(seconds: error ? 6 : 3),
+    clearPrevious: true,
+  );
+
+  // Share-toggle accent: amber while connecting, green once a phone is on,
+  // blue when connected but still waiting for one. Null = not sharing.
+  Color? _remoteActiveColor() {
+    final h = _remoteHost;
+    if (!h.sharing) return null;
+    if (!h.connected) return CcColors.warning;
+    return h.clientCount > 0 ? CcColors.ok : CcColors.accentBright;
   }
 
   Map<String, List<ListItem>> _tasksByRepo = const {};
@@ -212,6 +252,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   @override
   void initState() {
     super.initState();
+    onTermsChanged = _remoteHost.broadcastSessions;
     _remoteHost.addListener(_onRemoteChange);
     _loadTasks();
     // After restoring persisted sessions, expand the projects that own them so
@@ -320,6 +361,82 @@ class _WorkspacePageState extends State<WorkspacePage>
     _setTerminalCollapsed(false);
     final ctl = _ctlFor(p.path);
     if (!ctl.isExpanded) ctl.expand();
+  }
+
+  // --- remote (phone) session actions; wired into _remoteHost ---
+  void _remoteNewSession(String projectPath, String agent) {
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (p.path == projectPath) {
+          _launch(p.path, agent == 'codex' ? 'codex' : 'claude', ws.preLaunch);
+          return;
+        }
+      }
+    }
+  }
+
+  void _remoteCloseSession(String sid) {
+    final i = terms.indexWhere((s) => s.id == sid);
+    if (i >= 0) closeTerm(i);
+  }
+
+  void _remoteRenameSession(String sid, String name) {
+    final i = terms.indexWhere((s) => s.id == sid);
+    if (i < 0) return;
+    final n = name.trim();
+    setState(() => terms[i].name = n.isEmpty ? null : n);
+    persistTerms();
+  }
+
+  // Runs a phone-triggered config mutation via the Cli, then reloads config so
+  // the desktop tree updates and the host re-broadcasts roots to phones.
+  Future<void> _remoteConfigAction(
+    String action,
+    Map<String, dynamic> a,
+  ) async {
+    switch (action) {
+      case 'wt.add':
+        await Cli.worktreeAdd(
+          a['project'] as String,
+          a['branch'] as String,
+          workspace: a['workspace'] as String?,
+          start: a['start'] as String?,
+        );
+      case 'wt.remove':
+        await Cli.worktreeRemove(
+          a['project'] as String,
+          a['branch'] as String,
+          workspace: a['workspace'] as String?,
+          force: a['force'] == true,
+        );
+      case 'ws.new':
+        await Cli.workspaceCreate(
+          a['name'] as String,
+          path: a['path'] as String?,
+        );
+      case 'ws.remove':
+        await Cli.workspaceRemove(a['name'] as String);
+      case 'proj.add':
+        await Cli.workspaceAdd(a['workspace'] as String, a['source'] as String);
+      case 'proj.remove':
+        await Cli.projectRemove(
+          a['workspace'] as String,
+          a['project'] as String,
+        );
+    }
+    final cfg = await AppConfig.load();
+    if (cfg != null && mounted) {
+      setState(
+        () => _cfg = AppConfig(
+          _cfg.relayUrl,
+          _cfg.token,
+          _cfg.identity,
+          cfg.repos,
+          cfg.workspaces,
+        ),
+      );
+    }
+    _remoteHost.broadcastRoots();
   }
 
   void _selectGitProject(ProjectCfg p, {bool openTool = false}) {
@@ -1526,11 +1643,14 @@ class _WorkspacePageState extends State<WorkspacePage>
                 ? '手机远程：${_remoteHost.connected ? (_remoteHost.clientCount > 0 ? '${_remoteHost.clientCount} 台已连' : '等待手机') : '连接中…'}（点击关闭共享）'
                 : '把工作区共享给手机（远程办公）',
             selected: _remoteHost.sharing,
+            activeColor: _remoteActiveColor(),
             onPressed: () {
               if (_remoteHost.sharing) {
                 _remoteHost.disable();
+                _remoteSnack('已停止共享');
               } else {
                 _remoteHost.enable();
+                _remoteSnack('已开启共享 · 正在连接 relay…');
               }
             },
           ),
@@ -1621,6 +1741,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     required String tooltip,
     required bool selected,
     required VoidCallback? onPressed,
+    Color? activeColor,
   }) => Padding(
     padding: const EdgeInsets.only(right: 2),
     child: Tooltip(
@@ -1630,9 +1751,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         visualDensity: VisualDensity.compact,
         onPressed: onPressed,
         style: IconButton.styleFrom(
-          foregroundColor: selected ? CcColors.text : CcColors.muted,
+          foregroundColor: selected
+              ? (activeColor ?? CcColors.text)
+              : CcColors.muted,
           backgroundColor: selected
-              ? CcColors.accent.withValues(alpha: 0.16)
+              ? (activeColor ?? CcColors.accent).withValues(alpha: 0.16)
               : Colors.transparent,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
         ),

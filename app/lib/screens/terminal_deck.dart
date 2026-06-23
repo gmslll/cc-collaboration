@@ -21,11 +21,16 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
 
   String? get persistKey => null;
 
+  // onTermsChanged fires after the session list changes (add/close/rename/
+  // restore) so a remote host can re-broadcast the session list to phones.
+  void Function()? onTermsChanged;
+
   void addTerm(String workdir, String command) {
     setState(() {
       terms.add(TerminalSession(workdir, command));
       activeTerm = terms.length - 1;
     });
+    onTermsChanged?.call();
     unawaited(_save());
   }
 
@@ -37,6 +42,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         activeTerm = terms.isEmpty ? 0 : terms.length - 1;
       }
     });
+    onTermsChanged?.call();
     unawaited(_save());
   }
 
@@ -72,6 +78,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         terms.addAll(restored);
         activeTerm = 0;
       });
+      onTermsChanged?.call();
     } catch (_) {}
   }
 
@@ -80,20 +87,29 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
 
   // persistTerms re-saves the session list (e.g. after a rename). No-op unless
   // persistKey is set.
-  void persistTerms() => unawaited(_save());
+  void persistTerms() {
+    onTermsChanged?.call();
+    unawaited(_save());
+  }
 
   Future<void> _save() async {
     final key = persistKey;
     if (key == null) return;
     try {
       final f = File(await _persistPath(key));
-      await f.writeAsString(jsonEncode(terms
-          .map((s) => {
-                'workdir': s.workdir,
-                'command': s.command,
-                if (s.name?.isNotEmpty ?? false) 'name': s.name,
-              })
-          .toList()));
+      await f.writeAsString(
+        jsonEncode(
+          terms
+              .map(
+                (s) => {
+                  'workdir': s.workdir,
+                  'command': s.command,
+                  if (s.name?.isNotEmpty ?? false) 'name': s.name,
+                },
+              )
+              .toList(),
+        ),
+      );
     } catch (_) {}
   }
 
@@ -103,12 +119,12 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       terms.isEmpty ? null : (t) => terms[activeTerm].sendText(t);
 
   Widget terminalDeck({VoidCallback? onCollapse}) => TerminalDeck(
-        terms: terms,
-        active: activeTerm,
-        onSwitch: (i) => setState(() => activeTerm = i),
-        onClose: closeTerm,
-        onCollapse: onCollapse,
-      );
+    terms: terms,
+    active: activeTerm,
+    onSwitch: (i) => setState(() => activeTerm = i),
+    onClose: closeTerm,
+    onCollapse: onCollapse,
+  );
 
   // terminalBody is just the active terminal (no tab bar) — for hosts that put
   // the session list elsewhere (the workspace tree shows sessions under their
@@ -150,31 +166,35 @@ class TerminalDeck extends StatelessWidget {
   Widget build(BuildContext context) {
     if (terms.isEmpty) return const SizedBox.shrink();
     final idx = active.clamp(0, terms.length - 1);
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      TerminalTabBar(
-        terms: terms,
-        active: active,
-        onSwitch: onSwitch,
-        onClose: onClose,
-        trailing: onCollapse != null
-            ? IconButton(
-                icon: const Icon(Icons.chevron_right_rounded, size: 16),
-                tooltip: '收起终端',
-                onPressed: onCollapse)
-            : null,
-      ),
-      Expanded(
-        child: ColoredBox(
-          color: CcColors.bg,
-          child: IndexedStack(
-            index: idx,
-            children: terms
-                .map((s) => TerminalPane(key: ValueKey(s), session: s))
-                .toList(),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TerminalTabBar(
+          terms: terms,
+          active: active,
+          onSwitch: onSwitch,
+          onClose: onClose,
+          trailing: onCollapse != null
+              ? IconButton(
+                  icon: const Icon(Icons.chevron_right_rounded, size: 16),
+                  tooltip: '收起终端',
+                  onPressed: onCollapse,
+                )
+              : null,
+        ),
+        Expanded(
+          child: ColoredBox(
+            color: CcColors.bg,
+            child: IndexedStack(
+              index: idx,
+              children: terms
+                  .map((s) => TerminalPane(key: ValueKey(s), session: s))
+                  .toList(),
+            ),
           ),
         ),
-      ),
-    ]);
+      ],
+    );
   }
 }
 
@@ -204,49 +224,63 @@ class TerminalTabBar extends StatelessWidget {
     return Container(
       color: CcColors.panel,
       height: 38,
-      child: Row(children: [
-        ?leading,
-        Expanded(
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: terms.length,
-            itemBuilder: (_, i) {
-              final isActive = i == idx;
-              return InkWell(
-                onTap: () => onSwitch(i),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: BoxDecoration(
-                    border: Border(
+      child: Row(
+        children: [
+          ?leading,
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: terms.length,
+              itemBuilder: (_, i) {
+                final isActive = i == idx;
+                return InkWell(
+                  onTap: () => onSwitch(i),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      border: Border(
                         bottom: BorderSide(
-                            color:
-                                isActive ? CcColors.accent : Colors.transparent,
-                            width: 2)),
-                  ),
-                  child: Row(children: [
-                    Icon(Icons.terminal_rounded,
-                        size: 14,
-                        color: isActive ? CcColors.accent : CcColors.muted),
-                    const SizedBox(width: 6),
-                    Text(terms[i].label,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color:
-                                isActive ? CcColors.text : CcColors.muted)),
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: () => onClose(i),
-                      child: const Icon(Icons.close_rounded,
-                          size: 14, color: CcColors.muted),
+                          color: isActive
+                              ? CcColors.accent
+                              : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
                     ),
-                  ]),
-                ),
-              );
-            },
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.terminal_rounded,
+                          size: 14,
+                          color: isActive ? CcColors.accent : CcColors.muted,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          terms[i].label,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isActive ? CcColors.text : CcColors.muted,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        InkWell(
+                          onTap: () => onClose(i),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            size: 14,
+                            color: CcColors.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
-        ),
-        ?trailing,
-      ]),
+          ?trailing,
+        ],
+      ),
     );
   }
 }

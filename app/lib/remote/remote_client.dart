@@ -14,7 +14,16 @@ class RemoteSession {
 class RemoteRootInfo {
   final String name;
   final String path;
-  RemoteRootInfo(this.name, this.path);
+  final String workspace;
+  RemoteRootInfo(this.name, this.path, this.workspace);
+}
+
+class RemoteWorktree {
+  final String path;
+  final String branch;
+  RemoteWorktree(this.path, this.branch);
+  String get name =>
+      path.split('/').lastWhere((s) => s.isNotEmpty, orElse: () => path);
 }
 
 class RemoteEntry {
@@ -22,6 +31,39 @@ class RemoteEntry {
   final bool dir;
   final int size;
   RemoteEntry(this.name, this.dir, this.size);
+}
+
+class RemoteGitChange {
+  final String path;
+  final String status;
+  final bool staged;
+  final bool untracked;
+  final bool conflicted;
+  RemoteGitChange(
+    this.path,
+    this.status,
+    this.staged,
+    this.untracked,
+    this.conflicted,
+  );
+}
+
+class RemoteGitCommit {
+  final String hash;
+  final String short;
+  final String author;
+  final String date;
+  final String subject;
+  RemoteGitCommit(this.hash, this.short, this.author, this.date, this.subject);
+}
+
+class RemoteBranch {
+  final String name;
+  final bool current;
+  final bool remote;
+  final int ahead;
+  final int behind;
+  RemoteBranch(this.name, this.current, this.remote, this.ahead, this.behind);
 }
 
 // RemoteClient is the phone side of the remote workspace: over the relay (see
@@ -43,11 +85,33 @@ class RemoteClient extends RemoteChannel {
   bool fsLoading = false;
   String? fsError;
 
-  // File viewer.
+  // File viewer + editor.
   String? filePath;
   String? fileContent;
   bool fileLoading = false;
   String? fileError;
+  bool fileSaving = false;
+  String? fileSaveError;
+
+  // Git view: working-tree changes + recent commits for the selected repo.
+  String? gitRepo;
+  List<RemoteGitChange> gitChanges = [];
+  List<RemoteGitCommit> gitCommits = [];
+  bool gitLoading = false;
+  String? gitError;
+  List<RemoteBranch> branches = [];
+  String? gitOpError; // last failed git operation (for a transient toast)
+
+  // Project management: worktrees of the project being managed (wtProject=path).
+  String? wtProject;
+  List<RemoteWorktree> worktrees = [];
+  String? cfgError; // last failed config op (for a transient toast)
+
+  // Diff viewer (a file's working diff, or a commit's full diff).
+  String? diffTitle;
+  String? diffContent;
+  bool diffLoading = false;
+  String? diffError;
 
   final Map<String, Terminal> _terminals = {};
 
@@ -88,7 +152,11 @@ class RemoteClient extends RemoteChannel {
       case 'roots':
         roots = [
           for (final r in (f['items'] as List? ?? []))
-            RemoteRootInfo(r['name'] as String, r['path'] as String),
+            RemoteRootInfo(
+              r['name'] as String,
+              r['path'] as String,
+              (r['workspace'] as String?) ?? '',
+            ),
         ];
         notifyListeners();
       case 'term.output':
@@ -114,6 +182,14 @@ class RemoteClient extends RemoteChannel {
         fileLoading = false;
         fileError = null;
         notifyListeners();
+      case 'fs.write.ok':
+        fileSaving = false;
+        fileSaveError = null;
+        notifyListeners();
+      case 'fs.write.err':
+        fileSaving = false;
+        fileSaveError = (f['msg'] as String?) ?? '失败';
+        notifyListeners();
       case 'fs.err':
         if (fileLoading) {
           fileLoading = false;
@@ -123,6 +199,77 @@ class RemoteClient extends RemoteChannel {
           fsLoading = false;
           fsError = (f['msg'] as String?) ?? '失败';
         }
+        notifyListeners();
+      case 'git.status.ok':
+        gitRepo = f['path'] as String?;
+        gitChanges = [
+          for (final c in (f['changes'] as List? ?? []))
+            RemoteGitChange(
+              c['path'] as String,
+              (c['status'] as String?) ?? 'M',
+              (c['staged'] as bool?) ?? false,
+              (c['untracked'] as bool?) ?? false,
+              (c['conflicted'] as bool?) ?? false,
+            ),
+        ];
+        gitCommits = [
+          for (final c in (f['commits'] as List? ?? []))
+            RemoteGitCommit(
+              c['hash'] as String,
+              (c['short'] as String?) ?? '',
+              (c['author'] as String?) ?? '',
+              (c['date'] as String?) ?? '',
+              (c['subject'] as String?) ?? '',
+            ),
+        ];
+        gitLoading = false;
+        gitError = null;
+        notifyListeners();
+      case 'git.diff.ok':
+      case 'git.show.ok':
+        diffContent = (f['diff'] as String?) ?? '';
+        diffLoading = false;
+        diffError = null;
+        notifyListeners();
+      case 'git.err':
+        if (diffLoading) {
+          diffLoading = false;
+          diffError = (f['msg'] as String?) ?? '失败';
+        } else {
+          gitLoading = false;
+          gitError = (f['msg'] as String?) ?? '失败';
+        }
+        notifyListeners();
+      case 'git.op.ok':
+        gitOpError = null;
+        if (gitRepo != null) refreshGit();
+      case 'git.op.err':
+        gitOpError = (f['msg'] as String?) ?? '失败';
+        notifyListeners();
+      case 'git.branches.ok':
+        branches = [
+          for (final b in (f['branches'] as List? ?? []))
+            RemoteBranch(
+              b['name'] as String,
+              (b['current'] as bool?) ?? false,
+              (b['remote'] as bool?) ?? false,
+              (b['ahead'] as num?)?.toInt() ?? 0,
+              (b['behind'] as num?)?.toInt() ?? 0,
+            ),
+        ];
+        notifyListeners();
+      case 'wt.list.ok':
+        wtProject = f['path'] as String?;
+        worktrees = [
+          for (final w in (f['worktrees'] as List? ?? []))
+            RemoteWorktree(w['path'] as String, (w['branch'] as String?) ?? ''),
+        ];
+        notifyListeners();
+      case 'cfg.ok':
+        cfgError = null;
+        if (wtProject != null) loadWorktrees(wtProject!);
+      case 'cfg.err':
+        cfgError = (f['msg'] as String?) ?? '失败';
         notifyListeners();
     }
   }
@@ -148,6 +295,13 @@ class RemoteClient extends RemoteChannel {
     return term;
   }
 
+  // Session write actions (the host re-broadcasts `sessions` after each).
+  void newSession(String projectPath, String agent) =>
+      send({'t': 'session.new', 'project': projectPath, 'agent': agent});
+  void closeSession(String sid) => send({'t': 'session.close', 'sid': sid});
+  void renameSession(String sid, String name) =>
+      send({'t': 'session.rename', 'sid': sid, 'name': name});
+
   void openDir(String path) {
     fsLoading = true;
     fsError = null;
@@ -163,4 +317,101 @@ class RemoteClient extends RemoteChannel {
     notifyListeners();
     send({'t': 'fs.read', 'path': path});
   }
+
+  void saveFile(String path, String content) {
+    fileSaving = true;
+    fileSaveError = null;
+    notifyListeners();
+    send({'t': 'fs.write', 'path': path, 'content': content});
+  }
+
+  void openGit(String repo) {
+    gitRepo = repo;
+    gitChanges = [];
+    gitCommits = [];
+    gitLoading = true;
+    gitError = null;
+    notifyListeners();
+    send({'t': 'git.status', 'path': repo});
+  }
+
+  void refreshGit() {
+    final r = gitRepo;
+    if (r != null) openGit(r);
+  }
+
+  void requestWorkingDiff(String repo, String file) {
+    diffTitle = file;
+    diffContent = null;
+    diffLoading = true;
+    diffError = null;
+    notifyListeners();
+    send({'t': 'git.diff', 'path': repo, 'file': file});
+  }
+
+  void requestCommitDiff(String repo, String hash, String title) {
+    diffTitle = title;
+    diffContent = null;
+    diffLoading = true;
+    diffError = null;
+    notifyListeners();
+    send({'t': 'git.show', 'path': repo, 'hash': hash});
+  }
+
+  // Git write ops — host replies git.op.ok (→ auto refresh) or git.op.err.
+  void gitStage(String repo, String file) =>
+      send({'t': 'git.stage', 'path': repo, 'file': file});
+  void gitUnstage(String repo, String file) =>
+      send({'t': 'git.unstage', 'path': repo, 'file': file});
+  void gitStageAll(String repo) => send({'t': 'git.stageAll', 'path': repo});
+  void gitUnstageAll(String repo) =>
+      send({'t': 'git.unstageAll', 'path': repo});
+  void gitDiscard(String repo, String file) =>
+      send({'t': 'git.discard', 'path': repo, 'file': file});
+  void gitDiscardAll(String repo) =>
+      send({'t': 'git.discardAll', 'path': repo});
+  void gitCommit(String repo, String message, {bool push = false}) =>
+      send({'t': 'git.commit', 'path': repo, 'message': message, 'push': push});
+  void gitPush(String repo) => send({'t': 'git.push', 'path': repo});
+  void gitPull(String repo) => send({'t': 'git.pull', 'path': repo});
+  void gitFetch(String repo) => send({'t': 'git.fetch', 'path': repo});
+  void loadBranches(String repo) => send({'t': 'git.branches', 'path': repo});
+  void gitCheckout(String repo, String branch) =>
+      send({'t': 'git.checkout', 'path': repo, 'branch': branch});
+  void gitCreateBranch(String repo, String branch) =>
+      send({'t': 'git.createBranch', 'path': repo, 'branch': branch});
+  void gitStash(String repo, String message) =>
+      send({'t': 'git.stash', 'path': repo, 'message': message});
+  void gitStashPop(String repo, String ref) =>
+      send({'t': 'git.stashPop', 'path': repo, 'ref': ref});
+
+  // Project management — host replies cfg.ok (→ rebroadcast roots) or cfg.err.
+  void loadWorktrees(String projectPath) =>
+      send({'t': 'wt.list', 'path': projectPath});
+  void newWorkspace(String name, String path) =>
+      send({'t': 'ws.new', 'name': name, if (path.isNotEmpty) 'path': path});
+  void removeWorkspace(String name) => send({'t': 'ws.remove', 'name': name});
+  void addProject(String workspace, String source) =>
+      send({'t': 'proj.add', 'workspace': workspace, 'source': source});
+  void removeProject(String workspace, String project) =>
+      send({'t': 'proj.remove', 'workspace': workspace, 'project': project});
+  void addWorktree(
+    String workspace,
+    String project,
+    String branch,
+    String start,
+  ) => send({
+    't': 'wt.add',
+    'workspace': workspace,
+    'project': project,
+    'branch': branch,
+    if (start.isNotEmpty) 'start': start,
+  });
+  void removeWorktree(String workspace, String project, String branch) => send({
+    't': 'wt.remove',
+    'workspace': workspace,
+    'project': project,
+    'branch': branch,
+    'force': true,
+  });
 }

@@ -60,10 +60,88 @@ String errorText(Object e) {
   return '$e';
 }
 
-void snack(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+void snack(
+  BuildContext context,
+  String message, {
+  Color? background,
+  Duration? duration,
+  bool clearPrevious = false,
+}) {
+  final m = ScaffoldMessenger.of(context);
+  if (clearPrevious) m.clearSnackBars();
+  m.showSnackBar(
+    SnackBar(
+      content: Text(message),
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: background,
+      duration: duration ?? const Duration(seconds: 4),
+    ),
   );
+}
+
+// confirm shows a yes/no dialog; returns true only if the user confirms.
+Future<bool> confirm(
+  BuildContext context,
+  String message, {
+  String? title,
+  String okLabel = '确认',
+}) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: title == null ? null : Text(title),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text(okLabel),
+        ),
+      ],
+    ),
+  );
+  return ok ?? false;
+}
+
+// textPrompt asks for a single line of text. Returns the trimmed input, or null
+// if cancelled (or left empty when allowEmpty is false).
+Future<String?> textPrompt(
+  BuildContext context, {
+  required String title,
+  String? hint,
+  String initial = '',
+  String okLabel = '确定',
+  bool allowEmpty = false,
+}) async {
+  final ctl = TextEditingController(text: initial);
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: TextField(
+        controller: ctl,
+        autofocus: true,
+        decoration: InputDecoration(hintText: hint),
+        onSubmitted: (_) => Navigator.pop(ctx, true),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text(okLabel),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return null;
+  final text = ctl.text.trim();
+  return (text.isEmpty && !allowEmpty) ? null : text;
 }
 
 // centerMsg is the shared muted empty/placeholder state, optionally with a retry.

@@ -1,15 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../local/git.dart';
+import '../local/worktrees.dart';
 import '../screens/terminal_pane.dart';
 import '../widgets.dart' show kIgnoredEntries;
 import 'remote_channel.dart';
 
-// A project root the host exposes to remote clients.
+// A project root the host exposes to remote clients (workspace = owning ws name).
 class RemoteRoot {
   final String name;
   final String path;
-  const RemoteRoot(this.name, this.path);
+  final String workspace;
+  const RemoteRoot(this.name, this.path, this.workspace);
 }
 
 // RemoteHost shares this desktop's workspace (terminal sessions + project files)
@@ -20,12 +24,25 @@ class RemoteRoot {
 class RemoteHost extends RemoteChannel {
   final List<TerminalSession> Function() sessions;
   final List<RemoteRoot> Function() roots;
+  // Write actions that must touch WorkspacePage state (launch/close/rename a
+  // session). Null on hosts that only expose read access.
+  final void Function(String projectPath, String agent)? onNewSession;
+  final void Function(String sid)? onCloseSession;
+  final void Function(String sid, String name)? onRenameSession;
+  // Config mutations (worktree/workspace/project add/remove) — run the matching
+  // Cli command, reload config, then call broadcastRoots. Null = read-only host.
+  final Future<void> Function(String action, Map<String, dynamic> args)?
+  onConfigAction;
 
   RemoteHost({
     required super.relayUrl,
     required super.token,
     required this.sessions,
     required this.roots,
+    this.onNewSession,
+    this.onCloseSession,
+    this.onRenameSession,
+    this.onConfigAction,
   }) : super(role: 'host');
 
   int _clients = 0;
@@ -71,27 +88,87 @@ class RemoteHost extends RemoteChannel {
           (f['rows'] as num?)?.toInt() ?? 0,
           (f['cols'] as num?)?.toInt() ?? 0,
         );
+      case 'session.new':
+        onNewSession?.call(
+          (f['project'] as String?) ?? '',
+          (f['agent'] as String?) ?? 'claude',
+        );
+      case 'session.close':
+        final sid = f['sid'] as String?;
+        if (sid != null) onCloseSession?.call(sid);
+      case 'session.rename':
+        final sid = f['sid'] as String?;
+        final name = f['name'] as String?;
+        if (sid != null && name != null) onRenameSession?.call(sid, name);
       case 'fs.list':
         _fsList(f);
       case 'fs.read':
         _fsRead(f);
+      case 'fs.write':
+        _fsWrite(f);
+      case 'git.status':
+        _gitStatus(f);
+      case 'git.diff':
+        _gitDiff(f);
+      case 'git.show':
+        _gitShow(f);
+      case 'git.stage':
+      case 'git.unstage':
+      case 'git.stageAll':
+      case 'git.unstageAll':
+      case 'git.discard':
+      case 'git.discardAll':
+      case 'git.commit':
+      case 'git.push':
+      case 'git.pull':
+      case 'git.fetch':
+      case 'git.checkout':
+      case 'git.createBranch':
+      case 'git.stash':
+      case 'git.stashPop':
+        _gitOp(f);
+      case 'git.branches':
+        _gitBranches(f);
+      case 'wt.add':
+      case 'wt.remove':
+      case 'ws.new':
+      case 'ws.remove':
+      case 'proj.add':
+      case 'proj.remove':
+        _cfgOp(f);
+      case 'wt.list':
+        _wtList(f);
     }
   }
 
+  List<Map<String, dynamic>> _sessionItems() => sessions()
+      .map(
+        (s) => {
+          'sid': s.id,
+          'title': s.label,
+          'workdir': s.workdir,
+          'agent': s.command.contains('codex') ? 'codex' : 'claude',
+        },
+      )
+      .toList();
+
+  List<Map<String, dynamic>> _rootItems() => roots()
+      .map((r) => {'name': r.name, 'path': r.path, 'workspace': r.workspace})
+      .toList();
+
   void _replyList(int to) {
-    final sess = sessions()
-        .map(
-          (s) => {
-            'sid': s.id,
-            'title': s.label,
-            'workdir': s.workdir,
-            'agent': s.command.contains('codex') ? 'codex' : 'claude',
-          },
-        )
-        .toList();
-    final rs = roots().map((r) => {'name': r.name, 'path': r.path}).toList();
-    send({'t': 'sessions', 'to': to, 'items': sess});
-    send({'t': 'roots', 'to': to, 'items': rs});
+    send({'t': 'sessions', 'to': to, 'items': _sessionItems()});
+    send({'t': 'roots', 'to': to, 'items': _rootItems()});
+  }
+
+  // broadcastSessions/Roots push the current lists to ALL connected clients
+  // (to:0) after a change, so phones stay in sync without re-requesting.
+  void broadcastSessions() {
+    if (connected) send({'t': 'sessions', 'to': 0, 'items': _sessionItems()});
+  }
+
+  void broadcastRoots() {
+    if (connected) send({'t': 'roots', 'to': 0, 'items': _rootItems()});
   }
 
   TerminalSession? _sessionById(String? sid) {
@@ -212,6 +289,254 @@ class RemoteHost extends RemoteChannel {
       send({'t': 'fs.read.ok', 'to': to, 'path': path, 'content': content});
     } catch (e) {
       send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '$e'});
+    }
+  }
+
+  // fs.write: save edited content back to a file (scoped to a project root),
+  // preserving the file's existing line ending like the desktop editor does.
+  Future<void> _fsWrite(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final path = _safePath(f['path'] as String?);
+    final content = f['content'] as String?;
+    if (to == null) return;
+    if (path == null || content == null) {
+      send({
+        't': 'fs.write.err',
+        'to': to,
+        'path': f['path'],
+        'msg': 'forbidden',
+      });
+      return;
+    }
+    try {
+      var out = content;
+      try {
+        final existing = await File(path).readAsString();
+        if (existing.contains('\r\n')) out = content.replaceAll('\n', '\r\n');
+      } catch (_) {}
+      await File(path).writeAsString(out);
+      send({'t': 'fs.write.ok', 'to': to, 'path': path});
+    } catch (e) {
+      send({'t': 'fs.write.err', 'to': to, 'path': path, 'msg': '$e'});
+    }
+  }
+
+  // git.status: working-tree changes + recent commits for a (root) repo.
+  Future<void> _gitStatus(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final path = _safePath(f['path'] as String?);
+    if (to == null) return;
+    if (path == null) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    try {
+      final (changes, commits) = await (
+        gitChanges(path),
+        gitLog(path, max: 30),
+      ).wait;
+      send({
+        't': 'git.status.ok',
+        'to': to,
+        'path': path,
+        'changes': [
+          for (final c in changes)
+            {
+              'path': c.path,
+              'status': c.status,
+              'staged': c.staged,
+              'untracked': c.untracked,
+              'conflicted': c.conflicted,
+            },
+        ],
+        'commits': [
+          for (final c in commits)
+            {
+              'hash': c.hash,
+              'short': c.shortHash,
+              'author': c.author,
+              'date': c.date.toIso8601String(),
+              'subject': c.subject,
+            },
+        ],
+      });
+    } catch (e) {
+      send({'t': 'git.err', 'to': to, 'msg': '$e'});
+    }
+  }
+
+  // git.diff: unified diff of a file's working-tree changes.
+  Future<void> _gitDiff(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final path = _safePath(f['path'] as String?);
+    final file = f['file'] as String?;
+    if (to == null) return;
+    if (path == null || file == null || file.contains('..')) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    try {
+      final diff = await gitDiffFileWorking(path, file);
+      send({'t': 'git.diff.ok', 'to': to, 'file': file, 'diff': diff});
+    } catch (e) {
+      send({'t': 'git.err', 'to': to, 'msg': '$e'});
+    }
+  }
+
+  // git.show: full diff of a commit (hash validated to avoid arg injection).
+  Future<void> _gitShow(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final path = _safePath(f['path'] as String?);
+    final hash = f['hash'] as String?;
+    if (to == null) return;
+    if (path == null ||
+        hash == null ||
+        !RegExp(r'^[0-9a-fA-F]{4,40}$').hasMatch(hash)) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    try {
+      final diff = await gitShowCommit(path, hash);
+      send({'t': 'git.show.ok', 'to': to, 'hash': hash, 'diff': diff});
+    } catch (e) {
+      send({'t': 'git.err', 'to': to, 'msg': '$e'});
+    }
+  }
+
+  // _gitOp runs a mutating git command (reusing lib/local/git.dart) and replies
+  // git.op.ok / git.err. The client refreshes status on ok. All scoped to a root.
+  Future<void> _gitOp(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final op = f['t'] as String?;
+    final path = _safePath(f['path'] as String?);
+    if (to == null) return;
+    if (path == null) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    final file = f['file'] as String?;
+    final branch = f['branch'] as String?;
+    try {
+      switch (op) {
+        case 'git.stage':
+          if (file != null) await gitStageFiles(path, [file]);
+        case 'git.unstage':
+          if (file != null) await gitUnstageFiles(path, [file]);
+        case 'git.stageAll':
+          await gitStageAll(path);
+        case 'git.unstageAll':
+          await gitUnstageAll(path);
+        case 'git.discard':
+          if (file != null) await gitRestore(path, file);
+        case 'git.discardAll':
+          await gitRestoreChanges(path, await gitChanges(path));
+        case 'git.commit':
+          final msg = (f['message'] as String?)?.trim() ?? '';
+          if (msg.isEmpty) throw Exception('提交信息不能为空');
+          await gitCommit(path, msg);
+          if (f['push'] == true) {
+            try {
+              await gitPush(path);
+            } catch (_) {
+              await gitPush(path, setUpstream: true);
+            }
+          }
+        case 'git.push':
+          try {
+            await gitPush(path);
+          } catch (_) {
+            await gitPush(path, setUpstream: true);
+          }
+        case 'git.pull':
+          await gitPull(path);
+        case 'git.fetch':
+          await gitFetch(path);
+        case 'git.checkout':
+          if (branch != null) await gitCheckout(path, branch);
+        case 'git.createBranch':
+          if (branch != null) {
+            await gitCreateBranch(path, branch, start: f['start'] as String?);
+          }
+        case 'git.stash':
+          await gitStashPush(path, (f['message'] as String?) ?? '');
+        case 'git.stashPop':
+          final ref = f['ref'] as String?;
+          if (ref != null) await gitStashPop(path, ref);
+      }
+      send({'t': 'git.op.ok', 'to': to, 'op': op});
+    } catch (e) {
+      send({'t': 'git.err', 'to': to, 'msg': '$e'});
+    }
+  }
+
+  Future<void> _gitBranches(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final path = _safePath(f['path'] as String?);
+    if (to == null) return;
+    if (path == null) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    try {
+      final branches = await gitBranches(path);
+      send({
+        't': 'git.branches.ok',
+        'to': to,
+        'branches': [
+          for (final b in branches)
+            {
+              'name': b.name,
+              'current': b.current,
+              'remote': b.remote,
+              'ahead': b.ahead,
+              'behind': b.behind,
+            },
+        ],
+      });
+    } catch (e) {
+      send({'t': 'git.err', 'to': to, 'msg': '$e'});
+    }
+  }
+
+  // _cfgOp runs a config mutation (worktree/workspace/project) through the
+  // WorkspacePage callback (which shells the Cli, reloads config, rebroadcasts).
+  Future<void> _cfgOp(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final action = f['t'] as String?;
+    if (to == null) return;
+    if (action == null || onConfigAction == null) {
+      send({'t': 'cfg.err', 'to': to, 'msg': '不支持'});
+      return;
+    }
+    try {
+      await onConfigAction!(action, f);
+      send({'t': 'cfg.ok', 'to': to, 'op': action});
+    } catch (e) {
+      send({'t': 'cfg.err', 'to': to, 'msg': '$e'});
+    }
+  }
+
+  // wt.list: enumerate a project's worktrees (read-only; reuses listWorktrees).
+  Future<void> _wtList(Map<String, dynamic> f) async {
+    final to = (f['from'] as num?)?.toInt();
+    final path = _safePath(f['path'] as String?);
+    if (to == null) return;
+    if (path == null) {
+      send({'t': 'cfg.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    try {
+      final wts = await listWorktrees(path);
+      send({
+        't': 'wt.list.ok',
+        'to': to,
+        'path': path,
+        'worktrees': [
+          for (final w in wts) {'path': w.path, 'branch': w.branch},
+        ],
+      });
+    } catch (e) {
+      send({'t': 'cfg.err', 'to': to, 'msg': '$e'});
     }
   }
 }

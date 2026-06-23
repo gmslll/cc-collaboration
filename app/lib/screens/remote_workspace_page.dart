@@ -27,20 +27,37 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
     relayUrl: widget.relayUrl,
     token: widget.token,
   );
-  int _tab = 0; // 0 = 会话, 1 = 代码
+  int _tab = 0; // 0 = 会话, 1 = 代码, 2 = Git
   final List<String> _dirStack =
       []; // breadcrumb of opened dirs (empty = roots)
+  String? _gitRepo; // selected repo in the Git tab (null = repo list)
 
   @override
   void initState() {
     super.initState();
+    _c.addListener(_onClientChange);
     _c.connect();
   }
 
   @override
   void dispose() {
+    _c.removeListener(_onClientChange);
     _c.dispose();
     super.dispose();
+  }
+
+  String? _lastGitOpErr;
+  String? _lastCfgErr;
+  void _onClientChange() {
+    if (!mounted) return;
+    _lastGitOpErr = _toastIfNew(_c.gitOpError, _lastGitOpErr);
+    _lastCfgErr = _toastIfNew(_c.cfgError, _lastCfgErr);
+  }
+
+  // Toast when an error field flips to a new value; returns the new "last seen".
+  String? _toastIfNew(String? current, String? last) {
+    if (current != null && current != last) snack(context, '操作失败：$current');
+    return current;
   }
 
   @override
@@ -57,26 +74,40 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
               onPressed: _c.connected ? _c.refresh : null,
             ),
           ],
-          bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(0),
-            child: _statusBanner(),
-          ),
         ),
+        floatingActionButton: (_tab == 0 && _c.connected)
+            ? FloatingActionButton.small(
+                onPressed: _newSessionDialog,
+                tooltip: '新建会话',
+                child: const Icon(Icons.add),
+              )
+            : null,
         body: Column(
           children: [
+            _statusBanner(),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
               child: SegmentedButton<int>(
                 segments: const [
                   ButtonSegment(value: 0, label: Text('会话')),
                   ButtonSegment(value: 1, label: Text('代码')),
+                  ButtonSegment(value: 2, label: Text('Git')),
+                  ButtonSegment(value: 3, label: Text('管理')),
                 ],
                 selected: {_tab},
                 showSelectedIcon: false,
                 onSelectionChanged: (s) => setState(() => _tab = s.first),
               ),
             ),
-            Expanded(child: _tab == 0 ? _sessionsTab() : _codeTab()),
+            Expanded(
+              child: _tab == 0
+                  ? _sessionsTab()
+                  : _tab == 1
+                  ? _codeTab()
+                  : _tab == 2
+                  ? _gitTab()
+                  : _manageTab(),
+            ),
           ],
         ),
       ),
@@ -98,7 +129,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
           statusDot(color, size: 7, glow: true),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(text, style: TextStyle(color: color, fontSize: 12)),
+            child: Text(
+              text,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -129,7 +165,17 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
             overflow: TextOverflow.ellipsis,
             style: CcType.code(size: 11.5, color: CcColors.subtle),
           ),
-          trailing: const Icon(Icons.chevron_right_rounded),
+          trailing: PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (v) {
+              if (v == 'rename') _renameSessionDialog(s);
+              if (v == 'close') _c.closeSession(s.sid);
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'rename', child: Text('重命名')),
+              PopupMenuItem(value: 'close', child: Text('关闭')),
+            ],
+          ),
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
@@ -138,6 +184,71 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
         );
       },
     );
+  }
+
+  Future<void> _newSessionDialog() async {
+    if (_c.roots.isEmpty) {
+      snack(context, '没有可用项目');
+      return;
+    }
+    var project = _c.roots.first;
+    var agent = 'claude';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('新建会话'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButton<RemoteRootInfo>(
+                isExpanded: true,
+                value: project,
+                items: [
+                  for (final r in _c.roots)
+                    DropdownMenuItem(value: r, child: Text(r.name)),
+                ],
+                onChanged: (v) => setLocal(() => project = v ?? project),
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'claude', label: Text('Claude')),
+                  ButtonSegment(value: 'codex', label: Text('Codex')),
+                ],
+                selected: {agent},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) => setLocal(() => agent = s.first),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                _c.newSession(project.path, agent);
+                Navigator.pop(ctx);
+              },
+              child: const Text('启动'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _renameSessionDialog(RemoteSession s) async {
+    final name = await textPrompt(
+      context,
+      title: '重命名会话',
+      hint: '会话名称',
+      initial: s.title,
+      allowEmpty: true,
+    );
+    if (name != null) _c.renameSession(s.sid, name);
   }
 
   Widget _codeTab() {
@@ -232,6 +343,494 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
     setState(() => _dirStack.removeLast());
     if (_dirStack.isNotEmpty) _c.openDir(_dirStack.last);
   }
+
+  Widget _gitTab() {
+    if (_gitRepo == null) {
+      if (_c.roots.isEmpty) return centerMsg('电脑端未共享项目');
+      return ListView(
+        children: [
+          for (final r in _c.roots)
+            ListTile(
+              leading: const Icon(Icons.source_rounded),
+              title: Text(r.name),
+              subtitle: Text(
+                r.path,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CcType.code(size: 11, color: CcColors.subtle),
+              ),
+              onTap: () {
+                setState(() => _gitRepo = r.path);
+                _c.openGit(r.path);
+              },
+            ),
+        ],
+      );
+    }
+    return Column(
+      children: [
+        Material(
+          color: CcColors.panel,
+          child: ListTile(
+            dense: true,
+            leading: const Icon(Icons.arrow_back_rounded, size: 20),
+            title: Text(
+              _gitRepo!.split('/').last,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              onPressed: _c.refreshGit,
+            ),
+            onTap: () => setState(() => _gitRepo = null),
+          ),
+        ),
+        const Divider(height: 1, color: CcColors.border),
+        _gitActions(),
+        const Divider(height: 1, color: CcColors.border),
+        Expanded(
+          child: _c.gitLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _c.gitError != null
+              ? centerMsg(_c.gitError!)
+              : ListView(
+                  children: [
+                    _gitSection('工作区改动 (${_c.gitChanges.length})'),
+                    if (_c.gitChanges.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          '无改动',
+                          style: TextStyle(color: CcColors.muted),
+                        ),
+                      ),
+                    for (final c in _c.gitChanges)
+                      ListTile(
+                        dense: true,
+                        leading: _gitBadge(c),
+                        title: Text(
+                          c.path,
+                          style: CcType.code(size: 12.5),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: _changeMenu(c),
+                        onTap: c.untracked
+                            ? null
+                            : () => _openDiff(
+                                () => _c.requestWorkingDiff(_gitRepo!, c.path),
+                                c.path,
+                              ),
+                      ),
+                    _gitSection('最近提交'),
+                    for (final c in _c.gitCommits)
+                      ListTile(
+                        dense: true,
+                        leading: Text(
+                          c.short,
+                          style: CcType.code(
+                            size: 11,
+                            color: CcColors.accentBright,
+                          ),
+                        ),
+                        title: Text(
+                          c.subject,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${c.author} · ${_shortDate(c.date)}',
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            color: CcColors.subtle,
+                          ),
+                        ),
+                        onTap: () => _openDiff(
+                          () => _c.requestCommitDiff(
+                            _gitRepo!,
+                            c.hash,
+                            c.subject,
+                          ),
+                          '${c.short} ${c.subject}',
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _gitSection(String label) => Container(
+    width: double.infinity,
+    color: CcColors.bg,
+    padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+    child: Text(
+      label,
+      style: const TextStyle(
+        fontSize: 11.5,
+        fontWeight: FontWeight.w600,
+        color: CcColors.muted,
+      ),
+    ),
+  );
+
+  Widget _gitBadge(RemoteGitChange c) {
+    final color = c.conflicted
+        ? CcColors.danger
+        : c.untracked
+        ? CcColors.muted
+        : c.staged
+        ? CcColors.ok
+        : CcColors.warning;
+    return SizedBox(
+      width: 22,
+      child: Text(
+        c.status,
+        textAlign: TextAlign.center,
+        style: CcType.code(size: 12, color: color),
+      ),
+    );
+  }
+
+  String _shortDate(String iso) {
+    final d = DateTime.tryParse(iso);
+    if (d == null) return iso;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
+  }
+
+  void _openDiff(VoidCallback request, String title) {
+    request();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _RemoteDiffViewer(client: _c, title: title),
+      ),
+    );
+  }
+
+  // --- Git operations UI ---
+
+  Widget _gitActions() {
+    final repo = _gitRepo!;
+    Widget btn(IconData icon, String label, VoidCallback onTap) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 15),
+        label: Text(label),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+        ),
+      ),
+    );
+    return SizedBox(
+      height: 44,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+        children: [
+          btn(Icons.add_task_rounded, '暂存全部', () => _c.gitStageAll(repo)),
+          btn(Icons.check_circle_outline_rounded, '提交', _commitDialog),
+          btn(
+            Icons.arrow_upward_rounded,
+            'Push',
+            () => _confirmThen('确认 Push 到远程？', () => _c.gitPush(repo)),
+          ),
+          btn(Icons.arrow_downward_rounded, 'Pull', () => _c.gitPull(repo)),
+          btn(Icons.sync_rounded, 'Fetch', () => _c.gitFetch(repo)),
+          btn(Icons.account_tree_outlined, '分支', _branchSheet),
+          btn(Icons.inventory_2_outlined, 'Stash', _stashDialog),
+          btn(
+            Icons.undo_rounded,
+            '丢弃全部',
+            () => _confirmThen('丢弃所有改动？不可恢复', () => _c.gitDiscardAll(repo)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _changeMenu(RemoteGitChange c) => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert_rounded, size: 18),
+    onSelected: (v) {
+      switch (v) {
+        case 'stage':
+          _c.gitStage(_gitRepo!, c.path);
+        case 'unstage':
+          _c.gitUnstage(_gitRepo!, c.path);
+        case 'discard':
+          _confirmThen(
+            '丢弃 ${c.path} 的改动？不可恢复',
+            () => _c.gitDiscard(_gitRepo!, c.path),
+          );
+      }
+    },
+    itemBuilder: (_) => [
+      if (!c.staged) const PopupMenuItem(value: 'stage', child: Text('暂存')),
+      if (c.staged) const PopupMenuItem(value: 'unstage', child: Text('取消暂存')),
+      if (!c.untracked)
+        const PopupMenuItem(value: 'discard', child: Text('丢弃')),
+    ],
+  );
+
+  Future<void> _confirmThen(String msg, VoidCallback action) async {
+    if (await confirm(context, msg)) action();
+  }
+
+  Future<void> _commitDialog() async {
+    final ctl = TextEditingController();
+    var push = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('提交'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctl,
+                autofocus: true,
+                minLines: 1,
+                maxLines: 4,
+                decoration: const InputDecoration(hintText: '提交信息'),
+              ),
+              CheckboxListTile(
+                value: push,
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('提交后 Push'),
+                onChanged: (v) => setLocal(() => push = v ?? false),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('提交'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok == true && ctl.text.trim().isNotEmpty) {
+      _c.gitCommit(_gitRepo!, ctl.text.trim(), push: push);
+    }
+  }
+
+  Future<void> _stashDialog() async {
+    final msg = await textPrompt(
+      context,
+      title: 'Stash',
+      hint: '备注（可选）',
+      okLabel: 'Stash',
+      allowEmpty: true,
+    );
+    if (msg != null) _c.gitStash(_gitRepo!, msg);
+  }
+
+  Future<void> _branchSheet() async {
+    _c.loadBranches(_gitRepo!);
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => ListenableBuilder(
+        listenable: _c,
+        builder: (ctx, _) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: const Text('分支'),
+                trailing: TextButton.icon(
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('新建'),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _newBranchDialog();
+                  },
+                ),
+              ),
+              const Divider(height: 1, color: CcColors.border),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final b in _c.branches.where((b) => !b.remote))
+                      ListTile(
+                        dense: true,
+                        leading: Icon(
+                          b.current
+                              ? Icons.check_rounded
+                              : Icons.account_tree_outlined,
+                          size: 18,
+                          color: b.current ? CcColors.ok : CcColors.muted,
+                        ),
+                        title: Text(b.name),
+                        onTap: b.current
+                            ? null
+                            : () {
+                                Navigator.pop(ctx);
+                                _c.gitCheckout(_gitRepo!, b.name);
+                              },
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _newBranchDialog() async {
+    final b = await textPrompt(
+      context,
+      title: '新建分支',
+      hint: '分支名',
+      okLabel: '创建',
+    );
+    if (b != null) _c.gitCreateBranch(_gitRepo!, b);
+  }
+
+  // --- 管理 (workspace / project / worktree) ---
+
+  Widget _manageTab() {
+    final byWs = <String, List<RemoteRootInfo>>{};
+    for (final r in _c.roots) {
+      (byWs[r.workspace] ??= []).add(r);
+    }
+    return ListView(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: OutlinedButton.icon(
+            onPressed: _newWorkspaceDialog,
+            icon: const Icon(Icons.create_new_folder_outlined, size: 16),
+            label: const Text('新建工作区'),
+          ),
+        ),
+        if (byWs.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('电脑端未共享项目', style: TextStyle(color: CcColors.muted)),
+          ),
+        for (final entry in byWs.entries) ...[
+          _gitSection(entry.key.isEmpty ? '(默认工作区)' : entry.key),
+          for (final p in entry.value)
+            ListTile(
+              dense: true,
+              leading: const Icon(
+                Icons.folder_rounded,
+                size: 18,
+                color: CcColors.accentBright,
+              ),
+              title: Text(p.name),
+              trailing: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert_rounded, size: 18),
+                onSelected: (v) {
+                  if (v == 'wt') _openWorktrees(p);
+                  if (v == 'rm') {
+                    _confirmThen(
+                      '从「${entry.key}」移除项目 ${p.name}？（磁盘文件保留）',
+                      () => _c.removeProject(p.workspace, p.name),
+                    );
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'wt', child: Text('Worktree…')),
+                  PopupMenuItem(value: 'rm', child: Text('移除项目')),
+                ],
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+            child: Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => _addProjectDialog(entry.key),
+                  icon: const Icon(Icons.add, size: 15),
+                  label: const Text('添加项目'),
+                ),
+                const Spacer(),
+                if (entry.key.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: () => _confirmThen(
+                      '删除工作区「${entry.key}」？（磁盘文件保留）',
+                      () => _c.removeWorkspace(entry.key),
+                    ),
+                    icon: const Icon(Icons.delete_outline, size: 15),
+                    label: const Text('删除工作区'),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _openWorktrees(RemoteRootInfo p) => Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => _WorktreeScreen(client: _c, project: p),
+    ),
+  );
+
+  Future<void> _newWorkspaceDialog() async {
+    final nameCtl = TextEditingController();
+    final pathCtl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新建工作区'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtl,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '名称'),
+            ),
+            TextField(
+              controller: pathCtl,
+              decoration: const InputDecoration(hintText: '目录（可选，绝对路径）'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && nameCtl.text.trim().isNotEmpty) {
+      _c.newWorkspace(nameCtl.text.trim(), pathCtl.text.trim());
+    }
+  }
+
+  Future<void> _addProjectDialog(String ws) async {
+    final src = await textPrompt(
+      context,
+      title: '添加项目到「${ws.isEmpty ? "默认" : ws}」',
+      hint: 'GitHub URL 或本地路径',
+      okLabel: '添加',
+    );
+    if (src != null) _c.addProject(ws, src);
+  }
 }
 
 // _RemoteTerminalScreen renders one remote session full-screen, with an on-screen
@@ -314,10 +913,197 @@ class _RemoteFileViewer extends StatefulWidget {
 }
 
 class _RemoteFileViewerState extends State<_RemoteFileViewer> {
+  final _ctl = TextEditingController();
+  bool _loaded = false;
+  bool _dirty = false;
+  bool _wasSaving = false;
+
   @override
   void initState() {
     super.initState();
     widget.client.openFile(widget.path);
+    widget.client.addListener(_onChange);
+    _ctl.addListener(() {
+      if (_loaded && !_dirty) setState(() => _dirty = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.client.removeListener(_onChange);
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _onChange() {
+    if (!mounted) return;
+    final c = widget.client;
+    // Populate the editor once the file content first arrives.
+    if (!_loaded &&
+        c.filePath == widget.path &&
+        c.fileContent != null &&
+        !c.fileLoading) {
+      _ctl.text = c.fileContent!;
+      _loaded = true;
+    }
+    // Save result feedback (saving true -> false).
+    if (_wasSaving && !c.fileSaving) {
+      if (c.fileSaveError != null) {
+        snack(context, '保存失败：${c.fileSaveError}');
+      } else {
+        _dirty = false;
+        snack(context, '已保存');
+      }
+    }
+    _wasSaving = c.fileSaving;
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.client;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          '${widget.path.split('/').last}${_dirty ? ' •' : ''}',
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          IconButton(
+            tooltip: '保存',
+            icon: c.fileSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_rounded),
+            onPressed: (_dirty && !c.fileSaving)
+                ? () => c.saveFile(widget.path, _ctl.text)
+                : null,
+          ),
+        ],
+      ),
+      body: !_loaded
+          ? (c.fileError != null
+                ? centerMsg(c.fileError!)
+                : const Center(child: CircularProgressIndicator()))
+          : Padding(
+              padding: const EdgeInsets.all(12),
+              child: TextField(
+                controller: _ctl,
+                maxLines: null,
+                expands: true,
+                keyboardType: TextInputType.multiline,
+                textAlignVertical: TextAlignVertical.top,
+                style: CcType.code(size: 12.5),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  isCollapsed: true,
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+// _RemoteDiffViewer shows the diff the client just requested (a file's working
+// diff or a commit's full diff), rendered with the shared colored diff widget.
+class _RemoteDiffViewer extends StatelessWidget {
+  final RemoteClient client;
+  final String title;
+  const _RemoteDiffViewer({required this.client, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: client,
+      builder: (context, _) => Scaffold(
+        appBar: AppBar(title: Text(title, overflow: TextOverflow.ellipsis)),
+        body: client.diffLoading
+            ? const Center(child: CircularProgressIndicator())
+            : client.diffError != null
+            ? centerMsg(client.diffError!)
+            : (client.diffContent == null || client.diffContent!.isEmpty)
+            ? centerMsg('无差异')
+            : ColoredBox(
+                color: CcColors.bg,
+                child: diffText(client.diffContent!),
+              ),
+      ),
+    );
+  }
+}
+
+// _WorktreeScreen lists a project's worktrees and lets the phone add/remove them.
+class _WorktreeScreen extends StatefulWidget {
+  final RemoteClient client;
+  final RemoteRootInfo project;
+  const _WorktreeScreen({required this.client, required this.project});
+
+  @override
+  State<_WorktreeScreen> createState() => _WorktreeScreenState();
+}
+
+class _WorktreeScreenState extends State<_WorktreeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    widget.client.loadWorktrees(widget.project.path);
+  }
+
+  Future<void> _addDialog() async {
+    final branchCtl = TextEditingController();
+    final startCtl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新建 worktree'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: branchCtl,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '分支名'),
+            ),
+            TextField(
+              controller: startCtl,
+              decoration: const InputDecoration(hintText: '起点（可选，如 main）'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && branchCtl.text.trim().isNotEmpty) {
+      widget.client.addWorktree(
+        widget.project.workspace,
+        widget.project.name,
+        branchCtl.text.trim(),
+        startCtl.text.trim(),
+      );
+    }
+  }
+
+  Future<void> _remove(RemoteWorktree w) async {
+    final label = w.branch.isEmpty ? w.name : w.branch;
+    if (await confirm(context, '删除 worktree $label？', okLabel: '删除')) {
+      widget.client.removeWorktree(
+        widget.project.workspace,
+        widget.project.name,
+        w.branch,
+      );
+    }
   }
 
   @override
@@ -325,26 +1111,53 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
     return ListenableBuilder(
       listenable: widget.client,
       builder: (context, _) {
-        final c = widget.client;
-        final showing = c.filePath == widget.path;
+        final wts = widget.client.worktrees;
         return Scaffold(
-          appBar: AppBar(title: Text(widget.path.split('/').last)),
-          body: !showing || c.fileLoading
-              ? const Center(child: CircularProgressIndicator())
-              : c.fileError != null
-              ? centerMsg(c.fileError!)
-              : SingleChildScrollView(
-                  scrollDirection: Axis.vertical,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: SelectableText(
-                        c.fileContent ?? '',
-                        style: CcType.code(size: 12.5),
+          appBar: AppBar(
+            title: Text('${widget.project.name} · Worktrees'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: '新建',
+                onPressed: _addDialog,
+              ),
+            ],
+          ),
+          body: wts.isEmpty
+              ? centerMsg('没有 worktree')
+              : ListView(
+                  children: [
+                    for (final w in wts)
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(
+                          Icons.account_tree_outlined,
+                          size: 18,
+                        ),
+                        title: Text(
+                          w.branch.isEmpty ? w.name : w.branch,
+                          style: CcType.code(size: 13),
+                        ),
+                        subtitle: Text(
+                          w.path,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CcType.code(
+                            size: 10.5,
+                            color: CcColors.subtle,
+                          ),
+                        ),
+                        trailing: w.path == widget.project.path
+                            ? null
+                            : IconButton(
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  size: 18,
+                                ),
+                                onPressed: () => _remove(w),
+                              ),
                       ),
-                    ),
-                  ),
+                  ],
                 ),
         );
       },
