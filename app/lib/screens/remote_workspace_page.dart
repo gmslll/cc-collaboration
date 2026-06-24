@@ -899,6 +899,15 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     if (text != null && text.isNotEmpty) _term.paste(text);
   }
 
+  // Recreate the session's terminal (empty buffer) and re-open it; the host
+  // replays its current backlog so the phone re-pulls the computer's latest
+  // screen/history instead of staying on a stale or out-of-sync mirror.
+  void _reload() {
+    widget.client.reloadTerminal(widget.session.sid);
+    setState(() {}); // rebind TerminalView to the fresh _term
+    snack(context, '正在从电脑刷新…');
+  }
+
   // Full-screen agents (claude/codex) run in the alternate screen (no
   // scrollback), so the phone scrolls them by sending wheel reports to the
   // host like a Mac wheel would. terminalWheel returns null when the app isn't
@@ -930,7 +939,16 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.session.title)),
+      appBar: AppBar(
+        title: Text(widget.session.title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: '刷新(拉取电脑最新)',
+            onPressed: _reload,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(

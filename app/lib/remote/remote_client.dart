@@ -299,6 +299,15 @@ class RemoteClient extends RemoteChannel {
     return term;
   }
 
+  // reloadTerminal drops the cached Terminal and recreates it, so the phone's
+  // buffer starts empty and the host's term.open reply (backlog replay) shows
+  // the computer's current screen/history instead of appending to stale
+  // content. The caller rebuilds so the TerminalView rebinds to the new term.
+  void reloadTerminal(String sid) {
+    _terminals.remove(sid);
+    terminalFor(sid); // recreate + send term.open now → host replays backlog
+  }
+
   // Session write actions (the host re-broadcasts `sessions` after each).
   void newSession(String projectPath, String agent) =>
       send({'t': 'session.new', 'project': projectPath, 'agent': agent});
