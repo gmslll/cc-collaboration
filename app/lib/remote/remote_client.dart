@@ -1,5 +1,6 @@
 import 'package:xterm/xterm.dart';
 
+import '../terminal_mouse.dart';
 import 'remote_channel.dart';
 
 // Client-side models of what the desktop host advertises.
@@ -288,6 +289,9 @@ class RemoteClient extends RemoteChannel {
     if (existing != null) return existing;
     final term = Terminal(maxLines: 5000);
     _terminals[sid] = term;
+    // Same wheel fix as the desktop so touch-scroll reaches full-screen TUIs;
+    // without it xterm's default handler drops the wheel while the app tracks.
+    term.mouseHandler = const WheelMouseHandler();
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) =>
         send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});

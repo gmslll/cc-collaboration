@@ -185,6 +185,8 @@ class RemoteHost extends RemoteChannel {
     final s = _sessionById(sid);
     if (s == null || from == null) return;
     (_watchers[s.id] ??= {}).add(from);
+    // Setting remoteSink starts mirroring this session's output to the phone and
+    // hands it authority over the PTY size (see TerminalSession.onResize).
     s.remoteSink = (chunk) {
       for (final c in _watchers[s.id] ?? const <int>{}) {
         send({'t': 'term.output', 'to': c, 'sid': s.id, 'd': chunk});
@@ -196,15 +198,26 @@ class RemoteHost extends RemoteChannel {
     for (final entry in _watchers.entries.toList()) {
       entry.value.remove(connId);
       if (entry.value.isEmpty) {
-        _sessionById(entry.key)?.remoteSink = null;
+        // Last watcher gone: stop mirroring and restore the desktop's full width.
+        final s = _sessionById(entry.key);
+        if (s != null) {
+          s.remoteSink = null;
+          s.restoreLocalSize();
+        }
         _watchers.remove(entry.key);
       }
     }
   }
 
   void _detachAllSessions() {
-    for (final s in sessions()) {
-      s.remoteSink = null;
+    // Only the watched sessions hold a remoteSink — leave unwatched local
+    // sessions untouched (no spurious resize).
+    for (final sid in _watchers.keys) {
+      final s = _sessionById(sid);
+      if (s != null) {
+        s.remoteSink = null;
+        s.restoreLocalSize();
+      }
     }
     _watchers.clear();
   }

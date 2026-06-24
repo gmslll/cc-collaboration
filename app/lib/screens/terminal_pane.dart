@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:xterm/xterm.dart';
 
+import '../terminal_mouse.dart';
+
 // TerminalSession owns a PTY + xterm Terminal model. The cockpit keeps a list of
 // these (one per pickup/worktree) for multi-session tabs and can sendText into
 // the active one (e.g. paste the materialized prompt).
@@ -29,7 +31,7 @@ class TerminalSession {
           : workdir {
     // Fix xterm 4.0.0's broken wheel reporting so scroll reaches full-screen
     // agent TUIs (claude/codex), which scroll fine in real terminals.
-    terminal.mouseHandler = const _WheelMouseHandler();
+    terminal.mouseHandler = const WheelMouseHandler();
   }
 
   // label is what the UI shows: the user-given name, else the derived title.
@@ -65,7 +67,12 @@ class TerminalSession {
       (code) => terminal.write('\r\n\x1b[90m[已退出: $code]\x1b[0m\r\n'),
     );
     terminal.onOutput = (data) => pty.write(const Utf8Encoder().convert(data));
-    terminal.onResize = (w, h, pw, ph) => pty.resize(h, w);
+    // A phone mirroring this session (remoteSink set) owns the PTY size; don't
+    // let local (Mac window) resizes fight it — last-writer-wins between the
+    // wide Mac and the narrow phone is what garbles the mirror.
+    terminal.onResize = (w, h, pw, ph) {
+      if (remoteSink == null) pty.resize(h, w);
+    };
   }
 
   void sendText(String s) => _pty?.write(const Utf8Encoder().convert(s));
@@ -75,45 +82,17 @@ class TerminalSession {
     if (rows > 0 && cols > 0) _pty?.resize(rows, cols);
   }
 
-  void dispose() => _pty?.kill();
-}
-
-// _WheelMouseHandler fixes mouse-wheel scrolling in full-screen TUIs.
-//
-// xterm 4.0.0 is doubly broken for the wheel: (1) in basic click-tracking mode
-// (?1000h / clickOnly) its default handler drops wheel events entirely, and
-// (2) it encodes the wheel button as 64+4 / 64+5 (= 68 / 69) instead of the
-// standard transposed X11 codes 64 / 65. Either way claude/codex never see a
-// scroll (they scroll fine in real terminals, which send 64 / 65). This handler
-// reports the wheel with the correct codes whenever any mouse tracking is on,
-// and defers all non-wheel events (clicks/drag/move) to the package default.
-class _WheelMouseHandler implements TerminalMouseHandler {
-  const _WheelMouseHandler();
-
-  @override
-  String? call(TerminalMouseEvent e) {
-    if (!e.button.isWheel) return defaultMouseHandler(e);
-    if (e.state.mouseMode == MouseMode.none) return null;
-    // Only the wheel "press" is reported; releases are not.
-    if (e.buttonState != TerminalMouseButtonState.down) return null;
-    final code = switch (e.button) {
-      TerminalMouseButton.wheelUp => 64,
-      TerminalMouseButton.wheelDown => 65,
-      TerminalMouseButton.wheelLeft => 66,
-      TerminalMouseButton.wheelRight => 67,
-      _ => -1,
-    };
-    if (code < 0) return defaultMouseHandler(e);
-    final x = e.position.x + 1;
-    final y = e.position.y + 1;
-    return switch (e.state.mouseReportMode) {
-      MouseReportMode.sgr => '\x1b[<$code;$x;${y}M',
-      MouseReportMode.urxvt => '\x1b[${32 + code};$x;${y}M',
-      MouseReportMode.normal || MouseReportMode.utf =>
-        '\x1b[M${String.fromCharCode(32 + code)}'
-            '${String.fromCharCode(32 + x)}${String.fromCharCode(32 + y)}',
-    };
+  // restoreLocalSize: the last phone detached — resize the PTY back to the
+  // desktop's own viewport so the Mac returns to full width. Call right after
+  // clearing remoteSink (which hands size authority back to local resizes).
+  // terminal.viewWidth/Height track the Mac's xterm fit (decoupled from the
+  // PTY), so they hold the desktop's current size even after the phone shrank it.
+  void restoreLocalSize() {
+    final r = terminal.viewHeight, c = terminal.viewWidth;
+    if (r > 0 && c > 0) _pty?.resize(r, c);
   }
+
+  void dispose() => _pty?.kill();
 }
 
 // TerminalPane renders one session and starts it on first build.
