@@ -8,7 +8,7 @@ VERSION     := $(shell cat VERSION)
 LDFLAGS     := -X 'github.com/cc-collaboration/internal/version.Version=$(VERSION)'
 INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-apk install test e2e deploy clean version release-tag
+.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-apk package package-macos package-android install test e2e deploy clean version release-tag
 
 all: build
 
@@ -58,6 +58,18 @@ app-macos:
 
 app-apk:
 	cd app && flutter build apk --release
+
+# Distributable packages (GUI + embedded cc-handoff CLI) into dist/. macOS and
+# Android build here; the Windows desktop app must be packaged on Windows with
+# scripts/package.ps1 (this also cross-builds the Windows CLI for it).
+package:
+	bash scripts/package.sh all
+
+package-macos:
+	bash scripts/package.sh macos
+
+package-android:
+	bash scripts/package.sh android
 
 install: cli mcp
 	install -m 755 bin/cc-handoff $(INSTALL_DIR)/cc-handoff

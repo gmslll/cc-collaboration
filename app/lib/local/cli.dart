@@ -24,12 +24,41 @@ class CliException implements Exception {
 class Cli {
   static String _shell() => Platform.environment['SHELL'] ?? '/bin/sh';
 
+  static String? _binPath;
+
+  // _bin resolves the cc-handoff executable. Desktop packaging drops a copy next
+  // to the GUI executable (see scripts/package.sh / package.ps1) so the app
+  // works with no system install; if none is bundled (dev runs, or a system
+  // install), fall back to the bare name resolved via PATH.
+  static String _bin() {
+    final cached = _binPath;
+    if (cached != null) return cached;
+    final name = Platform.isWindows ? 'cc-handoff.exe' : 'cc-handoff';
+    // Packaging drops the binary next to the GUI executable (.app/Contents/MacOS
+    // on macOS, the runner Release\ dir on Windows).
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final bundled = '$exeDir${Platform.pathSeparator}$name';
+    if (File(bundled).existsSync()) return _binPath = bundled;
+    return _binPath = name; // PATH fallback (dev runs / system install)
+  }
+
+  // _exec runs cc-handoff with [args]. On POSIX it goes through the login shell
+  // so the binary inherits the user's PATH (a double-clicked .app has a minimal
+  // PATH) and can find git / claude / codex; on Windows the GUI already inherits
+  // the full user environment, so the executable is run directly.
+  static Future<ProcessResult> _exec(List<String> args) {
+    final bin = _bin();
+    if (Platform.isWindows) return Process.run(bin, args);
+    final cmd = '${shQuote(bin)} ${args.map(shQuote).join(' ')}';
+    return Process.run(_shell(), ['-lc', cmd]);
+  }
+
   // pickup carves a worktree for the handoff in repoPath and returns the
   // worktree dir + the interactive agent command to run in the terminal.
   static Future<PickupResult> pickup(String id, String repoPath) async {
-    final cmd =
-        'cc-handoff pickup ${shQuote(id)} --repo ${shQuote(repoPath)} --worktree --json';
-    final res = await Process.run(_shell(), ['-lc', cmd]);
+    final res = await _exec([
+      'pickup', id, '--repo', repoPath, '--worktree', '--json',
+    ]);
     if (res.exitCode != 0) {
       final err = (res.stderr as String).trim();
       throw CliException(err.isNotEmpty ? err : 'pickup 失败 (exit ${res.exitCode})');
@@ -49,12 +78,10 @@ class Cli {
     );
   }
 
-  // run executes `cc-handoff <args>` via the login shell and returns trimmed
-  // stdout; throws CliException(stderr) on non-zero exit. Each arg is
-  // single-quoted so paths / branches with spaces are safe.
+  // run executes `cc-handoff <args>` and returns trimmed stdout; throws
+  // CliException(stderr) on non-zero exit.
   static Future<String> run(List<String> args) async {
-    final cmd = 'cc-handoff ${args.map(shQuote).join(' ')}';
-    final res = await Process.run(_shell(), ['-lc', cmd]);
+    final res = await _exec(args);
     if (res.exitCode != 0) {
       final err = (res.stderr as String).trim();
       throw CliException(err.isNotEmpty ? err : '命令失败 (exit ${res.exitCode})');
