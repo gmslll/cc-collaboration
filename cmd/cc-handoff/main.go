@@ -53,6 +53,8 @@ func main() {
 		err = runOpen(ctx, args)
 	case "online":
 		err = runOnline(ctx, args)
+	case "msg":
+		err = runMsg(ctx, args)
 	case "ui":
 		err = runUI(ctx, args)
 	case "desktop":
@@ -111,6 +113,8 @@ Both sides:
   cc-handoff comment      <id> <body...>                post a comment
   cc-handoff comment      --list <id>                   list comments on a handoff
   cc-handoff online       [--json]                      show registered identities + who is currently watching
+  cc-handoff msg          list | send <target> <text...> [--no-submit] | whoami
+                                                        local point-to-point messaging between sibling app sessions (no relay; run inside an app-spawned terminal)
   cc-handoff ui           [--open] [--show-token]       print/open the relay management UI
   cc-handoff desktop      [--width N] [--height N] [--chrome PATH]
                                                         open the UI in a Chromium app window (Chrome/Edge/Brave)

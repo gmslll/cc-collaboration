@@ -9,6 +9,7 @@ import '../local/cli.dart';
 import '../local/config.dart';
 import '../local/diff_parse.dart';
 import '../local/git.dart';
+import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../local/worktrees.dart';
 import '../remote/remote_host.dart';
@@ -147,6 +148,14 @@ class _WorkspacePageState extends State<WorkspacePage>
   bool _remoteWasConnected = false;
   int _remoteLastClients = 0;
   String? _remoteShownErr;
+
+  // Local session message bus: lets sibling sessions (and the agents inside
+  // them) forward point-to-point messages to each other without the relay. The
+  // desktop cockpit is the single owner that watches the outbox.
+  late final LocalBus _localBus = LocalBus(
+    registry: localBusRegistry,
+    deliver: deliverLocalMessage,
+  );
   void _onRemoteChange() {
     if (!mounted) return;
     final h = _remoteHost;
@@ -256,7 +265,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   @override
   void initState() {
     super.initState();
-    onTermsChanged = _remoteHost.broadcastSessions;
+    onTermsChanged = () {
+      _remoteHost.broadcastSessions();
+      _localBus.syncRegistry(); // keep sessions.json current for `msg list`
+    };
+    _localBus.start();
     // Any newly spawned session surfaces the bottom terminal panel (even if it
     // was showing Git) so the launched agent is visible. Restore doesn't go
     // through addTerm, so a restored Git view isn't hijacked on startup.
@@ -285,6 +298,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     _commitFocus.dispose();
     _remoteHost.removeListener(_onRemoteChange);
     _remoteHost.dispose();
+    _localBus.dispose();
     disposeTerms();
     super.dispose();
   }

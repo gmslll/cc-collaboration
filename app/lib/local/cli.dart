@@ -42,6 +42,11 @@ class Cli {
     return _binPath = name; // PATH fallback (dev runs / system install)
   }
 
+  // binPath exposes the resolved cc-handoff executable so the app can hand its
+  // absolute path to spawned sessions (CC_HANDOFF_BIN) — a bundled binary isn't
+  // on the agent's PATH, so `"$CC_HANDOFF_BIN" msg …` is the stable invocation.
+  static String binPath() => _bin();
+
   // _exec runs cc-handoff with [args]. On POSIX it goes through the login shell
   // so the binary inherits the user's PATH (a double-clicked .app has a minimal
   // PATH) and can find git / claude / codex; on Windows the GUI already inherits

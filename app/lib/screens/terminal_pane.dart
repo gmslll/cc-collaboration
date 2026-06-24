@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/cli.dart';
+import '../local/local_bus.dart';
 import '../terminal_mouse.dart';
 import '../widgets.dart';
 
@@ -72,7 +74,10 @@ class TerminalSession {
       // Declare a real terminal type so full-screen TUIs (claude/codex) enable
       // mouse reporting → wheel scroll reaches them. A Finder-launched .app may
       // otherwise have no TERM. flutter_pty merges this over Platform.environment.
-      environment: const {'TERM': 'xterm-256color', 'COLORTERM': 'truecolor'},
+      // The CC_* vars wire this session into the local message bus: the agent
+      // inside calls `"$CC_HANDOFF_BIN" msg send <peer> …` (or bare `cc-handoff`
+      // — its dir is prepended to PATH) to reach a sibling session.
+      environment: _sessionEnv(),
       workingDirectory: workdir,
       rows: terminal.viewHeight,
       columns: terminal.viewWidth,
@@ -98,6 +103,31 @@ class TerminalSession {
     };
   }
 
+  int? get pid => _pty?.pid;
+
+  // _sessionEnv builds the PTY environment: the terminal type (so TUIs report
+  // mouse) plus the local-bus wiring (CC_SESSION_ID/NAME for identity, CC_BUS_DIR
+  // + CC_HANDOFF_BIN for the `msg` CLI). The cc-handoff dir is prepended to PATH
+  // so a bundled (non-system) binary is still callable by bare name.
+  Map<String, String> _sessionEnv() {
+    final env = <String, String>{
+      'TERM': 'xterm-256color',
+      'COLORTERM': 'truecolor',
+      'CC_SESSION_ID': id,
+      'CC_SESSION_NAME': label,
+      'CC_BUS_DIR': localBusDir(),
+      'CC_HANDOFF_BIN': Cli.binPath(),
+    };
+    final bin = Cli.binPath();
+    if (bin.contains(Platform.pathSeparator)) {
+      final binDir = File(bin).parent.path;
+      final sep = Platform.isWindows ? ';' : ':';
+      final base = Platform.environment['PATH'] ?? '';
+      env['PATH'] = base.isEmpty ? binDir : '$binDir$sep$base';
+    }
+    return env;
+  }
+
   void sendText(String s) => _pty?.write(const Utf8Encoder().convert(s));
 
   // resizeFromRemote lets a connected phone size the PTY to its viewport.
@@ -121,7 +151,19 @@ class TerminalSession {
 // TerminalPane renders one session and starts it on first build.
 class TerminalPane extends StatefulWidget {
   final TerminalSession session;
-  const TerminalPane({super.key, required this.session});
+  // Other live sessions this terminal can forward its selection to (the local
+  // point-to-point "发送到终端" menu). Empty hides the menu entries.
+  final List<TerminalSession> peers;
+  // onSendToPeer(fromId, targetId, text): route the selection into a sibling
+  // session's input. Null hides the menu entries.
+  final void Function(String fromId, String targetId, String text)?
+  onSendToPeer;
+  const TerminalPane({
+    super.key,
+    required this.session,
+    this.peers = const [],
+    this.onSendToPeer,
+  });
 
   @override
   State<TerminalPane> createState() => _TerminalPaneState();
@@ -170,8 +212,20 @@ class _TerminalPaneState extends State<TerminalPane> {
     );
   }
 
+  // _sendSelectionTo forwards the current selection into peer session [targetId]
+  // (the host injects it as input). No-op without a selection.
+  void _sendSelectionTo(String targetId, String peerLabel) {
+    final sel = _controller.selection;
+    final cb = widget.onSendToPeer;
+    if (sel == null || cb == null) return;
+    cb(widget.session.id, targetId, _terminal.buffer.getText(sel));
+    _controller.clearSelection();
+    snack(context, '已发送到 $peerLabel');
+  }
+
   void _showMenu(Offset globalPos) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final hasSelection = _controller.selection != null;
     showMenu<void>(
       context: context,
       position: RelativeRect.fromRect(
@@ -180,12 +234,23 @@ class _TerminalPaneState extends State<TerminalPane> {
       ),
       items: [
         PopupMenuItem(
-          enabled: _controller.selection != null,
+          enabled: hasSelection,
           onTap: _copy,
           child: const Text('复制'),
         ),
         PopupMenuItem(onTap: _paste, child: const Text('粘贴')),
         PopupMenuItem(onTap: _selectAll, child: const Text('全选')),
+        // 发送到终端: one entry per other live session — forwards the selection
+        // into that session's input so a sibling agent can read it.
+        if (widget.onSendToPeer != null && widget.peers.isNotEmpty) ...[
+          const PopupMenuDivider(),
+          for (final p in widget.peers)
+            PopupMenuItem(
+              enabled: hasSelection,
+              onTap: () => _sendSelectionTo(p.id, p.label),
+              child: Text('发送选区 → ${p.label}'),
+            ),
+        ],
       ],
     );
   }

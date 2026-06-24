@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../local/local_bus.dart';
 import '../theme.dart';
 import 'terminal_pane.dart';
 
@@ -124,12 +125,73 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   void Function(String)? get sendToTerminal =>
       terms.isEmpty ? null : (t) => terms[activeTerm].sendText(t);
 
+  // --- local point-to-point bus: session A → session B ---------------------
+  //
+  // The single entry point both the right-click "发送到终端" menu and the
+  // `cc-handoff msg` CLI (via LocalBus) funnel through. All it does is resolve a
+  // target and sendText into its PTY — but it owns the addressing rules so the
+  // UI and the agent path stay consistent.
+
+  // peersExcluding returns the other live sessions (forwarding targets for
+  // [selfId]). Used to build the context-menu list and `msg list`.
+  List<TerminalSession> peersExcluding(String selfId) =>
+      terms.where((s) => s.id != selfId).toList();
+
+  // localBusRegistry is the sessions.json payload LocalBus publishes so the CLI
+  // can resolve a target by id or name.
+  List<Map<String, dynamic>> localBusRegistry() => [
+    for (final s in terms)
+      {
+        'id': s.id,
+        'label': s.label,
+        if (s.name?.isNotEmpty ?? false) 'name': s.name,
+        'workdir': s.workdir,
+        if (s.pid != null) 'pid': s.pid,
+      },
+  ];
+
+  // deliverLocalMessage routes one message into a target session's PTY. Returns
+  // null on success, or a human-readable error (unknown/ambiguous target,
+  // self-send) that LocalBus writes back so `msg send` exits non-zero. Target
+  // resolution: exact id first, else a unique label match.
+  String? deliverLocalMessage(LocalMsg m) {
+    final to = m.to.trim();
+    if (to.isEmpty) return '缺少目标会话';
+    TerminalSession? target;
+    final byId = terms.where((s) => s.id == to);
+    if (byId.isNotEmpty) {
+      target = byId.first;
+    } else {
+      final byLabel = terms.where((s) => s.label == to).toList();
+      if (byLabel.length > 1) {
+        return '目标名「$to」对应多个会话,请改用其 id(如 ${byLabel.first.id})';
+      }
+      if (byLabel.length == 1) target = byLabel.first;
+    }
+    if (target == null) return '找不到目标会话「$to」';
+    if (target.id == m.from) return '不能发给自己';
+    final fromLabel = terms.where((s) => s.id == m.from).map((s) => s.label);
+    final tag = fromLabel.isNotEmpty
+        ? fromLabel.first
+        : (m.from.isEmpty ? '?' : m.from);
+    final text = '[来自 $tag] ${m.body}';
+    target.sendText(m.submit ? '$text\r' : text);
+    return null;
+  }
+
+  // _sendToPeer is the menu callback: human forwards fill the target's input
+  // (submit:false) so you can review before the receiving agent runs it.
+  void _sendToPeer(String fromId, String targetId, String text) =>
+      deliverLocalMessage(LocalMsg(fromId, targetId, text, false));
+
   Widget terminalDeck({VoidCallback? onCollapse}) => TerminalDeck(
     terms: terms,
     active: activeTerm,
     onSwitch: (i) => setState(() => activeTerm = i),
     onClose: closeTerm,
     onCollapse: onCollapse,
+    peersFor: peersExcluding,
+    onSendToPeer: _sendToPeer,
   );
 
   // terminalBody is just the active terminal (no tab bar) — for hosts that put
@@ -143,7 +205,14 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       child: IndexedStack(
         index: idx,
         children: terms
-            .map((s) => TerminalPane(key: ValueKey(s), session: s))
+            .map(
+              (s) => TerminalPane(
+                key: ValueKey(s),
+                session: s,
+                peers: peersExcluding(s.id),
+                onSendToPeer: _sendToPeer,
+              ),
+            )
             .toList(),
       ),
     );
@@ -159,6 +228,11 @@ class TerminalDeck extends StatelessWidget {
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   final VoidCallback? onCollapse;
+  // Local point-to-point forwarding wiring (see TerminalHost); null/absent
+  // hides the "发送到终端" context-menu entries.
+  final List<TerminalSession> Function(String selfId)? peersFor;
+  final void Function(String fromId, String targetId, String text)?
+  onSendToPeer;
   const TerminalDeck({
     super.key,
     required this.terms,
@@ -166,6 +240,8 @@ class TerminalDeck extends StatelessWidget {
     required this.onSwitch,
     required this.onClose,
     this.onCollapse,
+    this.peersFor,
+    this.onSendToPeer,
   });
 
   @override
@@ -194,7 +270,14 @@ class TerminalDeck extends StatelessWidget {
             child: IndexedStack(
               index: idx,
               children: terms
-                  .map((s) => TerminalPane(key: ValueKey(s), session: s))
+                  .map(
+                    (s) => TerminalPane(
+                      key: ValueKey(s),
+                      session: s,
+                      peers: peersFor?.call(s.id) ?? const [],
+                      onSendToPeer: onSendToPeer,
+                    ),
+                  )
                   .toList(),
             ),
           ),
