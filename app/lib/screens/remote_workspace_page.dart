@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/prefs.dart';
 import '../remote/remote_client.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'diff_split.dart';
 import 'terminal_pane.dart' show ccTerminalTheme;
 
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
@@ -1009,17 +1011,41 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
 
 // _RemoteDiffViewer shows the diff the client just requested (a file's working
 // diff or a commit's full diff), rendered with the shared colored diff widget.
-class _RemoteDiffViewer extends StatelessWidget {
+class _RemoteDiffViewer extends StatefulWidget {
   final RemoteClient client;
   final String title;
   const _RemoteDiffViewer({required this.client, required this.title});
 
   @override
+  State<_RemoteDiffViewer> createState() => _RemoteDiffViewerState();
+}
+
+class _RemoteDiffViewerState extends State<_RemoteDiffViewer> {
+  // Side-by-side by default, matching the desktop (shares the 'diff.split' pref).
+  bool _split = Prefs.getBool('diff.split', def: true);
+
+  @override
   Widget build(BuildContext context) {
+    final client = widget.client;
     return ListenableBuilder(
       listenable: client,
       builder: (context, _) => Scaffold(
-        appBar: AppBar(title: Text(title, overflow: TextOverflow.ellipsis)),
+        appBar: AppBar(
+          title: Text(widget.title, overflow: TextOverflow.ellipsis),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: diffSplitToggle(
+                _split,
+                (v) => setState(() => _split = v),
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ),
+          ],
+        ),
         body: client.diffLoading
             ? const Center(child: CircularProgressIndicator())
             : client.diffError != null
@@ -1028,7 +1054,9 @@ class _RemoteDiffViewer extends StatelessWidget {
             ? centerMsg('无差异')
             : ColoredBox(
                 color: CcColors.bg,
-                child: diffText(client.diffContent!),
+                child: _split
+                    ? SplitDiff(client.diffContent!)
+                    : diffText(client.diffContent!),
               ),
       ),
     );

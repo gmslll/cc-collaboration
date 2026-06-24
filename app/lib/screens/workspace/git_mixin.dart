@@ -23,10 +23,8 @@ mixin _GitMixin on State<WorkspacePage> {
   List<GitBranch> _gitBranches = const [];
   List<GitStash> _gitStashes = const [];
   List<FileDiff> _commitFiles = const [];
-  List<FileDiff> _stashFiles = const [];
   String? _selectedCommit;
   String? _selectedStash;
-  String? _stashPreviewRef;
   String? _compareTitle;
   List<FileDiff> _compareFiles = const [];
   String? _selectedGitPath;
@@ -94,8 +92,6 @@ mixin _GitMixin on State<WorkspacePage> {
         if (_selectedStash == null ||
             !stashes.any((s) => s.ref == _selectedStash)) {
           _selectedStash = stashes.isEmpty ? null : stashes.first.ref;
-          _stashFiles = const [];
-          _stashPreviewRef = null;
         }
         if (_selectedCommit == null && log.isNotEmpty) {
           _selectedCommit = log.first.hash;

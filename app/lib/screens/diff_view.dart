@@ -7,6 +7,7 @@ import '../local/git.dart';
 import '../local/prefs.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'diff_split.dart';
 import 'editor_page.dart';
 
 // DiffView is the GoLand-style diff: a changed-files tree (left) + the selected
@@ -19,11 +20,13 @@ class DiffView extends StatefulWidget {
   final List<FileDiff> files;
   final String? editRoot;
   final VoidCallback? onChanged;
+  final String? initialPath; // file to select first (else the first file)
   const DiffView({
     super.key,
     required this.files,
     this.editRoot,
     this.onChanged,
+    this.initialPath,
   });
 
   @override
@@ -43,7 +46,7 @@ class _DiffViewState extends State<DiffView> {
   void initState() {
     super.initState();
     _root = _buildTree(widget.files);
-    _selectFirst();
+    _reselect(widget.initialPath);
   }
 
   @override
@@ -63,8 +66,6 @@ class _DiffViewState extends State<DiffView> {
       _reselect(keep);
     }
   }
-
-  void _selectFirst() => _reselect(null);
 
   void _reselect(String? path) {
     if (widget.files.isEmpty) {
@@ -340,18 +341,7 @@ class _DiffViewState extends State<DiffView> {
                 ),
                 const SizedBox(width: 8),
               ],
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(value: true, label: Text('并排')),
-                  ButtonSegment(value: false, label: Text('统一')),
-                ],
-                selected: {_split},
-                onSelectionChanged: (s) {
-                  setState(() => _split = s.first);
-                  Prefs.setBool('diff.split', _split);
-                },
-                showSelectedIcon: false,
-              ),
+              diffSplitToggle(_split, (v) => setState(() => _split = v)),
             ]),
           ],
         ),
@@ -380,53 +370,22 @@ class _DiffViewState extends State<DiffView> {
     );
   }
 
-  Widget _rowWidget(DiffRow r) {
-    if (r.isHunk) {
-      return Container(
-        color: CcColors.accent.withValues(alpha: 0.10),
-        padding: const EdgeInsets.only(left: 8, right: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                r.hunkText,
-                style: const TextStyle(
-                  fontFamily: CcType.mono,
-                  fontSize: 12,
-                  color: CcColors.accentBright,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+  Widget _rowWidget(DiffRow r) => diffSplitRow(
+    r,
+    rightCell: _rightCell,
+    hunkTrailing: widget.editRoot == null
+        ? null
+        : (row) => TextButton.icon(
+            onPressed: () => _revertHunk(row.hunkIndex),
+            icon: const Icon(Icons.undo_rounded, size: 14),
+            label: const Text('还原', style: TextStyle(fontSize: 12)),
+            style: TextButton.styleFrom(
+              minimumSize: Size.zero,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              visualDensity: VisualDensity.compact,
             ),
-            if (widget.editRoot != null)
-              TextButton.icon(
-                onPressed: () => _revertHunk(r.hunkIndex),
-                icon: const Icon(Icons.undo_rounded, size: 14),
-                label: const Text('还原', style: TextStyle(fontSize: 12)),
-                style: TextButton.styleFrom(
-                  minimumSize: Size.zero,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-          ],
-        ),
-      );
-    }
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _gutter(r.oldNo),
-          Expanded(child: _cell(r.left, r.leftKind)),
-          const VerticalDivider(width: 1),
-          _gutter(r.newNo),
-          Expanded(child: _rightCell(r)),
-        ],
-      ),
-    );
-  }
+          ),
+  );
 
   // _rightCell is the editable new-side cell: inline TextField while editing,
   // else the text with a pencil on hover (when editing is allowed).
@@ -478,49 +437,14 @@ class _DiffViewState extends State<DiffView> {
         widget.editRoot != null &&
         r.newNo != null &&
         r.rightKind != DiffKind.empty;
-    if (!editable) return _cell(r.right, r.rightKind);
+    if (!editable) return diffCell(r.right, r.rightKind);
     return _EditableCell(
       text: r.right,
       kind: r.rightKind,
       onEdit: () => _startEdit(r),
     );
   }
-
-  Widget _gutter(int? no) => Container(
-    width: 44,
-    alignment: Alignment.topRight,
-    padding: const EdgeInsets.only(right: 6, top: 1),
-    color: CcColors.panel,
-    child: Text(
-      no?.toString() ?? '',
-      style: const TextStyle(
-        fontFamily: CcType.mono,
-        fontSize: 11,
-        color: CcColors.subtle,
-      ),
-    ),
-  );
-
-  Widget _cell(String text, DiffKind kind) => Container(
-    color: _cellBg(kind),
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-    child: Text(text, style: _cellStyle),
-  );
 }
-
-const _cellStyle = TextStyle(
-  fontFamily: CcType.mono,
-  fontSize: 12.5,
-  height: 1.4,
-  color: CcColors.text,
-);
-
-Color? _cellBg(DiffKind kind) => switch (kind) {
-  DiffKind.added => CcColors.ok.withValues(alpha: 0.10),
-  DiffKind.removed => CcColors.danger.withValues(alpha: 0.10),
-  DiffKind.empty => CcColors.bgGradTop.withValues(alpha: 0.5),
-  DiffKind.context => null,
-};
 
 // _EditableCell shows a new-side line with a pencil on hover; tapping it asks the
 // parent to switch the cell into an inline editor.
@@ -546,11 +470,11 @@ class _EditableCellState extends State<_EditableCell> {
       onEnter: (_) => setState(() => _h = true),
       onExit: (_) => setState(() => _h = false),
       child: Container(
-        color: _cellBg(widget.kind),
+        color: diffCellBg(widget.kind),
         padding: const EdgeInsets.only(left: 8, right: 2, top: 1, bottom: 1),
         child: Row(
           children: [
-            Expanded(child: Text(widget.text, style: _cellStyle)),
+            Expanded(child: Text(widget.text, style: diffCellStyle)),
             if (_h)
               InkWell(
                 onTap: widget.onEdit,
