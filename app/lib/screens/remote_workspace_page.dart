@@ -1232,57 +1232,184 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     );
   }
 
-  // _editKeyDialog collects a label + send-sequence (with \e/\r/^C-style escapes)
-  // for a new or existing button. Returns null on cancel / empty input.
+  // Common special keys (label → escaped form, standard xterm sequences). Picked
+  // from a menu in the editor so users don't need to memorize escape codes.
+  static const List<(String, String)> _specialKeys = [
+    ('Shift+Tab', r'\e[Z'),
+    ('Home', r'\e[H'),
+    ('End', r'\e[F'),
+    ('PgUp', r'\e[5~'),
+    ('PgDn', r'\e[6~'),
+    ('Insert', r'\e[2~'),
+    ('Delete', r'\e[3~'),
+    ('F1', r'\eOP'),
+    ('F2', r'\eOQ'),
+    ('F3', r'\eOR'),
+    ('F4', r'\eOS'),
+    ('F5', r'\e[15~'),
+    ('F6', r'\e[17~'),
+    ('F7', r'\e[18~'),
+    ('F8', r'\e[19~'),
+    ('F9', r'\e[20~'),
+    ('F10', r'\e[21~'),
+    ('F11', r'\e[23~'),
+    ('F12', r'\e[24~'),
+  ];
+
+  // _editKeyDialog collects a label + send-sequence for a new/existing button.
+  // It offers a combo builder (Ctrl/Alt/Shift + a base key), a special-keys
+  // menu, and a free-text field (with \e/\r/^C escapes) as the source of truth.
+  // Returns null on cancel / empty input.
   Future<_KeyButton?> _editKeyDialog(_KeyButton? existing) async {
     final labelCtl = TextEditingController(text: existing?.label ?? '');
     final seqCtl = TextEditingController(
       text: existing == null ? '' : _encodeSeq(existing.data),
     );
+    final baseCtl = TextEditingController();
+    var ctrl = false, alt = false, shift = false;
+
     final res = await showDialog<_KeyButton>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(existing == null ? '添加按钮' : '编辑按钮'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: labelCtl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '按钮名称'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: seqCtl,
-              decoration: const InputDecoration(
-                labelText: '发送内容',
-                helperText: r'\e=Esc  \r=回车  \t=Tab  ^C=Ctrl-C',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          // Compose modifiers + base key into the escaped sequence + a label.
+          void recompose() {
+            final base = baseCtl.text;
+            if (base.isEmpty) return;
+            final disp = base.substring(0, 1).toUpperCase();
+            var b = shift ? disp : base.substring(0, 1);
+            if (ctrl) b = '^${b.toUpperCase()}';
+            if (alt) b = '\\e$b';
+            seqCtl.text = b;
+            final parts = [
+              if (ctrl) 'Ctrl',
+              if (alt) 'Alt',
+              if (shift) 'Shift',
+            ];
+            labelCtl.text = parts.isEmpty ? disp : '${parts.join('-')}-$disp';
+          }
+
+          Widget modChip(String l, bool v, ValueChanged<bool> on) => FilterChip(
+            label: Text(l),
+            selected: v,
+            visualDensity: VisualDensity.compact,
+            onSelected: (s) => setLocal(() {
+              on(s);
+              recompose();
+            }),
+          );
+
+          return AlertDialog(
+            title: Text(existing == null ? '添加按钮' : '编辑按钮'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: labelCtl,
+                    decoration: const InputDecoration(labelText: '按钮名称'),
+                  ),
+                  const SizedBox(height: 14),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '组合键',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      modChip('Ctrl', ctrl, (s) => ctrl = s),
+                      modChip('Alt', alt, (s) => alt = s),
+                      modChip('Shift', shift, (s) => shift = s),
+                      SizedBox(
+                        width: 56,
+                        child: TextField(
+                          controller: baseCtl,
+                          decoration: const InputDecoration(
+                            labelText: '键',
+                            isDense: true,
+                          ),
+                          onChanged: (_) => setLocal(recompose),
+                        ),
+                      ),
+                      PopupMenuButton<(String, String)>(
+                        tooltip: '插入特殊键',
+                        itemBuilder: (_) => [
+                          for (final it in _specialKeys)
+                            PopupMenuItem(value: it, child: Text(it.$1)),
+                        ],
+                        onSelected: (it) => setLocal(() {
+                          seqCtl.text = it.$2;
+                          labelCtl.text = it.$1;
+                          ctrl = alt = shift = false;
+                          baseCtl.clear();
+                        }),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: CcColors.border),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.keyboard, size: 16),
+                              SizedBox(width: 6),
+                              Text('特殊键'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: seqCtl,
+                    decoration: const InputDecoration(
+                      labelText: '发送内容',
+                      helperText: r'\e=Esc  \r=回车  \t=Tab  ^C=Ctrl-C',
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final label = labelCtl.text.trim();
-              final seq = seqCtl.text;
-              if (label.isEmpty || seq.isEmpty) {
-                Navigator.pop(ctx);
-                return;
-              }
-              Navigator.pop(ctx, _KeyButton(label, _decodeSeq(seq)));
-            },
-            child: const Text('保存'),
-          ),
-        ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final label = labelCtl.text.trim();
+                  final seq = seqCtl.text;
+                  if (label.isEmpty || seq.isEmpty) {
+                    Navigator.pop(ctx);
+                    return;
+                  }
+                  Navigator.pop(ctx, _KeyButton(label, _decodeSeq(seq)));
+                },
+                child: const Text('保存'),
+              ),
+            ],
+          );
+        },
       ),
     );
     labelCtl.dispose();
     seqCtl.dispose();
+    baseCtl.dispose();
     return res;
   }
 }
