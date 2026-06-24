@@ -1608,33 +1608,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
       child: scrollableBar(
         scrolling: [
-          _toolButton(
-            icon: Icons.account_tree_outlined,
-            tooltip: _projectCollapsed ? '展开 Project' : '收起 Project',
-            selected: !_projectCollapsed,
-            onPressed: () => _setProjectCollapsed(!_projectCollapsed),
-          ),
-          _toolButton(
-            icon: Icons.description_outlined,
-            tooltip: _detailCollapsed ? '展开 Handoff' : '收起 Handoff',
-            selected: !_detailCollapsed && _detailItem != null,
-            onPressed: _detailItem == null
-                ? null
-                : () => _setDetailCollapsed(!_detailCollapsed),
-          ),
-          _toolButton(
-            icon: Icons.terminal_rounded,
-            tooltip: _terminalCollapsed ? '展开 Terminal' : '收起 Terminal',
-            selected:
-                !_terminalCollapsed && _bottomTool == _BottomTool.terminal,
-            onPressed: () => _setBottomTool(_BottomTool.terminal),
-          ),
-          _toolButton(
-            icon: Icons.alt_route_rounded,
-            tooltip: 'Git / Commit',
-            selected: !_terminalCollapsed && _bottomTool == _BottomTool.git,
-            onPressed: () => _openGitView(_GitView.changes),
-          ),
           _vcsOperationsMenu(),
           const VerticalDivider(width: 14),
           _toolButton(
@@ -1662,6 +1635,12 @@ class _WorkspacePageState extends State<WorkspacePage>
             onPressed: _showFindInFiles,
           ),
           _toolButton(
+            icon: Icons.data_object_rounded,
+            tooltip: '跳转符号',
+            selected: false,
+            onPressed: _showGoToSymbol,
+          ),
+          _toolButton(
             icon: Icons.history_rounded,
             tooltip: '最近文件',
             selected: false,
@@ -1678,6 +1657,12 @@ class _WorkspacePageState extends State<WorkspacePage>
             tooltip: '快捷键',
             selected: false,
             onPressed: _showShortcuts,
+          ),
+          _toolButton(
+            icon: Icons.refresh_rounded,
+            tooltip: '刷新',
+            selected: false,
+            onPressed: _busy ? null : _refresh,
           ),
           _toolButton(
             icon: _remoteHost.sharing
@@ -2271,42 +2256,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                     enabled: _detailItem != null,
                     onTap: () => _setDetailCollapsed(!_detailCollapsed),
                   ),
-                  const Divider(height: 13, indent: 8, endIndent: 8),
-                  _leftActionButton(
-                    icon: Icons.file_open_outlined,
-                    label: 'Quick Open · $mod+O',
-                    onTap: _showQuickOpen,
-                  ),
-                  _leftActionButton(
-                    icon: Icons.manage_search_rounded,
-                    label: 'Search · $mod+Shift+F',
-                    onTap: _showFindInFiles,
-                  ),
-                  _leftActionButton(
-                    icon: Icons.data_object_rounded,
-                    label: 'Symbols · $mod+Alt+O',
-                    onTap: _showGoToSymbol,
-                  ),
-                  _leftActionButton(
-                    icon: Icons.history_rounded,
-                    label: 'Recent Files · $mod+E',
-                    onTap: _showRecentFiles,
-                  ),
-                  _leftActionButton(
-                    icon: Icons.location_history_rounded,
-                    label: 'Recent Locations · $mod+Shift+E',
-                    onTap: _showRecentLocations,
-                  ),
-                  _leftActionButton(
-                    icon: Icons.keyboard_command_key_rounded,
-                    label: 'Shortcuts',
-                    onTap: _showShortcuts,
-                  ),
-                  _leftActionButton(
-                    icon: Icons.refresh_rounded,
-                    label: 'Refresh',
-                    onTap: _refresh,
-                  ),
                 ],
               ),
             ),
@@ -2352,30 +2301,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                 ? CcColors.accentBright
                 : CcColors.muted,
           ),
-        ),
-      ),
-    ),
-  );
-
-  Widget _leftActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    bool enabled = true,
-  }) => Tooltip(
-    message: label,
-    preferBelow: false,
-    child: InkWell(
-      onTap: enabled ? onTap : null,
-      child: SizedBox(
-        width: 46,
-        height: 32,
-        child: Icon(
-          icon,
-          size: 17,
-          color: enabled
-              ? CcColors.muted
-              : CcColors.subtle.withValues(alpha: 0.45),
         ),
       ),
     ),
@@ -3174,18 +3099,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
       child: scrollableBar(
         scrolling: [
-          _statusBarToolSegment(
-            icon: _bottomTool == _BottomTool.git
-                ? Icons.alt_route_rounded
-                : Icons.terminal_rounded,
-            label: _bottomTool == _BottomTool.git ? 'Git' : 'Terminal',
-            detail: _bottomTool == _BottomTool.git
-                ? (status?.branch ?? p?.name ?? '')
-                : '${terms.length}',
-            selected: true,
-            onTap: () => _setBottomTool(_bottomTool),
-          ),
-          const VerticalDivider(width: 1),
           _statusBarToolSegment(
             icon: Icons.terminal_rounded,
             label: 'Terminal',
