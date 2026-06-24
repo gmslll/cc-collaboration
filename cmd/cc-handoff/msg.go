@@ -117,7 +117,7 @@ func runMsgWhoami() error {
 func runMsgSend(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("msg send", flag.ContinueOnError)
 	noSubmit := fs.Bool("no-submit", false, "只填入对方输入框,不自动回车")
-	timeout := fs.Duration("timeout", 3*time.Second, "等待投递结果的超时")
+	timeout := fs.Duration("timeout", 5*time.Second, "等待投递结果的超时")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -162,23 +162,26 @@ func runMsgSend(ctx context.Context, args []string) error {
 		return err
 	}
 
-	// Wait for a verdict: the app writes <id>.err on failure then deletes the
-	// .json. So .err present → failure; .json gone with no .err → delivered;
-	// neither before the deadline → nobody is listening.
+	// Wait for the app's explicit receipt: it claims the message (rename to
+	// .taken) then writes <id>.ok on success or <id>.err on failure. We poll for
+	// either marker — keyed on the marker, not on the .json vanishing, since the
+	// claim removes .json well before delivery finishes. No marker before the
+	// deadline → nobody is listening.
+	okPath := filepath.Join(outbox, id+".ok")
 	errPath := filepath.Join(outbox, id+".err")
 	deadline := time.Now().Add(*timeout)
 	for {
 		if eb, e := os.ReadFile(errPath); e == nil {
 			os.Remove(errPath)
-			os.Remove(jsonPath)
 			return errors.New(strings.TrimSpace(string(eb)))
 		}
-		if _, e := os.Stat(jsonPath); errors.Is(e, os.ErrNotExist) {
+		if _, e := os.Stat(okPath); e == nil {
+			os.Remove(okPath)
 			fmt.Printf("已发送到 %s\n", target)
 			return nil
 		}
 		if time.Now().After(deadline) {
-			os.Remove(jsonPath)
+			os.Remove(jsonPath) // unconsumed; clean up our drop
 			return errors.New("无人接收(桌面 App 未在监听本地会话总线)")
 		}
 		select {

@@ -61,7 +61,9 @@ func TestMsgSendDelivered(t *testing.T) {
 		if m["to"] != "ts1" || m["from"] != "ts0" || m["body"] != "hi there" || m["submit"] != true {
 			t.Errorf("bad payload: %+v", m)
 		}
-		os.Remove(filepath.Join(outbox, name)) // success = just delete the .json
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))                                  // simulate claim
+		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte("ok"), 0o600) // success receipt
 	})
 
 	if err := runMsgSend(context.Background(), []string{"ts1", "hi", "there"}); err != nil {
@@ -78,8 +80,8 @@ func TestMsgSendError(t *testing.T) {
 
 	go consumeOutbox(t, outbox, func(name string, _ map[string]any) {
 		base := strings.TrimSuffix(name, ".json")
-		os.WriteFile(filepath.Join(outbox, base+".err"), []byte("找不到目标会话「ts9」"), 0o600)
-		os.Remove(filepath.Join(outbox, name))
+		os.Remove(filepath.Join(outbox, name))                                          // simulate claim
+		os.WriteFile(filepath.Join(outbox, base+".err"), []byte("找不到目标会话「ts9」"), 0o600) // failure receipt
 	})
 
 	err := runMsgSend(context.Background(), []string{"ts9", "hello"})

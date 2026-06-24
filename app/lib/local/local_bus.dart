@@ -40,6 +40,7 @@ class LocalBus {
   LocalBus({required this.registry, required this.deliver});
 
   StreamSubscription<FileSystemEvent>? _watch;
+  Timer? _sweep;
   final Set<String> _processing = {};
   bool _started = false;
 
@@ -57,7 +58,16 @@ class LocalBus {
       await _chmod700(_outbox);
       await syncRegistry();
       await _drainExisting(); // messages left from before we started watching
-      _watch = Directory(_outbox).watch().listen(_onEvent);
+      _watch = Directory(_outbox).watch().listen(_onEvent, onError: (_) {});
+      // Backstop for the watcher: FSEvents can coalesce or drop events under
+      // load, and the watch stream can die silently. A low-frequency sweep
+      // re-scans the outbox so a missed message is still delivered within a
+      // couple seconds — well inside the sender's send timeout — instead of
+      // being silently lost (which would read as a false "no receiver").
+      _sweep = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => unawaited(_drainExisting()),
+      );
     } catch (_) {
       // Best-effort: without a watcher, `msg send` simply times out and reports
       // "no receiver" rather than corrupting anything.
@@ -97,15 +107,23 @@ class LocalBus {
     unawaited(_process(p));
   }
 
-  Future<void> _process(String path) async {
-    if (!_processing.add(path)) return; // dedupe duplicate FS events
+  Future<void> _process(String jsonPath) async {
+    if (!_processing.add(jsonPath)) return; // in-process dedupe of FS events
     try {
-      final f = File(path);
-      if (!await f.exists()) return; // a delete event for a file we consumed
-      final base = path.substring(0, path.length - '.json'.length);
+      final base = jsonPath.substring(0, jsonPath.length - '.json'.length);
+      final taken = '$base.taken';
+      // Atomic claim: across the watcher + the sweep, and across multiple app
+      // instances, exactly one rename succeeds — everyone else gets an error and
+      // bows out. The filesystem rename IS the mutex, so there's no lock file or
+      // liveness probe to go stale and wedge delivery.
+      try {
+        await File(jsonPath).rename(taken);
+      } catch (_) {
+        return; // already claimed by someone else, or already gone
+      }
       String? err;
       try {
-        final m = jsonDecode(await f.readAsString());
+        final m = jsonDecode(await File(taken).readAsString());
         if (m is Map) {
           err = deliver(LocalMsg(
             (m['from'] ?? '').toString(),
@@ -119,24 +137,26 @@ class LocalBus {
       } catch (e) {
         err = '消息解析失败: $e';
       }
-      // Ordering matters: write .err BEFORE deleting .json, so when the sender
-      // sees the .json gone the verdict (.err present or absent) is already set.
-      if (err != null) {
-        try {
-          await File('$base.err').writeAsString(err);
-        } catch (_) {}
-      }
+      // Explicit terminal receipt the sender polls for: <id>.ok on success,
+      // <id>.err on failure. Keying on a marker (not "the .json vanished") keeps
+      // success/failure unambiguous even though the claim already removed .json.
       try {
-        await f.delete();
+        await File(err == null ? '$base.ok' : '$base.err')
+            .writeAsString(err ?? 'ok');
+      } catch (_) {}
+      try {
+        await File(taken).delete();
       } catch (_) {}
     } finally {
-      _processing.remove(path);
+      _processing.remove(jsonPath);
     }
   }
 
   void dispose() {
     _watch?.cancel();
     _watch = null;
+    _sweep?.cancel();
+    _sweep = null;
     _started = false;
   }
 }

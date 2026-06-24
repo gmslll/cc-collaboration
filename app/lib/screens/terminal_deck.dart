@@ -174,8 +174,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     final tag = fromLabel.isNotEmpty
         ? fromLabel.first
         : (m.from.isEmpty ? '?' : m.from);
-    final text = '[来自 $tag] ${m.body}';
-    target.sendText(m.submit ? '$text\r' : text);
+    final body = '[来自 $tag] ${m.body}';
+    // Deliver as one bracketed-paste block (ESC[200~ … ESC[201~) so the
+    // receiving TUI inserts it atomically — no per-newline submit, no control-
+    // char interpretation — even if it's mid-stream or the body is multi-line.
+    // A separate CR submits the whole block only when requested.
+    target.sendText('\x1b[200~$body\x1b[201~');
+    if (m.submit) target.sendText('\r');
     return null;
   }
 
