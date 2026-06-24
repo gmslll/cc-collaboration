@@ -32,6 +32,7 @@ class _AccountPageState extends State<AccountPage> {
   final _cfgIdentity = TextEditingController();
   final _token = TextEditingController();
   String _agent = 'claude';
+  String _terminalApp = ''; // '' = platform default
   final _wsRoot = TextEditingController();
   final _grade = TextEditingController();
   final _linear = TextEditingController();
@@ -73,6 +74,7 @@ class _AccountPageState extends State<AccountPage> {
       _cfgIdentity.text = c.identity;
       _token.text = c.token;
       _agent = c.agent.isEmpty ? 'claude' : c.agent;
+      _terminalApp = c.terminalApp;
       _wsRoot.text = c.workspaceRoot;
       _grade.text = c.gradeCommand;
       _linear.text = c.linearToken;
@@ -88,6 +90,7 @@ class _AccountPageState extends State<AccountPage> {
         identity: _cfgIdentity.text.trim(),
         token: _token.text.trim(),
         agent: _agent,
+        terminalApp: _terminalApp,
         workspaceRoot: _wsRoot.text.trim(),
         gradeCommand: _grade.text.trim(),
         linearToken: _linear.text.trim(),
@@ -358,6 +361,37 @@ class _AccountPageState extends State<AccountPage> {
                     DropdownMenuItem(value: 'manual', child: Text('manual')),
                   ],
                   onChanged: (v) => setState(() => _agent = v ?? 'claude'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text(
+                  '默认终端 App',
+                  style: TextStyle(color: CcColors.muted, fontSize: 13),
+                ),
+                const Spacer(),
+                DropdownButton<String>(
+                  value: _terminalApp,
+                  items: const [
+                    DropdownMenuItem(value: '', child: Text('(默认)')),
+                    DropdownMenuItem(
+                      value: 'terminal',
+                      child: Text('terminal'),
+                    ),
+                    DropdownMenuItem(value: 'iterm2', child: Text('iterm2')),
+                    DropdownMenuItem(value: 'ghostty', child: Text('ghostty')),
+                    DropdownMenuItem(
+                      value: 'windows-terminal',
+                      child: Text('windows-terminal'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'powershell',
+                      child: Text('powershell'),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => _terminalApp = v ?? ''),
                 ),
               ],
             ),

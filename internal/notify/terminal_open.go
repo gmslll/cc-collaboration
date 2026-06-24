@@ -30,15 +30,19 @@ func OpenTerminalCommand(ctx context.Context, app, mode, shellCmd string) error 
 			mode, config.LaunchModeWindow, config.LaunchModeSplit)
 	}
 
-	var script string
+	// ghostty launches directly via `open` (no AppleScript dictionary, window
+	// only); terminal/iterm2 go through osascript.
+	var cmd *exec.Cmd
 	switch app {
+	case config.TerminalAppGhostty:
+		cmd = ghosttyCommand(ctx, shellCmd)
 	case config.TerminalAppITerm2:
-		script = itermScript(mode, shellCmd, postLaunchInject{kind: injectKindNone})
+		cmd = osascriptCommand(ctx, itermScript(mode, shellCmd, postLaunchInject{kind: injectKindNone}))
 	case config.TerminalAppTerminal:
-		script = terminalAppScript(mode, shellCmd, postLaunchInject{kind: injectKindNone})
+		cmd = osascriptCommand(ctx, terminalAppScript(mode, shellCmd, postLaunchInject{kind: injectKindNone}))
 	default:
-		return fmt.Errorf("OpenTerminalCommand: unknown terminal_app %q (want %q or %q)",
-			app, config.TerminalAppTerminal, config.TerminalAppITerm2)
+		return fmt.Errorf("OpenTerminalCommand: unknown terminal_app %q (want %q, %q or %q)",
+			app, config.TerminalAppTerminal, config.TerminalAppITerm2, config.TerminalAppGhostty)
 	}
-	return exec.CommandContext(ctx, "osascript", "-e", script).Run()
+	return cmd.Run()
 }

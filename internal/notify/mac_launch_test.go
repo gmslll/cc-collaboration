@@ -41,7 +41,7 @@ func TestBracketedPaste(t *testing.T) {
 // osascript, by routing through Dry=true and validating it returns nil.
 func TestLaunchTerminalDry(t *testing.T) {
 	ag, _ := agent.Resolve("claude")
-	for _, app := range []string{"", "terminal", "iterm2"} {
+	for _, app := range []string{"", "terminal", "iterm2", "ghostty"} {
 		err := LaunchTerminal(t.Context(), LaunchOpts{
 			Agent:      ag,
 			App:        app,
@@ -51,6 +51,26 @@ func TestLaunchTerminalDry(t *testing.T) {
 		})
 		if err != nil {
 			t.Errorf("dry launch app=%q: %v", app, err)
+		}
+	}
+}
+
+// TestGhosttyCommand asserts Ghostty launches via `open` (not osascript) and
+// that the shell command stays a single intact argv (no extra quoting).
+func TestGhosttyCommand(t *testing.T) {
+	const shellCmd = "cd /tmp/x && claude -p foo"
+	cmd := ghosttyCommand(t.Context(), shellCmd)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	want := []string{"open", "-na", "Ghostty.app", "--args", "-e", shell, "-lc", shellCmd}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("ghosttyCommand args = %v, want %v", cmd.Args, want)
+	}
+	for i := range want {
+		if cmd.Args[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, cmd.Args[i], want[i])
 		}
 	}
 }
@@ -101,7 +121,8 @@ func TestLaunchTerminalInteractiveDryRun(t *testing.T) {
 	if err := os.WriteFile(prompt, []byte("line1\nline2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, app := range []string{"terminal", "iterm2"} {
+	// ghostty: covers the inject-skip note + split→window fallback under Dry.
+	for _, app := range []string{"terminal", "iterm2", "ghostty"} {
 		for _, mode := range []string{"window", "split"} {
 			err := LaunchTerminal(t.Context(), LaunchOpts{
 				Agent:       ag,

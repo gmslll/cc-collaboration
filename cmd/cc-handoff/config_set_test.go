@@ -63,6 +63,30 @@ func TestConfigSet_GitHubToken(t *testing.T) {
 	}
 }
 
+func TestConfigSet_TerminalApp(t *testing.T) {
+	seedUser(t)
+	if err := runConfigSet(context.Background(),
+		[]string{"--terminal-app", "ghostty"}); err != nil {
+		t.Fatal(err)
+	}
+	u := reload(t)
+	if u.TerminalApp != "ghostty" {
+		t.Fatalf("terminal_app not set: %+v", u)
+	}
+	// unrelated fields preserved.
+	if u.Token != "tok-keepme" || u.Identity != "me@backend" {
+		t.Fatalf("other fields clobbered: %+v", u)
+	}
+}
+
+func TestConfigSet_InvalidTerminalApp(t *testing.T) {
+	seedUser(t)
+	if err := runConfigSet(context.Background(),
+		[]string{"--terminal-app", "kitty"}); err == nil {
+		t.Fatal("expected invalid terminal-app error")
+	}
+}
+
 func TestWorkspaceSet(t *testing.T) {
 	seedUser(t)
 	if err := runWorkspaceSet(context.Background(),

@@ -59,19 +59,23 @@ func launchAgentWithPrompt(ctx context.Context, ag agent.Agent, projectDir, prom
 
 // projectTerminalPrefs reads the project's repo-level [triggers] for terminal
 // app / launch mode, so a --window launch honors the same prefs auto-launch
-// uses. Missing or unconfigured repo → empty strings, which OpenTerminalCommand
-// resolves to its platform defaults. Uses LoadRepo (not Resolve) so launching
-// doesn't require a configured relay/token.
+// uses. The repo's terminal_app wins; when it's unset, the user-level default
+// (config.toml terminal_app) applies — mirroring Resolve's user→repo precedence
+// for the auto-launch path. Both empty → OpenTerminalCommand's platform default.
+// Uses LoadRepo (not Resolve) so launching doesn't require a configured relay.
 func projectTerminalPrefs(projectPath string) (app, mode string) {
 	r, _, err := config.LoadRepo(projectPath)
 	if err != nil {
 		// Missing config is normal (LoadRepo returns nil,nil); a non-nil error
 		// means a corrupt .cc-handoff.toml — surface it but still fall back.
 		fmt.Fprintf(os.Stderr, "warning: read terminal prefs: %v\n", err)
-		return "", ""
+	} else if r != nil {
+		app, mode = r.Triggers.TerminalApp, r.Triggers.LaunchMode
 	}
-	if r == nil {
-		return "", ""
+	if app == "" {
+		if u, _, uerr := config.LoadUser(); uerr == nil && u != nil {
+			app = u.TerminalApp
+		}
 	}
-	return r.Triggers.TerminalApp, r.Triggers.LaunchMode
+	return app, mode
 }

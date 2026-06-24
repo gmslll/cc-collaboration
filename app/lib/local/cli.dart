@@ -109,6 +109,7 @@ class Cli {
     String? gradeCommand,
     String? linearToken,
     String? githubToken,
+    String? terminalApp,
   }) =>
       run([
         'config', 'set',
@@ -120,6 +121,7 @@ class Cli {
         if (gradeCommand != null) ...['--grade-command', gradeCommand],
         if (linearToken != null) ...['--linear-token', linearToken],
         if (githubToken != null) ...['--github-token', githubToken],
+        if (terminalApp != null) ...['--terminal-app', terminalApp],
       ]);
 
   static Future<void> workspaceSet(String name,

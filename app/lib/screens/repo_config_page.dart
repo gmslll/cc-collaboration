@@ -190,8 +190,11 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
         _switch('mute_user_presence(静音上下线通知)', c.muteUserPresence,
             (v) => setState(() => c.muteUserPresence = v)),
         const SizedBox(height: 6),
-        _dropdown('terminal_app', c.terminalApp,
-            const ['terminal', 'iterm2', 'windows-terminal', 'powershell'],
+        _dropdown(
+            'terminal_app',
+            c.terminalApp,
+            const ['terminal', 'iterm2', 'ghostty', 'windows-terminal',
+              'powershell'],
             (v) => setState(() => c.terminalApp = v)),
         _dropdown('launch_mode', c.launchMode, const ['window', 'split'],
             (v) => setState(() => c.launchMode = v)),

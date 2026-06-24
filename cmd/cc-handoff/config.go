@@ -34,6 +34,7 @@ func configUsage() {
                         [--agent claude|codex|manual] [--workspace-root DIR]
                         [--grade-command CMD] [--linear-token TOK]
                         [--github-token TOK]
+                        [--terminal-app terminal|iterm2|ghostty|windows-terminal|powershell]
         set one or more user-level fields; only the flags you pass are changed,
         the rest of the config (workspaces etc.) is preserved.
 `)
@@ -51,6 +52,7 @@ func runConfigSet(_ context.Context, args []string) error {
 	grade := fs.String("grade-command", "", "local AI severity grader command")
 	linear := fs.String("linear-token", "", "Linear personal API token")
 	github := fs.String("github-token", "", "GitHub personal access token (read PRs)")
+	terminalApp := fs.String("terminal-app", "", "default external terminal app: terminal|iterm2|ghostty|windows-terminal|powershell")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -83,6 +85,12 @@ func runConfigSet(_ context.Context, args []string) error {
 			u.LinearPersonalToken = *linear
 		case "github-token":
 			u.GitHubToken = *github
+		case "terminal-app":
+			if !validTerminalApp(*terminalApp) {
+				setErr = fmt.Errorf("invalid terminal-app %q (terminal|iterm2|ghostty|windows-terminal|powershell)", *terminalApp)
+				return
+			}
+			u.TerminalApp = *terminalApp
 		}
 	})
 	if setErr != nil {
@@ -99,4 +107,14 @@ func runConfigSet(_ context.Context, args []string) error {
 // validAgent allows empty (clears the field) or a known agent name.
 func validAgent(v string) bool {
 	return v == "" || v == "claude" || v == "codex" || v == "manual"
+}
+
+// validTerminalApp allows empty (clears the field) or a known terminal app.
+func validTerminalApp(v string) bool {
+	switch v {
+	case "", config.TerminalAppTerminal, config.TerminalAppITerm2, config.TerminalAppGhostty,
+		config.TerminalAppWindowsTerminal, config.TerminalAppPowerShell:
+		return true
+	}
+	return false
 }

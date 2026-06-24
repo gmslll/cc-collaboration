@@ -47,13 +47,18 @@ class AppConfig {
   final String linearToken;
   final String githubToken;
 
+  /// user-level default external terminal app (terminal/iterm2/ghostty/...),
+  /// used when a repo's .cc-handoff.toml doesn't set its own terminal_app.
+  final String terminalApp;
+
   AppConfig(this.relayUrl, this.token, this.identity, this.repos,
       [this.workspaces = const [],
       this.agent = '',
       this.workspaceRoot = '',
       this.gradeCommand = '',
       this.linearToken = '',
-      this.githubToken = '']);
+      this.githubToken = '',
+      this.terminalApp = '']);
 
   String? repoPath(String name) => repos[name];
 
@@ -74,6 +79,7 @@ class AppConfig {
     final grade = (map['grade_command'] ?? '').toString();
     final linear = (map['linear_personal_token'] ?? '').toString();
     final githubToken = (map['github_token'] ?? '').toString();
+    final terminalApp = (map['terminal_app'] ?? '').toString();
     final repos = <String, String>{};
     final wsList = <WorkspaceCfg>[];
 
@@ -113,7 +119,7 @@ class AppConfig {
     }
 
     return AppConfig(relay, token, identity, repos, wsList, userAgent, wsRoot,
-        grade, linear, githubToken);
+        grade, linear, githubToken, terminalApp);
   }
 }
 

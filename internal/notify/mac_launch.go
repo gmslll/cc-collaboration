@@ -132,15 +132,24 @@ func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
 		}
 	}
 
-	var script string
+	// Each app yields a runnable command: terminal/iterm2 via osascript, ghostty
+	// directly via `open` (no AppleScript dictionary).
+	var cmd *exec.Cmd
 	switch app {
+	case config.TerminalAppGhostty:
+		// split → window (no CLI split); the launch_interactive paste can't be
+		// typed in without AppleScript, so it's skipped (REPL still opens).
+		if inject.kind != injectKindNone {
+			fmt.Fprintln(os.Stderr, "ghostty: launch_interactive prompt injection unsupported; opening REPL without it")
+		}
+		cmd = ghosttyCommand(ctx, shellCmd)
 	case config.TerminalAppITerm2:
-		script = itermScript(mode, shellCmd, inject)
+		cmd = osascriptCommand(ctx, itermScript(mode, shellCmd, inject))
 	case config.TerminalAppTerminal:
-		script = terminalAppScript(mode, shellCmd, inject)
+		cmd = osascriptCommand(ctx, terminalAppScript(mode, shellCmd, inject))
 	default:
-		return fmt.Errorf("LaunchTerminal: unknown terminal_app %q (want %q or %q)",
-			app, config.TerminalAppTerminal, config.TerminalAppITerm2)
+		return fmt.Errorf("LaunchTerminal: unknown terminal_app %q (want %q, %q or %q)",
+			app, config.TerminalAppTerminal, config.TerminalAppITerm2, config.TerminalAppGhostty)
 	}
 
 	if opts.Dry {
@@ -148,7 +157,27 @@ func LaunchTerminal(ctx context.Context, opts LaunchOpts) error {
 			app, mode, opts.Interactive, opts.CWD, opts.PromptFile)
 		return nil
 	}
-	return exec.CommandContext(ctx, "osascript", "-e", script).Run()
+	return cmd.Run()
+}
+
+// osascriptCommand runs an AppleScript snippet (the terminal/iterm2 launch
+// path). ghosttyCommand is its non-AppleScript counterpart.
+func osascriptCommand(ctx context.Context, script string) *exec.Cmd {
+	return exec.CommandContext(ctx, "osascript", "-e", script)
+}
+
+// ghosttyCommand launches shellCmd in a new Ghostty window. Ghostty has no
+// AppleScript dictionary (so it can't be driven via osascript like
+// terminal/iterm2); `open -na` starts a new instance and `-e <shell> -lc <cmd>`
+// runs the command. Passing the shell + `-lc` + the command as separate argv
+// (Go exec doesn't go through a shell) keeps shellCmd intact — no extra
+// quoting — mirroring the embedded terminal's Pty.start(shell, ['-i','-c',cmd]).
+func ghosttyCommand(ctx context.Context, shellCmd string) *exec.Cmd {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	return exec.CommandContext(ctx, "open", "-na", "Ghostty.app", "--args", "-e", shell, "-lc", shellCmd)
 }
 
 type injectKind int

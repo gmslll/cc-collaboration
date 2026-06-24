@@ -21,6 +21,12 @@ type User struct {
 	// "codex" | "manual". Empty falls back to "claude" for backwards
 	// compatibility with installs predating multi-agent support.
 	Agent string `toml:"agent,omitempty"`
+	// TerminalApp is the user-level default external terminal app, used when a
+	// repo's .cc-handoff.toml [triggers] doesn't set terminal_app:
+	// "terminal" | "iterm2" | "ghostty" (macOS), "windows-terminal" |
+	// "powershell" (Windows). Empty falls back to the platform default; a
+	// per-repo terminal_app overrides this.
+	TerminalApp string `toml:"terminal_app,omitempty"`
 	// LinearPersonalToken is the user's Linear API key used by linear-sync to
 	// pull notifications. Lives at user-level (not repo-level) so the secret
 	// stays out of git. Empty disables the linear-sync feature.
@@ -257,6 +263,7 @@ const (
 const (
 	TerminalAppTerminal        = "terminal"
 	TerminalAppITerm2          = "iterm2"
+	TerminalAppGhostty         = "ghostty"
 	TerminalAppWindowsTerminal = "windows-terminal"
 	TerminalAppPowerShell      = "powershell"
 )
@@ -457,6 +464,11 @@ func Resolve(cwd string) (*Resolved, error) {
 		InboxOverride:       r.Inbox.Dir,
 		Linear:              r.Integrations.Linear,
 		LinearPersonalToken: u.LinearPersonalToken,
+	}
+	// A repo's terminal_app wins; otherwise fall back to the user-level default
+	// (the platform default is applied later by the launcher when both are "").
+	if out.Triggers.TerminalApp == "" {
+		out.Triggers.TerminalApp = u.TerminalApp
 	}
 	if out.RelayURL == "" || out.Token == "" || out.Me == "" {
 		return nil, fmt.Errorf("incomplete config: relay_url/token/identity must be set in user config")

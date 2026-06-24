@@ -257,6 +257,10 @@ class _WorkspacePageState extends State<WorkspacePage>
   void initState() {
     super.initState();
     onTermsChanged = _remoteHost.broadcastSessions;
+    // Any newly spawned session surfaces the bottom terminal panel (even if it
+    // was showing Git) so the launched agent is visible. Restore doesn't go
+    // through addTerm, so a restored Git view isn't hijacked on startup.
+    onTermAdded = () => _setBottomTool(_BottomTool.terminal);
     _remoteHost.addListener(_onRemoteChange);
     _loadTasks();
     // After restoring persisted sessions, expand the projects that own them so
@@ -361,8 +365,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   // _openAgent launches a session in [dir] under project [p], then expands the
   // project so its new session node (the "tab") is visible in the tree.
   void _openAgent(ProjectCfg p, String dir, String agent, String preLaunch) {
+    // _launch → addTerm → onTermAdded already surfaces + expands the terminal
+    // panel; just expand the project so its new session node is visible.
     _launch(dir, agent, preLaunch);
-    _setTerminalCollapsed(false);
     final ctl = _ctlFor(p.path);
     if (!ctl.isExpanded) ctl.expand();
   }
@@ -1745,7 +1750,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       return;
     }
     _openAgent(d.project, d.project.path, 'claude', d.ws.preLaunch);
-    _setTerminalCollapsed(false);
   }
 
   void _launchDefaultCodex() {
@@ -1755,7 +1759,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       return;
     }
     _openAgent(d.project, d.project.path, 'codex', d.ws.preLaunch);
-    _setTerminalCollapsed(false);
   }
 
   Widget _toolButton({

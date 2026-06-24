@@ -25,12 +25,18 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // restore) so a remote host can re-broadcast the session list to phones.
   void Function()? onTermsChanged;
 
+  // onTermAdded fires only when a NEW session is spawned via addTerm (not on
+  // restore) — the workspace uses it to surface the bottom terminal panel so a
+  // freshly launched agent is visible even if the bottom was showing Git.
+  void Function()? onTermAdded;
+
   void addTerm(String workdir, String command) {
     setState(() {
       terms.add(TerminalSession(workdir, command));
       activeTerm = terms.length - 1;
     });
     onTermsChanged?.call();
+    onTermAdded?.call();
     unawaited(_save());
   }
 
