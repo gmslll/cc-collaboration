@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -26,6 +27,25 @@ class TerminalSession {
   // remoteSink, when set, also receives this terminal's (utf8-decoded) PTY
   // output so a remote phone client can mirror it. Null when nobody's watching.
   void Function(String chunk)? remoteSink;
+
+  // Rolling buffer of recent raw PTY output so a phone connecting mid-session
+  // can replay it and see the current screen / scrollback instead of a blank
+  // terminal until the next redraw. Kept always (even with no watcher) and
+  // bounded by char count; whole chunks go in/out to avoid splitting an escape
+  // sequence mid-stream.
+  final Queue<String> _backlog = Queue<String>();
+  int _backlogLen = 0;
+  static const int _backlogCap = 256 * 1024;
+
+  void _appendBacklog(String chunk) {
+    _backlog.add(chunk);
+    _backlogLen += chunk.length;
+    while (_backlogLen > _backlogCap && _backlog.length > 1) {
+      _backlogLen -= _backlog.removeFirst().length;
+    }
+  }
+
+  String get backlog => _backlog.join();
 
   TerminalSession(this.workdir, this.command)
     : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
@@ -63,6 +83,7 @@ class TerminalSession {
         .transform(const Utf8Decoder(allowMalformed: true))
         .listen((chunk) {
           terminal.write(chunk);
+          _appendBacklog(chunk);
           remoteSink?.call(chunk);
         });
     pty.exitCode.then(

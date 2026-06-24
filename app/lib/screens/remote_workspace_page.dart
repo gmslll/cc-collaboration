@@ -4,6 +4,7 @@ import 'package:xterm/xterm.dart';
 
 import '../local/prefs.dart';
 import '../remote/remote_client.dart';
+import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
 import '../widgets.dart';
 import 'diff_split.dart';
@@ -898,6 +899,34 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     if (text != null && text.isNotEmpty) _term.paste(text);
   }
 
+  // Full-screen agents (claude/codex) run in the alternate screen (no
+  // scrollback), so the phone scrolls them by sending wheel reports to the
+  // host like a Mac wheel would. terminalWheel returns null when the app isn't
+  // in a scroll-reporting mode (plain shell) — then we leave it to the
+  // TerminalView's native touch scrollback.
+  void _wheel(bool up, {int ticks = 1}) {
+    final seq = terminalWheel(_term, up: up);
+    if (seq != null) widget.client.sendKeys(widget.session.sid, seq * ticks);
+  }
+
+  // Accumulated vertical drag distance, converted to wheel ticks once it
+  // crosses a line-height threshold (swipe-to-scroll).
+  double _scrollAccum = 0;
+  static const double _linePx = 22;
+
+  void _onPointerMove(PointerMoveEvent e) {
+    // Only synthesize wheel for scroll-reporting TUIs; a plain shell keeps its
+    // native touch scrollback (and selection) untouched since Listener doesn't
+    // claim the gesture.
+    if (!_term.mouseMode.reportScroll) return;
+    _scrollAccum += e.delta.dy;
+    while (_scrollAccum.abs() >= _linePx) {
+      final up = _scrollAccum > 0; // finger down → reveal earlier output
+      _wheel(up);
+      _scrollAccum += up ? -_linePx : _linePx;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -905,15 +934,19 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       body: Column(
         children: [
           Expanded(
-            child: TerminalView(
-              _term,
-              controller: _controller,
-              theme: ccTerminalTheme,
-              textStyle: const TerminalStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 12.5,
+            child: Listener(
+              onPointerDown: (_) => _scrollAccum = 0,
+              onPointerMove: _onPointerMove,
+              child: TerminalView(
+                _term,
+                controller: _controller,
+                theme: ccTerminalTheme,
+                textStyle: const TerminalStyle(
+                  fontFamily: 'JetBrainsMono',
+                  fontSize: 12.5,
+                ),
+                padding: const EdgeInsets.all(8),
               ),
-              padding: const EdgeInsets.all(8),
             ),
           ),
           _keyBar(),
@@ -947,6 +980,8 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
           children: [
             btn('复制', _copy),
             btn('粘贴', _paste),
+            btn('滚↑', () => _wheel(true, ticks: 3)),
+            btn('滚↓', () => _wheel(false, ticks: 3)),
             k('Esc', '\x1b'),
             k('Tab', '\t'),
             k('Ctrl-C', '\x03'),

@@ -184,6 +184,14 @@ class RemoteHost extends RemoteChannel {
     final from = (f['from'] as num?)?.toInt();
     final s = _sessionById(sid);
     if (s == null || from == null) return;
+    // Replay recent output to just this client so it sees the current screen /
+    // scrollback immediately instead of a blank terminal until the next redraw.
+    // This method runs synchronously (no await) so no PTY chunk can interleave
+    // between the replay and the remoteSink wiring below — no gap, no dup.
+    final bl = s.backlog;
+    if (bl.isNotEmpty) {
+      send({'t': 'term.output', 'to': from, 'sid': s.id, 'd': bl});
+    }
     (_watchers[s.id] ??= {}).add(from);
     // Setting remoteSink starts mirroring this session's output to the phone and
     // hands it authority over the PTY size (see TerminalSession.onResize).
