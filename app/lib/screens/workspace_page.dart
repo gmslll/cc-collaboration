@@ -372,6 +372,23 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (!ctl.isExpanded) ctl.expand();
   }
 
+  // _newShellTerminal opens a plain interactive shell (empty command) so the
+  // user has a terminal they can type in and scroll, separate from the agent
+  // TUIs. Runs in the current git project's dir, else the first project, else $HOME.
+  void _newShellTerminal() {
+    var cwd = _currentGitProject?.path ?? '';
+    if (cwd.isEmpty) {
+      for (final w in _cfg.workspaces) {
+        if (w.projects.isNotEmpty) {
+          cwd = w.projects.first.path;
+          break;
+        }
+      }
+    }
+    if (cwd.isEmpty) cwd = Platform.environment['HOME'] ?? '/';
+    addTerm(cwd, ''); // '' = plain interactive shell
+  }
+
   // --- remote (phone) session actions; wired into _remoteHost ---
   void _remoteNewSession(String projectPath, String agent) {
     for (final ws in _cfg.workspaces) {
@@ -3749,6 +3766,12 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
           ],
           trailing: [
+            IconButton(
+              icon: const Icon(Icons.add_rounded, size: 18),
+              tooltip: '新建终端（普通 shell）',
+              visualDensity: VisualDensity.compact,
+              onPressed: _newShellTerminal,
+            ),
             IconButton(
               icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
               tooltip: '收起 Terminal',

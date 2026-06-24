@@ -26,7 +26,11 @@ class TerminalSession {
   TerminalSession(this.workdir, this.command)
     : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
           ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
-          : workdir;
+          : workdir {
+    // Fix xterm 4.0.0's broken wheel reporting so scroll reaches full-screen
+    // agent TUIs (claude/codex), which scroll fine in real terminals.
+    terminal.mouseHandler = const _WheelMouseHandler();
+  }
 
   // label is what the UI shows: the user-given name, else the derived title.
   String get label => (name != null && name!.isNotEmpty) ? name! : title;
@@ -35,9 +39,16 @@ class TerminalSession {
     if (_started) return;
     _started = true;
     final shell = Platform.environment['SHELL'] ?? '/bin/sh';
+    // Empty command = a plain interactive login shell (typeable + scrollable);
+    // otherwise run the agent command and let the shell exit when it does.
+    final args = command.isEmpty ? const ['-i', '-l'] : ['-i', '-c', command];
     final pty = Pty.start(
       shell,
-      arguments: ['-i', '-c', command],
+      arguments: args,
+      // Declare a real terminal type so full-screen TUIs (claude/codex) enable
+      // mouse reporting → wheel scroll reaches them. A Finder-launched .app may
+      // otherwise have no TERM. flutter_pty merges this over Platform.environment.
+      environment: const {'TERM': 'xterm-256color', 'COLORTERM': 'truecolor'},
       workingDirectory: workdir,
       rows: terminal.viewHeight,
       columns: terminal.viewWidth,
@@ -65,6 +76,44 @@ class TerminalSession {
   }
 
   void dispose() => _pty?.kill();
+}
+
+// _WheelMouseHandler fixes mouse-wheel scrolling in full-screen TUIs.
+//
+// xterm 4.0.0 is doubly broken for the wheel: (1) in basic click-tracking mode
+// (?1000h / clickOnly) its default handler drops wheel events entirely, and
+// (2) it encodes the wheel button as 64+4 / 64+5 (= 68 / 69) instead of the
+// standard transposed X11 codes 64 / 65. Either way claude/codex never see a
+// scroll (they scroll fine in real terminals, which send 64 / 65). This handler
+// reports the wheel with the correct codes whenever any mouse tracking is on,
+// and defers all non-wheel events (clicks/drag/move) to the package default.
+class _WheelMouseHandler implements TerminalMouseHandler {
+  const _WheelMouseHandler();
+
+  @override
+  String? call(TerminalMouseEvent e) {
+    if (!e.button.isWheel) return defaultMouseHandler(e);
+    if (e.state.mouseMode == MouseMode.none) return null;
+    // Only the wheel "press" is reported; releases are not.
+    if (e.buttonState != TerminalMouseButtonState.down) return null;
+    final code = switch (e.button) {
+      TerminalMouseButton.wheelUp => 64,
+      TerminalMouseButton.wheelDown => 65,
+      TerminalMouseButton.wheelLeft => 66,
+      TerminalMouseButton.wheelRight => 67,
+      _ => -1,
+    };
+    if (code < 0) return defaultMouseHandler(e);
+    final x = e.position.x + 1;
+    final y = e.position.y + 1;
+    return switch (e.state.mouseReportMode) {
+      MouseReportMode.sgr => '\x1b[<$code;$x;${y}M',
+      MouseReportMode.urxvt => '\x1b[${32 + code};$x;${y}M',
+      MouseReportMode.normal || MouseReportMode.utf =>
+        '\x1b[M${String.fromCharCode(32 + code)}'
+            '${String.fromCharCode(32 + x)}${String.fromCharCode(32 + y)}',
+    };
+  }
 }
 
 // TerminalPane renders one session and starts it on first build.
