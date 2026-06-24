@@ -67,9 +67,10 @@ func parseWorktrees(raw string) []Worktree {
 // AddWorktree creates a worktree at dest for the repo at repoDir. When branch
 // does not exist yet it runs `git worktree add -b <branch> <dest> [start]` to
 // create it (from start, or current HEAD when start is empty); when the branch
-// already exists it attaches with `git worktree add <dest> <branch>`. stdout
-// and stderr stream to the caller's terminal since creation may fetch or print
-// progress.
+// already exists it attaches with `git worktree add <dest> <branch>`. git's
+// progress (including stdout) streams to the caller's stderr so it stays visible
+// in a terminal without polluting a machine-readable stdout (e.g. `pickup
+// --json`, or the MCP server's JSON-RPC stdio channel).
 func AddWorktree(ctx context.Context, repoDir, dest, branch, start string) error {
 	var args []string
 	if branchExists(ctx, repoDir, branch) {
@@ -155,16 +156,22 @@ func branchExists(ctx context.Context, repoDir, branch string) bool {
 	return err == nil
 }
 
-// runStreaming runs a git command with stdout/stderr wired to the process so
-// the user sees progress, mirroring the clone flow in the workspace CLI. This
-// is the user-facing counterpart to the sibling run helper in git.go: run
-// captures output for parsing (ListWorktrees, Collect), runStreaming streams it
-// for commands the user watches (worktree add/remove). Pick run when you need
+// runStreaming runs a git command with its output wired to the process's
+// stderr so the user sees progress, mirroring the clone flow in the workspace
+// CLI. This is the user-facing counterpart to the sibling run helper in git.go:
+// run captures output for parsing (ListWorktrees, Collect), runStreaming streams
+// it for commands the user watches (worktree add/remove). Pick run when you need
 // the output, runStreaming when the user does.
+//
+// Both git's stdout and stderr go to os.Stderr (not os.Stdout): some git
+// messages (e.g. "HEAD is now at …" on checkout) land on stdout, which would
+// corrupt callers whose stdout is a machine contract — `cc-handoff pickup
+// --json` and the MCP server's JSON-RPC stdio channel both materialize worktrees
+// through here. Progress stays visible in a terminal regardless.
 func runStreaming(ctx context.Context, dir string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
