@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../local/prefs.dart';
@@ -858,21 +859,55 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
 // _RemoteTerminalScreen renders one remote session full-screen, with an on-screen
 // key bar for the keys phone keyboards lack (agent TUIs need Esc/arrows/Ctrl-C).
-class _RemoteTerminalScreen extends StatelessWidget {
+class _RemoteTerminalScreen extends StatefulWidget {
   final RemoteClient client;
   final RemoteSession session;
   const _RemoteTerminalScreen({required this.client, required this.session});
 
   @override
+  State<_RemoteTerminalScreen> createState() => _RemoteTerminalScreenState();
+}
+
+class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
+  // Owned controller so the copy button can read the long-press selection.
+  final TerminalController _controller = TerminalController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Terminal get _term => widget.client.terminalFor(widget.session.sid);
+
+  void _copy() {
+    final sel = _controller.selection;
+    if (sel == null) {
+      snack(context, '请先长按选择文本');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: _term.buffer.getText(sel)));
+    _controller.clearSelection();
+    snack(context, '已复制');
+  }
+
+  Future<void> _paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    // term.paste routes through term.onOutput → term.input, so it reaches the host.
+    if (text != null && text.isNotEmpty) _term.paste(text);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final term = client.terminalFor(session.sid);
     return Scaffold(
-      appBar: AppBar(title: Text(session.title)),
+      appBar: AppBar(title: Text(widget.session.title)),
       body: Column(
         children: [
           Expanded(
             child: TerminalView(
-              term,
+              _term,
+              controller: _controller,
               theme: ccTerminalTheme,
               textStyle: const TerminalStyle(
                 fontFamily: 'JetBrainsMono',
@@ -881,17 +916,17 @@ class _RemoteTerminalScreen extends StatelessWidget {
               padding: const EdgeInsets.all(8),
             ),
           ),
-          _keyBar(term),
+          _keyBar(),
         ],
       ),
     );
   }
 
-  Widget _keyBar(Terminal term) {
-    Widget k(String label, String data) => Padding(
+  Widget _keyBar() {
+    Widget btn(String label, VoidCallback onPressed) => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: OutlinedButton(
-        onPressed: () => client.sendKeys(session.sid, data),
+        onPressed: onPressed,
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(0, 34),
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -900,6 +935,8 @@ class _RemoteTerminalScreen extends StatelessWidget {
         child: Text(label),
       ),
     );
+    Widget k(String label, String data) =>
+        btn(label, () => widget.client.sendKeys(widget.session.sid, data));
     return SafeArea(
       top: false,
       child: SizedBox(
@@ -908,6 +945,8 @@ class _RemoteTerminalScreen extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
           children: [
+            btn('复制', _copy),
+            btn('粘贴', _paste),
             k('Esc', '\x1b'),
             k('Tab', '\t'),
             k('Ctrl-C', '\x03'),

@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:xterm/xterm.dart';
 
 import '../terminal_mouse.dart';
+import '../widgets.dart';
 
 // TerminalSession owns a PTY + xterm Terminal model. The cockpit keeps a list of
 // these (one per pickup/worktree) for multi-session tabs and can sendText into
@@ -105,6 +107,12 @@ class TerminalPane extends StatefulWidget {
 }
 
 class _TerminalPaneState extends State<TerminalPane> {
+  // Owned controller so we can read the selection for the copy menu (xterm's
+  // default copy/paste keyboard shortcuts also operate on it).
+  final TerminalController _controller = TerminalController();
+
+  Terminal get _terminal => widget.session.terminal;
+
   @override
   void initState() {
     super.initState();
@@ -112,9 +120,61 @@ class _TerminalPaneState extends State<TerminalPane> {
   }
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _copy() {
+    final sel = _controller.selection;
+    if (sel == null) return;
+    Clipboard.setData(ClipboardData(text: _terminal.buffer.getText(sel)));
+    _controller.clearSelection();
+    snack(context, '已复制');
+  }
+
+  Future<void> _paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) _terminal.paste(text);
+  }
+
+  // Mirrors xterm's SelectAllTextIntent so the menu item matches Cmd/Ctrl+A.
+  void _selectAll() {
+    final b = _terminal.buffer;
+    _controller.setSelection(
+      b.createAnchor(0, b.height - _terminal.viewHeight),
+      b.createAnchor(_terminal.viewWidth, b.height - 1),
+      mode: SelectionMode.line,
+    );
+  }
+
+  void _showMenu(Offset globalPos) {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    showMenu<void>(
+      context: context,
+      position: RelativeRect.fromRect(
+        globalPos & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(
+          enabled: _controller.selection != null,
+          onTap: _copy,
+          child: const Text('复制'),
+        ),
+        PopupMenuItem(onTap: _paste, child: const Text('粘贴')),
+        PopupMenuItem(onTap: _selectAll, child: const Text('全选')),
+      ],
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return TerminalView(
-      widget.session.terminal,
+      _terminal,
+      controller: _controller,
+      onSecondaryTapDown: (details, _) => _showMenu(details.globalPosition),
       theme: ccTerminalTheme,
       textStyle: const TerminalStyle(fontFamily: 'JetBrainsMono', fontSize: 13),
       backgroundOpacity: 1,
