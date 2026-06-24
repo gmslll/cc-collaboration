@@ -24,12 +24,14 @@ class RemoteWorkspacePage extends StatefulWidget {
   State<RemoteWorkspacePage> createState() => _RemoteWorkspacePageState();
 }
 
-class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
+class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
+    with WidgetsBindingObserver {
   late final RemoteClient _c = RemoteClient(
     relayUrl: widget.relayUrl,
     token: widget.token,
   );
   int _tab = 0; // 0 = 会话, 1 = 代码, 2 = Git
+  DateTime? _pausedAt; // when the app last backgrounded (for resume reconnect)
   final List<String> _dirStack =
       []; // breadcrumb of opened dirs (empty = roots)
   String? _gitRepo; // selected repo in the Git tab (null = repo list)
@@ -37,15 +39,34 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _c.addListener(_onClientChange);
     _c.connect();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _c.removeListener(_onClientChange);
     _c.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _pausedAt = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      // A socket idle through minutes of OS suspension is usually dead, so force
+      // a reconnect rather than wait out the ping timeout. But skip quick app
+      // switches — dropping a healthy connection (3s reconnect) isn't worth it.
+      final paused = _pausedAt;
+      _pausedAt = null;
+      if (paused != null &&
+          DateTime.now().difference(paused) > const Duration(seconds: 10)) {
+        _c.kick();
+      }
+    }
   }
 
   String? _lastGitOpErr;

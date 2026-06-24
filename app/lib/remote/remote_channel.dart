@@ -50,6 +50,15 @@ abstract class RemoteChannel extends ChangeNotifier {
     super.dispose();
   }
 
+  // kick forces an immediate reconnect by closing the current socket (the
+  // _loop's `await for` then ends and reconnects). Used on phone foreground
+  // resume: a backgrounded socket is usually already dead, so don't wait up to
+  // a full ping interval to notice. No-op when not running / not connected.
+  void kick() {
+    if (!_running) return;
+    _ws?.close();
+  }
+
   // --- subclass hooks ---
   void onConnected() {}
   void onDisconnected() {}
@@ -91,6 +100,12 @@ abstract class RemoteChannel extends ChangeNotifier {
           _uri(relayUrl, role).toString(),
           headers: {'Authorization': 'Bearer $token'},
         );
+        // Heartbeat: send a WS ping every 20s. This keeps the connection warm
+        // (mobile NAT/proxies silently drop idle TCP) AND lets dart:io detect a
+        // dead peer — when a ping goes unanswered it closes the socket with an
+        // error, ending the stream below so the loop reconnects. Without it a
+        // half-open socket hangs in `await for` forever and never recovers.
+        ws.pingInterval = const Duration(seconds: 20);
         _ws = ws;
         _notify();
         await for (final msg in ws) {
