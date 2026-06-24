@@ -54,8 +54,7 @@ class LocalBus {
     try {
       await Directory(_outbox).create(recursive: true);
       // 700 so another local user can't drop forged messages into the outbox.
-      await _chmod700(_dir);
-      await _chmod700(_outbox);
+      await _chmod700([_dir, _outbox]);
       await syncRegistry();
       await _drainExisting(); // messages left from before we started watching
       _watch = Directory(_outbox).watch().listen(_onEvent, onError: (_) {});
@@ -74,10 +73,10 @@ class LocalBus {
     }
   }
 
-  Future<void> _chmod700(String path) async {
+  Future<void> _chmod700(List<String> paths) async {
     if (Platform.isWindows) return;
     try {
-      await Process.run('chmod', ['700', path]);
+      await Process.run('chmod', ['700', ...paths]);
     } catch (_) {}
   }
 
@@ -95,7 +94,7 @@ class LocalBus {
 
   Future<void> _drainExisting() async {
     try {
-      for (final e in Directory(_outbox).listSync()) {
+      await for (final e in Directory(_outbox).list()) {
         if (e is File && e.path.endsWith('.json')) await _process(e.path);
       }
     } catch (_) {}

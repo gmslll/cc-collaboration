@@ -23,6 +23,11 @@ class TerminalSession {
   final String title;
   String? name; // user-given label; overrides the derived title when set
   final Terminal terminal = Terminal(maxLines: 10000);
+  // The selection/copy controller lives on the session (not the pane) so the
+  // host can read the current selection — e.g. to forward it to another
+  // session from the tree's "发送选区到…" menu, which a full-screen TUI can't
+  // intercept the way it grabs an in-terminal right-click.
+  final TerminalController controller = TerminalController();
   Pty? _pty;
   bool _started = false;
 
@@ -60,6 +65,15 @@ class TerminalSession {
 
   // label is what the UI shows: the user-given name, else the derived title.
   String get label => (name != null && name!.isNotEmpty) ? name! : title;
+
+  // selectedText is the current selection's text, or null when nothing is
+  // selected. The host reads it to forward a selection to another session.
+  String? get selectedText {
+    final sel = controller.selection;
+    if (sel == null) return null;
+    final t = terminal.buffer.getText(sel);
+    return t.isEmpty ? null : t;
+  }
 
   void start() {
     if (_started) return;
@@ -110,15 +124,15 @@ class TerminalSession {
   // + CC_HANDOFF_BIN for the `msg` CLI). The cc-handoff dir is prepended to PATH
   // so a bundled (non-system) binary is still callable by bare name.
   Map<String, String> _sessionEnv() {
+    final bin = Cli.binPath();
     final env = <String, String>{
       'TERM': 'xterm-256color',
       'COLORTERM': 'truecolor',
       'CC_SESSION_ID': id,
       'CC_SESSION_NAME': label,
       'CC_BUS_DIR': localBusDir(),
-      'CC_HANDOFF_BIN': Cli.binPath(),
+      'CC_HANDOFF_BIN': bin,
     };
-    final bin = Cli.binPath();
     if (bin.contains(Platform.pathSeparator)) {
       final binDir = File(bin).parent.path;
       final sep = Platform.isWindows ? ';' : ':';
@@ -129,6 +143,15 @@ class TerminalSession {
   }
 
   void sendText(String s) => _pty?.write(const Utf8Encoder().convert(s));
+
+  // pasteText injects [s] as one bracketed-paste block (ESC[200~ … ESC[201~) so
+  // a full-screen TUI inserts it atomically — no per-newline submit, no control-
+  // char interpretation — even mid-stream. Use this (not sendText) for any
+  // programmatically delivered message; sendText stays raw for keystrokes.
+  void pasteText(String s, {bool submit = false}) {
+    sendText('\x1b[200~$s\x1b[201~');
+    if (submit) sendText('\r');
+  }
 
   // resizeFromRemote lets a connected phone size the PTY to its viewport.
   void resizeFromRemote(int rows, int cols) {
@@ -145,7 +168,10 @@ class TerminalSession {
     if (r > 0 && c > 0) _pty?.resize(r, c);
   }
 
-  void dispose() => _pty?.kill();
+  void dispose() {
+    controller.dispose();
+    _pty?.kill();
+  }
 }
 
 // TerminalPane renders one session and starts it on first build.
@@ -170,9 +196,10 @@ class TerminalPane extends StatefulWidget {
 }
 
 class _TerminalPaneState extends State<TerminalPane> {
-  // Owned controller so we can read the selection for the copy menu (xterm's
-  // default copy/paste keyboard shortcuts also operate on it).
-  final TerminalController _controller = TerminalController();
+  // The selection/copy controller now lives on the session (so the host can
+  // read the current selection to forward it); the pane just references it. Its
+  // lifecycle is the session's, so the pane doesn't dispose it.
+  TerminalController get _controller => widget.session.controller;
 
   Terminal get _terminal => widget.session.terminal;
 
@@ -180,12 +207,6 @@ class _TerminalPaneState extends State<TerminalPane> {
   void initState() {
     super.initState();
     widget.session.start();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
   }
 
   void _copy() {

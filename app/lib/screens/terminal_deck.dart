@@ -132,6 +132,15 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // target and sendText into its PTY — but it owns the addressing rules so the
   // UI and the agent path stay consistent.
 
+  // sessionById is the shared addressing primitive — find a session by its
+  // stable id, or null. Used by local-bus delivery and the tree's send menu.
+  TerminalSession? sessionById(String id) {
+    for (final s in terms) {
+      if (s.id == id) return s;
+    }
+    return null;
+  }
+
   // peersExcluding returns the other live sessions (forwarding targets for
   // [selfId]). Used to build the context-menu list and `msg list`.
   List<TerminalSession> peersExcluding(String selfId) =>
@@ -157,11 +166,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   String? deliverLocalMessage(LocalMsg m) {
     final to = m.to.trim();
     if (to.isEmpty) return '缺少目标会话';
-    TerminalSession? target;
-    final byId = terms.where((s) => s.id == to);
-    if (byId.isNotEmpty) {
-      target = byId.first;
-    } else {
+    var target = sessionById(to);
+    if (target == null) {
       final byLabel = terms.where((s) => s.label == to).toList();
       if (byLabel.length > 1) {
         return '目标名「$to」对应多个会话,请改用其 id(如 ${byLabel.first.id})';
@@ -170,17 +176,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     }
     if (target == null) return '找不到目标会话「$to」';
     if (target.id == m.from) return '不能发给自己';
-    final fromLabel = terms.where((s) => s.id == m.from).map((s) => s.label);
-    final tag = fromLabel.isNotEmpty
-        ? fromLabel.first
-        : (m.from.isEmpty ? '?' : m.from);
-    final body = '[来自 $tag] ${m.body}';
-    // Deliver as one bracketed-paste block (ESC[200~ … ESC[201~) so the
-    // receiving TUI inserts it atomically — no per-newline submit, no control-
-    // char interpretation — even if it's mid-stream or the body is multi-line.
-    // A separate CR submits the whole block only when requested.
-    target.sendText('\x1b[200~$body\x1b[201~');
-    if (m.submit) target.sendText('\r');
+    final tag = sessionById(m.from)?.label ?? (m.from.isEmpty ? '?' : m.from);
+    target.pasteText('[来自 $tag] ${m.body}', submit: m.submit);
     return null;
   }
 

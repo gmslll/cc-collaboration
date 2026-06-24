@@ -5876,16 +5876,36 @@ class _WorkspacePageState extends State<WorkspacePage>
         final display = (e.s.name?.isNotEmpty ?? false)
             ? e.s.name!
             : '$agent · ${e.s.title}';
+        // Other live sessions this node can forward its selection to. This menu
+        // lives in the tree (not the terminal surface), so a full-screen TUI
+        // can't grab the click the way it intercepts an in-terminal right-click.
+        final peers = peersExcluding(e.s.id);
         final sessionMenu = PopupMenuButton<String>(
           tooltip: '会话操作',
           onSelected: (v) {
-            if (v == 'rename') _renameSession(e.s);
-            if (v == 'close') closeTerm(e.idx);
+            if (v == 'rename') {
+              _renameSession(e.s);
+            } else if (v == 'close') {
+              closeTerm(e.idx);
+            } else if (v.startsWith('send:')) {
+              final to = sessionById(v.substring(5));
+              if (to != null) _forwardSelection(e.s, to);
+            }
           },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'rename', child: Text('重命名')),
-            PopupMenuItem(value: 'close', child: Text('关闭会话')),
-          ],
+          itemBuilder: (_) {
+            final hasSel = e.s.selectedText != null;
+            return [
+              const PopupMenuItem(value: 'rename', child: Text('重命名')),
+              const PopupMenuItem(value: 'close', child: Text('关闭会话')),
+              if (peers.isNotEmpty) const PopupMenuDivider(),
+              for (final q in peers)
+                PopupMenuItem(
+                  value: 'send:${q.id}',
+                  enabled: hasSel,
+                  child: Text('发送选区到「${q.label}」'),
+                ),
+            ];
+          },
         );
         return _ctxMenu(
           Container(
@@ -5936,6 +5956,18 @@ class _WorkspacePageState extends State<WorkspacePage>
         );
       }),
     ];
+  }
+
+  // _forwardSelection sends [from]'s current selection into [to]'s input via the
+  // local bus (submit:false — fills the target's input for you to confirm).
+  void _forwardSelection(TerminalSession from, TerminalSession to) {
+    final sel = from.selectedText;
+    if (sel == null) {
+      _snack('请先在「${from.label}」终端里选中要发送的文本');
+      return;
+    }
+    final err = deliverLocalMessage(LocalMsg(from.id, to.id, sel, false));
+    _snack(err ?? '已发送到 ${to.label}');
   }
 
   Future<void> _renameSession(TerminalSession s) async {
