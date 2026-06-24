@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
@@ -858,6 +860,111 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   }
 }
 
+// _KeyButton is one user-customizable entry in the on-screen key bar: a label
+// and the raw bytes it sends via sendKeys. The functional buttons (copy/paste/
+// scroll) are pinned separately and are not part of this editable list.
+class _KeyButton {
+  String label;
+  String data;
+  _KeyButton(this.label, this.data);
+  Map<String, String> toJson() => {'label': label, 'data': data};
+}
+
+const String _kKeyBarPref = 'remote.keybar.v1';
+
+List<_KeyButton> _defaultKeyButtons() => [
+  _KeyButton('Esc', '\x1b'),
+  _KeyButton('Tab', '\t'),
+  _KeyButton('Ctrl-C', '\x03'),
+  _KeyButton('Ctrl-D', '\x04'),
+  _KeyButton('↑', '\x1b[A'),
+  _KeyButton('↓', '\x1b[B'),
+  _KeyButton('←', '\x1b[D'),
+  _KeyButton('→', '\x1b[C'),
+  _KeyButton('Enter', '\r'),
+  _KeyButton('/', '/'),
+];
+
+List<_KeyButton> _loadKeyButtons() {
+  final raw = Prefs.getString(_kKeyBarPref, def: '');
+  if (raw.isEmpty) return _defaultKeyButtons();
+  try {
+    final list = jsonDecode(raw);
+    if (list is List) {
+      final out = [
+        for (final e in list)
+          if (e is Map && e['label'] is String && e['data'] is String)
+            _KeyButton(e['label'] as String, e['data'] as String),
+      ];
+      if (out.isNotEmpty) return out;
+    }
+  } catch (_) {}
+  return _defaultKeyButtons();
+}
+
+void _saveKeyButtons(List<_KeyButton> keys) =>
+    Prefs.setString(_kKeyBarPref, jsonEncode([for (final k in keys) k.toJson()]));
+
+// _decodeSeq turns a human-typed sequence (text + escapes) into the raw bytes
+// to send: \e=Esc \t=Tab \r=Enter \n=newline \\=backslash, and ^X=Ctrl-X
+// (^C→0x03, ^[→Esc). Unknown escapes pass the next char through literally.
+String _decodeSeq(String s) {
+  final b = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    final c = s[i];
+    if (c == '\\' && i + 1 < s.length) {
+      final n = s[++i];
+      b.write(switch (n) {
+        'e' => '\x1b',
+        't' => '\t',
+        'r' => '\r',
+        'n' => '\n',
+        _ => n,
+      });
+    } else if (c == '^' && i + 1 < s.length) {
+      final code = s[++i].toUpperCase().codeUnitAt(0);
+      if (code >= 64 && code <= 95) {
+        b.writeCharCode(code & 0x1f);
+      } else {
+        b
+          ..write('^')
+          ..write(s[i]);
+      }
+    } else {
+      b.write(c);
+    }
+  }
+  return b.toString();
+}
+
+// _encodeSeq is the inverse, used to prefill the edit field from stored bytes.
+String _encodeSeq(String s) {
+  final b = StringBuffer();
+  for (final r in s.runes) {
+    switch (r) {
+      case 0x1b:
+        b.write(r'\e');
+      case 0x09:
+        b.write(r'\t');
+      case 0x0d:
+        b.write(r'\r');
+      case 0x0a:
+        b.write(r'\n');
+      case 0x5c:
+        b.write(r'\\');
+      default:
+        if (r < 0x20) {
+          b
+            ..write('^')
+            ..writeCharCode(r + 64);
+        } else {
+          b.writeCharCode(r);
+        }
+    }
+  }
+  return b.toString();
+}
+
 // _RemoteTerminalScreen renders one remote session full-screen, with an on-screen
 // key bar for the keys phone keyboards lack (agent TUIs need Esc/arrows/Ctrl-C).
 class _RemoteTerminalScreen extends StatefulWidget {
@@ -872,6 +979,9 @@ class _RemoteTerminalScreen extends StatefulWidget {
 class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // Owned controller so the copy button can read the long-press selection.
   final TerminalController _controller = TerminalController();
+
+  // Customizable on-screen key bar (shared across sessions via Prefs).
+  late List<_KeyButton> _keys = _loadKeyButtons();
 
   @override
   void dispose() {
@@ -986,34 +1096,194 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
         child: Text(label),
       ),
     );
-    Widget k(String label, String data) =>
-        btn(label, () => widget.client.sendKeys(widget.session.sid, data));
     return SafeArea(
       top: false,
       child: SizedBox(
         height: 44,
-        child: ListView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+        child: Row(
           children: [
-            btn('复制', _copy),
-            btn('粘贴', _paste),
-            btn('滚↑', () => _wheel(true, ticks: 3)),
-            btn('滚↓', () => _wheel(false, ticks: 3)),
-            k('Esc', '\x1b'),
-            k('Tab', '\t'),
-            k('Ctrl-C', '\x03'),
-            k('Ctrl-D', '\x04'),
-            k('↑', '\x1b[A'),
-            k('↓', '\x1b[B'),
-            k('←', '\x1b[D'),
-            k('→', '\x1b[C'),
-            k('Enter', '\r'),
-            k('/', '/'),
+            Expanded(
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                children: [
+                  // Functional buttons are pinned at the front (not reorderable).
+                  btn('复制', _copy),
+                  btn('粘贴', _paste),
+                  btn('滚↑', () => _wheel(true, ticks: 3)),
+                  btn('滚↓', () => _wheel(false, ticks: 3)),
+                  for (final kb in _keys)
+                    btn(
+                      kb.label,
+                      () => widget.client.sendKeys(widget.session.sid, kb.data),
+                    ),
+                ],
+              ),
+            ),
+            // Pinned editor entry — always reachable regardless of scroll.
+            IconButton(
+              icon: const Icon(Icons.tune_rounded, size: 20),
+              tooltip: '自定义按键',
+              onPressed: _openKeyBarEditor,
+            ),
           ],
         ),
       ),
     );
+  }
+
+  // _openKeyBarEditor lets the user add/edit/delete/reorder the key buttons and
+  // restore defaults. Edits mutate _keys, persist to Prefs, and rebuild the bar.
+  void _openKeyBarEditor() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) {
+          void apply(VoidCallback change) {
+            change();
+            _saveKeyButtons(_keys);
+            setSheet(() {});
+            setState(() {});
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '自定义按键',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => apply(() {
+                          _keys = _defaultKeyButtons();
+                        }),
+                        child: const Text('恢复默认'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Flexible(
+                    child: ReorderableListView(
+                      shrinkWrap: true,
+                      // onReorderItem already adjusts newIndex for the removed
+                      // item, so no manual oldI/newI correction is needed.
+                      onReorderItem: (oldI, newI) => apply(() {
+                        _keys.insert(newI, _keys.removeAt(oldI));
+                      }),
+                      children: [
+                        for (final kb in _keys)
+                          ListTile(
+                            key: ObjectKey(kb),
+                            dense: true,
+                            leading: const Icon(Icons.drag_handle, size: 20),
+                            title: Text(kb.label),
+                            subtitle: Text(
+                              _encodeSeq(kb.data),
+                              style: const TextStyle(
+                                fontFamily: 'JetBrainsMono',
+                                fontSize: 11,
+                              ),
+                            ),
+                            onTap: () async {
+                              final r = await _editKeyDialog(kb);
+                              if (r != null) {
+                                apply(() {
+                                  kb.label = r.label;
+                                  kb.data = r.data;
+                                });
+                              }
+                            },
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20),
+                              tooltip: '删除',
+                              onPressed: () => apply(() => _keys.remove(kb)),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      final r = await _editKeyDialog(null);
+                      if (r != null) apply(() => _keys.add(r));
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('添加按钮'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // _editKeyDialog collects a label + send-sequence (with \e/\r/^C-style escapes)
+  // for a new or existing button. Returns null on cancel / empty input.
+  Future<_KeyButton?> _editKeyDialog(_KeyButton? existing) async {
+    final labelCtl = TextEditingController(text: existing?.label ?? '');
+    final seqCtl = TextEditingController(
+      text: existing == null ? '' : _encodeSeq(existing.data),
+    );
+    final res = await showDialog<_KeyButton>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(existing == null ? '添加按钮' : '编辑按钮'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: labelCtl,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: '按钮名称'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: seqCtl,
+              decoration: const InputDecoration(
+                labelText: '发送内容',
+                helperText: r'\e=Esc  \r=回车  \t=Tab  ^C=Ctrl-C',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final label = labelCtl.text.trim();
+              final seq = seqCtl.text;
+              if (label.isEmpty || seq.isEmpty) {
+                Navigator.pop(ctx);
+                return;
+              }
+              Navigator.pop(ctx, _KeyButton(label, _decodeSeq(seq)));
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    labelCtl.dispose();
+    seqCtl.dispose();
+    return res;
   }
 }
 
