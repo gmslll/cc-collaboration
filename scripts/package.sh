@@ -28,7 +28,7 @@ mkdir -p "$DIST" "$ROOT/bin"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing required tool: $1" >&2; exit 1; }; }
 
 build_macos() {
-  need go; need flutter; need lipo; need ditto
+  need go; need flutter; need lipo; need ditto; need codesign
   echo "==> macOS: building universal cc-handoff CLI"
   # Universal (Intel + Apple Silicon) so the embedded CLI runs regardless of the
   # arch Flutter built the app for.
@@ -37,6 +37,12 @@ build_macos() {
   lipo -create -output "$ROOT/bin/cc-handoff-darwin-universal" \
     "$ROOT/bin/cc-handoff-darwin-amd64" "$ROOT/bin/cc-handoff-darwin-arm64"
 
+  # Drop any cc-handoff embedded by a previous run BEFORE building. It lives in
+  # Contents/MacOS (sealed code); on an incremental rebuild Xcode re-signs the
+  # bundle over that stale, now-unsealed binary and fails with
+  #   "code object is not signed at all ... In subcomponent: .../MacOS/cc-handoff".
+  # Removing it lets Flutter emit a clean, fully-sealed .app that we re-seal below.
+  rm -f "$ROOT"/app/build/macos/Build/Products/Release/*.app/Contents/MacOS/cc-handoff
   echo "==> macOS: flutter build macos --release"
   (cd app && flutter build macos --release)
 
@@ -47,6 +53,18 @@ build_macos() {
   echo "==> macOS: embedding cc-handoff into $(basename "$appdir")/Contents/MacOS"
   install -m 0755 "$ROOT/bin/cc-handoff-darwin-universal" "$appdir/Contents/MacOS/cc-handoff"
 
+  # Embedding a Mach-O into Contents/MacOS breaks the bundle's code seal
+  # (Contents/_CodeSignature/CodeResources no longer lists every file). Re-sign
+  # the embedded CLI, then re-seal the whole .app ad-hoc, re-applying the same
+  # entitlements Xcode used (sandbox off + network client — see Release.entitlements)
+  # so the rebuilt signature keeps them. Without this, `codesign --verify` reports
+  # "a sealed resource is missing or invalid" and the next build's CodeSign fails.
+  echo "==> macOS: re-sealing bundle (ad-hoc) after embed"
+  codesign --force --sign - "$appdir/Contents/MacOS/cc-handoff"
+  codesign --force --sign - \
+    --entitlements "$ROOT/app/macos/Runner/Release.entitlements" "$appdir"
+  codesign --verify --strict "$appdir"
+
   local name zip
   name=$(basename "$appdir" .app)
   zip="$DIST/${name}-macos-v${VERSION}.zip"
@@ -54,8 +72,8 @@ build_macos() {
   # ditto preserves the .app bundle (symlinks, resource forks) — `zip` does not.
   (cd "$(dirname "$appdir")" && ditto -c -k --keepParent "$(basename "$appdir")" "$zip")
   echo "  ✓ $zip"
-  echo "  note: the embedded CLI is unsigned. For distribution to other Macs,"
-  echo "        codesign + notarize the .app, or recipients run:"
+  echo "  note: the .app is ad-hoc signed (not notarized). For distribution to"
+  echo "        other Macs, codesign + notarize with a Developer ID, or recipients run:"
   echo "        xattr -dr com.apple.quarantine /path/to/${name}.app"
 }
 
