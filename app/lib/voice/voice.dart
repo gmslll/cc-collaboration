@@ -2,24 +2,24 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_tts/flutter_tts.dart';
-
 import '../screens/terminal_pane.dart';
+import 'speaker.dart';
 import 'stt.dart';
 
 // VoiceService is the desktop two-way voice bridge for the AI terminals:
-//   • TTS — read an agent's just-finished reply aloud. The text comes from the
-//     agent's own session log (clean prose), NOT the TUI screen (escape codes).
+//   • reading replies — extracts an agent's just-finished reply as clean prose
+//     from its session LOG (not the TUI screen), to speak locally and/or push to
+//     a phone. readReplyText() does the extraction; speak() voices it.
 //   • STT — speech → text (via the shared web-safe [SpeechInput]), injected into
 //     the active terminal's input.
 //
-// TTS is desktop-only (it tails ~/.claude or ~/.codex logs via dart:io); the
-// phone reuses [SpeechInput] directly for voice input. The workspace owns one
-// instance and gates TTS on its own toggle. Locating the agent log reuses the
-// session id we mint for claude (TerminalSession.agentSessionId) — see the
-// session-restore feature — so we read exactly the right .jsonl.
+// Log parsing is desktop-only (it tails ~/.claude or ~/.codex via dart:io); TTS
+// and STT delegate to the web-safe [Speaker]/[SpeechInput], which the phone
+// reuses directly. The workspace owns one instance and gates reading on its own
+// toggle. Locating the agent log reuses the session id we mint for claude
+// (TerminalSession.agentSessionId) — see the session-restore feature.
 class VoiceService {
-  final FlutterTts _tts = FlutterTts();
+  final Speaker _speaker = Speaker();
   final SpeechInput _input = SpeechInput();
 
   // Per-session reading cursor into the agent log: the resolved log path and the
@@ -37,15 +37,17 @@ class VoiceService {
       _input.onListeningChange = f;
 
   Future<void> init() async {
-    await _tts.setLanguage('zh-CN');
-    await _tts.awaitSpeakCompletion(true);
     await _input.init();
   }
 
-  // --- TTS: read the agent's reply -----------------------------------------
+  // --- reading the agent's reply -------------------------------------------
+
+  Future<void> speak(String text) => _speaker.speak(text);
+  Future<void> stopSpeaking() => _speaker.stop();
 
   // armBaseline marks "start reading from here" for [s]: future turns are read,
-  // existing history is not. Call when TTS is enabled or the active tab changes.
+  // existing history is not. Call when reading is enabled, the active tab
+  // changes, or a phone opens a session.
   Future<void> armBaseline(TerminalSession s) async {
     final path = await _resolveLogPath(s);
     _cursor[s.id] = (
@@ -54,20 +56,26 @@ class VoiceService {
     );
   }
 
-  // speakReplyFor reads the new assistant prose written to [s]'s log since the
-  // last read and speaks it (interrupting any current utterance). No-op when the
-  // log can't be located (e.g. a claude session with no minted id) or there's no
-  // new text.
-  Future<void> speakReplyFor(TerminalSession s) async {
+  // readReplyText returns the new assistant prose written to [s]'s log since the
+  // last read (advancing the cursor), or null when the log can't be located
+  // (e.g. a claude session with no minted id) or there's no new text. The caller
+  // decides what to do with it (speak locally, push to a phone, or both). A
+  // never-armed session is baselined here and returns null, so we never replay a
+  // session's whole backlog the first time it's read.
+  Future<String?> readReplyText(TerminalSession s) async {
     final path = await _resolveLogPath(s);
-    if (path == null) return;
+    if (path == null) return null;
     final cur = _cursor[s.id];
-    // start=0 on first resolve, or when codex rolled a new file under us.
-    var start = cur?.path == path ? cur!.offset : 0;
+    if (cur == null) {
+      _cursor[s.id] = (path: path, offset: await _lengthOf(path));
+      return null; // first sight: baseline, don't replay backlog
+    }
+    // start=0 when codex rolled a new file under us, else resume from the cursor.
+    final start = cur.path == path ? cur.offset : 0;
     final len = await _lengthOf(path);
     if (len <= start) {
       _cursor[s.id] = (path: path, offset: len);
-      return;
+      return null;
     }
     final raf = await File(path).open();
     String chunk;
@@ -82,17 +90,12 @@ class VoiceService {
     final nl = chunk.lastIndexOf('\n');
     if (nl < 0) {
       _cursor[s.id] = (path: path, offset: start); // no full line yet; retry
-      return;
+      return null;
     }
     final consumed = chunk.substring(0, nl + 1);
     _cursor[s.id] = (path: path, offset: start + utf8.encode(consumed).length);
-    final text = _extract(s.agentKind, consumed);
-    if (text == null || text.isEmpty) return;
-    await _tts.stop();
-    await _tts.speak(text);
+    return _extract(s.agentKind, consumed);
   }
-
-  Future<void> stopSpeaking() => _tts.stop();
 
   // _extract pulls the assistant's spoken prose out of a span of agent-log lines:
   // claude → message.content[] text blocks (skip thinking/tool_use); codex →
@@ -219,6 +222,6 @@ class VoiceService {
 
   void dispose() {
     _input.dispose();
-    _tts.stop();
+    _speaker.stop();
   }
 }

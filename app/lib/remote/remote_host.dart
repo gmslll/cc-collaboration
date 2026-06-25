@@ -111,6 +111,14 @@ class RemoteHost extends RemoteChannel {
   bool get sharing => active;
   int get clientCount => _clients;
 
+  // watching reports whether any phone is currently viewing [sid] (so the
+  // workspace only does reply-text work when someone's listening).
+  bool watching(String sid) => _watchers[sid]?.isNotEmpty ?? false;
+
+  // onSessionWatched fires when a phone opens (subscribes to) a session — the
+  // workspace baselines that session's voice reading cursor.
+  void Function(String sid)? onSessionWatched;
+
   Future<void> enable() async => start();
   void disable() => stop();
 
@@ -245,6 +253,15 @@ class RemoteHost extends RemoteChannel {
     });
   }
 
+  // broadcastReply pushes an agent's clean reply text to the phones watching
+  // [sid] so they can read it aloud (phone-side TTS). Only watchers receive it.
+  void broadcastReply(String sid, String text) {
+    if (!connected) return;
+    for (final c in _watchers[sid] ?? const <int>{}) {
+      send({'t': 'reply', 'to': c, 'sid': sid, 'text': text});
+    }
+  }
+
   TerminalSession? _sessionById(String? sid) {
     if (sid == null) return null;
     for (final s in sessions()) {
@@ -273,6 +290,7 @@ class RemoteHost extends RemoteChannel {
       i = end;
     }
     (_watchers[s.id] ??= {}).add(from);
+    onSessionWatched?.call(s.id); // baseline voice reading for this session
     // Setting remoteSink starts mirroring this session's output to the phone and
     // hands it authority over the PTY size (see TerminalSession.onResize). Output
     // is coalesced per session (see _OutputBatcher) then fanned out to watchers.

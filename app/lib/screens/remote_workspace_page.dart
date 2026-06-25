@@ -9,6 +9,7 @@ import '../local/prefs.dart';
 import '../remote/remote_client.dart';
 import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
+import '../voice/speaker.dart';
 import '../voice/stt.dart';
 import '../widgets.dart';
 import 'diff_split.dart';
@@ -1218,16 +1219,32 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   final SpeechInput _voice = SpeechInput();
   bool _listening = false;
 
+  // Read AI replies aloud on the phone. The desktop pushes the clean reply text
+  // (RemoteClient.onReplyText); we speak it via the web-safe Speaker when the
+  // toggle is on. Persisted per device.
+  final Speaker _speaker = Speaker();
+  bool _ttsOn = Prefs.getBool('remote.tts');
+
   @override
   void initState() {
     super.initState();
     _voice.onListeningChange = (v) {
       if (mounted) setState(() => _listening = v);
     };
+    widget.client.onReplyText = _onReplyText;
+  }
+
+  void _onReplyText(String sid, String text) {
+    if (!_ttsOn || sid != widget.session.sid) return;
+    _speaker.speak(text);
   }
 
   @override
   void dispose() {
+    if (widget.client.onReplyText == _onReplyText) {
+      widget.client.onReplyText = null;
+    }
+    _speaker.stop();
     _voice.dispose();
     _controller.dispose();
     super.dispose();
@@ -1312,6 +1329,18 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       appBar: AppBar(
         title: Text(widget.session.title),
         actions: [
+          IconButton(
+            icon: Icon(
+              _ttsOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+            ),
+            tooltip: _ttsOn ? '朗读已开启' : '朗读 AI 回复',
+            onPressed: () {
+              setState(() => _ttsOn = !_ttsOn);
+              Prefs.setBool('remote.tts', _ttsOn);
+              if (!_ttsOn) _speaker.stop();
+              snack(context, _ttsOn ? '已开启朗读 AI 回复' : '已关闭朗读');
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: '刷新(拉取电脑最新)',

@@ -334,10 +334,19 @@ class _WorkspacePageState extends State<WorkspacePage>
       final (title, body) = agentDoneNotice(s);
       _remoteHost.broadcastNotify(title, body, sid: s.id);
       _resumeParkedFor(s); // a freed-up session can take a parked message
-      // Read the active session's reply aloud (only the active one, so multiple
-      // agents don't talk over each other).
-      if (_ttsOn && terms.isNotEmpty && terms[activeTerm].id == s.id) {
-        _voice.speakReplyFor(s);
+      // Extract the reply once (advances the cursor): speak it locally if our
+      // toggle is on for the active session (so multiple agents don't talk over
+      // each other), and/or push it to a phone watching this session so it can
+      // read the reply aloud too.
+      final speakLocal =
+          _ttsOn && terms.isNotEmpty && terms[activeTerm].id == s.id;
+      final phoneWants = _remoteHost.watching(s.id);
+      if (speakLocal || phoneWants) {
+        _voice.readReplyText(s).then((text) {
+          if (text == null || text.isEmpty) return;
+          if (speakLocal) _voice.speak(text);
+          if (phoneWants) _remoteHost.broadcastReply(s.id, text);
+        });
       }
     };
     // Right-click "发送到在线用户…" in any terminal routes the selection here.
@@ -347,6 +356,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     // backlog or another tab's.
     onActiveTermChanged = () {
       if (_ttsOn && terms.isNotEmpty) _voice.armBaseline(terms[activeTerm]);
+    };
+    // When a phone opens a session, baseline its reading cursor so we push it
+    // future replies (not the backlog) for phone-side TTS.
+    _remoteHost.onSessionWatched = (sid) {
+      final s = sessionById(sid);
+      if (s != null) _voice.armBaseline(s);
     };
     // Keep the mic button in sync with the recognizer (handles silence/timeout
     // auto-stop, not just explicit stop).

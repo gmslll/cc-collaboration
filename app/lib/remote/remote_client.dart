@@ -93,6 +93,11 @@ class RemoteClient extends RemoteChannel {
   List<RemoteSession> sessions = [];
   List<RemoteRootInfo> roots = [];
 
+  // onReplyText fires when the desktop pushes an agent's clean reply text for a
+  // watched session (the terminal screen reads it aloud). Not a ChangeNotifier
+  // field — it's a transient one-shot, not rebuildable state.
+  void Function(String sid, String text)? onReplyText;
+
   // File browser (single current directory, mobile-friendly).
   String? fsPath;
   List<RemoteEntry> fsEntries = [];
@@ -195,6 +200,12 @@ class RemoteClient extends RemoteChannel {
         final sid = f['sid'] as String?;
         final d = f['d'] as String?;
         if (sid != null && d != null) _terminals[sid]?.write(d);
+      case 'reply':
+        // The desktop pushed an agent's clean reply text for a watched session;
+        // the terminal screen reads it aloud if its TTS toggle is on.
+        final sid = f['sid'] as String?;
+        final text = f['text'] as String?;
+        if (sid != null && text != null) onReplyText?.call(sid, text);
       case 'fs.list.ok':
         fsPath = f['path'] as String?;
         fsEntries = [
