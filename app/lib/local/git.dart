@@ -12,10 +12,14 @@ class GitException implements Exception {
 // _git runs a git command in [dir] via the login shell (so a double-clicked app
 // inherits the user's PATH, same as worktrees.dart) and returns stdout. Throws
 // GitException(stderr) on a non-zero exit.
-Future<String> _git(String dir, String args) async {
+Future<String> _git(
+  String dir,
+  String args, {
+  Set<int> okExit = const {0},
+}) async {
   final shell = Platform.environment['SHELL'] ?? '/bin/sh';
   final r = await Process.run(shell, ['-lc', 'git -C ${shQuote(dir)} $args']);
-  if (r.exitCode != 0) {
+  if (!okExit.contains(r.exitCode)) {
     final err = (r.stderr as String).trim();
     throw GitException(err.isNotEmpty ? err : 'git 失败 (exit ${r.exitCode})');
   }
@@ -184,6 +188,19 @@ Future<String> gitDiffRefToWorking(String dir, String ref) {
   final r = ref.trim();
   if (r.isEmpty) throw GitException('compare ref 不能为空');
   return _git(dir, 'diff ${shQuote(r)} --');
+}
+
+// gitDiffUntracked presents an untracked file as fully added (vs /dev/null) so
+// it can be viewed in the diff viewer. `git diff --no-index` exits 1 when the
+// inputs differ — the normal case here — so exit 1 is allowed.
+Future<String> gitDiffUntracked(String dir, String file) {
+  final f = file.trim();
+  if (f.isEmpty) throw GitException('file path 不能为空');
+  return _git(
+    dir,
+    'diff --no-index -- /dev/null ${shQuote(f)}',
+    okExit: {0, 1},
+  );
 }
 
 // gitStatus is the short porcelain status (for a quick "anything changed?").

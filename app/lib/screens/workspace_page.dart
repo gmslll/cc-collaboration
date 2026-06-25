@@ -37,7 +37,7 @@ part 'workspace/search_mixin.dart';
 
 enum _BottomTool { terminal, git }
 
-enum _GitView { changes, log, branches, stash }
+enum _GitView { changes, log, stash }
 
 enum _LeftToolView { project, structure, changes, stash }
 
@@ -67,6 +67,15 @@ const _searchSkipDirs = {
   '__pycache__',
   '.venv',
 };
+
+// _DiffTreeNode is one node of the directory tree built from a commit's changed
+// files (the right pane of the 3-pane Log).
+class _DiffTreeNode {
+  final String name;
+  final Map<String, _DiffTreeNode> children = {};
+  final List<FileDiff> files = [];
+  _DiffTreeNode(this.name);
+}
 
 class _OpenFile {
   // For a code tab, [path] is the file path. For a read-only diff tab, [diffs]
@@ -216,7 +225,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       Prefs.getString('ws.bottomTool', def: 'terminal') == 'git'
       ? _BottomTool.git
       : _BottomTool.terminal;
-  _GitView _gitView = _GitView.changes;
   final _changesQueryCtl = TextEditingController();
   final _structureQueryCtl = TextEditingController();
   final _workspaceFocus = FocusNode(debugLabel: 'workspace-shell');
@@ -1404,11 +1412,9 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   void _openGitShortcut() => _openLeftTool(_LeftToolView.changes);
 
-  void _openBranchesShortcut() =>
-      _setBottomTool(_BottomTool.git, gitView: _GitView.branches);
+  void _openBranchesShortcut() => _showBranchDialog();
 
-  void _openLogShortcut() =>
-      _setBottomTool(_BottomTool.git, gitView: _GitView.log);
+  void _openLogShortcut() => _setBottomTool(_BottomTool.git);
 
   void _pushShortcut() {
     final p = _currentGitProject;
@@ -1505,7 +1511,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     setState(() {
       _gitProject = hit.project;
-      _gitView = _GitView.log;
       _bottomTool = _BottomTool.git;
       _terminalCollapsed = false;
       _logPathFilter = hit.rel;
@@ -1535,7 +1540,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     setState(() {
       _gitProject = hit.project;
-      _gitView = _GitView.changes;
       _bottomTool = _BottomTool.git;
       _terminalCollapsed = false;
       _selectedGitPath = hit.rel;
@@ -2263,20 +2267,15 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   _leftToolButton(
                     icon: Icons.account_tree_rounded,
-                    tooltip: 'Branches · $mod+Shift+9（底部）',
-                    selected:
-                        !_terminalCollapsed &&
-                        _bottomTool == _BottomTool.git &&
-                        _gitView == _GitView.branches,
+                    tooltip: 'Branches 弹窗 · $mod+Shift+9',
+                    selected: false,
                     onTap: _openBranchesShortcut,
                   ),
                   _leftToolButton(
                     icon: Icons.history_rounded,
                     tooltip: 'Git Log · $mod+Alt+9（底部）',
                     selected:
-                        !_terminalCollapsed &&
-                        _bottomTool == _BottomTool.git &&
-                        _gitView != _GitView.branches,
+                        !_terminalCollapsed && _bottomTool == _BottomTool.git,
                     onTap: _openLogShortcut,
                   ),
                   _leftToolButton(
@@ -3252,9 +3251,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     final branch = status?.branch ?? p.name;
     return InkWell(
       onTap: _gitLoading ? null : () => _showBranchDialog(),
-      onSecondaryTap: () => _openGitView(_GitView.branches),
+      onSecondaryTap: () => _openGitView(_GitView.log),
       child: Tooltip(
-        message: 'Branches Popup · secondary click opens Branches tool window',
+        message: 'Branches 弹窗 · 右键打开底部 Git Log',
         child: Container(
           height: 28,
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -3467,10 +3466,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     ],
   );
 
-  void _setBottomTool(_BottomTool tool, {_GitView? gitView}) {
+  void _setBottomTool(_BottomTool tool) {
     setState(() {
       _bottomTool = tool;
-      if (gitView != null) _gitView = gitView;
       _terminalCollapsed = false;
     });
     Prefs.setString(
@@ -3490,8 +3488,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       case _GitView.stash:
         _openLeftTool(_LeftToolView.stash);
       case _GitView.log:
-      case _GitView.branches:
-        _setBottomTool(_BottomTool.git, gitView: view);
+        _setBottomTool(_BottomTool.git);
     }
   }
 
@@ -3541,7 +3538,6 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _compareBranch(ProjectCfg p, GitBranch b) async {
     final right = _gitStatus?.branch ?? 'HEAD';
     setState(() {
-      _gitView = _GitView.log;
       _bottomTool = _BottomTool.git;
       _terminalCollapsed = false;
       _compareTitle = '${b.name}...$right';
@@ -3566,7 +3562,6 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Future<void> _compareCommitWithWorking(ProjectCfg p, GitCommit c) async {
     setState(() {
-      _gitView = _GitView.log;
       _bottomTool = _BottomTool.git;
       _terminalCollapsed = false;
       _selectedCommit = c.hash;
@@ -3815,14 +3810,8 @@ class _WorkspacePageState extends State<WorkspacePage>
             _bottomTab(
               icon: Icons.history_rounded,
               label: 'Log',
-              selected: _gitView != _GitView.branches,
-              onTap: () => setState(() => _gitView = _GitView.log),
-            ),
-            _bottomTab(
-              icon: Icons.account_tree_rounded,
-              label: 'Branches',
-              selected: _gitView == _GitView.branches,
-              onTap: () => setState(() => _gitView = _GitView.branches),
+              selected: true,
+              onTap: () => _setBottomTool(_BottomTool.git),
             ),
             const SizedBox(width: 10),
             if (p != null)
@@ -3870,11 +3859,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             child: Column(
               children: [
                 if (_gitOperation != null) _gitOperationBar(p, _gitOperation!),
-                Expanded(
-                  child: _gitView == _GitView.branches
-                      ? _branchesView(p, false)
-                      : _gitLogView(p),
-                ),
+                Expanded(child: _gitLogView(p)),
               ],
             ),
           ),
@@ -3882,35 +3867,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  Widget _branchesView(ProjectCfg p, bool compact) => _BranchListPane(
-    project: p,
-    branches: _gitBranches,
-    loading: _gitLoading,
-    error: _gitError,
-    embedded: compact,
-    onRefresh: _refreshGit,
-    onCheckout: (branch) => _checkoutBranchCurrent(p, branch),
-    onCreate: (branch, start) => _createBranchCurrent(p, branch, start: start),
-    onRename: (oldName, newName) async {
-      await gitRenameBranch(p.path, oldName, newName);
-      await _refreshGit();
-      _snack('分支已重命名');
-    },
-    onDelete: (branch, force) async {
-      await gitDeleteBranch(p.path, branch, force: force);
-      await _refreshGit();
-      _snack(force ? '分支已强制删除' : '分支已删除');
-    },
-    onDeleteRemote: (branch) async => _deleteRemoteBranchCurrent(p, branch),
-    onPushBranch: (branch, {publish = false}) =>
-        _pushBranchCurrent(p, branch, publish: publish),
-    onCompare: (branch) async => _compareBranch(p, branch),
-    onMerge: (branch) async => _mergeBranchIntoCurrent(p, branch),
-    onRebase: (branch) async => _rebaseCurrentOntoBranch(p, branch),
-    onFetch: ({prune = false}) => _gitFetchCurrent(p, prune: prune),
-    onPull: () => _gitPullCurrent(p),
-    onPush: () => _gitPushCurrent(p),
-  );
 
   Widget _localChangesList(ProjectCfg p) {
     final visibleChanges = _filteredGitChanges;
@@ -4259,11 +4215,30 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   // Opens a changed file's working-tree diff as a center editor tab (the left
-  // panel is too narrow for an inline diff).
-  void _openWorkingTreeDiffTab(String path) {
+  // panel is too narrow for an inline diff). Untracked files aren't in
+  // `git diff HEAD`, so they're shown as a whole-file addition.
+  Future<void> _openWorkingTreeDiffTab(String path) async {
     setState(() => _selectedGitPath = path);
-    if (_gitFiles.isNotEmpty) {
+    if (_gitFiles.any((f) => f.path == path)) {
       _openDiffTab(_gitFiles, 'Working Tree', initialPath: path);
+      return;
+    }
+    final p = _currentGitProject;
+    if (p == null) return;
+    try {
+      final files = parseUnifiedDiff(await gitDiffUntracked(p.path, path));
+      if (!mounted) return;
+      if (files.isEmpty) {
+        _openCodeFile('${p.path}/$path'); // binary/empty — fall back to source
+        return;
+      }
+      _openDiffTab(
+        files,
+        'Working Tree · ${path.split('/').last}',
+        initialPath: files.first.path,
+      );
+    } catch (e) {
+      if (mounted) _snack(errorText(e));
     }
   }
 
@@ -4345,8 +4320,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         : null;
     return Row(
       children: [
+        _logBranchPane(p),
         SizedBox(
-          width: 430,
+          width: 360,
           child: DecoratedBox(
             decoration: const BoxDecoration(color: CcColors.panel),
             child: Column(
@@ -4637,7 +4613,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               Expanded(
                 child: selected.isEmpty
                     ? centerMsg('选择 commit 查看改动文件')
-                    : _commitFilesList(
+                    : _commitFilesTree(
                         selected,
                         _compareTitle ?? selectedCommit?.shortHash ?? 'diff',
                       ),
@@ -4649,32 +4625,278 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  // _commitFilesList lists a commit's / compare's changed files; clicking one
-  // opens its before/after diff as a tab in the center editor.
-  Widget _commitFilesList(List<FileDiff> files, String title) =>
-      ListView.builder(
-        itemCount: files.length,
-        itemBuilder: (_, i) {
-          final fd = files[i];
-          return ListTile(
-            dense: true,
-            visualDensity: const VisualDensity(vertical: -2),
-            leading: const Icon(
-              Icons.description_outlined,
-              size: 16,
-              color: CcColors.muted,
+  // ---- 3-pane Log: left branch tree ----
+
+  // _logBranchPane is the GoLand-style branch sidebar: Local / Remote groups;
+  // clicking a branch scopes the commit list to it, right-click reuses the
+  // existing branch operations.
+  Widget _logBranchPane(ProjectCfg p) {
+    final locals = _gitBranches.where((b) => !b.remote).toList();
+    final remotes = _gitBranches.where((b) => b.remote).toList();
+    return SizedBox(
+      width: 240,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: CcColors.panel,
+          border: Border(right: BorderSide(color: CcColors.border)),
+        ),
+        child: _gitBranches.isEmpty
+            ? centerMsg('没有分支')
+            : ListView(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                children: [
+                  _branchGroupHeader('Local', locals.length),
+                  for (final b in locals) _logBranchTile(p, b),
+                  if (remotes.isNotEmpty) ...[
+                    _branchGroupHeader('Remote', remotes.length),
+                    for (final b in remotes) _logBranchTile(p, b),
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _branchGroupHeader(String label, int count) => Padding(
+    padding: const EdgeInsets.fromLTRB(10, 8, 8, 4),
+    child: Row(
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: CcType.code(
+            size: 10.5,
+            color: CcColors.subtle,
+            weight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text('$count', style: CcType.code(size: 10.5, color: CcColors.subtle)),
+      ],
+    ),
+  );
+
+  Widget _logBranchTile(ProjectCfg p, GitBranch b) {
+    final active = !_gitLogAllBranches && _gitLogRefFilter == b.name;
+    return InkWell(
+      onTap: () => _filterLogByBranch(b),
+      onSecondaryTapDown: (d) => _showLogBranchMenu(p, b, d.globalPosition),
+      child: Container(
+        color: active ? CcColors.accent.withValues(alpha: 0.10) : null,
+        padding: EdgeInsets.only(
+          left: b.remote ? 22 : 12,
+          right: 8,
+          top: 4,
+          bottom: 4,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              b.current
+                  ? Icons.star_rounded
+                  : b.remote
+                  ? Icons.cloud_outlined
+                  : Icons.call_split_rounded,
+              size: 14,
+              color: b.current ? CcColors.warning : CcColors.subtle,
             ),
-            title: Text(
-              fd.path,
-              style: CcType.code(size: 12.5),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                b.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CcType.code(
+                  size: 12,
+                  color: active || b.current ? CcColors.text : CcColors.muted,
+                  weight: b.current ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
             ),
-            trailing: fileDiffBadges(fd),
-            onTap: () => _openDiffTab(files, title, initialPath: fd.path),
-          );
-        },
+            if (b.ahead > 0 || b.behind > 0) ...[
+              const SizedBox(width: 4),
+              tag('↑${b.ahead} ↓${b.behind}', CcColors.warning),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _filterLogByBranch(GitBranch b) {
+    setState(() {
+      _gitLogRefFilter = b.name;
+      _gitLogAllBranches = false;
+    });
+    Prefs.setBool('ws.gitLogAllBranches', false);
+    _refreshGit();
+  }
+
+  // Right-click a branch in the Log — reuses the existing branch operations;
+  // deeper management (new/rename/delete) lives in the Branches popup.
+  Future<void> _showLogBranchMenu(
+    ProjectCfg p,
+    GitBranch b,
+    Offset position,
+  ) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final v = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        if (!b.current)
+          const PopupMenuItem(value: 'checkout', child: Text('Checkout')),
+        const PopupMenuItem(
+          value: 'compare',
+          child: Text('Compare with Working Tree'),
+        ),
+        if (!b.current) ...[
+          const PopupMenuItem(value: 'merge', child: Text('Merge into Current')),
+          const PopupMenuItem(
+            value: 'rebase',
+            child: Text('Rebase Current onto This'),
+          ),
+        ],
+        if (!b.remote) ...[
+          const PopupMenuDivider(),
+          const PopupMenuItem(value: 'push', child: Text('Push')),
+          if (b.upstream.isEmpty)
+            const PopupMenuItem(value: 'publish', child: Text('Publish')),
+        ],
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'dialog', child: Text('Branches Popup…')),
+      ],
+    );
+    if (v == null || !mounted) return;
+    switch (v) {
+      case 'checkout':
+        _checkoutBranchCurrent(p, b);
+      case 'compare':
+        _compareBranch(p, b);
+      case 'merge':
+        _mergeBranchIntoCurrent(p, b);
+      case 'rebase':
+        _rebaseCurrentOntoBranch(p, b);
+      case 'push':
+        _pushBranchCurrent(p, b);
+      case 'publish':
+        _pushBranchCurrent(p, b, publish: true);
+      case 'dialog':
+        _showBranchDialog();
+    }
+  }
+
+  // ---- 3-pane Log: right changed-files tree ----
+
+  // _commitFilesTree shows a commit's / compare's changed files as a directory
+  // tree (single-child dir chains compacted); clicking a file opens its diff as
+  // a tab in the center editor.
+  Widget _commitFilesTree(List<FileDiff> files, String title) {
+    final root = _DiffTreeNode('');
+    for (final f in files) {
+      final parts = f.path.split('/');
+      var node = root;
+      for (var i = 0; i < parts.length - 1; i++) {
+        node = node.children.putIfAbsent(parts[i], () => _DiffTreeNode(parts[i]));
+      }
+      node.files.add(f);
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      children: _diffTreeRows(root, files, title, 0),
+    );
+  }
+
+  List<Widget> _diffTreeRows(
+    _DiffTreeNode node,
+    List<FileDiff> all,
+    String title,
+    int depth,
+  ) {
+    final out = <Widget>[];
+    final dirNames = node.children.keys.toList()..sort();
+    for (final name in dirNames) {
+      var child = node.children[name]!;
+      var label = name;
+      // Compact single-child directory chains (a/b/c → one node).
+      while (child.files.isEmpty && child.children.length == 1) {
+        final only = child.children.values.first;
+        label = '$label/${only.name}';
+        child = only;
+      }
+      out.add(
+        Padding(
+          padding: EdgeInsets.only(left: 12.0 + depth * 14, top: 3, bottom: 3),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.folder_rounded,
+                size: 15,
+                color: CcColors.subtle,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 12, color: CcColors.muted),
+                ),
+              ),
+            ],
+          ),
+        ),
       );
+      out.addAll(_diffTreeRows(child, all, title, depth + 1));
+    }
+    final files = [...node.files]..sort((a, b) => a.path.compareTo(b.path));
+    for (final f in files) {
+      final name = f.path.split('/').last;
+      out.add(
+        InkWell(
+          onTap: () => _openDiffTab(all, title, initialPath: f.path),
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 12.0 + (depth + 1) * 14,
+              right: 8,
+              top: 3,
+              bottom: 3,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.description_outlined,
+                  size: 15,
+                  color: _diffStatusColor(f.status),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 12.5),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                fileDiffBadges(f),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return out;
+  }
+
+  Color _diffStatusColor(String status) => switch (status) {
+    'added' => CcColors.ok,
+    'deleted' => CcColors.danger,
+    'renamed' => CcColors.warning,
+    _ => CcColors.muted,
+  };
 
   Widget _commitActionsMenu(
     ProjectCfg p,
@@ -4856,7 +5078,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       enabled: p != null,
       onSelected: (v) {
         if (p == null) return;
-        if (v == 'branches') _openGitView(_GitView.branches);
+        if (v == 'branches') _openGitView(_GitView.log);
         if (v == 'dialog') _showBranchDialog();
         if (v == 'new') _showCreateBranchQuick(p);
         if (v == 'fetch') _gitFetchCurrent(p);
@@ -4897,7 +5119,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         const PopupMenuDivider(),
         const PopupMenuItem(
           value: 'branches',
-          child: Text('Open Branches Tab'),
+          child: Text('Open Git Log'),
         ),
         const PopupMenuItem(value: 'dialog', child: Text('Branches Popup...')),
         const PopupMenuItem(value: 'new', child: Text('New Branch...')),

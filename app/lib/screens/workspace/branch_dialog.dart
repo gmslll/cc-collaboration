@@ -91,6 +91,7 @@ class _BranchDialogState extends State<_BranchDialog> {
                 branches: _branches,
                 loading: _loading,
                 error: _error,
+                embedded: false,
                 onRefresh: _load,
                 onCheckout: (branch) async {
                   await widget.onCheckout(branch);
