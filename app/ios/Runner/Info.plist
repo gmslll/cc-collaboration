@@ -70,5 +70,7 @@
 	<string>用于语音输入:把你说的话转成文字发送到 AI 会话终端。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>用于把语音识别成文字,在本机完成。</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>
