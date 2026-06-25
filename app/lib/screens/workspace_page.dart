@@ -83,13 +83,19 @@ class _OpenFile {
   final String path;
   int? line;
   bool dirty = false;
-  final List<FileDiff>? diffs; // non-null = a read-only diff tab
-  final String? diffInitialPath; // file to select first inside the diff
+  List<FileDiff>? diffs; // non-null = a read-only diff tab
+  String? diffInitialPath; // file to select first inside the diff
+  bool diffShowTree; // diff tabs: show DiffView's own file tree (false = single-pane)
   final GlobalKey<CodeEditorPaneState> key = GlobalKey<CodeEditorPaneState>();
   bool previewMode = false; // .md tabs: rendered preview vs source
 
-  _OpenFile(this.path, {this.line}) : diffs = null, diffInitialPath = null;
-  _OpenFile.diff(this.path, this.diffs, {this.diffInitialPath}) : line = null;
+  _OpenFile(this.path, {this.line}) : diffShowTree = true;
+  _OpenFile.diff(
+    this.path,
+    this.diffs, {
+    this.diffInitialPath,
+    this.diffShowTree = true,
+  }) : line = null;
 
   bool get isDiff => diffs != null;
   String get name => isDiff ? path : path.split('/').last;
@@ -591,15 +597,31 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _openDiffTab opens a read-only diff tab in the center editor showing a
   // commit's / compare's files, focused on [initialPath]. Deduped by [title].
-  void _openDiffTab(List<FileDiff> diffs, String title, {String? initialPath}) {
+  void _openDiffTab(
+    List<FileDiff> diffs,
+    String title, {
+    String? initialPath,
+    bool showTree = true,
+  }) {
     if (diffs.isEmpty) return;
     final existing = _codeFiles.indexWhere((f) => f.isDiff && f.path == title);
     setState(() {
       if (existing >= 0) {
+        // Reuse the open diff tab but re-point it at the just-clicked file so the
+        // center pane follows the commit-list selection (instead of staying put).
+        final f = _codeFiles[existing];
+        f.diffs = diffs;
+        f.diffInitialPath = initialPath;
+        f.diffShowTree = showTree;
         _activeFile = existing;
       } else {
         _codeFiles.add(
-          _OpenFile.diff(title, diffs, diffInitialPath: initialPath),
+          _OpenFile.diff(
+            title,
+            diffs,
+            diffInitialPath: initialPath,
+            diffShowTree: showTree,
+          ),
         );
         _activeFile = _codeFiles.length - 1;
       }
@@ -2926,6 +2948,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             key: ValueKey(f.path),
             files: f.diffs!,
             initialPath: f.diffInitialPath,
+            showTree: f.diffShowTree,
           ),
         );
       }
@@ -4158,12 +4181,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             ],
           ),
           minLeadingWidth: 58,
-          title: Text(
-            c.path,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: CcType.code(size: 12),
-          ),
+          title: fileNameDirLabel(c.path),
           subtitle: c.oldPath == null
               ? null
               : Text(
@@ -4220,7 +4238,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _openWorkingTreeDiffTab(String path) async {
     setState(() => _selectedGitPath = path);
     if (_gitFiles.any((f) => f.path == path)) {
-      _openDiffTab(_gitFiles, 'Working Tree', initialPath: path);
+      _openDiffTab(_gitFiles, 'Working Tree', initialPath: path, showTree: false);
       return;
     }
     final p = _currentGitProject;
@@ -4236,6 +4254,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         files,
         'Working Tree · ${path.split('/').last}',
         initialPath: files.first.path,
+        showTree: false,
       );
     } catch (e) {
       if (mounted) _snack(errorText(e));
@@ -5281,7 +5300,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: const BoxDecoration(
         color: CcColors.panel,
-        border: Border(bottom: BorderSide(color: CcColors.border)),
+        border: Border(top: BorderSide(color: CcColors.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -5490,7 +5509,6 @@ class _WorkspacePageState extends State<WorkspacePage>
               children: [
                 _gitSummaryBar(status),
                 if (_gitOperation != null) _gitOperationBar(p, _gitOperation!),
-                if (!stash) _commitBox(p, status),
                 Expanded(
                   child: stash
                       ? _compactStashView(p)
@@ -5498,6 +5516,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                             ? centerMsg('Working tree clean')
                             : _localChangesList(p)),
                 ),
+                if (!stash) _commitBox(p, status),
               ],
             ),
           ),
@@ -5858,9 +5877,15 @@ class _WorkspacePageState extends State<WorkspacePage>
         }
       },
       children: [
-        ..._sessionNodes(p),
-        _projectGitNode(p),
-        _projectFilesNode(p),
+        ..._sessionNodesForDir(p.path),
+        _filesNode(
+          p.path,
+          p.name,
+          selectedPath: _revealedProjectFilePath,
+          fileMenuBuilder: (path) => _projectFileMenu(p, path),
+          pathStatusBuilder: (path) =>
+              _pathStatus(p.path, p.name, _gitChanges, path),
+        ),
         ..._worktreeNodes(ws, p),
         ..._taskNodes(p),
         if (_projectEmpty(p))
@@ -5871,108 +5896,6 @@ class _WorkspacePageState extends State<WorkspacePage>
               style: TextStyle(color: CcColors.muted, fontSize: 12),
             ),
           ),
-      ],
-    );
-  }
-
-  Widget _projectGitNode(ProjectCfg p) {
-    final selected = _gitProject?.path == p.path;
-    final status = selected ? _gitStatus : null;
-    final summary = status == null
-        ? 'Git'
-        : status.clean
-        ? '${status.branch} · clean'
-        : '${status.branch} · ${status.staged + status.modified + status.untracked + status.conflicted} changes';
-    return _ctxMenu(
-      ListTile(
-        dense: true,
-        visualDensity: _tileDensity,
-        contentPadding: const EdgeInsets.only(left: 12, right: 8),
-        horizontalTitleGap: 8,
-        leading: Icon(
-          Icons.alt_route_rounded,
-          size: 17,
-          color: selected ? CcColors.accentBright : CcColors.muted,
-        ),
-        title: Text(
-          summary,
-          style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (status != null && !status.clean) ...[
-              statusDot(
-                status.conflicted > 0 ? CcColors.danger : CcColors.warning,
-                size: 7,
-              ),
-              const SizedBox(width: 4),
-            ],
-          ],
-        ),
-        onTap: () => _selectGitProject(p, openTool: true),
-      ),
-      _projectGitMenu(p),
-    );
-  }
-
-  PopupMenuButton<String> _projectGitMenu(ProjectCfg project) {
-    final selected = _gitProject?.path == project.path;
-    final status = selected ? _gitStatus : null;
-    final canStageAll =
-        status == null || status.modified > 0 || status.untracked > 0;
-    final canUnstageAll = status == null || status.staged > 0;
-    final canRollbackAll =
-        status == null ||
-        status.modified > 0 ||
-        status.untracked > 0 ||
-        status.staged > 0;
-    return PopupMenuButton<String>(
-      tooltip: 'Git actions',
-      icon: const Icon(Icons.more_vert_rounded, size: 16),
-      padding: EdgeInsets.zero,
-      onOpened: () => _selectGitProject(project),
-      onSelected: (v) => _handleGitMenuAction(project, v),
-      itemBuilder: (_) => [
-        const PopupMenuItem(value: 'changes', child: Text('Open Changes')),
-        const PopupMenuItem(
-          value: 'workingDiff',
-          child: Text('Show Working Tree Diff'),
-        ),
-        const PopupMenuItem(value: 'commit', child: Text('Commit...')),
-        const PopupMenuItem(value: 'log', child: Text('Open Log')),
-        const PopupMenuItem(value: 'branches', child: Text('Open Branches')),
-        const PopupMenuItem(value: 'stash', child: Text('Open Stash')),
-        const PopupMenuItem(
-          value: 'branchPopup',
-          child: Text('Branches Popup...'),
-        ),
-        const PopupMenuItem(value: 'newBranch', child: Text('New Branch...')),
-        const PopupMenuDivider(),
-        const PopupMenuItem(value: 'fetch', child: Text('Fetch')),
-        const PopupMenuItem(value: 'fetchPrune', child: Text('Fetch --prune')),
-        const PopupMenuItem(value: 'pull', child: Text('Pull')),
-        const PopupMenuItem(value: 'pullRebase', child: Text('Pull --rebase')),
-        const PopupMenuItem(value: 'push', child: Text('Push')),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: canStageAll ? 'stageAll' : null,
-          child: const Text('Stage All'),
-        ),
-        PopupMenuItem(
-          value: canUnstageAll ? 'unstageAll' : null,
-          child: const Text('Unstage All'),
-        ),
-        const PopupMenuItem(
-          value: 'stashPush',
-          child: Text('Stash Changes...'),
-        ),
-        PopupMenuItem(
-          value: canRollbackAll ? 'rollbackAll' : null,
-          child: const Text('Rollback All...'),
-        ),
       ],
     );
   }
@@ -6019,9 +5942,17 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
-  Widget _projectFilesNode(ProjectCfg p) {
-    final header = _sectionHeader(p.path, 'files', 'FILES');
-    if (_secCollapsed(p.path, 'files')) return header;
+  // _filesNode 渲染一个可折叠的 FILES 区:项目根或某个 worktree 路径各用一份。
+  // fileMenuBuilder/pathStatusBuilder 由调用方注入(worktree 可传 null/轻量版)。
+  Widget _filesNode(
+    String dir,
+    String label, {
+    String? selectedPath,
+    PopupMenuButton<String>? Function(String path)? fileMenuBuilder,
+    Widget Function(String path)? pathStatusBuilder,
+  }) {
+    final header = _sectionHeader(dir, 'files', 'FILES');
+    if (_secCollapsed(dir, 'files')) return header;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -6029,27 +5960,33 @@ class _WorkspacePageState extends State<WorkspacePage>
         Padding(
           padding: const EdgeInsets.only(left: 4),
           child: DirTile(
-            dir: p.path,
-            label: p.name,
+            dir: dir,
+            label: label,
             depth: 0,
             initiallyExpanded: false,
             onOpenFile: _openCodeFile,
-            selectedPath: _revealedProjectFilePath,
-            fileMenuBuilder: (path) => _projectFileMenu(p, path),
-            pathStatusBuilder: (path) => _projectPathStatus(p, path),
+            selectedPath: selectedPath,
+            fileMenuBuilder: fileMenuBuilder,
+            pathStatusBuilder: pathStatusBuilder,
           ),
         ),
       ],
     );
   }
 
-  Widget _projectPathStatus(ProjectCfg project, String path) {
-    final rel = path == project.path
-        ? ''
-        : path.substring(project.path.length + 1);
+  // _pathStatus 计算文件/目录的 git 改动角标。rootPath/rootLabel 是该文件树的根
+  // (项目根或 worktree);allChanges 是相对 rootPath 的改动列表(项目用 _gitChanges,
+  // worktree 用 _worktreeChanges[wtPath])。
+  Widget _pathStatus(
+    String rootPath,
+    String rootLabel,
+    List<GitChange> allChanges,
+    String path,
+  ) {
+    final rel = path == rootPath ? '' : path.substring(rootPath.length + 1);
     final isDir = FileSystemEntity.isDirectorySync(path);
     final changes = isDir
-        ? _gitChanges
+        ? allChanges
               .where(
                 (c) =>
                     rel.isEmpty ||
@@ -6057,7 +5994,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                     (c.oldPath?.startsWith('$rel/') ?? false),
               )
               .toList()
-        : _gitChanges.where((c) => c.path == rel || c.oldPath == rel).toList();
+        : allChanges.where((c) => c.path == rel || c.oldPath == rel).toList();
     if (changes.isEmpty) return const SizedBox.shrink();
     final severity = changes.firstWhere(
       (c) => c.conflicted,
@@ -6068,7 +6005,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
     );
     final label = isDir ? '${changes.length}' : _gitChangeShortLabel(severity);
-    final target = rel.isEmpty ? project.name : rel;
+    final target = rel.isEmpty ? rootLabel : rel;
     return Tooltip(
       message: isDir
           ? '$target · ${changes.length} changed files'
@@ -6110,9 +6047,10 @@ class _WorkspacePageState extends State<WorkspacePage>
   // tasks — not while still loading or before the tile is expanded.
   bool _projectEmpty(ProjectCfg p) {
     final wts = _worktrees[p.path];
-    final wtLoadedEmpty =
-        _worktrees.containsKey(p.path) && wts != null && wts.isEmpty;
-    return wtLoadedEmpty &&
+    if (wts == null) return false; // 未加载或加载中,先不显示空提示
+    // 主工作树(path == 项目根)不算附加 worktree;只有附加 worktree 全无时才算空。
+    final noLinked = wts.where((w) => w.path != p.path).isEmpty;
+    return noLinked &&
         (_tasksByRepo[p.name]?.isEmpty ?? true) &&
         _sessionsFor(p).isEmpty;
   }
@@ -6130,11 +6068,22 @@ class _WorkspacePageState extends State<WorkspacePage>
     return out;
   }
 
-  List<Widget> _sessionNodes(ProjectCfg p) {
-    final ss = _sessionsFor(p);
+  // _sessionsForDir returns the open terminal sessions launched in EXACTLY [dir]
+  // (a project root OR a worktree path), paired with their index in `terms`.
+  // Exact match is correct: _openAgent always launches at p.path or w.path.
+  List<({int idx, TerminalSession s})> _sessionsForDir(String dir) {
+    final out = <({int idx, TerminalSession s})>[];
+    for (var i = 0; i < terms.length; i++) {
+      if (terms[i].workdir == dir) out.add((idx: i, s: terms[i]));
+    }
+    return out;
+  }
+
+  List<Widget> _sessionNodesForDir(String dir) {
+    final ss = _sessionsForDir(dir);
     if (ss.isEmpty) return const [];
-    final header = _sectionHeader(p.path, 'sessions', '会话 (${ss.length})');
-    if (_secCollapsed(p.path, 'sessions')) return [header];
+    final header = _sectionHeader(dir, 'sessions', '会话 (${ss.length})');
+    if (_secCollapsed(dir, 'sessions')) return [header];
     return [
       header,
       ...ss.map((e) {
@@ -6283,50 +6232,109 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
       ];
     }
-    if (wts.isEmpty) return const [];
+    // 主工作树的 path == 项目根,已由项目节点自身表示,这里只列附加 worktree。
+    final linked = wts.where((w) => w.path != p.path).toList();
+    if (linked.isEmpty) return const [];
     final header = _sectionHeader(
       p.path,
       'worktrees',
-      'WORKTREES (${wts.length})',
+      'WORKTREES (${linked.length})',
     );
     if (_secCollapsed(p.path, 'worktrees')) return [header];
     return [
       header,
-      ...wts.map(
-        (w) => _ctxMenu(
-          _HoverZone(
-            builder: (h) => ListTile(
-              visualDensity: _tileDensity,
-              contentPadding: const EdgeInsets.only(left: 10, right: 2),
-              leading: Icon(
-                Icons.account_tree_rounded,
-                size: 18,
-                color: w.isHandoff ? CcColors.accent : CcColors.muted,
-              ),
-              title: Text(
-                w.branch.isEmpty ? w.name : w.branch,
-                style: const TextStyle(fontFamily: CcType.mono, fontSize: 13.5),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: w.isHandoff
-                  ? const Text(
-                      'handoff',
-                      style: TextStyle(color: CcColors.accent, fontSize: 11),
-                    )
-                  : null,
-              trailing: _rowActions(
-                h,
-                onClaude: () => _openAgent(p, w.path, 'claude', ws.preLaunch),
-                onCodex: () => _openAgent(p, w.path, 'codex', ws.preLaunch),
+      ...linked.map((w) {
+        final title = w.branch.isEmpty ? w.name : w.branch;
+        return ExpansionTile(
+          leading: Icon(
+            Icons.account_tree_rounded,
+            size: 18,
+            color: w.isHandoff ? CcColors.accent : CcColors.muted,
+          ),
+          controller: _ctlFor(w.path),
+          tilePadding: const EdgeInsets.only(left: 10, right: 2),
+          childrenPadding: const EdgeInsets.only(left: 12),
+          shape: const Border(),
+          onExpansionChanged: (open) {
+            if (open) _ensureWorktreeChanges(w.path);
+          },
+          title: _ctxMenu(
+            _HoverZone(
+              builder: (h) => Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontFamily: CcType.mono,
+                            fontSize: 13.5,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (w.isHandoff)
+                          const Text(
+                            'handoff',
+                            style: TextStyle(
+                              color: CcColors.accent,
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  _rowActions(
+                    h,
+                    onClaude: () =>
+                        _openAgent(p, w.path, 'claude', ws.preLaunch),
+                    onCodex: () => _openAgent(p, w.path, 'codex', ws.preLaunch),
+                  ),
+                ],
               ),
             ),
+            _worktreeMenu(ws, p, w),
           ),
-          _worktreeMenu(ws, p, w),
-        ),
-      ),
+          children: [
+            ..._sessionNodesForDir(w.path),
+            _filesNode(
+              w.path,
+              title,
+              fileMenuBuilder: (path) => _worktreeFileMenu(path),
+              pathStatusBuilder: (path) => _pathStatus(
+                w.path,
+                title,
+                _worktreeChanges[w.path] ?? const [],
+                path,
+              ),
+            ),
+          ],
+        );
+      }),
     ];
   }
+
+  // worktree 文件树的轻量菜单。compare/history/blame 依赖项目 git 根,对 worktree
+  // 不直接成立(各自是独立工作树),留作后续。
+  PopupMenuButton<String> _worktreeFileMenu(String path) =>
+      PopupMenuButton<String>(
+        tooltip: 'File actions',
+        icon: const Icon(Icons.more_vert_rounded, size: 16),
+        padding: EdgeInsets.zero,
+        onSelected: (v) {
+          if (v == 'open') _openCodeFile(path);
+          if (v == 'copyPath') _copyFilePath(path);
+          if (v == 'reveal') _revealFileInProject(path);
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'open', child: Text('Open')),
+          PopupMenuItem(value: 'copyPath', child: Text('Copy Path')),
+          PopupMenuItem(value: 'reveal', child: Text('Reveal')),
+        ],
+      );
 
   List<Widget> _taskNodes(ProjectCfg p) {
     final ts = _tasksByRepo[p.name] ?? const [];
@@ -6595,7 +6603,9 @@ class _WorkspacePageState extends State<WorkspacePage>
               size: 16,
               color: CcColors.muted,
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 2),
+            Icon(_sectionIcon(kind), size: 13, color: CcColors.muted),
+            const SizedBox(width: 5),
             Text(
               label,
               style: const TextStyle(
@@ -6611,6 +6621,15 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
     );
   }
+
+  // 各分组(会话 / FILES / WORKTREES / 任务)的代表图标。
+  IconData _sectionIcon(String kind) => switch (kind) {
+    'sessions' => Icons.terminal_rounded,
+    'files' => Icons.folder_outlined,
+    'worktrees' => Icons.account_tree_rounded,
+    'tasks' => Icons.assignment_outlined,
+    _ => Icons.label_outline_rounded,
+  };
 
   Widget _quickBtn(String label, VoidCallback onTap) => Padding(
     padding: const EdgeInsets.only(right: 3),

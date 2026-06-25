@@ -152,7 +152,10 @@ Widget diffSplitRow(
 // scrolls horizontally, rather than squeezing both columns into the screen.
 class SplitDiff extends StatefulWidget {
   final String raw;
-  const SplitDiff(this.raw, {super.key});
+  // scroll=true (default): own horizontal scroll + lazy ListView. scroll=false:
+  // natural-sized (no scroll) so an outer InteractiveViewer can pan/zoom it.
+  final bool scroll;
+  const SplitDiff(this.raw, {super.key, this.scroll = true});
 
   @override
   State<SplitDiff> createState() => _SplitDiffState();
@@ -206,22 +209,29 @@ class _SplitDiffState extends State<SplitDiff> {
     const chrome = 44.0 * 2 + 1; // two gutters + the divider
     final lineW = _maxLen * charW + 20;
     final cellW = lineW < 160 ? 160.0 : lineW;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: SizedBox(
-        width: cellW * 2 + chrome,
-        child: ListView.builder(
-          padding: EdgeInsets.zero,
-          itemCount: _items.length,
-          itemBuilder: (_, i) {
-            final it = _items[i];
-            return it is FileDiff
-                ? _fileHeader(it)
-                : diffSplitRow(it as DiffRow, cellWidth: cellW);
-          },
-        ),
-      ),
+    Widget rowAt(int i) {
+      final it = _items[i];
+      return it is FileDiff
+          ? _fileHeader(it)
+          : diffSplitRow(it as DiffRow, cellWidth: cellW);
+    }
+
+    final body = SizedBox(
+      width: cellW * 2 + chrome,
+      child: widget.scroll
+          ? ListView.builder(
+              padding: EdgeInsets.zero,
+              itemCount: _items.length,
+              itemBuilder: (_, i) => rowAt(i),
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [for (var i = 0; i < _items.length; i++) rowAt(i)],
+            ),
     );
+    return widget.scroll
+        ? SingleChildScrollView(scrollDirection: Axis.horizontal, child: body)
+        : body;
   }
 
   Widget _fileHeader(FileDiff f) => Container(

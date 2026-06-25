@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/diff_parse.dart';
 import '../local/prefs.dart';
 import '../remote/remote_client.dart';
 import '../terminal_mouse.dart' show terminalWheel;
@@ -168,48 +169,151 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     );
   }
 
+  // _rootForSession matches a session to its project by the longest root path
+  // that is a prefix of the session's workdir (root itself or a subdir/worktree).
+  RemoteRootInfo? _rootForSession(RemoteSession s) {
+    RemoteRootInfo? best;
+    for (final r in _c.roots) {
+      if (s.workdir == r.path || s.workdir.startsWith('${r.path}/')) {
+        if (best == null || r.path.length > best.path.length) best = r;
+      }
+    }
+    return best;
+  }
+
+  // _rootsByWorkspace groups the shared projects by their workspace name.
+  Map<String, List<RemoteRootInfo>> _rootsByWorkspace() {
+    final byWs = <String, List<RemoteRootInfo>>{};
+    for (final r in _c.roots) {
+      (byWs[r.workspace] ??= []).add(r);
+    }
+    return byWs;
+  }
+
   Widget _sessionsTab() {
     if (_c.sessions.isEmpty) {
       return centerMsg('没有会话。\n在电脑端起一个 Claude/Codex 会话，并打开工具栏的「共享给手机」。');
     }
-    return ListView.separated(
-      itemCount: _c.sessions.length,
-      separatorBuilder: (_, _) =>
-          const Divider(height: 1, color: CcColors.border),
-      itemBuilder: (_, i) {
-        final s = _c.sessions[i];
-        return ListTile(
-          leading: Icon(
-            s.agent == 'codex'
-                ? Icons.smart_toy_outlined
-                : Icons.play_arrow_rounded,
-            color: CcColors.accentBright,
-          ),
-          title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(
-            s.workdir,
+    // Group sessions by workspace → project (matching workdir to a root); any
+    // session not under a known root falls into "其他".
+    final byWs = _rootsByWorkspace();
+    final byProject = <String, List<RemoteSession>>{};
+    final orphans = <RemoteSession>[];
+    for (final s in _c.sessions) {
+      final r = _rootForSession(s);
+      if (r == null) {
+        orphans.add(s);
+      } else {
+        (byProject[r.path] ??= []).add(s);
+      }
+    }
+
+    final children = <Widget>[];
+    for (final entry in byWs.entries) {
+      final projects = entry.value
+          .where((p) => byProject[p.path]?.isNotEmpty ?? false)
+          .toList();
+      if (projects.isEmpty) continue;
+      children.add(_gitSection(entry.key.isEmpty ? '(默认工作区)' : entry.key));
+      for (final p in projects) {
+        children.add(_projectSubHeader(p.name));
+        for (final s in byProject[p.path]!) {
+          children.add(_sessionRow(s, root: p));
+        }
+      }
+    }
+    if (orphans.isNotEmpty) {
+      children.add(_gitSection('其他'));
+      for (final s in orphans) {
+        children.add(_sessionRow(s, root: null));
+      }
+    }
+    return ListView(children: children);
+  }
+
+  Widget _projectSubHeader(String name) => Padding(
+    padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+    child: Row(
+      children: [
+        const Icon(Icons.folder_rounded, size: 14, color: CcColors.muted),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: CcType.code(size: 11.5, color: CcColors.subtle),
-          ),
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded),
-            onSelected: (v) {
-              if (v == 'rename') _renameSessionDialog(s);
-              if (v == 'close') _c.closeSession(s.sid);
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'rename', child: Text('重命名')),
-              PopupMenuItem(value: 'close', child: Text('关闭')),
-            ],
-          ),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
+            style: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: CcColors.text,
             ),
           ),
-        );
-      },
+        ),
+      ],
+    ),
+  );
+
+  Widget _sessionRow(RemoteSession s, {RemoteRootInfo? root}) {
+    // Worktree sessions live under <root>/.worktrees/<name>; show that name.
+    final inWorktree = root != null && s.workdir != root.path;
+    String? sub;
+    if (root == null) {
+      sub = s.workdir; // orphan — show the full path
+    } else if (inWorktree) {
+      final rel = s.workdir.substring(root.path.length + 1);
+      sub = rel.startsWith('.worktrees/')
+          ? rel.substring('.worktrees/'.length)
+          : rel;
+    }
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.only(left: 22, right: 4),
+      leading: Icon(
+        s.agent == 'codex'
+            ? Icons.smart_toy_outlined
+            : Icons.play_arrow_rounded,
+        color: CcColors.accentBright,
+      ),
+      title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: sub == null
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (inWorktree) ...[
+                  const Icon(
+                    Icons.account_tree_rounded,
+                    size: 12,
+                    color: CcColors.subtle,
+                  ),
+                  const SizedBox(width: 3),
+                ],
+                Flexible(
+                  child: Text(
+                    sub,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 11.5, color: CcColors.subtle),
+                  ),
+                ),
+              ],
+            ),
+      trailing: PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert_rounded),
+        onSelected: (v) {
+          if (v == 'rename') _renameSessionDialog(s);
+          if (v == 'close') _c.closeSession(s.sid);
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'rename', child: Text('重命名')),
+          PopupMenuItem(value: 'close', child: Text('关闭')),
+        ],
+      ),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
+        ),
+      ),
     );
   }
 
@@ -437,12 +541,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                       ListTile(
                         dense: true,
                         leading: _gitBadge(c),
-                        title: Text(
-                          c.path,
-                          style: CcType.code(size: 12.5),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        title: fileNameDirLabel(c.path),
                         trailing: _changeMenu(c),
                         onTap: c.untracked
                             ? null
@@ -474,14 +573,17 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                             color: CcColors.subtle,
                           ),
                         ),
-                        onTap: () => _openDiff(
-                          () => _c.requestCommitDiff(
-                            _gitRepo!,
-                            c.hash,
-                            c.subject,
-                          ),
-                          '${c.short} ${c.subject}',
-                        ),
+                        onTap: () {
+                          _c.requestCommitDiff(_gitRepo!, c.hash, c.subject);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => _RemoteCommitFiles(
+                                client: _c,
+                                title: '${c.short} ${c.subject}',
+                              ),
+                            ),
+                          );
+                        },
                       ),
                   ],
                 ),
@@ -731,10 +833,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   // --- 管理 (workspace / project / worktree) ---
 
   Widget _manageTab() {
-    final byWs = <String, List<RemoteRootInfo>>{};
-    for (final r in _c.roots) {
-      (byWs[r.workspace] ??= []).add(r);
-    }
+    final byWs = _rootsByWorkspace();
     return ListView(
       children: [
         Padding(
@@ -1542,35 +1641,144 @@ class _RemoteDiffViewerState extends State<_RemoteDiffViewer> {
       builder: (context, _) => Scaffold(
         appBar: AppBar(
           title: Text(widget.title, overflow: TextOverflow.ellipsis),
-          actions: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-              child: diffSplitToggle(
-                _split,
-                (v) => setState(() => _split = v),
-                style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ),
-          ],
+          actions: [_diffSplitAction(_split, (v) => setState(() => _split = v))],
         ),
         body: client.diffLoading
             ? const Center(child: CircularProgressIndicator())
             : client.diffError != null
             ? centerMsg(client.diffError!)
-            : (client.diffContent == null || client.diffContent!.isEmpty)
-            ? centerMsg('无差异')
-            : ColoredBox(
-                color: CcColors.bg,
-                child: _split
-                    ? SplitDiff(client.diffContent!)
-                    : diffText(client.diffContent!),
-              ),
+            : _zoomableDiff(client.diffContent ?? '', _split),
       ),
     );
   }
+}
+
+// _diffSplitAction is the compact 并排/统一 toggle for a diff screen's AppBar.
+Widget _diffSplitAction(bool split, ValueChanged<bool> onChanged) => Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+  child: diffSplitToggle(
+    split,
+    onChanged,
+    style: const ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
+  ),
+);
+
+// _zoomableDiff renders a raw unified diff at natural size inside an
+// InteractiveViewer so the phone can pinch-zoom + pan (the diff is wider than
+// the screen). constrained:false hands pan/zoom to the viewer instead of the
+// diff's own scroll, avoiding a gesture conflict.
+Widget _zoomableDiff(String raw, bool split) {
+  if (raw.trim().isEmpty) return centerMsg('无差异');
+  return ColoredBox(
+    color: CcColors.bg,
+    child: InteractiveViewer(
+      constrained: false,
+      minScale: 0.4,
+      maxScale: 3.0,
+      boundaryMargin: const EdgeInsets.all(80),
+      child: split
+          ? SplitDiff(raw, scroll: false)
+          : IntrinsicWidth(child: diffText(raw, scrollable: false)),
+    ),
+  );
+}
+
+// _RemoteCommitFiles shows a commit's file overview (parsed from its diff), then
+// drills into a single file's diff on tap — like the desktop's changed-files
+// tree → selected file.
+class _RemoteCommitFiles extends StatefulWidget {
+  final RemoteClient client;
+  final String title;
+  const _RemoteCommitFiles({required this.client, required this.title});
+
+  @override
+  State<_RemoteCommitFiles> createState() => _RemoteCommitFilesState();
+}
+
+class _RemoteCommitFilesState extends State<_RemoteCommitFiles> {
+  String? _parsedFrom; // the diffContent we last parsed (skip re-parsing)
+  List<FileDiff> _files = const [];
+
+  List<FileDiff> _filesFor(String? content) {
+    if (content == null) return const [];
+    if (content != _parsedFrom) {
+      _parsedFrom = content;
+      _files = parseUnifiedDiff(content);
+    }
+    return _files;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final client = widget.client;
+    return ListenableBuilder(
+      listenable: client,
+      builder: (context, _) {
+        Widget body;
+        if (client.diffLoading) {
+          body = const Center(child: CircularProgressIndicator());
+        } else if (client.diffError != null) {
+          body = centerMsg(client.diffError!);
+        } else {
+          final files = _filesFor(client.diffContent);
+          body = files.isEmpty
+              ? centerMsg('无差异')
+              : ListView(
+                  children: [
+                    for (final f in files)
+                      ListTile(
+                        dense: true,
+                        title: fileNameDirLabel(f.path),
+                        trailing: fileDiffBadges(f),
+                        onTap: () {
+                          final (name, _) = splitFileNameDir(f.path);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  _DiffScreen(title: name, raw: f.raw),
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                );
+        }
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(widget.title, overflow: TextOverflow.ellipsis),
+          ),
+          body: body,
+        );
+      },
+    );
+  }
+}
+
+// _DiffScreen renders one given unified-diff string (a single file from a
+// commit) with the split/unified toggle + pinch-zoom.
+class _DiffScreen extends StatefulWidget {
+  final String title;
+  final String raw;
+  const _DiffScreen({required this.title, required this.raw});
+
+  @override
+  State<_DiffScreen> createState() => _DiffScreenState();
+}
+
+class _DiffScreenState extends State<_DiffScreen> {
+  bool _split = Prefs.getBool('diff.split', def: true);
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: Text(widget.title, overflow: TextOverflow.ellipsis),
+      actions: [_diffSplitAction(_split, (v) => setState(() => _split = v))],
+    ),
+    body: _zoomableDiff(widget.raw, _split),
+  );
 }
 
 // _WorktreeScreen lists a project's worktrees and lets the phone add/remove them.

@@ -21,12 +21,14 @@ class DiffView extends StatefulWidget {
   final String? editRoot;
   final VoidCallback? onChanged;
   final String? initialPath; // file to select first (else the first file)
+  final bool showTree; // false = single-pane (nav driven by an external list)
   const DiffView({
     super.key,
     required this.files,
     this.editRoot,
     this.onChanged,
     this.initialPath,
+    this.showTree = true,
   });
 
   @override
@@ -58,12 +60,17 @@ class _DiffViewState extends State<DiffView> {
   @override
   void didUpdateWidget(DiffView old) {
     super.didUpdateWidget(old);
+    final pathChanged =
+        widget.initialPath != null && widget.initialPath != old.initialPath;
     if (!identical(old.files, widget.files)) {
       // a re-diff (after edit/revert) rebuilds the list — keep the user on the
-      // same file by path rather than snapping back to the first one.
-      final keep = _selected?.path;
+      // same file by path rather than snapping back to the first one, unless the
+      // parent explicitly pointed us at a new file on this update.
       _root = _buildTree(widget.files);
-      _reselect(keep);
+      _reselect(pathChanged ? widget.initialPath : _selected?.path);
+    } else if (pathChanged) {
+      // same file list, but the commit list selected a different file — follow.
+      _reselect(widget.initialPath);
     }
   }
 
@@ -187,6 +194,9 @@ class _DiffViewState extends State<DiffView> {
   @override
   Widget build(BuildContext context) {
     if (widget.files.isEmpty) return centerMsg('没有变动文件');
+    // single-pane: only the diff; file navigation is driven by an external list
+    // (e.g. the Commit panel) so the internal tree would be redundant.
+    if (!widget.showTree) return _right();
     return Row(
       children: [
         SizedBox(width: _treeW, child: _tree()),

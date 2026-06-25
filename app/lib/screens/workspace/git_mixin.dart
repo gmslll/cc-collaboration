@@ -19,6 +19,10 @@ mixin _GitMixin on State<WorkspacePage> {
   GitOperationState? _gitOperation;
   List<FileDiff> _gitFiles = const [];
   List<GitChange> _gitChanges = const [];
+
+  /// 每个附加 worktree 的 git 改动,按 worktree 路径缓存(展开时懒加载)。
+  /// 项目根用 _gitChanges;worktree 各自一份,供其文件树角标使用。
+  final Map<String, List<GitChange>> _worktreeChanges = {};
   List<GitCommit> _gitLog = const [];
   List<GitBranch> _gitBranches = const [];
   List<GitStash> _gitStashes = const [];
@@ -75,6 +79,9 @@ mixin _GitMixin on State<WorkspacePage> {
         _gitStatus = status;
         _gitOperation = operation;
         _gitChanges = changes;
+        // git state changed → drop per-worktree change caches; they refetch
+        // lazily on next expand (mirrors how _gitChanges refreshes here).
+        _worktreeChanges.clear();
         _selectedChangePaths.removeWhere(
           (path) => !changes.any((c) => c.path == path),
         );
@@ -110,6 +117,13 @@ mixin _GitMixin on State<WorkspacePage> {
         _gitLoading = false;
       });
     }
+  }
+
+  /// 懒加载某个附加 worktree 的 git 改动(展开 worktree 节点时调用)。
+  Future<void> _ensureWorktreeChanges(String wtPath) async {
+    if (_worktreeChanges.containsKey(wtPath)) return; // cached until _refreshGit
+    final changes = await gitChanges(wtPath);
+    if (mounted) setState(() => _worktreeChanges[wtPath] = changes);
   }
 
   Future<void> _gitPullCurrent(ProjectCfg p) async {

@@ -613,3 +613,43 @@ class _HoverLiftState extends State<HoverLift> {
     );
   }
 }
+
+// splitFileNameDir splits a path into (fileName, dirPath); dirPath is '' if none.
+(String, String) splitFileNameDir(String path) {
+  final i = path.lastIndexOf('/');
+  return (
+    i < 0 ? path : path.substring(i + 1),
+    i < 0 ? '' : path.substring(0, i),
+  );
+}
+
+// fileNameDirLabel renders a path as filename (left) + small gray directory —
+// shared by the desktop commit panel and the phone change / commit-file rows.
+Widget fileNameDirLabel(String path) {
+  final (name, dir) = splitFileNameDir(path);
+  return Row(
+    crossAxisAlignment: CrossAxisAlignment.baseline,
+    textBaseline: TextBaseline.alphabetic,
+    children: [
+      Flexible(
+        child: Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: CcType.code(size: 12.5),
+        ),
+      ),
+      if (dir.isNotEmpty) ...[
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            dir,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CcType.code(size: 10.5, color: CcColors.subtle),
+          ),
+        ),
+      ],
+    ],
+  );
+}
