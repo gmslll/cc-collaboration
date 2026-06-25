@@ -1,18 +1,23 @@
 PODS:
   - flutter_pty (0.0.1):
     - FlutterMacOS
+  - flutter_tts (0.0.1):
+    - FlutterMacOS
   - FlutterMacOS (1.0.0)
   - pasteboard (0.0.1):
     - FlutterMacOS
 
 DEPENDENCIES:
   - flutter_pty (from `Flutter/ephemeral/.symlinks/plugins/flutter_pty/macos`)
+  - flutter_tts (from `Flutter/ephemeral/.symlinks/plugins/flutter_tts/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - pasteboard (from `Flutter/ephemeral/.symlinks/plugins/pasteboard/macos`)
 
 EXTERNAL SOURCES:
   flutter_pty:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_pty/macos
+  flutter_tts:
+    :path: Flutter/ephemeral/.symlinks/plugins/flutter_tts/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
   pasteboard:
@@ -20,6 +25,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   flutter_pty: 1e360feaf8b1a213d2d50da3c076005b8eef1eee
+  flutter_tts: ae915565cc6948444b513acc8ee021993281e027
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   pasteboard: 278d8100149f940fb795d6b3a74f0720c890ecb7
 

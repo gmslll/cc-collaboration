@@ -67,6 +67,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // terminalDeck() and terminalBody().
   void Function(String text)? onSendToOnline;
 
+  // onActiveTermChanged fires whenever the active session changes (switch / add /
+  // close / restore) — the single chokepoint for "which session is in front".
+  // The workspace uses it to re-arm voice TTS on the now-active session.
+  void Function()? onActiveTermChanged;
+
   // _onSessionDone is wired onto every session's onDone: show the local desktop
   // banner, then let the host fan it out (phone push) via onAgentDone.
   void _onSessionDone(TerminalSession s) {
@@ -99,6 +104,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     });
     onTermsChanged?.call();
     onTermAdded?.call();
+    onActiveTermChanged?.call();
     unawaited(_save());
   }
 
@@ -111,6 +117,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       }
     });
     onTermsChanged?.call();
+    onActiveTermChanged?.call();
     unawaited(_save());
   }
 
@@ -178,6 +185,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         activeTerm = 0;
       });
       onTermsChanged?.call();
+      onActiveTermChanged?.call();
       // Only rewrite when a legacy entry was actually recovered — steady-state
       // restarts (all entries already structured) skip the redundant write.
       if (upgraded) unawaited(_save());
@@ -336,7 +344,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   Widget terminalDeck({VoidCallback? onCollapse}) => TerminalDeck(
     terms: terms,
     active: activeTerm,
-    onSwitch: (i) => setState(() => activeTerm = i),
+    onSwitch: (i) {
+      setState(() => activeTerm = i);
+      onActiveTermChanged?.call();
+    },
     onClose: closeTerm,
     onCollapse: onCollapse,
     groupsFor: sendGroupsFor,

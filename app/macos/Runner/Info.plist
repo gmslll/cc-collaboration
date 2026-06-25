@@ -26,6 +26,10 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于语音输入:把你说的话转成文字发送到 AI 会话终端。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>用于在本机把语音识别成文字,内容不会离开你的设备。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

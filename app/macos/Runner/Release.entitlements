@@ -8,5 +8,10 @@
 	<false/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- Voice: microphone capture + on-device speech recognition. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.personal-information.speech-recognition</key>
+	<true/>
 </dict>
 </plist>

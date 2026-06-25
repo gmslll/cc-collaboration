@@ -3,6 +3,8 @@
          add this automatically, the release one does not). -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Voice input (speech_to_text). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
         android:label="cc-handoff"
         android:name="${applicationName}"
@@ -48,6 +50,10 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- speech_to_text needs to see the on-device speech recognizer. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
         </intent>
     </queries>
 </manifest>

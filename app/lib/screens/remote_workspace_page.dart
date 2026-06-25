@@ -9,6 +9,7 @@ import '../local/prefs.dart';
 import '../remote/remote_client.dart';
 import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
+import '../voice/stt.dart';
 import '../widgets.dart';
 import 'diff_split.dart';
 import '../terminal_theme.dart';
@@ -1211,13 +1212,44 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // Customizable on-screen key bar (shared across sessions via Prefs).
   late List<_KeyButton> _keys = _loadKeyButtons();
 
+  // Voice input: speak → transcript pasted into this session's input (reaches
+  // the host like _paste). Web-safe (speech_to_text); on iOS Safari STT is
+  // unavailable and the button reports so.
+  final SpeechInput _voice = SpeechInput();
+  bool _listening = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _voice.onListeningChange = (v) {
+      if (mounted) setState(() => _listening = v);
+    };
+  }
+
   @override
   void dispose() {
+    _voice.dispose();
     _controller.dispose();
     super.dispose();
   }
 
   Terminal get _term => widget.client.terminalFor(widget.session.sid);
+
+  Future<void> _voiceInput() async {
+    if (_listening) {
+      await _voice.stop();
+      return;
+    }
+    final ok = await _voice.start(
+      onFinal: (text) {
+        final t = text.trim();
+        if (t.isEmpty) return;
+        _term.paste(t); // routes through term.onOutput → host input
+        snack(context, '🎤 $t');
+      },
+    );
+    if (!ok && mounted) snack(context, '此环境不支持语音输入(检查麦克风权限)');
+  }
 
   void _copy() {
     final sel = _controller.selection;
@@ -1338,6 +1370,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   // Functional buttons are pinned at the front (not reorderable).
                   btn('复制', _copy),
                   btn('粘贴', _paste),
+                  btn(_listening ? '🎤 停' : '🎤 说', _voiceInput),
                   btn('滚↑', () => _wheel(true, ticks: 3)),
                   btn('滚↓', () => _wheel(false, ticks: 3)),
                   for (final kb in _keys)

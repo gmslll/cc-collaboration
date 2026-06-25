@@ -20,6 +20,7 @@ import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
 import '../remote/remote_host.dart';
 import '../theme.dart';
+import '../voice/voice.dart';
 import '../widgets.dart';
 import 'diff_page.dart';
 import 'diff_split.dart';
@@ -208,6 +209,12 @@ class _WorkspacePageState extends State<WorkspacePage>
   bool _msgDialogOpen = false;
   String? _parkedFilePath; // cached path to parked_messages.json
 
+  // Voice: read agent replies aloud (TTS) + voice input (STT) for the active
+  // terminal. _ttsOn gates reading; _listening reflects an in-progress mic.
+  final VoiceService _voice = VoiceService();
+  bool _ttsOn = Prefs.getBool('ws.tts');
+  bool _listening = false;
+
   void _onRemoteChange() {
     if (!mounted) return;
     final h = _remoteHost;
@@ -327,9 +334,26 @@ class _WorkspacePageState extends State<WorkspacePage>
       final (title, body) = agentDoneNotice(s);
       _remoteHost.broadcastNotify(title, body, sid: s.id);
       _resumeParkedFor(s); // a freed-up session can take a parked message
+      // Read the active session's reply aloud (only the active one, so multiple
+      // agents don't talk over each other).
+      if (_ttsOn && terms.isNotEmpty && terms[activeTerm].id == s.id) {
+        _voice.speakReplyFor(s);
+      }
     };
     // Right-click "发送到在线用户…" in any terminal routes the selection here.
     onSendToOnline = _showSendToOnlineUser;
+    // When the active session changes (any path: switch/add/close/restore),
+    // re-arm TTS so it reads the now-front session's future turns, not its
+    // backlog or another tab's.
+    onActiveTermChanged = () {
+      if (_ttsOn && terms.isNotEmpty) _voice.armBaseline(terms[activeTerm]);
+    };
+    // Keep the mic button in sync with the recognizer (handles silence/timeout
+    // auto-stop, not just explicit stop).
+    _voice.onListeningChange = (v) {
+      if (mounted) setState(() => _listening = v);
+    };
+    _voice.init();
     _localBus.start();
     _connectRelayPresence();
     _loadParked();
@@ -396,6 +420,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     _localBus.dispose();
     _relaySse?.cancel();
     _sessionHeartbeat?.cancel();
+    _voice.dispose();
     disposeTerms();
     super.dispose();
   }
@@ -2284,9 +2309,78 @@ class _WorkspacePageState extends State<WorkspacePage>
             const SizedBox(width: 4),
             _parkedBadge(),
           ],
+          const SizedBox(width: 4),
+          _ttsToggle(),
+          _micButton(),
         ],
       ),
     );
+  }
+
+  // _ttsToggle turns reading-agent-replies-aloud on/off (persisted). Enabling it
+  // arms the baseline on the active session so only future turns are read.
+  Widget _ttsToggle() => IconButton(
+    tooltip: _ttsOn ? '朗读已开启 (点击关闭)' : '朗读 AI 回复',
+    visualDensity: VisualDensity.compact,
+    onPressed: () {
+      final on = !_ttsOn;
+      setState(() => _ttsOn = on);
+      Prefs.setBool('ws.tts', on);
+      if (on) {
+        onActiveTermChanged?.call(); // arm the active session (reads _ttsOn)
+        _snack('已开启朗读 AI 回复');
+      } else {
+        _voice.stopSpeaking();
+        _snack('已关闭朗读');
+      }
+    },
+    icon: Icon(
+      _ttsOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+      size: 18,
+      color: _ttsOn ? CcColors.accent : CcColors.muted,
+    ),
+  );
+
+  // _micButton is push-to-talk for the active terminal: tap to dictate, the
+  // recognized text is injected into that session's input (not auto-submitted).
+  Widget _micButton() => IconButton(
+    tooltip: _listening ? '正在听… (点击停止)' : '语音输入到当前会话',
+    visualDensity: VisualDensity.compact,
+    onPressed: _toggleMic,
+    icon: Icon(
+      _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
+      size: 18,
+      color: _listening ? CcColors.danger : CcColors.muted,
+    ),
+  );
+
+  Future<void> _toggleMic() async {
+    if (_listening) {
+      await _voice.stopListening();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    if (terms.isEmpty) {
+      _snack('没有可输入的会话');
+      return;
+    }
+    final target = terms[activeTerm];
+    final ok = await _voice.startListening(
+      onFinal: (text) {
+        if (!mounted) return;
+        setState(() => _listening = false);
+        final t = text.trim();
+        if (t.isEmpty) return;
+        target.pasteText(t, submit: false); // user reviews, then hits enter
+        _snack('🎤 $t');
+      },
+    );
+    if (!mounted) return;
+    if (ok) {
+      setState(() => _listening = true);
+    } else {
+      _snack('语音识别不可用 (检查麦克风/语音识别权限)');
+    }
   }
 
   // _parkedBadge is the toolbar "待处理 (N)" inbox button with a count pill.
@@ -6779,7 +6873,10 @@ class _WorkspacePageState extends State<WorkspacePage>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              onTap: () => setState(() => activeTerm = e.idx),
+              onTap: () {
+                setState(() => activeTerm = e.idx);
+                onActiveTermChanged?.call(); // re-arm TTS on the now-active tab
+              },
               trailing: active
                   ? Padding(
                       padding: const EdgeInsets.only(right: 2),
