@@ -712,6 +712,74 @@ PopupMenuItem<String> ccMenuItem({
   );
 }
 
+// SendTarget is one "send to session" menu target: a session id + its label.
+typedef SendTarget = ({String id, String label});
+
+// sendMenuEntries builds the first-level "发送到会话" rows: same-project targets
+// inline, then a "其他会话 ▸" row (value 'send-others') when there are
+// other-project targets. Each target is value 'send:<id>'.
+List<PopupMenuEntry<String>> sendMenuEntries(
+  List<SendTarget> same,
+  List<SendTarget> others, {
+  bool enabled = true,
+}) => [
+  for (final t in same)
+    ccMenuItem(
+      value: 'send:${t.id}',
+      icon: Icons.send_rounded,
+      label: '发送到「${t.label}」',
+      enabled: enabled,
+    ),
+  if (others.isNotEmpty)
+    ccMenuItem(
+      value: 'send-others',
+      icon: Icons.more_horiz_rounded,
+      label: '其他会话 ▸',
+      enabled: enabled,
+    ),
+];
+
+// showGroupedSendMenu shows the grouped send picker at [globalPos] and returns
+// the chosen session id as 'send:<id>' (or one of [extraTop]'s values, or null).
+// Same-project targets are inline; picking "其他会话" cascades a second menu of
+// other-project targets — Flutter's showMenu has no native submenu. [extraTop]
+// rows (e.g. the terminal's copy/paste/全选) render above a divider.
+Future<String?> showGroupedSendMenu(
+  BuildContext context,
+  Offset globalPos, {
+  required List<SendTarget> same,
+  required List<SendTarget> others,
+  List<PopupMenuEntry<String>> extraTop = const [],
+}) async {
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+  RelativeRect posAt(Offset p) =>
+      RelativeRect.fromRect(p & const Size(1, 1), Offset.zero & overlay.size);
+  final sendItems = sendMenuEntries(same, others);
+  final v = await showMenu<String>(
+    context: context,
+    position: posAt(globalPos),
+    items: [
+      ...extraTop,
+      if (extraTop.isNotEmpty && sendItems.isNotEmpty) const PopupMenuDivider(),
+      ...sendItems,
+    ],
+  );
+  if (v != 'send-others') return v; // 'send:<id>', an extraTop value, or null
+  if (!context.mounted) return null;
+  return showMenu<String>(
+    context: context,
+    position: posAt(globalPos),
+    items: [
+      for (final t in others)
+        ccMenuItem(
+          value: 'send:${t.id}',
+          icon: Icons.send_rounded,
+          label: '发送到「${t.label}」',
+        ),
+    ],
+  );
+}
+
 // fileNameDirLabel renders a path as filename (left) + small gray directory —
 // shared by the desktop commit panel and the phone change / commit-file rows.
 Widget fileNameDirLabel(String path) {

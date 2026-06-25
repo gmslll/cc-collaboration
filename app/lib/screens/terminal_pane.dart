@@ -24,10 +24,19 @@ class TerminalSession {
   String? name; // user-given label; overrides the derived title when set
   final Terminal terminal = Terminal(maxLines: 10000);
   // The selection/copy controller lives on the session (not the pane) so the
-  // host can read the current selection — e.g. to forward it to another
-  // session from the tree's "发送选区到…" menu, which a full-screen TUI can't
-  // intercept the way it grabs an in-terminal right-click.
-  final TerminalController controller = TerminalController();
+  // host can read the current selection — e.g. to forward it to another session.
+  //
+  // pointerInputs: none() stops the controller forwarding mouse clicks into the
+  // PTY. A full-screen TUI (claude/codex) otherwise eats left/right clicks, so
+  // GUI text selection never registers (the "发送选区" menu stays grey), the
+  // right-click context menu never opens, and a press-without-release wedges the
+  // TUI ("卡死"). With clicks kept GUI-side, drag = pure selection and right-tap
+  // = our menu — and wheel scroll is unaffected (it goes through a separate path
+  // that doesn't consult pointerInputs). Focus-on-click still works (onTapDown
+  // fires regardless). Trade-off: clicks no longer reach the TUI (keyboard- and
+  // wheel-driven, so fine for claude/codex; shells never had mouse mode anyway).
+  final TerminalController controller =
+      TerminalController(pointerInputs: const PointerInputs.none());
   Pty? _pty;
   bool _started = false;
 
@@ -200,9 +209,11 @@ class TerminalSession {
 // TerminalPane renders one session and starts it on first build.
 class TerminalPane extends StatefulWidget {
   final TerminalSession session;
-  // Other live sessions this terminal can forward its selection to (the local
-  // point-to-point "发送到终端" menu). Empty hides the menu entries.
-  final List<TerminalSession> peers;
+  // Forwarding targets for the in-terminal "发送到会话" menu, grouped: [same]
+  // (same project) inline, [others] (other projects) under a 其他会话 submenu.
+  // Both empty hides the entries.
+  final List<SendTarget> same;
+  final List<SendTarget> others;
   // onSendToPeer(fromId, targetId, text): route the selection into a sibling
   // session's input. Null hides the menu entries.
   final void Function(String fromId, String targetId, String text)?
@@ -210,7 +221,8 @@ class TerminalPane extends StatefulWidget {
   const TerminalPane({
     super.key,
     required this.session,
-    this.peers = const [],
+    this.same = const [],
+    this.others = const [],
     this.onSendToPeer,
   });
 
@@ -258,25 +270,35 @@ class _TerminalPaneState extends State<TerminalPane> {
 
   // _sendSelectionTo forwards the current selection into peer session [targetId]
   // (the host injects it as input). No-op without a selection.
-  void _sendSelectionTo(String targetId, String peerLabel) {
+  void _sendSelectionTo(String targetId) {
     final sel = _controller.selection;
     final cb = widget.onSendToPeer;
     if (sel == null || cb == null) return;
     cb(widget.session.id, targetId, _terminal.buffer.getText(sel));
     _controller.clearSelection();
-    snack(context, '已发送到 $peerLabel');
+    String? label;
+    for (final t in [...widget.same, ...widget.others]) {
+      if (t.id == targetId) {
+        label = t.label;
+        break;
+      }
+    }
+    snack(context, label != null ? '已发送到 $label' : '已发送');
   }
 
-  void _showMenu(Offset globalPos) {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+  Future<void> _showMenu(Offset globalPos) async {
     final hasSelection = _controller.selection != null;
-    showMenu<String>(
-      context: context,
-      position: RelativeRect.fromRect(
-        globalPos & const Size(1, 1),
-        Offset.zero & overlay.size,
-      ),
-      items: [
+    final canSend =
+        widget.onSendToPeer != null &&
+        (widget.same.isNotEmpty || widget.others.isNotEmpty);
+    // Send targets only when there's a selection to send (else just the editing
+    // rows). 复制/粘贴/全选 sit above the send section via extraTop.
+    final v = await showGroupedSendMenu(
+      context,
+      globalPos,
+      same: hasSelection && canSend ? widget.same : const [],
+      others: hasSelection && canSend ? widget.others : const [],
+      extraTop: [
         ccMenuItem(
           value: 'copy',
           icon: Icons.content_copy_rounded,
@@ -293,36 +315,19 @@ class _TerminalPaneState extends State<TerminalPane> {
           icon: Icons.select_all_rounded,
           label: '全选',
         ),
-        // 发送到终端: one entry per other live session — forwards the selection
-        // into that session's input so a sibling agent can read it.
-        if (widget.onSendToPeer != null && widget.peers.isNotEmpty) ...[
-          const PopupMenuDivider(),
-          for (final p in widget.peers)
-            ccMenuItem(
-              value: 'send:${p.id}',
-              icon: Icons.send_rounded,
-              label: '发送选区 → ${p.label}',
-              enabled: hasSelection,
-            ),
-        ],
       ],
-    ).then((v) {
-      if (v == null || !mounted) return;
-      switch (v) {
-        case 'copy':
-          _copy();
-        case 'paste':
-          _paste();
-        case 'selectAll':
-          _selectAll();
-        default:
-          if (v.startsWith('send:')) {
-            final id = v.substring('send:'.length);
-            final p = widget.peers.firstWhere((p) => p.id == id);
-            _sendSelectionTo(p.id, p.label);
-          }
-      }
-    });
+    );
+    if (v == null || !mounted) return;
+    switch (v) {
+      case 'copy':
+        _copy();
+      case 'paste':
+        _paste();
+      case 'selectAll':
+        _selectAll();
+      default:
+        if (v.startsWith('send:')) _sendSelectionTo(v.substring('send:'.length));
+    }
   }
 
   @override

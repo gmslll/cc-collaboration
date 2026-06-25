@@ -40,6 +40,9 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   bool get dirty => _dirty;
   bool get saving => _saving;
   String get text => _ctl?.text ?? '';
+  // selectedText is the currently selected substring (empty when nothing is
+  // selected) — the host reads it to forward a code selection to a session.
+  String get selectedText => _ctl?.selectedText ?? '';
   int get lineCount => text.isEmpty ? 0 : text.split('\n').length;
   String get eol => _crlf ? 'CRLF' : 'LF';
   String get languageLabel => _languageLabelForExt(fileExtOf(widget.path));

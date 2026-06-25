@@ -7,7 +7,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '../local/local_bus.dart';
 import '../theme.dart';
+import '../widgets.dart';
 import 'terminal_pane.dart';
+
+// _targets maps sessions to the (id,label) records the send menu consumes.
+List<SendTarget> _targets(List<TerminalSession> ss) =>
+    [for (final s in ss) (id: s.id, label: s.label)];
 
 // TerminalHost owns the terminal-session list + active index + lifecycle, shared
 // by the inbox cockpit and the workspace cockpit (both add sessions on pickup /
@@ -146,6 +151,14 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   List<TerminalSession> peersExcluding(String selfId) =>
       terms.where((s) => s.id != selfId).toList();
 
+  // sendGroupsFor splits the forwarding targets for [selfId] into "same" and
+  // "others" for the grouped send menu. Default: everything in one group (the
+  // inbox cockpit has no project tree). The workspace cockpit overrides it to
+  // put same-project sessions first and other-project sessions under 其他会话.
+  ({List<TerminalSession> same, List<TerminalSession> others}) sendGroupsFor(
+    String selfId,
+  ) => (same: peersExcluding(selfId), others: const []);
+
   // localBusRegistry is the sessions.json payload LocalBus publishes so the CLI
   // can resolve a target by id or name.
   List<Map<String, dynamic>> localBusRegistry() => [
@@ -231,7 +244,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     onSwitch: (i) => setState(() => activeTerm = i),
     onClose: closeTerm,
     onCollapse: onCollapse,
-    peersFor: peersExcluding,
+    groupsFor: sendGroupsFor,
     onSendToPeer: _sendToPeer,
   );
 
@@ -245,16 +258,16 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       color: CcColors.bg,
       child: IndexedStack(
         index: idx,
-        children: terms
-            .map(
-              (s) => TerminalPane(
-                key: ValueKey(s),
-                session: s,
-                peers: peersExcluding(s.id),
-                onSendToPeer: _sendToPeer,
-              ),
-            )
-            .toList(),
+        children: terms.map((s) {
+          final g = sendGroupsFor(s.id);
+          return TerminalPane(
+            key: ValueKey(s),
+            session: s,
+            same: _targets(g.same),
+            others: _targets(g.others),
+            onSendToPeer: _sendToPeer,
+          );
+        }).toList(),
       ),
     );
   }
@@ -271,7 +284,10 @@ class TerminalDeck extends StatelessWidget {
   final VoidCallback? onCollapse;
   // Local point-to-point forwarding wiring (see TerminalHost); null/absent
   // hides the "发送到终端" context-menu entries.
-  final List<TerminalSession> Function(String selfId)? peersFor;
+  final ({List<TerminalSession> same, List<TerminalSession> others}) Function(
+    String selfId,
+  )?
+  groupsFor;
   final void Function(String fromId, String targetId, String text)?
   onSendToPeer;
   const TerminalDeck({
@@ -281,7 +297,7 @@ class TerminalDeck extends StatelessWidget {
     required this.onSwitch,
     required this.onClose,
     this.onCollapse,
-    this.peersFor,
+    this.groupsFor,
     this.onSendToPeer,
   });
 
@@ -310,16 +326,16 @@ class TerminalDeck extends StatelessWidget {
             color: CcColors.bg,
             child: IndexedStack(
               index: idx,
-              children: terms
-                  .map(
-                    (s) => TerminalPane(
-                      key: ValueKey(s),
-                      session: s,
-                      peers: peersFor?.call(s.id) ?? const [],
-                      onSendToPeer: onSendToPeer,
-                    ),
-                  )
-                  .toList(),
+              children: terms.map((s) {
+                final g = groupsFor?.call(s.id);
+                return TerminalPane(
+                  key: ValueKey(s),
+                  session: s,
+                  same: g == null ? const [] : _targets(g.same),
+                  others: g == null ? const [] : _targets(g.others),
+                  onSendToPeer: onSendToPeer,
+                );
+              }).toList(),
             ),
           ),
         ),

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1470,6 +1471,65 @@ class _WorkspacePageState extends State<WorkspacePage>
     return (project: best, rel: rel);
   }
 
+  // _sendGroupsFor splits live sessions into same-project vs other-project,
+  // relative to [sourcePath] (a session's workdir or an open file's path),
+  // excluding [excludeId]. Powers the grouped "发送到会话" menus: same-project
+  // sessions inline, others under 其他会话. Source with no project → all "others".
+  ({List<TerminalSession> same, List<TerminalSession> others}) _sendGroupsFor(
+    String sourcePath, {
+    String? excludeId,
+  }) {
+    final srcProj = _projectForFile(sourcePath)?.project.path;
+    final same = <TerminalSession>[];
+    final others = <TerminalSession>[];
+    for (final s in terms) {
+      if (s.id == excludeId) continue;
+      final sp = _projectForFile(s.workdir)?.project.path;
+      (srcProj != null && sp == srcProj ? same : others).add(s);
+    }
+    return (same: same, others: others);
+  }
+
+  // sendGroupsFor (overriding the flat default) groups a terminal's send targets
+  // by project: same-project siblings first, other-project sessions under 其他会话.
+  @override
+  ({List<TerminalSession> same, List<TerminalSession> others}) sendGroupsFor(
+    String selfId,
+  ) {
+    final self = sessionById(selfId);
+    if (self == null) return (same: peersExcluding(selfId), others: const []);
+    return _sendGroupsFor(self.workdir, excludeId: selfId);
+  }
+
+  // _showEditorSendMenu forwards the active file's current selection to a chosen
+  // session (grouped by project), injecting it with a 来自文件 prefix. No-op
+  // without a selection. Wired to right-click in the file viewer.
+  Future<void> _showEditorSendMenu(Offset globalPos) async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) return;
+    final f = _codeFiles[_activeFile];
+    final text = f.key.currentState?.selectedText ?? '';
+    if (text.trim().isEmpty) {
+      _snack('请先在文件里选中要发送的内容');
+      return;
+    }
+    final g = _sendGroupsFor(f.path);
+    if (g.same.isEmpty && g.others.isEmpty) {
+      _snack('当前没有其它会话可发送');
+      return;
+    }
+    final v = await showGroupedSendMenu(
+      context,
+      globalPos,
+      same: [for (final s in g.same) (id: s.id, label: s.label)],
+      others: [for (final s in g.others) (id: s.id, label: s.label)],
+    );
+    if (v == null || !mounted || !v.startsWith('send:')) return;
+    final target = sessionById(v.substring('send:'.length));
+    if (target == null) return;
+    target.pasteText('[来自文件 ${f.path.split('/').last}] $text', submit: false);
+    _snack('已发送到 ${target.label}');
+  }
+
   Future<void> _showBlameForActiveFile() async {
     if (_activeFile < 0 || _activeFile >= _codeFiles.length) return;
     final file = _codeFiles[_activeFile].path;
@@ -2921,19 +2981,28 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         );
       }
-      return PreviewableEditor(
-        path: f.path,
-        editorKey: f.key,
-        initialLine: f.line,
-        previewMode: f.previewMode,
-        onDirtyChanged: (v) {
-          if (!mounted) return;
-          setState(() => f.dirty = v);
+      // Listener (not GestureDetector) so the right-click reaches us even though
+      // re_editor handles pointers itself — lets you forward a code selection to
+      // a session. onPointerDown reads the selection synchronously, before the
+      // editor can clear it.
+      return Listener(
+        onPointerDown: (e) {
+          if (e.buttons == kSecondaryButton) _showEditorSendMenu(e.position);
         },
-        onLoaded: () {
-          if (!mounted) return;
-          setState(() {});
-        },
+        child: PreviewableEditor(
+          path: f.path,
+          editorKey: f.key,
+          initialLine: f.line,
+          previewMode: f.previewMode,
+          onDirtyChanged: (v) {
+            if (!mounted) return;
+            setState(() => f.dirty = v);
+          },
+          onLoaded: () {
+            if (!mounted) return;
+            setState(() {});
+          },
+        ),
       );
     }
     if (_aiChatFocused) return terminalDeck();
@@ -6170,7 +6239,6 @@ class _WorkspacePageState extends State<WorkspacePage>
             }
           },
           itemBuilder: (_) {
-            final hasSel = e.s.selectedText != null;
             return [
               ccMenuItem(
                 value: 'rename',
@@ -6183,12 +6251,14 @@ class _WorkspacePageState extends State<WorkspacePage>
                 label: '关闭会话',
               ),
               if (peers.isNotEmpty) const PopupMenuDivider(),
+              // Always enabled — sends the selection if there is one, else this
+              // session's recent output (renderSnapshot). No need to first make a
+              // mouse selection inside a TUI.
               for (final q in peers)
                 ccMenuItem(
                   value: 'send:${q.id}',
                   icon: Icons.send_rounded,
-                  label: '发送选区到「${q.label}」',
-                  enabled: hasSel,
+                  label: '发送到「${q.label}」',
                 ),
             ];
           },
@@ -6244,16 +6314,25 @@ class _WorkspacePageState extends State<WorkspacePage>
     ];
   }
 
-  // _forwardSelection sends [from]'s current selection into [to]'s input via the
-  // local bus (submit:false — fills the target's input for you to confirm).
+  // Recent-output fallback size when forwarding a session with no active
+  // selection (a TUI you can't easily mouse-select in). One screenful-ish.
+  static const int _kForwardLines = 40;
+
+  // _forwardSelection forwards [from]'s content into [to]'s input via the local
+  // bus (submit:false — fills the target's input for you to confirm). Sends the
+  // current selection if there is one, else [from]'s recent output snapshot, so
+  // the menu works even when you can't make a selection inside a TUI.
   void _forwardSelection(TerminalSession from, TerminalSession to) {
     final sel = from.selectedText;
-    if (sel == null) {
-      _snack('请先在「${from.label}」终端里选中要发送的文本');
+    final body = sel ?? from.renderSnapshot(_kForwardLines);
+    if (body.trim().isEmpty) {
+      _snack('「${from.label}」暂无可发送内容');
       return;
     }
-    final err = deliverLocalMessage(LocalMsg(from.id, to.id, sel, false));
-    _snack(err ?? '已发送到 ${to.label}');
+    final err = deliverLocalMessage(LocalMsg(from.id, to.id, body, false));
+    _snack(
+      err ?? (sel != null ? '已发送选区到 ${to.label}' : '已发送最近输出到 ${to.label}'),
+    );
   }
 
   Future<void> _renameSession(TerminalSession s) async {
