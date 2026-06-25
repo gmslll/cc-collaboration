@@ -31,7 +31,7 @@ type busSession struct {
 
 func runMsg(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: cc-handoff msg <list|send|whoami>")
+		return errors.New("usage: cc-handoff msg <list|send|read|whoami>")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -39,10 +39,12 @@ func runMsg(ctx context.Context, args []string) error {
 		return runMsgList(rest)
 	case "send":
 		return runMsgSend(ctx, rest)
+	case "read":
+		return runMsgRead(ctx, rest)
 	case "whoami":
 		return runMsgWhoami()
 	default:
-		return fmt.Errorf("unknown msg subcommand %q (want list|send|whoami)", sub)
+		return fmt.Errorf("unknown msg subcommand %q (want list|send|read|whoami)", sub)
 	}
 }
 
@@ -127,19 +129,6 @@ func runMsgSend(ctx context.Context, args []string) error {
 	}
 	target := rest[0]
 	body := strings.Join(rest[1:], " ")
-
-	dir, err := busDir()
-	if err != nil {
-		return err
-	}
-	outbox := filepath.Join(dir, "outbox")
-	if err := os.MkdirAll(outbox, 0o700); err != nil {
-		return err
-	}
-	id, err := randID()
-	if err != nil {
-		return err
-	}
 	payload, err := json.Marshal(map[string]any{
 		"from":   os.Getenv("CC_SESSION_ID"),
 		"to":     target,
@@ -149,45 +138,110 @@ func runMsgSend(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := publishAndAwait(ctx, payload, *timeout); err != nil {
+		return err
+	}
+	fmt.Printf("已发送到 %s\n", target)
+	return nil
+}
+
+// runMsgRead asks the desktop app for a plain-text snapshot of another local
+// session's recent screen. It drops a kind:"read" request into the same outbox
+// the app already watches; the app renders the target's terminal buffer and
+// writes it back as the <id>.ok receipt — for a read that receipt body IS the
+// reply payload, which we print (raw, or wrapped in JSON).
+func runMsgRead(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("msg read", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "emit JSON {id,lines,text} instead of raw text")
+	lines := fs.Int("lines", 200, "max number of trailing lines to read")
+	timeout := fs.Duration("timeout", 5*time.Second, "等待快照返回的超时")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) < 1 {
+		return errors.New("usage: cc-handoff msg read <session-id> [--lines N] [--json]")
+	}
+	target := rest[0]
+	payload, err := json.Marshal(map[string]any{
+		"from":  os.Getenv("CC_SESSION_ID"),
+		"to":    target,
+		"kind":  "read",
+		"lines": *lines,
+	})
+	if err != nil {
+		return err
+	}
+	ob, err := publishAndAwait(ctx, payload, *timeout)
+	if err != nil {
+		return err
+	}
+	snapshot := string(ob)
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"id":    target,
+			"lines": *lines,
+			"text":  snapshot,
+		})
+	}
+	fmt.Println(snapshot)
+	return nil
+}
+
+// publishAndAwait atomically drops payload as <id>.json into the local-bus
+// outbox and polls for the app's receipt, returning the <id>.ok body on success
+// (just "ok" for a send, the rendered snapshot for a read) or the <id>.err text
+// as an error. Shared by `msg send` and `msg read` so both publish, poll, and
+// clean up identically. The app claims the message (rename to .taken) then
+// writes a marker; we key on the marker (not the .json vanishing) since the
+// claim removes .json before delivery finishes. No marker by the deadline →
+// nobody is listening.
+func publishAndAwait(ctx context.Context, payload []byte, timeout time.Duration) ([]byte, error) {
+	dir, err := busDir()
+	if err != nil {
+		return nil, err
+	}
+	outbox := filepath.Join(dir, "outbox")
+	if err := os.MkdirAll(outbox, 0o700); err != nil {
+		return nil, err
+	}
+	id, err := randID()
+	if err != nil {
+		return nil, err
+	}
 
 	// Atomic publish: write a temp file then rename into outbox so the app's
 	// watcher never reads a half-written message.
 	jsonPath := filepath.Join(outbox, id+".json")
 	tmpPath := filepath.Join(outbox, "."+id+".tmp")
 	if err := os.WriteFile(tmpPath, payload, 0o600); err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.Rename(tmpPath, jsonPath); err != nil {
 		os.Remove(tmpPath)
-		return err
+		return nil, err
 	}
 
-	// Wait for the app's explicit receipt: it claims the message (rename to
-	// .taken) then writes <id>.ok on success or <id>.err on failure. We poll for
-	// either marker — keyed on the marker, not on the .json vanishing, since the
-	// claim removes .json well before delivery finishes. No marker before the
-	// deadline → nobody is listening.
 	okPath := filepath.Join(outbox, id+".ok")
 	errPath := filepath.Join(outbox, id+".err")
-	deadline := time.Now().Add(*timeout)
+	deadline := time.Now().Add(timeout)
 	for {
 		if eb, e := os.ReadFile(errPath); e == nil {
 			os.Remove(errPath)
-			return errors.New(strings.TrimSpace(string(eb)))
+			return nil, errors.New(strings.TrimSpace(string(eb)))
 		}
-		if _, e := os.Stat(okPath); e == nil {
+		if ob, e := os.ReadFile(okPath); e == nil {
 			os.Remove(okPath)
-			fmt.Printf("已发送到 %s\n", target)
-			return nil
+			return ob, nil
 		}
 		if time.Now().After(deadline) {
 			os.Remove(jsonPath) // unconsumed; clean up our drop
-			return errors.New("无人接收(桌面 App 未在监听本地会话总线)")
+			return nil, errors.New("无人接收(桌面 App 未在监听本地会话总线)")
 		}
 		select {
 		case <-ctx.Done():
 			os.Remove(jsonPath)
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}

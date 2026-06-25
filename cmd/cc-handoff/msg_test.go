@@ -62,7 +62,7 @@ func TestMsgSendDelivered(t *testing.T) {
 			t.Errorf("bad payload: %+v", m)
 		}
 		base := strings.TrimSuffix(name, ".json")
-		os.Remove(filepath.Join(outbox, name))                                  // simulate claim
+		os.Remove(filepath.Join(outbox, name))                               // simulate claim
 		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte("ok"), 0o600) // success receipt
 	})
 
@@ -104,6 +104,109 @@ func TestMsgSendNoReceiver(t *testing.T) {
 func TestMsgSendOutsideBus(t *testing.T) {
 	t.Setenv("CC_BUS_DIR", "")
 	if err := runMsgSend(context.Background(), []string{"ts1", "x"}); err == nil ||
+		!strings.Contains(err.Error(), "CC_BUS_DIR") {
+		t.Fatalf("want CC_BUS_DIR error, got %v", err)
+	}
+}
+
+// TestMsgReadDelivered: a simulated app consumes the read request → the on-disk
+// payload is a well-formed kind:"read", and the snapshot the app writes back as
+// the .ok receipt is printed to stdout.
+func TestMsgReadDelivered(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	outbox := filepath.Join(dir, "outbox")
+	const snapshot = "调研 session 当前屏幕\n第二行结论"
+
+	go consumeOutbox(t, outbox, func(name string, m map[string]any) {
+		if m["kind"] != "read" || m["to"] != "ts1" || m["from"] != "ts0" || m["lines"] != float64(80) {
+			t.Errorf("bad read payload: %+v", m)
+		}
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))                                   // simulate claim
+		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte(snapshot), 0o600) // snapshot receipt
+	})
+
+	var readErr error
+	out := captureStdout(t, func() {
+		readErr = runMsgRead(context.Background(), []string{"--lines", "80", "ts1"})
+	})
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	if !strings.Contains(out, "第二行结论") {
+		t.Fatalf("snapshot not printed: %q", out)
+	}
+}
+
+// TestMsgReadJSON: --json wraps the snapshot as {id,lines,text}.
+func TestMsgReadJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	outbox := filepath.Join(dir, "outbox")
+	const snapshot = "line A\nline B"
+
+	go consumeOutbox(t, outbox, func(name string, _ map[string]any) {
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))
+		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte(snapshot), 0o600)
+	})
+
+	var readErr error
+	out := captureStdout(t, func() {
+		readErr = runMsgRead(context.Background(), []string{"--json", "ts1"})
+	})
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	var got struct {
+		ID    string `json:"id"`
+		Lines int    `json:"lines"`
+		Text  string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not valid JSON: %v (%s)", err, out)
+	}
+	if got.ID != "ts1" || got.Text != snapshot {
+		t.Fatalf("json mismatch: %+v", got)
+	}
+}
+
+// TestMsgReadError: the app writes a sibling .err → read surfaces it non-nil.
+func TestMsgReadError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	outbox := filepath.Join(dir, "outbox")
+
+	go consumeOutbox(t, outbox, func(name string, _ map[string]any) {
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))
+		os.WriteFile(filepath.Join(outbox, base+".err"), []byte("找不到目标会话「ts9」"), 0o600)
+	})
+
+	err := runMsgRead(context.Background(), []string{"ts9"})
+	if err == nil || !strings.Contains(err.Error(), "找不到目标会话") {
+		t.Fatalf("want resolution error, got %v", err)
+	}
+}
+
+// TestMsgReadNoReceiver: nobody renders → times out with a clear message.
+func TestMsgReadNoReceiver(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	err := runMsgRead(context.Background(), []string{"--timeout", "150ms", "ts1"})
+	if err == nil || !strings.Contains(err.Error(), "无人接收") {
+		t.Fatalf("want no-receiver error, got %v", err)
+	}
+}
+
+func TestMsgReadOutsideBus(t *testing.T) {
+	t.Setenv("CC_BUS_DIR", "")
+	if err := runMsgRead(context.Background(), []string{"ts1"}); err == nil ||
 		!strings.Contains(err.Error(), "CC_BUS_DIR") {
 		t.Fatalf("want CC_BUS_DIR error, got %v", err)
 	}

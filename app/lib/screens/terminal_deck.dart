@@ -159,25 +159,46 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       },
   ];
 
-  // deliverLocalMessage routes one message into a target session's PTY. Returns
-  // null on success, or a human-readable error (unknown/ambiguous target,
-  // self-send) that LocalBus writes back so `msg send` exits non-zero. Target
-  // resolution: exact id first, else a unique label match.
-  String? deliverLocalMessage(LocalMsg m) {
-    final to = m.to.trim();
-    if (to.isEmpty) return '缺少目标会话';
-    var target = sessionById(to);
+  // _resolveTarget maps a local-bus address (id or label) to a live session.
+  // Returns (session, null) on success or (null, error) for an empty, unknown,
+  // or ambiguous target. Shared by message delivery and snapshot reads so both
+  // resolve addresses identically. Exact id first, else a unique label match.
+  (TerminalSession?, String?) _resolveTarget(String to) {
+    final t = to.trim();
+    if (t.isEmpty) return (null, '缺少目标会话');
+    var target = sessionById(t);
     if (target == null) {
-      final byLabel = terms.where((s) => s.label == to).toList();
+      final byLabel = terms.where((s) => s.label == t).toList();
       if (byLabel.length > 1) {
-        return '目标名「$to」对应多个会话,请改用其 id(如 ${byLabel.first.id})';
+        return (null, '目标名「$t」对应多个会话,请改用其 id(如 ${byLabel.first.id})');
       }
       if (byLabel.length == 1) target = byLabel.first;
     }
-    if (target == null) return '找不到目标会话「$to」';
+    if (target == null) return (null, '找不到目标会话「$t」');
+    return (target, null);
+  }
+
+  // deliverLocalMessage routes one message into a target session's PTY. Returns
+  // null on success, or a human-readable error (unknown/ambiguous target,
+  // self-send) that LocalBus writes back so `msg send` exits non-zero.
+  String? deliverLocalMessage(LocalMsg m) {
+    final (target, err) = _resolveTarget(m.to);
+    if (target == null) return err; // err is non-null when target is null
     if (target.id == m.from) return '不能发给自己';
     final tag = sessionById(m.from)?.label ?? (m.from.isEmpty ? '?' : m.from);
     target.pasteText('[来自 $tag] ${m.body}', submit: m.submit);
+    return null;
+  }
+
+  // readSnapshot renders a target session's recent screen (last [lines] lines,
+  // plain text) into [out] for a `kind:"read"` request from `cc-handoff msg
+  // read`. Returns null on success or a resolution error (same contract as
+  // deliverLocalMessage). Self-read is allowed — reading your own scrollback is
+  // harmless, unlike messaging yourself.
+  String? readSnapshot(String to, int lines, StringSink out) {
+    final (target, err) = _resolveTarget(to);
+    if (target == null) return err;
+    out.write(target.renderSnapshot(lines));
     return null;
   }
 

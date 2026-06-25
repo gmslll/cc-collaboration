@@ -44,6 +44,9 @@ class TerminalSession {
   int _backlogLen = 0;
   static const int _backlogCap = 256 * 1024;
 
+  // Trailing-whitespace matcher for renderSnapshot; compiled once, not per call.
+  static final RegExp _trailingBlank = RegExp(r'\s+$');
+
   void _appendBacklog(String chunk) {
     _backlog.add(chunk);
     _backlogLen += chunk.length;
@@ -73,6 +76,20 @@ class TerminalSession {
     if (sel == null) return null;
     final t = terminal.buffer.getText(sel);
     return t.isEmpty ? null : t;
+  }
+
+  // renderSnapshot returns the last [lines] lines of this session's terminal as
+  // plain text — the rendered screen + scrollback with ANSI stripped, which is
+  // what `cc-handoff msg read` hands a sibling session. We render the whole
+  // xterm buffer (getText with no range; bounded by maxLines=10000) and tail it
+  // so a full-screen TUI (claude/codex) reads as the visible screen rather than
+  // a stream of redraw escape codes. [lines] <= 0 returns the whole buffer.
+  String renderSnapshot(int lines) {
+    // Drop trailing blank lines (a TUI's idle bottom rows) for a tidy snapshot.
+    final all = terminal.buffer.getText().replaceFirst(_trailingBlank, '');
+    if (lines <= 0) return all;
+    final ls = all.split('\n');
+    return ls.length <= lines ? all : ls.sublist(ls.length - lines).join('\n');
   }
 
   void start() {

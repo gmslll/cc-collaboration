@@ -113,8 +113,9 @@ Both sides:
   cc-handoff comment      <id> <body...>                post a comment
   cc-handoff comment      --list <id>                   list comments on a handoff
   cc-handoff online       [--json]                      show registered identities + who is currently watching
-  cc-handoff msg          list | send <target> <text...> [--no-submit] | whoami
+  cc-handoff msg          list | send <target> <text...> [--no-submit] | read <target> [--lines N] [--json] | whoami
                                                         local point-to-point messaging between sibling app sessions (no relay; run inside an app-spawned terminal)
+                                                        read = pull a plain-text snapshot of another session's screen
   cc-handoff ui           [--open] [--show-token]       print/open the relay management UI
   cc-handoff desktop      [--width N] [--height N] [--chrome PATH]
                                                         open the UI in a Chromium app window (Chrome/Edge/Brave)

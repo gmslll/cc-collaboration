@@ -36,8 +36,17 @@ class LocalBus {
   // or a human-readable error (target missing/ambiguous/self) the bus writes
   // back as <id>.err so `msg send` can report it.
   final String? Function(LocalMsg msg) deliver;
+  // readSnapshot renders a target session's recent output into [out] for a
+  // kind:"read" request; returns null on success (and the rendered text becomes
+  // the <id>.ok payload `msg read` reads) or a human-readable error → <id>.err.
+  // Same error contract as [deliver].
+  final String? Function(String to, int lines, StringSink out) readSnapshot;
 
-  LocalBus({required this.registry, required this.deliver});
+  LocalBus({
+    required this.registry,
+    required this.deliver,
+    required this.readSnapshot,
+  });
 
   StreamSubscription<FileSystemEvent>? _watch;
   Timer? _sweep;
@@ -121,15 +130,29 @@ class LocalBus {
         return; // already claimed by someone else, or already gone
       }
       String? err;
+      // On success <id>.ok carries this body: a plain "ok" for a delivered
+      // message, or the rendered snapshot text for a kind:"read" request — the
+      // .ok receipt doubles as the read reply, so no extra file type is needed.
+      String okBody = 'ok';
       try {
         final m = jsonDecode(await File(taken).readAsString());
         if (m is Map) {
-          err = deliver(LocalMsg(
-            (m['from'] ?? '').toString(),
-            (m['to'] ?? '').toString(),
-            (m['body'] ?? '').toString(),
-            m['submit'] != false, // default: submit
-          ));
+          // kind defaults to "msg" so old `send` payloads (no kind) deliver as
+          // before; "read" renders the target's screen instead of injecting it.
+          final kind = (m['kind'] ?? 'msg').toString();
+          if (kind == 'read') {
+            final lines = (m['lines'] is num) ? (m['lines'] as num).toInt() : 200;
+            final out = StringBuffer();
+            err = readSnapshot((m['to'] ?? '').toString(), lines, out);
+            if (err == null) okBody = out.toString();
+          } else {
+            err = deliver(LocalMsg(
+              (m['from'] ?? '').toString(),
+              (m['to'] ?? '').toString(),
+              (m['body'] ?? '').toString(),
+              m['submit'] != false, // default: submit
+            ));
+          }
         } else {
           err = '消息格式错误';
         }
@@ -139,9 +162,17 @@ class LocalBus {
       // Explicit terminal receipt the sender polls for: <id>.ok on success,
       // <id>.err on failure. Keying on a marker (not "the .json vanished") keeps
       // success/failure unambiguous even though the claim already removed .json.
+      // The .ok is written atomically (temp + rename) because a `msg read`
+      // sender reads its content — a half-written snapshot must never be seen.
       try {
-        await File(err == null ? '$base.ok' : '$base.err')
-            .writeAsString(err ?? 'ok');
+        if (err == null) {
+          final okPath = '$base.ok';
+          final tmp = File('$okPath.tmp');
+          await tmp.writeAsString(okBody);
+          await tmp.rename(okPath);
+        } else {
+          await File('$base.err').writeAsString(err);
+        }
       } catch (_) {}
       try {
         await File(taken).delete();

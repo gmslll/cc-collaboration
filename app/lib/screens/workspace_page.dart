@@ -155,6 +155,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   late final LocalBus _localBus = LocalBus(
     registry: localBusRegistry,
     deliver: deliverLocalMessage,
+    readSnapshot: readSnapshot,
   );
   void _onRemoteChange() {
     if (!mounted) return;
