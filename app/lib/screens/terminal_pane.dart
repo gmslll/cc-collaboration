@@ -6,6 +6,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_pty/flutter_pty.dart';
+import 'package:pasteboard/pasteboard.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:xterm/xterm.dart';
 
 import '../local/cli.dart';
@@ -360,10 +362,41 @@ class _TerminalPaneState extends State<TerminalPane> {
     snack(context, '已复制');
   }
 
+  // _paste is the single paste entry (right-click 粘贴 and Cmd/Ctrl+V, both
+  // routed here). Text wins; if the clipboard holds no text but an image (e.g. a
+  // screenshot), it's written to a temp PNG and the file path is pasted instead
+  // — claude/codex read the image from that path. Flutter's Clipboard is
+  // text-only, so the image goes through `pasteboard`.
   Future<void> _paste() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
-    if (text != null && text.isNotEmpty) _terminal.paste(text);
+    if (text != null && text.isNotEmpty) {
+      _terminal.paste(text);
+      _controller.clearSelection();
+      return;
+    }
+    await _pasteImage();
+  }
+
+  // _pasteImage drops a clipboard image to a temp PNG and pastes its path so the
+  // agent can read it. No-op when the clipboard has no image.
+  Future<void> _pasteImage() async {
+    Uint8List? bytes;
+    try {
+      bytes = await Pasteboard.image;
+    } catch (_) {}
+    if (bytes == null || bytes.isEmpty) return;
+    try {
+      final dir = Directory('${(await getTemporaryDirectory()).path}/cc-paste');
+      await dir.create(recursive: true);
+      final path =
+          '${dir.path}/img-${DateTime.now().millisecondsSinceEpoch}.png';
+      await File(path).writeAsBytes(bytes, flush: true);
+      _terminal.paste(path);
+      if (mounted) snack(context, '已粘贴图片路径(回车让 agent 读取)');
+    } catch (_) {
+      if (mounted) snack(context, '粘贴图片失败');
+    }
   }
 
   // Mirrors xterm's SelectAllTextIntent so the menu item matches Cmd/Ctrl+A.
@@ -459,12 +492,30 @@ class _TerminalPaneState extends State<TerminalPane> {
     }
   }
 
+  // _onKeyEvent intercepts the paste shortcut (Cmd+V on macOS, Ctrl+V elsewhere —
+  // matching xterm's defaultTerminalShortcuts) so paste routes through our
+  // image-aware _paste() instead of xterm's text-only handler. Returning handled
+  // short-circuits xterm's shortcut manager (see TerminalView._handleKeyEvent);
+  // every other key falls through unchanged.
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final pasteMod = Platform.isMacOS
+        ? HardwareKeyboard.instance.isMetaPressed
+        : HardwareKeyboard.instance.isControlPressed;
+    if (pasteMod && event.logicalKey == LogicalKeyboardKey.keyV) {
+      unawaited(_paste());
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
     return TerminalView(
       _terminal,
       controller: _controller,
       onSecondaryTapDown: (details, _) => _showMenu(details.globalPosition),
+      onKeyEvent: _onKeyEvent,
       theme: ccTerminalTheme,
       textStyle: const TerminalStyle(fontFamily: 'JetBrainsMono', fontSize: 13),
       backgroundOpacity: 1,
