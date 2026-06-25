@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import 'local/prefs.dart';
+import 'syntax.dart';
 import 'theme.dart';
 
 // Small UI helpers shared across screens (deduped from per-page copies).
@@ -376,23 +377,55 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) =>
 // via ListView so big diffs stay smooth. Shared by the local git diff viewer
 // and the GitHub PR view (PR file `patch`). Pass [scrollable]=false to embed in
 // an outer scroll (renders a non-lazy Column instead).
-Widget diffText(String diff, {bool scrollable = true}) {
+Widget diffText(String diff, {bool scrollable = true, bool highlight = false}) {
   final lines = diff.split('\n');
+  // When highlight is on, resolve each line's language up front (the file can
+  // change mid-diff via `diff --git`/`+++` headers) so lazy items stay correct.
+  final langs = highlight ? _lineLanguages(lines) : null;
   if (!scrollable) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [for (final l in lines) _diffLine(l)],
+      children: [
+        for (var i = 0; i < lines.length; i++)
+          _diffLine(lines[i], langId: langs?[i]),
+      ],
     );
   }
   return ListView.builder(
     itemCount: lines.length,
-    itemBuilder: (_, i) => _diffLine(lines[i]),
+    itemBuilder: (_, i) => _diffLine(lines[i], langId: langs?[i]),
   );
 }
 
-Widget _diffLine(String line) {
+// _lineLanguages tags each unified-diff line with the current file's language id
+// (tracked from `diff --git a/.. b/<path>` and `+++ b/<path>` headers).
+List<String?> _lineLanguages(List<String> lines) {
+  final out = List<String?>.filled(lines.length, null);
+  String? cur;
+  for (var i = 0; i < lines.length; i++) {
+    final l = lines[i];
+    if (l.startsWith('diff --git ')) {
+      final m = RegExp(r' b/(.+)$').firstMatch(l);
+      cur = m == null ? null : langIdForPath(m.group(1)!);
+    } else if (l.startsWith('+++ b/')) {
+      cur = langIdForPath(l.substring('+++ b/'.length));
+    }
+    out[i] = cur;
+  }
+  return out;
+}
+
+Widget _diffLine(String line, {String? langId}) {
+  const baseStyle = TextStyle(
+    fontFamily: CcType.mono,
+    fontSize: 12.5,
+    height: 1.4,
+    color: CcColors.text,
+  );
   Color fg = CcColors.text; // context
   Color? bg;
+  bool isCode = false; // a +/-/context content line (highlightable)
+  // Order matters: file-header checks (+++/---) must precede the +/- checks.
   if (line.startsWith('@@')) {
     fg = CcColors.accentBright;
   } else if (line.startsWith('+++') ||
@@ -402,27 +435,41 @@ Widget _diffLine(String line) {
       line.startsWith('new file') ||
       line.startsWith('deleted file') ||
       line.startsWith('similarity ') ||
-      line.startsWith('rename ')) {
-    fg = CcColors.subtle; // file headers
+      line.startsWith('rename ') ||
+      line.startsWith('\\')) {
+    fg = CcColors.subtle; // file headers / "No newline"
   } else if (line.startsWith('+')) {
     fg = CcColors.ok;
     bg = CcColors.ok.withValues(alpha: 0.06);
+    isCode = true;
   } else if (line.startsWith('-')) {
     fg = CcColors.danger;
     bg = CcColors.danger.withValues(alpha: 0.06);
+    isCode = true;
+  } else {
+    isCode = true; // context line (leading space)
+  }
+  final Widget child;
+  if (isCode && langId != null) {
+    // keep the +/- prefix in the line color, syntax-highlight the rest.
+    final prefix = line.isEmpty ? ' ' : line.substring(0, 1);
+    final content = line.isEmpty ? '' : line.substring(1);
+    final span = highlightLine(content, langId, base: baseStyle);
+    child = Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: prefix, style: baseStyle.copyWith(color: fg)),
+          span ?? TextSpan(text: content, style: baseStyle),
+        ],
+      ),
+    );
+  } else {
+    child = Text(line.isEmpty ? ' ' : line, style: baseStyle.copyWith(color: fg));
   }
   return Container(
     color: bg,
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
-    child: Text(
-      line.isEmpty ? ' ' : line,
-      style: TextStyle(
-        fontFamily: CcType.mono,
-        fontSize: 12.5,
-        height: 1.4,
-        color: fg,
-      ),
-    ),
+    child: child,
   );
 }
 

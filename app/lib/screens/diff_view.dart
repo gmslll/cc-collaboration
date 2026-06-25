@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/prefs.dart';
+import '../syntax.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'diff_split.dart';
@@ -37,6 +38,7 @@ class DiffView extends StatefulWidget {
 
 class _DiffViewState extends State<DiffView> {
   FileDiff? _selected;
+  String? _lang; // re_highlight language id of the selected file (null = plain)
   List<DiffRow> _rows = const [];
   bool _split = Prefs.getBool('diff.split', def: true);
   double _treeW = Prefs.getDouble('diff.treeW', def: 300);
@@ -98,6 +100,7 @@ class _DiffViewState extends State<DiffView> {
   void _select(FileDiff f) {
     setState(() {
       _selected = f;
+      _lang = langIdForPath(f.path);
       _rows = parseRows(f.raw);
       _editingNewNo = null;
     });
@@ -369,7 +372,10 @@ class _DiffViewState extends State<DiffView> {
       return centerMsg('(无 diff —— 二进制或过大)');
     }
     if (!_split) {
-      return ColoredBox(color: CcColors.bg, child: diffText(f.raw));
+      return ColoredBox(
+        color: CcColors.bg,
+        child: diffText(f.raw, highlight: true),
+      );
     }
     return ColoredBox(
       color: CcColors.bg,
@@ -382,6 +388,7 @@ class _DiffViewState extends State<DiffView> {
 
   Widget _rowWidget(DiffRow r) => diffSplitRow(
     r,
+    langId: _lang,
     rightCell: _rightCell,
     hunkTrailing: widget.editRoot == null
         ? null
@@ -447,10 +454,11 @@ class _DiffViewState extends State<DiffView> {
         widget.editRoot != null &&
         r.newNo != null &&
         r.rightKind != DiffKind.empty;
-    if (!editable) return diffCell(r.right, r.rightKind);
+    if (!editable) return diffCell(r.right, r.rightKind, langId: _lang);
     return _EditableCell(
       text: r.right,
       kind: r.rightKind,
+      langId: _lang,
       onEdit: () => _startEdit(r),
     );
   }
@@ -461,11 +469,13 @@ class _DiffViewState extends State<DiffView> {
 class _EditableCell extends StatefulWidget {
   final String text;
   final DiffKind kind;
+  final String? langId;
   final VoidCallback onEdit;
   const _EditableCell({
     required this.text,
     required this.kind,
     required this.onEdit,
+    this.langId,
   });
 
   @override
@@ -476,6 +486,9 @@ class _EditableCellState extends State<_EditableCell> {
   bool _h = false;
   @override
   Widget build(BuildContext context) {
+    final span = widget.langId == null
+        ? null
+        : highlightLine(widget.text, widget.langId, base: diffCellStyle);
     return MouseRegion(
       onEnter: (_) => setState(() => _h = true),
       onExit: (_) => setState(() => _h = false),
@@ -484,7 +497,11 @@ class _EditableCellState extends State<_EditableCell> {
         padding: const EdgeInsets.only(left: 8, right: 2, top: 1, bottom: 1),
         child: Row(
           children: [
-            Expanded(child: Text(widget.text, style: diffCellStyle)),
+            Expanded(
+              child: span == null
+                  ? Text(widget.text, style: diffCellStyle)
+                  : Text.rich(span),
+            ),
             if (_h)
               InkWell(
                 onTap: widget.onEdit,

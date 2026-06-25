@@ -1681,7 +1681,9 @@ Widget _zoomableDiff(String raw, bool split) {
       boundaryMargin: const EdgeInsets.all(80),
       child: split
           ? SplitDiff(raw, scroll: false)
-          : IntrinsicWidth(child: diffText(raw, scrollable: false)),
+          : IntrinsicWidth(
+              child: diffText(raw, scrollable: false, highlight: true),
+            ),
     ),
   );
 }

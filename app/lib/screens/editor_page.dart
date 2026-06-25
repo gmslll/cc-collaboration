@@ -2,29 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:re_editor/re_editor.dart';
-import 'package:re_highlight/languages/bash.dart';
-import 'package:re_highlight/languages/cpp.dart';
-import 'package:re_highlight/languages/css.dart';
-import 'package:re_highlight/languages/dart.dart';
-import 'package:re_highlight/languages/go.dart';
-import 'package:re_highlight/languages/ini.dart';
-import 'package:re_highlight/languages/java.dart';
-import 'package:re_highlight/languages/javascript.dart';
-import 'package:re_highlight/languages/json.dart';
-import 'package:re_highlight/languages/kotlin.dart';
-import 'package:re_highlight/languages/markdown.dart';
-import 'package:re_highlight/languages/php.dart';
-import 'package:re_highlight/languages/python.dart';
-import 'package:re_highlight/languages/ruby.dart';
-import 'package:re_highlight/languages/rust.dart';
-import 'package:re_highlight/languages/sql.dart';
-import 'package:re_highlight/languages/typescript.dart';
-import 'package:re_highlight/languages/xml.dart';
-import 'package:re_highlight/languages/yaml.dart';
-import 'package:re_highlight/re_highlight.dart';
 import 'package:re_highlight/styles/atom-one-dark.dart';
 
 import '../plugins/plugin_manager.dart';
+import '../syntax.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_view.dart';
@@ -352,36 +333,13 @@ class _EditorPageState extends State<EditorPage> {
 }
 
 CodeHighlightTheme? _themeFor(String path) {
-  final mode = _modeForExt(path.split('.').last.toLowerCase());
+  final mode = modeForPath(path);
   if (mode == null) return null;
   return CodeHighlightTheme(
     languages: {'code': CodeHighlightThemeMode(mode: mode)},
     theme: atomOneDarkTheme,
   );
 }
-
-Mode? _modeForExt(String ext) => switch (ext) {
-  'dart' => langDart,
-  'go' => langGo,
-  'ts' || 'tsx' => langTypescript,
-  'js' || 'jsx' || 'mjs' => langJavascript,
-  'py' => langPython,
-  'json' => langJson,
-  'yaml' || 'yml' => langYaml,
-  'md' || 'markdown' => langMarkdown,
-  'sh' || 'bash' || 'zsh' => langBash,
-  'xml' || 'html' || 'htm' => langXml,
-  'css' => langCss,
-  'java' => langJava,
-  'kt' || 'kts' => langKotlin,
-  'rs' => langRust,
-  'c' || 'cc' || 'cpp' || 'cxx' || 'h' || 'hpp' => langCpp,
-  'sql' => langSql,
-  'rb' => langRuby,
-  'php' => langPhp,
-  'toml' || 'ini' || 'cfg' || 'conf' || 'properties' => langIni,
-  _ => null,
-};
 
 String _languageLabelForExt(String ext) => switch (ext) {
   'dart' => 'Dart',

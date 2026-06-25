@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../local/diff_parse.dart';
 import '../local/prefs.dart';
+import '../syntax.dart';
 import '../theme.dart';
 
 // diffSplitToggle is the shared 并排/统一 switch (persists the 'diff.split' pref);
@@ -62,16 +63,23 @@ Widget diffGutter(int? no) => Container(
 // diffCell renders one side's line. wrap=true (desktop, Expanded cells) lets long
 // lines soft-wrap within the column; wrap=false (phone, fixed-width cells) keeps
 // each line on one line so the grid reads like the desktop and scrolls instead.
-Widget diffCell(String text, DiffKind kind, {bool wrap = true}) => Container(
-  color: diffCellBg(kind),
-  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-  child: Text(
-    text,
-    style: diffCellStyle,
-    softWrap: wrap,
-    maxLines: wrap ? null : 1,
-  ),
-);
+Widget diffCell(String text, DiffKind kind, {bool wrap = true, String? langId}) {
+  final span = langId == null
+      ? null
+      : highlightLine(text, langId, base: diffCellStyle);
+  return Container(
+    color: diffCellBg(kind),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+    child: span == null
+        ? Text(
+            text,
+            style: diffCellStyle,
+            softWrap: wrap,
+            maxLines: wrap ? null : 1,
+          )
+        : Text.rich(span, softWrap: wrap, maxLines: wrap ? null : 1),
+  );
+}
 
 // fileDiffBadges renders a file's +adds / -dels counts (shared by the split
 // file header and the commit/working-tree file lists).
@@ -105,6 +113,7 @@ Widget diffSplitRow(
   Widget? Function(DiffRow r)? hunkTrailing,
   double?
   cellWidth, // null = Expanded (desktop); set = fixed-width (phone scroll)
+  String? langId, // re_highlight language id for syntax coloring (null = plain)
 }) {
   if (r.isHunk) {
     return Container(
@@ -137,10 +146,13 @@ Widget diffSplitRow(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         diffGutter(r.oldNo),
-        col(diffCell(r.left, r.leftKind, wrap: wrap)),
+        col(diffCell(r.left, r.leftKind, wrap: wrap, langId: langId)),
         const VerticalDivider(width: 1),
         diffGutter(r.newNo),
-        col(rightCell?.call(r) ?? diffCell(r.right, r.rightKind, wrap: wrap)),
+        col(
+          rightCell?.call(r) ??
+              diffCell(r.right, r.rightKind, wrap: wrap, langId: langId),
+        ),
       ],
     ),
   );
@@ -166,6 +178,7 @@ class _SplitDiffState extends State<SplitDiff> {
   // in the background — don't re-parse). Each item is a FileDiff header or a
   // DiffRow; _maxLen is the longest content line (to size the columns).
   List<Object> _items = const [];
+  List<String?> _itemLang = const []; // language id per item (null = no highlight)
   int _maxLen = 0;
 
   @override
@@ -183,12 +196,19 @@ class _SplitDiffState extends State<SplitDiff> {
   void _reparse() {
     final files = parseUnifiedDiff(widget.raw);
     final items = <Object>[];
+    final langs = <String?>[];
     if (files.isEmpty) {
-      items.addAll(parseRows(widget.raw));
+      final rows = parseRows(widget.raw);
+      items.addAll(rows);
+      langs.addAll(List.filled(rows.length, null));
     } else {
       for (final f in files) {
+        final lang = langIdForPath(f.path);
         items.add(f);
-        items.addAll(parseRows(f.raw));
+        langs.add(null); // file header — not code
+        final rows = parseRows(f.raw);
+        items.addAll(rows);
+        langs.addAll(List.filled(rows.length, lang));
       }
     }
     var maxLen = 0;
@@ -199,6 +219,7 @@ class _SplitDiffState extends State<SplitDiff> {
       }
     }
     _items = items;
+    _itemLang = langs;
     _maxLen = maxLen;
   }
 
@@ -213,7 +234,7 @@ class _SplitDiffState extends State<SplitDiff> {
       final it = _items[i];
       return it is FileDiff
           ? _fileHeader(it)
-          : diffSplitRow(it as DiffRow, cellWidth: cellW);
+          : diffSplitRow(it as DiffRow, cellWidth: cellW, langId: _itemLang[i]);
     }
 
     final body = SizedBox(
