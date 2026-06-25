@@ -670,6 +670,48 @@ class _HoverLiftState extends State<HoverLift> {
   );
 }
 
+// ccMenuItem is the shared JetBrains/GoLand-style popup-menu row: a leading icon,
+// the label, and an optional right-aligned keyboard-shortcut hint. value == null
+// (or enabled == false) renders a disabled row; danger tints it red. Used by every
+// right-click / popup menu so they read consistently.
+PopupMenuItem<String> ccMenuItem({
+  required String? value,
+  required IconData icon,
+  required String label,
+  String? shortcut,
+  bool danger = false,
+  bool? enabled,
+}) {
+  final on = enabled ?? (value != null);
+  final color = !on
+      ? CcColors.subtle
+      : danger
+      ? CcColors.danger
+      : CcColors.muted;
+  return PopupMenuItem<String>(
+    value: value,
+    enabled: on,
+    height: 34,
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    child: Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: danger && on ? const TextStyle(color: CcColors.danger) : null,
+          ),
+        ),
+        if (shortcut != null) ...[
+          const SizedBox(width: 18),
+          Text(shortcut, style: CcType.code(size: 11, color: CcColors.subtle)),
+        ],
+      ],
+    ),
+  );
+}
+
 // fileNameDirLabel renders a path as filename (left) + small gray directory —
 // shared by the desktop commit panel and the phone change / commit-file rows.
 Widget fileNameDirLabel(String path) {

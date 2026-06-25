@@ -284,6 +284,7 @@ ThemeData ccTheme() {
         borderRadius: BorderRadius.circular(CcRadius.sm),
         side: const BorderSide(color: CcColors.border),
       ),
+      menuPadding: const EdgeInsets.symmetric(vertical: 6),
       textStyle: const TextStyle(color: CcColors.text, fontSize: 13),
     ),
     snackBarTheme: SnackBarThemeData(

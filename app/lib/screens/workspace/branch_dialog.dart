@@ -896,53 +896,69 @@ class _BranchListPaneState extends State<_BranchListPane> {
                 },
                 itemBuilder: (_) => [
                   if (!b.current)
-                    const PopupMenuItem(
+                    ccMenuItem(
                       value: 'checkout',
-                      child: Text('Checkout'),
+                      icon: Icons.call_split_rounded,
+                      label: 'Checkout',
                     ),
-                  const PopupMenuItem(
+                  ccMenuItem(
                     value: 'compare',
-                    child: Text('Compare with Current'),
+                    icon: Icons.difference_rounded,
+                    label: 'Compare with Current',
                   ),
                   if (!b.current) ...[
-                    const PopupMenuItem(
+                    ccMenuItem(
                       value: 'merge',
-                      child: Text('Merge into Current'),
+                      icon: Icons.merge_type_rounded,
+                      label: 'Merge into Current',
                     ),
-                    const PopupMenuItem(
+                    ccMenuItem(
                       value: 'rebase',
-                      child: Text('Rebase Current onto Selected'),
+                      icon: Icons.merge_type_rounded,
+                      label: 'Rebase Current onto Selected',
                     ),
                   ],
                   if (!b.remote) ...[
                     const PopupMenuDivider(),
                     if (b.upstream.isEmpty)
-                      const PopupMenuItem(
+                      ccMenuItem(
                         value: 'publish',
-                        child: Text('Publish Branch'),
+                        icon: Icons.cloud_upload_rounded,
+                        label: 'Publish Branch',
                       ),
                     if (b.upstream.isNotEmpty)
-                      const PopupMenuItem(
+                      ccMenuItem(
                         value: 'push',
-                        child: Text('Push Branch'),
+                        icon: Icons.upload_rounded,
+                        label: 'Push Branch',
                       ),
-                    const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    ccMenuItem(
+                      value: 'rename',
+                      icon: Icons.edit_rounded,
+                      label: 'Rename',
+                    ),
                     if (!b.current)
-                      const PopupMenuItem(
+                      ccMenuItem(
                         value: 'delete',
-                        child: Text('Delete'),
+                        icon: Icons.delete_outline_rounded,
+                        label: 'Delete',
+                        danger: true,
                       ),
                     if (!b.current)
-                      const PopupMenuItem(
+                      ccMenuItem(
                         value: 'forceDelete',
-                        child: Text('Force Delete'),
+                        icon: Icons.delete_outline_rounded,
+                        label: 'Force Delete',
+                        danger: true,
                       ),
                   ],
                   if (b.remote) ...[
                     const PopupMenuDivider(),
-                    const PopupMenuItem(
+                    ccMenuItem(
                       value: 'deleteRemote',
-                      child: Text('Delete Remote Branch'),
+                      icon: Icons.delete_outline_rounded,
+                      label: 'Delete Remote Branch',
+                      danger: true,
                     ),
                   ],
                 ],

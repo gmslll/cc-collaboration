@@ -1953,137 +1953,97 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         ),
         const PopupMenuDivider(),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'changes',
           icon: Icons.list_alt_rounded,
           label: 'Open Changes',
           shortcut: '$mod+9',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'workingDiff',
           icon: Icons.difference_rounded,
           label: 'Show Working Tree Diff',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'commit',
           icon: Icons.check_circle_outline_rounded,
           label: 'Commit...',
           shortcut: '$mod+K',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'log',
           icon: Icons.history_rounded,
           label: 'Open Git Log',
           shortcut: '$mod+Alt+9',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'branches',
           icon: Icons.account_tree_rounded,
           label: 'Open Branches',
           shortcut: '$mod+Shift+9',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'stash',
           icon: Icons.inventory_2_outlined,
           label: 'Open Stash',
         ),
         const PopupMenuDivider(),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'branchPopup',
           icon: Icons.call_split_rounded,
           label: 'Branches Popup...',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'newBranch',
           icon: Icons.add_rounded,
           label: 'New Branch...',
         ),
         const PopupMenuDivider(),
-        _vcsMenuItem(value: 'fetch', icon: Icons.sync_rounded, label: 'Fetch'),
-        _vcsMenuItem(
+        ccMenuItem(value: 'fetch', icon: Icons.sync_rounded, label: 'Fetch'),
+        ccMenuItem(
           value: 'fetchPrune',
           icon: Icons.cleaning_services_outlined,
           label: 'Fetch --prune',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'pull',
           icon: Icons.call_received_rounded,
           label: 'Pull --ff-only',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'pullRebase',
           icon: Icons.vertical_align_top_rounded,
           label: 'Pull --rebase',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'push',
           icon: Icons.upload_rounded,
           label: 'Push',
           shortcut: '$mod+Shift+K',
         ),
         const PopupMenuDivider(),
-        _vcsMenuItem(
+        ccMenuItem(
           value: canStageAll ? 'stageAll' : null,
           icon: Icons.add_task_rounded,
           label: 'Stage All',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: canUnstageAll ? 'unstageAll' : null,
           icon: Icons.remove_done_rounded,
           label: 'Unstage All',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: 'stashPush',
           icon: Icons.archive_outlined,
           label: 'Stash Changes...',
         ),
-        _vcsMenuItem(
+        ccMenuItem(
           value: canRollbackAll ? 'rollbackAll' : null,
           icon: Icons.restore_rounded,
           label: 'Rollback All...',
           danger: true,
         ),
       ],
-    );
-  }
-
-  PopupMenuItem<String> _vcsMenuItem({
-    required String? value,
-    required IconData icon,
-    required String label,
-    String? shortcut,
-    bool danger = false,
-  }) {
-    final enabled = value != null;
-    final color = !enabled
-        ? CcColors.subtle
-        : danger
-        ? CcColors.danger
-        : CcColors.muted;
-    return PopupMenuItem<String>(
-      value: value,
-      enabled: enabled,
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              style: danger && enabled
-                  ? const TextStyle(color: CcColors.danger)
-                  : null,
-            ),
-          ),
-          if (shortcut != null) ...[
-            const SizedBox(width: 18),
-            Text(
-              shortcut,
-              style: CcType.code(size: 11, color: CcColors.subtle),
-            ),
-          ],
-        ],
-      ),
     );
   }
 
@@ -2760,66 +2720,66 @@ class _WorkspacePageState extends State<WorkspacePage>
         if (v == 'closeUnmodified') _closeUnmodifiedCodeFiles();
       },
       itemBuilder: (_) => [
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'structure',
           icon: Icons.account_tree_rounded,
           label: 'File Structure',
           shortcut: '$mod+F12',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'find',
           icon: Icons.search_rounded,
           label: 'Find in File',
           shortcut: '$mod+F',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'usages',
           icon: Icons.travel_explore_rounded,
           label: 'Find Usages',
           shortcut: '$mod+Alt+F7',
         ),
         const PopupMenuDivider(),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'workingDiff',
           icon: Icons.difference_rounded,
           label: 'Working Tree Diff',
           shortcut: '$mod+Alt+D',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'compareHead',
           icon: Icons.compare_arrows_rounded,
           label: 'Compare with HEAD',
           shortcut: '$mod+Shift+D',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'fileLog',
           icon: Icons.manage_history_rounded,
           label: 'Open File Git Log',
           shortcut: '$mod+Alt+H',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'history',
           icon: Icons.history_rounded,
           label: 'File History',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'annotate',
           icon: Icons.person_search_rounded,
           label: 'Annotate / Blame',
         ),
         const PopupMenuDivider(),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'reveal',
           icon: Icons.my_location_rounded,
           label: 'Reveal in Project',
           shortcut: '$mod+Shift+1',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'copyPath',
           icon: Icons.copy_rounded,
           label: 'Copy Path',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'save',
           icon: Icons.save_rounded,
           label: 'Save',
@@ -2827,19 +2787,19 @@ class _WorkspacePageState extends State<WorkspacePage>
           enabled: file.dirty,
         ),
         const PopupMenuDivider(),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'close',
           icon: Icons.close_rounded,
           label: 'Close',
           shortcut: '$mod+W',
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'closeOthers',
           icon: Icons.filter_none_rounded,
           label: 'Close Others',
           enabled: _codeFiles.length > 1,
         ),
-        _codeActionMenuItem(
+        ccMenuItem(
           value: 'closeUnmodified',
           icon: Icons.rule_rounded,
           label: 'Close Unmodified',
@@ -2847,28 +2807,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       ],
     );
   }
-
-  PopupMenuItem<String> _codeActionMenuItem({
-    required String value,
-    required IconData icon,
-    required String label,
-    String? shortcut,
-    bool enabled = true,
-  }) => PopupMenuItem<String>(
-    value: value,
-    enabled: enabled,
-    child: Row(
-      children: [
-        Icon(icon, size: 16, color: enabled ? CcColors.muted : CcColors.subtle),
-        const SizedBox(width: 10),
-        Expanded(child: Text(label)),
-        if (shortcut != null) ...[
-          const SizedBox(width: 18),
-          Text(shortcut, style: CcType.code(size: 11, color: CcColors.subtle)),
-        ],
-      ],
-    ),
-  );
 
   PopupMenuButton<String> _editorFileTabMenu(int index) {
     final file = _codeFiles[index];
@@ -2905,29 +2843,60 @@ class _WorkspacePageState extends State<WorkspacePage>
         if (v == 'closeAll') _closeAllCodeFiles();
       },
       itemBuilder: (_) => [
-        const PopupMenuItem(value: 'copyPath', child: Text('Copy Path')),
-        const PopupMenuItem(value: 'reveal', child: Text('Reveal in Project')),
+        ccMenuItem(
+          value: 'copyPath',
+          icon: Icons.content_copy_rounded,
+          label: 'Copy Path',
+        ),
+        ccMenuItem(
+          value: 'reveal',
+          icon: Icons.my_location_rounded,
+          label: 'Reveal in Project',
+        ),
         const PopupMenuDivider(),
-        const PopupMenuItem(
+        ccMenuItem(
           value: 'workingDiff',
-          child: Text('Open File Working Tree Diff'),
+          icon: Icons.difference_rounded,
+          label: 'Open File Working Tree Diff',
         ),
-        const PopupMenuItem(value: 'fileLog', child: Text('Open File Git Log')),
-        const PopupMenuItem(value: 'history', child: Text('File History')),
-        const PopupMenuItem(value: 'annotate', child: Text('Annotate / Blame')),
+        ccMenuItem(
+          value: 'fileLog',
+          icon: Icons.list_alt_rounded,
+          label: 'Open File Git Log',
+        ),
+        ccMenuItem(
+          value: 'history',
+          icon: Icons.history_rounded,
+          label: 'File History',
+        ),
+        ccMenuItem(
+          value: 'annotate',
+          icon: Icons.format_align_left_rounded,
+          label: 'Annotate / Blame',
+        ),
         const PopupMenuDivider(),
-        const PopupMenuItem(value: 'close', child: Text('Close')),
-        const PopupMenuItem(value: 'closeOthers', child: Text('Close Others')),
-        if (index < _codeFiles.length - 1)
-          const PopupMenuItem(
-            value: 'closeRight',
-            child: Text('Close Tabs to the Right'),
-          ),
-        const PopupMenuItem(
-          value: 'closeUnmodified',
-          child: Text('Close Unmodified'),
+        ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
+        ccMenuItem(
+          value: 'closeOthers',
+          icon: Icons.clear_rounded,
+          label: 'Close Others',
         ),
-        const PopupMenuItem(value: 'closeAll', child: Text('Close All')),
+        if (index < _codeFiles.length - 1)
+          ccMenuItem(
+            value: 'closeRight',
+            icon: Icons.keyboard_tab_rounded,
+            label: 'Close Tabs to the Right',
+          ),
+        ccMenuItem(
+          value: 'closeUnmodified',
+          icon: Icons.cleaning_services_rounded,
+          label: 'Close Unmodified',
+        ),
+        ccMenuItem(
+          value: 'closeAll',
+          icon: Icons.clear_all_rounded,
+          label: 'Close All',
+        ),
       ],
     );
   }
@@ -4203,27 +4172,47 @@ class _WorkspacePageState extends State<WorkspacePage>
               if (v == 'discard') _gitDiscardFileCurrent(p, c.path);
             },
             itemBuilder: (_) => [
-              const PopupMenuItem(value: 'open', child: Text('Open')),
+              ccMenuItem(
+                value: 'open',
+                icon: Icons.description_outlined,
+                label: 'Open',
+              ),
               if (!c.untracked) ...[
-                const PopupMenuItem(
+                ccMenuItem(
                   value: 'compare',
-                  child: Text('Compare with HEAD'),
+                  icon: Icons.difference_rounded,
+                  label: 'Compare with HEAD',
                 ),
-                const PopupMenuItem(
+                ccMenuItem(
                   value: 'history',
-                  child: Text('File History'),
+                  icon: Icons.history_rounded,
+                  label: 'File History',
                 ),
-                const PopupMenuItem(
+                ccMenuItem(
                   value: 'annotate',
-                  child: Text('Annotate / Blame'),
+                  icon: Icons.format_align_left_rounded,
+                  label: 'Annotate / Blame',
                 ),
               ],
               const PopupMenuDivider(),
               if (c.unstaged)
-                const PopupMenuItem(value: 'stage', child: Text('Stage')),
+                ccMenuItem(
+                  value: 'stage',
+                  icon: Icons.add_rounded,
+                  label: 'Stage',
+                ),
               if (c.staged)
-                const PopupMenuItem(value: 'unstage', child: Text('Unstage')),
-              const PopupMenuItem(value: 'discard', child: Text('Rollback')),
+                ccMenuItem(
+                  value: 'unstage',
+                  icon: Icons.remove_rounded,
+                  label: 'Unstage',
+                ),
+              ccMenuItem(
+                value: 'discard',
+                icon: Icons.undo_rounded,
+                label: 'Rollback',
+                danger: true,
+              ),
             ],
           ),
           onTap: () => _openWorkingTreeDiffTab(c.path),
@@ -4766,26 +4755,44 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
       items: [
         if (!b.current)
-          const PopupMenuItem(value: 'checkout', child: Text('Checkout')),
-        const PopupMenuItem(
+          ccMenuItem(
+            value: 'checkout',
+            icon: Icons.call_split_rounded,
+            label: 'Checkout',
+          ),
+        ccMenuItem(
           value: 'compare',
-          child: Text('Compare with Working Tree'),
+          icon: Icons.difference_rounded,
+          label: 'Compare with Working Tree',
         ),
         if (!b.current) ...[
-          const PopupMenuItem(value: 'merge', child: Text('Merge into Current')),
-          const PopupMenuItem(
+          ccMenuItem(
+            value: 'merge',
+            icon: Icons.merge_type_rounded,
+            label: 'Merge into Current',
+          ),
+          ccMenuItem(
             value: 'rebase',
-            child: Text('Rebase Current onto This'),
+            icon: Icons.merge_type_rounded,
+            label: 'Rebase Current onto This',
           ),
         ],
         if (!b.remote) ...[
           const PopupMenuDivider(),
-          const PopupMenuItem(value: 'push', child: Text('Push')),
+          ccMenuItem(value: 'push', icon: Icons.upload_rounded, label: 'Push'),
           if (b.upstream.isEmpty)
-            const PopupMenuItem(value: 'publish', child: Text('Publish')),
+            ccMenuItem(
+              value: 'publish',
+              icon: Icons.cloud_upload_rounded,
+              label: 'Publish',
+            ),
         ],
         const PopupMenuDivider(),
-        const PopupMenuItem(value: 'dialog', child: Text('Branches Popup…')),
+        ccMenuItem(
+          value: 'dialog',
+          icon: Icons.account_tree_rounded,
+          label: 'Branches Popup…',
+        ),
       ],
     );
     if (v == null || !mounted) return;
@@ -4937,16 +4944,33 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (v == 'compareWorking') _compareCommitWithWorking(p, c);
     },
     itemBuilder: (_) => [
-      const PopupMenuItem(value: 'copy', child: Text('Copy Hash')),
-      const PopupMenuItem(value: 'branch', child: Text('New Branch from Here')),
-      const PopupMenuItem(value: 'compare', child: Text('Show Commit Diff')),
-      const PopupMenuItem(
+      ccMenuItem(
+        value: 'copy',
+        icon: Icons.content_copy_rounded,
+        label: 'Copy Hash',
+      ),
+      ccMenuItem(
+        value: 'branch',
+        icon: Icons.add_rounded,
+        label: 'New Branch from Here',
+      ),
+      ccMenuItem(
+        value: 'compare',
+        icon: Icons.difference_rounded,
+        label: 'Show Commit Diff',
+      ),
+      ccMenuItem(
         value: 'compareWorking',
-        child: Text('Compare with Working Tree'),
+        icon: Icons.compare_arrows_rounded,
+        label: 'Compare with Working Tree',
       ),
       const PopupMenuDivider(),
-      const PopupMenuItem(value: 'cherryPick', child: Text('Cherry-pick')),
-      const PopupMenuItem(value: 'revert', child: Text('Revert')),
+      ccMenuItem(
+        value: 'cherryPick',
+        icon: Icons.content_paste_rounded,
+        label: 'Cherry-pick',
+      ),
+      ccMenuItem(value: 'revert', icon: Icons.undo_rounded, label: 'Revert'),
     ],
   );
 
@@ -5136,18 +5160,35 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         ),
         const PopupMenuDivider(),
-        const PopupMenuItem(
+        ccMenuItem(
           value: 'branches',
-          child: Text('Open Git Log'),
+          icon: Icons.history_rounded,
+          label: 'Open Git Log',
         ),
-        const PopupMenuItem(value: 'dialog', child: Text('Branches Popup...')),
-        const PopupMenuItem(value: 'new', child: Text('New Branch...')),
+        ccMenuItem(
+          value: 'dialog',
+          icon: Icons.account_tree_rounded,
+          label: 'Branches Popup...',
+        ),
+        ccMenuItem(value: 'new', icon: Icons.add_rounded, label: 'New Branch...'),
         const PopupMenuDivider(),
-        const PopupMenuItem(value: 'fetch', child: Text('Fetch')),
-        const PopupMenuItem(value: 'prune', child: Text('Fetch --prune')),
-        const PopupMenuItem(value: 'pull', child: Text('Pull --ff-only')),
-        const PopupMenuItem(value: 'pullRebase', child: Text('Pull --rebase')),
-        const PopupMenuItem(value: 'push', child: Text('Push')),
+        ccMenuItem(value: 'fetch', icon: Icons.sync_rounded, label: 'Fetch'),
+        ccMenuItem(
+          value: 'prune',
+          icon: Icons.sync_problem_rounded,
+          label: 'Fetch --prune',
+        ),
+        ccMenuItem(
+          value: 'pull',
+          icon: Icons.download_rounded,
+          label: 'Pull --ff-only',
+        ),
+        ccMenuItem(
+          value: 'pullRebase',
+          icon: Icons.download_rounded,
+          label: 'Pull --rebase',
+        ),
+        ccMenuItem(value: 'push', icon: Icons.upload_rounded, label: 'Push'),
         if (locals.isNotEmpty) const PopupMenuDivider(),
         for (final b in locals.take(8))
           PopupMenuItem(
@@ -6031,14 +6072,34 @@ class _WorkspacePageState extends State<WorkspacePage>
         if (v == 'history') _showFileHistoryForProjectFile(project, rel);
         if (v == 'annotate') _showBlameForProjectFile(project, rel);
       },
-      itemBuilder: (_) => const [
-        PopupMenuItem(value: 'open', child: Text('Open')),
-        PopupMenuItem(value: 'copyPath', child: Text('Copy Path')),
-        PopupMenuItem(value: 'reveal', child: Text('Reveal in Project')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'compare', child: Text('Compare with HEAD')),
-        PopupMenuItem(value: 'history', child: Text('File History')),
-        PopupMenuItem(value: 'annotate', child: Text('Annotate / Blame')),
+      itemBuilder: (_) => [
+        ccMenuItem(value: 'open', icon: Icons.description_outlined, label: 'Open'),
+        ccMenuItem(
+          value: 'copyPath',
+          icon: Icons.content_copy_rounded,
+          label: 'Copy Path',
+        ),
+        ccMenuItem(
+          value: 'reveal',
+          icon: Icons.my_location_rounded,
+          label: 'Reveal in Project',
+        ),
+        const PopupMenuDivider(),
+        ccMenuItem(
+          value: 'compare',
+          icon: Icons.difference_rounded,
+          label: 'Compare with HEAD',
+        ),
+        ccMenuItem(
+          value: 'history',
+          icon: Icons.history_rounded,
+          label: 'File History',
+        ),
+        ccMenuItem(
+          value: 'annotate',
+          icon: Icons.format_align_left_rounded,
+          label: 'Annotate / Blame',
+        ),
       ],
     );
   }
@@ -6111,14 +6172,23 @@ class _WorkspacePageState extends State<WorkspacePage>
           itemBuilder: (_) {
             final hasSel = e.s.selectedText != null;
             return [
-              const PopupMenuItem(value: 'rename', child: Text('重命名')),
-              const PopupMenuItem(value: 'close', child: Text('关闭会话')),
+              ccMenuItem(
+                value: 'rename',
+                icon: Icons.edit_rounded,
+                label: '重命名',
+              ),
+              ccMenuItem(
+                value: 'close',
+                icon: Icons.close_rounded,
+                label: '关闭会话',
+              ),
               if (peers.isNotEmpty) const PopupMenuDivider(),
               for (final q in peers)
-                PopupMenuItem(
+                ccMenuItem(
                   value: 'send:${q.id}',
+                  icon: Icons.send_rounded,
+                  label: '发送选区到「${q.label}」',
                   enabled: hasSel,
-                  child: Text('发送选区到「${q.label}」'),
                 ),
             ];
           },
@@ -6329,10 +6399,18 @@ class _WorkspacePageState extends State<WorkspacePage>
           if (v == 'copyPath') _copyFilePath(path);
           if (v == 'reveal') _revealFileInProject(path);
         },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'open', child: Text('Open')),
-          PopupMenuItem(value: 'copyPath', child: Text('Copy Path')),
-          PopupMenuItem(value: 'reveal', child: Text('Reveal')),
+        itemBuilder: (_) => [
+          ccMenuItem(value: 'open', icon: Icons.description_outlined, label: 'Open'),
+          ccMenuItem(
+            value: 'copyPath',
+            icon: Icons.content_copy_rounded,
+            label: 'Copy Path',
+          ),
+          ccMenuItem(
+            value: 'reveal',
+            icon: Icons.my_location_rounded,
+            label: 'Reveal',
+          ),
         ],
       );
 
@@ -6374,13 +6452,15 @@ class _WorkspacePageState extends State<WorkspacePage>
   // ------------------------------------------------------------- menus ----
 
   List<PopupMenuEntry<String>> _agentItems(String def) => [
-    PopupMenuItem(
+    ccMenuItem(
       value: 'claude',
-      child: Text('起 claude${def == 'claude' ? '  (默认)' : ''}'),
+      icon: Icons.play_arrow_rounded,
+      label: '起 claude${def == 'claude' ? '  (默认)' : ''}',
     ),
-    PopupMenuItem(
+    ccMenuItem(
       value: 'codex',
-      child: Text('起 codex${def == 'codex' ? '  (默认)' : ''}'),
+      icon: Icons.smart_toy_outlined,
+      label: '起 codex${def == 'codex' ? '  (默认)' : ''}',
     ),
   ];
 
@@ -6398,10 +6478,23 @@ class _WorkspacePageState extends State<WorkspacePage>
               _removeWorkspace(ws);
           }
         },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'add', child: Text('添加项目')),
-          PopupMenuItem(value: 'settings', child: Text('工作区设置')),
-          PopupMenuItem(value: 'remove', child: Text('删除工作区')),
+        itemBuilder: (_) => [
+          ccMenuItem(
+            value: 'add',
+            icon: Icons.create_new_folder_outlined,
+            label: '添加项目',
+          ),
+          ccMenuItem(
+            value: 'settings',
+            icon: Icons.settings_rounded,
+            label: '工作区设置',
+          ),
+          ccMenuItem(
+            value: 'remove',
+            icon: Icons.delete_outline_rounded,
+            label: '删除工作区',
+            danger: true,
+          ),
         ],
       );
 
@@ -6505,13 +6598,34 @@ class _WorkspacePageState extends State<WorkspacePage>
         itemBuilder: (_) => [
           ..._agentItems(ws.agent),
           const PopupMenuDivider(),
-          const PopupMenuItem(value: 'diff', child: Text('看变动')),
-          const PopupMenuItem(value: 'files', child: Text('文件')),
+          ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
+          ccMenuItem(
+            value: 'files',
+            icon: Icons.folder_open_rounded,
+            label: '文件',
+          ),
           if (p.github.isNotEmpty)
-            const PopupMenuItem(value: 'pr', child: Text('GitHub PR')),
-          const PopupMenuItem(value: 'worktree', child: Text('新建 worktree')),
-          const PopupMenuItem(value: 'config', child: Text('项目配置')),
-          const PopupMenuItem(value: 'remove', child: Text('移除项目')),
+            ccMenuItem(
+              value: 'pr',
+              icon: Icons.merge_rounded,
+              label: 'GitHub PR',
+            ),
+          ccMenuItem(
+            value: 'worktree',
+            icon: Icons.account_tree_rounded,
+            label: '新建 worktree',
+          ),
+          ccMenuItem(
+            value: 'config',
+            icon: Icons.settings_rounded,
+            label: '项目配置',
+          ),
+          ccMenuItem(
+            value: 'remove',
+            icon: Icons.delete_outline_rounded,
+            label: '移除项目',
+            danger: true,
+          ),
         ],
       );
 
@@ -6571,9 +6685,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     itemBuilder: (_) => [
       ..._agentItems(ws.agent),
       const PopupMenuDivider(),
-      const PopupMenuItem(value: 'diff', child: Text('看变动')),
-      const PopupMenuItem(value: 'files', child: Text('文件')),
-      const PopupMenuItem(value: 'delete', child: Text('删除 worktree')),
+      ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
+      ccMenuItem(value: 'files', icon: Icons.folder_open_rounded, label: '文件'),
+      ccMenuItem(
+        value: 'delete',
+        icon: Icons.delete_outline_rounded,
+        label: '删除 worktree',
+        danger: true,
+      ),
     ],
   );
 

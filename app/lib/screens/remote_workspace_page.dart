@@ -304,9 +304,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           if (v == 'rename') _renameSessionDialog(s);
           if (v == 'close') _c.closeSession(s.sid);
         },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'rename', child: Text('重命名')),
-          PopupMenuItem(value: 'close', child: Text('关闭')),
+        itemBuilder: (_) => [
+          ccMenuItem(value: 'rename', icon: Icons.edit_rounded, label: '重命名'),
+          ccMenuItem(value: 'close', icon: Icons.close_rounded, label: '关闭'),
         ],
       ),
       onTap: () => Navigator.of(context).push(
@@ -699,10 +699,17 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       }
     },
     itemBuilder: (_) => [
-      if (!c.staged) const PopupMenuItem(value: 'stage', child: Text('暂存')),
-      if (c.staged) const PopupMenuItem(value: 'unstage', child: Text('取消暂存')),
+      if (!c.staged)
+        ccMenuItem(value: 'stage', icon: Icons.add_rounded, label: '暂存'),
+      if (c.staged)
+        ccMenuItem(value: 'unstage', icon: Icons.remove_rounded, label: '取消暂存'),
       if (!c.untracked)
-        const PopupMenuItem(value: 'discard', child: Text('丢弃')),
+        ccMenuItem(
+          value: 'discard',
+          icon: Icons.undo_rounded,
+          label: '丢弃',
+          danger: true,
+        ),
     ],
   );
 
@@ -871,9 +878,18 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                     );
                   }
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'wt', child: Text('Worktree…')),
-                  PopupMenuItem(value: 'rm', child: Text('移除项目')),
+                itemBuilder: (_) => [
+                  ccMenuItem(
+                    value: 'wt',
+                    icon: Icons.account_tree_rounded,
+                    label: 'Worktree…',
+                  ),
+                  ccMenuItem(
+                    value: 'rm',
+                    icon: Icons.delete_outline_rounded,
+                    label: '移除项目',
+                    danger: true,
+                  ),
                 ],
               ),
             ),

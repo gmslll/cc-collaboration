@@ -270,33 +270,59 @@ class _TerminalPaneState extends State<TerminalPane> {
   void _showMenu(Offset globalPos) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final hasSelection = _controller.selection != null;
-    showMenu<void>(
+    showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
         globalPos & const Size(1, 1),
         Offset.zero & overlay.size,
       ),
       items: [
-        PopupMenuItem(
+        ccMenuItem(
+          value: 'copy',
+          icon: Icons.content_copy_rounded,
+          label: '复制',
           enabled: hasSelection,
-          onTap: _copy,
-          child: const Text('复制'),
         ),
-        PopupMenuItem(onTap: _paste, child: const Text('粘贴')),
-        PopupMenuItem(onTap: _selectAll, child: const Text('全选')),
+        ccMenuItem(
+          value: 'paste',
+          icon: Icons.content_paste_rounded,
+          label: '粘贴',
+        ),
+        ccMenuItem(
+          value: 'selectAll',
+          icon: Icons.select_all_rounded,
+          label: '全选',
+        ),
         // 发送到终端: one entry per other live session — forwards the selection
         // into that session's input so a sibling agent can read it.
         if (widget.onSendToPeer != null && widget.peers.isNotEmpty) ...[
           const PopupMenuDivider(),
           for (final p in widget.peers)
-            PopupMenuItem(
+            ccMenuItem(
+              value: 'send:${p.id}',
+              icon: Icons.send_rounded,
+              label: '发送选区 → ${p.label}',
               enabled: hasSelection,
-              onTap: () => _sendSelectionTo(p.id, p.label),
-              child: Text('发送选区 → ${p.label}'),
             ),
         ],
       ],
-    );
+    ).then((v) {
+      if (v == null || !mounted) return;
+      switch (v) {
+        case 'copy':
+          _copy();
+        case 'paste':
+          _paste();
+        case 'selectAll':
+          _selectAll();
+        default:
+          if (v.startsWith('send:')) {
+            final id = v.substring('send:'.length);
+            final p = widget.peers.firstWhere((p) => p.id == id);
+            _sendSelectionTo(p.id, p.label);
+          }
+      }
+    });
   }
 
   @override

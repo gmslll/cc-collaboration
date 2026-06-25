@@ -156,13 +156,20 @@ class _AdminPageState extends State<AdminPage> {
                     }
                   },
                   itemBuilder: (_) => [
-                    PopupMenuItem(
+                    ccMenuItem(
                         value: 'admin',
-                        child: Text(u.isAdmin ? '取消 admin' : '设为 admin')),
-                    PopupMenuItem(
+                        icon: Icons.shield_rounded,
+                        label: u.isAdmin ? '取消 admin' : '设为 admin'),
+                    ccMenuItem(
                         value: 'disable',
-                        child: Text(u.disabled ? '启用' : '停用')),
-                    const PopupMenuItem(value: 'reset', child: Text('重置密码')),
+                        icon: u.disabled
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.block_rounded,
+                        label: u.disabled ? '启用' : '停用'),
+                    ccMenuItem(
+                        value: 'reset',
+                        icon: Icons.password_rounded,
+                        label: '重置密码'),
                   ],
                 ),
               ),
