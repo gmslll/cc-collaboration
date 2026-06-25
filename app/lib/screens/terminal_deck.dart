@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,11 +13,24 @@ import '../widgets.dart';
 import 'terminal_pane.dart';
 
 // agentDoneNotice is the shared "会话完成" copy so the desktop banner and the
-// phone push read identically. Returns (title, body); the agent name follows the
-// codex/claude sniff used elsewhere (see RemoteHost._sessionItems).
+// phone push read identically. Returns (title, body); the agent name comes from
+// TerminalSession.agentKind (authoritative field, sniff fallback).
 (String, String) agentDoneNotice(TerminalSession s) {
-  final agent = s.command.contains('codex') ? 'codex' : 'claude';
-  return ('AI 会话完成', '$agent · ${s.label} 已就绪，等待输入');
+  return ('AI 会话完成', '${s.agentKind} · ${s.label} 已就绪，等待输入');
+}
+
+// _genUuid returns a random RFC-4122 v4 UUID. Used to mint a fixed session id
+// for a freshly launched claude tab (`claude --session-id <uuid>`) so the same
+// conversation can be `--resume`d after an app restart. No package dependency —
+// 16 secure-random bytes with the version/variant nibbles set.
+String _genUuid() {
+  final r = Random.secure();
+  final b = List<int>.generate(16, (_) => r.nextInt(256));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 1
+  final h = b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+  return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-'
+      '${h.substring(16, 20)}-${h.substring(20)}';
 }
 
 // TerminalHost owns the terminal-session list + active index + lifecycle, shared
@@ -47,6 +61,12 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // push the notification to a connected phone.
   void Function(TerminalSession session)? onAgentDone;
 
+  // onSendToOnline forwards a terminal selection to the cross-user
+  // "发送到在线用户" picker (a remote user + their session). The workspace sets
+  // it; hosts that leave it null hide the menu entry. Threaded into both
+  // terminalDeck() and terminalBody().
+  void Function(String text)? onSendToOnline;
+
   // _onSessionDone is wired onto every session's onDone: show the local desktop
   // banner, then let the host fan it out (phone push) via onAgentDone.
   void _onSessionDone(TerminalSession s) {
@@ -55,9 +75,26 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     onAgentDone?.call(s);
   }
 
-  void addTerm(String workdir, String command) {
+  void addTerm(
+    String workdir,
+    String command, {
+    String agent = '',
+    String preLaunch = '',
+  }) {
+    // Mint a fixed session id for claude up front so it launches with
+    // --session-id and can be --resume'd on the next app start. The immediate
+    // _save() below persists it. codex can't pre-assign an id (resumes --last).
+    final sid = agent == 'claude' ? _genUuid() : null;
     setState(() {
-      terms.add(TerminalSession(workdir, command)..onDone = _onSessionDone);
+      terms.add(
+        TerminalSession(
+          workdir,
+          command,
+          agent: agent,
+          preLaunch: preLaunch,
+          agentSessionId: sid,
+        )..onDone = _onSessionDone,
+      );
       activeTerm = terms.length - 1;
     });
     onTermsChanged?.call();
@@ -83,6 +120,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     }
   }
 
+  // Matches a legacy persisted command ("claude"/"codex" or "pre && claude") so
+  // restoreTerms can recover agent + preLaunch. Compiled once, not per entry.
+  static final RegExp _legacyAgentCmd = RegExp(r'^(?:(.+) && )?(claude|codex)$');
+
   // restoreTerms reopens persisted sessions (skipping any whose worktree dir is
   // gone). Call from the host's initState. No-op unless persistKey is set.
   Future<void> restoreTerms() async {
@@ -94,12 +135,39 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       final data = jsonDecode(await f.readAsString());
       if (data is! List) return;
       final restored = <TerminalSession>[];
+      var upgraded = false; // a legacy entry was recovered → rewrite the file
       for (final e in data) {
         if (e is! Map) continue;
         final wd = (e['workdir'] ?? '').toString();
         final cmd = (e['command'] ?? '').toString();
         if (wd.isEmpty || cmd.isEmpty || !Directory(wd).existsSync()) continue;
-        final ts = TerminalSession(wd, cmd)..onDone = _onSessionDone;
+        var agent = (e['agent'] ?? '').toString();
+        var preLaunch = (e['preLaunch'] ?? '').toString();
+        final sid = (e['sessionId'] ?? '').toString();
+        // Back-compat: pre-upgrade entries from _launch have no 'agent' field and
+        // baked preLaunch into command as "pre && claude"/"pre && codex" (or a
+        // bare "claude"/"codex"). Recover the agent + prefix only for that exact
+        // shape so the tab still resumes (most-recent, since no stored id). Any
+        // other command — e.g. a pickup's prompt-injection — keeps agent '' and
+        // runs verbatim, exactly as before. (preLaunch is necessarily empty here:
+        // it's only ever persisted alongside an 'agent', so a legacy entry has
+        // neither.)
+        if (agent.isEmpty) {
+          final m = _legacyAgentCmd.firstMatch(cmd.trim());
+          if (m != null) {
+            agent = m.group(2)!;
+            preLaunch = m.group(1) ?? '';
+            upgraded = true;
+          }
+        }
+        final ts = TerminalSession(
+          wd,
+          cmd,
+          agent: agent,
+          preLaunch: preLaunch,
+          agentSessionId: sid.isEmpty ? null : sid,
+          resume: true,
+        )..onDone = _onSessionDone;
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
         restored.add(ts);
@@ -110,6 +178,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         activeTerm = 0;
       });
       onTermsChanged?.call();
+      // Only rewrite when a legacy entry was actually recovered — steady-state
+      // restarts (all entries already structured) skip the redundant write.
+      if (upgraded) unawaited(_save());
     } catch (_) {}
   }
 
@@ -136,6 +207,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
                   'workdir': s.workdir,
                   'command': s.command,
                   if (s.name?.isNotEmpty ?? false) 'name': s.name,
+                  // AI-session binding (see TerminalSession) — lets a reopened
+                  // tab --resume its exact conversation next launch.
+                  if (s.agent.isNotEmpty) 'agent': s.agent,
+                  if (s.preLaunch.isNotEmpty) 'preLaunch': s.preLaunch,
+                  if (s.agentSessionId != null) 'sessionId': s.agentSessionId,
                 },
               )
               .toList(),
@@ -265,6 +341,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     onCollapse: onCollapse,
     groupsFor: sendGroupsFor,
     onSendToPeer: _sendToPeer,
+    onSendToOnline: onSendToOnline,
   );
 
   // terminalBody is just the active terminal (no tab bar) — for hosts that put
@@ -285,6 +362,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
             same: g.same,
             others: g.others,
             onSendToPeer: _sendToPeer,
+            onSendToOnline: onSendToOnline,
           );
         }).toList(),
       ),
@@ -309,6 +387,9 @@ class TerminalDeck extends StatelessWidget {
   groupsFor;
   final void Function(String fromId, String targetId, String text)?
   onSendToPeer;
+  // onSendToOnline(text): forward a selection to the cross-user picker; null
+  // hides the "发送到在线用户" entry.
+  final void Function(String text)? onSendToOnline;
   const TerminalDeck({
     super.key,
     required this.terms,
@@ -318,6 +399,7 @@ class TerminalDeck extends StatelessWidget {
     this.onCollapse,
     this.groupsFor,
     this.onSendToPeer,
+    this.onSendToOnline,
   });
 
   @override
@@ -353,6 +435,7 @@ class TerminalDeck extends StatelessWidget {
                   same: g?.same ?? const [],
                   others: g?.others ?? const [],
                   onSendToPeer: onSendToPeer,
+                  onSendToOnline: onSendToOnline,
                 );
               }).toList(),
             ),

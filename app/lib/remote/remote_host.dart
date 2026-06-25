@@ -206,7 +206,7 @@ class RemoteHost extends RemoteChannel {
           'sid': s.id,
           'title': s.label,
           'workdir': s.workdir,
-          'agent': s.command.contains('codex') ? 'codex' : 'claude',
+          'agent': s.agentKind,
         },
       )
       .toList();

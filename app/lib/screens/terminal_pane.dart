@@ -24,6 +24,18 @@ class TerminalSession {
   final String command;
   final String title;
   String? name; // user-given label; overrides the derived title when set
+  // --- AI-session binding (resume the same conversation after an app restart) -
+  // agent is the explicit kind ('claude'/'codex'/'' for shell/raw) — set by the
+  // launcher, not sniffed. preLaunch is the shell run before the agent (e.g.
+  // 'clset 6'). For claude we mint a fixed [agentSessionId] (uuid) at first
+  // launch and pass it via --session-id, then --resume it next time so the tab
+  // reopens the exact same conversation. codex can't pre-assign an id, so it
+  // resumes the cwd's most-recent rollout instead (see _resolvedCommand). resume
+  // is true only when this session is being reopened from persistence.
+  final String agent;
+  final String preLaunch;
+  final String? agentSessionId;
+  final bool resume;
   final Terminal terminal = Terminal(maxLines: 10000);
   // The selection/copy controller lives on the session (not the pane) so the
   // host can read the current selection — e.g. to forward it to another session.
@@ -86,10 +98,16 @@ class TerminalSession {
 
   String get backlog => _backlog.join();
 
-  TerminalSession(this.workdir, this.command)
-    : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
-          ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
-          : workdir {
+  TerminalSession(
+    this.workdir,
+    this.command, {
+    this.agent = '',
+    this.preLaunch = '',
+    this.agentSessionId,
+    this.resume = false,
+  }) : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
+           ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
+           : workdir {
     // Fix xterm 4.0.0's broken wheel reporting so scroll reaches full-screen
     // agent TUIs (claude/codex), which scroll fine in real terminals.
     terminal.mouseHandler = const WheelMouseHandler();
@@ -106,6 +124,12 @@ class TerminalSession {
   // workspace_page.dart and remote_host.dart. The local bus reads it to decide
   // whether to attach a reply cheat-sheet to a delivered message.
   bool get isAgent => command.contains('claude') || command.contains('codex');
+
+  // agentKind is the authoritative agent name ('claude'/'codex') for labels and
+  // notifications: the explicit field when the launcher set it, else the legacy
+  // command sniff (pickup / pre-upgrade sessions that carry no agent field).
+  String get agentKind =>
+      agent.isNotEmpty ? agent : (command.contains('codex') ? 'codex' : 'claude');
 
   // selectedText is the current selection's text, or null when nothing is
   // selected. The host reads it to forward a selection to another session.
@@ -130,13 +154,40 @@ class TerminalSession {
     return ls.length <= lines ? all : ls.sublist(ls.length - lines).join('\n');
   }
 
+  // _resolvedCommand is the shell command actually run for this session. For a
+  // plain shell / arbitrary command it's [command] unchanged. For an agent it's
+  // rebuilt from agent + preLaunch + session binding so a reopened tab resumes
+  // its prior conversation: claude binds a fixed --session-id on first launch
+  // and --resume's it thereafter; codex has no pre-assignable id so it resumes
+  // the cwd's most-recent rollout (--last). preLaunch (if any) is prepended.
+  String _resolvedCommand() {
+    if (agent != 'claude' && agent != 'codex') return command;
+    final pre = preLaunch.trim();
+    final prefix = pre.isEmpty ? '' : '$pre && ';
+    if (agent == 'claude') {
+      if (!resume) {
+        return agentSessionId == null
+            ? '${prefix}claude'
+            : '${prefix}claude --session-id $agentSessionId';
+      }
+      // Reopen: resume the exact id; fall back to most-recent if we never minted
+      // one (e.g. a pre-upgrade persisted session).
+      return agentSessionId == null
+          ? '${prefix}claude --continue'
+          : '${prefix}claude --resume $agentSessionId';
+    }
+    // codex: bare on first launch, newest-in-cwd on reopen.
+    return resume ? '${prefix}codex resume --last' : '${prefix}codex';
+  }
+
   void start() {
     if (_started) return;
     _started = true;
     final shell = Platform.environment['SHELL'] ?? '/bin/sh';
     // Empty command = a plain interactive login shell (typeable + scrollable);
-    // otherwise run the agent command and let the shell exit when it does.
-    final args = command.isEmpty ? const ['-i', '-l'] : ['-i', '-c', command];
+    // otherwise run the (resolved) agent command and let the shell exit with it.
+    final cmd = _resolvedCommand();
+    final args = cmd.isEmpty ? const ['-i', '-l'] : ['-i', '-c', cmd];
     final pty = Pty.start(
       shell,
       arguments: args,
@@ -271,12 +322,16 @@ class TerminalPane extends StatefulWidget {
   // session's input. Null hides the menu entries.
   final void Function(String fromId, String targetId, String text)?
   onSendToPeer;
+  // onSendToOnline(text): hand the selection to the host's "发送到在线用户" flow
+  // (pick a remote user + their session). Null hides that menu entry.
+  final void Function(String text)? onSendToOnline;
   const TerminalPane({
     super.key,
     required this.session,
     this.same = const [],
     this.others = const [],
     this.onSendToPeer,
+    this.onSendToOnline,
   });
 
   @override
@@ -339,13 +394,24 @@ class _TerminalPaneState extends State<TerminalPane> {
     snack(context, label != null ? '已发送到 $label' : '已发送');
   }
 
+  // _sendSelectionToOnline hands the current selection to the host's
+  // "发送到在线用户" picker (a remote user + their session). No-op without one.
+  void _sendSelectionToOnline() {
+    final sel = _controller.selection;
+    final cb = widget.onSendToOnline;
+    if (sel == null || cb == null) return;
+    cb(_terminal.buffer.getText(sel));
+    _controller.clearSelection();
+  }
+
   Future<void> _showMenu(Offset globalPos) async {
     final hasSelection = _controller.selection != null;
     final canSend =
         widget.onSendToPeer != null &&
         (widget.same.isNotEmpty || widget.others.isNotEmpty);
     // Send targets only when there's a selection to send (else just the editing
-    // rows). 复制/粘贴/全选 sit above the send section via extraTop.
+    // rows). 复制/粘贴/全选 sit above the send section via extraTop; 发送到在线
+    // 用户 sits below via extraBottom (also selection-gated).
     final v = await showGroupedSendMenu(
       context,
       globalPos,
@@ -369,6 +435,14 @@ class _TerminalPaneState extends State<TerminalPane> {
           label: '全选',
         ),
       ],
+      extraBottom: [
+        if (hasSelection && widget.onSendToOnline != null)
+          ccMenuItem(
+            value: 'online',
+            icon: Icons.cloud_upload_rounded,
+            label: '发送到在线用户…',
+          ),
+      ],
     );
     if (v == null || !mounted) return;
     switch (v) {
@@ -378,6 +452,8 @@ class _TerminalPaneState extends State<TerminalPane> {
         _paste();
       case 'selectAll':
         _selectAll();
+      case 'online':
+        _sendSelectionToOnline();
       default:
         if (v.startsWith('send:')) _sendSelectionTo(v.substring('send:'.length));
     }

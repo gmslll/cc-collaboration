@@ -328,6 +328,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       _remoteHost.broadcastNotify(title, body, sid: s.id);
       _resumeParkedFor(s); // a freed-up session can take a parked message
     };
+    // Right-click "发送到在线用户…" in any terminal routes the selection here.
+    onSendToOnline = _showSendToOnlineUser;
     _localBus.start();
     _connectRelayPresence();
     _loadParked();
@@ -837,8 +839,10 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   void _launch(String dir, String agent, String preLaunch) {
-    final pl = preLaunch.trim();
-    addTerm(dir, pl.isEmpty ? agent : '$pl && $agent');
+    // Pass agent + preLaunch structured (not pre-joined): addTerm mints a fixed
+    // session id for claude and TerminalSession rebuilds the actual command with
+    // the right resume binding, so a reopened tab returns to its conversation.
+    addTerm(dir, agent, agent: agent, preLaunch: preLaunch.trim());
   }
 
   // _openAgent launches a session in [dir] under project [p], then expands the
@@ -6684,7 +6688,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       header,
       ...ss.map((e) {
         final active = e.idx == activeTerm;
-        final agent = e.s.command.contains('codex') ? 'codex' : 'claude';
+        final agent = e.s.agentKind;
         final display = (e.s.name?.isNotEmpty ?? false)
             ? e.s.name!
             : '$agent · ${e.s.title}';
