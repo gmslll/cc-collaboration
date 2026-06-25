@@ -11,7 +11,7 @@ import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
 import '../widgets.dart';
 import 'diff_split.dart';
-import 'terminal_pane.dart' show ccTerminalTheme;
+import '../terminal_theme.dart';
 
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
@@ -19,10 +19,15 @@ import 'terminal_pane.dart' show ccTerminalTheme;
 class RemoteWorkspacePage extends StatefulWidget {
   final String relayUrl;
   final String token;
+  // onLogout, when set, adds a logout action to the AppBar. The phone leaves it
+  // null (logout lives in its 账号 tab); the web client passes it since this is
+  // the whole app there.
+  final Future<void> Function()? onLogout;
   const RemoteWorkspacePage({
     super.key,
     required this.relayUrl,
     required this.token,
+    this.onLogout,
   });
 
   @override
@@ -76,10 +81,64 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   String? _lastGitOpErr;
   String? _lastCfgErr;
+  DateTime? _lastNoticeAt; // newest notice already toasted (dedupes rebuilds)
   void _onClientChange() {
     if (!mounted) return;
     _lastGitOpErr = _toastIfNew(_c.gitOpError, _lastGitOpErr);
     _lastCfgErr = _toastIfNew(_c.cfgError, _lastCfgErr);
+    final n = _c.notices.isNotEmpty ? _c.notices.first : null;
+    if (n != null && n.at != _lastNoticeAt) {
+      _lastNoticeAt = n.at;
+      snack(context, '✅ ${n.title}：${n.body}', background: CcColors.ok);
+    }
+  }
+
+  // _showNotices opens the in-app "任务通知" history and clears the unread badge.
+  void _showNotices() {
+    _c.markNoticesRead();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: CcColors.panel,
+      builder: (_) => SafeArea(
+        child: _c.notices.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.all(28),
+                child: Center(
+                  child: Text('暂无通知', style: TextStyle(color: CcColors.muted)),
+                ),
+              )
+            : ListView(
+                shrinkWrap: true,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: Text(
+                      '通知',
+                      style: TextStyle(
+                        color: CcColors.text,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  for (final n in _c.notices)
+                    ListTile(
+                      leading: const Icon(
+                        Icons.check_circle_outline_rounded,
+                        color: CcColors.ok,
+                      ),
+                      title: Text(
+                        n.title,
+                        style: const TextStyle(color: CcColors.text),
+                      ),
+                      subtitle: Text(
+                        '${n.body} · ${relativeTime(n.at)}',
+                        style: const TextStyle(color: CcColors.muted),
+                      ),
+                    ),
+                ],
+              ),
+      ),
+    );
   }
 
   // Toast when an error field flips to a new value; returns the new "last seen".
@@ -97,10 +156,25 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           title: const Text('远程工作区'),
           actions: [
             IconButton(
+              tooltip: '通知',
+              icon: Badge(
+                isLabelVisible: _c.unreadNotices > 0,
+                label: Text('${_c.unreadNotices}'),
+                child: const Icon(Icons.notifications_none_rounded),
+              ),
+              onPressed: _showNotices,
+            ),
+            IconButton(
               tooltip: '刷新',
               icon: const Icon(Icons.refresh_rounded),
               onPressed: _c.connected ? _c.refresh : null,
             ),
+            if (widget.onLogout != null)
+              IconButton(
+                tooltip: '登出',
+                icon: const Icon(Icons.logout_rounded),
+                onPressed: widget.onLogout,
+              ),
           ],
         ),
         floatingActionButton: (_tab == 0 && _c.connected)

@@ -107,19 +107,43 @@ func (t *Tokens) Identities() []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
-// Middleware returns an http middleware that requires Authorization: Bearer
-// <token>, resolves it to an identity via r, and attaches the identity to the
+// tokenFromRequest pulls the bearer credential from the Authorization header.
+// When allowQuery is set it also accepts a ?access_token= query param — needed
+// only for the browser WebSocket handshake, which can't carry a custom header.
+// REST routes leave it off so tokens aren't invited into URLs (and access logs).
+func tokenFromRequest(req *http.Request, allowQuery bool) string {
+	const prefix = "Bearer "
+	if hdr := req.Header.Get("Authorization"); strings.HasPrefix(hdr, prefix) {
+		return strings.TrimPrefix(hdr, prefix)
+	}
+	if allowQuery {
+		return req.URL.Query().Get("access_token")
+	}
+	return ""
+}
+
+// Middleware requires Authorization: Bearer <token> (the path for all REST
+// routes), resolves it to an identity via r, and attaches the identity to the
 // request context (and to any installed WithIdentityHolder).
 func Middleware(r Resolver) func(http.Handler) http.Handler {
+	return middleware(r, false)
+}
+
+// MiddlewareAllowingQueryToken is Middleware that additionally accepts the token
+// as ?access_token=. Use it only for the WebSocket route (browsers can't set the
+// handshake header) so REST routes stay header-only.
+func MiddlewareAllowingQueryToken(r Resolver) func(http.Handler) http.Handler {
+	return middleware(r, true)
+}
+
+func middleware(r Resolver, allowQuery bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			hdr := req.Header.Get("Authorization")
-			const prefix = "Bearer "
-			if !strings.HasPrefix(hdr, prefix) {
+			raw := tokenFromRequest(req, allowQuery)
+			if raw == "" {
 				http.Error(w, "missing bearer token", http.StatusUnauthorized)
 				return
 			}
-			raw := strings.TrimPrefix(hdr, prefix)
 			id, ok := r.Resolve(req.Context(), raw)
 			if !ok {
 				http.Error(w, "invalid token", http.StatusUnauthorized)

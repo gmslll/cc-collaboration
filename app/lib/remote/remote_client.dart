@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:xterm/xterm.dart';
 
+import '../notifications.dart';
 import '../terminal_mouse.dart';
 import 'remote_channel.dart';
 
@@ -69,6 +70,16 @@ class RemoteBranch {
   RemoteBranch(this.name, this.current, this.remote, this.ahead, this.behind);
 }
 
+// A notification pushed from the desktop host (e.g. an agent finished a turn),
+// kept in a small in-app history so the phone can show it beyond the transient
+// OS banner.
+class RemoteNotice {
+  final String title;
+  final String body;
+  final DateTime at;
+  RemoteNotice(this.title, this.body) : at = DateTime.now();
+}
+
 // RemoteClient is the phone side of the remote workspace: over the relay (see
 // RemoteChannel for transport) it discovers the desktop host's terminal sessions
 // and project roots, drives terminals (xterm fed by network bytes, keystrokes
@@ -116,6 +127,15 @@ class RemoteClient extends RemoteChannel {
   bool diffLoading = false;
   String? diffError;
 
+  // Pushed notifications (newest first) + unread count for the AppBar bell.
+  final List<RemoteNotice> notices = [];
+  int unreadNotices = 0;
+  void markNoticesRead() {
+    if (unreadNotices == 0) return;
+    unreadNotices = 0;
+    notifyListeners();
+  }
+
   final Map<String, Terminal> _terminals = {};
   final Map<String, Timer> _resizeTimers = {}; // debounce phone resize per session
 
@@ -162,6 +182,14 @@ class RemoteClient extends RemoteChannel {
               (r['workspace'] as String?) ?? '',
             ),
         ];
+        notifyListeners();
+      case 'notify':
+        final title = (f['title'] as String?) ?? '通知';
+        final body = (f['body'] as String?) ?? '';
+        notices.insert(0, RemoteNotice(title, body));
+        if (notices.length > 50) notices.removeLast();
+        unreadNotices++;
+        Notifications.show(title, body); // OS banner (works in background too)
         notifyListeners();
       case 'term.output':
         final sid = f['sid'] as String?;

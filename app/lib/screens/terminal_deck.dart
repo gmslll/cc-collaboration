@@ -6,13 +6,18 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../local/local_bus.dart';
+import '../notifications.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'terminal_pane.dart';
 
-// _targets maps sessions to the (id,label) records the send menu consumes.
-List<SendTarget> _targets(List<TerminalSession> ss) =>
-    [for (final s in ss) (id: s.id, label: s.label)];
+// agentDoneNotice is the shared "会话完成" copy so the desktop banner and the
+// phone push read identically. Returns (title, body); the agent name follows the
+// codex/claude sniff used elsewhere (see RemoteHost._sessionItems).
+(String, String) agentDoneNotice(TerminalSession s) {
+  final agent = s.command.contains('codex') ? 'codex' : 'claude';
+  return ('AI 会话完成', '$agent · ${s.label} 已就绪，等待输入');
+}
 
 // TerminalHost owns the terminal-session list + active index + lifecycle, shared
 // by the inbox cockpit and the workspace cockpit (both add sessions on pickup /
@@ -36,9 +41,23 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // freshly launched agent is visible even if the bottom was showing Git.
   void Function()? onTermAdded;
 
+  // onAgentDone fires when an agent session finishes a turn (see
+  // TerminalSession.onDone). The mixin already pops the desktop banner; a host
+  // that can reach further (the workspace, via RemoteHost) sets this to also
+  // push the notification to a connected phone.
+  void Function(TerminalSession session)? onAgentDone;
+
+  // _onSessionDone is wired onto every session's onDone: show the local desktop
+  // banner, then let the host fan it out (phone push) via onAgentDone.
+  void _onSessionDone(TerminalSession s) {
+    final (title, body) = agentDoneNotice(s);
+    Notifications.show(title, body);
+    onAgentDone?.call(s);
+  }
+
   void addTerm(String workdir, String command) {
     setState(() {
-      terms.add(TerminalSession(workdir, command));
+      terms.add(TerminalSession(workdir, command)..onDone = _onSessionDone);
       activeTerm = terms.length - 1;
     });
     onTermsChanged?.call();
@@ -80,7 +99,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         final wd = (e['workdir'] ?? '').toString();
         final cmd = (e['command'] ?? '').toString();
         if (wd.isEmpty || cmd.isEmpty || !Directory(wd).existsSync()) continue;
-        final ts = TerminalSession(wd, cmd);
+        final ts = TerminalSession(wd, cmd)..onDone = _onSessionDone;
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
         restored.add(ts);
@@ -155,9 +174,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // "others" for the grouped send menu. Default: everything in one group (the
   // inbox cockpit has no project tree). The workspace cockpit overrides it to
   // put same-project sessions first and other-project sessions under 其他会话.
-  ({List<TerminalSession> same, List<TerminalSession> others}) sendGroupsFor(
+  ({List<SendTarget> same, List<SendTarget> others}) sendGroupsFor(
     String selfId,
-  ) => (same: peersExcluding(selfId), others: const []);
+  ) => (same: [for (final s in peersExcluding(selfId)) s.asTarget], others: const []);
 
   // localBusRegistry is the sessions.json payload LocalBus publishes so the CLI
   // can resolve a target by id or name.
@@ -263,8 +282,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           return TerminalPane(
             key: ValueKey(s),
             session: s,
-            same: _targets(g.same),
-            others: _targets(g.others),
+            same: g.same,
+            others: g.others,
             onSendToPeer: _sendToPeer,
           );
         }).toList(),
@@ -284,7 +303,7 @@ class TerminalDeck extends StatelessWidget {
   final VoidCallback? onCollapse;
   // Local point-to-point forwarding wiring (see TerminalHost); null/absent
   // hides the "发送到终端" context-menu entries.
-  final ({List<TerminalSession> same, List<TerminalSession> others}) Function(
+  final ({List<SendTarget> same, List<SendTarget> others}) Function(
     String selfId,
   )?
   groupsFor;
@@ -331,8 +350,8 @@ class TerminalDeck extends StatelessWidget {
                 return TerminalPane(
                   key: ValueKey(s),
                   session: s,
-                  same: g == null ? const [] : _targets(g.same),
-                  others: g == null ? const [] : _targets(g.others),
+                  same: g?.same ?? const [],
+                  others: g?.others ?? const [],
                   onSendToPeer: onSendToPeer,
                 );
               }).toList(),

@@ -41,8 +41,12 @@ class Notifications {
       const details = NotificationDetails(
         android: AndroidNotificationDetails('cc_handoff', 'cc-handoff',
             importance: Importance.high, priority: Priority.high),
-        iOS: DarwinNotificationDetails(),
-        macOS: DarwinNotificationDetails(),
+        // presentAlert/Banner/Sound so the banner shows even with the app in the
+        // foreground (iOS/macOS otherwise suppress notifications while active).
+        iOS: DarwinNotificationDetails(
+            presentAlert: true, presentBanner: true, presentSound: true),
+        macOS: DarwinNotificationDetails(
+            presentAlert: true, presentBanner: true, presentSound: true),
       );
       await _plugin.show(
           id: _id++, title: title, body: body, notificationDetails: details);

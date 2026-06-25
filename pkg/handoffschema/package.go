@@ -347,3 +347,24 @@ type LogAlert struct {
 	// supply it.
 	Sender string `json:"sender,omitempty"`
 }
+
+// SessionInfo is one open terminal session an app publishes to the relay so a
+// peer can target a specific remote session (POST /v1/sessions). Transient
+// presence-level data — the relay holds it in memory with a TTL, not the DB.
+type SessionInfo struct {
+	ID      string `json:"id"`                // the app's local session id (e.g. ts0)
+	Label   string `json:"label"`             // human label (name or derived title)
+	Project string `json:"project,omitempty"` // owning project name, for grouping
+	Workdir string `json:"workdir,omitempty"` // session working dir
+}
+
+// Message is a short text sent to a specific session on another user's machine
+// (POST /v1/messages). Delivered transiently as a message.deliver SSE event;
+// the recipient's app confirms before injecting it. From is stamped server-side
+// from the token.
+type Message struct {
+	Recipient string `json:"recipient,omitempty"`  // target identity (request only)
+	SessionID string `json:"session_id,omitempty"` // target session id on the recipient
+	Body      string `json:"body"`                 // the text to deliver
+	From      string `json:"from,omitempty"`       // sender identity (server-set)
+}

@@ -1,23 +1,20 @@
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
+import 'prefs_store.dart';
 
 // Prefs is a tiny key→bool store for UI layout state (panel collapse, section
-// fold) persisted to appSupport, so the cockpit layout is remembered across
-// launches. Loaded once at startup; reads are synchronous against the cache.
+// fold) persisted via a per-platform backend (appSupport JSON on desktop/mobile,
+// no-op on web), so the cockpit layout is remembered across launches. Loaded
+// once at startup; reads are synchronous against the cache.
 class Prefs {
   static final Map<String, dynamic> _data = {};
-  static String? _path;
 
   static Future<void> load() async {
     try {
-      _path = '${(await getApplicationSupportDirectory()).path}/ui_prefs.json';
-      final f = File(_path!);
-      if (await f.exists()) {
-        final m = jsonDecode(await f.readAsString());
-        if (m is Map) _data.addAll(m.cast<String, dynamic>());
-      }
+      final raw = await prefsLoadRaw();
+      if (raw == null) return;
+      final m = jsonDecode(raw);
+      if (m is Map) _data.addAll(m.cast<String, dynamic>());
     } catch (_) {}
   }
 
@@ -50,10 +47,8 @@ class Prefs {
   }
 
   static Future<void> _save() async {
-    final p = _path;
-    if (p == null) return;
     try {
-      await File(p).writeAsString(jsonEncode(_data));
+      await prefsSaveRaw(jsonEncode(_data));
     } catch (_) {}
   }
 }

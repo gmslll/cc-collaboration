@@ -230,6 +230,21 @@ class RemoteHost extends RemoteChannel {
     if (connected) send({'t': 'roots', 'to': 0, 'items': _rootItems()});
   }
 
+  // broadcastNotify pushes a one-shot notification (e.g. an agent finished a
+  // turn) to every connected phone. Host→client only — no onFrame case needed.
+  // Transient/fire-and-forget: a phone connecting later won't see it (unlike the
+  // sessions/roots snapshots, which replay on connect).
+  void broadcastNotify(String title, String body, {String? sid}) {
+    if (!connected) return;
+    send({
+      't': 'notify',
+      'to': 0,
+      'title': title,
+      'body': body,
+      'sid': ?sid,
+    });
+  }
+
   TerminalSession? _sessionById(String? sid) {
     if (sid == null) return null;
     for (final s in sessions()) {

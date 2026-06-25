@@ -1,11 +1,15 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../api/models.dart';
 import '../api/relay_client.dart';
+import '../api/sse.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
 import '../local/diff_parse.dart';
@@ -130,6 +134,20 @@ class _CodeLocation {
   String get label => line == null ? path : '$path:$line';
 }
 
+// _ParkedMessage is a cross-user message the user chose to handle "稍后" — kept
+// (and persisted) until injected later, manually or when the target session
+// next goes idle. [sessionId] is the local session the sender targeted.
+class _ParkedMessage {
+  final String from, sessionId, body;
+  _ParkedMessage(this.from, this.sessionId, this.body);
+  Map<String, dynamic> toJson() =>
+      {'from': from, 'session_id': sessionId, 'body': body};
+  _ParkedMessage.fromJson(Map j)
+      : from = (j['from'] ?? '').toString(),
+        sessionId = (j['session_id'] ?? '').toString(),
+        body = (j['body'] ?? '').toString();
+}
+
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
 // (left, primary) + a Workspace → Project → (Worktrees + Tasks) tree (right).
 // Launch a claude/codex session in any project or worktree; tap a task for its
@@ -176,6 +194,19 @@ class _WorkspacePageState extends State<WorkspacePage>
     deliver: deliverLocalMessage,
     readSnapshot: readSnapshot,
   );
+
+  // Relay presence: while the workspace is open we hold an SSE subscription (so
+  // peers see us online + their cross-user messages reach us) and republish our
+  // open sessions on a heartbeat so a peer can target a specific one.
+  StreamSubscription<SseEvent>? _relaySse;
+  Timer? _sessionHeartbeat;
+
+  // Parked ("稍后") cross-user messages: persisted across restarts, surfaced as a
+  // toolbar badge, injected later (manually, or auto when the target session
+  // next goes idle). _msgDialogOpen guards against stacked inject popups.
+  final List<_ParkedMessage> _parked = [];
+  bool _msgDialogOpen = false;
+
   void _onRemoteChange() {
     if (!mounted) return;
     final h = _remoteHost;
@@ -287,8 +318,18 @@ class _WorkspacePageState extends State<WorkspacePage>
     onTermsChanged = () {
       _remoteHost.broadcastSessions();
       _localBus.syncRegistry(); // keep sessions.json current for `msg list`
+      _publishSessions(); // keep the relay's session registry current too
+    };
+    // An agent finishing a turn pops a desktop banner (TerminalHost) and pushes
+    // the same "任务通知" to any connected phone (reuses the shared copy helper).
+    onAgentDone = (s) {
+      final (title, body) = agentDoneNotice(s);
+      _remoteHost.broadcastNotify(title, body, sid: s.id);
+      _resumeParkedFor(s); // a freed-up session can take a parked message
     };
     _localBus.start();
+    _connectRelayPresence();
+    _loadParked();
     // Any newly spawned session surfaces the bottom terminal panel (even if it
     // was showing Git) so the launched agent is visible. Restore doesn't go
     // through addTerm, so a restored Git view isn't hijacked on startup.
@@ -350,8 +391,377 @@ class _WorkspacePageState extends State<WorkspacePage>
     PluginManager.instance.removeListener(_onPluginsChanged);
     _remoteHost.dispose();
     _localBus.dispose();
+    _relaySse?.cancel();
+    _sessionHeartbeat?.cancel();
     disposeTerms();
     super.dispose();
+  }
+
+  // ----------------------------------------------- cross-user messaging ----
+
+  // _connectRelayPresence holds an SSE subscription (keeps us online for peers +
+  // receives their messages) and republishes our sessions on a heartbeat so a
+  // peer can target a specific one. No-op when the relay isn't configured.
+  // _relayConfigured is true when we have a relay URL + token to talk to.
+  bool get _relayConfigured =>
+      _cfg.relayUrl.isNotEmpty && _cfg.token.isNotEmpty;
+
+  void _connectRelayPresence() {
+    if (!_relayConfigured || _cfg.identity.isEmpty) return;
+    _relaySse = subscribeEvents(_cfg.relayUrl, _cfg.token, _cfg.identity)
+        .listen(_onRelayEvent, onError: (_) {});
+    _publishSessions();
+    _sessionHeartbeat = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _publishSessions(),
+    );
+  }
+
+  // _publishSessions advertises our open sessions (with their project) so peers
+  // can pick a specific one. Fire-and-forget; best-effort presence.
+  void _publishSessions() {
+    if (!_relayConfigured) return;
+    final list = [
+      for (final s in terms)
+        {
+          'id': s.id,
+          'label': s.label,
+          'project': _projectForFile(s.workdir)?.project.name ?? '',
+          'workdir': s.workdir,
+        },
+    ];
+    unawaited(widget.client.publishSessions(list).catchError((_) {}));
+  }
+
+  // _onRelayEvent acts on the cross-user message.deliver event (other relay
+  // events — handoffs/presence — are handled by the inbox page).
+  void _onRelayEvent(SseEvent ev) {
+    if (ev.type != 'message.deliver') return;
+    Map? m;
+    try {
+      final d = jsonDecode(ev.data);
+      if (d is Map) m = d;
+    } catch (_) {}
+    if (m == null) return;
+    final body = (m['body'] ?? '').toString();
+    if (body.isEmpty) return;
+    final from = (m['from'] ?? '').toString();
+    final sid = (m['session_id'] ?? '').toString();
+    // Don't stack popups: if one is already open, park the new arrival straight
+    // into the badge instead.
+    if (_msgDialogOpen) {
+      _park(from, sid, body);
+    } else {
+      _showIncomingMessage(from, sid, body);
+    }
+  }
+
+  // _showIncomingMessage asks the user to confirm (and pick the target session)
+  // before injecting a peer's text — cross-user content never lands in a session
+  // unprompted. Default target = the session the sender picked, else the active.
+  Future<void> _showIncomingMessage(String from, String sid, String body) async {
+    if (!mounted) return;
+    if (terms.isEmpty) {
+      _snack('$from 发来内容,但当前没有会话可注入');
+      return;
+    }
+    var target =
+        sessionById(sid) ?? terms[activeTerm.clamp(0, terms.length - 1)];
+    _msgDialogOpen = true;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Text('$from 发来内容'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('注入到会话:'),
+                DropdownButton<TerminalSession>(
+                  value: target,
+                  isExpanded: true,
+                  items: [
+                    for (final s in terms)
+                      DropdownMenuItem(value: s, child: Text(s.label)),
+                  ],
+                  onChanged: (v) => setSt(() {
+                    if (v != null) target = v;
+                  }),
+                ),
+                const SizedBox(height: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: SingleChildScrollView(
+                    child: Text(body, style: CcType.code(size: 12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'ignore'),
+              child: const Text('忽略'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'park'),
+              child: const Text('稍后'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'inject'),
+              child: const Text('注入'),
+            ),
+          ],
+        ),
+      ),
+    );
+    _msgDialogOpen = false;
+    switch (result) {
+      case 'inject':
+        target.pasteText('[来自 $from · 远程] $body', submit: false);
+        _snack('已注入到 ${target.label}');
+      case 'park':
+        _park(from, sid, body);
+    }
+  }
+
+  // _park stashes a cross-user message for later; surfaced via the toolbar badge.
+  void _park(String from, String sid, String body) {
+    setState(() => _parked.add(_ParkedMessage(from, sid, body)));
+    _saveParked();
+    _snack('已挂起,稍后处理');
+  }
+
+  Future<String> _parkedPath() async =>
+      '${(await getApplicationSupportDirectory()).path}/parked_messages.json';
+
+  Future<void> _loadParked() async {
+    try {
+      final f = File(await _parkedPath());
+      if (!await f.exists()) return;
+      final data = jsonDecode(await f.readAsString());
+      if (data is! List || !mounted) return;
+      setState(() {
+        _parked
+          ..clear()
+          ..addAll(data.whereType<Map>().map(_ParkedMessage.fromJson));
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveParked() async {
+    try {
+      await File(await _parkedPath())
+          .writeAsString(jsonEncode([for (final m in _parked) m.toJson()]));
+    } catch (_) {}
+  }
+
+  // _resumeParkedFor pops the inject confirm for the first message parked for a
+  // session that just went idle — unless a dialog is already open.
+  void _resumeParkedFor(TerminalSession s) {
+    if (_msgDialogOpen) return;
+    final i = _parked.indexWhere((m) => m.sessionId == s.id);
+    if (i < 0) return;
+    final m = _parked[i];
+    setState(() => _parked.removeAt(i));
+    _saveParked();
+    _showIncomingMessage(m.from, m.sessionId, m.body);
+  }
+
+  // _showParkedList lets the user inject (处理) or discard (忽略) parked messages
+  // at any time from the toolbar badge.
+  Future<void> _showParkedList() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Text('待处理 (${_parked.length})'),
+          content: SizedBox(
+            width: 460,
+            child: _parked.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Text('没有待处理的消息'),
+                  )
+                : ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final m in List.of(_parked))
+                        ListTile(
+                          dense: true,
+                          title: Text(
+                            '${m.from} → '
+                            '${sessionById(m.sessionId)?.label ?? m.sessionId}',
+                          ),
+                          subtitle: Text(
+                            m.body.split('\n').first,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextButton(
+                                onPressed: () {
+                                  setState(() => _parked.remove(m));
+                                  _saveParked();
+                                  Navigator.pop(ctx);
+                                  _showIncomingMessage(m.from, m.sessionId, m.body);
+                                },
+                                child: const Text('处理'),
+                              ),
+                              IconButton(
+                                tooltip: '忽略',
+                                visualDensity: VisualDensity.compact,
+                                icon: const Icon(Icons.close_rounded, size: 16),
+                                onPressed: () {
+                                  setState(() => _parked.remove(m));
+                                  setSt(() {});
+                                  _saveParked();
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // _showSendToOnlineUser sends [text] to a specific session of a chosen online
+  // user: pick a user → load their published sessions → pick one → send.
+  Future<void> _showSendToOnlineUser(String text) async {
+    if (text.trim().isEmpty) {
+      _snack('没有可发送的内容');
+      return;
+    }
+    if (!_relayConfigured) {
+      _snack('未配置 relay,无法发给在线用户');
+      return;
+    }
+    List<OnlineUser> users;
+    try {
+      users = (await widget.client.onlineUsers())
+          .where((u) => u.online && u.identity != _cfg.identity)
+          .toList();
+    } catch (e) {
+      _snack('获取在线用户失败:${errorText(e)}');
+      return;
+    }
+    if (!mounted) return;
+    if (users.isEmpty) {
+      _snack('当前没有其它在线用户');
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        String? selected;
+        List<RemoteSession>? sessions; // null = 未加载
+        var loading = false;
+        return StatefulBuilder(
+          builder: (ctx, setSt) {
+            Future<void> pickUser(String identity) async {
+              setSt(() {
+                selected = identity;
+                sessions = null;
+                loading = true;
+              });
+              try {
+                sessions = await widget.client.userSessions(identity);
+              } catch (_) {
+                sessions = const [];
+              } finally {
+                setSt(() => loading = false);
+              }
+            }
+
+            Future<void> send(RemoteSession s) async {
+              Navigator.pop(ctx);
+              try {
+                await widget.client.sendMessage(selected!, s.id, text);
+                _snack('已发送到 $selected · ${s.label},等待对方确认');
+              } catch (e) {
+                _snack('发送失败:${errorText(e)}');
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('发送到在线用户'),
+              content: SizedBox(
+                width: 440,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('在线用户:'),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final u in users)
+                          ChoiceChip(
+                            label: Text(u.identity),
+                            selected: selected == u.identity,
+                            onSelected: (_) => pickUser(u.identity),
+                          ),
+                      ],
+                    ),
+                    const Divider(),
+                    if (selected == null)
+                      const Text('选择一个用户查看其会话')
+                    else if (loading)
+                      const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else if ((sessions ?? const []).isEmpty)
+                      const Text('该用户当前没有可发送的会话')
+                    else
+                      Flexible(
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: [
+                            for (final s in sessions!)
+                              ListTile(
+                                dense: true,
+                                leading:
+                                    const Icon(Icons.terminal_rounded, size: 16),
+                                title: Text(s.label),
+                                subtitle:
+                                    s.project.isEmpty ? null : Text(s.project),
+                                onTap: () => send(s),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   // ---------------------------------------------------------------- data ----
@@ -1475,17 +1885,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   // relative to [sourcePath] (a session's workdir or an open file's path),
   // excluding [excludeId]. Powers the grouped "发送到会话" menus: same-project
   // sessions inline, others under 其他会话. Source with no project → all "others".
-  ({List<TerminalSession> same, List<TerminalSession> others}) _sendGroupsFor(
+  ({List<SendTarget> same, List<SendTarget> others}) _sendGroupsFor(
     String sourcePath, {
     String? excludeId,
   }) {
     final srcProj = _projectForFile(sourcePath)?.project.path;
-    final same = <TerminalSession>[];
-    final others = <TerminalSession>[];
+    final same = <SendTarget>[];
+    final others = <SendTarget>[];
     for (final s in terms) {
       if (s.id == excludeId) continue;
       final sp = _projectForFile(s.workdir)?.project.path;
-      (srcProj != null && sp == srcProj ? same : others).add(s);
+      (srcProj != null && sp == srcProj ? same : others).add(s.asTarget);
     }
     return (same: same, others: others);
   }
@@ -1493,11 +1903,16 @@ class _WorkspacePageState extends State<WorkspacePage>
   // sendGroupsFor (overriding the flat default) groups a terminal's send targets
   // by project: same-project siblings first, other-project sessions under 其他会话.
   @override
-  ({List<TerminalSession> same, List<TerminalSession> others}) sendGroupsFor(
+  ({List<SendTarget> same, List<SendTarget> others}) sendGroupsFor(
     String selfId,
   ) {
     final self = sessionById(selfId);
-    if (self == null) return (same: peersExcluding(selfId), others: const []);
+    if (self == null) {
+      return (
+        same: [for (final s in peersExcluding(selfId)) s.asTarget],
+        others: const [],
+      );
+    }
     return _sendGroupsFor(self.workdir, excludeId: selfId);
   }
 
@@ -1513,17 +1928,25 @@ class _WorkspacePageState extends State<WorkspacePage>
       return;
     }
     final g = _sendGroupsFor(f.path);
-    if (g.same.isEmpty && g.others.isEmpty) {
-      _snack('当前没有其它会话可发送');
-      return;
-    }
     final v = await showGroupedSendMenu(
       context,
       globalPos,
-      same: [for (final s in g.same) (id: s.id, label: s.label)],
-      others: [for (final s in g.others) (id: s.id, label: s.label)],
+      same: g.same,
+      others: g.others,
+      extraBottom: [
+        ccMenuItem(
+          value: 'online',
+          icon: Icons.cloud_upload_rounded,
+          label: '发送到在线用户…',
+        ),
+      ],
     );
-    if (v == null || !mounted || !v.startsWith('send:')) return;
+    if (v == null || !mounted) return;
+    if (v == 'online') {
+      _showSendToOnlineUser(text);
+      return;
+    }
+    if (!v.startsWith('send:')) return;
     final target = sessionById(v.substring('send:'.length));
     if (target == null) return;
     target.pasteText('[来自文件 ${f.path.split('/').last}] $text', submit: false);
@@ -1849,6 +2272,42 @@ class _WorkspacePageState extends State<WorkspacePage>
             '${terms.length} sessions',
             style: CcType.code(size: 11.5, color: CcColors.subtle),
           ),
+          if (_parked.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: '待处理消息 (${_parked.length})',
+              visualDensity: VisualDensity.compact,
+              onPressed: _showParkedList,
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.inbox_rounded, size: 18),
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 15),
+                      height: 15,
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: CcColors.accent,
+                        borderRadius: BorderRadius.circular(CcRadius.pill),
+                      ),
+                      child: Text(
+                        '${_parked.length}',
+                        style: CcType.code(
+                          size: 8.5,
+                          color: CcColors.bg,
+                          weight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -6233,6 +6692,10 @@ class _WorkspacePageState extends State<WorkspacePage>
               _renameSession(e.s);
             } else if (v == 'close') {
               closeTerm(e.idx);
+            } else if (v == 'send-online') {
+              _showSendToOnlineUser(
+                e.s.selectedText ?? e.s.renderSnapshot(_kForwardLines),
+              );
             } else if (v.startsWith('send:')) {
               final to = sessionById(v.substring(5));
               if (to != null) _forwardSelection(e.s, to);
@@ -6260,6 +6723,12 @@ class _WorkspacePageState extends State<WorkspacePage>
                   icon: Icons.send_rounded,
                   label: '发送到「${q.label}」',
                 ),
+              const PopupMenuDivider(),
+              ccMenuItem(
+                value: 'send-online',
+                icon: Icons.cloud_upload_rounded,
+                label: '发送到在线用户…',
+              ),
             ];
           },
         );

@@ -743,13 +743,15 @@ List<PopupMenuEntry<String>> sendMenuEntries(
 // the chosen session id as 'send:<id>' (or one of [extraTop]'s values, or null).
 // Same-project targets are inline; picking "其他会话" cascades a second menu of
 // other-project targets — Flutter's showMenu has no native submenu. [extraTop]
-// rows (e.g. the terminal's copy/paste/全选) render above a divider.
+// rows (e.g. the terminal's copy/paste/全选) render above a divider; [extraBottom]
+// rows (e.g. "发送到在线用户…") render below the local targets.
 Future<String?> showGroupedSendMenu(
   BuildContext context,
   Offset globalPos, {
   required List<SendTarget> same,
   required List<SendTarget> others,
   List<PopupMenuEntry<String>> extraTop = const [],
+  List<PopupMenuEntry<String>> extraBottom = const [],
 }) async {
   final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
   RelativeRect posAt(Offset p) =>
@@ -760,8 +762,12 @@ Future<String?> showGroupedSendMenu(
     position: posAt(globalPos),
     items: [
       ...extraTop,
-      if (extraTop.isNotEmpty && sendItems.isNotEmpty) const PopupMenuDivider(),
+      if (extraTop.isNotEmpty && (sendItems.isNotEmpty || extraBottom.isNotEmpty))
+        const PopupMenuDivider(),
       ...sendItems,
+      if (extraBottom.isNotEmpty && sendItems.isNotEmpty)
+        const PopupMenuDivider(),
+      ...extraBottom,
     ],
   );
   if (v != 'send-others') return v; // 'send:<id>', an extraTop value, or null

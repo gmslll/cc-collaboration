@@ -195,6 +195,17 @@ class OnlineUser {
         online = j['online'] == true;
 }
 
+// RemoteSession is one open terminal session another user published to the relay
+// (GET /v1/users/{identity}/sessions) — a target for cross-user "发送到会话".
+class RemoteSession {
+  final String id, label, project, workdir;
+  RemoteSession.fromJson(Map<String, dynamic> j)
+      : id = _s(j['id']),
+        label = _s(j['label']),
+        project = _s(j['project']),
+        workdir = _s(j['workdir']);
+}
+
 class MachineToken {
   final String id, label;
   final DateTime createdAt;

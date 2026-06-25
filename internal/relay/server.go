@@ -32,6 +32,14 @@ import (
 //go:embed ui/*
 var uiFiles embed.FS
 
+// appFiles is the Flutter Web client bundle (the browser version of the phone's
+// remote workspace), served at /app/. Built with
+// `flutter build web -t lib/main_web.dart --base-href /app/` and copied here.
+// `all:` so nested assets/ and canvaskit/ dirs are embedded too.
+//
+//go:embed all:app
+var appFiles embed.FS
+
 type Server struct {
 	Store  *store.Store
 	Tokens *auth.Tokens
@@ -40,6 +48,11 @@ type Server struct {
 	// and a phone client) for the remote-workspace feature. Lazily created in
 	// Handler if nil. In-memory/transient like the Hub.
 	WsBroker *wsBroker
+	// Sessions holds each identity's published terminal sessions so a peer can
+	// target a specific remote session (POST /v1/sessions, GET
+	// /v1/users/{id}/sessions). Lazily created in Handler; in-memory/transient,
+	// TTL'd and cleared on presence offline.
+	Sessions *sessionRegistry
 	// SeedAdmins are operator-configured admin identities (from -admins /
 	// RELAY_ADMINS). They are always admin even without a users row, so an
 	// operator can never be locked out. Effective admin = SeedAdmins ∪
@@ -57,12 +70,16 @@ func (s *Server) Handler() http.Handler {
 	if s.WsBroker == nil {
 		s.WsBroker = newWsBroker()
 	}
+	if s.Sessions == nil {
+		s.Sessions = newSessionRegistry()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("/", s.uiIndex)
 	mux.HandleFunc("/ui", s.uiIndex)
 	mux.Handle("GET /ui/", http.FileServerFS(uiFiles))
+	mux.Handle("GET /app/", http.FileServerFS(appFiles))
 
 	api := http.NewServeMux()
 	api.HandleFunc("POST /v1/handoffs", s.submit)
@@ -79,9 +96,11 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/handoffs/{id}/attachments/{name}", s.putAttachment)
 	api.HandleFunc("GET /v1/handoffs/{id}/attachments/{name}", s.getAttachment)
 	api.HandleFunc("GET /v1/events", s.events)
-	api.HandleFunc("GET /v1/ws", s.ws)
 	api.HandleFunc("GET /v1/users/online", s.listOnlineUsers)
 	api.HandleFunc("POST /v1/alerts", s.postAlert)
+	api.HandleFunc("POST /v1/sessions", s.postSessions)
+	api.HandleFunc("GET /v1/users/{identity}/sessions", s.getUserSessions)
+	api.HandleFunc("POST /v1/messages", s.postMessage)
 	// Account endpoints (authenticated): logout / whoami / change own password.
 	api.HandleFunc("POST /v1/logout", s.logout)
 	api.HandleFunc("GET /v1/me", s.me)
@@ -113,6 +132,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/login", s.login)
 
 	resolver := &bearerResolver{store: s.Store, seed: s.Tokens}
+	// /v1/ws needs query-param auth (browsers can't set the WS handshake header),
+	// so register it on the outer mux with a query-allowing wrapper — the more
+	// specific pattern wins, leaving the /v1/ catch-all header-only. Mirrors the
+	// /v1/login special-case above.
+	mux.Handle("GET /v1/ws",
+		auth.MiddlewareAllowingQueryToken(resolver)(http.HandlerFunc(s.ws)))
 	mux.Handle("/v1/", auth.Middleware(resolver)(api))
 	return logging(mux)
 }
@@ -120,6 +145,10 @@ func (s *Server) Handler() http.Handler {
 // broadcastPresence is wired as Hub.OnPresenceChange. Fans a user.online /
 // user.offline event out to every OTHER subscribed identity.
 func (s *Server) broadcastPresence(identity string, online bool) {
+	// A user that just went fully offline has no live sessions to target.
+	if !online && s.Sessions != nil {
+		s.Sessions.clear(identity)
+	}
 	eventType := sse.EventTypeUserOnline
 	if !online {
 		eventType = sse.EventTypeUserOffline

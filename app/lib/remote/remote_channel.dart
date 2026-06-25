@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'ws_connect.dart';
 
 // RemoteChannel is the shared transport for both ends of the remote workspace:
 // it owns the relay WebSocket (connect, auth, auto-reconnect), the /v1/ws URL
@@ -18,13 +20,13 @@ abstract class RemoteChannel extends ChangeNotifier {
     required this.role,
   });
 
-  WebSocket? _ws;
+  WebSocketChannel? _ch;
   int? _connId; // this connection's id (from the relay's _hello)
   bool _running = false;
   bool _disposed = false;
   String? lastError;
 
-  bool get connected => _ws != null;
+  bool get connected => _ch != null;
   bool get active => _running; // sharing/connecting requested (vs. wire state)
 
   void start() {
@@ -36,8 +38,8 @@ abstract class RemoteChannel extends ChangeNotifier {
 
   void stop() {
     _running = false;
-    _ws?.close();
-    _ws = null;
+    _ch?.sink.close();
+    _ch = null;
     _connId = null;
     _notify();
   }
@@ -46,7 +48,7 @@ abstract class RemoteChannel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _running = false;
-    _ws?.close();
+    _ch?.sink.close();
     super.dispose();
   }
 
@@ -56,7 +58,7 @@ abstract class RemoteChannel extends ChangeNotifier {
   // a full ping interval to notice. No-op when not running / not connected.
   void kick() {
     if (!_running) return;
-    _ws?.close();
+    _ch?.sink.close();
   }
 
   // --- subclass hooks ---
@@ -68,11 +70,11 @@ abstract class RemoteChannel extends ChangeNotifier {
   // send writes a frame, stamping the sender's connId as `from` so a peer can
   // reply directly (`to`); the relay routes by `to`/role and ignores the rest.
   void send(Map<String, dynamic> frame) {
-    final ws = _ws;
-    if (ws == null) return;
+    final ch = _ch;
+    if (ch == null) return;
     frame['from'] = _connId ?? 0;
     try {
-      ws.add(jsonEncode(frame));
+      ch.sink.add(jsonEncode(frame));
     } catch (_) {}
   }
 
@@ -96,25 +98,21 @@ abstract class RemoteChannel extends ChangeNotifier {
     while (_running) {
       lastError = null;
       try {
-        final ws = await WebSocket.connect(
-          _uri(relayUrl, role).toString(),
-          headers: {'Authorization': 'Bearer $token'},
-        );
-        // Heartbeat: send a WS ping every 20s. This keeps the connection warm
-        // (mobile NAT/proxies silently drop idle TCP) AND lets dart:io detect a
-        // dead peer — when a ping goes unanswered it closes the socket with an
-        // error, ending the stream below so the loop reconnects. Without it a
-        // half-open socket hangs in `await for` forever and never recovers.
-        ws.pingInterval = const Duration(seconds: 20);
-        _ws = ws;
+        final ch = connectWs(_uri(relayUrl, role), token);
+        // ready completes on a successful handshake (or throws → reconnect). On
+        // native the channel also pings every 20s so a dead peer is detected
+        // (the stream ends, the loop reconnects) — mobile NAT/proxies silently
+        // drop idle TCP; on web the browser owns keepalive. See ws_connect.dart.
+        await ch.ready;
+        _ch = ch;
         _notify();
-        await for (final msg in ws) {
+        await for (final msg in ch.stream) {
           if (msg is String) _dispatch(msg);
         }
       } catch (e) {
         lastError = '$e';
       }
-      _ws = null;
+      _ch = null;
       _connId = null;
       onDisconnected();
       _notify();

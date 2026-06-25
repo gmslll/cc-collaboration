@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
@@ -9,6 +10,7 @@ import 'package:xterm/xterm.dart';
 
 import '../local/cli.dart';
 import '../local/local_bus.dart';
+import '../terminal_theme.dart';
 import '../terminal_mouse.dart';
 import '../widgets.dart';
 
@@ -44,6 +46,24 @@ class TerminalSession {
   // output so a remote phone client can mirror it. Null when nobody's watching.
   void Function(String chunk)? remoteSink;
 
+  // --- "agent finished a turn" detection ----------------------------------
+  //
+  // claude/codex stream continuously (animated spinner) while working and stop
+  // when they pause for input — usually ringing the terminal bell (BEL) as they
+  // do. We watch for that transition (bell, else output going idle) and fire
+  // [onDone] once per turn, so the host can pop a "会话完成" notification. Only
+  // armed for isAgent sessions, and only after the user has actually given the
+  // agent something to do (_sawInput) so the initial idle prompt doesn't ping.
+  void Function(TerminalSession session)? onDone;
+  Timer? _idleTimer;
+  DateTime? _busySince; // start of the current output burst (a "turn")
+  bool _doneAnnounced = false; // onDone already fired for this turn
+  bool _sawInput = false; // user has typed/sent into this session at least once
+  bool _belSeen = false; // a BEL arrived during the current turn
+  static const Duration _idleGap = Duration(seconds: 4); // output-stop → done
+  static const Duration _belDelay = Duration(milliseconds: 600); // settle after bell
+  static const Duration _minBusy = Duration(milliseconds: 1200); // ignore tiny redraws
+
   // Rolling buffer of recent raw PTY output so a phone connecting mid-session
   // can replay it and see the current screen / scrollback instead of a blank
   // terminal until the next redraw. Kept always (even with no watcher) and
@@ -77,6 +97,9 @@ class TerminalSession {
 
   // label is what the UI shows: the user-given name, else the derived title.
   String get label => (name != null && name!.isNotEmpty) ? name! : title;
+
+  // asTarget is this session as a send-menu target (id + label).
+  SendTarget get asTarget => (id: id, label: label);
 
   // isAgent reports whether this session runs an AI agent TUI (claude/codex),
   // sniffed from the launch command — the same convention used in
@@ -136,11 +159,15 @@ class TerminalSession {
           terminal.write(chunk);
           _appendBacklog(chunk);
           remoteSink?.call(chunk);
+          if (isAgent) _markActivity(chunk);
         });
     pty.exitCode.then(
       (code) => terminal.write('\r\n\x1b[90m[已退出: $code]\x1b[0m\r\n'),
     );
-    terminal.onOutput = (data) => pty.write(const Utf8Encoder().convert(data));
+    terminal.onOutput = (data) {
+      _sawInput = true; // local keystrokes count as "the user gave it work"
+      pty.write(const Utf8Encoder().convert(data));
+    };
     // A phone mirroring this session (remoteSink set) owns the PTY size; don't
     // let local (Mac window) resizes fight it — last-writer-wins between the
     // wide Mac and the narrow phone is what garbles the mirror.
@@ -174,7 +201,43 @@ class TerminalSession {
     return env;
   }
 
-  void sendText(String s) => _pty?.write(const Utf8Encoder().convert(s));
+  void sendText(String s) {
+    _sawInput = true; // remote keys / delivered messages also arm the detector
+    _pty?.write(const Utf8Encoder().convert(s));
+  }
+
+  // _markActivity feeds the turn detector one output chunk: output after a just-
+  // announced turn opens a fresh turn; a BEL is the strong "awaiting input" cue;
+  // and every chunk (re)arms the idle timer that fires _fireDone once output
+  // stops. The window shortens to _belDelay once a bell has been seen.
+  void _markActivity(String chunk) {
+    if (_doneAnnounced) {
+      _doneAnnounced = false; // new output → a new turn began
+      _busySince = null;
+      _belSeen = false;
+    }
+    _busySince ??= DateTime.now();
+    // Stop scanning the chunk for BEL once we've seen one this turn.
+    if (!_belSeen && chunk.contains('\x07')) _belSeen = true;
+    _idleTimer?.cancel();
+    _idleTimer = Timer(_belSeen ? _belDelay : _idleGap, _fireDone);
+  }
+
+  // _fireDone announces a finished turn at most once. It skips turns the user
+  // never kicked off (_sawInput) and trivial redraws (too short, no bell) so a
+  // notification means "the thing you asked for is done / waiting on you".
+  void _fireDone() {
+    if (_doneAnnounced || !_sawInput) return;
+    final since = _busySince;
+    final lasted = since == null
+        ? Duration.zero
+        : DateTime.now().difference(since);
+    if (!_belSeen && lasted < _minBusy) return;
+    _doneAnnounced = true;
+    _busySince = null;
+    _belSeen = false;
+    onDone?.call(this);
+  }
 
   // pasteText injects [s] as one bracketed-paste block (ESC[200~ … ESC[201~) so
   // a full-screen TUI inserts it atomically — no per-newline submit, no control-
@@ -201,6 +264,7 @@ class TerminalSession {
   }
 
   void dispose() {
+    _idleTimer?.cancel();
     controller.dispose();
     _pty?.kill();
   }
@@ -344,30 +408,5 @@ class _TerminalPaneState extends State<TerminalPane> {
   }
 }
 
-// Terminal palette aligned with the app: indigo cursor, our bg/fg, and semantic
-// red/green/amber ANSI hues (VS Code-derived) so agent TUIs look cohesive.
-const ccTerminalTheme = TerminalTheme(
-  cursor: Color(0xFF818CF8),
-  selection: Color(0x55818CF8),
-  foreground: Color(0xFFE6EAF2),
-  background: Color(0xFF0A0E1A),
-  black: Color(0xFF1E2536),
-  red: Color(0xFFF87171),
-  green: Color(0xFF34D399),
-  yellow: Color(0xFFFBBF24),
-  blue: Color(0xFF60A5FA),
-  magenta: Color(0xFFC084FC),
-  cyan: Color(0xFF22D3EE),
-  white: Color(0xFFE5E5E5),
-  brightBlack: Color(0xFF5E6A82),
-  brightRed: Color(0xFFFCA5A5),
-  brightGreen: Color(0xFF6EE7B7),
-  brightYellow: Color(0xFFFDE68A),
-  brightBlue: Color(0xFF93C5FD),
-  brightMagenta: Color(0xFFD8B4FE),
-  brightCyan: Color(0xFF67E8F9),
-  brightWhite: Color(0xFFFFFFFF),
-  searchHitBackground: Color(0xFFFFFF2B),
-  searchHitBackgroundCurrent: Color(0xFF31FF26),
-  searchHitForeground: Color(0xFF000000),
-);
+// ccTerminalTheme moved to ../terminal_theme.dart (xterm-only) so the web client
+// can reuse it without pulling terminal_pane.dart's flutter_pty/dart:io deps.

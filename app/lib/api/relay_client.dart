@@ -81,6 +81,29 @@ class RelayClient {
         .toList();
   }
 
+  // --- cross-user session messaging ---
+
+  // publishSessions advertises this app's currently-open terminal sessions so
+  // peers can target a specific one. Transient on the relay (TTL'd).
+  Future<void> publishSessions(List<Map<String, dynamic>> sessions) =>
+      _dio.post('/v1/sessions', data: {'sessions': sessions});
+
+  // userSessions fetches another user's currently-open sessions (empty if
+  // they're offline / haven't published).
+  Future<List<RemoteSession>> userSessions(String identity) async {
+    final r =
+        await _dio.get('/v1/users/${Uri.encodeComponent(identity)}/sessions');
+    return _asList(r.data, 'sessions')
+        .map((e) => RemoteSession.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  // sendMessage delivers [body] to a specific session on [recipient]'s machine
+  // (transient; the recipient's app confirms before injecting).
+  Future<void> sendMessage(String recipient, String sessionId, String body) =>
+      _dio.post('/v1/messages',
+          data: {'recipient': recipient, 'session_id': sessionId, 'body': body});
+
   Future<List<Project>> projects() async {
     final r = await _dio.get('/v1/projects');
     return _asList(r.data, 'projects')

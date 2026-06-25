@@ -37,6 +37,12 @@ const EventTypeUserOffline = "user.offline"
 // writes it as a triage prompt and optionally auto-launches the agent.
 const EventTypeLogAlert = "log.alert"
 
+// EventTypeMessageDeliver is published when a user sends a short text to a
+// specific session on another user's machine (POST /v1/messages). Pushed to the
+// recipient, whose app asks the user to confirm before injecting it. Transient,
+// like alerts — not persisted, no replay.
+const EventTypeMessageDeliver = "message.deliver"
+
 // subscriberBuffer caps per-subscriber backlog. A slow client can fall behind
 // and drop events; recovery happens via Last-Event-Id reconnect, so the buffer
 // only needs to absorb short bursts during a write to the wire.
