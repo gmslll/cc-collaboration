@@ -1,0 +1,218 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../plugins/format_plugin.dart';
+import '../plugins/plugin_manager.dart';
+import '../theme.dart';
+import '../widgets.dart';
+
+// Plugins management dialog: list the format plugins, show whether each tool is
+// installed on the host, let the user enable/disable them, and surface the
+// install command for missing tools.
+Future<void> showPluginsDialog(BuildContext context) => showDialog<void>(
+  context: context,
+  builder: (_) => Dialog(
+    backgroundColor: CcColors.panel,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 580, maxHeight: 620),
+      child: const _PluginsPane(),
+    ),
+  ),
+);
+
+class _PluginsPane extends StatefulWidget {
+  const _PluginsPane();
+
+  @override
+  State<_PluginsPane> createState() => _PluginsPaneState();
+}
+
+class _PluginsPaneState extends State<_PluginsPane> {
+  final _mgr = PluginManager.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _mgr.detectAll(); // refresh availability when the page opens
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 12, 10),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.extension_rounded,
+                size: 20,
+                color: CcColors.accentBright,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  '格式化插件',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+              IconButton(
+                tooltip: '重新检测',
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                onPressed: () => _mgr.detectAll(force: true),
+              ),
+              IconButton(
+                tooltip: '关闭',
+                icon: const Icon(Icons.close_rounded, size: 18),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Text(
+            '打开文件时按类型渲染 / 格式化。格式化器需要宿主机上已安装对应命令行工具(仅桌面本地生效)。',
+            style: TextStyle(color: CcColors.muted, fontSize: 12.5, height: 1.4),
+          ),
+        ),
+        const Divider(height: 1),
+        Flexible(
+          child: ListenableBuilder(
+            listenable: _mgr,
+            builder: (context, _) => ListView.separated(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: kFormatPlugins.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 2),
+              itemBuilder: (context, i) => _row(kFormatPlugins[i]),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _row(FormatPlugin p) {
+    final on = _mgr.enabled(p.id);
+    final avail = _mgr.available(p);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(
+              p.kind == PluginKind.renderer
+                  ? Icons.visibility_rounded
+                  : Icons.auto_fix_high_rounded,
+              size: 18,
+              color: on ? CcColors.accentBright : CcColors.subtle,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        p.name,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _extChips(p.exts),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                _status(p, avail),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Switch(
+            value: on,
+            onChanged: (v) => _mgr.setEnabled(p.id, v),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _extChips(Set<String> exts) {
+    final shown = exts.take(4).map((e) => '.$e').toList();
+    final extra = exts.length - shown.length;
+    return Wrap(
+      spacing: 4,
+      children: [
+        for (final e in shown) chip(e),
+        if (extra > 0) chip('+$extra'),
+      ],
+    );
+  }
+
+  Widget _status(FormatPlugin p, bool avail) {
+    if (p.builtIn) {
+      return Row(
+        children: [
+          statusDot(CcColors.ok, size: 7),
+          const SizedBox(width: 6),
+          const Text(
+            '内置 · 渲染预览',
+            style: TextStyle(color: CcColors.muted, fontSize: 12),
+          ),
+        ],
+      );
+    }
+    if (avail) {
+      return Row(
+        children: [
+          statusDot(CcColors.ok, size: 7),
+          const SizedBox(width: 6),
+          Text(
+            '已检测到 ${p.tool}',
+            style: const TextStyle(color: CcColors.muted, fontSize: 12),
+          ),
+        ],
+      );
+    }
+    final hint = p.installHint ?? '未安装';
+    return Row(
+      children: [
+        statusDot(CcColors.warning, size: 7),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            '未检测到 ${p.tool} · $hint',
+            style: const TextStyle(color: CcColors.warning, fontSize: 12),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (p.installCmd != null)
+          IconButton(
+            tooltip: '复制安装命令',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            icon: const Icon(Icons.copy_rounded, size: 14),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: p.installCmd!));
+              if (!mounted) return;
+              snack(context, '已复制安装命令');
+            },
+          ),
+      ],
+    );
+  }
+}

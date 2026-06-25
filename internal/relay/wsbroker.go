@@ -121,7 +121,13 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	if role != "host" {
 		role = "client"
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+		// permessage-deflate: terminal output (ANSI redraws, repeated text)
+		// compresses ~6-8x. dart:io clients already offer it by default, so this
+		// just enables negotiation; it's transparent to frame routing below.
+		CompressionMode: websocket.CompressionContextTakeover,
+	})
 	if err != nil {
 		return
 	}

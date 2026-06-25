@@ -12,6 +12,7 @@ import '../local/git.dart';
 import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../local/worktrees.dart';
+import '../plugins/plugin_manager.dart';
 import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -22,6 +23,7 @@ import 'editor_page.dart';
 import 'file_browser_page.dart';
 import 'github_pr_page.dart';
 import 'handoff_detail_view.dart';
+import 'plugins_page.dart';
 import 'repo_config_page.dart';
 import 'terminal_deck.dart';
 import 'terminal_pane.dart';
@@ -75,6 +77,7 @@ class _OpenFile {
   final List<FileDiff>? diffs; // non-null = a read-only diff tab
   final String? diffInitialPath; // file to select first inside the diff
   final GlobalKey<CodeEditorPaneState> key = GlobalKey<CodeEditorPaneState>();
+  bool previewMode = false; // .md tabs: rendered preview vs source
 
   _OpenFile(this.path, {this.line}) : diffs = null, diffInitialPath = null;
   _OpenFile.diff(this.path, this.diffs, {this.diffInitialPath}) : line = null;
@@ -276,6 +279,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     // through addTerm, so a restored Git view isn't hijacked on startup.
     onTermAdded = () => _setBottomTool(_BottomTool.terminal);
     _remoteHost.addListener(_onRemoteChange);
+    PluginManager.instance.detectAll();
+    PluginManager.instance.addListener(_onPluginsChanged);
     _loadTasks();
     // After restoring persisted sessions, expand the projects that own them so
     // the session tabs are visible in the tree.
@@ -290,6 +295,35 @@ class _WorkspacePageState extends State<WorkspacePage>
   ExpansibleController _ctlFor(String path) =>
       _proj.putIfAbsent(path, ExpansibleController.new);
 
+  // Format-plugin availability/enable changes (detection finishing, toggles in
+  // the plugins dialog) repaint the editor toolbar's 格式化 / 预览 affordances.
+  void _onPluginsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _formatActiveFile() async {
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) return;
+    final f = _codeFiles[_activeFile];
+    if (f.isDiff) return;
+    await f.key.currentState?.formatViaPlugin();
+  }
+
+  // 格式化 / 源码-预览 affordances for the active code tab (shared with the
+  // standalone EditorPage; they collapse to nothing when not applicable).
+  Widget _formatTabButton() => formatPluginButton(
+    path: _codeFiles[_activeFile].path,
+    onFormat: _formatActiveFile,
+  );
+
+  Widget _previewTabButton() {
+    final f = _codeFiles[_activeFile];
+    return previewToggleButton(
+      path: f.path,
+      previewMode: f.previewMode,
+      onToggle: () => setState(() => f.previewMode = !f.previewMode),
+    );
+  }
+
   @override
   void dispose() {
     _commitCtl.dispose();
@@ -298,6 +332,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     _workspaceFocus.dispose();
     _commitFocus.dispose();
     _remoteHost.removeListener(_onRemoteChange);
+    PluginManager.instance.removeListener(_onPluginsChanged);
     _remoteHost.dispose();
     _localBus.dispose();
     disposeTerms();
@@ -1674,6 +1709,12 @@ class _WorkspacePageState extends State<WorkspacePage>
             onPressed: _showShortcuts,
           ),
           _toolButton(
+            icon: Icons.extension_rounded,
+            tooltip: '格式化插件',
+            selected: false,
+            onPressed: () => showPluginsDialog(context),
+          ),
+          _toolButton(
             icon: Icons.refresh_rounded,
             tooltip: '刷新',
             selected: false,
@@ -2556,6 +2597,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                 onPressed: _showFindInCurrentFile,
               ),
               _activeFileActionsMenu(_codeFiles[_activeFile]),
+              _previewTabButton(),
+              _formatTabButton(),
               IconButton(
                 icon: const Icon(Icons.save_rounded, size: 17),
                 tooltip: '保存',
@@ -2887,10 +2930,11 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         );
       }
-      return CodeEditorPane(
-        key: f.key,
+      return PreviewableEditor(
         path: f.path,
+        editorKey: f.key,
         initialLine: f.line,
+        previewMode: f.previewMode,
         onDirtyChanged: (v) {
           if (!mounted) return;
           setState(() => f.dirty = v);

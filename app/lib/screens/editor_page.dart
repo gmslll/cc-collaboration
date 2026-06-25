@@ -24,8 +24,10 @@ import 'package:re_highlight/languages/yaml.dart';
 import 'package:re_highlight/re_highlight.dart';
 import 'package:re_highlight/styles/atom-one-dark.dart';
 
+import '../plugins/plugin_manager.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../widgets/markdown_view.dart';
 
 class CodeEditorPane extends StatefulWidget {
   final String path;
@@ -59,10 +61,7 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   String get text => _ctl?.text ?? '';
   int get lineCount => text.isEmpty ? 0 : text.split('\n').length;
   String get eol => _crlf ? 'CRLF' : 'LF';
-  String get languageLabel {
-    final ext = widget.path.split('.').last.toLowerCase();
-    return _languageLabelForExt(ext);
-  }
+  String get languageLabel => _languageLabelForExt(fileExtOf(widget.path));
 
   int? get fileBytes {
     try {
@@ -165,6 +164,48 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     }
   }
 
+  String get fileExt => fileExtOf(widget.path);
+
+  // Re-read the file from disk into a fresh controller (after an external tool
+  // such as a formatter rewrote it), keeping the cursor near the same line.
+  Future<void> reloadFromDisk() async {
+    final keepLine = _ctl?.selection.startIndex;
+    try {
+      final content = await File(widget.path).readAsString();
+      _crlf = content.contains('\r\n');
+      _ctl?.removeListener(_onChange);
+      _ctl?.dispose();
+      _ctl = CodeLineEditingController.fromText(content)..addListener(_onChange);
+      _original = _ctl!.text;
+      _dirty = false;
+      if (!mounted) return;
+      setState(() {});
+      widget.onDirtyChanged?.call(false);
+      if (keepLine != null && lineCount > 0) {
+        _ctl!.selection = CodeLineSelection.collapsed(
+          index: keepLine.clamp(0, lineCount - 1),
+          offset: 0,
+        );
+      }
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
+  }
+
+  // Run the enabled formatter plugin for this file type: flush pending edits,
+  // format in place on disk, then reload the reflowed result.
+  Future<void> formatViaPlugin() async {
+    if (PluginManager.instance.formatterFor(fileExt) == null) return;
+    try {
+      if (_dirty) await save();
+      await PluginManager.instance.format(widget.path);
+      await reloadFromDisk();
+      if (mounted) snack(context, '已格式化');
+    } catch (e) {
+      if (mounted) snack(context, '格式化失败: $e');
+    }
+  }
+
   @override
   void dispose() {
     _ctl?.dispose();
@@ -210,6 +251,24 @@ class EditorPage extends StatefulWidget {
 class _EditorPageState extends State<EditorPage> {
   final _editorKey = GlobalKey<CodeEditorPaneState>();
   bool _dirty = false;
+  bool _preview = false;
+
+  @override
+  void initState() {
+    super.initState();
+    PluginManager.instance.detectAll();
+    PluginManager.instance.addListener(_onPlugins);
+  }
+
+  @override
+  void dispose() {
+    PluginManager.instance.removeListener(_onPlugins);
+    super.dispose();
+  }
+
+  void _onPlugins() {
+    if (mounted) setState(() {});
+  }
 
   Future<bool> _confirmDiscard() async {
     final ok = await showDialog<bool>(
@@ -252,6 +311,17 @@ class _EditorPageState extends State<EditorPage> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
+            previewToggleButton(
+              path: widget.path,
+              previewMode: _preview,
+              onToggle: () => setState(() => _preview = !_preview),
+              iconSize: 18,
+            ),
+            formatPluginButton(
+              path: widget.path,
+              onFormat: () => _editorKey.currentState?.formatViaPlugin(),
+              iconSize: 18,
+            ),
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: FilledButton.icon(
@@ -270,9 +340,10 @@ class _EditorPageState extends State<EditorPage> {
             ),
           ],
         ),
-        body: CodeEditorPane(
-          key: _editorKey,
+        body: PreviewableEditor(
           path: widget.path,
+          editorKey: _editorKey,
+          previewMode: _preview,
           onDirtyChanged: (v) => setState(() => _dirty = v),
         ),
       ),
@@ -335,3 +406,101 @@ String _languageLabelForExt(String ext) => switch (ext) {
   'ini' || 'cfg' || 'conf' || 'properties' => 'Config',
   _ => ext.isEmpty ? 'Plain Text' : ext.toUpperCase(),
 };
+
+// fileExtOf returns the lowercased extension of a path's filename.
+String fileExtOf(String path) =>
+    path.split('/').last.split('.').last.toLowerCase();
+
+// formatPluginButton is the editor 「格式化」 action for [path]: shown only when
+// a formatter plugin covers the type, disabled (with a reason) when the host
+// tool is missing or the plugin is off. Shared by the standalone page and the
+// workspace tab toolbar.
+Widget formatPluginButton({
+  required String path,
+  required VoidCallback onFormat,
+  double iconSize = 17,
+}) {
+  final ext = fileExtOf(path);
+  final mgr = PluginManager.instance;
+  final cat = mgr.formatterCatalogFor(ext);
+  if (cat == null) return const SizedBox.shrink();
+  final ready = mgr.formatterFor(ext) != null;
+  return IconButton(
+    icon: Icon(Icons.auto_fix_high_rounded, size: iconSize),
+    tooltip: ready
+        ? '格式化 (${cat.tool})'
+        : mgr.enabled(cat.id)
+        ? '未检测到 ${cat.tool} · 见插件设置'
+        : '${cat.name} 已禁用',
+    visualDensity: VisualDensity.compact,
+    onPressed: ready ? onFormat : null,
+  );
+}
+
+// previewToggleButton is the 源码/预览 toggle for renderable files; it collapses
+// to nothing when no enabled renderer (e.g. Markdown) handles the type.
+Widget previewToggleButton({
+  required String path,
+  required bool previewMode,
+  required VoidCallback onToggle,
+  double iconSize = 17,
+}) {
+  if (PluginManager.instance.rendererFor(fileExtOf(path)) == null) {
+    return const SizedBox.shrink();
+  }
+  return IconButton(
+    icon: Icon(
+      previewMode ? Icons.code_rounded : Icons.visibility_rounded,
+      size: iconSize,
+    ),
+    tooltip: previewMode ? '源码' : '预览',
+    visualDensity: VisualDensity.compact,
+    onPressed: onToggle,
+  );
+}
+
+// PreviewableEditor is the editor body shared by the standalone EditorPage and
+// the workspace tab: a CodeEditorPane that, for renderable files, can swap to a
+// rendered preview while keeping the source buffer mounted (so the toggle is
+// lossless). Which extensions render is driven by the plugin catalog.
+class PreviewableEditor extends StatelessWidget {
+  final String path;
+  final GlobalKey<CodeEditorPaneState> editorKey;
+  final int? initialLine;
+  final bool previewMode;
+  final ValueChanged<bool>? onDirtyChanged;
+  final VoidCallback? onLoaded;
+  const PreviewableEditor({
+    super.key,
+    required this.path,
+    required this.editorKey,
+    required this.previewMode,
+    this.initialLine,
+    this.onDirtyChanged,
+    this.onLoaded,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pane = CodeEditorPane(
+      key: editorKey,
+      path: path,
+      initialLine: initialLine,
+      onDirtyChanged: onDirtyChanged,
+      onLoaded: onLoaded,
+    );
+    final canRender =
+        PluginManager.instance.rendererFor(fileExtOf(path)) != null;
+    if (!canRender) return pane;
+    return IndexedStack(
+      index: previewMode ? 1 : 0,
+      sizing: StackFit.expand,
+      children: [
+        pane,
+        previewMode
+            ? MarkdownView(data: editorKey.currentState?.text ?? '')
+            : const SizedBox.shrink(),
+      ],
+    );
+  }
+}

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:xterm/xterm.dart';
 
 import '../terminal_mouse.dart';
@@ -115,6 +117,7 @@ class RemoteClient extends RemoteChannel {
   String? diffError;
 
   final Map<String, Terminal> _terminals = {};
+  final Map<String, Timer> _resizeTimers = {}; // debounce phone resize per session
 
   bool get hostOnline => _hostOnline;
   String? get error => lastError;
@@ -293,8 +296,14 @@ class RemoteClient extends RemoteChannel {
     // without it xterm's default handler drops the wheel while the app tracks.
     term.mouseHandler = const WheelMouseHandler();
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
-    term.onResize = (w, h, pw, ph) =>
+    // Debounce resize: rotation / window drags fire a burst of onResize calls;
+    // sending only the last one ~120ms later spares the PTY a string of redraws.
+    term.onResize = (w, h, pw, ph) {
+      _resizeTimers[sid]?.cancel();
+      _resizeTimers[sid] = Timer(const Duration(milliseconds: 120), () {
         send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+      });
+    };
     send({'t': 'term.open', 'sid': sid});
     return term;
   }
@@ -305,6 +314,7 @@ class RemoteClient extends RemoteChannel {
   // content. The caller rebuilds so the TerminalView rebinds to the new term.
   void reloadTerminal(String sid) {
     _terminals.remove(sid);
+    _resizeTimers.remove(sid)?.cancel();
     terminalFor(sid); // recreate + send term.open now → host replays backlog
   }
 

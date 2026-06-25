@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show min;
 
 import '../local/git.dart';
 import '../local/worktrees.dart';
@@ -14,6 +15,63 @@ class RemoteRoot {
   final String path;
   final String workspace;
   const RemoteRoot(this.name, this.path, this.workspace);
+}
+
+// _isHighSurrogate reports whether [u] is the leading half of a UTF-16 surrogate
+// pair, so backlog replay never splits an astral char (emoji) across two frames.
+bool _isHighSurrogate(int u) => u >= 0xd800 && u <= 0xdbff;
+
+// Max chars per term.output frame: the coalescer's flush threshold and the
+// backlog-replay slice size. Bounds frame size (and worst-case latency).
+const int _maxFrameChars = 64 * 1024;
+
+// _OutputBatcher coalesces a session's PTY output before it goes on the wire.
+// Without it every PTY chunk became one WS frame + one synchronous terminal.write
+// on the phone — the main cause of mirror jank under streaming output. It uses
+// leading-edge throttling: the first chunk after an idle gap flushes immediately
+// (typing echo stays crisp), while a burst is collapsed to at most one frame per
+// [window]; the buffer also flushes early once it reaches [_maxFrameChars].
+class _OutputBatcher {
+  _OutputBatcher(this._send);
+  final void Function(String data) _send;
+  final StringBuffer _buf = StringBuffer();
+  Timer? _timer;
+  final Stopwatch _since = Stopwatch()..start();
+
+  static const Duration window = Duration(milliseconds: 12); // tunable knob
+
+  void add(String chunk) {
+    _buf.write(chunk);
+    if (_buf.length >= _maxFrameChars) {
+      _flush(); // bound frame size + worst-case latency
+      return;
+    }
+    if (_timer != null) return; // a flush is already scheduled
+    final waited = _since.elapsed;
+    if (waited >= window) {
+      _flush(); // leading edge: idle long enough, send now
+    } else {
+      _timer = Timer(window - waited, _flush); // trailing edge for the burst
+    }
+  }
+
+  void _flush() {
+    _timer?.cancel();
+    _timer = null;
+    if (_buf.isEmpty) return;
+    final data = _buf.toString();
+    _buf.clear();
+    _since.reset();
+    _send(data);
+  }
+
+  // dispose drops any buffered output without sending — used when the last
+  // watcher leaves, so there is no one to receive it anyway.
+  void dispose() {
+    _timer?.cancel();
+    _timer = null;
+    _buf.clear();
+  }
 }
 
 // RemoteHost shares this desktop's workspace (terminal sessions + project files)
@@ -47,6 +105,7 @@ class RemoteHost extends RemoteChannel {
 
   int _clients = 0;
   final Map<String, Set<int>> _watchers = {}; // session id -> watching clients
+  final Map<String, _OutputBatcher> _batchers = {}; // session id -> output coalescer
   static const int _maxRead = 2 * 1024 * 1024; // 2MB file-read cap
 
   bool get sharing => active;
@@ -188,18 +247,26 @@ class RemoteHost extends RemoteChannel {
     // scrollback immediately instead of a blank terminal until the next redraw.
     // This method runs synchronously (no await) so no PTY chunk can interleave
     // between the replay and the remoteSink wiring below — no gap, no dup.
+    // Replay in <=64KB frames (not one 256KB write) so the phone can yield to
+    // the UI between writes — no multi-second freeze on join. Never split a
+    // surrogate pair across frames or the joined char would render broken.
     final bl = s.backlog;
-    if (bl.isNotEmpty) {
-      send({'t': 'term.output', 'to': from, 'sid': s.id, 'd': bl});
+    for (var i = 0; i < bl.length;) {
+      var end = min(i + _maxFrameChars, bl.length);
+      if (end < bl.length && _isHighSurrogate(bl.codeUnitAt(end - 1))) end++;
+      send({'t': 'term.output', 'to': from, 'sid': s.id, 'd': bl.substring(i, end)});
+      i = end;
     }
     (_watchers[s.id] ??= {}).add(from);
     // Setting remoteSink starts mirroring this session's output to the phone and
-    // hands it authority over the PTY size (see TerminalSession.onResize).
-    s.remoteSink = (chunk) {
+    // hands it authority over the PTY size (see TerminalSession.onResize). Output
+    // is coalesced per session (see _OutputBatcher) then fanned out to watchers.
+    final batcher = _batchers[s.id] ??= _OutputBatcher((data) {
       for (final c in _watchers[s.id] ?? const <int>{}) {
-        send({'t': 'term.output', 'to': c, 'sid': s.id, 'd': chunk});
+        send({'t': 'term.output', 'to': c, 'sid': s.id, 'd': data});
       }
-    };
+    });
+    s.remoteSink = batcher.add;
   }
 
   void _dropClient(int connId) {
@@ -212,6 +279,7 @@ class RemoteHost extends RemoteChannel {
           s.remoteSink = null;
           s.restoreLocalSize();
         }
+        _batchers.remove(entry.key)?.dispose();
         _watchers.remove(entry.key);
       }
     }
@@ -227,6 +295,10 @@ class RemoteHost extends RemoteChannel {
         s.restoreLocalSize();
       }
     }
+    for (final b in _batchers.values) {
+      b.dispose();
+    }
+    _batchers.clear();
     _watchers.clear();
   }
 
