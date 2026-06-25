@@ -185,9 +185,27 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     final (target, err) = _resolveTarget(m.to);
     if (target == null) return err; // err is non-null when target is null
     if (target.id == m.from) return '不能发给自己';
-    final tag = sessionById(m.from)?.label ?? (m.from.isEmpty ? '?' : m.from);
-    target.pasteText('[来自 $tag] ${m.body}', submit: m.submit);
+    target.pasteText(_composeDelivery(target, m), submit: m.submit);
     return null;
+  }
+
+  // _composeDelivery builds the text pasted into the target session. Humans (and
+  // messages with no resolvable sender) get the original "[来自 label] body". An
+  // AI agent recipient (TerminalSession.isAgent) additionally gets the sender id
+  // in the tag plus a short reply cheat-sheet, so any tool (Claude/Codex) can
+  // answer over the bus without reverse-engineering it. The hint is appended only
+  // when the message is auto-submitted; on --no-submit it would otherwise linger
+  // in the recipient's input.
+  String _composeDelivery(TerminalSession target, LocalMsg m) {
+    final fromLabel = sessionById(m.from)?.label ?? (m.from.isEmpty ? '?' : m.from);
+    if (m.from.isEmpty || !target.isAgent) {
+      return '[来自 $fromLabel] ${m.body}';
+    }
+    final head = '[来自 $fromLabel · ${m.from}] ${m.body}';
+    if (!m.submit) return head;
+    return '$head\n'
+        '↩ 回我: cc-handoff msg send ${m.from} "<内容>"\n'
+        '  其它: msg list 看会话 / msg read ${m.from} 看对方屏幕';
   }
 
   // readSnapshot renders a target session's recent screen (last [lines] lines,

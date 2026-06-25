@@ -29,12 +29,42 @@ type busSession struct {
 	PID     int    `json:"pid,omitempty"`
 }
 
+// msgUsage is the self-describing help for `cc-handoff msg`, printed for `msg`,
+// `msg -h`, `msg --help`, and `msg help`. It deliberately needs no CC_BUS_DIR so
+// an agent that just received a "[来自 X · tsN] …" message can read it (even from
+// a terminal the app didn't spawn) to learn how to reply.
+const msgUsage = `cc-handoff msg — 桌面 App 本地会话之间的点对点消息(收发 / 读屏)
+
+用法:
+  cc-handoff msg list                列出同机其它会话(ID / 名称 / 目录)
+  cc-handoff msg send <目标> <内容…>   把消息发到目标会话;<目标> 用 ID 或名称
+  cc-handoff msg read <目标> [选项]    读取目标会话最近的屏幕快照(纯文本)
+  cc-handoff msg whoami              打印自己的会话 ID 和名称
+
+send 选项:
+  --no-submit       只填入对方输入框,不自动回车
+  --timeout 5s      等待投递结果的超时
+
+read 选项:
+  --lines 200       最多读取的尾部行数
+  --json            输出 JSON {id,lines,text} 而非纯文本
+  --timeout 5s      等待快照返回的超时
+
+收到 “[来自 调研 · ts2] …” 这样的消息后,回复发件人(用方括号里的 ID):
+  cc-handoff msg send ts2 "你的回复"
+
+提示:这些命令只能在桌面 App 唤起的终端里运行(依赖 App 注入的 CC_BUS_DIR)。
+`
+
 func runMsg(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: cc-handoff msg <list|send|read|whoami>")
+	sub, rest := "", args
+	if len(args) > 0 {
+		sub, rest = args[0], args[1:]
 	}
-	sub, rest := args[0], args[1:]
 	switch sub {
+	case "", "-h", "--help", "help":
+		fmt.Print(msgUsage)
+		return nil
 	case "list":
 		return runMsgList(rest)
 	case "send":
@@ -75,7 +105,7 @@ func loadSessions(dir string) ([]busSession, error) {
 
 func runMsgList(args []string) error {
 	fs := flag.NewFlagSet("msg list", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "emit JSON instead of a table")
+	asJSON := fs.Bool("json", false, "输出 JSON 而非表格")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -152,8 +182,8 @@ func runMsgSend(ctx context.Context, args []string) error {
 // reply payload, which we print (raw, or wrapped in JSON).
 func runMsgRead(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("msg read", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "emit JSON {id,lines,text} instead of raw text")
-	lines := fs.Int("lines", 200, "max number of trailing lines to read")
+	asJSON := fs.Bool("json", false, "输出 JSON {id,lines,text} 而非纯文本")
+	lines := fs.Int("lines", 200, "最多读取的尾部行数")
 	timeout := fs.Duration("timeout", 5*time.Second, "等待快照返回的超时")
 	if err := fs.Parse(args); err != nil {
 		return err

@@ -69,6 +69,12 @@ class TerminalSession {
   // label is what the UI shows: the user-given name, else the derived title.
   String get label => (name != null && name!.isNotEmpty) ? name! : title;
 
+  // isAgent reports whether this session runs an AI agent TUI (claude/codex),
+  // sniffed from the launch command — the same convention used in
+  // workspace_page.dart and remote_host.dart. The local bus reads it to decide
+  // whether to attach a reply cheat-sheet to a delivered message.
+  bool get isAgent => command.contains('claude') || command.contains('codex');
+
   // selectedText is the current selection's text, or null when nothing is
   // selected. The host reads it to forward a selection to another session.
   String? get selectedText {

@@ -212,6 +212,25 @@ func TestMsgReadOutsideBus(t *testing.T) {
 	}
 }
 
+// TestMsgHelp: `msg`, `msg --help`, `msg -h`, `msg help` all print the self-
+// describing usage — without needing CC_BUS_DIR — so an agent that just received
+// a "[来自 X · tsN] …" message can learn how to reply over the bus.
+func TestMsgHelp(t *testing.T) {
+	t.Setenv("CC_BUS_DIR", "") // help must work outside an app-spawned terminal
+	for _, args := range [][]string{{}, {"--help"}, {"-h"}, {"help"}} {
+		var err error
+		out := captureStdout(t, func() { err = runMsg(context.Background(), args) })
+		if err != nil {
+			t.Fatalf("runMsg(%v): %v", args, err)
+		}
+		for _, want := range []string{"send", "read", "list", "whoami", "回复"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("help for %v missing %q:\n%s", args, want, out)
+			}
+		}
+	}
+}
+
 // consumeOutbox polls outbox until a *.json appears, decodes it, and hands it to
 // onMsg (which simulates the app's success/failure write-back). One-shot.
 func consumeOutbox(t *testing.T, outbox string, onMsg func(name string, m map[string]any)) {

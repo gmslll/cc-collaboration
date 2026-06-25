@@ -2,9 +2,16 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../file_icons.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'editor_page.dart';
+
+// GoLand-style tree metrics (Project panel look): a left disclosure chevron,
+// per-type SVG icons, a full-row selection band, and faint indent guides.
+const double _kRowBaseLeft = 8; // left gutter before depth 0
+const double _kIndentStep = 16; // horizontal step per nesting level
+const double _kChevronW = 16; // column reserved for the disclosure chevron
 
 // FileBrowserPage is a lazy file tree of a project root; tapping a file opens it
 // in the editor. Each directory lists its children on first expand.
@@ -94,18 +101,22 @@ class DirTile extends StatefulWidget {
 class _DirTileState extends State<DirTile> {
   List<FileSystemEntity>? _children; // null = not loaded yet
   bool _loading = false;
+  late bool _open;
 
   @override
   void initState() {
     super.initState();
-    if (widget.initiallyExpanded || _containsSelectedPath) _loadChildren();
+    _open = widget.initiallyExpanded || _containsSelectedPath;
+    if (_open) _loadChildren();
   }
 
   @override
   void didUpdateWidget(DirTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedPath != widget.selectedPath &&
-        _containsSelectedPath) {
+    // Reveal-in-project: when the selection moves into this dir, open + load so
+    // the highlighted descendant becomes visible.
+    if (oldWidget.selectedPath != widget.selectedPath && _containsSelectedPath) {
+      if (!_open) setState(() => _open = true);
       _loadChildren();
     }
   }
@@ -142,68 +153,94 @@ class _DirTileState extends State<DirTile> {
     }
   }
 
+  void _toggle() {
+    setState(() => _open = !_open);
+    if (_open) _loadChildren();
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedInDir = _containsSelectedPath;
     final selected = widget.selectedPath == widget.dir;
     final ancestor = selectedInDir && !selected;
-    return Container(
-      decoration: BoxDecoration(
-        color: selected
-            ? CcColors.accent.withValues(alpha: 0.10)
-            : Colors.transparent,
-        border: Border(
-          left: BorderSide(
-            color: selected ? CcColors.accent : Colors.transparent,
-            width: 2,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _treeRow(
+          depth: widget.depth,
+          selected: selected,
+          bold: selected || ancestor,
+          onTap: _toggle,
+          iconAsset: folderIconAsset,
+          iconSize: 16,
+          label: widget.label,
+          status: widget.pathStatusBuilder?.call(widget.dir),
+          chevron: AnimatedRotation(
+            turns: _open ? 0.25 : 0.0,
+            duration: const Duration(milliseconds: 150),
+            child: Icon(
+              Icons.chevron_right_rounded,
+              size: 16,
+              color: selected || ancestor ? CcColors.muted : CcColors.subtle,
+            ),
           ),
         ),
-      ),
-      child: ExpansionTile(
-        key: PageStorageKey('fb-${widget.dir}'),
-        initiallyExpanded: widget.initiallyExpanded || selectedInDir,
-        onExpansionChanged: (open) {
-          if (open) _loadChildren();
-        },
-        dense: true,
-        visualDensity: const VisualDensity(vertical: -2),
-        tilePadding: EdgeInsets.only(left: 8.0 + widget.depth * 12, right: 8),
-        childrenPadding: EdgeInsets.zero,
-        shape: const Border(),
-        collapsedShape: const Border(),
-        leading: Icon(
-          Icons.folder_rounded,
-          size: 16,
-          color: selected
-              ? CcColors.accentBright
-              : ancestor
-              ? CcColors.muted
-              : CcColors.subtle,
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                widget.label,
-                style: TextStyle(
-                  fontFamily: CcType.mono,
-                  fontSize: 12.5,
-                  color: selected ? CcColors.text : null,
-                  fontWeight: selected || ancestor
-                      ? FontWeight.w700
-                      : FontWeight.w400,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+        if (_open) ..._childWidgets(),
+      ],
+    );
+  }
+
+  // One row of the tree, shared by folders and files. The chevron column is
+  // always reserved (an empty slot for files), so a file's icon lines up with
+  // the same-depth folder icon by construction — no per-row alignment fudge.
+  Widget _treeRow({
+    required int depth,
+    required bool selected,
+    required bool bold,
+    required VoidCallback onTap,
+    required String iconAsset,
+    required double iconSize,
+    required String label,
+    Widget? chevron,
+    Widget? status,
+  }) {
+    return _IndentGuides(
+      depth: depth,
+      child: _band(
+        selected,
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: _kRowBaseLeft + depth * _kIndentStep,
+              right: 8,
+              top: 3,
+              bottom: 3,
             ),
-            if (widget.pathStatusBuilder != null) ...[
-              const SizedBox(width: 6),
-              widget.pathStatusBuilder!(widget.dir),
-            ],
-          ],
+            child: Row(
+              children: [
+                SizedBox(width: _kChevronW, child: chevron),
+                const SizedBox(width: 2),
+                fileSvg(iconAsset, size: iconSize),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: CcType.mono,
+                      fontSize: 12.5,
+                      color: CcColors.text,
+                      fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (status != null) ...[const SizedBox(width: 6), status],
+              ],
+            ),
+          ),
         ),
-        children: _childWidgets(),
       ),
     );
   }
@@ -213,7 +250,7 @@ class _DirTileState extends State<DirTile> {
       return [
         Padding(
           padding: EdgeInsets.only(
-            left: 12.0 + widget.depth * 12,
+            left: _kRowBaseLeft + (widget.depth + 1) * _kIndentStep + _kChevronW,
             top: 2,
             bottom: 4,
           ),
@@ -245,48 +282,29 @@ class _DirTileState extends State<DirTile> {
     ];
   }
 
+  // Full-row GoLand-style selection band (flat translucent fill, no left rule).
+  // Decorations are cached so the common unselected row allocates nothing.
+  static const _noBand = BoxDecoration();
+  static final _selBand = BoxDecoration(
+    color: CcColors.accent.withValues(alpha: 0.16),
+  );
+  Widget _band(bool selected, Widget child) =>
+      DecoratedBox(decoration: selected ? _selBand : _noBand, child: child);
+
   Widget _fileTile(String path, String name, int depth) {
     final selected = path == widget.selectedPath;
     final menu = widget.fileMenuBuilder?.call(path);
-    final tile = Container(
-      decoration: BoxDecoration(
-        color: selected
-            ? CcColors.accent.withValues(alpha: 0.10)
-            : Colors.transparent,
-        border: Border(
-          left: BorderSide(
-            color: selected ? CcColors.accent : Colors.transparent,
-            width: 2,
-          ),
-        ),
-      ),
-      child: ListTile(
-        dense: true,
-        selected: selected,
-        visualDensity: const VisualDensity(vertical: -2),
-        contentPadding: EdgeInsets.only(left: 12.0 + depth * 12, right: 8),
-        horizontalTitleGap: 6,
-        leading: Icon(
-          Icons.description_rounded,
-          size: 15,
-          color: selected ? CcColors.accentBright : CcColors.subtle,
-        ),
-        title: Text(
-          name,
-          style: TextStyle(
-            fontFamily: CcType.mono,
-            fontSize: 12.5,
-            color: selected ? CcColors.text : null,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: widget.pathStatusBuilder?.call(path),
-        onTap: () => widget.onOpenFile(path),
-      ),
+    final row = _treeRow(
+      depth: depth,
+      selected: selected,
+      bold: selected,
+      onTap: () => widget.onOpenFile(path),
+      iconAsset: fileIconAsset(name),
+      iconSize: 15,
+      label: name,
+      status: widget.pathStatusBuilder?.call(path),
     );
-    if (menu == null) return tile;
+    if (menu == null) return row;
     // Right-click anywhere on the file row pops the same actions (no ⋮ button).
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -304,7 +322,42 @@ class _DirTileState extends State<DirTile> {
         );
         if (value != null && mounted) menu.onSelected?.call(value);
       },
-      child: tile,
+      child: row,
     );
   }
+}
+
+// _IndentGuides paints one faint vertical rule per ancestor level behind a row,
+// aligned under each ancestor's chevron. Stacked rows make them read as
+// continuous tree guides, like GoLand's Project panel.
+class _IndentGuides extends StatelessWidget {
+  final int depth;
+  final Widget child;
+  const _IndentGuides({required this.depth, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (depth <= 0) return child;
+    return CustomPaint(painter: _GuidePainter(depth), child: child);
+  }
+}
+
+class _GuidePainter extends CustomPainter {
+  final int depth;
+  _GuidePainter(this.depth);
+
+  static final Paint _paint = Paint()
+    ..color = CcColors.border.withValues(alpha: 0.55)
+    ..strokeWidth = 1;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var i = 0; i < depth; i++) {
+      final x = _kRowBaseLeft + i * _kIndentStep + _kChevronW / 2;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), _paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GuidePainter old) => old.depth != depth;
 }
