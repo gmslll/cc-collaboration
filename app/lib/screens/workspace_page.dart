@@ -206,6 +206,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   // next goes idle). _msgDialogOpen guards against stacked inject popups.
   final List<_ParkedMessage> _parked = [];
   bool _msgDialogOpen = false;
+  String? _parkedFilePath; // cached path to parked_messages.json
 
   void _onRemoteChange() {
     if (!mounted) return;
@@ -530,12 +531,18 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _park stashes a cross-user message for later; surfaced via the toolbar badge.
   void _park(String from, String sid, String body) {
-    setState(() => _parked.add(_ParkedMessage(from, sid, body)));
-    _saveParked();
+    _mutateParked(() => _parked.add(_ParkedMessage(from, sid, body)));
     _snack('已挂起,稍后处理');
   }
 
-  Future<String> _parkedPath() async =>
+  // _mutateParked applies [fn] to the parked list (rebuilds the toolbar badge)
+  // and persists once — the single seam for every add/remove.
+  void _mutateParked(void Function() fn) {
+    setState(fn);
+    _saveParked();
+  }
+
+  Future<String> _parkedPath() async => _parkedFilePath ??=
       '${(await getApplicationSupportDirectory()).path}/parked_messages.json';
 
   Future<void> _loadParked() async {
@@ -566,8 +573,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     final i = _parked.indexWhere((m) => m.sessionId == s.id);
     if (i < 0) return;
     final m = _parked[i];
-    setState(() => _parked.removeAt(i));
-    _saveParked();
+    _mutateParked(() => _parked.removeAt(i));
     _showIncomingMessage(m.from, m.sessionId, m.body);
   }
 
@@ -606,8 +612,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                             children: [
                               TextButton(
                                 onPressed: () {
-                                  setState(() => _parked.remove(m));
-                                  _saveParked();
+                                  _mutateParked(() => _parked.remove(m));
                                   Navigator.pop(ctx);
                                   _showIncomingMessage(m.from, m.sessionId, m.body);
                                 },
@@ -618,9 +623,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                                 visualDensity: VisualDensity.compact,
                                 icon: const Icon(Icons.close_rounded, size: 16),
                                 onPressed: () {
-                                  setState(() => _parked.remove(m));
-                                  setSt(() {});
-                                  _saveParked();
+                                  _mutateParked(() => _parked.remove(m));
+                                  setSt(() {}); // also refresh this dialog's list
                                 },
                               ),
                             ],
@@ -2274,44 +2278,47 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
           if (_parked.isNotEmpty) ...[
             const SizedBox(width: 4),
-            IconButton(
-              tooltip: '待处理消息 (${_parked.length})',
-              visualDensity: VisualDensity.compact,
-              onPressed: _showParkedList,
-              icon: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Icon(Icons.inbox_rounded, size: 18),
-                  Positioned(
-                    right: -4,
-                    top: -4,
-                    child: Container(
-                      constraints: const BoxConstraints(minWidth: 15),
-                      height: 15,
-                      padding: const EdgeInsets.symmetric(horizontal: 3),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: CcColors.accent,
-                        borderRadius: BorderRadius.circular(CcRadius.pill),
-                      ),
-                      child: Text(
-                        '${_parked.length}',
-                        style: CcType.code(
-                          size: 8.5,
-                          color: CcColors.bg,
-                          weight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _parkedBadge(),
           ],
         ],
       ),
     );
   }
+
+  // _parkedBadge is the toolbar "待处理 (N)" inbox button with a count pill.
+  Widget _parkedBadge() => IconButton(
+    tooltip: '待处理消息 (${_parked.length})',
+    visualDensity: VisualDensity.compact,
+    onPressed: _showParkedList,
+    icon: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        const Icon(Icons.inbox_rounded, size: 18),
+        Positioned(
+          right: -4,
+          top: -4,
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 15),
+            height: 15,
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: CcColors.accent,
+              borderRadius: BorderRadius.circular(CcRadius.pill),
+            ),
+            child: Text(
+              '${_parked.length}',
+              style: CcType.code(
+                size: 8.5,
+                color: CcColors.bg,
+                weight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   void _setProjectCollapsed(bool v) {
     setState(() => _projectCollapsed = v);
