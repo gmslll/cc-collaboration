@@ -8,7 +8,7 @@ VERSION     := $(shell cat VERSION)
 LDFLAGS     := -X 'github.com/cc-collaboration/internal/version.Version=$(VERSION)'
 INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build cli relay mcp relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-apk package package-macos package-android install test e2e deploy clean version release-tag
+.PHONY: all build cli relay mcp web relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-apk package package-macos package-android install test e2e deploy clean version release-tag
 
 all: build
 
@@ -17,17 +17,31 @@ build: cli relay mcp
 cli:
 	go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff ./cmd/cc-handoff
 
-relay:
+# web builds the Flutter Web client (the browser version of the phone's remote
+# workspace) and stages it into internal/relay/app, where the relay embeds it via
+# //go:embed and serves it at /app/. The bundle is gitignored (a tracked .gitkeep
+# keeps the embed compilable on a fresh clone); this regenerates it. The relay
+# targets depend on it so the embedded client is always current — for a fast
+# Go-only relay build that skips this, run `go build ./cmd/relay` directly.
+web:
+	cd app && flutter build web -t lib/main_web.dart --base-href /app/
+	rm -rf internal/relay/app
+	mkdir -p internal/relay/app
+	cp -R app/build/web/. internal/relay/app/
+	touch internal/relay/app/.gitkeep
+
+relay: web
 	go build -ldflags "$(LDFLAGS)" -o bin/cc-relay ./cmd/relay
 
 mcp:
 	go build -ldflags "$(LDFLAGS)" -o bin/cc-handoff-mcp ./cmd/cc-handoff-mcp
 
-# Cross-builds for a Linux VPS.
-relay-linux:
+# Cross-builds for a Linux VPS. Depend on `web` so the shipped binary embeds the
+# current client bundle (built on this machine, then cross-compiled in).
+relay-linux: web
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/cc-relay-linux-amd64 ./cmd/relay
 
-relay-linux-arm64:
+relay-linux-arm64: web
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/cc-relay-linux-arm64 ./cmd/relay
 
 # Cross-builds for Windows. Receivers run cli + mcp; the relay is backend-only
