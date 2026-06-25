@@ -46,23 +46,23 @@ class TerminalSession {
   // output so a remote phone client can mirror it. Null when nobody's watching.
   void Function(String chunk)? remoteSink;
 
-  // --- "agent finished a turn" detection ----------------------------------
+  // --- "agent finished a turn" detection (bell-only) ----------------------
   //
-  // claude/codex stream continuously (animated spinner) while working and stop
-  // when they pause for input — usually ringing the terminal bell (BEL) as they
-  // do. We watch for that transition (bell, else output going idle) and fire
-  // [onDone] once per turn, so the host can pop a "会话完成" notification. Only
-  // armed for isAgent sessions, and only after the user has actually given the
-  // agent something to do (_sawInput) so the initial idle prompt doesn't ping.
+  // claude/codex ring the terminal bell (BEL \x07) exactly when they stop and
+  // wait for you — finished a turn, or blocked on a permission/input prompt —
+  // and NOT while working. So a bell, confirmed by output then going quiet, is
+  // what we fire [onDone] on (→ a "会话完成" notification). There is no idle/
+  // timeout heuristic: mid-turn pauses (between streamed chunks, tool calls,
+  // thinking) don't bell, so they never notify. Only for isAgent sessions, and
+  // only after the user has actually given the agent something to do (_sawInput)
+  // so the initial idle prompt doesn't ping. Trade-off: an agent with the
+  // terminal bell disabled won't notify.
   void Function(TerminalSession session)? onDone;
-  Timer? _idleTimer;
-  DateTime? _busySince; // start of the current output burst (a "turn")
-  bool _doneAnnounced = false; // onDone already fired for this turn
+  Timer? _belTimer;
+  bool _belArmed = false; // a bell rang; waiting for output to settle to confirm
   bool _sawInput = false; // user has typed/sent into this session at least once
-  bool _belSeen = false; // a BEL arrived during the current turn
-  static const Duration _idleGap = Duration(seconds: 4); // output-stop → done
-  static const Duration _belDelay = Duration(milliseconds: 600); // settle after bell
-  static const Duration _minBusy = Duration(milliseconds: 1200); // ignore tiny redraws
+  static const Duration _belSettle =
+      Duration(milliseconds: 1200); // quiet-after-bell → done
 
   // Rolling buffer of recent raw PTY output so a phone connecting mid-session
   // can replay it and see the current screen / scrollback instead of a blank
@@ -206,36 +206,25 @@ class TerminalSession {
     _pty?.write(const Utf8Encoder().convert(s));
   }
 
-  // _markActivity feeds the turn detector one output chunk: output after a just-
-  // announced turn opens a fresh turn; a BEL is the strong "awaiting input" cue;
-  // and every chunk (re)arms the idle timer that fires _fireDone once output
-  // stops. The window shortens to _belDelay once a bell has been seen.
+  // _markActivity feeds the turn detector one output chunk. A BEL arms it; while
+  // armed, every chunk (re)starts the settle timer so _fireDone runs only once
+  // output goes quiet AFTER the bell — the final redraw doesn't fire it early,
+  // and a bell whose work then resumes keeps pushing the timer out. Output with
+  // no bell since the last fire does nothing: no idle/timeout path, so a mid-turn
+  // pause never reads as "done".
   void _markActivity(String chunk) {
-    if (_doneAnnounced) {
-      _doneAnnounced = false; // new output → a new turn began
-      _busySince = null;
-      _belSeen = false;
-    }
-    _busySince ??= DateTime.now();
-    // Stop scanning the chunk for BEL once we've seen one this turn.
-    if (!_belSeen && chunk.contains('\x07')) _belSeen = true;
-    _idleTimer?.cancel();
-    _idleTimer = Timer(_belSeen ? _belDelay : _idleGap, _fireDone);
+    if (!_belArmed && chunk.contains('\x07')) _belArmed = true;
+    if (!_belArmed) return;
+    _belTimer?.cancel();
+    _belTimer = Timer(_belSettle, _fireDone);
   }
 
-  // _fireDone announces a finished turn at most once. It skips turns the user
-  // never kicked off (_sawInput) and trivial redraws (too short, no bell) so a
-  // notification means "the thing you asked for is done / waiting on you".
+  // _fireDone announces a finished turn. It only runs while armed by a bell;
+  // it skips turns the user never kicked off (_sawInput) — e.g. the initial idle
+  // prompt — and disarms so the next turn needs a fresh bell.
   void _fireDone() {
-    if (_doneAnnounced || !_sawInput) return;
-    final since = _busySince;
-    final lasted = since == null
-        ? Duration.zero
-        : DateTime.now().difference(since);
-    if (!_belSeen && lasted < _minBusy) return;
-    _doneAnnounced = true;
-    _busySince = null;
-    _belSeen = false;
+    _belArmed = false;
+    if (!_sawInput) return;
     onDone?.call(this);
   }
 
@@ -264,7 +253,7 @@ class TerminalSession {
   }
 
   void dispose() {
-    _idleTimer?.cancel();
+    _belTimer?.cancel();
     controller.dispose();
     _pty?.kill();
   }
