@@ -36,6 +36,9 @@ class VoiceService {
   set onListeningChange(void Function(bool listening)? f) =>
       _input.onListeningChange = f;
 
+  // sttError is the last speech-recognition failure reason (for UI feedback).
+  String? get sttError => _input.lastError;
+
   Future<void> init() async {
     await _input.init();
   }
@@ -164,17 +167,42 @@ class VoiceService {
     final home = Platform.environment['HOME'] ?? '';
     if (home.isEmpty) return null;
     if (s.agentKind == 'codex') return _newestCodexRollout(home, s.workdir);
+    // claude: prefer the exact minted id (glob in case the cwd-encoded dir name
+    // differs from our guess), then fall back to the cwd's newest log — which
+    // covers legacy / `claude --continue` sessions that have no minted id.
     final id = s.agentSessionId;
-    if (id == null || id.isEmpty) return null; // can't locate without the uuid
-    final projects = Directory('$home/.claude/projects');
-    if (!await projects.exists()) return null;
-    await for (final d in projects.list(followLinks: false)) {
-      if (d is Directory) {
-        final f = File('${d.path}/$id.jsonl');
-        if (await f.exists()) return f.path;
+    if (id != null && id.isNotEmpty) {
+      final projects = Directory('$home/.claude/projects');
+      if (await projects.exists()) {
+        await for (final d in projects.list(followLinks: false)) {
+          if (d is Directory) {
+            final f = File('${d.path}/$id.jsonl');
+            if (await f.exists()) return f.path;
+          }
+        }
       }
     }
-    return null;
+    return _newestClaudeInCwd(home, s.workdir);
+  }
+
+  // _newestClaudeInCwd returns the newest session log in claude's project dir for
+  // [workdir]. claude encodes the cwd as the dir name with '/' and '.' replaced
+  // by '-' (e.g. /a/github.com/b -> -a-github-com-b).
+  Future<String?> _newestClaudeInCwd(String home, String workdir) async {
+    final enc = workdir.replaceAll(RegExp(r'[/.]'), '-');
+    final dir = Directory('$home/.claude/projects/$enc');
+    if (!await dir.exists()) return null;
+    String? best;
+    DateTime? bestMod;
+    await for (final e in dir.list(followLinks: false)) {
+      if (e is! File || !e.path.endsWith('.jsonl')) continue;
+      final mod = (await e.stat()).modified;
+      if (bestMod == null || mod.isAfter(bestMod)) {
+        best = e.path;
+        bestMod = mod;
+      }
+    }
+    return best;
   }
 
   // _newestCodexRollout finds the most-recent rollout whose session_meta.cwd

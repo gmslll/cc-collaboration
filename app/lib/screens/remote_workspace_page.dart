@@ -1,11 +1,16 @@
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:xterm/xterm.dart';
 
+import '../live_activity/live_activity.dart';
 import '../local/diff_parse.dart';
 import '../local/prefs.dart';
+import '../remote/file_fs.dart';
 import '../remote/remote_client.dart';
 import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
@@ -55,6 +60,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _c.addListener(_onClientChange);
+    _c.onFileReceived = (name, path) {
+      if (!mounted) return;
+      snack(context, '📁 收到文件：$name（在「⇅」里打开）', background: CcColors.ok);
+    };
     _c.connect();
   }
 
@@ -151,6 +160,102 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     return current;
   }
 
+  // _showFileTransfer is the phone's file hub: send a file up to the desktop,
+  // and open / share files the desktop has sent down (landed in Documents/cc-recv).
+  void _showFileTransfer() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: CcColors.panel,
+      builder: (_) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              leading: const Icon(
+                Icons.upload_file_rounded,
+                color: CcColors.accentBright,
+              ),
+              title: const Text(
+                '发送文件到电脑',
+                style: TextStyle(color: CcColors.text),
+              ),
+              subtitle: const Text(
+                '落地到电脑 ~/Downloads/cc-recv',
+                style: TextStyle(color: CcColors.muted),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _sendFileToMac();
+              },
+            ),
+            const Divider(height: 1),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Text(
+                '已收文件',
+                style: TextStyle(color: CcColors.subtle, fontSize: 12),
+              ),
+            ),
+            if (_c.receivedFiles.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(
+                  child: Text('暂无', style: TextStyle(color: CcColors.muted)),
+                ),
+              ),
+            for (final f in _c.receivedFiles)
+              ListTile(
+                leading: const Icon(
+                  Icons.insert_drive_file_outlined,
+                  color: CcColors.muted,
+                ),
+                title: Text(f.name, style: const TextStyle(color: CcColors.text)),
+                subtitle: Text(
+                  relativeTime(f.at),
+                  style: const TextStyle(color: CcColors.muted),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.open_in_new_rounded, size: 20),
+                      tooltip: '打开',
+                      onPressed: () => OpenFilex.open(f.path),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.ios_share_rounded, size: 20),
+                      tooltip: '分享 / 保存到「文件」',
+                      onPressed: () => Share.shareXFiles([XFile(f.path)]),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // _sendFileToMac picks a phone file and streams it up to the desktop host.
+  Future<void> _sendFileToMac() async {
+    final res = await FilePicker.platform.pickFiles();
+    final path = res?.files.single.path;
+    if (path == null || !mounted) return; // cancelled
+    final name = path.split('/').last;
+    snack(context, '正在发送 $name…');
+    _c.sendFile(
+      path,
+      onDone: (ok, msg) {
+        if (!mounted) return;
+        snack(
+          context,
+          ok ? '已发送 $name' : '发送失败：$msg',
+          background: ok ? CcColors.ok : CcColors.danger,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -159,6 +264,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         appBar: AppBar(
           title: const Text('远程工作区'),
           actions: [
+            if (kFileTransferSupported)
+              IconButton(
+                tooltip: '文件传输',
+                icon: Badge(
+                  isLabelVisible: _c.receivedFiles.isNotEmpty,
+                  label: Text('${_c.receivedFiles.length}'),
+                  child: const Icon(Icons.swap_vert_rounded),
+                ),
+                onPressed: _c.connected ? _showFileTransfer : null,
+              ),
             IconButton(
               tooltip: '通知',
               icon: Badge(
@@ -341,9 +456,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       child: Row(
         children: [
           Icon(
-            collapsed
-                ? Icons.chevron_right_rounded
-                : Icons.expand_more_rounded,
+            collapsed ? Icons.chevron_right_rounded : Icons.expand_more_rounded,
             size: 18,
             color: CcColors.muted,
           ),
@@ -1132,8 +1245,10 @@ List<_KeyButton> _loadKeyButtons() {
   return _defaultKeyButtons();
 }
 
-void _saveKeyButtons(List<_KeyButton> keys) =>
-    Prefs.setString(_kKeyBarPref, jsonEncode([for (final k in keys) k.toJson()]));
+void _saveKeyButtons(List<_KeyButton> keys) => Prefs.setString(
+  _kKeyBarPref,
+  jsonEncode([for (final k in keys) k.toJson()]),
+);
 
 // _decodeSeq turns a human-typed sequence (text + escapes) into the raw bytes
 // to send: \e=Esc \t=Tab \r=Enter \n=newline \\=backslash, and ^X=Ctrl-X
@@ -1195,6 +1310,12 @@ String _encodeSeq(String s) {
   return b.toString();
 }
 
+// Voice dictation mode for the phone terminal: off, or dictating (mic open,
+// transcribing speech straight into the terminal until the user stops). No wake
+// word — Android's recognizer can't reliably stay always-on, so the mic only
+// runs during an explicit dictation session. See _RemoteTerminalScreenState.
+enum _VoiceMode { off, dictating }
+
 // _RemoteTerminalScreen renders one remote session full-screen, with an on-screen
 // key bar for the keys phone keyboards lack (agent TUIs need Esc/arrows/Ctrl-C).
 class _RemoteTerminalScreen extends StatefulWidget {
@@ -1213,11 +1334,17 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // Customizable on-screen key bar (shared across sessions via Prefs).
   late List<_KeyButton> _keys = _loadKeyButtons();
 
-  // Voice input: speak → transcript pasted into this session's input (reaches
-  // the host like _paste). Web-safe (speech_to_text); on iOS Safari STT is
-  // unavailable and the button reports so.
+  // Voice dictation: tap to start a continuous recognizer; each finished
+  // utterance is pasted into this session's input (reaches the host like _paste).
+  // Control words: "停"/"停止" ends dictation, "发送"/"回车" presses Enter. Web-safe
+  // (speech_to_text); on iOS Safari STT is unavailable and the button reports so.
   final SpeechInput _voice = SpeechInput();
-  bool _listening = false;
+  _VoiceMode _vmode = _VoiceMode.off;
+  final List<String> _dbgLog = []; // recent voice events, shown above key bar
+  // Spoken control words (matched on a full utterance for stop, as a substring
+  // for send). _norm() normalizes case/spaces.
+  static const List<String> _kStop = ['停', '停止', '结束', '停止听写', '关闭'];
+  static const List<String> _kSend = ['发送', '回车'];
 
   // Read AI replies aloud on the phone. The desktop pushes the clean reply text
   // (RemoteClient.onReplyText); we speak it via the web-safe Speaker when the
@@ -1225,18 +1352,45 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   final Speaker _speaker = Speaker();
   bool _ttsOn = Prefs.getBool('remote.tts');
 
+  // iOS Live Activity (Dynamic Island): started lazily the first time the agent
+  // goes "working" so an idle island never lingers, updated on each status push,
+  // and ended when leaving this session. No-op off iOS / when disabled.
+  bool _laStarted = false;
+
   @override
   void initState() {
     super.initState();
-    _voice.onListeningChange = (v) {
-      if (mounted) setState(() => _listening = v);
-    };
     widget.client.onReplyText = _onReplyText;
+    widget.client.onAgentStatus = _onAgentStatus;
   }
 
-  void _onReplyText(String sid, String text) {
+  void _onAgentStatus(String sid, bool working, String text) {
+    if (sid != widget.session.sid) return;
+    if (working && !_laStarted) {
+      _laStarted = true;
+      final title = widget.session.title.isNotEmpty
+          ? widget.session.title
+          : widget.session.agent;
+      LiveActivity.start(title: title, sessionId: sid).then(
+        (_) => LiveActivity.update(working: working, text: text),
+      );
+    } else if (_laStarted) {
+      LiveActivity.update(working: working, text: text);
+    }
+  }
+
+  Future<void> _onReplyText(String sid, String text) async {
     if (!_ttsOn || sid != widget.session.sid) return;
-    _speaker.speak(text);
+    // While dictating, pause the mic so it doesn't transcribe our own playback
+    // and the two don't fight over the audio device. speak() returns when the
+    // utterance finishes (Speaker uses awaitSpeakCompletion).
+    if (_vmode == _VoiceMode.dictating) {
+      await _voice.pause();
+      await _speaker.speak(text);
+      _voice.resume();
+    } else {
+      _speaker.speak(text);
+    }
   }
 
   @override
@@ -1244,6 +1398,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     if (widget.client.onReplyText == _onReplyText) {
       widget.client.onReplyText = null;
     }
+    if (widget.client.onAgentStatus == _onAgentStatus) {
+      widget.client.onAgentStatus = null;
+    }
+    if (_laStarted) LiveActivity.end();
     _speaker.stop();
     _voice.dispose();
     _controller.dispose();
@@ -1252,21 +1410,89 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 
   Terminal get _term => widget.client.terminalFor(widget.session.sid);
 
-  Future<void> _voiceInput() async {
-    if (_listening) {
-      await _voice.stop();
+  // _setDbg keeps the last few recognizer events so a sequence (e.g. an error
+  // immediately overwritten by a status change) stays visible, not just the last.
+  void _setDbg(String s) {
+    if (!mounted) return;
+    setState(() {
+      _dbgLog.add(s);
+      if (_dbgLog.length > 4) _dbgLog.removeAt(0);
+    });
+  }
+
+  // _toggleDictation turns dictation on/off. On: start the continuous recognizer
+  // feeding _onUtterance. Off: stop it. A failure to start surfaces lastError so
+  // the button never silently does nothing.
+  Future<void> _toggleDictation() async {
+    if (_vmode != _VoiceMode.off) {
+      await _voice.stopContinuous();
+      if (mounted) {
+        setState(() {
+          _vmode = _VoiceMode.off;
+          _dbgLog.clear();
+        });
+        snack(context, '🎙️ 听写已关闭', clearPrevious: true);
+      }
       return;
     }
-    final ok = await _voice.start(
-      onFinal: (text) {
-        final t = text.trim();
-        if (t.isEmpty) return;
-        _term.paste(t); // routes through term.onOutput → host input
-        snack(context, '🎤 $t');
-      },
+    // Live diagnostics: surface every recognizer event so a silent failure is
+    // visible in the HUD above the key bar.
+    _voice.onListeningChange = (v) => _setDbg(v ? '🎙️ 监听中…' : '⏸️ 停(将重启)');
+    _voice.onError = (e) => _setDbg('❌ $e');
+    _voice.onDebug = _setDbg;
+    final ok = await _voice.startContinuous(
+      onFinal: _onUtterance,
+      onPartial: (p) => _setDbg('👂 $p'),
     );
-    if (!ok && mounted) snack(context, '此环境不支持语音输入(检查麦克风权限)');
+    if (!mounted) return;
+    if (!ok) {
+      snack(context, '语音不可用:${_voice.lastError ?? "检查麦克风/语音识别权限"}');
+      return;
+    }
+    setState(() => _vmode = _VoiceMode.dictating);
+    snack(context, '🔴 听写中,直接说话即可(说「停」或再点关闭)', clearPrevious: true);
   }
+
+  // _onUtterance handles one finished transcript. A whole-utterance stop word
+  // ends dictation; "发送"/"回车" presses Enter (words before it are injected,
+  // words after are processed too); otherwise the text is pasted into the
+  // terminal. Only FINAL results land here — partials would inject duplicates.
+  void _onUtterance(String raw) {
+    final t = raw.trim();
+    _setDbg('✅ 终稿「$t」');
+    if (t.isEmpty || !mounted) return;
+    if (_kStop.contains(_norm(t))) {
+      _toggleDictation(); // spoken stop = tapping the button off
+      return;
+    }
+    for (final kw in _kSend) {
+      final i = t.indexOf(kw);
+      if (i >= 0) {
+        final before = t.substring(0, i).trim();
+        if (before.isNotEmpty) _inject(before);
+        _sendEnter();
+        final after = t.substring(i + kw.length).trim();
+        if (after.isNotEmpty) _onUtterance(after);
+        return;
+      }
+    }
+    _inject(t);
+  }
+
+  void _inject(String text) {
+    _term.paste(text); // routes through term.onOutput → host input
+    snack(context, '🎤 $text', clearPrevious: true);
+  }
+
+  void _sendEnter() {
+    widget.client.sendKeys(widget.session.sid, '\r');
+    snack(context, '⏎ 已发送', clearPrevious: true);
+  }
+
+  // Normalizes case/spaces so a spoken control word matches regardless of the
+  // recognizer's spacing.
+  static String _norm(String s) =>
+      s.toLowerCase().replaceAll(' ', '').replaceAll('　', '');
 
   void _copy() {
     final sel = _controller.selection;
@@ -1366,11 +1592,27 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
               ),
             ),
           ),
+          if (_vmode != _VoiceMode.off) _voiceHud(),
           _keyBar(),
         ],
       ),
     );
   }
+
+  // _voiceHud is a thin diagnostics line above the key bar (only while the voice
+  // monitor is on) showing the recognizer's latest event — status / partial /
+  // final / error — so a silent failure is visible at a glance.
+  Widget _voiceHud() => Container(
+    width: double.infinity,
+    color: Colors.black87,
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    child: Text(
+      _dbgLog.isEmpty ? '🎙️ 等待识别…' : _dbgLog.join('  ·  '),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+    ),
+  );
 
   Widget _keyBar() {
     Widget btn(String label, VoidCallback onPressed) => Padding(
@@ -1399,7 +1641,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   // Functional buttons are pinned at the front (not reorderable).
                   btn('复制', _copy),
                   btn('粘贴', _paste),
-                  btn(_listening ? '🎤 停' : '🎤 说', _voiceInput),
+                  btn(switch (_vmode) {
+                    _VoiceMode.off => '🎙️ 听写',
+                    _VoiceMode.dictating => '🔴 听写中',
+                  }, _toggleDictation),
                   btn('滚↑', () => _wheel(true, ticks: 3)),
                   btn('滚↓', () => _wheel(false, ticks: 3)),
                   for (final kb in _keys)
@@ -1832,7 +2077,9 @@ class _RemoteDiffViewerState extends State<_RemoteDiffViewer> {
       builder: (context, _) => Scaffold(
         appBar: AppBar(
           title: Text(widget.title, overflow: TextOverflow.ellipsis),
-          actions: [_diffSplitAction(_split, (v) => setState(() => _split = v))],
+          actions: [
+            _diffSplitAction(_split, (v) => setState(() => _split = v)),
+          ],
         ),
         body: client.diffLoading
             ? const Center(child: CircularProgressIndicator())

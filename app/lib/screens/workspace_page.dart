@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -343,9 +344,17 @@ class _WorkspacePageState extends State<WorkspacePage>
       final phoneWants = _remoteHost.watching(s.id);
       if (speakLocal || phoneWants) {
         _voice.readReplyText(s).then((text) {
-          if (text == null || text.isEmpty) return;
+          if (text == null || text.isEmpty) {
+            // No prose reply (e.g. tool-only turn) — still clear the phone's
+            // "thinking" Live Activity so it doesn't spin forever.
+            if (phoneWants) _remoteHost.broadcastStatus(s.id, false, '已完成');
+            return;
+          }
           if (speakLocal) _voice.speak(text);
-          if (phoneWants) _remoteHost.broadcastReply(s.id, text);
+          if (phoneWants) {
+            _remoteHost.broadcastReply(s.id, text);
+            _remoteHost.broadcastStatus(s.id, false, text);
+          }
         });
       }
     };
@@ -362,6 +371,24 @@ class _WorkspacePageState extends State<WorkspacePage>
     _remoteHost.onSessionWatched = (sid) {
       final s = sessionById(sid);
       if (s != null) _voice.armBaseline(s);
+    };
+    // A phone-sent file landed in ~/Downloads/cc-recv — toast it with a
+    // shortcut to reveal it in Finder.
+    _remoteHost.onFileReceived = (name, path) {
+      if (!mounted) return;
+      final m = ScaffoldMessenger.of(context);
+      m.clearSnackBars();
+      m.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('收到手机文件：$name'),
+          action: SnackBarAction(
+            label: '在 Finder 中显示',
+            onPressed: () => Process.run('open', ['-R', path]),
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
     };
     // Keep the mic button in sync with the recognizer (handles silence/timeout
     // auto-stop, not just explicit stop).
@@ -910,6 +937,23 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     if (cwd.isEmpty) cwd = Platform.environment['HOME'] ?? '/';
     addTerm(cwd, ''); // '' = plain interactive shell
+  }
+
+  // _sendFileToPhone opens a native file picker and streams the chosen file to
+  // every connected phone over the relay (see RemoteHost.sendFile).
+  Future<void> _sendFileToPhone() async {
+    final res = await FilePicker.platform.pickFiles();
+    final path = res?.files.single.path;
+    if (path == null || !mounted) return; // cancelled
+    final name = path.split('/').last;
+    _remoteSnack('正在发送 $name…');
+    _remoteHost.sendFile(
+      path,
+      onDone: (ok, msg) {
+        if (!mounted) return;
+        _remoteSnack(ok ? '已发送 $name' : '发送失败：$msg', error: !ok);
+      },
+    );
   }
 
   // --- remote (phone) session actions; wired into _remoteHost ---
@@ -2298,6 +2342,16 @@ class _WorkspacePageState extends State<WorkspacePage>
               }
             },
           ),
+          _toolButton(
+            icon: Icons.upload_file_outlined,
+            tooltip: _remoteHost.clientCount > 0
+                ? '发送文件到手机'
+                : '发送文件到手机（需先有手机连接）',
+            selected: false,
+            onPressed: (_remoteHost.sharing && _remoteHost.clientCount > 0)
+                ? _sendFileToPhone
+                : null,
+          ),
           _runChip('Claude', Icons.play_arrow_rounded, _launchDefaultClaude),
           _runChip('Codex', Icons.smart_toy_outlined, _launchDefaultCodex),
         ],
@@ -2394,7 +2448,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (ok) {
       setState(() => _listening = true);
     } else {
-      _snack('语音识别不可用 (检查麦克风/语音识别权限)');
+      _snack('语音识别不可用:${_voice.sttError ?? "检查麦克风/语音识别权限"}');
     }
   }
 

@@ -7,6 +7,8 @@ import '../local/git.dart';
 import '../local/worktrees.dart';
 import '../screens/terminal_pane.dart';
 import '../widgets.dart' show kIgnoredEntries;
+import 'file_fs.dart';
+import 'file_transfer.dart';
 import 'remote_channel.dart';
 
 // A project root the host exposes to remote clients (workspace = owning ws name).
@@ -119,6 +121,34 @@ class RemoteHost extends RemoteChannel {
   // workspace baselines that session's voice reading cursor.
   void Function(String sid)? onSessionWatched;
 
+  // onFileReceived fires when a phone-sent file finishes landing in
+  // ~/Downloads/cc-recv (the workspace pops a desktop notification).
+  void Function(String name, String path)? onFileReceived;
+
+  // _fileRx assembles inbound file.* frames from clients into ~/Downloads/cc-recv.
+  FileReceiver? _fileRxInst;
+  FileReceiver get _fileRx => _fileRxInst ??= FileReceiver(
+    openSink: (info) => openReceiveSink(info, host: true),
+    sendFrame: send,
+    onComplete: (info, path) => onFileReceived?.call(info.name, path),
+  );
+
+  // sendFile streams a desktop file to phone client(s) over the relay. With no
+  // [to] it broadcasts to every connected client; pass a connId for a direct
+  // send. Returns a handle the UI can cancel / await.
+  FileSendHandle sendFile(
+    String path, {
+    int? to,
+    void Function(int sent, int total)? onProgress,
+    void Function(bool ok, String msg)? onDone,
+  }) => sendFileOverChannel(
+    path: path,
+    send: send,
+    to: to,
+    onProgress: onProgress,
+    onDone: onDone,
+  );
+
   Future<void> enable() async => start();
   void disable() => stop();
 
@@ -142,6 +172,9 @@ class RemoteHost extends RemoteChannel {
 
   @override
   void onFrame(Map<String, dynamic> f) {
+    // Inbound file transfer (phone → desktop) is handled by the receiver, which
+    // owns file.offer/chunk/end/cancel; everything else is a workspace frame.
+    if (_fileRx.dispatch(f)) return;
     switch (f['t']) {
       case 'list':
         final from = (f['from'] as num?)?.toInt();
@@ -149,7 +182,14 @@ class RemoteHost extends RemoteChannel {
       case 'term.open':
         _termOpen(f);
       case 'term.input':
-        _sessionById(f['sid'] as String?)?.sendText((f['d'] as String?) ?? '');
+        final s = _sessionById(f['sid'] as String?);
+        final d = (f['d'] as String?) ?? '';
+        s?.sendText(d);
+        // A submit (Enter) sent to an agent session means it's now working —
+        // flip the phone's Live Activity to "thinking" until onAgentDone.
+        if (s != null && s.isAgent && (d.contains('\r') || d.contains('\n'))) {
+          broadcastStatus(s.id, true, '思考中…');
+        }
       case 'term.resize':
         _sessionById(f['sid'] as String?)?.resizeFromRemote(
           (f['rows'] as num?)?.toInt() ?? 0,
@@ -259,6 +299,16 @@ class RemoteHost extends RemoteChannel {
     if (!connected) return;
     for (final c in _watchers[sid] ?? const <int>{}) {
       send({'t': 'reply', 'to': c, 'sid': sid, 'text': text});
+    }
+  }
+
+  // broadcastStatus pushes an agent's working/idle state (+ a short text) to the
+  // phones watching [sid] so they can drive a Live Activity / Dynamic Island
+  // while the user is in another app. Only watchers receive it.
+  void broadcastStatus(String sid, bool working, String text) {
+    if (!connected) return;
+    for (final c in _watchers[sid] ?? const <int>{}) {
+      send({'t': 'status', 'to': c, 'sid': sid, 'working': working, 'text': text});
     }
   }
 

@@ -4,6 +4,8 @@ import 'package:xterm/xterm.dart';
 
 import '../notifications.dart';
 import '../terminal_mouse.dart';
+import 'file_fs.dart';
+import 'file_transfer.dart';
 import 'remote_channel.dart';
 
 // Client-side models of what the desktop host advertises.
@@ -80,6 +82,15 @@ class RemoteNotice {
   RemoteNotice(this.title, this.body) : at = DateTime.now();
 }
 
+// A file received from the desktop, landed in the app's Documents/cc-recv. Kept
+// so the phone can list and re-open / share files beyond the arrival toast.
+class ReceivedFile {
+  final String name;
+  final String path;
+  final DateTime at;
+  ReceivedFile(this.name, this.path) : at = DateTime.now();
+}
+
 // RemoteClient is the phone side of the remote workspace: over the relay (see
 // RemoteChannel for transport) it discovers the desktop host's terminal sessions
 // and project roots, drives terminals (xterm fed by network bytes, keystrokes
@@ -97,6 +108,40 @@ class RemoteClient extends RemoteChannel {
   // watched session (the terminal screen reads it aloud). Not a ChangeNotifier
   // field — it's a transient one-shot, not rebuildable state.
   void Function(String sid, String text)? onReplyText;
+
+  // onAgentStatus fires when the desktop pushes a watched session's working/idle
+  // state (+ a short text). The terminal screen drives an iOS Live Activity /
+  // Dynamic Island from it so the user can leave the app and still see progress.
+  void Function(String sid, bool working, String text)? onAgentStatus;
+
+  // Files received from the desktop (newest first) + a one-shot arrival callback
+  // for a toast. _fileRx assembles inbound file.* frames into Documents/cc-recv.
+  final List<ReceivedFile> receivedFiles = [];
+  void Function(String name, String path)? onFileReceived;
+  FileReceiver? _fileRxInst;
+  FileReceiver get _fileRx => _fileRxInst ??= FileReceiver(
+    openSink: (info) => openReceiveSink(info, host: false),
+    sendFrame: send,
+    onComplete: (info, path) {
+      receivedFiles.insert(0, ReceivedFile(info.name, path));
+      if (receivedFiles.length > 100) receivedFiles.removeLast();
+      notifyListeners();
+      onFileReceived?.call(info.name, path);
+    },
+  );
+
+  // sendFile streams a phone file up to the desktop host over the relay (no `to`
+  // → routed to the host). Returns a handle the UI can cancel / await.
+  FileSendHandle sendFile(
+    String path, {
+    void Function(int sent, int total)? onProgress,
+    void Function(bool ok, String msg)? onDone,
+  }) => sendFileOverChannel(
+    path: path,
+    send: send,
+    onProgress: onProgress,
+    onDone: onDone,
+  );
 
   // File browser (single current directory, mobile-friendly).
   String? fsPath;
@@ -165,6 +210,9 @@ class RemoteClient extends RemoteChannel {
 
   @override
   void onFrame(Map<String, dynamic> f) {
+    // Inbound file transfer (desktop → phone) is handled by the receiver, which
+    // owns file.offer/chunk/end/cancel; everything else is a workspace frame.
+    if (_fileRx.dispatch(f)) return;
     switch (f['t']) {
       case 'sessions':
         sessions = [
@@ -206,6 +254,16 @@ class RemoteClient extends RemoteChannel {
         final sid = f['sid'] as String?;
         final text = f['text'] as String?;
         if (sid != null && text != null) onReplyText?.call(sid, text);
+      case 'status':
+        // Agent working/idle state for a watched session → Live Activity.
+        final sid = f['sid'] as String?;
+        if (sid != null) {
+          onAgentStatus?.call(
+            sid,
+            (f['working'] as bool?) ?? false,
+            (f['text'] as String?) ?? '',
+          );
+        }
       case 'fs.list.ok':
         fsPath = f['path'] as String?;
         fsEntries = [
