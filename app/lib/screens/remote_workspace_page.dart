@@ -41,6 +41,8 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     token: widget.token,
   );
   int _tab = 0; // 0 = 会话, 1 = 代码, 2 = Git
+  // Collapsed project groups in the sessions tab, keyed by project path.
+  final Set<String> _collapsedProjects = <String>{};
   DateTime? _pausedAt; // when the app last backgrounded (for resume reconnect)
   final List<String> _dirStack =
       []; // breadcrumb of opened dirs (empty = roots)
@@ -290,9 +292,26 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       if (projects.isEmpty) continue;
       children.add(_gitSection(entry.key.isEmpty ? '(默认工作区)' : entry.key));
       for (final p in projects) {
-        children.add(_projectSubHeader(p.name));
-        for (final s in byProject[p.path]!) {
-          children.add(_sessionRow(s, root: p));
+        final ss = byProject[p.path]!;
+        final collapsed = _collapsedProjects.contains(p.path);
+        children.add(
+          _projectSubHeader(
+            p.name,
+            count: ss.length,
+            collapsed: collapsed,
+            onTap: () => setState(() {
+              if (collapsed) {
+                _collapsedProjects.remove(p.path);
+              } else {
+                _collapsedProjects.add(p.path);
+              }
+            }),
+          ),
+        );
+        if (!collapsed) {
+          for (final s in ss) {
+            children.add(_sessionRow(s, root: p));
+          }
         }
       }
     }
@@ -305,25 +324,45 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     return ListView(children: children);
   }
 
-  Widget _projectSubHeader(String name) => Padding(
-    padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
-    child: Row(
-      children: [
-        const Icon(Icons.folder_rounded, size: 14, color: CcColors.muted),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              color: CcColors.text,
+  // _projectSubHeader is a tappable project group header: a chevron (collapsed/
+  // expanded), the folder + name, and the session count. Tapping toggles whether
+  // its session rows are shown (see _collapsedProjects).
+  Widget _projectSubHeader(
+    String name, {
+    required int count,
+    required bool collapsed,
+    required VoidCallback onTap,
+  }) => InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 14, 2),
+      child: Row(
+        children: [
+          Icon(
+            collapsed
+                ? Icons.chevron_right_rounded
+                : Icons.expand_more_rounded,
+            size: 18,
+            color: CcColors.muted,
+          ),
+          const SizedBox(width: 2),
+          const Icon(Icons.folder_rounded, size: 14, color: CcColors.muted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: CcColors.text,
+              ),
             ),
           ),
-        ),
-      ],
+          Text('$count', style: CcType.code(size: 11, color: CcColors.subtle)),
+        ],
+      ),
     ),
   );
 
