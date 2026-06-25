@@ -1,4 +1,4 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'session_kv.dart';
 
 // Session is the active relay auth: where + who + token. It comes from an
 // explicit login (stored securely) or, on desktop, from ~/.config/cc-handoff.
@@ -23,35 +23,34 @@ class Session {
       );
 }
 
-// SessionStore persists a logged-in session in the platform secure store
-// (Keychain / Keystore), so mobile (no config.toml) stays logged in.
+// SessionStore persists a logged-in session via a per-platform key-value backend
+// (OS secure store on desktop/mobile, browser localStorage on web — see
+// session_kv.dart), so a client with no config.toml stays logged in.
 class SessionStore {
-  static const _s = FlutterSecureStorage();
-
   static Future<Session?> load() async {
-    final url = await _s.read(key: 'relay_url');
-    final token = await _s.read(key: 'token');
+    final url = await kvRead('relay_url');
+    final token = await kvRead('token');
     if (url == null || url.isEmpty || token == null || token.isEmpty) {
       return null;
     }
     return Session(
       relayUrl: url,
       token: token,
-      identity: await _s.read(key: 'identity') ?? '',
-      isAdmin: (await _s.read(key: 'is_admin')) == 'true',
+      identity: await kvRead('identity') ?? '',
+      isAdmin: (await kvRead('is_admin')) == 'true',
     );
   }
 
   static Future<void> save(Session s) async {
-    await _s.write(key: 'relay_url', value: s.relayUrl);
-    await _s.write(key: 'token', value: s.token);
-    await _s.write(key: 'identity', value: s.identity);
-    await _s.write(key: 'is_admin', value: s.isAdmin.toString());
+    await kvWrite('relay_url', s.relayUrl);
+    await kvWrite('token', s.token);
+    await kvWrite('identity', s.identity);
+    await kvWrite('is_admin', s.isAdmin.toString());
   }
 
   static Future<void> clear() async {
     for (final k in ['relay_url', 'token', 'identity', 'is_admin']) {
-      await _s.delete(key: k);
+      await kvDelete(k);
     }
   }
 }
