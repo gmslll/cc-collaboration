@@ -91,6 +91,16 @@ class ReceivedFile {
   ReceivedFile(this.name, this.path) : at = DateTime.now();
 }
 
+// A file sent up to the desktop (path is the original local file the user
+// picked). Recorded on a successful send so the phone can list / re-open /
+// share it beyond the send toast — symmetric with ReceivedFile.
+class SentFile {
+  final String name;
+  final String path;
+  final DateTime at;
+  SentFile(this.name, this.path) : at = DateTime.now();
+}
+
 // RemoteClient is the phone side of the remote workspace: over the relay (see
 // RemoteChannel for transport) it discovers the desktop host's terminal sessions
 // and project roots, drives terminals (xterm fed by network bytes, keystrokes
@@ -130,8 +140,13 @@ class RemoteClient extends RemoteChannel {
     },
   );
 
+  // Files sent up to the desktop (newest first), recorded on a successful send
+  // so the phone can list / re-open / share them beyond the send toast.
+  final List<SentFile> sentFiles = [];
+
   // sendFile streams a phone file up to the desktop host over the relay (no `to`
-  // → routed to the host). Returns a handle the UI can cancel / await.
+  // → routed to the host). Returns a handle the UI can cancel / await. On a
+  // successful send it records the file in sentFiles for the transfer hub.
   FileSendHandle sendFile(
     String path, {
     void Function(int sent, int total)? onProgress,
@@ -140,7 +155,14 @@ class RemoteClient extends RemoteChannel {
     path: path,
     send: send,
     onProgress: onProgress,
-    onDone: onDone,
+    onDone: (ok, msg) {
+      if (ok) {
+        sentFiles.insert(0, SentFile(path.split('/').last, path));
+        if (sentFiles.length > 100) sentFiles.removeLast();
+        notifyListeners();
+      }
+      onDone?.call(ok, msg);
+    },
   );
 
   // File browser (single current directory, mobile-friendly).

@@ -161,7 +161,8 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   }
 
   // _showFileTransfer is the phone's file hub: send a file up to the desktop,
-  // and open / share files the desktop has sent down (landed in Documents/cc-recv).
+  // list files just sent (the picked local file), and open / share files the
+  // desktop has sent down (landed in Documents/cc-recv).
   void _showFileTransfer() {
     showModalBottomSheet<void>(
       context: context,
@@ -189,52 +190,59 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
               },
             ),
             const Divider(height: 1),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text(
-                '已收文件',
-                style: TextStyle(color: CcColors.subtle, fontSize: 12),
-              ),
-            ),
-            if (_c.receivedFiles.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(20),
-                child: Center(
-                  child: Text('暂无', style: TextStyle(color: CcColors.muted)),
-                ),
-              ),
-            for (final f in _c.receivedFiles)
-              ListTile(
-                leading: const Icon(
-                  Icons.insert_drive_file_outlined,
-                  color: CcColors.muted,
-                ),
-                title: Text(f.name, style: const TextStyle(color: CcColors.text)),
-                subtitle: Text(
-                  relativeTime(f.at),
-                  style: const TextStyle(color: CcColors.muted),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.open_in_new_rounded, size: 20),
-                      tooltip: '打开',
-                      onPressed: () => OpenFilex.open(f.path),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.ios_share_rounded, size: 20),
-                      tooltip: '分享 / 保存到「文件」',
-                      onPressed: () => Share.shareXFiles([XFile(f.path)]),
-                    ),
-                  ],
-                ),
-              ),
+            _fileSectionHeader('已发送'),
+            if (_c.sentFiles.isEmpty) _fileSectionEmpty(),
+            for (final f in _c.sentFiles) _fileTile(f.name, f.at, f.path),
+            const Divider(height: 1),
+            _fileSectionHeader('已收文件'),
+            if (_c.receivedFiles.isEmpty) _fileSectionEmpty(),
+            for (final f in _c.receivedFiles) _fileTile(f.name, f.at, f.path),
           ],
         ),
       ),
     );
   }
+
+  // Shared bits for the transfer hub's "已发送" / "已收文件" sections.
+  Widget _fileSectionHeader(String label) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+    child: Text(
+      label,
+      style: const TextStyle(color: CcColors.subtle, fontSize: 12),
+    ),
+  );
+
+  Widget _fileSectionEmpty() => const Padding(
+    padding: EdgeInsets.all(20),
+    child: Center(child: Text('暂无', style: TextStyle(color: CcColors.muted))),
+  );
+
+  Widget _fileTile(String name, DateTime at, String path) => ListTile(
+    leading: const Icon(
+      Icons.insert_drive_file_outlined,
+      color: CcColors.muted,
+    ),
+    title: Text(name, style: const TextStyle(color: CcColors.text)),
+    subtitle: Text(
+      relativeTime(at),
+      style: const TextStyle(color: CcColors.muted),
+    ),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.open_in_new_rounded, size: 20),
+          tooltip: '打开',
+          onPressed: () => OpenFilex.open(path),
+        ),
+        IconButton(
+          icon: const Icon(Icons.ios_share_rounded, size: 20),
+          tooltip: '分享 / 保存到「文件」',
+          onPressed: () => Share.shareXFiles([XFile(path)]),
+        ),
+      ],
+    ),
+  );
 
   // _sendFileToMac picks a phone file and streams it up to the desktop host.
   Future<void> _sendFileToMac() async {
