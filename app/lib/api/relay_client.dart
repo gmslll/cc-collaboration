@@ -197,28 +197,61 @@ class LoginResult {
   LoginResult(this.token, this.identity, this.isAdmin);
 }
 
+// AuthException carries a short, user-facing message (its toString IS that
+// message) so the login screen can show "该账号已注册" instead of a raw
+// DioException dump.
+class AuthException implements Exception {
+  final String message;
+  AuthException(this.message);
+  @override
+  String toString() => message;
+}
+
 // login posts to /v1/login (which is outside the auth middleware) on a
 // tokenless client and returns the session token.
-Future<LoginResult> login(String baseUrl, String identity, String password) async {
-  final dio = Dio(BaseOptions(baseUrl: baseUrl.replaceAll(RegExp(r'/+$'), '')));
-  final r =
-      await dio.post('/v1/login', data: {'identity': identity, 'password': password});
-  final d = (r.data as Map).cast<String, dynamic>();
-  return LoginResult((d['token'] ?? '').toString(),
-      (d['identity'] ?? identity).toString(), d['is_admin'] == true);
-}
+Future<LoginResult> login(String baseUrl, String identity, String password) =>
+    _authPost(baseUrl, '/v1/login', identity, password);
 
 // register posts to /v1/register (also outside the auth middleware) to
 // self-register a new account, returning a ready-to-use session token just like
 // login — so the caller can sign in immediately after registering.
-Future<LoginResult> register(
-    String baseUrl, String identity, String password) async {
+Future<LoginResult> register(String baseUrl, String identity, String password) =>
+    _authPost(baseUrl, '/v1/register', identity, password);
+
+// _authPost runs the shared login/register request on a tokenless client and
+// maps failures to a clean AuthException (server's plain-text body, or a
+// friendly message for the common 409/401 and connection errors).
+Future<LoginResult> _authPost(
+    String baseUrl, String path, String identity, String password) async {
   final dio = Dio(BaseOptions(baseUrl: baseUrl.replaceAll(RegExp(r'/+$'), '')));
-  final r = await dio
-      .post('/v1/register', data: {'identity': identity, 'password': password});
-  final d = (r.data as Map).cast<String, dynamic>();
-  return LoginResult((d['token'] ?? '').toString(),
-      (d['identity'] ?? identity).toString(), d['is_admin'] == true);
+  try {
+    final r =
+        await dio.post(path, data: {'identity': identity, 'password': password});
+    final d = (r.data as Map).cast<String, dynamic>();
+    return LoginResult((d['token'] ?? '').toString(),
+        (d['identity'] ?? identity).toString(), d['is_admin'] == true);
+  } on DioException catch (e) {
+    throw AuthException(_authErrText(e));
+  }
+}
+
+String _authErrText(DioException e) {
+  final resp = e.response;
+  if (resp != null) {
+    if (resp.statusCode == 409) return '该账号已注册,请直接登录或换一个 identity';
+    if (resp.statusCode == 401) return 'identity 或密码错误';
+    final body = resp.data?.toString().trim() ?? '';
+    if (body.isNotEmpty) return body;
+    return '服务器返回 ${resp.statusCode}';
+  }
+  switch (e.type) {
+    case DioExceptionType.connectionTimeout:
+    case DioExceptionType.receiveTimeout:
+    case DioExceptionType.connectionError:
+      return '无法连接 relay,请检查地址';
+    default:
+      return e.message ?? '请求失败';
+  }
 }
 
 // _asList tolerates either a bare JSON array or a wrapped object
