@@ -1550,6 +1550,17 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     if (seq != null) widget.client.sendKeys(widget.session.sid, seq * ticks);
   }
 
+  // _clearScrollback wipes the phone's LOCAL scrollback (the history the host
+  // replayed on connect, laid out at the COMPUTER's width — that's what looks
+  // garbled when you swipe up). The current screen is kept (it's the latest,
+  // already at the phone's width), and output from here on accumulates clean.
+  // Trade-off: you can no longer scroll up to the pre-clear history — but that
+  // part was unreadable anyway.
+  void _clearScrollback() {
+    _term.eraseScrollbackOnly();
+    snack(context, '已清空本地历史(上滑乱码的来源)');
+  }
+
   // Accumulated vertical drag distance, converted to wheel ticks once it
   // crosses a line-height threshold (swipe-to-scroll).
   double _scrollAccum = 0;
@@ -1682,6 +1693,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   }, _toggleDictation),
                   btn('滚↑', () => _wheel(true, ticks: 3)),
                   btn('滚↓', () => _wheel(false, ticks: 3)),
+                  btn('清空', _clearScrollback),
                   for (final kb in _keys)
                     btn(
                       kb.label,
