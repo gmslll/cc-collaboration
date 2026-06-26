@@ -26,6 +26,27 @@ Widget diffSplitToggle(
   },
 );
 
+// diffContextToggle is the 全部/相关 switch (persists the 'diff.fullContext' pref):
+// 全部 = re-fetch the diff with full file context (every line shown), 相关 = only
+// changed regions (git's default context). onChanged carries the new value.
+Widget diffContextToggle(
+  bool full,
+  ValueChanged<bool> onChanged, {
+  ButtonStyle? style,
+}) => SegmentedButton<bool>(
+  segments: const [
+    ButtonSegment(value: false, label: Text('相关')),
+    ButtonSegment(value: true, label: Text('全部')),
+  ],
+  selected: {full},
+  showSelectedIcon: false,
+  style: style,
+  onSelectionChanged: (s) {
+    Prefs.setBool('diff.fullContext', s.first);
+    onChanged(s.first);
+  },
+);
+
 // Shared GoLand-style split-diff rendering, used by BOTH the desktop DiffView
 // (editable) and the phone's read-only SplitDiff. The primitives below + the
 // per-row builder are the single source of the side-by-side look; callers inject

@@ -23,6 +23,10 @@ class DiffView extends StatefulWidget {
   final VoidCallback? onChanged;
   final String? initialPath; // file to select first (else the first file)
   final bool showTree; // false = single-pane (nav driven by an external list)
+  // onReloadContext re-fetches this diff with a given git context-line count
+  // (3 = changed regions only, 999999 = whole file). Non-null enables the
+  // 全部/相关 toggle; the closure captures the source (commit/compare/working).
+  final Future<List<FileDiff>> Function(int context)? onReloadContext;
   const DiffView({
     super.key,
     required this.files,
@@ -30,6 +34,7 @@ class DiffView extends StatefulWidget {
     this.onChanged,
     this.initialPath,
     this.showTree = true,
+    this.onReloadContext,
   });
 
   @override
@@ -41,6 +46,11 @@ class _DiffViewState extends State<DiffView> {
   String? _lang; // re_highlight language id of the selected file (null = plain)
   List<DiffRow> _rows = const [];
   bool _split = Prefs.getBool('diff.split', def: true);
+  // 全部/相关: false = git's default context (changed regions only), true = whole
+  // file (re-fetched via onReloadContext). _files is what we render — it starts
+  // as widget.files and is swapped for the full-context fetch when toggled.
+  bool _fullContext = Prefs.getBool('diff.fullContext', def: false);
+  late List<FileDiff> _files;
   double _treeW = Prefs.getDouble('diff.treeW', def: 300);
   late _Dir _root; // the dir tree — built once per file list (not per build)
   int? _editingNewNo; // the new-side line number currently being inline-edited
@@ -49,8 +59,11 @@ class _DiffViewState extends State<DiffView> {
   @override
   void initState() {
     super.initState();
-    _root = _buildTree(widget.files);
+    _files = widget.files;
+    _root = _buildTree(_files);
     _reselect(widget.initialPath);
+    // Honor a persisted 「全部」 toggle on first load.
+    if (_fullContext && widget.onReloadContext != null) _applyContext(true);
   }
 
   @override
@@ -65,19 +78,41 @@ class _DiffViewState extends State<DiffView> {
     final pathChanged =
         widget.initialPath != null && widget.initialPath != old.initialPath;
     if (!identical(old.files, widget.files)) {
-      // a re-diff (after edit/revert) rebuilds the list — keep the user on the
-      // same file by path rather than snapping back to the first one, unless the
-      // parent explicitly pointed us at a new file on this update.
-      _root = _buildTree(widget.files);
+      // a re-diff (after edit/revert) or a re-pointed tab (new commit) replaces
+      // the list — adopt the parent's (default-context) list, keep the user on
+      // the same file by path unless explicitly pointed at a new one.
+      _files = widget.files;
+      _root = _buildTree(_files);
       _reselect(pathChanged ? widget.initialPath : _selected?.path);
+      // Re-apply a persisted 「全部」 view to the new source.
+      if (_fullContext && widget.onReloadContext != null) _applyContext(true);
     } else if (pathChanged) {
       // same file list, but the commit list selected a different file — follow.
       _reselect(widget.initialPath);
     }
   }
 
+  // _applyContext re-fetches the diff at the requested context (全部 vs 相关) via
+  // the parent's closure and swaps in the result, keeping the current selection.
+  Future<void> _applyContext(bool full) async {
+    final reload = widget.onReloadContext;
+    if (reload == null) return;
+    if (_fullContext != full) setState(() => _fullContext = full);
+    try {
+      final fs = await reload(full ? 999999 : 3);
+      if (!mounted) return;
+      setState(() {
+        _files = fs;
+        _root = _buildTree(_files);
+      });
+      _reselect(_selected?.path);
+    } catch (_) {
+      // keep the current diff on failure
+    }
+  }
+
   void _reselect(String? path) {
-    if (widget.files.isEmpty) {
+    if (_files.isEmpty) {
       setState(() {
         _selected = null;
         _rows = const [];
@@ -85,9 +120,9 @@ class _DiffViewState extends State<DiffView> {
       });
       return;
     }
-    var target = widget.files.first;
+    var target = _files.first;
     if (path != null) {
-      for (final f in widget.files) {
+      for (final f in _files) {
         if (f.path == path) {
           target = f;
           break;
@@ -196,7 +231,7 @@ class _DiffViewState extends State<DiffView> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.files.isEmpty) return centerMsg('没有变动文件');
+    if (_files.isEmpty) return centerMsg('没有变动文件');
     // single-pane: only the diff; file navigation is driven by an external list
     // (e.g. the Commit panel) so the internal tree would be redundant.
     if (!widget.showTree) return _right();
@@ -352,6 +387,10 @@ class _DiffViewState extends State<DiffView> {
                   icon: const Icon(Icons.undo_rounded, size: 16),
                   label: const Text('丢弃'),
                 ),
+                const SizedBox(width: 8),
+              ],
+              if (widget.onReloadContext != null) ...[
+                diffContextToggle(_fullContext, _applyContext),
                 const SizedBox(width: 8),
               ],
               diffSplitToggle(_split, (v) => setState(() => _split = v)),

@@ -163,44 +163,51 @@ class GitOperationState {
   });
 }
 
-// gitDiffWorking = all uncommitted changes (working tree + staged) vs HEAD.
-Future<String> gitDiffWorking(String dir) => _git(dir, 'diff HEAD');
+// _ctx renders git's context-line flag. Default 3 = git's default (no change);
+// a large value (e.g. 999999) makes a diff include the whole file as context —
+// used by the diff viewer's 「全部」(full-file) toggle.
+String _ctx(int context) => '--unified=$context';
 
-Future<String> gitDiffFileWorking(String dir, String file) {
+// gitDiffWorking = all uncommitted changes (working tree + staged) vs HEAD.
+Future<String> gitDiffWorking(String dir, {int context = 3}) =>
+    _git(dir, 'diff ${_ctx(context)} HEAD');
+
+Future<String> gitDiffFileWorking(String dir, String file, {int context = 3}) {
   final f = file.trim();
   if (f.isEmpty) throw GitException('file path 不能为空');
-  return _git(dir, 'diff HEAD -- ${shQuote(f)}');
+  return _git(dir, 'diff ${_ctx(context)} HEAD -- ${shQuote(f)}');
 }
 
 // gitDiffBase = what this branch added vs [base] (default origin/main):
 // `git diff <base>...HEAD` (the merge-base diff).
-Future<String> gitDiffBase(String dir, String base) {
+Future<String> gitDiffBase(String dir, String base, {int context = 3}) {
   final b = base.trim().isEmpty ? 'origin/main' : base.trim();
-  return _git(dir, 'diff ${shQuote(b)}...HEAD');
+  return _git(dir, 'diff ${_ctx(context)} ${shQuote(b)}...HEAD');
 }
 
-Future<String> gitDiffRefs(String dir, String left, String right) {
+Future<String> gitDiffRefs(String dir, String left, String right,
+    {int context = 3}) {
   final l = left.trim();
   final r = right.trim();
   if (l.isEmpty || r.isEmpty) throw GitException('compare ref 不能为空');
-  return _git(dir, 'diff ${shQuote(l)}...${shQuote(r)}');
+  return _git(dir, 'diff ${_ctx(context)} ${shQuote(l)}...${shQuote(r)}');
 }
 
-Future<String> gitDiffRefToWorking(String dir, String ref) {
+Future<String> gitDiffRefToWorking(String dir, String ref, {int context = 3}) {
   final r = ref.trim();
   if (r.isEmpty) throw GitException('compare ref 不能为空');
-  return _git(dir, 'diff ${shQuote(r)} --');
+  return _git(dir, 'diff ${_ctx(context)} ${shQuote(r)} --');
 }
 
 // gitDiffUntracked presents an untracked file as fully added (vs /dev/null) so
 // it can be viewed in the diff viewer. `git diff --no-index` exits 1 when the
 // inputs differ — the normal case here — so exit 1 is allowed.
-Future<String> gitDiffUntracked(String dir, String file) {
+Future<String> gitDiffUntracked(String dir, String file, {int context = 3}) {
   final f = file.trim();
   if (f.isEmpty) throw GitException('file path 不能为空');
   return _git(
     dir,
-    'diff --no-index -- /dev/null ${shQuote(f)}',
+    'diff ${_ctx(context)} --no-index -- /dev/null ${shQuote(f)}',
     okExit: {0, 1},
   );
 }
@@ -557,10 +564,11 @@ Future<void> gitStashPush(
   );
 }
 
-Future<String> gitStashShow(String dir, String ref) async {
+Future<String> gitStashShow(String dir, String ref, {int context = 3}) async {
   final r = ref.trim();
   if (r.isEmpty) throw GitException('stash ref 不能为空');
-  return _git(dir, 'stash show -p --find-renames ${shQuote(r)}');
+  return _git(
+      dir, 'stash show -p ${_ctx(context)} --find-renames ${shQuote(r)}');
 }
 
 Future<void> gitStashApply(String dir, String ref) async {
@@ -634,19 +642,21 @@ List<GitCommit> parseGitLog(String out) {
   return commits;
 }
 
-Future<String> gitShowCommit(String dir, String hash) {
+Future<String> gitShowCommit(String dir, String hash, {int context = 3}) {
   if (hash.trim().isEmpty) throw GitException('commit hash 不能为空');
-  return _git(dir, 'show --format= --find-renames ${shQuote(hash)}');
+  return _git(
+      dir, 'show ${_ctx(context)} --format= --find-renames ${shQuote(hash)}');
 }
 
-Future<String> gitShowCommitFile(String dir, String hash, String file) {
+Future<String> gitShowCommitFile(String dir, String hash, String file,
+    {int context = 3}) {
   final h = hash.trim();
   final f = file.trim();
   if (h.isEmpty) throw GitException('commit hash 不能为空');
   if (f.isEmpty) throw GitException('file path 不能为空');
   return _git(
     dir,
-    'show --format= --find-renames ${shQuote(h)} -- ${shQuote(f)}',
+    'show ${_ctx(context)} --format= --find-renames ${shQuote(h)} -- ${shQuote(f)}',
   );
 }
 

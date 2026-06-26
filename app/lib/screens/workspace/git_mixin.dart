@@ -31,6 +31,10 @@ mixin _GitMixin on State<WorkspacePage> {
   String? _selectedStash;
   String? _compareTitle;
   List<FileDiff> _compareFiles = const [];
+  // Re-fetches the currently shown commit/compare diff at a given git context
+  // (for the diff viewer's 全部/相关 toggle); set whenever a commit/compare is
+  // selected so the source (hash/refs) is captured. Null = no toggle.
+  Future<List<FileDiff>> Function(int context)? _logDiffReload;
   String? _selectedGitPath;
   final Set<String> _selectedChangePaths = {};
   String _changesQuery = '';

@@ -19,6 +19,7 @@ import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
+import '../remote/file_transfer.dart';
 import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../voice/voice.dart';
@@ -94,6 +95,9 @@ class _OpenFile {
   List<FileDiff>? diffs; // non-null = a read-only diff tab
   String? diffInitialPath; // file to select first inside the diff
   bool diffShowTree; // diff tabs: show DiffView's own file tree (false = single-pane)
+  // diffReload re-fetches this diff tab's files at a given git context (for the
+  // 全部/相关 toggle); captures the source (commit/compare/working). Null = no toggle.
+  Future<List<FileDiff>> Function(int context)? diffReload;
   final GlobalKey<CodeEditorPaneState> key = GlobalKey<CodeEditorPaneState>();
   bool previewMode = false; // .md tabs: rendered preview vs source
 
@@ -103,6 +107,7 @@ class _OpenFile {
     this.diffs, {
     this.diffInitialPath,
     this.diffShowTree = true,
+    this.diffReload,
   }) : line = null;
 
   bool get isDiff => diffs != null;
@@ -188,6 +193,8 @@ class _WorkspacePageState extends State<WorkspacePage>
   bool _remoteWasConnected = false;
   int _remoteLastClients = 0;
   String? _remoteShownErr;
+  // The most recent desktop→phone send batch, shown live in the progress dialog.
+  List<FileXfer> _sendBatch = const [];
 
   // Local session message bus: lets sibling sessions (and the agents inside
   // them) forward point-to-point messages to each other without the relay. The
@@ -945,22 +952,126 @@ class _WorkspacePageState extends State<WorkspacePage>
     addTerm(cwd, ''); // '' = plain interactive shell
   }
 
-  // _sendFileToPhone opens a native file picker and streams the chosen file to
-  // every connected phone over the relay (see RemoteHost.sendFile).
+  // _sendFileToPhone opens a native file picker and offers the chosen file to
+  // every connected phone over the relay (broadcast). Each phone independently
+  // accepts/rejects (see RemoteHost.sendFileToClients); a live dialog tracks each
+  // recipient's progress.
   Future<void> _sendFileToPhone() async {
     final res = await FilePicker.platform.pickFiles();
     final path = res?.files.single.path;
     if (path == null || !mounted) return; // cancelled
-    final name = path.split('/').last;
-    _remoteSnack('正在发送 $name…');
-    _remoteHost.sendFile(
-      path,
-      onDone: (ok, msg) {
-        if (!mounted) return;
-        _remoteSnack(ok ? '已发送 $name' : '发送失败：$msg', error: !ok);
-      },
+    final batch = _remoteHost.sendFileToClients(path);
+    if (batch.isEmpty) {
+      _remoteSnack('没有已连接的手机', error: true);
+      return;
+    }
+    _sendBatch = batch;
+    _showOutgoingDialog(path.split('/').last);
+  }
+
+  // _showOutgoingDialog renders the just-offered batch with a live per-phone
+  // progress row (等待接受 → 传输中 X% → 已完成/已拒绝/失败), rebuilt as the host
+  // notifies. The user can close it any time; transfers keep running.
+  void _showOutgoingDialog(String fileName) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: CcColors.panel,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
+            child: ListenableBuilder(
+              listenable: _remoteHost,
+              builder: (context, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.upload_rounded,
+                        color: CcColors.accentBright,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '发送到手机 · $fileName',
+                          style: const TextStyle(
+                            color: CcColors.text,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  for (final x in _sendBatch) _hostXferRow(x),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('关闭'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
+
+  Widget _hostXferRow(FileXfer x) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                x.peerName ?? '手机',
+                style: const TextStyle(color: CcColors.text),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(
+              _hostXferStatus(x),
+              style: TextStyle(color: _hostXferColor(x), fontSize: 12),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: LinearProgressIndicator(
+            value: x.status == XferStatus.waiting ? null : x.fraction,
+            minHeight: 4,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  String _hostXferStatus(FileXfer x) => switch (x.status) {
+    XferStatus.waiting => '等待接受…',
+    XferStatus.active => '${(x.fraction * 100).round()}%',
+    XferStatus.done => '已完成',
+    XferStatus.rejected => '已拒绝',
+    XferStatus.failed => '失败',
+    XferStatus.cancelled => '已取消',
+  };
+
+  Color _hostXferColor(FileXfer x) => switch (x.status) {
+    XferStatus.done => CcColors.ok,
+    XferStatus.rejected || XferStatus.failed || XferStatus.cancelled =>
+      CcColors.danger,
+    _ => CcColors.muted,
+  };
 
   // --- remote (phone) session actions; wired into _remoteHost ---
   void _remoteNewSession(String projectPath, String agent) {
@@ -1111,6 +1222,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     String title, {
     String? initialPath,
     bool showTree = true,
+    Future<List<FileDiff>> Function(int context)? reload,
   }) {
     if (diffs.isEmpty) return;
     final existing = _codeFiles.indexWhere((f) => f.isDiff && f.path == title);
@@ -1122,6 +1234,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         f.diffs = diffs;
         f.diffInitialPath = initialPath;
         f.diffShowTree = showTree;
+        f.diffReload = reload;
         _activeFile = existing;
       } else {
         _codeFiles.add(
@@ -1130,6 +1243,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             diffs,
             diffInitialPath: initialPath,
             diffShowTree: showTree,
+            diffReload: reload,
           ),
         );
         _activeFile = _codeFiles.length - 1;
@@ -2239,6 +2353,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                     files: files,
                     editRoot: project.path,
                     onChanged: _refreshGit,
+                    onReloadContext: (ctx) async => parseUnifiedDiff(
+                        await gitDiffFileWorking(project.path, relPath,
+                            context: ctx)),
                   ),
                 ),
               ],
@@ -3617,6 +3734,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             files: f.diffs!,
             initialPath: f.diffInitialPath,
             showTree: f.diffShowTree,
+            onReloadContext: f.diffReload,
           ),
         );
       }
@@ -4226,6 +4344,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!mounted) return;
       setState(() {
         _commitFiles = parseUnifiedDiff(diff);
+        _logDiffReload = (ctx) async =>
+            parseUnifiedDiff(await gitShowCommit(p.path, c.hash, context: ctx));
         _gitLoading = false;
       });
     } catch (e) {
@@ -4250,6 +4370,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!mounted) return;
       setState(() {
         _compareFiles = parseUnifiedDiff(diff);
+        _logDiffReload = (ctx) async => parseUnifiedDiff(
+            await gitDiffRefs(p.path, b.name, right, context: ctx));
         _commitFiles = const [];
         _gitLoading = false;
       });
@@ -4275,6 +4397,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!mounted) return;
       setState(() {
         _compareFiles = parseUnifiedDiff(diff);
+        _logDiffReload = (ctx) async => parseUnifiedDiff(
+            await gitDiffRefToWorking(p.path, c.hash, context: ctx));
         _commitFiles = const [];
         _gitLoading = false;
       });
@@ -4400,7 +4524,11 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!mounted) return;
       setState(() => _gitLoading = false);
       final files = parseUnifiedDiff(diff);
-      if (files.isNotEmpty) _openDiffTab(files, 'Stash · ${s.ref}');
+      if (files.isNotEmpty) {
+        _openDiffTab(files, 'Stash · ${s.ref}',
+            reload: (ctx) async =>
+                parseUnifiedDiff(await gitStashShow(p.path, s.ref, context: ctx)));
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _gitLoading = false);
@@ -4936,11 +5064,15 @@ class _WorkspacePageState extends State<WorkspacePage>
   // `git diff HEAD`, so they're shown as a whole-file addition.
   Future<void> _openWorkingTreeDiffTab(String path) async {
     setState(() => _selectedGitPath = path);
+    final p = _currentGitProject;
     if (_gitFiles.any((f) => f.path == path)) {
-      _openDiffTab(_gitFiles, 'Working Tree', initialPath: path, showTree: false);
+      _openDiffTab(_gitFiles, 'Working Tree', initialPath: path, showTree: false,
+          reload: p == null
+              ? null
+              : (ctx) async =>
+                  parseUnifiedDiff(await gitDiffWorking(p.path, context: ctx)));
       return;
     }
-    final p = _currentGitProject;
     if (p == null) return;
     try {
       final files = parseUnifiedDiff(await gitDiffUntracked(p.path, path));
@@ -4954,6 +5086,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         'Working Tree · ${path.split('/').last}',
         initialPath: files.first.path,
         showTree: false,
+        reload: (ctx) async =>
+            parseUnifiedDiff(await gitDiffUntracked(p.path, path, context: ctx)),
       );
     } catch (e) {
       if (mounted) _snack(errorText(e));
@@ -5193,6 +5327,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                     : _commitFilesTree(
                         selected,
                         _compareTitle ?? selectedCommit?.shortHash ?? 'diff',
+                        reload: _logDiffReload,
                       ),
               ),
             ],
@@ -5682,7 +5817,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   // _commitFilesTree shows a commit's / compare's changed files as a directory
   // tree (single-child dir chains compacted); clicking a file opens its diff as
   // a tab in the center editor.
-  Widget _commitFilesTree(List<FileDiff> files, String title) {
+  Widget _commitFilesTree(
+    List<FileDiff> files,
+    String title, {
+    Future<List<FileDiff>> Function(int context)? reload,
+  }) {
     final root = _DiffTreeNode('');
     for (final f in files) {
       final parts = f.path.split('/');
@@ -5694,7 +5833,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      children: _diffTreeRows(root, files, title, 0),
+      children: _diffTreeRows(root, files, title, 0, reload),
     );
   }
 
@@ -5703,6 +5842,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     List<FileDiff> all,
     String title,
     int depth,
+    Future<List<FileDiff>> Function(int context)? reload,
   ) {
     final out = <Widget>[];
     final dirNames = node.children.keys.toList()..sort();
@@ -5738,14 +5878,15 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         ),
       );
-      out.addAll(_diffTreeRows(child, all, title, depth + 1));
+      out.addAll(_diffTreeRows(child, all, title, depth + 1, reload));
     }
     final files = [...node.files]..sort((a, b) => a.path.compareTo(b.path));
     for (final f in files) {
       final name = f.path.split('/').last;
       out.add(
         InkWell(
-          onTap: () => _openDiffTab(all, title, initialPath: f.path),
+          onTap: () =>
+              _openDiffTab(all, title, initialPath: f.path, reload: reload),
           child: Padding(
             padding: EdgeInsets.only(
               left: 12.0 + (depth + 1) * 14,

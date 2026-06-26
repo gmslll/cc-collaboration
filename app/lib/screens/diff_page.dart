@@ -115,6 +115,11 @@ class _DiffPageState extends State<DiffPage> {
             : DiffView(
                 files: _files,
                 editRoot: _mode == 0 ? widget.path : null,
-                onChanged: _load),
+                onChanged: _load,
+                onReloadContext: (ctx) async => parseUnifiedDiff(
+                      await (_mode == 0
+                          ? gitDiffWorking(widget.path, context: ctx)
+                          : gitDiffBase(widget.path, _base, context: ctx)),
+                    )),
       );
 }
