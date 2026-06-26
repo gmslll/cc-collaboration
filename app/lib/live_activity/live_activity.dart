@@ -16,7 +16,9 @@ class LiveActivity {
   );
 
   static bool get _supported =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android);
 
   // areEnabled reports whether Live Activities can actually be shown (iOS ≥
   // 16.1 and not disabled by the user). false everywhere else.
