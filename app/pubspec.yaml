@@ -64,6 +64,15 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+# Vendored xterm 4.0.0 with a one-line selection fix: in alt-buffer (full-screen
+# TUIs like claude/codex) the selection pixel→cell math double-counted the scroll
+# offset and clamped selections to the bottom row, so dragging anywhere but the
+# very bottom selected nothing. See third_party/xterm/lib/src/ui/render.dart
+# (getCellOffset, marked PATCH cc-handoff). Plain shells were unaffected.
+dependency_overrides:
+  xterm:
+    path: third_party/xterm
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 

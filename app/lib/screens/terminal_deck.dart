@@ -412,7 +412,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // keep the session running) and filters hidden tabs out of the strip. Off by
   // default so the inbox cockpit keeps ×=closeTerm (kill) — it has no tree to
   // reopen a hidden session from.
-  Widget terminalDeck({VoidCallback? onCollapse, bool hideClosedTabs = false}) =>
+  Widget terminalDeck({
+    VoidCallback? onCollapse,
+    VoidCallback? onNewShell,
+    bool hideClosedTabs = false,
+  }) =>
       TerminalDeck(
     terms: terms,
     active: activeTerm,
@@ -423,6 +427,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     },
     onClose: hideClosedTabs ? closeTermView : closeTerm,
     onCollapse: onCollapse,
+    onNewShell: onNewShell,
     groupsFor: sendGroupsFor,
     onSendToPeer: _sendToPeer,
     onSendToOnline: onSendToOnline,
@@ -467,6 +472,8 @@ class TerminalDeck extends StatelessWidget {
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   final VoidCallback? onCollapse;
+  // onNewShell: open a plain interactive shell tab; null hides the + button.
+  final VoidCallback? onNewShell;
   // Local point-to-point forwarding wiring (see TerminalHost); null/absent
   // hides the "发送到终端" context-menu entries.
   final ({List<SendTarget> same, List<SendTarget> others}) Function(
@@ -486,6 +493,7 @@ class TerminalDeck extends StatelessWidget {
     required this.onSwitch,
     required this.onClose,
     this.onCollapse,
+    this.onNewShell,
     this.groupsFor,
     this.onSendToPeer,
     this.onSendToOnline,
@@ -504,13 +512,27 @@ class TerminalDeck extends StatelessWidget {
           hiddenIds: hiddenIds,
           onSwitch: onSwitch,
           onClose: onClose,
-          trailing: onCollapse != null
-              ? IconButton(
-                  icon: const Icon(Icons.chevron_right_rounded, size: 16),
-                  tooltip: '收起终端',
-                  onPressed: onCollapse,
-                )
-              : null,
+          trailing: (onNewShell == null && onCollapse == null)
+              ? null
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (onNewShell != null)
+                      IconButton(
+                        icon: const Icon(Icons.add_rounded, size: 18),
+                        tooltip: '新建终端（普通 shell）',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: onNewShell,
+                      ),
+                    if (onCollapse != null)
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right_rounded, size: 16),
+                        tooltip: '收起终端',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: onCollapse,
+                      ),
+                  ],
+                ),
         ),
         Expanded(
           child: ColoredBox(

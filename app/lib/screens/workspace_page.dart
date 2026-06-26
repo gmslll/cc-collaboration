@@ -3644,7 +3644,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
       );
     }
-    if (_aiChatFocused) return terminalDeck(hideClosedTabs: true);
+    if (_aiChatFocused) {
+      return terminalDeck(hideClosedTabs: true, onNewShell: _newShellTerminal);
+    }
     return _workspaceWelcome();
   }
 
