@@ -37,6 +37,8 @@ class _AccountPageState extends State<AccountPage> {
   final _grade = TextEditingController();
   final _linear = TextEditingController();
   final _github = TextEditingController();
+  final _claudeCmd = TextEditingController();
+  final _codexCmd = TextEditingController();
   bool _savingCfg = false;
 
   bool get _isDesktop =>
@@ -61,6 +63,8 @@ class _AccountPageState extends State<AccountPage> {
     _grade.dispose();
     _linear.dispose();
     _github.dispose();
+    _claudeCmd.dispose();
+    _codexCmd.dispose();
     super.dispose();
   }
 
@@ -79,6 +83,8 @@ class _AccountPageState extends State<AccountPage> {
       _grade.text = c.gradeCommand;
       _linear.text = c.linearToken;
       _github.text = c.githubToken;
+      _claudeCmd.text = c.claudeCommand;
+      _codexCmd.text = c.codexCommand;
     });
   }
 
@@ -90,6 +96,8 @@ class _AccountPageState extends State<AccountPage> {
         identity: _cfgIdentity.text.trim(),
         token: _token.text.trim(),
         agent: _agent,
+        claudeCommand: _claudeCmd.text.trim(),
+        codexCommand: _codexCmd.text.trim(),
         terminalApp: _terminalApp,
         workspaceRoot: _wsRoot.text.trim(),
         gradeCommand: _grade.text.trim(),
@@ -364,6 +372,10 @@ class _AccountPageState extends State<AccountPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            _cfgField(_claudeCmd, 'claude 启动命令(留空=自动找;绝对路径或命令)'),
+            const SizedBox(height: 10),
+            _cfgField(_codexCmd, 'codex 启动命令(留空=自动找;绝对路径或命令)'),
             const SizedBox(height: 8),
             Row(
               children: [

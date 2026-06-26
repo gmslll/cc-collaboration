@@ -32,6 +32,7 @@ func configUsage() {
 
   cc-handoff config set [--relay-url URL] [--token TOK] [--identity ID]
                         [--agent claude|codex|manual] [--workspace-root DIR]
+                        [--claude-command CMD] [--codex-command CMD]
                         [--grade-command CMD] [--linear-token TOK]
                         [--github-token TOK]
                         [--terminal-app terminal|iterm2|ghostty|windows-terminal|powershell]
@@ -48,6 +49,8 @@ func runConfigSet(_ context.Context, args []string) error {
 	token := fs.String("token", "", "relay bearer token")
 	identity := fs.String("identity", "", "your identity, e.g. you@backend")
 	agent := fs.String("agent", "", "default agent: claude|codex|manual")
+	claudeCmd := fs.String("claude-command", "", "override claude launch (abs path or full command; empty = auto)")
+	codexCmd := fs.String("codex-command", "", "override codex launch (abs path or full command; empty = auto)")
 	wsRoot := fs.String("workspace-root", "", "base dir for workspaces")
 	grade := fs.String("grade-command", "", "local AI severity grader command")
 	linear := fs.String("linear-token", "", "Linear personal API token")
@@ -77,6 +80,10 @@ func runConfigSet(_ context.Context, args []string) error {
 				return
 			}
 			u.Agent = *agent
+		case "claude-command":
+			u.ClaudeCommand = *claudeCmd
+		case "codex-command":
+			u.CodexCommand = *codexCmd
 		case "workspace-root":
 			u.WorkspaceRoot = *wsRoot
 		case "grade-command":

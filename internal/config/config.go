@@ -21,6 +21,13 @@ type User struct {
 	// "codex" | "manual". Empty falls back to "claude" for backwards
 	// compatibility with installs predating multi-agent support.
 	Agent string `toml:"agent,omitempty"`
+	// ClaudeCommand / CodexCommand override how each agent is launched (an
+	// absolute path or a full command/script). The desktop app's PTY launcher
+	// prefers these over PATH lookup so a non-standard install (e.g.
+	// ~/.cac/bin/claude) still starts. Empty = auto-resolve. Stored here so any
+	// `config set` round-trip (SaveUser) preserves them.
+	ClaudeCommand string `toml:"claude_command,omitempty"`
+	CodexCommand  string `toml:"codex_command,omitempty"`
 	// TerminalApp is the user-level default external terminal app, used when a
 	// repo's .cc-handoff.toml [triggers] doesn't set terminal_app:
 	// "terminal" | "iterm2" | "ghostty" (macOS), "windows-terminal" |

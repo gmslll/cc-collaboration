@@ -10,6 +10,7 @@ import 'package:pasteboard/pasteboard.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/agent_resolver.dart';
 import '../local/cli.dart';
 import '../local/local_bus.dart';
 import '../terminal_theme.dart';
@@ -59,6 +60,10 @@ class TerminalSession {
   Pty? _pty;
   bool _started = false;
   bool _disposed = false;
+  // Resolved agent launch token (abs path / user override / bare name), set in
+  // _startAsync before the PTY spawns. Null until resolved (non-agent sessions
+  // leave it null and _resolvedCommand ignores it).
+  String? _invocation;
 
   // remoteSink, when set, also receives this terminal's (utf8-decoded) PTY
   // output so a remote phone client can mirror it. Null when nobody's watching.
@@ -173,30 +178,46 @@ class TerminalSession {
     if (agent != 'claude' && agent != 'codex') return command;
     final pre = preLaunch.trim();
     final prefix = pre.isEmpty ? '' : '$pre && ';
+    // The agent invocation: a resolved absolute path / user override (set in
+    // _startAsync via AgentResolver), else the bare agent name as a last resort.
+    final inv = (_invocation != null && _invocation!.isNotEmpty)
+        ? _invocation!
+        : agent;
     if (agent == 'claude') {
       if (!resume) {
         return agentSessionId == null
-            ? '${prefix}claude'
-            : '${prefix}claude --session-id $agentSessionId';
+            ? '$prefix$inv'
+            : '$prefix$inv --session-id $agentSessionId';
       }
       // Reopen: resume the exact id; fall back to most-recent if we never minted
       // one (e.g. a pre-upgrade persisted session).
       return agentSessionId == null
-          ? '${prefix}claude --continue'
-          : '${prefix}claude --resume $agentSessionId';
+          ? '$prefix$inv --continue'
+          : '$prefix$inv --resume $agentSessionId';
     }
     // codex can't be given a session id at launch; we capture the one it mints
     // (see _maybeCaptureCodexId) and resume that EXACT session on reopen, falling
     // back to the cwd's most-recent rollout if we never captured one.
-    if (!resume) return '${prefix}codex';
+    if (!resume) return '$prefix$inv';
     return agentSessionId == null
-        ? '${prefix}codex resume --last'
-        : '${prefix}codex resume ${agentSessionId!}';
+        ? '$prefix$inv resume --last'
+        : '$prefix$inv resume ${agentSessionId!}';
   }
 
   void start() {
     if (_started) return;
     _started = true;
+    unawaited(_startAsync());
+  }
+
+  Future<void> _startAsync() async {
+    // Resolve how to launch the agent (user override / discovered absolute path /
+    // bare name) BEFORE spawning, so a claude/codex that isn't on the GUI's PATH
+    // still starts. Cheap and cached after the first session (see AgentResolver).
+    if (agent == 'claude' || agent == 'codex') {
+      _invocation = await AgentResolver.resolve(agent);
+    }
+    if (_disposed) return; // closed during the async resolve
     final shell = Platform.environment['SHELL'] ?? '/bin/sh';
     // Empty command = a plain interactive login shell (typeable + scrollable);
     // otherwise run the (resolved) agent command and let the shell exit with it.
@@ -226,9 +247,15 @@ class TerminalSession {
           remoteSink?.call(chunk);
           if (isAgent) _markActivity(chunk);
         });
-    pty.exitCode.then(
-      (code) => terminal.write('\r\n\x1b[90m[已退出: $code]\x1b[0m\r\n'),
-    );
+    pty.exitCode.then((code) {
+      terminal.write('\r\n\x1b[90m[已退出: $code]\x1b[0m\r\n');
+      // 127 = command not found: the agent binary couldn't be launched. Point
+      // the user at the per-agent override so they can fix it.
+      if (code == 127 && (agent == 'claude' || agent == 'codex')) {
+        terminal.write('\x1b[33m未找到 $agent。可在「账号 · config.toml」设置 '
+            '${agent}_command(绝对路径或启动命令)后重开。\x1b[0m\r\n');
+      }
+    });
     terminal.onOutput = (data) {
       _sawInput = true; // local keystrokes count as "the user gave it work"
       pty.write(const Utf8Encoder().convert(data));

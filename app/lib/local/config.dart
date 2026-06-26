@@ -51,6 +51,12 @@ class AppConfig {
   /// used when a repo's .cc-handoff.toml doesn't set its own terminal_app.
   final String terminalApp;
 
+  /// per-agent launch overrides (absolute path or full command/script); empty =
+  /// auto-resolve. Read by AgentResolver so the PTY launcher works without a
+  /// PATH-resolvable `claude`/`codex`.
+  final String claudeCommand;
+  final String codexCommand;
+
   AppConfig(this.relayUrl, this.token, this.identity, this.repos,
       [this.workspaces = const [],
       this.agent = '',
@@ -58,7 +64,9 @@ class AppConfig {
       this.gradeCommand = '',
       this.linearToken = '',
       this.githubToken = '',
-      this.terminalApp = '']);
+      this.terminalApp = '',
+      this.claudeCommand = '',
+      this.codexCommand = '']);
 
   String? repoPath(String name) => repos[name];
 
@@ -112,6 +120,8 @@ class AppConfig {
     final linear = (map['linear_personal_token'] ?? '').toString();
     final githubToken = (map['github_token'] ?? '').toString();
     final terminalApp = (map['terminal_app'] ?? '').toString();
+    final claudeCommand = (map['claude_command'] ?? '').toString();
+    final codexCommand = (map['codex_command'] ?? '').toString();
     final repos = <String, String>{};
     final wsList = <WorkspaceCfg>[];
 
@@ -151,7 +161,7 @@ class AppConfig {
     }
 
     return AppConfig(relay, token, identity, repos, wsList, userAgent, wsRoot,
-        grade, linear, githubToken, terminalApp);
+        grade, linear, githubToken, terminalApp, claudeCommand, codexCommand);
   }
 }
 
