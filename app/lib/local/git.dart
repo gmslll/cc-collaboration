@@ -61,6 +61,7 @@ class GitCommit {
   final DateTime date;
   final String subject;
   final String refs;
+  final List<String> parents; // full parent hashes, child -> older parent
 
   const GitCommit({
     required this.hash,
@@ -69,6 +70,7 @@ class GitCommit {
     required this.date,
     required this.subject,
     required this.refs,
+    this.parents = const [],
   });
 }
 
@@ -586,7 +588,7 @@ Future<List<GitCommit>> gitLog(
   final scope = r.isNotEmpty ? '${shQuote(r)} ' : (allBranches ? '--all ' : '');
   final out = await _git(
     dir,
-    'log $scope--date=iso-strict --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%s%x00 -n $max --decorate=short$pathspec',
+    'log $scope--date=iso-strict --topo-order --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%P%x1f%s%x00 -n $max --decorate=short$pathspec',
   );
   return _parseGitLog(out);
 }
@@ -600,7 +602,7 @@ Future<List<GitCommit>> gitLogFile(
   if (f.isEmpty) throw GitException('file path 不能为空');
   final out = await _git(
     dir,
-    'log --follow --date=iso-strict --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%s%x00 -n $max --decorate=short -- ${shQuote(f)}',
+    'log --follow --date=iso-strict --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%P%x1f%s%x00 -n $max --decorate=short -- ${shQuote(f)}',
   );
   return _parseGitLog(out);
 }
@@ -610,7 +612,7 @@ List<GitCommit> _parseGitLog(String out) {
   for (final rec in out.split('\x00')) {
     if (rec.trim().isEmpty) continue;
     final parts = rec.split('\x1f');
-    if (parts.length < 6) continue;
+    if (parts.length < 7) continue;
     commits.add(
       GitCommit(
         hash: parts[0],
@@ -620,7 +622,8 @@ List<GitCommit> _parseGitLog(String out) {
             DateTime.tryParse(parts[3]) ??
             DateTime.fromMillisecondsSinceEpoch(0),
         refs: parts[4],
-        subject: parts.sublist(5).join('\x1f'),
+        parents: parts[5].split(' ').where((s) => s.isNotEmpty).toList(),
+        subject: parts.sublist(6).join('\x1f'),
       ),
     );
   }

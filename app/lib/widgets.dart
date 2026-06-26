@@ -277,6 +277,23 @@ String relativeTime(DateTime t) {
   return '${d.inDays}d';
 }
 
+// commitDate renders a GoLand-style date column: 今天/昨天 + HH:mm for recent
+// commits, M/D HH:mm within the same year, else YYYY/M/D. Manual formatting —
+// no intl dependency.
+String commitDate(DateTime t) {
+  if (t.millisecondsSinceEpoch == 0) return '';
+  String two(int n) => n < 10 ? '0$n' : '$n';
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(t.year, t.month, t.day);
+  final hm = '${two(t.hour)}:${two(t.minute)}';
+  final diffDays = today.difference(day).inDays;
+  if (diffDays == 0) return '今天 $hm';
+  if (diffDays == 1) return '昨天 $hm';
+  if (t.year == now.year) return '${t.month}/${t.day} $hm';
+  return '${t.year}/${t.month}/${t.day}';
+}
+
 // hostOf strips the scheme + trailing slash from a URL for compact display.
 String hostOf(String url) {
   var s = url;

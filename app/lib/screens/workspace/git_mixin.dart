@@ -44,6 +44,25 @@ mixin _GitMixin on State<WorkspacePage> {
   String? _gitError;
   final _commitCtl = TextEditingController();
 
+  // ---- commit 图形轨道:在「显示中的列表」上算一次 lane 布局并缓存 ----
+  List<GraphRow> _graphRows = const [];
+  int _graphLaneCount = 1;
+  String _graphKey = '';
+
+  /// 仅在显示列表变化时重算图形布局(纯写缓存、不 setState)。供 `_gitLogView`
+  /// 每次 build 调用,幂等。分支/路径/all 切换会经 `_refreshGit` 替换 `_gitLog`
+  /// => key 变 => 重算;滚动时复用同一批 [GraphRow] 实例,painter 不重绘。
+  void _ensureGraph(List<GitCommit> commits) {
+    // The graph depends only on the displayed list's content/order, which is
+    // fully captured by its length + newest hash (filters already shaped it).
+    final key = '${commits.length}|${commits.isEmpty ? '' : commits.first.hash}';
+    if (key == _graphKey) return;
+    final layout = computeGraphRows(commits);
+    _graphRows = layout.rows;
+    _graphLaneCount = layout.laneCount;
+    _graphKey = key;
+  }
+
   /// 当前 git 项目:已选中的,否则回退到第一个可用项目。
   ProjectCfg? get _currentGitProject =>
       _gitProject ?? _defaultProject()?.project;
@@ -100,8 +119,16 @@ mixin _GitMixin on State<WorkspacePage> {
             !stashes.any((s) => s.ref == _selectedStash)) {
           _selectedStash = stashes.isEmpty ? null : stashes.first.ref;
         }
-        if (_selectedCommit == null && log.isNotEmpty) {
-          _selectedCommit = log.first.hash;
+        // Reset the selected commit if it isn't in the freshly-loaded log
+        // (e.g. after switching repos): otherwise the detail pane would run
+        // `git show <old-repo-hash>` against the new repo and fail with
+        // "fatal: ambiguous argument". Mirrors the _selectedStash handling above.
+        if (_selectedCommit == null ||
+            !log.any((c) => c.hash == _selectedCommit)) {
+          _selectedCommit = log.isEmpty ? null : log.first.hash;
+          _commitFiles = const [];
+          _compareTitle = null;
+          _compareFiles = const [];
         }
         if (_selectedGitPath != _workingTreeDiffSelection &&
             (_selectedGitPath == null ||

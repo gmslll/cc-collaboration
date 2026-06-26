@@ -34,6 +34,7 @@ import 'plugins_page.dart';
 import 'repo_config_page.dart';
 import 'terminal_deck.dart';
 import 'terminal_pane.dart';
+import 'workspace/git_graph.dart';
 
 part 'workspace/branch_dialog.dart';
 part 'workspace/navigation_dialogs.dart';
@@ -292,8 +293,13 @@ class _WorkspacePageState extends State<WorkspacePage>
   double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 340);
   double _detailWidth = Prefs.getDouble('ws.detailWidth', def: 520);
   double _terminalHeight = Prefs.getDouble('ws.terminalHeight', def: 360);
+  double _logBranchWidth = Prefs.getDouble('ws.logBranchWidth', def: 240);
+  double _logCommitWidth = Prefs.getDouble('ws.logCommitWidth', def: 480);
   // shared comfortable-but-compact density for the tree's leaf rows.
   static const _tileDensity = VisualDensity(vertical: -1);
+  // Fixed height of a Git Log commit row — shared by the ListView itemExtent and
+  // the graph rail's CustomPaint so per-row graph slices stack seamlessly.
+  static const _logRowHeight = 30.0;
 
   @override
   String? get persistKey => 'workspace_sessions';
@@ -5011,11 +5017,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     final effectiveRef = logRefs.contains(_gitLogRefFilter)
         ? _gitLogRefFilter
         : '';
-    final scopeLabel = effectiveRef.isNotEmpty
-        ? effectiveRef
-        : _gitLogAllBranches
-        ? 'All branches'
-        : _gitStatus?.branch ?? 'Current branch';
     final effectiveAuthor = authors.contains(_logAuthorFilter)
         ? _logAuthorFilter
         : '';
@@ -5028,152 +5029,60 @@ class _WorkspacePageState extends State<WorkspacePage>
     final selectedCommit = _compareTitle == null && _selectedCommit != null
         ? _gitLog.where((c) => c.hash == _selectedCommit).firstOrNull
         : null;
+    _ensureGraph(commits);
+    final railWidth = _graphLaneCount * kLaneWidth;
     return Row(
       children: [
         _logBranchPane(p),
+        resizeHandle(
+          prefKey: 'ws.logBranchWidth',
+          get: () => _logBranchWidth,
+          set: (v) => setState(() => _logBranchWidth = v),
+          min: 180,
+          max: 360,
+        ),
         SizedBox(
-          width: 360,
+          width: _logCommitWidth,
           child: DecoratedBox(
             decoration: const BoxDecoration(color: CcColors.panel),
             child: Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
-                  child: Row(
+                  child: Column(
                     children: [
-                      Expanded(
+                      SizedBox(
+                        height: 32,
                         child: TextField(
+                          style: const TextStyle(fontSize: 13),
                           decoration: const InputDecoration(
-                            hintText: 'Filter log',
+                            hintText: 'Filter by message, author or hash',
                             isDense: true,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
                             prefixIcon: Icon(Icons.search_rounded, size: 17),
                           ),
                           onChanged: (v) => setState(() => _logQuery = v),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Tooltip(
-                        message: _gitLogAllBranches
-                            ? 'Showing all branches'
-                            : 'Showing current branch',
-                        child: FilterChip(
-                          selected: _gitLogAllBranches,
-                          showCheckmark: false,
-                          label: const Text('All'),
-                          avatar: Icon(
-                            Icons.account_tree_rounded,
-                            size: 15,
-                            color: _gitLogAllBranches
-                                ? CcColors.accentBright
-                                : CcColors.muted,
+                      const SizedBox(height: 7),
+                      scrollableBar(
+                        scrolling: [
+                          _logBranchFilter(logRefs, effectiveRef),
+                          const SizedBox(width: 6),
+                          _logUserFilter(authors, effectiveAuthor),
+                          const SizedBox(width: 6),
+                          _logPathFilterChip(),
+                        ],
+                        pinnedTrailing: [
+                          const SizedBox(width: 8),
+                          Text(
+                            '${commits.length}/${_gitLog.length}',
+                            style: CcType.code(size: 11, color: CcColors.subtle),
                           ),
-                          onSelected: (v) {
-                            setState(() {
-                              _gitLogAllBranches = v;
-                              if (v) _gitLogRefFilter = '';
-                            });
-                            Prefs.setBool('ws.gitLogAllBranches', v);
-                            _refreshGit();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 150),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            isDense: true,
-                            value: effectiveRef,
-                            iconSize: 16,
-                            style: CcType.code(size: 11, color: CcColors.muted),
-                            items: [
-                              const DropdownMenuItem(
-                                value: '',
-                                child: Text('Current'),
-                              ),
-                              for (final r in logRefs)
-                                DropdownMenuItem(value: r, child: Text(r)),
-                            ],
-                            onChanged: (v) {
-                              setState(() {
-                                _gitLogRefFilter = v ?? '';
-                                if (_gitLogRefFilter.isNotEmpty) {
-                                  _gitLogAllBranches = false;
-                                  Prefs.setBool('ws.gitLogAllBranches', false);
-                                }
-                              });
-                              _refreshGit();
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 130),
-                        child: FilterChip(
-                          selected: _logPathFilter.isNotEmpty,
-                          showCheckmark: false,
-                          label: Text(
-                            _logPathFilter.isEmpty ? 'Path' : _logPathFilter,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          avatar: Icon(
-                            Icons.folder_open_rounded,
-                            size: 15,
-                            color: _logPathFilter.isNotEmpty
-                                ? CcColors.accentBright
-                                : CcColors.muted,
-                          ),
-                          onSelected: (_) => _setGitLogPathFilter(),
-                          onDeleted: _logPathFilter.isEmpty
-                              ? null
-                              : () {
-                                  setState(() => _logPathFilter = '');
-                                  _refreshGit();
-                                },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  height: 32,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '$scopeLabel${_logPathFilter.isEmpty ? '' : ' · $_logPathFilter'} · ${commits.length}/${_gitLog.length} commits',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CcType.code(
-                            size: 10.8,
-                            color: CcColors.subtle,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 170),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            isDense: true,
-                            value: effectiveAuthor,
-                            iconSize: 16,
-                            style: CcType.code(size: 11, color: CcColors.muted),
-                            items: [
-                              const DropdownMenuItem(
-                                value: '',
-                                child: Text('All authors'),
-                              ),
-                              for (final a in authors)
-                                DropdownMenuItem(value: a, child: Text(a)),
-                            ],
-                            onChanged: (v) =>
-                                setState(() => _logAuthorFilter = v ?? ''),
-                          ),
-                        ),
+                        ],
                       ),
                     ],
                   ),
@@ -5182,77 +5091,28 @@ class _WorkspacePageState extends State<WorkspacePage>
                 Expanded(
                   child: commits.isEmpty
                       ? centerMsg('没有匹配 commit')
-                      : ListView.separated(
+                      : ListView.builder(
                           itemCount: commits.length,
-                          separatorBuilder: (_, _) =>
-                              const Divider(height: 1, color: CcColors.border),
-                          itemBuilder: (_, i) {
-                            final c = commits[i];
-                            final sel =
-                                c.hash == _selectedCommit &&
-                                _compareTitle == null;
-                            final age = c.date.millisecondsSinceEpoch == 0
-                                ? ''
-                                : relativeTime(c.date);
-                            return Container(
-                              color: sel
-                                  ? CcColors.accent.withValues(alpha: 0.10)
-                                  : Colors.transparent,
-                              child: ListTile(
-                                dense: true,
-                                leading: Icon(
-                                  Icons.commit_rounded,
-                                  size: 17,
-                                  color: sel
-                                      ? CcColors.accentBright
-                                      : CcColors.muted,
-                                ),
-                                title: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        c.subject,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(fontSize: 13.5),
-                                      ),
-                                    ),
-                                    if (c.refs.isNotEmpty) ...[
-                                      const SizedBox(width: 8),
-                                      Flexible(
-                                        child: tag(
-                                          c.refs,
-                                          CcColors.accentBright,
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                subtitle: Text(
-                                  '${c.shortHash} · ${c.author}${age.isEmpty ? '' : ' · $age'}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: CcType.code(
-                                    size: 11.5,
-                                    color: CcColors.muted,
-                                  ),
-                                ),
-                                trailing: _commitActionsMenu(
-                                  p,
-                                  c,
-                                  compact: true,
-                                ),
-                                onTap: () => _selectCommit(p, c),
-                              ),
-                            );
-                          },
+                          itemExtent: _logRowHeight,
+                          itemBuilder: (_, i) => _commitRow(
+                            p,
+                            commits[i],
+                            i < _graphRows.length ? _graphRows[i] : null,
+                            railWidth,
+                          ),
                         ),
                 ),
               ],
             ),
           ),
         ),
-        const VerticalDivider(width: 1),
+        resizeHandle(
+          prefKey: 'ws.logCommitWidth',
+          get: () => _logCommitWidth,
+          set: (v) => setState(() => _logCommitWidth = v),
+          min: 340,
+          max: 720,
+        ),
         Expanded(
           child: Column(
             children: [
@@ -5281,42 +5141,49 @@ class _WorkspacePageState extends State<WorkspacePage>
                         style: CcType.code(size: 12, color: CcColors.muted),
                       ),
                     ),
-                    if (_compareTitle != null)
-                      TextButton(
-                        onPressed: () => setState(() {
-                          _compareTitle = null;
-                          _compareFiles = const [];
-                        }),
-                        child: const Text('Commit Log'),
-                      ),
-                    if (selectedCommit != null) ...[
-                      TextButton.icon(
-                        onPressed: _gitLoading
-                            ? null
-                            : () => _copyCommitHash(selectedCommit),
-                        icon: const Icon(Icons.content_copy_rounded, size: 14),
-                        label: const Text('Copy'),
-                      ),
-                      TextButton.icon(
-                        onPressed: _gitLoading
-                            ? null
-                            : () => _createBranchFromCommit(p, selectedCommit),
-                        icon: const Icon(Icons.call_split_rounded, size: 14),
-                        label: const Text('Branch'),
-                      ),
-                      TextButton.icon(
-                        onPressed: _gitLoading
-                            ? null
-                            : () =>
-                                  _compareCommitWithWorking(p, selectedCommit),
-                        icon: const Icon(
-                          Icons.compare_arrows_rounded,
-                          size: 14,
+                    scrollableActions([
+                      if (_compareTitle != null)
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _compareTitle = null;
+                            _compareFiles = const [];
+                          }),
+                          child: const Text('Commit Log'),
                         ),
-                        label: const Text('Working Tree'),
-                      ),
-                      _commitActionsMenu(p, selectedCommit),
-                    ],
+                      if (selectedCommit != null) ...[
+                        TextButton.icon(
+                          onPressed: _gitLoading
+                              ? null
+                              : () => _copyCommitHash(selectedCommit),
+                          icon: const Icon(
+                            Icons.content_copy_rounded,
+                            size: 14,
+                          ),
+                          label: const Text('Copy'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _gitLoading
+                              ? null
+                              : () => _createBranchFromCommit(p, selectedCommit),
+                          icon: const Icon(Icons.call_split_rounded, size: 14),
+                          label: const Text('Branch'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _gitLoading
+                              ? null
+                              : () => _compareCommitWithWorking(
+                                  p,
+                                  selectedCommit,
+                                ),
+                          icon: const Icon(
+                            Icons.compare_arrows_rounded,
+                            size: 14,
+                          ),
+                          label: const Text('Working Tree'),
+                        ),
+                        _commitActionsMenu(p, selectedCommit),
+                      ],
+                    ]),
                   ],
                 ),
               ),
@@ -5335,6 +5202,304 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
+  // _logFilterShell wraps a filter control (dropdown/button) in a compact pill
+  // with a leading icon, matching the GoLand-style toolbar. [active] tints it.
+  Widget _logFilterShell({
+    required IconData icon,
+    required bool active,
+    required Widget child,
+    VoidCallback? onTap,
+  }) {
+    final content = Container(
+      height: 28,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: active
+            ? CcColors.accent.withValues(alpha: 0.12)
+            : CcColors.panelHigh,
+        border: Border.all(
+          color: active ? CcColors.accent.withValues(alpha: 0.5) : CcColors.border,
+        ),
+        borderRadius: BorderRadius.circular(CcRadius.sm),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 14,
+            color: active ? CcColors.accentBright : CcColors.muted,
+          ),
+          const SizedBox(width: 5),
+          child,
+        ],
+      ),
+    );
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+      child: content,
+    );
+  }
+
+  // _logFilterDropdown is the underline-less, width-capped dropdown shared by the
+  // Branch and User toolbar filters.
+  Widget _logFilterDropdown({
+    required double maxWidth,
+    required String value,
+    required List<DropdownMenuItem<String>> items,
+    required ValueChanged<String?> onChanged,
+  }) => ConstrainedBox(
+    constraints: BoxConstraints(maxWidth: maxWidth),
+    child: DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        isDense: true,
+        isExpanded: true,
+        value: value,
+        iconSize: 16,
+        style: CcType.code(size: 11.5, color: CcColors.text),
+        items: items,
+        onChanged: onChanged,
+      ),
+    ),
+  );
+
+  // _logBranchFilter merges the "all branches" toggle and the ref picker into a
+  // single GoLand-style "Branch ▾" dropdown.
+  static const _logAllSentinel = ' ALL';
+  Widget _logBranchFilter(List<String> logRefs, String effectiveRef) {
+    final scoped = _gitLogAllBranches || effectiveRef.isNotEmpty;
+    return _logFilterShell(
+      icon: Icons.account_tree_rounded,
+      active: scoped,
+      child: _logFilterDropdown(
+        maxWidth: 150,
+        value: _gitLogAllBranches ? _logAllSentinel : effectiveRef,
+        items: [
+          const DropdownMenuItem(
+            value: _logAllSentinel,
+            child: Text('All branches'),
+          ),
+          const DropdownMenuItem(value: '', child: Text('Current branch')),
+          for (final r in logRefs) DropdownMenuItem(value: r, child: Text(r)),
+        ],
+        onChanged: (v) {
+          setState(() {
+            if (v == _logAllSentinel) {
+              _gitLogAllBranches = true;
+              _gitLogRefFilter = '';
+            } else {
+              _gitLogAllBranches = false;
+              _gitLogRefFilter = v ?? '';
+            }
+          });
+          Prefs.setBool('ws.gitLogAllBranches', _gitLogAllBranches);
+          _refreshGit();
+        },
+      ),
+    );
+  }
+
+  // _logUserFilter is the "User" author dropdown.
+  Widget _logUserFilter(List<String> authors, String effectiveAuthor) {
+    return _logFilterShell(
+      icon: Icons.person_outline_rounded,
+      active: effectiveAuthor.isNotEmpty,
+      child: _logFilterDropdown(
+        maxWidth: 120,
+        value: effectiveAuthor,
+        items: [
+          const DropdownMenuItem(value: '', child: Text('All users')),
+          for (final a in authors) DropdownMenuItem(value: a, child: Text(a)),
+        ],
+        onChanged: (v) => setState(() => _logAuthorFilter = v ?? ''),
+      ),
+    );
+  }
+
+  // _logPathFilterChip is the "Paths" filter button (opens a path picker).
+  Widget _logPathFilterChip() {
+    final active = _logPathFilter.isNotEmpty;
+    return _logFilterShell(
+      icon: Icons.folder_open_rounded,
+      active: active,
+      onTap: _setGitLogPathFilter,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 120),
+            child: Text(
+              active ? _logPathFilter : 'Paths',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CcType.code(size: 11.5, color: CcColors.text),
+            ),
+          ),
+          if (active) ...[
+            const SizedBox(width: 4),
+            InkWell(
+              onTap: () {
+                setState(() => _logPathFilter = '');
+                _refreshGit();
+              },
+              child: const Icon(
+                Icons.close_rounded,
+                size: 13,
+                color: CcColors.muted,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // _commitRefBadges renders up to two ref pills (branch = bright blue,
+  // tag = amber) on a single line, with a "+N" overflow marker. Replaces the old
+  // wrapping multi-line refs block.
+  Widget _commitRefBadges(String refs) {
+    final parts = refs
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty && s != 'HEAD')
+        .toList();
+    if (parts.isEmpty) return const SizedBox.shrink();
+    final chips = <Widget>[];
+    for (final raw in parts.take(2)) {
+      var label = raw;
+      var isTag = false;
+      if (label.startsWith('HEAD -> ')) label = label.substring(8);
+      if (label.startsWith('tag: ')) {
+        label = label.substring(5);
+        isTag = true;
+      }
+      chips.add(
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: tag(label, isTag ? CcColors.warning : CcColors.accentBright),
+        ),
+      );
+    }
+    if (parts.length > 2) {
+      chips.add(
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Text(
+            '+${parts.length - 2}',
+            style: CcType.code(size: 11, color: CcColors.subtle),
+          ),
+        ),
+      );
+    }
+    return Row(mainAxisSize: MainAxisSize.min, children: chips);
+  }
+
+  // _commitRow renders one GoLand-style commit row: 作者 | 日期 | 图形轨道 |
+  // 信息 | refs 胶囊 | 操作菜单。[gr] 是该行预算好的图形切片(可为 null)。
+  Widget _commitRow(ProjectCfg p, GitCommit c, GraphRow? gr, double railWidth) {
+    final sel = c.hash == _selectedCommit && _compareTitle == null;
+    final isMerge = c.parents.length >= 2;
+    final rowBg = sel
+        ? Color.alphaBlend(
+            CcColors.accent.withValues(alpha: 0.12),
+            CcColors.panel,
+          )
+        : CcColors.panel;
+    return Material(
+      color: rowBg,
+      child: InkWell(
+        onTap: () => _selectCommit(p, c),
+        child: Stack(
+          children: [
+            if (sel)
+              const Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: SizedBox(
+                  width: 2,
+                  child: ColoredBox(color: CcColors.accent),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(left: 8, right: 2),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 58,
+                    child: Text(
+                      c.author,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: CcType.code(
+                        size: 11.5,
+                        color: isMerge ? CcColors.subtle : CcColors.muted,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 92,
+                    child: Text(
+                      commitDate(c.date),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: CcType.code(size: 11.5, color: CcColors.subtle),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  if (gr != null)
+                    SizedBox(
+                      width: railWidth,
+                      height: _logRowHeight,
+                      child: CustomPaint(
+                        painter: GraphRailPainter(
+                          row: gr,
+                          laneCount: _graphLaneCount,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      c.subject,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isMerge ? CcColors.subtle : CcColors.text,
+                      ),
+                    ),
+                  ),
+                  if (c.refs.trim().isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Flexible(
+                      fit: FlexFit.loose,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        reverse: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        child: _commitRefBadges(c.refs),
+                      ),
+                    ),
+                  ],
+                  SizedBox(
+                    width: 26,
+                    height: 26,
+                    child: _commitActionsMenu(p, c, compact: true),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ---- 3-pane Log: left branch tree ----
 
   // _logBranchPane is the GoLand-style branch sidebar: Local / Remote groups;
@@ -5344,7 +5509,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     final locals = _gitBranches.where((b) => !b.remote).toList();
     final remotes = _gitBranches.where((b) => b.remote).toList();
     return SizedBox(
-      width: 240,
+      width: _logBranchWidth,
       child: DecoratedBox(
         decoration: const BoxDecoration(
           color: CcColors.panel,
@@ -5633,8 +5798,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   }) => PopupMenuButton<String>(
     icon: Icon(
       compact ? Icons.more_vert_rounded : Icons.more_horiz_rounded,
-      size: compact ? 18 : 17,
+      size: compact ? 16 : 17,
     ),
+    iconSize: compact ? 16 : 17,
+    padding: compact ? EdgeInsets.zero : const EdgeInsets.all(8),
+    splashRadius: compact ? 14 : null,
     tooltip: 'Commit actions',
     enabled: !_gitLoading,
     onSelected: (v) {
