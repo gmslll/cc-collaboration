@@ -1370,9 +1370,6 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // toggle is on. Persisted per device.
   final Speaker _speaker = Speaker();
   bool _ttsOn = Prefs.getBool('remote.tts');
-  // History replay mode: 'text' (default, plain re-wrap) or 'ansi' (coloured
-  // re-wrap). Sent to the host on connect/reload; toggled from the key bar.
-  String _historyMode = Prefs.getString('remote.historyMode', def: 'text');
 
   // iOS Live Activity (Dynamic Island): started lazily the first time the agent
   // goes "working" so an idle island never lingers, updated on each status push,
@@ -1382,9 +1379,11 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   @override
   void initState() {
     super.initState();
-    // Set before the first _term access (build → terminalFor → term.open) so the
-    // initial history replay uses the saved mode.
-    widget.client.historyMode = _historyMode;
+    // History replay mode ('text'/'ansi') lives on the client and rides every
+    // term.open; load the saved pref before the first _term access (build →
+    // terminalFor → term.open) so the initial replay uses it.
+    widget.client.historyMode =
+        Prefs.getString('remote.historyMode', def: 'text');
     widget.client.onReplyText = _onReplyText;
     widget.client.onAgentStatus = _onAgentStatus;
   }
@@ -1571,12 +1570,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // 默认)↔ 彩色(带颜色重排)。Persisted, then reload re-pulls history in the new
   // mode (term.open carries client.historyMode).
   void _toggleHistoryMode() {
-    final m = _historyMode == 'ansi' ? 'text' : 'ansi';
-    setState(() => _historyMode = m);
-    Prefs.setString('remote.historyMode', m);
-    widget.client.historyMode = m;
-    snack(context, m == 'ansi' ? '历史改为彩色,正在刷新…' : '历史改为纯文本,正在刷新…');
-    _reload();
+    final c = widget.client;
+    c.historyMode = c.historyMode == 'ansi' ? 'text' : 'ansi';
+    Prefs.setString('remote.historyMode', c.historyMode);
+    _reload(); // re-pulls history in the new mode + rebuilds the label (its snack)
   }
 
   // Accumulated vertical drag distance, converted to wheel ticks once it
@@ -1712,7 +1709,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   btn('滚↑', () => _wheel(true, ticks: 3)),
                   btn('滚↓', () => _wheel(false, ticks: 3)),
                   btn('清空', _clearScrollback),
-                  btn(_historyMode == 'ansi' ? '历史·彩色' : '历史·文本',
+                  btn(
+                      widget.client.historyMode == 'ansi'
+                          ? '历史·彩色'
+                          : '历史·文本',
                       _toggleHistoryMode),
                   for (final kb in _keys)
                     btn(
