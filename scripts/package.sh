@@ -2,13 +2,14 @@
 # Package the cc-handoff GUI for distribution.
 #
 # The desktop GUI shells out to the `cc-handoff` CLI for local git/worktree/
-# pickup ops, so this embeds a copy of that binary INSIDE the app bundle (next
-# to the GUI executable). cli.dart resolves it by absolute path, so the app
-# works with no separate `cc-handoff` install ("内嵌直接用").
+# pickup ops (and that CLI in turn launches `cc-handoff-mcp` for Claude/Codex
+# MCP), so this embeds BOTH binaries INSIDE the app bundle (next to the GUI
+# executable). cli.dart / setup.ResolveMCPBinary resolve them by path, so the app
+# works with no separate install ("内嵌直接用").
 #
 # Run on macOS. Builds the macOS .app and/or the Android APK, and cross-builds
-# the Windows cc-handoff.exe for use by scripts/package.ps1. Flutter's Windows
-# DESKTOP build only runs on Windows — package the .exe app there.
+# the Windows cc-handoff.exe + cc-handoff-mcp.exe for use by scripts/package.ps1.
+# Flutter's Windows DESKTOP build only runs on Windows — package the .exe app there.
 #
 # Usage:
 #   scripts/package.sh [macos|android|windows-cli|all]   # default: all
@@ -29,20 +30,28 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing required tool: $1" >
 
 build_macos() {
   need go; need flutter; need lipo; need ditto; need codesign
-  echo "==> macOS: building universal cc-handoff CLI"
-  # Universal (Intel + Apple Silicon) so the embedded CLI runs regardless of the
-  # arch Flutter built the app for.
+  echo "==> macOS: building universal cc-handoff CLI + cc-handoff-mcp"
+  # Universal (Intel + Apple Silicon) so the embedded binaries run regardless of
+  # the arch Flutter built the app for.
   CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$ROOT/bin/cc-handoff-darwin-amd64" ./cmd/cc-handoff
   CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$ROOT/bin/cc-handoff-darwin-arm64" ./cmd/cc-handoff
   lipo -create -output "$ROOT/bin/cc-handoff-darwin-universal" \
     "$ROOT/bin/cc-handoff-darwin-amd64" "$ROOT/bin/cc-handoff-darwin-arm64"
+  # cc-handoff-mcp is the MCP server cc-handoff wires into Claude/Codex sessions;
+  # setup.ResolveMCPBinary looks for it next to cc-handoff, so it must be embedded
+  # alongside it — else MCP setup fails for users with no separate install.
+  CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$ROOT/bin/cc-handoff-mcp-darwin-amd64" ./cmd/cc-handoff-mcp
+  CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$ROOT/bin/cc-handoff-mcp-darwin-arm64" ./cmd/cc-handoff-mcp
+  lipo -create -output "$ROOT/bin/cc-handoff-mcp-darwin-universal" \
+    "$ROOT/bin/cc-handoff-mcp-darwin-amd64" "$ROOT/bin/cc-handoff-mcp-darwin-arm64"
 
-  # Drop any cc-handoff embedded by a previous run BEFORE building. It lives in
+  # Drop any embedded binaries from a previous run BEFORE building. They live in
   # Contents/MacOS (sealed code); on an incremental rebuild Xcode re-signs the
-  # bundle over that stale, now-unsealed binary and fails with
+  # bundle over the stale, now-unsealed binaries and fails with
   #   "code object is not signed at all ... In subcomponent: .../MacOS/cc-handoff".
-  # Removing it lets Flutter emit a clean, fully-sealed .app that we re-seal below.
-  rm -f "$ROOT"/app/build/macos/Build/Products/Release/*.app/Contents/MacOS/cc-handoff
+  # Removing them lets Flutter emit a clean, fully-sealed .app that we re-seal below.
+  rm -f "$ROOT"/app/build/macos/Build/Products/Release/*.app/Contents/MacOS/cc-handoff \
+        "$ROOT"/app/build/macos/Build/Products/Release/*.app/Contents/MacOS/cc-handoff-mcp
   echo "==> macOS: flutter build macos --release"
   (cd app && flutter build macos --release)
 
@@ -50,8 +59,9 @@ build_macos() {
   appdir=$(ls -d "$ROOT"/app/build/macos/Build/Products/Release/*.app 2>/dev/null | head -1)
   [ -n "$appdir" ] || { echo "macOS .app not found under app/build/macos/.../Release" >&2; exit 1; }
 
-  echo "==> macOS: embedding cc-handoff into $(basename "$appdir")/Contents/MacOS"
+  echo "==> macOS: embedding cc-handoff + cc-handoff-mcp into $(basename "$appdir")/Contents/MacOS"
   install -m 0755 "$ROOT/bin/cc-handoff-darwin-universal" "$appdir/Contents/MacOS/cc-handoff"
+  install -m 0755 "$ROOT/bin/cc-handoff-mcp-darwin-universal" "$appdir/Contents/MacOS/cc-handoff-mcp"
 
   # Embedding a Mach-O into Contents/MacOS breaks the bundle's code seal
   # (Contents/_CodeSignature/CodeResources no longer lists every file). Re-sign
@@ -61,6 +71,7 @@ build_macos() {
   # "a sealed resource is missing or invalid" and the next build's CodeSign fails.
   echo "==> macOS: re-sealing bundle (ad-hoc) after embed"
   codesign --force --sign - "$appdir/Contents/MacOS/cc-handoff"
+  codesign --force --sign - "$appdir/Contents/MacOS/cc-handoff-mcp"
   codesign --force --sign - \
     --entitlements "$ROOT/app/macos/Runner/Release.entitlements" "$appdir"
   codesign --verify --strict "$appdir"
@@ -94,9 +105,9 @@ windows_cli() {
   # Reuse the Makefile's cross-build targets so build flags / output names have a
   # single source. (The macOS build above is inline because the Makefile has no
   # universal-darwin target — it's lipo'd here, which is packaging-specific.)
-  echo "==> Windows: cross-building cc-handoff.exe (amd64 + arm64) via make"
-  make cli-windows-amd64 cli-windows-arm64
-  echo "  ✓ bin/cc-handoff-windows-*.exe"
+  echo "==> Windows: cross-building cc-handoff.exe + cc-handoff-mcp.exe (amd64 + arm64) via make"
+  make windows
+  echo "  ✓ bin/cc-handoff-windows-*.exe + bin/cc-handoff-mcp-windows-*.exe"
   echo "  next: copy the repo (incl. bin/) to a Windows box and run scripts/package.ps1"
 }
 

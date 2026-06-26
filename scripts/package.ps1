@@ -1,15 +1,16 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  Package the cc-handoff GUI for Windows, embedding cc-handoff.exe so the app
-  needs no separate CLI install.
+  Package the cc-handoff GUI for Windows, embedding cc-handoff.exe and
+  cc-handoff-mcp.exe so the app needs no separate CLI install.
 
 .DESCRIPTION
   Run on Windows from the repo root (Flutter's Windows desktop build only works
-  on Windows). Builds the Flutter Windows app, obtains cc-handoff.exe (built
-  locally with Go if available, else a cross-built bin\cc-handoff-windows-<arch>.exe
-  produced by scripts/package.sh on macOS), copies it next to the runner .exe so
-  cli.dart resolves it by absolute path, and zips the result into dist\.
+  on Windows). Builds the Flutter Windows app, obtains cc-handoff.exe and
+  cc-handoff-mcp.exe (built locally with Go if available, else cross-built
+  bin\cc-handoff[-mcp]-windows-<arch>.exe produced by scripts/package.sh on macOS),
+  copies them next to the runner .exe so cli.dart / ResolveMCPBinary resolve them
+  by path, and zips the result into dist\.
 
 .PARAMETER Arch
   amd64 (default) or arm64 — selects the cross-built fallback binary name.
@@ -31,18 +32,26 @@ New-Item -ItemType Directory -Force -Path $dist, (Join-Path $root 'bin') | Out-N
 
 if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) { throw 'flutter not found on PATH' }
 
-# 1. cc-handoff.exe — build with local Go, else reuse the cross-built artifact.
+# 1. cc-handoff.exe + cc-handoff-mcp.exe — build with local Go, else reuse the
+#    cross-built artifacts produced by scripts/package.sh on macOS.
 $exe = Join-Path $root 'bin\cc-handoff.exe'
-if (Get-Command go -ErrorAction SilentlyContinue) {
-  Write-Host '==> building cc-handoff.exe with go'
-  $env:CGO_ENABLED = '0'
-  & go build -ldflags $ldflags -o $exe ./cmd/cc-handoff
-} else {
-  $cross = Join-Path $root "bin\cc-handoff-windows-$Arch.exe"
-  if (-not (Test-Path $cross)) {
-    throw "go not found and no $cross — run scripts/package.sh on macOS first (it cross-builds), or install Go."
+$mcpExe = Join-Path $root 'bin\cc-handoff-mcp.exe'
+$haveGo = [bool](Get-Command go -ErrorAction SilentlyContinue)
+if ($haveGo) { $env:CGO_ENABLED = '0' }
+foreach ($b in @(
+    @{ Out = $exe;    Pkg = './cmd/cc-handoff';     Cross = "bin\cc-handoff-windows-$Arch.exe" },
+    @{ Out = $mcpExe; Pkg = './cmd/cc-handoff-mcp'; Cross = "bin\cc-handoff-mcp-windows-$Arch.exe" }
+  )) {
+  if ($haveGo) {
+    Write-Host "==> building $(Split-Path $b.Out -Leaf) with go"
+    & go build -ldflags $ldflags -o $b.Out $b.Pkg
+  } else {
+    $cross = Join-Path $root $b.Cross
+    if (-not (Test-Path $cross)) {
+      throw "go not found and no $cross — run scripts/package.sh on macOS first (it cross-builds), or install Go."
+    }
+    Copy-Item -Force $cross $b.Out
   }
-  Copy-Item -Force $cross $exe
 }
 
 # 2. Flutter Windows build.
@@ -56,9 +65,10 @@ $rel = Get-ChildItem -Path (Join-Path $root 'app\build\windows') -Recurse -Direc
   Select-Object -First 1 -ExpandProperty FullName
 if (-not $rel) { throw 'Windows build output (runner\Release) not found under app\build\windows' }
 
-# 3. Embed cc-handoff.exe next to the runner .exe.
-Write-Host "==> embedding cc-handoff.exe into $rel"
+# 3. Embed cc-handoff.exe + cc-handoff-mcp.exe next to the runner .exe.
+Write-Host "==> embedding cc-handoff.exe + cc-handoff-mcp.exe into $rel"
 Copy-Item -Force $exe (Join-Path $rel 'cc-handoff.exe')
+Copy-Item -Force $mcpExe (Join-Path $rel 'cc-handoff-mcp.exe')
 
 # 4. Zip.
 $zip = Join-Path $dist "cc-handoff-windows-$Arch-v$version.zip"
