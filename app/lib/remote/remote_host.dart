@@ -329,14 +329,17 @@ class RemoteHost extends RemoteChannel {
     final from = (f['from'] as num?)?.toInt();
     final s = _sessionById(sid);
     if (s == null || from == null) return;
-    // Replay recent output to just this client so it sees the current screen /
-    // scrollback immediately instead of a blank terminal until the next redraw.
-    // This method runs synchronously (no await) so no PTY chunk can interleave
-    // between the replay and the remoteSink wiring below — no gap, no dup.
-    // Replay in <=64KB frames (not one 256KB write) so the phone can yield to
-    // the UI between writes — no multi-second freeze on join. Never split a
-    // surrogate pair across frames or the joined char would render broken.
-    final bl = s.backlog;
+    // Replay history as PLAIN TEXT (not the raw byte backlog) so it stays
+    // readable on a phone narrower than this computer: the raw stream bakes in
+    // the computer's width (full-screen TUIs format to width) and renders
+    // mis-wrapped ("乱码") at the phone's width. historyText() strips ANSI/colour
+    // so the phone re-wraps each line at its own width; the live stream below is
+    // still raw (colour intact) and, after the phone's resize, the agent redraws
+    // the current screen at the phone's width. Trade-off: replayed history loses
+    // colour. Runs synchronously (no await) so no PTY chunk interleaves before
+    // the remoteSink wiring below — no gap, no dup. <=64KB frames so the phone
+    // yields between writes; never split a surrogate pair across frames.
+    final bl = s.historyText();
     for (var i = 0; i < bl.length;) {
       var end = min(i + _maxFrameChars, bl.length);
       if (end < bl.length && _isHighSurrogate(bl.codeUnitAt(end - 1))) end++;

@@ -168,6 +168,17 @@ class TerminalSession {
     return ls.length <= lines ? all : ls.sublist(ls.length - lines).join('\n');
   }
 
+  // historyText is the session's buffer (scrollback + screen) as plain text with
+  // CRLF endings — for replaying READABLE history to a phone whose width differs
+  // from this terminal's. The raw byte backlog bakes in THIS width's layout and
+  // renders mis-wrapped at another width; this strips ANSI/colour so the phone's
+  // terminal re-wraps each line at its own width. getText joins rows with '\n';
+  // a terminal needs '\r\n' to also return to column 0, so normalise.
+  String historyText() {
+    final all = terminal.buffer.getText().replaceFirst(_trailingBlank, '');
+    return all.split(RegExp(r'\r?\n')).join('\r\n');
+  }
+
   // _resolvedCommand is the shell command actually run for this session. For a
   // plain shell / arbitrary command it's [command] unchanged. For an agent it's
   // rebuilt from agent + preLaunch + session binding so a reopened tab resumes
