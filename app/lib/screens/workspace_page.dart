@@ -5030,7 +5030,6 @@ class _WorkspacePageState extends State<WorkspacePage>
         ? _gitLog.where((c) => c.hash == _selectedCommit).firstOrNull
         : null;
     _ensureGraph(commits);
-    final railWidth = _graphLaneCount * kLaneWidth;
     return Row(
       children: [
         _logBranchPane(p),
@@ -5098,7 +5097,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                             p,
                             commits[i],
                             i < _graphRows.length ? _graphRows[i] : null,
-                            railWidth,
                           ),
                         ),
                 ),
@@ -5398,7 +5396,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _commitRow renders one GoLand-style commit row: 作者 | 日期 | 图形轨道 |
   // 信息 | refs 胶囊 | 操作菜单。[gr] 是该行预算好的图形切片(可为 null)。
-  Widget _commitRow(ProjectCfg p, GitCommit c, GraphRow? gr, double railWidth) {
+  Widget _commitRow(ProjectCfg p, GitCommit c, GraphRow? gr) {
     final sel = c.hash == _selectedCommit && _compareTitle == null;
     final isMerge = c.parents.length >= 2;
     final rowBg = sel
@@ -5451,15 +5449,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   const SizedBox(width: 4),
                   if (gr != null)
-                    SizedBox(
-                      width: railWidth,
-                      height: _logRowHeight,
-                      child: CustomPaint(
-                        painter: GraphRailPainter(
-                          row: gr,
-                          laneCount: _graphLaneCount,
-                        ),
-                      ),
+                    GraphRail(
+                      row: gr,
+                      laneCount: _graphLaneCount,
+                      laneWidth: kLaneWidth,
+                      rowHeight: _logRowHeight,
                     ),
                   const SizedBox(width: 6),
                   Expanded(

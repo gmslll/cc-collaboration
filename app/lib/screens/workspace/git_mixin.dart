@@ -53,9 +53,12 @@ mixin _GitMixin on State<WorkspacePage> {
   /// 每次 build 调用,幂等。分支/路径/all 切换会经 `_refreshGit` 替换 `_gitLog`
   /// => key 变 => 重算;滚动时复用同一批 [GraphRow] 实例,painter 不重绘。
   void _ensureGraph(List<GitCommit> commits) {
-    // The graph depends only on the displayed list's content/order, which is
-    // fully captured by its length + newest hash (filters already shaped it).
-    final key = '${commits.length}|${commits.isEmpty ? '' : commits.first.hash}';
+    // The graph depends only on the displayed list's content/order. length +
+    // first + last hash distinguishes filtered lists that happen to share a
+    // count and newest commit (avoids _graphRows drifting out of sync).
+    final key = commits.isEmpty
+        ? '0'
+        : '${commits.length}|${commits.first.hash}|${commits.last.hash}';
     if (key == _graphKey) return;
     final layout = computeGraphRows(commits);
     _graphRows = layout.rows;

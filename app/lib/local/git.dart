@@ -590,7 +590,7 @@ Future<List<GitCommit>> gitLog(
     dir,
     'log $scope--date=iso-strict --topo-order --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%P%x1f%s%x00 -n $max --decorate=short$pathspec',
   );
-  return _parseGitLog(out);
+  return parseGitLog(out);
 }
 
 Future<List<GitCommit>> gitLogFile(
@@ -604,14 +604,18 @@ Future<List<GitCommit>> gitLogFile(
     dir,
     'log --follow --date=iso-strict --pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%D%x1f%P%x1f%s%x00 -n $max --decorate=short -- ${shQuote(f)}',
   );
-  return _parseGitLog(out);
+  return parseGitLog(out);
 }
 
-List<GitCommit> _parseGitLog(String out) {
+List<GitCommit> parseGitLog(String out) {
   final commits = <GitCommit>[];
   for (final rec in out.split('\x00')) {
-    if (rec.trim().isEmpty) continue;
-    final parts = rec.split('\x1f');
+    // git 在记录之间插入 \n,split('\x00') 后除首条外每条都带前导 \n,会污染
+    // parts[0](hash)成 "\n<hash>",令 computeGraphRows 的 present.contains(parent)
+    // 恒为 false、拓扑连接边全丢。trim 去掉首尾(首=该 \n,尾=subject 末尾空白)。
+    final trimmed = rec.trim();
+    if (trimmed.isEmpty) continue;
+    final parts = trimmed.split('\x1f');
     if (parts.length < 7) continue;
     commits.add(
       GitCommit(

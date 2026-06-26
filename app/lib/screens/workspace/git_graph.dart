@@ -1,10 +1,16 @@
 // GoLand 风格的 commit 图形轨道:从 commit 的 parent 关系算出每行的 lane
-// 布局(分叉/合并彩线),再由 [GraphRailPainter] 逐行绘制。
+// 布局(分叉/合并彩线),再由 [GraphRail] 逐行用 Widget 渲染。
 //
 // 设计要点(单遍 active-lanes 扫描):自顶向下维护一个可变 `lanes` 数组,
 // 每个 lane 记录它正在等待的下一个 commit hash。第 i 行扫描完后的状态,
 // 正是第 i+1 行扫描前的状态——因此第 i 行底沿的锚点 lane 与第 i+1 行顶沿
 // 的锚点 lane 天然一致,跨行连线无缝衔接。
+//
+// 渲染用纯 Widget(Stack/Positioned/ColoredBox/Transform.rotate)而非 CustomPaint:
+// 本机 macOS/Impeller 下该 painter 的描边类 canvas 绘制不可靠(drawPath/drawLine
+// 都不上屏,只有 drawCircle 能),改走 Flutter 标准渲染管线后连线稳定可见。
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../local/git.dart';
@@ -58,7 +64,7 @@ const List<Color> kLanePalette = [
 ];
 
 const int kMaxLanes = 8; // rail 渲染上限,超出的 lane clamp 到最后一列
-const double kLaneWidth = 11.0; // 每条 lane 的水平间距(紧凑,贴近 GoLand)
+const double kLaneWidth = 14.0; // 每条 lane 的水平间距(略宽,连线更舒展、更易看见)
 
 /// 在「显示中的列表」(已过滤)上计算图形布局。被过滤掉/超出抓取上限的
 /// parent 视为悬空——其 lane 会一直 pass 到列表底部形成竖线 stub。
@@ -188,148 +194,97 @@ GraphLayout computeGraphRows(List<GitCommit> commits) {
   return GraphLayout(rows, laneCount);
 }
 
-/// 绘制单行的图形轨道切片(配合定高的 ListView 行)。
-class GraphRailPainter extends CustomPainter {
+/// 用纯 Widget 渲染单行的图形轨道切片(配合定高的 ListView 行)。
+///
+/// 不用 CustomPaint:本机 Impeller 下该 painter 的描边 canvas 绘制不上屏。改用
+/// `Stack` + `Positioned`,竖线/斜线是 `ColoredBox`(斜线再套 `Transform.rotate`)、
+/// 圆点是圆形 `DecoratedBox` —— 全部走 Flutter 标准渲染管线,稳定可见。
+class GraphRail extends StatelessWidget {
   final GraphRow row;
   final int laneCount;
   final double laneWidth;
+  final double rowHeight;
+  final double lineWidth;
   final double dotRadius;
 
-  const GraphRailPainter({
+  const GraphRail({
+    super.key,
     required this.row,
     required this.laneCount,
     this.laneWidth = kLaneWidth,
-    this.dotRadius = 3.0,
+    this.rowHeight = 30,
+    this.lineWidth = 2.2,
+    this.dotRadius = 3.5,
   });
 
-  double _x(int lane) {
-    final l = lane >= laneCount ? laneCount - 1 : (lane < 0 ? 0 : lane);
-    return laneWidth / 2 + l * laneWidth;
-  }
-
-  // 连线宽度。用「填充缎带」而非描边绘制:macOS/Impeller 会丢弃本 painter 里的
-  // PaintingStyle.stroke 描边,但填充(圆点/路径)能稳定上屏。
-  static const double _lineWidth = 2.4;
+  double _x(int lane) => laneWidth / 2 + lane.clamp(0, laneCount - 1) * laneWidth;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final h = size.height;
+  Widget build(BuildContext context) {
+    final h = rowHeight;
     final mid = h / 2;
+    final children = <Widget>[];
 
-    // pass < toDot < stub < fromDot,圆点最后压在最上。
-    for (final phase in const [
-      EdgeKind.pass,
-      EdgeKind.toDot,
-      EdgeKind.stub,
-      EdgeKind.fromDot,
-    ]) {
-      for (final e in row.edges) {
-        if (e.kind != phase) continue;
-        switch (e.kind) {
-          case EdgeKind.pass:
-            final a = _x(e.fromLane);
-            final b = _x(e.toLane);
-            _fillRibbon(canvas, Offset(a, 0), Offset(a, mid), Offset(b, mid),
-                Offset(b, h), e.color);
-          case EdgeKind.toDot:
-            final a = _x(e.fromLane);
-            final b = _x(row.dotLane);
-            final m = mid / 2;
-            _fillRibbon(canvas, Offset(a, 0), Offset(a, m), Offset(b, m),
-                Offset(b, mid), e.color);
-          case EdgeKind.fromDot:
-            final a = _x(row.dotLane);
-            final b = _x(e.toLane);
-            final m = (mid + h) / 2;
-            _fillRibbon(canvas, Offset(a, mid), Offset(a, m), Offset(b, m),
-                Offset(b, h), e.color);
-          case EdgeKind.stub:
-            // 短尾:从圆点向下走半程即止,表示线索延伸到窗口外。
-            final a = _x(row.dotLane);
-            final end = mid + (h - mid) * 0.6;
-            _fillRibbon(canvas, Offset(a, mid), Offset(a, mid), Offset(a, end),
-                Offset(a, end), e.color);
-        }
+    // pass=贯穿竖线;toDot=上半段(汇入圆点);fromDot=下半段(流向 parent);
+    // stub=圆点下方短尾。同 lane → 竖线;跨 lane → 斜线。
+    for (final e in row.edges) {
+      switch (e.kind) {
+        case EdgeKind.pass:
+          children.add(_seg(_x(e.fromLane), 0, _x(e.toLane), h, e.color));
+        case EdgeKind.toDot:
+          children.add(_seg(_x(e.fromLane), 0, _x(row.dotLane), mid, e.color));
+        case EdgeKind.fromDot:
+          children.add(_seg(_x(row.dotLane), mid, _x(e.toLane), h, e.color));
+        case EdgeKind.stub:
+          final a = _x(row.dotLane);
+          children.add(_seg(a, mid, a, mid + (h - mid) * 0.6, e.color));
       }
     }
 
-    // 圆点(填充)压在最上。
+    // 圆点压在最上。
     final cx = _x(row.dotLane);
-    canvas.drawCircle(
-      Offset(cx, mid),
-      row.isMerge ? dotRadius + 0.5 : dotRadius,
-      Paint()
-        ..color = row.dotColor
-        ..isAntiAlias = true,
+    final r = row.isMerge ? dotRadius + 0.5 : dotRadius;
+    children.add(Positioned(
+      left: cx - r,
+      top: mid - r,
+      width: 2 * r,
+      height: 2 * r,
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: row.dotColor, shape: BoxShape.circle),
+      ),
+    ));
+
+    return SizedBox(
+      width: laneCount * laneWidth,
+      height: h,
+      child: Stack(clipBehavior: Clip.none, children: children),
     );
   }
 
-  // _fillRibbon 把三次贝塞尔 (p0,c1,c2,p3) 当作 [_lineWidth] 宽的「填充缎带」画
-  // 出来(逐点法向偏移成闭合多边形 + 两端圆头),全程只用填充,绕开 Impeller 的
-  // 描边不渲染问题;圆头让相邻行/圆点处衔接顺滑。
-  void _fillRibbon(
-    Canvas canvas,
-    Offset p0,
-    Offset c1,
-    Offset c2,
-    Offset p3,
-    Color color,
-  ) {
-    const steps = 10;
-    final pts = <Offset>[];
-    for (var i = 0; i <= steps; i++) {
-      final t = i / steps;
-      final u = 1 - t;
-      pts.add(
-        Offset(
-          u * u * u * p0.dx +
-              3 * u * u * t * c1.dx +
-              3 * u * t * t * c2.dx +
-              t * t * t * p3.dx,
-          u * u * u * p0.dy +
-              3 * u * u * t * c1.dy +
-              3 * u * t * t * c2.dy +
-              t * t * t * p3.dy,
-        ),
+  /// 一条从 (x0,y0) 到 (x1,y1) 的线段:竖线用普通 `ColoredBox`,斜线用绕中心
+  /// 旋转的 `ColoredBox`。两者都走标准渲染管线,绕开 canvas 描边不上屏的问题。
+  Widget _seg(double x0, double y0, double x1, double y1, Color color) {
+    if (x0 == x1) {
+      return Positioned(
+        left: x0 - lineWidth / 2,
+        top: math.min(y0, y1),
+        width: lineWidth,
+        height: (y1 - y0).abs(),
+        child: ColoredBox(color: color),
       );
     }
-    final half = _lineWidth / 2;
-    final left = <Offset>[];
-    final right = <Offset>[];
-    for (var i = 0; i < pts.length; i++) {
-      Offset dir;
-      if (i == 0) {
-        dir = pts[1] - pts[0];
-      } else if (i == pts.length - 1) {
-        dir = pts[i] - pts[i - 1];
-      } else {
-        dir = pts[i + 1] - pts[i - 1];
-      }
-      final len = dir.distance;
-      dir = len == 0 ? const Offset(0, 1) : dir / len;
-      final perp = Offset(-dir.dy, dir.dx) * half;
-      left.add(pts[i] + perp);
-      right.add(pts[i] - perp);
-    }
-    final path = Path()..moveTo(left.first.dx, left.first.dy);
-    for (final p in left.skip(1)) {
-      path.lineTo(p.dx, p.dy);
-    }
-    for (var i = right.length - 1; i >= 0; i--) {
-      path.lineTo(right[i].dx, right[i].dy);
-    }
-    path.close();
-    final paint = Paint()
-      ..color = color
-      ..isAntiAlias = true;
-    canvas.drawPath(path, paint);
-    canvas.drawCircle(pts.first, half, paint);
-    canvas.drawCircle(pts.last, half, paint);
+    final dx = x1 - x0;
+    final dy = y1 - y0;
+    final len = math.sqrt(dx * dx + dy * dy);
+    final angle = math.atan2(dy, dx);
+    final midX = (x0 + x1) / 2;
+    final midY = (y0 + y1) / 2;
+    return Positioned(
+      left: midX - len / 2,
+      top: midY - lineWidth / 2,
+      width: len,
+      height: lineWidth,
+      child: Transform.rotate(angle: angle, child: ColoredBox(color: color)),
+    );
   }
-
-  @override
-  bool shouldRepaint(GraphRailPainter old) =>
-      !identical(old.row, row) ||
-      old.laneCount != laneCount ||
-      old.laneWidth != laneWidth;
 }
