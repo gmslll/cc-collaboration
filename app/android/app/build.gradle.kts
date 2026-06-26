@@ -6,7 +6,11 @@ plugins {
 
 android {
     namespace = "dev.cchandoff.app"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned to 36 (not flutter.compileSdkVersion, currently 34): a transitive
+    // dep (flutter_plugin_android_lifecycle) now requires consumers to compile
+    // against API 36. Plugin subprojects are bumped to match in the root
+    // build.gradle.kts.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
