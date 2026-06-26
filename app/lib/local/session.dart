@@ -46,6 +46,8 @@ class SessionStore {
     await kvWrite('token', s.token);
     await kvWrite('identity', s.identity);
     await kvWrite('is_admin', s.isAdmin.toString());
+    // A fresh login cancels any prior explicit logout (see markLoggedOut).
+    await kvDelete(_loggedOutKey);
   }
 
   static Future<void> clear() async {
@@ -53,4 +55,19 @@ class SessionStore {
       await kvDelete(k);
     }
   }
+
+  // --- explicit-logout sentinel -------------------------------------------
+  //
+  // On desktop _bootstrap falls back to ~/.config/cc-handoff/config.toml when no
+  // session is stored, so clearing the session alone isn't enough — the app
+  // would silently re-authenticate from config.toml on the next launch, making
+  // "登出" look like it did nothing. markLoggedOut records that the user logged
+  // out on purpose; _bootstrap then skips the config.toml fallback until the next
+  // real login (save() clears the flag).
+  static const _loggedOutKey = 'logged_out';
+
+  static Future<void> markLoggedOut() => kvWrite(_loggedOutKey, 'true');
+
+  static Future<bool> isLoggedOut() async =>
+      (await kvRead(_loggedOutKey)) == 'true';
 }

@@ -132,10 +132,14 @@ class _HomeShellState extends State<HomeShell> {
     final cfg =
         await AppConfig.load(); // config.toml: auth + repos, or null (mobile)
     final stored = await SessionStore.load(); // explicit login, or null
+    // After an explicit logout, don't silently re-auth from config.toml — wait
+    // for a real login (which clears the flag). Only matters when there's no
+    // stored session; a stored session always wins.
+    final loggedOut = stored == null && await SessionStore.isLoggedOut();
 
     final session =
         stored ??
-        (cfg != null
+        (cfg != null && !loggedOut
             ? Session(
                 relayUrl: cfg.relayUrl,
                 token: cfg.token,
@@ -182,15 +186,23 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _logout() async {
-    await SessionStore.clear();
-    if (!mounted) return;
-    setState(() {
-      _client = null;
-      _cfg = null;
-      _me = null;
-      _index = 0;
-      _needLogin = true;
-    });
+    // Switch to the login screen immediately so the button always responds,
+    // even if the secure-store writes below are slow or throw.
+    if (mounted) {
+      setState(() {
+        _client = null;
+        _cfg = null;
+        _me = null;
+        _index = 0;
+        _needLogin = true;
+      });
+    }
+    // Best-effort: drop the stored session and record the explicit logout so
+    // _bootstrap won't re-auth from config.toml on the next launch.
+    try {
+      await SessionStore.clear();
+      await SessionStore.markLoggedOut();
+    } catch (_) {}
   }
 
   @override
