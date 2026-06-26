@@ -1316,6 +1316,17 @@ String _encodeSeq(String s) {
 // runs during an explicit dictation session. See _RemoteTerminalScreenState.
 enum _VoiceMode { off, dictating }
 
+// _NoUserScroll forces inner Scrollables in its subtree to
+// NeverScrollableScrollPhysics, so a finger drag can't scroll the phone's local
+// terminal buffer. Used by _RemoteTerminalScreenState._wrapScroll for
+// scroll-reporting TUIs, which scroll via host wheel reports instead.
+class _NoUserScroll extends ScrollBehavior {
+  const _NoUserScroll();
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const NeverScrollableScrollPhysics();
+}
+
 // _RemoteTerminalScreen renders one remote session full-screen, with an on-screen
 // key bar for the keys phone keyboards lack (agent TUIs need Esc/arrows/Ctrl-C).
 class _RemoteTerminalScreen extends StatefulWidget {
@@ -1549,6 +1560,20 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     }
   }
 
+  // _wrapScroll disables the TerminalView's OWN inner Scrollable for
+  // scroll-reporting TUIs (claude/codex). Those scroll by sending wheel reports
+  // to the host (see _onPointerMove and the 滚↑/↓ buttons), and the host redraws
+  // at the current width. If the local Scrollable also moved on a finger drag it
+  // would expose the phone's local buffer — history laid out at the COMPUTER's
+  // width — which renders mis-wrapped ("乱码"). Killing only user scrolling here
+  // (programmatic stick-to-bottom still works) leaves the clean host-wheel path
+  // as the sole scroll path. Plain shells (no reportScroll) keep native
+  // scrollback. The inner Scrollable sets no explicit physics, so a
+  // ScrollConfiguration override takes effect.
+  Widget _wrapScroll(Widget child) => _term.mouseMode.reportScroll
+      ? ScrollConfiguration(behavior: const _NoUserScroll(), child: child)
+      : child;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1580,15 +1605,17 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             child: Listener(
               onPointerDown: (_) => _scrollAccum = 0,
               onPointerMove: _onPointerMove,
-              child: TerminalView(
-                _term,
-                controller: _controller,
-                theme: ccTerminalTheme,
-                textStyle: const TerminalStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 12.5,
+              child: _wrapScroll(
+                TerminalView(
+                  _term,
+                  controller: _controller,
+                  theme: ccTerminalTheme,
+                  textStyle: const TerminalStyle(
+                    fontFamily: 'JetBrainsMono',
+                    fontSize: 12.5,
+                  ),
+                  padding: const EdgeInsets.all(8),
                 ),
-                padding: const EdgeInsets.all(8),
               ),
             ),
           ),
