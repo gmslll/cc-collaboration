@@ -50,8 +50,9 @@ class GraphLayout {
   const GraphLayout(this.rows, this.laneCount);
 }
 
-/// lane 调色板:复用主题色(accent/ok/warning/danger/accentBright)+ 3 个补充色,
-/// 共 8 色循环;复用 `CcColors` 避免与主题漂移。
+/// lane 调色板:复用主题色(accent/ok/warning/danger/accentBright)+ 7 个补充色,
+/// 共 12 色循环(与 kMaxLanes 对齐,12 条并行 lane 互不撞色);复用 `CcColors` 避免
+/// 与主题漂移。补充色在深色面板上挑了相互区分度较高的色相。
 const List<Color> kLanePalette = [
   CcColors.accent, // 蓝
   CcColors.ok, // 绿
@@ -61,9 +62,13 @@ const List<Color> kLanePalette = [
   Color(0xFF4FC1B0), // 青
   CcColors.accentBright, // 亮蓝
   Color(0xFFF178B6), // 粉
+  Color(0xFFE8924A), // 橙
+  Color(0xFFA6CC59), // 黄绿
+  Color(0xFFD06BC9), // 品红
+  Color(0xFF7E83E0), // 靛蓝
 ];
 
-const int kMaxLanes = 8; // rail 渲染上限,超出的 lane clamp 到最后一列
+const int kMaxLanes = 12; // rail 渲染上限,超出的 lane clamp 到最后一列
 const double kLaneWidth = 14.0; // 每条 lane 的水平间距(略宽,连线更舒展、更易看见)
 
 /// 在「显示中的列表」(已过滤)上计算图形布局。被过滤掉/超出抓取上限的

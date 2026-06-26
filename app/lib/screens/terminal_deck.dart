@@ -107,7 +107,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   }) {
     // Mint a fixed session id for claude up front so it launches with
     // --session-id and can be --resume'd on the next app start. The immediate
-    // _save() below persists it. codex can't pre-assign an id (resumes --last).
+    // _save() below persists it. codex can't pre-assign an id — it captures the
+    // one it mints after launch (TerminalSession._maybeCaptureCodexId) and asks
+    // us to persist it via onPersist.
     final sid = agent == 'claude' ? _genUuid() : null;
     setState(() {
       terms.add(
@@ -117,7 +119,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           agent: agent,
           preLaunch: preLaunch,
           agentSessionId: sid,
-        )..onDone = _onSessionDone,
+        )
+          ..onDone = _onSessionDone
+          ..onPersist = persistTerms,
       );
       activeTerm = terms.length - 1;
     });
@@ -235,7 +239,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           preLaunch: preLaunch,
           agentSessionId: sid.isEmpty ? null : sid,
           resume: true,
-        )..onDone = _onSessionDone;
+        )
+          ..onDone = _onSessionDone
+          ..onPersist = persistTerms;
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
         restored.add(ts);

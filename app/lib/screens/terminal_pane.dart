@@ -36,7 +36,10 @@ class TerminalSession {
   // is true only when this session is being reopened from persistence.
   final String agent;
   final String preLaunch;
-  final String? agentSessionId;
+  // Mutable: claude gets a fixed id at construction; codex can't be given one at
+  // launch, so it's captured from codex's rollout file after start (see
+  // _maybeCaptureCodexId) and then persisted.
+  String? agentSessionId;
   final bool resume;
   final Terminal terminal = Terminal(maxLines: 10000);
   // The selection/copy controller lives on the session (not the pane) so the
@@ -55,6 +58,7 @@ class TerminalSession {
       TerminalController(pointerInputs: const PointerInputs.none());
   Pty? _pty;
   bool _started = false;
+  bool _disposed = false;
 
   // remoteSink, when set, also receives this terminal's (utf8-decoded) PTY
   // output so a remote phone client can mirror it. Null when nobody's watching.
@@ -72,6 +76,9 @@ class TerminalSession {
   // so the initial idle prompt doesn't ping. Trade-off: an agent with the
   // terminal bell disabled won't notify.
   void Function(TerminalSession session)? onDone;
+  // onPersist asks the host to re-save the session list — fired after a codex
+  // session id is captured so a reopened tab can resume the exact conversation.
+  void Function()? onPersist;
   Timer? _belTimer;
   bool _belArmed = false; // a bell rang; waiting for output to settle to confirm
   bool _sawInput = false; // user has typed/sent into this session at least once
@@ -178,8 +185,13 @@ class TerminalSession {
           ? '${prefix}claude --continue'
           : '${prefix}claude --resume $agentSessionId';
     }
-    // codex: bare on first launch, newest-in-cwd on reopen.
-    return resume ? '${prefix}codex resume --last' : '${prefix}codex';
+    // codex can't be given a session id at launch; we capture the one it mints
+    // (see _maybeCaptureCodexId) and resume that EXACT session on reopen, falling
+    // back to the cwd's most-recent rollout if we never captured one.
+    if (!resume) return '${prefix}codex';
+    return agentSessionId == null
+        ? '${prefix}codex resume --last'
+        : '${prefix}codex resume ${agentSessionId!}';
   }
 
   void start() {
@@ -227,6 +239,101 @@ class TerminalSession {
     terminal.onResize = (w, h, pw, ph) {
       if (remoteSink == null) pty.resize(h, w);
     };
+    _maybeCaptureCodexId();
+  }
+
+  // --- codex session-id capture -------------------------------------------
+  //
+  // codex (unlike claude) can't be told a session id at launch, but it writes a
+  // rollout file $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl whose
+  // first line (session_meta) carries {id, cwd}. After a FRESH codex launch we
+  // poll for the rollout written since launch whose cwd matches this session's
+  // workdir, capture its uuid into agentSessionId, and ask the host to persist —
+  // so a reopened tab resumes that EXACT conversation (`codex resume <uuid>`)
+  // instead of the fragile `codex resume --last`. Best-effort: on miss the
+  // session simply keeps the --last behaviour.
+  bool _codexCaptureStarted = false;
+
+  void _maybeCaptureCodexId() {
+    if (_codexCaptureStarted) return;
+    if (agent != 'codex' || resume || agentSessionId != null) return;
+    _codexCaptureStarted = true;
+    unawaited(_captureCodexId(DateTime.now()));
+  }
+
+  Future<void> _captureCodexId(DateTime since) async {
+    final home = Platform.environment['CODEX_HOME'] ??
+        '${Platform.environment['HOME'] ?? ''}/.codex';
+    final sessions = Directory('$home/sessions');
+    for (var attempt = 0; attempt < 30; attempt++) {
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (_disposed) return;
+      final id = await _findCodexRollout(sessions, since);
+      if (id != null) {
+        agentSessionId = id;
+        onPersist?.call();
+        return;
+      }
+    }
+  }
+
+  // _findCodexRollout returns the codex session id of the newest rollout under
+  // [sessions] written at/after [since] whose cwd matches this session, or null.
+  // Only today's (and a 6h-earlier, for the midnight boundary) date bucket is
+  // scanned, so cost is bounded no matter how many old sessions exist.
+  Future<String?> _findCodexRollout(Directory sessions, DateTime since) async {
+    String bucket(DateTime d) =>
+        '${sessions.path}/${d.year.toString().padLeft(4, '0')}/'
+        '${d.month.toString().padLeft(2, '0')}/'
+        '${d.day.toString().padLeft(2, '0')}';
+    final dirs = <String>{
+      bucket(since),
+      bucket(since.subtract(const Duration(hours: 6))),
+    };
+    final files = <File>[];
+    for (final p in dirs) {
+      final d = Directory(p);
+      if (!await d.exists()) continue;
+      try {
+        await for (final e in d.list(followLinks: false)) {
+          if (e is File &&
+              e.path.contains('rollout-') &&
+              e.path.endsWith('.jsonl')) {
+            files.add(e);
+          }
+        }
+      } catch (_) {}
+    }
+    files.sort(
+        (a, b) => b.statSync().modified.compareTo(a.statSync().modified));
+    final floor = since.subtract(const Duration(seconds: 5));
+    for (final f in files) {
+      if (f.statSync().modified.isBefore(floor)) break;
+      final id = await _rolloutId(f);
+      if (id != null) return id;
+    }
+    return null;
+  }
+
+  // _rolloutId reads a rollout file's session_meta (first line) and returns its
+  // id iff its cwd matches this session's workdir.
+  Future<String?> _rolloutId(File f) async {
+    try {
+      final firstLine = await f
+          .openRead()
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter())
+          .first;
+      final m = jsonDecode(firstLine);
+      if (m is! Map) return null;
+      final payload = m['payload'];
+      if (payload is! Map) return null;
+      if (payload['cwd']?.toString() != workdir) return null;
+      final id = payload['id']?.toString();
+      return (id != null && id.isNotEmpty) ? id : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   int? get pid => _pty?.pid;
@@ -306,6 +413,7 @@ class TerminalSession {
   }
 
   void dispose() {
+    _disposed = true; // stops the codex id-capture poll
     _belTimer?.cancel();
     controller.dispose();
     _pty?.kill();
