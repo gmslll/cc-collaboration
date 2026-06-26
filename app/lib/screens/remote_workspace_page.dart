@@ -1631,6 +1631,26 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             tooltip: '刷新(拉取电脑最新)',
             onPressed: _reload,
           ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: '更多',
+            onSelected: (v) {
+              if (v == 'clear') _clearScrollback();
+              if (v == 'histmode') _toggleHistoryMode();
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'clear',
+                child: Text('清空本地历史(消除上滑乱码)'),
+              ),
+              PopupMenuItem(
+                value: 'histmode',
+                child: Text(widget.client.historyMode == 'ansi'
+                    ? '历史:彩色 → 切到文本'
+                    : '历史:文本 → 切到彩色'),
+              ),
+            ],
+          ),
         ],
       ),
       body: Column(
@@ -1708,12 +1728,6 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   }, _toggleDictation),
                   btn('滚↑', () => _wheel(true, ticks: 3)),
                   btn('滚↓', () => _wheel(false, ticks: 3)),
-                  btn('清空', _clearScrollback),
-                  btn(
-                      widget.client.historyMode == 'ansi'
-                          ? '历史·彩色'
-                          : '历史·文本',
-                      _toggleHistoryMode),
                   for (final kb in _keys)
                     btn(
                       kb.label,
