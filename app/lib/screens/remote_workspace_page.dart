@@ -14,6 +14,7 @@ import '../local/prefs.dart';
 import '../remote/file_fs.dart';
 import '../remote/file_transfer.dart';
 import '../remote/remote_client.dart';
+import '../syntax.dart';
 import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
 import '../voice/speaker.dart';
@@ -911,7 +912,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                         onTap: c.untracked
                             ? null
                             : () => _openDiff(
-                                () => _c.requestWorkingDiff(_gitRepo!, c.path),
+                                () => _c.requestWorkingDiff(_gitRepo!, c.path,
+                                    full: Prefs.getBool('diff.fullContext',
+                                        def: false)),
                                 c.path,
                               ),
                       ),
@@ -939,7 +942,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                           ),
                         ),
                         onTap: () {
-                          _c.requestCommitDiff(_gitRepo!, c.hash, c.subject);
+                          _c.requestCommitDiff(_gitRepo!, c.hash, c.subject,
+                              full: Prefs.getBool('diff.fullContext',
+                                  def: false));
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => _RemoteCommitFiles(
@@ -2220,6 +2225,7 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
   bool _loaded = false;
   bool _dirty = false;
   bool _wasSaving = false;
+  bool _editing = false; // false = read-only syntax-highlighted view
 
   @override
   void initState() {
@@ -2273,6 +2279,13 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
         ),
         actions: [
           IconButton(
+            tooltip: _editing ? '查看' : '编辑',
+            icon: Icon(_editing ? Icons.visibility_rounded : Icons.edit_rounded),
+            onPressed: _loaded
+                ? () => setState(() => _editing = !_editing)
+                : null,
+          ),
+          IconButton(
             tooltip: '保存',
             icon: c.fileSaving
                 ? const SizedBox(
@@ -2291,21 +2304,31 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
           ? (c.fileError != null
                 ? centerMsg(c.fileError!)
                 : const Center(child: CircularProgressIndicator()))
-          : Padding(
-              padding: const EdgeInsets.all(12),
-              child: TextField(
-                controller: _ctl,
-                maxLines: null,
-                expands: true,
-                keyboardType: TextInputType.multiline,
-                textAlignVertical: TextAlignVertical.top,
-                style: CcType.code(size: 12.5),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  isCollapsed: true,
+          : _editing
+              // edit mode: plain editable text box (re_editor is desktop-only).
+              ? Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: TextField(
+                    controller: _ctl,
+                    maxLines: null,
+                    expands: true,
+                    keyboardType: TextInputType.multiline,
+                    textAlignVertical: TextAlignVertical.top,
+                    style: CcType.code(size: 12.5),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      isCollapsed: true,
+                    ),
+                  ),
+                )
+              // view mode: read-only syntax-highlighted (parity with the mac).
+              : ColoredBox(
+                  color: CcColors.bg,
+                  child: highlightedCode(
+                    _ctl.text,
+                    langIdForPath(widget.path),
+                  ),
                 ),
-              ),
-            ),
     );
   }
 }
@@ -2324,6 +2347,8 @@ class _RemoteDiffViewer extends StatefulWidget {
 class _RemoteDiffViewerState extends State<_RemoteDiffViewer> {
   // Side-by-side by default, matching the desktop (shares the 'diff.split' pref).
   bool _split = Prefs.getBool('diff.split', def: true);
+  // 全部/相关: shares the 'diff.fullContext' pref with the desktop.
+  bool _full = Prefs.getBool('diff.fullContext', def: false);
 
   @override
   Widget build(BuildContext context) {
@@ -2334,6 +2359,11 @@ class _RemoteDiffViewerState extends State<_RemoteDiffViewer> {
         appBar: AppBar(
           title: Text(widget.title, overflow: TextOverflow.ellipsis),
           actions: [
+            _diffContextAction(_full, (v) {
+              Prefs.setBool('diff.fullContext', v);
+              setState(() => _full = v);
+              client.reloadDiff(v); // re-fetch the same diff at new context
+            }),
             _diffSplitAction(_split, (v) => setState(() => _split = v)),
           ],
         ),
@@ -2352,6 +2382,19 @@ Widget _diffSplitAction(bool split, ValueChanged<bool> onChanged) => Padding(
   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
   child: diffSplitToggle(
     split,
+    onChanged,
+    style: const ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
+  ),
+);
+
+// _diffContextAction is the compact 全部/相关 toggle for a diff screen's AppBar.
+Widget _diffContextAction(bool full, ValueChanged<bool> onChanged) => Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+  child: diffContextToggle(
+    full,
     onChanged,
     style: const ButtonStyle(
       visualDensity: VisualDensity.compact,
@@ -2397,6 +2440,7 @@ class _RemoteCommitFiles extends StatefulWidget {
 class _RemoteCommitFilesState extends State<_RemoteCommitFiles> {
   String? _parsedFrom; // the diffContent we last parsed (skip re-parsing)
   List<FileDiff> _files = const [];
+  bool _full = Prefs.getBool('diff.fullContext', def: false);
 
   List<FileDiff> _filesFor(String? content) {
     if (content == null) return const [];
@@ -2445,6 +2489,13 @@ class _RemoteCommitFilesState extends State<_RemoteCommitFiles> {
         return Scaffold(
           appBar: AppBar(
             title: Text(widget.title, overflow: TextOverflow.ellipsis),
+            actions: [
+              _diffContextAction(_full, (v) {
+                Prefs.setBool('diff.fullContext', v);
+                setState(() => _full = v);
+                client.reloadDiff(v); // re-fetch this commit at new context
+              }),
+            ],
           ),
           body: body,
         );

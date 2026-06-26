@@ -490,6 +490,51 @@ Widget _diffLine(String line, {String? langId}) {
   );
 }
 
+// highlightedCode is a read-only, syntax-highlighted code viewer (line-numbered,
+// lazy ListView). Pure Dart/Flutter (+ syntax.dart) so it works on phone & web —
+// the remote clients can't use the desktop re_editor. Pass [langId] from
+// langIdForPath(path); null/unknown → plain mono text.
+Widget highlightedCode(String text, String? langId) {
+  final lines = text.split('\n');
+  const baseStyle = TextStyle(
+    fontFamily: CcType.mono,
+    fontSize: 12.5,
+    height: 1.4,
+    color: CcColors.text,
+  );
+  return ListView.builder(
+    itemCount: lines.length,
+    itemBuilder: (_, i) {
+      final line = lines[i];
+      final span = (langId == null || line.isEmpty)
+          ? null
+          : highlightLine(line, langId, base: baseStyle);
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 40,
+              child: Text(
+                '${i + 1}',
+                textAlign: TextAlign.right,
+                style: baseStyle.copyWith(color: CcColors.subtle),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: span != null
+                  ? Text.rich(span)
+                  : Text(line.isEmpty ? ' ' : line, style: baseStyle),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
 // Subtle gradients for surfaces (the "稍多表现力" lift, kept understated).
 const appGradient = BoxDecoration(
   gradient: LinearGradient(

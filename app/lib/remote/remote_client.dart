@@ -396,6 +396,11 @@ class RemoteClient extends RemoteChannel {
   String? diffContent;
   bool diffLoading = false;
   String? diffError;
+  bool diffFull = false; // 全部/相关: true = whole-file context
+  // Last diff request, kept so the 全部/相关 toggle can re-issue the same source.
+  String? _diffRepo;
+  String? _diffFile; // working-diff file (null for a commit)
+  String? _diffHash; // commit hash (null for a working diff)
 
   // Pushed notifications (newest first) + unread count for the AppBar bell.
   final List<RemoteNotice> notices = [];
@@ -688,22 +693,43 @@ class RemoteClient extends RemoteChannel {
     if (r != null) openGit(r);
   }
 
-  void requestWorkingDiff(String repo, String file) {
+  void requestWorkingDiff(String repo, String file, {bool full = false}) {
     diffTitle = file;
     diffContent = null;
     diffLoading = true;
     diffError = null;
+    diffFull = full;
+    _diffRepo = repo;
+    _diffFile = file;
+    _diffHash = null;
     notifyListeners();
-    send({'t': 'git.diff', 'path': repo, 'file': file});
+    send({'t': 'git.diff', 'path': repo, 'file': file, 'full': full});
   }
 
-  void requestCommitDiff(String repo, String hash, String title) {
+  void requestCommitDiff(String repo, String hash, String title,
+      {bool full = false}) {
     diffTitle = title;
     diffContent = null;
     diffLoading = true;
     diffError = null;
+    diffFull = full;
+    _diffRepo = repo;
+    _diffFile = null;
+    _diffHash = hash;
     notifyListeners();
-    send({'t': 'git.show', 'path': repo, 'hash': hash});
+    send({'t': 'git.show', 'path': repo, 'hash': hash, 'full': full});
+  }
+
+  // reloadDiff re-issues the current diff request at the given context (the
+  // 全部/相关 toggle) using the remembered source.
+  void reloadDiff(bool full) {
+    final repo = _diffRepo;
+    if (repo == null) return;
+    if (_diffHash != null) {
+      requestCommitDiff(repo, _diffHash!, diffTitle ?? '', full: full);
+    } else if (_diffFile != null) {
+      requestWorkingDiff(repo, _diffFile!, full: full);
+    }
   }
 
   // Git write ops — host replies git.op.ok (→ auto refresh) or git.op.err.

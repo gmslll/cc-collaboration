@@ -691,7 +691,10 @@ class RemoteHost extends RemoteChannel {
       return;
     }
     try {
-      final diff = await gitDiffFileWorking(path, file);
+      // full=true → whole-file context (the diff viewer's 「全部」 toggle).
+      final full = f['full'] == true;
+      final diff =
+          await gitDiffFileWorking(path, file, context: full ? 999999 : 3);
       send({'t': 'git.diff.ok', 'to': to, 'file': file, 'diff': diff});
     } catch (e) {
       send({'t': 'git.err', 'to': to, 'msg': '$e'});
@@ -711,7 +714,8 @@ class RemoteHost extends RemoteChannel {
       return;
     }
     try {
-      final diff = await gitShowCommit(path, hash);
+      final full = f['full'] == true;
+      final diff = await gitShowCommit(path, hash, context: full ? 999999 : 3);
       send({'t': 'git.show.ok', 'to': to, 'hash': hash, 'diff': diff});
     } catch (e) {
       send({'t': 'git.err', 'to': to, 'msg': '$e'});
