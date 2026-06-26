@@ -1603,6 +1603,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     // native touch scrollback (and selection) untouched since Listener doesn't
     // claim the gesture.
     if (!_term.mouseMode.reportScroll) return;
+    // Don't scroll while a long-press selection is in progress, or the screen
+    // would scroll out from under the selection (selectWord sets the selection
+    // on long-press start; cleared on the next pointer-down — see the Listener).
+    if (_controller.selection != null) return;
     _scrollAccum += e.delta.dy;
     while (_scrollAccum.abs() >= _linePx) {
       final up = _scrollAccum > 0; // finger down → reveal earlier output
@@ -1674,7 +1678,14 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
         children: [
           Expanded(
             child: Listener(
-              onPointerDown: (_) => _scrollAccum = 0,
+              onPointerDown: (_) {
+                _scrollAccum = 0;
+                // A new touch clears any prior selection: a plain drag then
+                // scrolls (no selection to gate it), a long-press re-selects,
+                // and a tap acts as "deselect". Tapping 复制 is on the key bar
+                // (outside this Listener) so it keeps the selection.
+                if (_controller.selection != null) _controller.clearSelection();
+              },
               onPointerMove: _onPointerMove,
               child: _wrapScroll(
                 TerminalView(
