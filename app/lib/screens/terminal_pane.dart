@@ -87,6 +87,15 @@ class TerminalSession {
   Timer? _belTimer;
   bool _belArmed = false; // a bell rang; waiting for output to settle to confirm
   bool _sawInput = false; // user has typed/sent into this session at least once
+  // _busy = this agent is mid-turn (we submitted input; no finishing bell yet).
+  // Read via [busy], which ANDs isAgent so it's only ever meaningful for agent
+  // sessions. Drives local-bus delivery: a busy agent's incoming peer message is
+  // parked in its bus inbox for its PostToolUse/Stop hook to inject mid-turn,
+  // instead of pasting (which would just queue behind the running turn). Set
+  // when a turn starts (a submit \r reaches an agent), cleared on the finishing
+  // bell (_fireDone).
+  bool _busy = false;
+  bool get busy => isAgent && _busy;
   static const Duration _belSettle =
       Duration(milliseconds: 1200); // quiet-after-bell → done
 
@@ -335,6 +344,9 @@ class TerminalSession {
     });
     terminal.onOutput = (data) {
       _sawInput = true; // local keystrokes count as "the user gave it work"
+      // A local Enter into an agent starts a turn → mark busy so a peer message
+      // arriving now routes to the bus inbox (hook injection) not a paste queue.
+      if (isAgent && data.contains('\r')) _busy = true;
       pty.write(const Utf8Encoder().convert(data));
     };
     // A phone mirroring this session (remoteSink set) owns the PTY size; don't
@@ -467,6 +479,9 @@ class TerminalSession {
 
   void sendText(String s) {
     _sawInput = true; // remote keys / delivered messages also arm the detector
+    // A lone CR submitting to an agent starts a turn (remote Enter, or the
+    // submit \r pasteText sends after a delivered message) → mark busy.
+    if (isAgent && s == '\r') _busy = true;
     _pty?.write(const Utf8Encoder().convert(s));
   }
 
@@ -488,6 +503,7 @@ class TerminalSession {
   // prompt — and disarms so the next turn needs a fresh bell.
   void _fireDone() {
     _belArmed = false;
+    _busy = false; // bell settled → agent is idle/waiting again
     if (!_sawInput) return;
     onDone?.call(this);
   }
@@ -533,9 +549,14 @@ class TerminalPane extends StatefulWidget {
   final List<SendTarget> same;
   final List<SendTarget> others;
   // onSendToPeer(fromId, targetId, text): route the selection into a sibling
-  // session's input. Null hides the menu entries.
+  // session's input box (fill, no submit). Null hides the menu entries.
   final void Function(String fromId, String targetId, String text)?
   onSendToPeer;
+  // onInterjectToPeer(fromId, targetId, text): same targets as onSendToPeer but
+  // submit:true — interjects into a busy peer's running turn (via its bus hook),
+  // or runs the selection immediately when the peer is idle. Null hides it.
+  final void Function(String fromId, String targetId, String text)?
+  onInterjectToPeer;
   // onSendToOnline(text): hand the selection to the host's "发送到在线用户" flow
   // (pick a remote user + their session). Null hides that menu entry.
   final void Function(String text)? onSendToOnline;
@@ -545,6 +566,7 @@ class TerminalPane extends StatefulWidget {
     this.same = const [],
     this.others = const [],
     this.onSendToPeer,
+    this.onInterjectToPeer,
     this.onSendToOnline,
   });
 
@@ -621,22 +643,34 @@ class _TerminalPaneState extends State<TerminalPane> {
     );
   }
 
-  // _sendSelectionTo forwards the current selection into peer session [targetId]
-  // (the host injects it as input). No-op without a selection.
-  void _sendSelectionTo(String targetId) {
+  // _sendSelectionTo fills the current selection into peer [targetId]'s input
+  // (no submit). _interjectSelectionTo routes it submit:true instead, so a busy
+  // peer's running turn gets it via its bus hook (or it runs immediately when
+  // the peer is idle). Both no-op without a selection or the matching callback.
+  void _sendSelectionTo(String targetId) =>
+      _forwardSelectionTo(targetId, widget.onSendToPeer, '已发送');
+  void _interjectSelectionTo(String targetId) =>
+      _forwardSelectionTo(targetId, widget.onInterjectToPeer, '已插话');
+
+  void _forwardSelectionTo(
+    String targetId,
+    void Function(String fromId, String targetId, String text)? cb,
+    String done,
+  ) {
     final sel = _controller.selection;
-    final cb = widget.onSendToPeer;
     if (sel == null || cb == null) return;
     cb(widget.session.id, targetId, _terminal.buffer.getText(sel));
     _controller.clearSelection();
-    String? label;
+    final label = _peerLabel(targetId);
+    snack(context, label != null ? '$done到 $label' : done);
+  }
+
+  // _peerLabel resolves a forwarding target id to its display label, or null.
+  String? _peerLabel(String targetId) {
     for (final t in [...widget.same, ...widget.others]) {
-      if (t.id == targetId) {
-        label = t.label;
-        break;
-      }
+      if (t.id == targetId) return t.label;
     }
-    snack(context, label != null ? '已发送到 $label' : '已发送');
+    return null;
   }
 
   // _sendSelectionToOnline hands the current selection to the host's
@@ -651,9 +685,9 @@ class _TerminalPaneState extends State<TerminalPane> {
 
   Future<void> _showMenu(Offset globalPos) async {
     final hasSelection = _controller.selection != null;
-    final canSend =
-        widget.onSendToPeer != null &&
-        (widget.same.isNotEmpty || widget.others.isNotEmpty);
+    final hasTargets = widget.same.isNotEmpty || widget.others.isNotEmpty;
+    final canSend = widget.onSendToPeer != null && hasTargets;
+    final canInterject = widget.onInterjectToPeer != null && hasTargets;
     // Send targets only when there's a selection to send (else just the editing
     // rows). 复制/粘贴/全选 sit above the send section via extraTop; 发送到在线
     // 用户 sits below via extraBottom (also selection-gated).
@@ -681,6 +715,12 @@ class _TerminalPaneState extends State<TerminalPane> {
         ),
       ],
       extraBottom: [
+        if (hasSelection && canInterject)
+          ccMenuItem(
+            value: 'interject',
+            icon: Icons.bolt_rounded,
+            label: '插话到会话…',
+          ),
         if (hasSelection && widget.onSendToOnline != null)
           ccMenuItem(
             value: 'online',
@@ -699,6 +739,20 @@ class _TerminalPaneState extends State<TerminalPane> {
         _selectAll();
       case 'online':
         _sendSelectionToOnline();
+      case 'interject':
+        // Flutter showMenu has no submenu: reopen a target picker, then route
+        // the selection submit:true so a busy peer gets it mid-turn via its hook.
+        final pick = await showPeerPicker(
+          context,
+          globalPos,
+          [...widget.same, ...widget.others],
+          'interject',
+          icon: Icons.bolt_rounded,
+          label: (t) => '插话到「${t.label}」',
+        );
+        if (pick != null && mounted && pick.startsWith('interject:')) {
+          _interjectSelectionTo(pick.substring('interject:'.length));
+        }
       default:
         if (v.startsWith('send:')) _sendSelectionTo(v.substring('send:'.length));
     }

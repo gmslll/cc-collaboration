@@ -71,6 +71,8 @@ func main() {
 		err = runAlert(ctx, args)
 	case "stop-hook":
 		err = runStopHook(ctx, args)
+	case "bus-hook":
+		err = runBusHook(ctx, args)
 	case "version", "-v", "--version":
 		runVersion()
 	case "help", "-h", "--help":

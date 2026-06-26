@@ -67,14 +67,43 @@ func (codexAgent) RegisterMCP(ctx context.Context, opts setup.MCPRegisterOptions
 	return setup.RegisterCodex(ctx, opts, out)
 }
 
+// InstallBusHooks merges the bus PostToolUse + Stop hooks into
+// $CODEX_HOME/hooks.json (default ~/.codex/hooks.json). Codex's features.hooks
+// defaults on, so this fires in every Codex session — the $CC_BUS_DIR env guard
+// in the command keeps it a no-op outside app-spawned sessions. (Note: an
+// automated/non-interactive Codex launch may also need
+// --dangerously-bypass-hook-trust; the desktop app passes it.)
+func (codexAgent) InstallBusHooks(out io.Writer) error {
+	home, err := codexHome()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, "hooks.json")
+	res, err := setup.EnsureCodexBusHooks(path)
+	if err != nil {
+		return err
+	}
+	reportBusHook(out, "codex", path, res)
+	return nil
+}
+
+// codexHome resolves $CODEX_HOME (default ~/.codex), the root for Codex's
+// config, skills, and hooks.
+func codexHome() (string, error) {
+	if home := os.Getenv("CODEX_HOME"); home != "" {
+		return home, nil
+	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory for Codex: %w", err)
+	}
+	return filepath.Join(userHome, ".codex"), nil
+}
+
 func codexSkillsDir() (string, error) {
-	home := os.Getenv("CODEX_HOME")
-	if home == "" {
-		userHome, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home directory for Codex skill install: %w", err)
-		}
-		home = filepath.Join(userHome, ".codex")
+	home, err := codexHome()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(home, "skills"), nil
 }

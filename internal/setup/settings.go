@@ -75,6 +75,131 @@ func EnsureStopHook(repoRoot string) (EnsureResult, error) {
 	return EnsureWritten, nil
 }
 
+// BusHookCommand is the command installed under PostToolUse + Stop for the
+// local session bus. It self-gates on $CC_BUS_DIR — the env var the desktop
+// app injects into every session it spawns — so it's a sub-millisecond shell
+// no-op in any other Claude/Codex session (other repos, plain terminals) and
+// only does real work (`cc-handoff bus-hook` drains the session's bus inbox)
+// inside an app-spawned session. That env guard is how one user-global hook
+// stays scoped to "only the app's sessions".
+const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && cc-handoff bus-hook || true`
+
+// busHookEvents are the two lifecycle events the bus hook rides: PostToolUse
+// surfaces a peer message mid-turn (next tool boundary), Stop catches it at
+// turn end when the turn made no further tool calls.
+var busHookEvents = []string{"PostToolUse", "Stop"}
+
+// EnsureClaudeBusHooks merges the bus PostToolUse + Stop hooks into a Claude
+// Code settings.json (typically the user-global ~/.claude/settings.json so it
+// applies to app sessions in any repo). Idempotent: an event already carrying
+// BusHookCommand is left untouched. Returns EnsureWritten only when it actually
+// changed the file.
+func EnsureClaudeBusHooks(settingsPath string) (EnsureResult, error) {
+	root, err := loadSettings(settingsPath)
+	if err != nil {
+		return EnsureAlreadyPresent, err
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	changed := false
+	for _, ev := range busHookEvents {
+		if ensureHookEntry(hooks, ev, BusHookCommand) {
+			changed = true
+		}
+	}
+	if !changed {
+		return EnsureAlreadyPresent, nil
+	}
+	root["hooks"] = hooks
+	return EnsureWritten, marshalWrite(settingsPath, root)
+}
+
+// EnsureCodexBusHooks does the same for a Codex hooks.json (typically
+// $CODEX_HOME/hooks.json, default ~/.codex/hooks.json). Codex's hooks.json puts
+// the lifecycle events at the file root (no "hooks" wrapper), but the matcher
+// group / command-handler shape is identical to Claude's — same BusHookCommand,
+// same env-guard scoping.
+func EnsureCodexBusHooks(hooksPath string) (EnsureResult, error) {
+	root, err := loadSettings(hooksPath)
+	if err != nil {
+		return EnsureAlreadyPresent, err
+	}
+	changed := false
+	for _, ev := range busHookEvents {
+		if ensureHookEntry(root, ev, BusHookCommand) {
+			changed = true
+		}
+	}
+	if !changed {
+		return EnsureAlreadyPresent, nil
+	}
+	return EnsureWritten, marshalWrite(hooksPath, root)
+}
+
+// ensureHookEntry appends a matcher-less command hook for `event` into
+// `container` (event-name → []group) unless some entry already references
+// `command`. Writes the canonical nested shape {hooks:[{type,command}]} that
+// both Claude and Codex accept for every event (including PostToolUse, which
+// the flat shape EnsureStopHook uses isn't guaranteed to match for). Returns
+// true iff it mutated the container.
+func ensureHookEntry(container map[string]any, event, command string) bool {
+	var arr []any
+	if existing, ok := container[event].([]any); ok {
+		arr = existing
+	}
+	if hookGroupsContain(arr, command) {
+		return false
+	}
+	arr = append(arr, map[string]any{
+		"hooks": []any{
+			map[string]any{"type": "command", "command": command},
+		},
+	})
+	container[event] = arr
+	return true
+}
+
+// hookGroupsContain reports whether any entry under an event already carries
+// `command`, tolerating both the flat {type,command} shape and the nested
+// {hooks:[{command}]} group shape so re-installing is a no-op regardless of how
+// the entry was written.
+func hookGroupsContain(arr []any, command string) bool {
+	for _, e := range arr {
+		entry, _ := e.(map[string]any)
+		if entry == nil {
+			continue
+		}
+		if cmd, _ := entry["command"].(string); strings.Contains(cmd, command) {
+			return true
+		}
+		nested, _ := entry["hooks"].([]any)
+		for _, h := range nested {
+			hm, _ := h.(map[string]any)
+			if hm == nil {
+				continue
+			}
+			if cmd, _ := hm["command"].(string); strings.Contains(cmd, command) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// marshalWrite pretty-prints root and atomically writes it to path. Shared by
+// the bus-hook installers (EnsureStopHook inlines the same steps for its own
+// historical reasons).
+func marshalWrite(path string, root map[string]any) error {
+	pretty, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	pretty = append(pretty, '\n')
+	return writeAtomic(path, pretty)
+}
+
 // loadSettings parses <path> into a generic map. Missing file returns an
 // empty map. Numbers stay as json.Number so a round-trip can't reformat
 // integers a user set to floats.

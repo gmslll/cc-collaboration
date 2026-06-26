@@ -6,6 +6,10 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Added
+
+- Local session bus **mid-turn interjection** — a peer message sent to a *busy* agent session (mid-turn) no longer just queues behind the running turn. The desktop app now routes by the target's busy/idle state (derived from the existing BEL "turn finished" detector): an **idle** target still gets the message pasted straight into its PTY (immediate turn), while a **busy** target gets it parked in a per-session bus inbox (`$CC_BUS_DIR/inbox/<session-id>/`, `internal/localbus`) that the target's **PostToolUse** hook drains as `additionalContext` at the next tool boundary — surfacing the message inside the running turn without interrupting it — with a **Stop** hook as the turn-end backstop. One `cc-handoff bus-hook` binary serves both Claude Code and Codex (identical hook contract); `cc-handoff bus-hook install` (run on app start) idempotently wires the hooks into `~/.claude/settings.json` and `~/.codex/hooks.json`. The hook command self-gates on `$CC_BUS_DIR`, so it's a sub-millisecond no-op in any session the app didn't spawn — the user's other Claude/Codex sessions are untouched.
+
 ## [0.3.0] - 2026-06-05
 
 ### Added

@@ -815,13 +815,10 @@ Future<String?> showGroupedSendMenu(
   List<PopupMenuEntry<String>> extraTop = const [],
   List<PopupMenuEntry<String>> extraBottom = const [],
 }) async {
-  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-  RelativeRect posAt(Offset p) =>
-      RelativeRect.fromRect(p & const Size(1, 1), Offset.zero & overlay.size);
   final sendItems = sendMenuEntries(same, others);
   final v = await showMenu<String>(
     context: context,
-    position: posAt(globalPos),
+    position: menuPosAt(context, globalPos),
     items: [
       ...extraTop,
       if (extraTop.isNotEmpty && (sendItems.isNotEmpty || extraBottom.isNotEmpty))
@@ -834,15 +831,41 @@ Future<String?> showGroupedSendMenu(
   );
   if (v != 'send-others') return v; // 'send:<id>', an extraTop value, or null
   if (!context.mounted) return null;
+  return showPeerPicker(context, globalPos, others, 'send');
+}
+
+// menuPosAt converts a global tap position into the RelativeRect showMenu wants,
+// anchored against the current overlay. Shared so context-menu positioning lives
+// in one place (the grouped send menu + the peer picker).
+RelativeRect menuPosAt(BuildContext context, Offset globalPos) {
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+  return RelativeRect.fromRect(
+    globalPos & const Size(1, 1),
+    Offset.zero & overlay.size,
+  );
+}
+
+// showPeerPicker shows a flat menu of [peers] at [globalPos], each returning
+// '<prefix>:<id>' (or null). Backs both the "其他会话" send cascade and the
+// "插话到会话" cascade — Flutter's showMenu has no native submenu, so a chosen
+// parent row reopens a menu of targets here.
+Future<String?> showPeerPicker(
+  BuildContext context,
+  Offset globalPos,
+  List<SendTarget> peers,
+  String prefix, {
+  IconData icon = Icons.send_rounded,
+  String Function(SendTarget t)? label,
+}) {
   return showMenu<String>(
     context: context,
-    position: posAt(globalPos),
+    position: menuPosAt(context, globalPos),
     items: [
-      for (final t in others)
+      for (final t in peers)
         ccMenuItem(
-          value: 'send:${t.id}',
-          icon: Icons.send_rounded,
-          label: '发送到「${t.label}」',
+          value: '$prefix:${t.id}',
+          icon: icon,
+          label: label?.call(t) ?? '发送到「${t.label}」',
         ),
     ],
   );

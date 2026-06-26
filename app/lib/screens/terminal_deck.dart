@@ -361,16 +361,59 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     return (target, null);
   }
 
-  // deliverLocalMessage routes one message into a target session's PTY. Returns
-  // null on success, or a human-readable error (unknown/ambiguous target,
-  // self-send) that LocalBus writes back so `msg send` exits non-zero.
+  // Monotonic suffix so two messages parked in the same microsecond still get
+  // distinct, FIFO-ordered inbox filenames.
+  int _busSeq = 0;
+
+  // deliverLocalMessage routes one message to a target session. Returns null on
+  // success, or a human-readable error (unknown/ambiguous target, self-send,
+  // inbox write failure) that LocalBus writes back so `msg send` exits non-zero.
+  //
+  // Idle target → paste straight into its PTY (an immediate new turn). Busy
+  // agent target → park in its bus inbox so its PostToolUse/Stop hook injects
+  // the message mid-turn, instead of the paste queuing behind the whole running
+  // turn. --no-submit fills and non-agent targets always paste (no hook to
+  // drain an inbox, and a fill is meant to sit in the input box for review).
   String? deliverLocalMessage(LocalMsg m) {
     final (target, err) = _resolveTarget(m.to);
     if (target == null) return err; // err is non-null when target is null
     if (target.id == m.from) return '不能发给自己';
+    if (m.submit && target.busy) {
+      return _enqueueBusInbox(target, m);
+    }
     target.pasteText(_composeDelivery(target, m), submit: m.submit);
     return null;
   }
+
+  // _enqueueBusInbox drops a message into <busDir>/inbox/<targetId>/ for the
+  // target's `cc-handoff bus-hook` to drain as additionalContext. Filename is a
+  // microsecond timestamp + counter so the hook reads FIFO; atomic tmp+rename so
+  // the hook never sees a half-written file (mirrors local_bus.dart's writes and
+  // the Go-side internal/localbus reader). Returns null on success, else an
+  // error string relayed back as the `msg send` .err receipt.
+  String? _enqueueBusInbox(TerminalSession target, LocalMsg m) {
+    try {
+      final micros = DateTime.now().microsecondsSinceEpoch;
+      final dir = Directory('${localBusDir()}/inbox/${target.id}')
+        ..createSync(recursive: true);
+      final path = '${dir.path}/$micros-${_busSeq++}.json';
+      final tmp = File('$path.tmp');
+      tmp.writeAsStringSync(jsonEncode({
+        'from': m.from,
+        'fromLabel': _fromLabel(m.from),
+        'body': m.body,
+      }));
+      tmp.renameSync(path);
+      return null;
+    } catch (e) {
+      return '投递到会话 inbox 失败: $e';
+    }
+  }
+
+  // _fromLabel resolves a sender session id to its human label, falling back to
+  // the raw id ('?' when empty). Shared by bus-inbox delivery and PTY paste.
+  String _fromLabel(String fromId) =>
+      sessionById(fromId)?.label ?? (fromId.isEmpty ? '?' : fromId);
 
   // _composeDelivery builds the text pasted into the target session. Humans (and
   // messages with no resolvable sender) get the original "[来自 label] body". An
@@ -380,7 +423,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // when the message is auto-submitted; on --no-submit it would otherwise linger
   // in the recipient's input.
   String _composeDelivery(TerminalSession target, LocalMsg m) {
-    final fromLabel = sessionById(m.from)?.label ?? (m.from.isEmpty ? '?' : m.from);
+    final fromLabel = _fromLabel(m.from);
     if (m.from.isEmpty || !target.isAgent) {
       return '[来自 $fromLabel] ${m.body}';
     }
@@ -408,6 +451,12 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   void _sendToPeer(String fromId, String targetId, String text) =>
       deliverLocalMessage(LocalMsg(fromId, targetId, text, false));
 
+  // _interjectToPeer is the submit:true variant: deliverLocalMessage routes it to
+  // a busy agent's bus inbox (hook injects it mid-turn) or runs it immediately
+  // when the target is idle — same routing as `cc-handoff msg send`.
+  void _interjectToPeer(String fromId, String targetId, String text) =>
+      deliverLocalMessage(LocalMsg(fromId, targetId, text, true));
+
   // hideClosedTabs (workspace only) routes the tab × to closeTermView (hide,
   // keep the session running) and filters hidden tabs out of the strip. Off by
   // default so the inbox cockpit keeps ×=closeTerm (kill) — it has no tree to
@@ -430,6 +479,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     onNewShell: onNewShell,
     groupsFor: sendGroupsFor,
     onSendToPeer: _sendToPeer,
+    onInterjectToPeer: _interjectToPeer,
     onSendToOnline: onSendToOnline,
   );
 
@@ -451,6 +501,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
             same: g.same,
             others: g.others,
             onSendToPeer: _sendToPeer,
+            onInterjectToPeer: _interjectToPeer,
             onSendToOnline: onSendToOnline,
           );
         }).toList(),
@@ -482,6 +533,10 @@ class TerminalDeck extends StatelessWidget {
   groupsFor;
   final void Function(String fromId, String targetId, String text)?
   onSendToPeer;
+  // onInterjectToPeer(fromId, targetId, text): submit:true forwarding (interject
+  // into a busy peer's turn via its hook, or run when idle); null hides it.
+  final void Function(String fromId, String targetId, String text)?
+  onInterjectToPeer;
   // onSendToOnline(text): forward a selection to the cross-user picker; null
   // hides the "发送到在线用户" entry.
   final void Function(String text)? onSendToOnline;
@@ -496,6 +551,7 @@ class TerminalDeck extends StatelessWidget {
     this.onNewShell,
     this.groupsFor,
     this.onSendToPeer,
+    this.onInterjectToPeer,
     this.onSendToOnline,
   });
 
@@ -547,6 +603,7 @@ class TerminalDeck extends StatelessWidget {
                   same: g?.same ?? const [],
                   others: g?.others ?? const [],
                   onSendToPeer: onSendToPeer,
+                  onInterjectToPeer: onInterjectToPeer,
                   onSendToOnline: onSendToOnline,
                 );
               }).toList(),

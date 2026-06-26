@@ -410,6 +410,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     };
     _voice.init();
     _localBus.start();
+    // Wire the bus PostToolUse/Stop hooks so a busy agent session can be
+    // interrupted by a sibling's message mid-turn. Idempotent + env-guarded;
+    // fire-and-forget so a missing/old cc-handoff binary never blocks startup.
+    Cli.installBusHooks();
     _connectRelayPresence();
     _loadParked();
     // Any newly spawned session surfaces the bottom terminal panel (even if it

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/cc-collaboration/internal/setup"
@@ -53,4 +54,21 @@ func (claudeAgent) InstallCommands(repoRoot, version string, prompt setup.Prompt
 
 func (claudeAgent) RegisterMCP(ctx context.Context, opts setup.MCPRegisterOptions, out io.Writer) error {
 	return setup.Register(ctx, opts, out)
+}
+
+// InstallBusHooks merges the bus PostToolUse + Stop hooks into the user-global
+// ~/.claude/settings.json so they fire in any app-spawned Claude session
+// regardless of cwd (the env guard keeps them no-ops elsewhere).
+func (claudeAgent) InstallBusHooks(out io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	res, err := setup.EnsureClaudeBusHooks(path)
+	if err != nil {
+		return err
+	}
+	reportBusHook(out, "claude", path, res)
+	return nil
 }

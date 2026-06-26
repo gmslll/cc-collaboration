@@ -58,6 +58,17 @@ class Cli {
     return Process.run(_shell(), ['-lc', cmd]);
   }
 
+  // installBusHooks wires the local-bus PostToolUse + Stop hooks into the user's
+  // agent config (claude ~/.claude/settings.json, codex ~/.codex/hooks.json) so
+  // a sibling's message can interrupt a busy agent session mid-turn. Idempotent
+  // and env-guarded ($CC_BUS_DIR) so it stays scoped to app-spawned sessions;
+  // fire-and-forget on app start with errors swallowed.
+  static Future<void> installBusHooks() async {
+    try {
+      await _exec(['bus-hook', 'install']);
+    } catch (_) {}
+  }
+
   // pickup carves a worktree for the handoff in repoPath and returns the
   // worktree dir + the interactive agent command to run in the terminal.
   static Future<PickupResult> pickup(String id, String repoPath) async {
