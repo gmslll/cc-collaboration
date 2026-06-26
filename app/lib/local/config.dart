@@ -64,6 +64,38 @@ class AppConfig {
 
   static String configPath() => '${_home()}/.config/cc-handoff/config.toml';
 
+  // saveAuth writes/merges the auth keys (relay_url/token/identity) into the same
+  // config.toml the CLI reads, so the bundled/installed cc-handoff CLI the app
+  // shells out to (workspace/worktree/pickup ops) is authenticated. A
+  // freshly-registered user has no config.toml, so without this the embedded CLI
+  // is unauthenticated and nothing works. Existing keys — notably [[workspace]] —
+  // are preserved; only the three auth keys are (re)written (also refreshes an
+  // expired token on re-login). Mirrors the Go side's config.SaveUser.
+  static Future<void> saveAuth(
+      String relayUrl, String token, String identity) async {
+    final f = File(configPath());
+    Map<String, dynamic> map = {};
+    if (await f.exists()) {
+      try {
+        map = Map<String, dynamic>.from(
+            TomlDocument.parse(await f.readAsString()).toMap());
+      } catch (_) {
+        map = {}; // unparseable — rebuild rather than block login
+      }
+    }
+    map['relay_url'] = relayUrl;
+    map['token'] = token;
+    map['identity'] = identity;
+    await f.parent.create(recursive: true);
+    await f.writeAsString(TomlDocument.fromMap(map).toString());
+    // The token is sensitive; tighten perms to match the CLI's 0600 (posix only).
+    if (!Platform.isWindows) {
+      try {
+        await Process.run('chmod', ['600', f.path]);
+      } catch (_) {}
+    }
+  }
+
   static Future<AppConfig?> load() async {
     final f = File(configPath());
     if (!await f.exists()) return null;

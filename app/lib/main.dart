@@ -182,6 +182,13 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _onLoggedIn(Session s) async {
     await SessionStore.save(s);
+    // Also write the global config.toml so the bundled/installed cc-handoff CLI
+    // (which the app shells out to for workspace/worktree/pickup ops) is
+    // authenticated — a freshly-registered user otherwise has no config and the
+    // CLI fails. Best-effort: never block login on it.
+    try {
+      await AppConfig.saveAuth(s.relayUrl, s.token, s.identity);
+    } catch (_) {}
     await _bootstrap();
   }
 
