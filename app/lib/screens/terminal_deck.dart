@@ -44,6 +44,25 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   final List<TerminalSession> terms = [];
   int activeTerm = 0;
 
+  // _hiddenTabs holds the ids of sessions whose top-bar tab was closed via the
+  // workspace "close view" (×). The session stays in [terms] — its PTY keeps
+  // running and its pane stays mounted in the IndexedStack, so reopening it
+  // (reopenTermView, from the project tree) returns to the exact live screen.
+  // Purely a tab-strip concept: everything else (IndexedStack aliveness, the
+  // docked terminalBody, the tree listing, activeTerm indices, the local bus,
+  // remote mirroring) keeps using the unfiltered [terms]. Transient — a restart
+  // restores every session as a visible tab again.
+  final Set<String> _hiddenTabs = {};
+
+  // hasVisibleTab is false only when every session's tab has been closed (all
+  // hidden). The workspace gates its focused-chat deck on this so closing the
+  // last tab falls back to the welcome screen instead of an empty tab strip.
+  bool get hasVisibleTab => terms.any((s) => !_hiddenTabs.contains(s.id));
+
+  // isTabHidden reports whether a session's tab is currently closed (the session
+  // still runs in the background). The tree uses it to mark such sessions.
+  bool isTabHidden(String id) => _hiddenTabs.contains(id);
+
   String? get persistKey => null;
 
   // onTermsChanged fires after the session list changes (add/close/rename/
@@ -109,6 +128,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   }
 
   void closeTerm(int i) {
+    _hiddenTabs.remove(terms[i].id);
     terms[i].dispose();
     setState(() {
       terms.removeAt(i);
@@ -119,6 +139,47 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     onTermsChanged?.call();
     onActiveTermChanged?.call();
     unawaited(_save());
+  }
+
+  // closeTermView hides a session's top-bar tab WITHOUT ending it (the × on a
+  // workspace tab). The PTY keeps running and the pane stays mounted in the
+  // IndexedStack, so reopenTermView returns to the exact live screen. If the
+  // closed tab was active, focus moves to the nearest still-visible tab (none →
+  // the workspace falls back to the welcome screen via hasVisibleTab). [terms]
+  // is unchanged, so no dispose and no _save.
+  void closeTermView(int i) {
+    if (i < 0 || i >= terms.length) return;
+    setState(() {
+      _hiddenTabs.add(terms[i].id);
+      if (activeTerm == i) {
+        final next = _nearestVisible(i);
+        if (next != null) activeTerm = next;
+      }
+    });
+    onActiveTermChanged?.call();
+  }
+
+  // reopenTermView un-hides a session's tab and makes it active — the project
+  // tree calls this to bring a closed session's tab back.
+  void reopenTermView(int i) {
+    if (i < 0 || i >= terms.length) return;
+    setState(() {
+      _hiddenTabs.remove(terms[i].id);
+      activeTerm = i;
+    });
+    onActiveTermChanged?.call();
+  }
+
+  // _nearestVisible returns the index of the closest non-hidden tab to [from]
+  // (searching outward), or null when every tab is hidden.
+  int? _nearestVisible(int from) {
+    for (var d = 1; d < terms.length; d++) {
+      final r = from + d;
+      if (r < terms.length && !_hiddenTabs.contains(terms[r].id)) return r;
+      final l = from - d;
+      if (l >= 0 && !_hiddenTabs.contains(terms[l].id)) return l;
+    }
+    return null;
   }
 
   void disposeTerms() {
@@ -341,14 +402,20 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   void _sendToPeer(String fromId, String targetId, String text) =>
       deliverLocalMessage(LocalMsg(fromId, targetId, text, false));
 
-  Widget terminalDeck({VoidCallback? onCollapse}) => TerminalDeck(
+  // hideClosedTabs (workspace only) routes the tab × to closeTermView (hide,
+  // keep the session running) and filters hidden tabs out of the strip. Off by
+  // default so the inbox cockpit keeps ×=closeTerm (kill) — it has no tree to
+  // reopen a hidden session from.
+  Widget terminalDeck({VoidCallback? onCollapse, bool hideClosedTabs = false}) =>
+      TerminalDeck(
     terms: terms,
     active: activeTerm,
+    hiddenIds: hideClosedTabs ? _hiddenTabs : null,
     onSwitch: (i) {
       setState(() => activeTerm = i);
       onActiveTermChanged?.call();
     },
-    onClose: closeTerm,
+    onClose: hideClosedTabs ? closeTermView : closeTerm,
     onCollapse: onCollapse,
     groupsFor: sendGroupsFor,
     onSendToPeer: _sendToPeer,
@@ -387,6 +454,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
 class TerminalDeck extends StatelessWidget {
   final List<TerminalSession> terms;
   final int active;
+  // hiddenIds: sessions whose tab is closed ("close view") — kept in [terms]
+  // (alive in the IndexedStack) but dropped from the tab strip. Null = nothing
+  // hidden (inbox cockpit).
+  final Set<String>? hiddenIds;
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   final VoidCallback? onCollapse;
@@ -405,6 +476,7 @@ class TerminalDeck extends StatelessWidget {
     super.key,
     required this.terms,
     required this.active,
+    this.hiddenIds,
     required this.onSwitch,
     required this.onClose,
     this.onCollapse,
@@ -423,6 +495,7 @@ class TerminalDeck extends StatelessWidget {
         TerminalTabBar(
           terms: terms,
           active: active,
+          hiddenIds: hiddenIds,
           onSwitch: onSwitch,
           onClose: onClose,
           trailing: onCollapse != null
@@ -463,6 +536,9 @@ class TerminalDeck extends StatelessWidget {
 class TerminalTabBar extends StatelessWidget {
   final List<TerminalSession> terms;
   final int active;
+  // hiddenIds: ids of sessions whose tab was closed ("close view") — filtered
+  // out of the strip but kept in [terms]. Null/empty = show every tab.
+  final Set<String>? hiddenIds;
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   final Widget? leading;
@@ -471,6 +547,7 @@ class TerminalTabBar extends StatelessWidget {
     super.key,
     required this.terms,
     required this.active,
+    this.hiddenIds,
     required this.onSwitch,
     required this.onClose,
     this.leading,
@@ -480,6 +557,14 @@ class TerminalTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final idx = terms.isEmpty ? 0 : active.clamp(0, terms.length - 1);
+    // Tabs whose view was closed (hiddenIds) stay in [terms] (alive) but drop
+    // out of the strip; keep each kept tab's REAL index so onSwitch/onClose and
+    // the active underline stay aligned with the host's terms/activeTerm.
+    final visible = <({int i, TerminalSession s})>[];
+    for (var i = 0; i < terms.length; i++) {
+      if (hiddenIds?.contains(terms[i].id) ?? false) continue;
+      visible.add((i: i, s: terms[i]));
+    }
     return Container(
       color: CcColors.panel,
       height: 38,
@@ -489,8 +574,10 @@ class TerminalTabBar extends StatelessWidget {
           Expanded(
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: terms.length,
-              itemBuilder: (_, i) {
+              itemCount: visible.length,
+              itemBuilder: (_, k) {
+                final i = visible[k].i;
+                final term = visible[k].s;
                 final isActive = i == idx;
                 return InkWell(
                   onTap: () => onSwitch(i),
@@ -515,7 +602,7 @@ class TerminalTabBar extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          terms[i].label,
+                          term.label,
                           style: TextStyle(
                             fontSize: 12,
                             color: isActive ? CcColors.text : CcColors.muted,

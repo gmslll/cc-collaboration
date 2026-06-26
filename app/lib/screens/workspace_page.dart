@@ -3597,7 +3597,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   // 编辑区没开文件、且当前底部工具是终端并有会话时，AI 终端占满编辑区（专注对话）。
   bool get _aiChatFocused =>
       (_activeFile < 0 || _activeFile >= _codeFiles.length) &&
-      terms.isNotEmpty &&
+      hasVisibleTab &&
       _bottomTool == _BottomTool.terminal;
 
   Widget _editorCanvas() {
@@ -3638,7 +3638,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
       );
     }
-    if (_aiChatFocused) return terminalDeck();
+    if (_aiChatFocused) return terminalDeck(hideClosedTabs: true);
     return _workspaceWelcome();
   }
 
@@ -6851,6 +6851,9 @@ class _WorkspacePageState extends State<WorkspacePage>
       header,
       ...ss.map((e) {
         final active = e.idx == activeTerm;
+        // hidden = the session keeps running but its tab was closed ("close
+        // view"); tapping the node reopens the tab (reopenTermView).
+        final hidden = isTabHidden(e.s.id);
         final agent = e.s.agentKind;
         final display = (e.s.name?.isNotEmpty ?? false)
             ? e.s.name!
@@ -6884,8 +6887,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               ),
               ccMenuItem(
                 value: 'close',
-                icon: Icons.close_rounded,
-                label: '关闭会话',
+                icon: Icons.power_settings_new_rounded,
+                label: '结束会话',
               ),
               if (peers.isNotEmpty) const PopupMenuDivider(),
               // Always enabled — sends the selection if there is one, else this
@@ -6943,15 +6946,27 @@ class _WorkspacePageState extends State<WorkspacePage>
                 overflow: TextOverflow.ellipsis,
               ),
               onTap: () {
-                setState(() => activeTerm = e.idx);
-                onActiveTermChanged?.call(); // re-arm TTS on the now-active tab
+                // Reopen the session's tab (un-hide it if its view was closed)
+                // and make it active, then surface the terminal panel so the
+                // reopened session is visible. reopenTermView re-arms TTS.
+                reopenTermView(e.idx);
+                _setBottomTool(_BottomTool.terminal);
               },
               trailing: active
                   ? Padding(
                       padding: const EdgeInsets.only(right: 2),
                       child: statusDot(CcColors.ok, size: 7, glow: true),
                     )
-                  : null,
+                  : (hidden
+                        ? Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: Icon(
+                              Icons.visibility_off_outlined,
+                              size: 13,
+                              color: CcColors.muted,
+                            ),
+                          )
+                        : null),
             ),
           ),
           sessionMenu,
