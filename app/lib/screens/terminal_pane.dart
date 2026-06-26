@@ -179,6 +179,72 @@ class TerminalSession {
     return all.split(RegExp(r'\r?\n')).join('\r\n');
   }
 
+  // historyAnsi is historyText with COLOUR: it walks the buffer's cells and
+  // re-emits them as a logical-line stream with inline SGR escapes, so a phone
+  // re-wraps it at its own width AND keeps fg/bg/bold/etc. Soft-wrapped rows
+  // carry no line break (isWrapped) so the phone re-flows them. Encoding per
+  // xterm core/cell.dart (CellColor packs type<<25 | 0xRRGGBB-or-index; CellAttr
+  // bit flags). Absolute-positioned TUI chrome flattens, same as historyText.
+  String historyAnsi() {
+    String colorSgr(int c, bool fg) {
+      final v = c & CellColor.valueMask;
+      switch (c & CellColor.typeMask) {
+        case CellColor.named:
+          return '${v < 8 ? (fg ? 30 : 40) + v : (fg ? 90 : 100) + (v - 8)}';
+        case CellColor.palette:
+          return '${fg ? 38 : 48};5;$v';
+        case CellColor.rgb:
+          return '${fg ? 38 : 48};2;${(v >> 16) & 0xff};${(v >> 8) & 0xff};${v & 0xff}';
+        default: // normal → default fg/bg
+          return fg ? '39' : '49';
+      }
+    }
+
+    String sgr(int fg, int bg, int at) {
+      final p = <String>['0']; // reset, then re-apply the full style — robust
+      if ((at & CellAttr.bold) != 0) p.add('1');
+      if ((at & CellAttr.faint) != 0) p.add('2');
+      if ((at & CellAttr.italic) != 0) p.add('3');
+      if ((at & CellAttr.underline) != 0) p.add('4');
+      if ((at & CellAttr.blink) != 0) p.add('5');
+      if ((at & CellAttr.inverse) != 0) p.add('7');
+      if ((at & CellAttr.invisible) != 0) p.add('8');
+      if ((at & CellAttr.strikethrough) != 0) p.add('9');
+      p.add(colorSgr(fg, true));
+      p.add(colorSgr(bg, false));
+      return '\x1b[${p.join(';')}m';
+    }
+
+    final buf = terminal.buffer;
+    var last = buf.height - 1;
+    while (last >= 0 && buf.lines[last].getTrimmedLength() == 0) {
+      last--; // drop trailing blank lines (idle TUI bottom rows)
+    }
+    final out = StringBuffer();
+    int? pf, pb, pa; // last-emitted fg/bg/attrs, to only emit SGR on change
+    for (var y = 0; y <= last; y++) {
+      final line = buf.lines[y];
+      if (y != 0 && !line.isWrapped) out.write('\r\n');
+      final len = line.getTrimmedLength();
+      for (var x = 0; x < len; x++) {
+        if (line.getWidth(x) == 0) continue; // wide-char continuation cell
+        final fg = line.getForeground(x);
+        final bg = line.getBackground(x);
+        final at = line.getAttributes(x);
+        if (fg != pf || bg != pb || at != pa) {
+          out.write(sgr(fg, bg, at));
+          pf = fg;
+          pb = bg;
+          pa = at;
+        }
+        final cp = line.getCodePoint(x);
+        out.writeCharCode(cp == 0 ? 0x20 : cp);
+      }
+    }
+    out.write('\x1b[0m');
+    return out.toString();
+  }
+
   // _resolvedCommand is the shell command actually run for this session. For a
   // plain shell / arbitrary command it's [command] unchanged. For an agent it's
   // rebuilt from agent + preLaunch + session binding so a reopened tab resumes

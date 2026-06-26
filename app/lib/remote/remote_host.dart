@@ -339,7 +339,11 @@ class RemoteHost extends RemoteChannel {
     // colour. Runs synchronously (no await) so no PTY chunk interleaves before
     // the remoteSink wiring below — no gap, no dup. <=64KB frames so the phone
     // yields between writes; never split a surrogate pair across frames.
-    final bl = s.historyText();
+    // historyMode picks how the phone wants pre-connect history rendered:
+    // 'ansi' = coloured re-wrap (historyAnsi), anything else = plain text
+    // (default). Both re-wrap at the phone's width; 'text' drops colour.
+    final mode = (f['historyMode'] ?? 'text').toString();
+    final bl = mode == 'ansi' ? s.historyAnsi() : s.historyText();
     for (var i = 0; i < bl.length;) {
       var end = min(i + _maxFrameChars, bl.length);
       if (end < bl.length && _isHighSurrogate(bl.codeUnitAt(end - 1))) end++;

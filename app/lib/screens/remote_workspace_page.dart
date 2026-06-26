@@ -1370,6 +1370,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // toggle is on. Persisted per device.
   final Speaker _speaker = Speaker();
   bool _ttsOn = Prefs.getBool('remote.tts');
+  // History replay mode: 'text' (default, plain re-wrap) or 'ansi' (coloured
+  // re-wrap). Sent to the host on connect/reload; toggled from the key bar.
+  String _historyMode = Prefs.getString('remote.historyMode', def: 'text');
 
   // iOS Live Activity (Dynamic Island): started lazily the first time the agent
   // goes "working" so an idle island never lingers, updated on each status push,
@@ -1379,6 +1382,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   @override
   void initState() {
     super.initState();
+    // Set before the first _term access (build → terminalFor → term.open) so the
+    // initial history replay uses the saved mode.
+    widget.client.historyMode = _historyMode;
     widget.client.onReplyText = _onReplyText;
     widget.client.onAgentStatus = _onAgentStatus;
   }
@@ -1561,6 +1567,18 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     snack(context, '已清空本地历史(上滑乱码的来源)');
   }
 
+  // _toggleHistoryMode flips how pre-connect history is replayed: 文本(纯文本,
+  // 默认)↔ 彩色(带颜色重排)。Persisted, then reload re-pulls history in the new
+  // mode (term.open carries client.historyMode).
+  void _toggleHistoryMode() {
+    final m = _historyMode == 'ansi' ? 'text' : 'ansi';
+    setState(() => _historyMode = m);
+    Prefs.setString('remote.historyMode', m);
+    widget.client.historyMode = m;
+    snack(context, m == 'ansi' ? '历史改为彩色,正在刷新…' : '历史改为纯文本,正在刷新…');
+    _reload();
+  }
+
   // Accumulated vertical drag distance, converted to wheel ticks once it
   // crosses a line-height threshold (swipe-to-scroll).
   double _scrollAccum = 0;
@@ -1694,6 +1712,8 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   btn('滚↑', () => _wheel(true, ticks: 3)),
                   btn('滚↓', () => _wheel(false, ticks: 3)),
                   btn('清空', _clearScrollback),
+                  btn(_historyMode == 'ansi' ? '历史·彩色' : '历史·文本',
+                      _toggleHistoryMode),
                   for (final kb in _keys)
                     btn(
                       kb.label,

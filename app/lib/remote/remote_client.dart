@@ -111,6 +111,12 @@ class RemoteClient extends RemoteChannel {
 
   bool _hostOnline = false;
 
+  // historyMode tells the host how to replay a session's pre-connect history on
+  // term.open: 'text' (default) = plain re-wrappable text; 'ansi' = coloured
+  // re-wrap. Set by the UI from a saved pref; switching + reloadTerminal re-pulls
+  // history in the new mode. The live stream is always raw (coloured).
+  String historyMode = 'text';
+
   List<RemoteSession> sessions = [];
   List<RemoteRootInfo> roots = [];
 
@@ -427,7 +433,7 @@ class RemoteClient extends RemoteChannel {
         send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
       });
     };
-    send({'t': 'term.open', 'sid': sid});
+    send({'t': 'term.open', 'sid': sid, 'historyMode': historyMode});
     return term;
   }
 
