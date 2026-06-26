@@ -67,20 +67,68 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
+	s.issueSession(w, r, u.Identity, http.StatusOK)
+}
+
+// register provisions a normal (non-admin, enabled) account from {identity,
+// password} and immediately issues a session, so the new user is signed in
+// without a separate login. Open self-registration: no admin, no invite, no
+// approval. Like login, it's registered on the outer mux (bypasses the auth
+// middleware) since the caller has no token yet.
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Identity string `json:"identity"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	identity := strings.TrimSpace(req.Identity)
+	if identity == "" {
+		http.Error(w, "identity required", http.StatusBadRequest)
+		return
+	}
+	if req.Password == "" {
+		http.Error(w, "password required", http.StatusBadRequest)
+		return
+	}
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.Store.CreateUser(r.Context(), store.User{
+		Identity: identity, PasswordHash: hash,
+	}, time.Now()); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			http.Error(w, "该账号已注册", http.StatusConflict)
+			return
+		}
+		http.Error(w, "create user: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.issueSession(w, r, identity, http.StatusCreated)
+}
+
+// issueSession mints a session token for identity, persists it, and writes the
+// standard auth body ({token, identity, is_admin}) with status. Shared by login
+// and register so both hand back an immediately-usable session.
+func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, identity string, status int) {
 	raw, err := auth.NewToken()
 	if err != nil {
 		http.Error(w, "mint session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	now := time.Now()
-	if err := s.Store.CreateSession(r.Context(), auth.HashToken(raw), u.Identity, now, now.Add(sessionTTL)); err != nil {
+	if err := s.Store.CreateSession(r.Context(), auth.HashToken(raw), identity, now, now.Add(sessionTTL)); err != nil {
 		http.Error(w, "create session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, status, map[string]any{
 		"token":    raw,
-		"identity": u.Identity,
-		"is_admin": s.isAdmin(r.Context(), u.Identity),
+		"identity": identity,
+		"is_admin": s.isAdmin(r.Context(), identity),
 	})
 }
 

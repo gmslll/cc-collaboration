@@ -42,6 +42,7 @@ const els = {
   loginForm: document.querySelector("#login-form"),
   loginIdentity: document.querySelector("#login-identity"),
   loginPassword: document.querySelector("#login-password"),
+  registerButton: document.querySelector("#register-button"),
   tokenConnect: document.querySelector("#token-connect"),
   signoutButton: document.querySelector("#signout-button"),
   tokenInput: document.querySelector("#token-input"),
@@ -135,6 +136,7 @@ function setupWorkspacesTab() {
 
 function wireEvents() {
   els.loginForm.addEventListener("submit", onLogin);
+  els.registerButton.addEventListener("click", onRegister);
   els.tokenConnect.addEventListener("click", onUseToken);
   els.signoutButton.addEventListener("click", onSignout);
   els.newProjectForm.addEventListener("submit", onCreateProject);
@@ -774,6 +776,38 @@ async function onLogin(event) {
     await onConnected();
   } catch (err) {
     toast(`登录失败：${err.message || err}`);
+  }
+}
+
+// onRegister self-registers a new (non-admin) account from the same identity +
+// password fields, then signs in exactly like onLogin (the response carries a
+// ready-to-use session token).
+async function onRegister(event) {
+  event.preventDefault();
+  const identity = els.loginIdentity.value.trim();
+  const password = els.loginPassword.value;
+  if (!identity || !password) {
+    toast("请输入 identity 和密码");
+    return;
+  }
+  try {
+    const resp = await fetch("/v1/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identity, password }),
+    });
+    if (!resp.ok) {
+      const msg = resp.status === 409 ? "该账号已注册" : "注册失败，请重试。";
+      els.authMessage.textContent = msg;
+      toast(msg);
+      return;
+    }
+    const data = await resp.json();
+    setToken(data.token);
+    els.loginPassword.value = "";
+    await onConnected();
+  } catch (err) {
+    toast(`注册失败：${err.message || err}`);
   }
 }
 

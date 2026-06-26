@@ -208,6 +208,19 @@ Future<LoginResult> login(String baseUrl, String identity, String password) asyn
       (d['identity'] ?? identity).toString(), d['is_admin'] == true);
 }
 
+// register posts to /v1/register (also outside the auth middleware) to
+// self-register a new account, returning a ready-to-use session token just like
+// login — so the caller can sign in immediately after registering.
+Future<LoginResult> register(
+    String baseUrl, String identity, String password) async {
+  final dio = Dio(BaseOptions(baseUrl: baseUrl.replaceAll(RegExp(r'/+$'), '')));
+  final r = await dio
+      .post('/v1/register', data: {'identity': identity, 'password': password});
+  final d = (r.data as Map).cast<String, dynamic>();
+  return LoginResult((d['token'] ?? '').toString(),
+      (d['identity'] ?? identity).toString(), d['is_admin'] == true);
+}
+
 // _asList tolerates either a bare JSON array or a wrapped object
 // ({"items":[...]} / {"comments":[...]}); falls back to the first list value.
 List _asList(dynamic data, String key) {

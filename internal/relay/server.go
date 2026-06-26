@@ -126,10 +126,12 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/tokens", s.createToken)
 	api.HandleFunc("DELETE /v1/tokens/{id}", s.deleteToken)
 
-	// Login is the one /v1 route that must NOT require a bearer (you don't have
-	// one yet); registering it on the outer mux makes the more-specific pattern
-	// win over the "/v1/" catch-all, so it bypasses the auth middleware.
+	// Login and register are the /v1 routes that must NOT require a bearer (you
+	// don't have one yet); registering them on the outer mux makes the
+	// more-specific pattern win over the "/v1/" catch-all, so they bypass the
+	// auth middleware. register is open self-registration (non-admin accounts).
 	mux.HandleFunc("POST /v1/login", s.login)
+	mux.HandleFunc("POST /v1/register", s.register)
 
 	resolver := &bearerResolver{store: s.Store, seed: s.Tokens}
 	// /v1/ws needs query-param auth (browsers can't set the WS handshake header),

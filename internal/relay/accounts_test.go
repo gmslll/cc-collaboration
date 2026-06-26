@@ -91,6 +91,75 @@ func TestLoginFlow(t *testing.T) {
 	}
 }
 
+// TestRegisterFlow exercises open self-registration: a brand-new account is
+// created from {identity, password}, gets an immediately-usable session, is a
+// non-admin, rejects a duplicate identity, requires a password, and can then
+// log in normally.
+func TestRegisterFlow(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	// Register a fresh account → 201 + session token, non-admin.
+	code, body := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "carol@demo", "password": "secret pass"})
+	if code != http.StatusCreated {
+		t.Fatalf("register status=%d body=%s", code, body)
+	}
+	var rr struct {
+		Token   string `json:"token"`
+		IsAdmin bool   `json:"is_admin"`
+	}
+	if err := json.Unmarshal(body, &rr); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Token == "" {
+		t.Fatal("no session token returned")
+	}
+	if rr.IsAdmin {
+		t.Error("self-registered account must not be admin")
+	}
+
+	// The returned token is immediately usable (auto-login).
+	code, body = getAuthed(t, srv.URL+"/v1/me", rr.Token)
+	if code != http.StatusOK {
+		t.Fatalf("me status=%d", code)
+	}
+	var me struct {
+		Identity string `json:"identity"`
+		IsAdmin  bool   `json:"is_admin"`
+	}
+	_ = json.Unmarshal(body, &me)
+	if me.Identity != "carol@demo" || me.IsAdmin {
+		t.Fatalf("me=%+v", me)
+	}
+
+	// Duplicate identity → 409.
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "carol@demo", "password": "other"}); code != http.StatusConflict {
+		t.Fatalf("duplicate register: status=%d", code)
+	}
+
+	// Missing password → 400.
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "dave@demo", "password": ""}); code != http.StatusBadRequest {
+		t.Fatalf("missing password: status=%d", code)
+	}
+
+	// The registered account can log in with its credentials.
+	if code, _ := postJSON(t, srv.URL+"/v1/login", "",
+		map[string]string{"identity": "carol@demo", "password": "secret pass"}); code != http.StatusOK {
+		t.Fatalf("login after register: status=%d", code)
+	}
+}
+
 // TestBackCompatFileToken pins that a legacy tokens.json bearer still
 // authenticates via the seed resolver after the multi-source refactor.
 func TestBackCompatFileToken(t *testing.T) {

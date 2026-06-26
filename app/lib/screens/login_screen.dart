@@ -19,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _identity = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  bool _isRegisterMode = false;
   String? _error;
 
   @override
@@ -41,7 +42,9 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      final res = await login(url, id, _password.text);
+      final res = _isRegisterMode
+          ? await register(url, id, _password.text)
+          : await login(url, id, _password.text);
       await widget.onLoggedIn(Session(
         relayUrl: url,
         token: res.token,
@@ -51,7 +54,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       setState(() {
         _busy = false;
-        _error = '登录失败:$e';
+        _error = '${_isRegisterMode ? '注册' : '登录'}失败:$e';
       });
     }
   }
@@ -97,9 +100,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           letterSpacing: -0.3,
                           color: CcColors.text)),
                   const SizedBox(height: 4),
-                  const Text('登录',
+                  Text(_isRegisterMode ? '注册新账号' : '登录',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: CcColors.muted)),
+                      style: const TextStyle(color: CcColors.muted)),
                   const SizedBox(height: 20),
                   TextField(
                     controller: _relay,
@@ -154,8 +157,24 @@ class _LoginScreenState extends State<LoginScreen> {
                             height: 18,
                             width: 18,
                             child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.arrow_forward_rounded, size: 18),
-                    label: Text(_busy ? '登录中' : '登录'),
+                        : Icon(
+                            _isRegisterMode
+                                ? Icons.person_add_alt_1_rounded
+                                : Icons.arrow_forward_rounded,
+                            size: 18),
+                    label: Text(_busy
+                        ? (_isRegisterMode ? '注册中' : '登录中')
+                        : (_isRegisterMode ? '注册' : '登录')),
+                  ),
+                  const SizedBox(height: 4),
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() {
+                              _isRegisterMode = !_isRegisterMode;
+                              _error = null;
+                            }),
+                    child: Text(_isRegisterMode ? '已有账号?去登录' : '没有账号?去注册'),
                   ),
                 ],
               ),
