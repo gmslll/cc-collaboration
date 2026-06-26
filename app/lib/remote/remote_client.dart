@@ -210,10 +210,14 @@ class RemoteClient extends RemoteChannel {
 
   @override
   void onFrame(Map<String, dynamic> f) {
+    final t = f['t'];
     // Inbound file transfer (desktop → phone) is handled by the receiver, which
-    // owns file.offer/chunk/end/cancel; everything else is a workspace frame.
-    if (_fileRx.dispatch(f)) return;
-    switch (f['t']) {
+    // owns the file.* frames; everything else is a workspace frame.
+    if (t is String && t.startsWith('file.')) {
+      _fileRx.dispatch(f);
+      return;
+    }
+    switch (t) {
       case 'sessions':
         sessions = [
           for (final s in (f['items'] as List? ?? []))

@@ -119,9 +119,10 @@ abstract class FileChunkSink {
   Future<void> abort();
 }
 
-// _DigestCatcher captures the final Digest from a chunked hash conversion,
-// avoiding a dependency on package:convert's AccumulatorSink.
-class _DigestCatcher implements Sink<Digest> {
+// DigestCatcher captures the final Digest from a chunked sha256 conversion,
+// avoiding a dependency on package:convert's AccumulatorSink. Shared by the
+// receiver here and the sender in file_fs_io.dart.
+class DigestCatcher implements Sink<Digest> {
   Digest? value;
   @override
   void add(Digest data) => value = data;
@@ -141,7 +142,7 @@ class _Incoming {
   int nextSeq = 0;
   bool failed = false;
   // Streaming sha256 so we never hold the whole file in memory.
-  final _DigestCatcher _digestOut = _DigestCatcher();
+  final DigestCatcher _digestOut = DigestCatcher();
   late final ByteConversionSink _digestIn = sha256.startChunkedConversion(
     _digestOut,
   );

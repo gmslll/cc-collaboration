@@ -12,16 +12,6 @@ import 'file_transfer.dart';
 // the web-safe UI can gate the file-transfer controls without touching Platform.
 const bool kFileTransferSupported = true;
 
-// _DigestCatcher captures the final Digest from a chunked sha256 conversion
-// (same trick as file_transfer.dart, avoiding package:convert's AccumulatorSink).
-class _DigestCatcher implements Sink<Digest> {
-  Digest? value;
-  @override
-  void add(Digest data) => value = data;
-  @override
-  void close() {}
-}
-
 // Native (dart:io) disk layer for file transfer — selected by file_fs.dart when
 // dart:library.io exists. Host (macOS) lands files in ~/Downloads/cc-recv; the
 // phone client lands them in its app Documents/cc-recv. The macOS app runs
@@ -170,7 +160,7 @@ FileSendHandle sendFileOverChannel({
         to: to,
       ));
       raf = await file.open();
-      final digestOut = _DigestCatcher();
+      final digestOut = DigestCatcher();
       final digestIn = sha256.startChunkedConversion(digestOut);
       final buf = Uint8List(kFileChunkBytes);
       var seq = 0;
