@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -1426,6 +1427,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       widget.client.onAgentStatus = null;
     }
     if (_laStarted) LiveActivity.end();
+    _stopScroll();
     _speaker.stop();
     _voice.dispose();
     _controller.dispose();
@@ -1553,6 +1555,21 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   void _wheel(bool up, {int ticks = 1}) {
     final seq = terminalWheel(_term, up: up);
     if (seq != null) widget.client.sendKeys(widget.session.sid, seq * ticks);
+  }
+
+  // Hold-to-scroll: pressing 滚↑/滚↓ nudges once, then holding repeats the wheel
+  // until release (see _scrollBtn). A quick tap = one nudge.
+  Timer? _scrollHold;
+  void _startScroll(bool up) {
+    _wheel(up);
+    _scrollHold?.cancel();
+    _scrollHold =
+        Timer.periodic(const Duration(milliseconds: 80), (_) => _wheel(up));
+  }
+
+  void _stopScroll() {
+    _scrollHold?.cancel();
+    _scrollHold = null;
   }
 
   // _clearScrollback wipes the phone's LOCAL scrollback (the history the host
@@ -1708,6 +1725,25 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
         child: Text(label),
       ),
     );
+    // scrollBtn is like btn but hold-to-repeat: Listener (passive) drives the
+    // press/hold/release; the OutlinedButton is just the visual + ripple.
+    Widget scrollBtn(String label, bool up) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Listener(
+        onPointerDown: (_) => _startScroll(up),
+        onPointerUp: (_) => _stopScroll(),
+        onPointerCancel: (_) => _stopScroll(),
+        child: OutlinedButton(
+          onPressed: () {}, // press/hold handled by the Listener above
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 34),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            visualDensity: VisualDensity.compact,
+          ),
+          child: Text(label),
+        ),
+      ),
+    );
     return SafeArea(
       top: false,
       child: SizedBox(
@@ -1726,8 +1762,8 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                     _VoiceMode.off => '🎙️ 听写',
                     _VoiceMode.dictating => '🔴 听写中',
                   }, _toggleDictation),
-                  btn('滚↑', () => _wheel(true, ticks: 3)),
-                  btn('滚↓', () => _wheel(false, ticks: 3)),
+                  scrollBtn('滚↑', true),
+                  scrollBtn('滚↓', false),
                   for (final kb in _keys)
                     btn(
                       kb.label,
