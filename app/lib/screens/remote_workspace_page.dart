@@ -12,6 +12,7 @@ import '../live_activity/live_activity.dart';
 import '../local/diff_parse.dart';
 import '../local/prefs.dart';
 import '../remote/file_fs.dart';
+import '../remote/file_transfer.dart';
 import '../remote/remote_client.dart';
 import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
@@ -55,6 +56,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   final List<String> _dirStack =
       []; // breadcrumb of opened dirs (empty = roots)
   String? _gitRepo; // selected repo in the Git tab (null = repo list)
+  bool _offerDialogOpen = false; // guards against stacked accept/reject dialogs
 
   @override
   void initState() {
@@ -65,6 +67,8 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       if (!mounted) return;
       snack(context, '📁 收到文件：$name（在「⇅」里打开）', background: CcColors.ok);
     };
+    // A desktop file offer → prompt 接受/拒绝 (one dialog at a time).
+    _c.onIncomingOffer = (_) => _pumpOffers();
     _c.connect();
   }
 
@@ -161,47 +165,171 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     return current;
   }
 
+  // _pumpOffers shows the accept/reject dialog for the next waiting incoming
+  // offer, one at a time. Re-runs itself after each decision so a burst of
+  // offers (or a second phone-less desktop send) queues instead of stacking.
+  void _pumpOffers() {
+    if (_offerDialogOpen || !mounted) return;
+    FileXfer? offer;
+    for (final x in _c.transfers) {
+      if (x.dir == XferDir.recv && x.status == XferStatus.waiting) {
+        offer = x;
+        break;
+      }
+    }
+    if (offer == null) return;
+    _offerDialogOpen = true;
+    final o = offer;
+    showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: CcColors.panel,
+        title: const Text('收到文件', style: TextStyle(color: CcColors.text)),
+        content: Text(
+          '${o.peerName ?? '电脑'} 想发送\n${o.name}（${_fmtBytes(o.size)}）',
+          style: const TextStyle(color: CcColors.muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('拒绝', style: TextStyle(color: CcColors.danger)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('接受'),
+          ),
+        ],
+      ),
+    ).then((accepted) {
+      _offerDialogOpen = false;
+      if (!mounted) return;
+      // The sender may have cancelled while the dialog was up — only answer if
+      // it's still pending.
+      if (o.status == XferStatus.waiting) {
+        if (accepted == true) {
+          _c.acceptOffer(o.xid);
+        } else {
+          _c.rejectOffer(o.xid);
+        }
+      }
+      _pumpOffers(); // next queued offer, if any
+    });
+  }
+
   // _showFileTransfer is the phone's file hub: send a file up to the desktop,
-  // list files just sent (the picked local file), and open / share files the
+  // watch in-flight transfers, list files just sent, and open / share files the
   // desktop has sent down (landed in Documents/cc-recv).
   void _showFileTransfer() {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: CcColors.panel,
-      builder: (_) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            ListTile(
-              leading: const Icon(
-                Icons.upload_file_rounded,
-                color: CcColors.accentBright,
-              ),
-              title: const Text(
-                '发送文件到电脑',
-                style: TextStyle(color: CcColors.text),
-              ),
-              subtitle: const Text(
-                '落地到电脑 ~/Downloads/cc-recv',
-                style: TextStyle(color: CcColors.muted),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                _sendFileToMac();
-              },
+      // Rebuild on every client change so in-flight progress updates live.
+      builder: (_) => ListenableBuilder(
+        listenable: _c,
+        builder: (context, _) {
+          final active = _c.transfers.where((x) => x.inFlight).toList();
+          return SafeArea(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                ListTile(
+                  leading: const Icon(
+                    Icons.upload_file_rounded,
+                    color: CcColors.accentBright,
+                  ),
+                  title: const Text(
+                    '发送文件到电脑',
+                    style: TextStyle(color: CcColors.text),
+                  ),
+                  subtitle: const Text(
+                    '落地到电脑 ~/Downloads/cc-recv',
+                    style: TextStyle(color: CcColors.muted),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _sendFileToMac();
+                  },
+                ),
+                if (active.isNotEmpty) ...[
+                  const Divider(height: 1),
+                  _fileSectionHeader('传输中'),
+                  for (final x in active) _xferTile(x),
+                ],
+                const Divider(height: 1),
+                _fileSectionHeader('已发送'),
+                if (_c.sentFiles.isEmpty) _fileSectionEmpty(),
+                for (final f in _c.sentFiles) _fileTile(f.name, f.at, f.path),
+                const Divider(height: 1),
+                _fileSectionHeader('已收文件'),
+                if (_c.receivedFiles.isEmpty) _fileSectionEmpty(),
+                for (final f in _c.receivedFiles)
+                  _fileTile(f.name, f.at, f.path),
+              ],
             ),
-            const Divider(height: 1),
-            _fileSectionHeader('已发送'),
-            if (_c.sentFiles.isEmpty) _fileSectionEmpty(),
-            for (final f in _c.sentFiles) _fileTile(f.name, f.at, f.path),
-            const Divider(height: 1),
-            _fileSectionHeader('已收文件'),
-            if (_c.receivedFiles.isEmpty) _fileSectionEmpty(),
-            for (final f in _c.receivedFiles) _fileTile(f.name, f.at, f.path),
+          );
+        },
+      ),
+    );
+  }
+
+  // _xferTile renders one in-flight transfer: a direction icon, the file name,
+  // a progress bar (indeterminate while still 等待接受) and a status line.
+  Widget _xferTile(FileXfer x) {
+    final sending = x.dir == XferDir.send;
+    return ListTile(
+      leading: Icon(
+        sending ? Icons.upload_rounded : Icons.download_rounded,
+        color: CcColors.accentBright,
+      ),
+      title: Text(x.name, style: const TextStyle(color: CcColors.text)),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: x.status == XferStatus.waiting ? null : x.fraction,
+                minHeight: 4,
+                backgroundColor: CcColors.panel,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _xferStatusText(x),
+              style: const TextStyle(color: CcColors.muted, fontSize: 12),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  String _xferStatusText(FileXfer x) {
+    switch (x.status) {
+      case XferStatus.waiting:
+        return x.dir == XferDir.send ? '等待对方接受…' : '等待接受…';
+      case XferStatus.active:
+        return '${(x.fraction * 100).round()}% · '
+            '${_fmtBytes(x.sent)} / ${_fmtBytes(x.size)}';
+      case XferStatus.done:
+        return '已完成';
+      case XferStatus.rejected:
+        return '已拒绝';
+      case XferStatus.failed:
+        return '失败';
+      case XferStatus.cancelled:
+        return '已取消';
+    }
+  }
+
+  // _fmtBytes is a compact human size (1.2 MB / 340 KB / 12 B) for transfer rows.
+  String _fmtBytes(int n) {
+    if (n >= 1024 * 1024) return '${(n / (1024 * 1024)).toStringAsFixed(1)} MB';
+    if (n >= 1024) return '${(n / 1024).toStringAsFixed(0)} KB';
+    return '$n B';
   }
 
   // Shared bits for the transfer hub's "已发送" / "已收文件" sections.

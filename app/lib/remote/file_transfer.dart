@@ -11,11 +11,16 @@ import 'package:crypto/crypto.dart';
 //
 // Wire protocol (symmetric — host↔client use the same frames):
 //   file.offer  {xid, name, size, mime?, sid?}  announce a transfer
+//   file.accept {xid}                            receiver consents; sender streams
+//   file.reject {xid, reason}                    receiver declines; nothing sent
 //   file.chunk  {xid, seq, data}                 data = base64 of a raw slice
 //   file.end    {xid, sha256?}                   finalize; receiver verifies
 //   file.cancel {xid, reason}                    sender or receiver aborts
 //   file.ack    {xid, ok, savedPath?, msg?}      receiver reports the outcome
 // `from` is stamped by RemoteChannel.send; the receiver acks back with to:from.
+// The offer→accept handshake gates streaming: a sender announces, then waits for
+// the receiver's file.accept before sending any chunk, so the receiving side can
+// prompt the user (接不接受) and only then does data start flowing.
 
 // Raw bytes per file.chunk. base64 inflates 256KB to ~341KB — well under the
 // relay's 8MB frame cap — and the relay's permessage-deflate shrinks the wire
@@ -74,6 +79,23 @@ Map<String, dynamic> fileEndFrame({required String xid, String? sha256, int? to}
   'sha256': ?sha256,
 };
 
+Map<String, dynamic> fileAcceptFrame({required String xid, int? to}) => {
+  't': 'file.accept',
+  'to': ?to,
+  'xid': xid,
+};
+
+Map<String, dynamic> fileRejectFrame({
+  required String xid,
+  String reason = '已拒绝',
+  int? to,
+}) => {
+  't': 'file.reject',
+  'to': ?to,
+  'xid': xid,
+  'reason': reason,
+};
+
 Map<String, dynamic> fileCancelFrame({
   required String xid,
   String reason = '',
@@ -110,6 +132,51 @@ class IncomingFile {
   IncomingFile(this.xid, this.name, this.size, this.mime, this.from);
 }
 
+// Direction of a transfer, from the local end's point of view.
+enum XferDir { send, recv }
+
+// Lifecycle of a transfer, driving the progress UI on both ends.
+//   waiting   offer sent / received, awaiting the accept decision
+//   active    accepted; bytes flowing (track sent/size)
+//   done      completed and verified
+//   rejected  the receiver declined the offer
+//   failed    aborted by an error (decode/write/verify/size)
+//   cancelled cancelled by either side mid-flight
+enum XferStatus { waiting, active, done, rejected, failed, cancelled }
+
+// FileXfer is the UI-facing record of one transfer (send or receive), shared by
+// the phone client and the desktop host so both can render a live progress row.
+// It is plain mutable state; its owner (a ChangeNotifier) calls notifyListeners
+// after mutating it. `peer` is the other end's connId and `peerName` its display
+// name (the device picked, on the host side); `path` is the source/saved path.
+class FileXfer {
+  FileXfer({
+    required this.xid,
+    required this.name,
+    required this.size,
+    required this.dir,
+    this.peer,
+    this.peerName,
+    this.status = XferStatus.waiting,
+    this.path,
+  }) : at = DateTime.now();
+
+  final String xid;
+  final String name;
+  int size;
+  final XferDir dir;
+  final int? peer;
+  final String? peerName;
+  XferStatus status;
+  String? path;
+  int sent = 0;
+  final DateTime at;
+
+  bool get inFlight =>
+      status == XferStatus.waiting || status == XferStatus.active;
+  double get fraction => size <= 0 ? 0 : (sent / size).clamp(0.0, 1.0);
+}
+
 // FileChunkSink is the disk-write side, injected so this module stays web-safe.
 // add() is called in receive order; finish() closes and returns the saved path;
 // abort() discards a partial transfer. Implemented natively in file_fs_io.dart.
@@ -141,6 +208,10 @@ class _Incoming {
   int received = 0;
   int nextSeq = 0;
   bool failed = false;
+  // accepted flips once the user (or an auto-accepting host) consents; the sink
+  // is opened then and chunks are only expected after. Chunks before consent are
+  // a protocol violation and fail the transfer.
+  bool accepted = false;
   // Streaming sha256 so we never hold the whole file in memory.
   final DigestCatcher _digestOut = DigestCatcher();
   late final ByteConversionSink _digestIn = sha256.startChunkedConversion(
@@ -158,6 +229,7 @@ class FileReceiver {
   FileReceiver({
     required this.openSink,
     required this.sendFrame,
+    this.onOffer,
     this.onProgress,
     this.onComplete,
     this.onError,
@@ -166,8 +238,13 @@ class FileReceiver {
   // openSink creates a disk sink for a just-offered file (makes the landing
   // dir, opens a temp file). Native-only; never called on web.
   final Future<FileChunkSink> Function(IncomingFile info) openSink;
-  // sendFrame routes a reply frame (ack/cancel) back through the channel.
+  // sendFrame routes a reply frame (accept/reject/ack/cancel) back through the
+  // channel.
   final void Function(Map<String, dynamic> frame) sendFrame;
+  // onOffer, when set, defers consent to the UI: an offer is parked and the
+  // caller must later call accept(xid) / reject(xid). When null the receiver
+  // auto-accepts (the desktop host trusts its own user's phone pushes).
+  final void Function(IncomingFile info)? onOffer;
   final void Function(IncomingFile info, int received)? onProgress;
   final void Function(IncomingFile info, String savedPath)? onComplete;
   final void Function(IncomingFile info, String reason)? onError;
@@ -229,21 +306,54 @@ class FileReceiver {
     );
     final inc = _Incoming(info);
     _live[xid] = inc;
-    // Open the sink asynchronously; queue it on the chain so the first chunk
-    // waits for the file handle.
+    // Consent gate: when a UI handler is wired, park the offer and let the user
+    // decide (accept/reject); otherwise auto-accept (host). No sink is opened —
+    // and no chunk is expected — until consent.
+    if (onOffer != null) {
+      onOffer!(info);
+    } else {
+      _accept(inc);
+    }
+  }
+
+  // accept consents to a parked offer: ack the sender so it starts streaming,
+  // and open the disk sink (queued on the chain so the first chunk waits for the
+  // file handle). No-op if the offer is unknown / already decided.
+  void accept(String xid) {
+    final inc = _live[xid];
+    if (inc == null || inc.failed || inc.accepted) return;
+    _accept(inc);
+  }
+
+  void _accept(_Incoming inc) {
+    inc.accepted = true;
+    sendFrame(fileAcceptFrame(xid: inc.info.xid, to: inc.info.from));
     inc.chain = inc.chain.then((_) async {
+      if (inc.failed) return;
       try {
-        inc.sink = await openSink(info);
+        inc.sink = await openSink(inc.info);
       } catch (e) {
         _fail(inc, '无法创建文件: $e');
       }
     });
   }
 
+  // reject declines a parked offer: tell the sender (so it never streams) and
+  // drop it locally. No sink was opened, so there is nothing to clean up.
+  void reject(String xid, {String reason = '已拒绝'}) {
+    final inc = _live.remove(xid);
+    if (inc == null) return;
+    sendFrame(fileRejectFrame(xid: xid, reason: reason, to: inc.info.from));
+  }
+
   void _onChunk(Map<String, dynamic> f) {
     final xid = f['xid'] as String?;
     final inc = xid == null ? null : _live[xid];
     if (inc == null || inc.failed) return;
+    if (!inc.accepted) {
+      _fail(inc, '未经同意的数据'); // chunk before accept — protocol violation
+      return;
+    }
     final seq = (f['seq'] as num?)?.toInt() ?? -1;
     final data = f['data'] as String?;
     if (seq != inc.nextSeq || data == null) {

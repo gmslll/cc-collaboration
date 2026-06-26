@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
 import '../notifications.dart';
@@ -7,6 +9,26 @@ import '../terminal_mouse.dart';
 import 'file_fs.dart';
 import 'file_transfer.dart';
 import 'remote_channel.dart';
+
+// deviceDisplayName resolves a human-friendly name for this phone (shown in the
+// desktop's send list and progress rows) — the iOS device name or the Android
+// brand+model. Web-safe (uses defaultTargetPlatform, not dart:io Platform); any
+// failure falls back to a generic label.
+Future<String> deviceDisplayName() async {
+  try {
+    final info = DeviceInfoPlugin();
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+        return (await info.iosInfo).name;
+      case TargetPlatform.android:
+        final a = await info.androidInfo;
+        return '${a.brand} ${a.model}'.trim();
+      default:
+        break;
+    }
+  } catch (_) {}
+  return '手机';
+}
 
 // Client-side models of what the desktop host advertises.
 class RemoteSession {
@@ -107,9 +129,23 @@ class SentFile {
 // sent back), and browses/reads files. Read-only files for now (editing later).
 class RemoteClient extends RemoteChannel {
   RemoteClient({required super.relayUrl, required super.token})
-    : super(role: 'client');
+    : super(role: 'client') {
+    _loadDeviceName();
+  }
 
   bool _hostOnline = false;
+
+  // This phone's display name, sent to the host on connect (hello) so the
+  // desktop's send list / progress rows can show "Gabriel 的 iPhone" instead of
+  // an anonymous connection. Resolved async; '手机' until then.
+  String deviceName = '手机';
+  Future<void> _loadDeviceName() async {
+    deviceName = await deviceDisplayName();
+    if (connected) _sendHello();
+  }
+
+  void _sendHello() =>
+      send({'t': 'hello', 'role': 'client', 'name': deviceName});
 
   // historyMode tells the host how to replay a session's pre-connect history on
   // term.open: 'text' (default) = plain re-wrappable text; 'ansi' = coloured
@@ -134,42 +170,198 @@ class RemoteClient extends RemoteChannel {
   // for a toast. _fileRx assembles inbound file.* frames into Documents/cc-recv.
   final List<ReceivedFile> receivedFiles = [];
   void Function(String name, String path)? onFileReceived;
+
+  // Live transfers (send & receive, newest first) driving the in-app progress
+  // rows. onIncomingOffer fires when the desktop offers a file so the UI can
+  // prompt 接受/拒绝; acceptOffer/rejectOffer answer it.
+  final List<FileXfer> transfers = [];
+  void Function(FileXfer offer)? onIncomingOffer;
+  // Outgoing send handles by xid, so the host's file.accept / file.reject can be
+  // routed to the matching transfer's consent gate.
+  final Map<String, FileSendHandle> _outById = {};
+
+  FileXfer? _xfer(String xid) {
+    for (final x in transfers) {
+      if (x.xid == xid) return x;
+    }
+    return null;
+  }
+
+  void _addXfer(FileXfer x) {
+    transfers.insert(0, x);
+    while (transfers.length > 100) {
+      transfers.removeLast();
+    }
+  }
+
   FileReceiver? _fileRxInst;
   FileReceiver get _fileRx => _fileRxInst ??= FileReceiver(
     openSink: (info) => openReceiveSink(info, host: false),
     sendFrame: send,
+    // Defer consent to the UI: park the offer, surface it, decide later.
+    onOffer: (info) {
+      final x = FileXfer(
+        xid: info.xid,
+        name: info.name,
+        size: info.size,
+        dir: XferDir.recv,
+        peer: info.from,
+        peerName: '电脑',
+      );
+      _addXfer(x);
+      notifyListeners();
+      onIncomingOffer?.call(x);
+    },
+    onProgress: (info, received) {
+      final x = _xfer(info.xid);
+      if (x == null) return;
+      x.sent = received;
+      x.status = XferStatus.active;
+      notifyListeners();
+    },
     onComplete: (info, path) {
+      final x = _xfer(info.xid);
+      if (x != null) {
+        x.sent = x.size;
+        x.status = XferStatus.done;
+        x.path = path;
+      }
       receivedFiles.insert(0, ReceivedFile(info.name, path));
       if (receivedFiles.length > 100) receivedFiles.removeLast();
       notifyListeners();
       onFileReceived?.call(info.name, path);
     },
+    onError: (info, reason) {
+      final x = _xfer(info.xid);
+      if (x != null && x.status != XferStatus.rejected) {
+        x.status = XferStatus.failed;
+        notifyListeners();
+      }
+    },
   );
+
+  // acceptOffer / rejectOffer answer a parked incoming offer (driven by the
+  // accept/reject dialog). accept lets the desktop start streaming; reject tells
+  // it to send nothing.
+  void acceptOffer(String xid) {
+    final x = _xfer(xid);
+    if (x != null) x.status = XferStatus.active;
+    _fileRx.accept(xid);
+    notifyListeners();
+  }
+
+  void rejectOffer(String xid) {
+    final x = _xfer(xid);
+    if (x != null) x.status = XferStatus.rejected;
+    _fileRx.reject(xid);
+    notifyListeners();
+  }
 
   // Files sent up to the desktop (newest first), recorded on a successful send
   // so the phone can list / re-open / share them beyond the send toast.
   final List<SentFile> sentFiles = [];
 
   // sendFile streams a phone file up to the desktop host over the relay (no `to`
-  // → routed to the host). Returns a handle the UI can cancel / await. On a
-  // successful send it records the file in sentFiles for the transfer hub.
+  // → routed to the host). Returns a handle the UI can cancel / await. The host
+  // auto-accepts (its own user's push), so this completes without a prompt; a
+  // live FileXfer tracks progress and a successful send is recorded in sentFiles.
   FileSendHandle sendFile(
     String path, {
     void Function(int sent, int total)? onProgress,
     void Function(bool ok, String msg)? onDone,
-  }) => sendFileOverChannel(
-    path: path,
-    send: send,
-    onProgress: onProgress,
-    onDone: (ok, msg) {
-      if (ok) {
-        sentFiles.insert(0, SentFile(path.split('/').last, path));
-        if (sentFiles.length > 100) sentFiles.removeLast();
-        notifyListeners();
-      }
-      onDone?.call(ok, msg);
-    },
-  );
+  }) {
+    final name = path.split('/').last;
+    late final FileSendHandle h;
+    h = sendFileOverChannel(
+      path: path,
+      send: send,
+      requireAccept: true,
+      onProgress: (sent, total) {
+        final x = _xfer(h.xid);
+        if (x != null) {
+          x.sent = sent;
+          x.size = total;
+          x.status = XferStatus.active;
+          notifyListeners();
+        }
+        onProgress?.call(sent, total);
+      },
+      onDone: (ok, msg) {
+        final x = _xfer(h.xid);
+        if (x != null) {
+          x.status = ok
+              ? XferStatus.done
+              : msg.contains('拒绝')
+              ? XferStatus.rejected
+              : msg.contains('取消')
+              ? XferStatus.cancelled
+              : XferStatus.failed;
+          notifyListeners();
+        }
+        if (ok) {
+          sentFiles.insert(0, SentFile(name, path));
+          if (sentFiles.length > 100) sentFiles.removeLast();
+          notifyListeners();
+        }
+        _outById.remove(h.xid);
+        onDone?.call(ok, msg);
+      },
+    );
+    _outById[h.xid] = h;
+    _addXfer(
+      FileXfer(
+        xid: h.xid,
+        name: name,
+        size: 0,
+        dir: XferDir.send,
+        peer: 0,
+        peerName: '电脑',
+        status: XferStatus.waiting,
+        path: path,
+      ),
+    );
+    notifyListeners();
+    return h;
+  }
+
+  // _dispatchFile routes a file.* frame. accept/reject/ack and a cancel of one
+  // of OUR outgoing xids resolve the matching send handle's gate; anything else
+  // (offer/chunk/end, or a cancel of an inbound transfer) goes to the receiver.
+  void _dispatchFile(String t, Map<String, dynamic> f) {
+    final xid = f['xid'] as String?;
+    switch (t) {
+      case 'file.accept':
+        if (xid != null) _outById[xid]?.accept();
+        return;
+      case 'file.reject':
+        if (xid != null) {
+          _outById[xid]?.reject();
+          final x = _xfer(xid);
+          if (x != null) {
+            x.status = XferStatus.rejected;
+            notifyListeners();
+          }
+        }
+        return;
+      case 'file.ack':
+        if (xid != null && f['ok'] == false) {
+          final x = _xfer(xid);
+          if (x != null && x.inFlight) {
+            x.status = XferStatus.failed;
+            notifyListeners();
+          }
+        }
+        return;
+      case 'file.cancel':
+        if (xid != null && _outById.containsKey(xid)) {
+          _outById[xid]
+            ?..reject()
+            ..cancel(); // receiver aborted our send (gate or mid-stream)
+          return;
+        }
+    }
+    _fileRx.dispatch(f);
+  }
 
   // File browser (single current directory, mobile-friendly).
   String? fsPath;
@@ -223,7 +415,10 @@ class RemoteClient extends RemoteChannel {
   void connect() => start();
 
   @override
-  void onConnected() => send({'t': 'list'}); // discover host on connect
+  void onConnected() {
+    _sendHello(); // announce device name so the host can label this phone
+    send({'t': 'list'}); // discover host on connect
+  }
 
   @override
   void onDisconnected() => _hostOnline = false;
@@ -239,10 +434,11 @@ class RemoteClient extends RemoteChannel {
   @override
   void onFrame(Map<String, dynamic> f) {
     final t = f['t'];
-    // Inbound file transfer (desktop → phone) is handled by the receiver, which
-    // owns the file.* frames; everything else is a workspace frame.
+    // File transfer frames split by role: accept/reject/ack/cancel for a file we
+    // are SENDING route to its handle; offer/chunk/end (and cancels of an inbound
+    // file) go to the receiver.
     if (t is String && t.startsWith('file.')) {
-      _fileRx.dispatch(f);
+      _dispatchFile(t, f);
       return;
     }
     switch (t) {

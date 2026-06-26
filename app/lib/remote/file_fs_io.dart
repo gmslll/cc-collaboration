@@ -91,13 +91,25 @@ Future<FileChunkSink> openReceiveSink(
   return _IoChunkSink(tmp, raf, finalPath);
 }
 
-// FileSendHandle is a live outgoing transfer the UI can cancel and await.
+// FileSendHandle is a live outgoing transfer the UI can cancel and await. It
+// also carries the accept/reject gate: after the sender announces (file.offer)
+// it blocks until the receiver's decision routes back here as accept()/reject().
 class FileSendHandle {
-  FileSendHandle(this.xid, this._cancel, this.done);
+  FileSendHandle(this.xid, this._cancel, this.done, this._gate);
   final String xid;
   final void Function() _cancel;
   final Future<void> done;
+  final Completer<bool> _gate;
   void cancel() => _cancel();
+  // accept/reject resolve the consent gate the sender is waiting on (driven by
+  // the receiver's file.accept / file.reject). Idempotent.
+  void accept() {
+    if (!_gate.isCompleted) _gate.complete(true);
+  }
+
+  void reject() {
+    if (!_gate.isCompleted) _gate.complete(false);
+  }
 }
 
 const Map<String, String> _mimes = {
@@ -123,23 +135,32 @@ String? _guessMime(String name) {
   return _mimes[name.substring(dot + 1).toLowerCase()];
 }
 
+// Max time to wait for the receiver's accept after announcing an offer before
+// giving up — so a phone that never answers (asleep, dialog dismissed) doesn't
+// leave the sender hanging forever.
+const Duration _acceptTimeout = Duration(seconds: 60);
+
 // sendFileOverChannel reads [path] and streams it as file.offer/chunk/end frames
 // via [send] (which routes through RemoteChannel). It reads 256KB at a time,
 // computes a streaming sha256, yields between chunks so a big file doesn't
 // starve the UI isolate, and honors cancel(). Routing: pass [to] for host→a
 // specific client (or 0 to broadcast); omit it on the client so it reaches the
-// host.
+// host. When [requireAccept] is set the sender announces the offer and then
+// waits for the receiver's file.accept (routed in via the handle) before
+// streaming any data; a file.reject or a timeout aborts without sending bytes.
 FileSendHandle sendFileOverChannel({
   required String path,
   required void Function(Map<String, dynamic> frame) send,
   int? to,
   String? sid,
+  bool requireAccept = false,
   void Function(int sent, int total)? onProgress,
   void Function(bool ok, String msg)? onDone,
 }) {
   final xid = 'f${DateTime.now().microsecondsSinceEpoch}-${path.hashCode & 0xffff}';
   var cancelled = false;
   final completer = Completer<void>();
+  final gate = Completer<bool>();
 
   Future<void> run() async {
     RandomAccessFile? raf;
@@ -159,6 +180,27 @@ FileSendHandle sendFileOverChannel({
         sid: sid,
         to: to,
       ));
+      // Wait for the receiver to consent before streaming. accept()/reject() on
+      // the handle complete this gate; cancel() is checked below.
+      if (requireAccept) {
+        bool accepted;
+        try {
+          accepted = await gate.future.timeout(_acceptTimeout);
+        } on TimeoutException {
+          send(fileCancelFrame(xid: xid, reason: '等待接受超时', to: to));
+          onDone?.call(false, '对方未响应');
+          return;
+        }
+        if (!accepted) {
+          onDone?.call(false, '对方已拒绝');
+          return;
+        }
+        if (cancelled) {
+          send(fileCancelFrame(xid: xid, reason: '已取消', to: to));
+          onDone?.call(false, '已取消');
+          return;
+        }
+      }
       raf = await file.open();
       final digestOut = DigestCatcher();
       final digestIn = sha256.startChunkedConversion(digestOut);
@@ -195,5 +237,5 @@ FileSendHandle sendFileOverChannel({
   }
 
   unawaited(run());
-  return FileSendHandle(xid, () => cancelled = true, completer.future);
+  return FileSendHandle(xid, () => cancelled = true, completer.future, gate);
 }
