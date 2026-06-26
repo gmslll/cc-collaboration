@@ -32,6 +32,14 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# MSVC 14.51+ (Visual Studio 18, shipped on windows-latest runners) turned
+# <experimental/coroutine> into a hard error (STL1011). The
+# flutter_local_notifications_windows plugin still includes that header, so the
+# build fails before runner\Release is produced. The macro keeps the header
+# working by aliasing std::experimental::coroutine_* to the C++20 std:: types.
+# Set before any add_subdirectory so flutter, runner, and all plugins inherit it.
+add_definitions(-D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by
