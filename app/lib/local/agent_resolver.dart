@@ -84,11 +84,19 @@ class AgentResolver {
     try {
       final r = await Process.run('where', [agent]);
       if (r.exitCode == 0) {
-        final line = (r.stdout as String)
+        final lines = (r.stdout as String)
             .split('\n')
             .map((s) => s.trim())
-            .firstWhere((s) => s.isNotEmpty, orElse: () => '');
-        if (line.isNotEmpty && File(line).existsSync()) return line;
+            .where((s) => s.isNotEmpty)
+            .toList();
+        // where.exe lists EVERY match. An npm-installed agent has both an
+        // extensionless Unix wrapper (`claude`, a sh script cmd.exe can't run)
+        // and a `claude.cmd` shim — and where lists the Unix one first. Prefer a
+        // shim cmd.exe can actually launch via `/c` (.cmd/.bat/.exe), else fall
+        // back to the first hit.
+        final pick = lines.firstWhere(_runnableOnWindows,
+            orElse: () => lines.isEmpty ? '' : lines.first);
+        if (pick.isNotEmpty && File(pick).existsSync()) return pick;
       }
     } catch (_) {}
     final appData = Platform.environment['APPDATA'] ?? '';
@@ -101,5 +109,16 @@ class AgentResolver {
       }
     }
     return '';
+  }
+
+  // _runnableOnWindows is true for a path cmd.exe can launch via `/c` — one
+  // ending in a PATHEXT executable extension. Excludes npm's extensionless sh
+  // shim and the .ps1 variant, which cmd.exe can't execute.
+  static bool _runnableOnWindows(String path) {
+    final p = path.toLowerCase();
+    return p.endsWith('.cmd') ||
+        p.endsWith('.exe') ||
+        p.endsWith('.bat') ||
+        p.endsWith('.com');
   }
 }
