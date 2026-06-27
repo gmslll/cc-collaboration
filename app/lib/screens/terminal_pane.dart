@@ -350,6 +350,11 @@ class TerminalSession {
       return;
     }
     _pty = pty;
+    // TEMP DIAGNOSTIC: mirror xterm's input-pipeline events into this terminal so
+    // we can see, on a packaged Windows build, exactly where keystrokes are lost
+    // (focus / connection attach / key events / updateEditingValue). Remove with
+    // the xterm diagnostic patch once Windows IME input is sorted.
+    kXtermInputDebug = (s) => terminal.write('\x1b[35m‹$s›\x1b[0m\r\n');
     pty.output
         .cast<List<int>>()
         .transform(const Utf8Decoder(allowMalformed: true))

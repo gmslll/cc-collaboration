@@ -1,4 +1,5 @@
 export 'src/terminal_view.dart';
+export 'src/ui/custom_text_edit.dart' show kXtermInputDebug; // TEMP DIAGNOSTIC
 export 'src/ui/controller.dart';
 export 'src/ui/cursor_type.dart';
 export 'src/ui/keyboard_visibility.dart';
