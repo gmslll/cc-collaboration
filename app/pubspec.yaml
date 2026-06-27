@@ -70,9 +70,16 @@ dev_dependencies:
 # offset and clamped selections to the bottom row, so dragging anywhere but the
 # very bottom selected nothing. See third_party/xterm/lib/src/ui/render.dart
 # (getCellOffset, marked PATCH cc-handoff). Plain shells were unaffected.
+#
+# Vendored flutter_pty 0.4.2 with a Windows UTF-8 fix: upstream widened UTF-8
+# path/arg/env bytes to UTF-16 by a per-byte cast, mangling non-ASCII (e.g. a
+# Chinese working dir) → CreateProcessW failed and the terminal wouldn't start.
+# See third_party/flutter_pty/src/flutter_pty_win.c (marked PATCH cc-handoff).
 dependency_overrides:
   xterm:
     path: third_party/xterm
+  flutter_pty:
+    path: third_party/flutter_pty
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
