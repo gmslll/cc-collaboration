@@ -323,10 +323,7 @@ class TerminalSession {
     // Resolve the working directory: expand a leading ~ and fall back to the home
     // dir if it doesn't exist, so a stale or Unix-style path can't make the spawn
     // throw (Pty.start hands workingDirectory straight to the OS).
-    var wd = workdir;
-    if (wd.startsWith('~')) {
-      wd = wd == '~' ? homeDir() : '${homeDir()}${wd.substring(1)}';
-    }
+    var wd = expandHome(workdir);
     if (wd.isEmpty || !Directory(wd).existsSync()) wd = homeDir();
 
     final Pty pty;

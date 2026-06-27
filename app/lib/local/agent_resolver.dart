@@ -94,9 +94,10 @@ class AgentResolver {
         // and a `claude.cmd` shim — and where lists the Unix one first. Prefer a
         // shim cmd.exe can actually launch via `/c` (.cmd/.bat/.exe), else fall
         // back to the first hit.
-        final pick = lines.firstWhere(_runnableOnWindows,
-            orElse: () => lines.isEmpty ? '' : lines.first);
-        if (pick.isNotEmpty && File(pick).existsSync()) return pick;
+        if (lines.isNotEmpty) {
+          final pick = lines.firstWhere(_runnableOnWindows, orElse: () => lines.first);
+          if (File(pick).existsSync()) return pick;
+        }
       }
     } catch (_) {}
     final appData = Platform.environment['APPDATA'] ?? '';

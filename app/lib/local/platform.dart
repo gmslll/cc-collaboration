@@ -25,3 +25,12 @@ String ccConfigDir() {
   }
   return '${homeDir()}/.config/cc-handoff';
 }
+
+/// expandHome expands a leading `~` / `~/` to the user's home directory; any
+/// other string is returned unchanged. Shared by config-path parsing and PTY
+/// working-directory resolution so the two agree.
+String expandHome(String p) {
+  if (p == '~') return homeDir();
+  if (p.startsWith('~/')) return '${homeDir()}/${p.substring(2)}';
+  return p;
+}

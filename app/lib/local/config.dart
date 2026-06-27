@@ -172,11 +172,8 @@ String _home() => homeDir();
 // _isAbsolutePath accepts POSIX (/…) and Windows (C:\…, C:/…, \\unc) roots so a
 // project's absolute path in config.toml isn't mistaken for relative and
 // prefixed with the workspace base dir on Windows.
+final _driveLetter = RegExp(r'^[A-Za-z]:'); // Windows C:\ / C:/ root
 bool _isAbsolutePath(String p) =>
-    p.startsWith('/') || p.startsWith(r'\') || RegExp(r'^[A-Za-z]:').hasMatch(p);
+    p.startsWith('/') || p.startsWith(r'\') || _driveLetter.hasMatch(p);
 
-String _expand(String p) {
-  if (p == '~') return _home();
-  if (p.startsWith('~/')) return '${_home()}/${p.substring(2)}';
-  return p;
-}
+String _expand(String p) => expandHome(p);
