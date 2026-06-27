@@ -849,16 +849,11 @@ class _TerminalPaneState extends State<TerminalPane> {
 
   @override
   Widget build(BuildContext context) {
-    return TerminalView(
+    final view = TerminalView(
       _terminal,
       controller: _controller,
-      // Windows: raw hardware key events (CustomKeyboardListener) — diagnostics
-      // proved the Flutter Windows engine delivers KEY events (with .character) to
-      // xterm's custom text client but never delivers text-input/IME
-      // (updateEditingValue), so ASCII is driven from key events here. IME (CJK)
-      // can't reach the terminal this way (the IME consumes the keys and the dead
-      // connection swallows the composition) — handled separately. macOS (false)
-      // keeps the full IME path, so Chinese composing works there.
+      // Windows drives all input through the _WindowsImeInputLayer overlay below
+      // (a real EditableText), so the TerminalView itself takes no keyboard there.
       hardwareKeyboardOnly: Platform.isWindows,
       onSecondaryTapDown: (details, _) => _showMenu(details.globalPosition),
       onKeyEvent: _onKeyEvent,
@@ -866,6 +861,113 @@ class _TerminalPaneState extends State<TerminalPane> {
       textStyle: const TerminalStyle(fontFamily: 'JetBrainsMono', fontSize: 13),
       backgroundOpacity: 1,
       padding: const EdgeInsets.all(10),
+    );
+    // The Flutter Windows engine never delivers text-input/IME (updateEditingValue)
+    // to xterm's custom text client (proven by on-screen diagnostics), so Chinese
+    // can't reach the terminal through it. On Windows we overlay a REAL EditableText
+    // — which the engine DOES feed IME — to capture typing + composition and forward
+    // it to the PTY, while the TerminalView underneath keeps display/scroll/selection.
+    if (!Platform.isWindows) return view;
+    return _WindowsImeInputLayer(session: widget.session, child: view);
+  }
+}
+
+// _WindowsImeInputLayer overlays a real (invisible) EditableText over the terminal
+// to capture keyboard + IME input on Windows. Committed text (ASCII and composed
+// CJK) is forwarded to the PTY and the field reset to empty; control keys
+// (Enter/Backspace/Tab/Esc/arrows/Ctrl-*) are turned into terminal sequences via
+// the terminal's keyInput. The TerminalView is wrapped in ExcludeFocus so it can't
+// steal keyboard focus from the input; a Listener focuses the input on any tap.
+class _WindowsImeInputLayer extends StatefulWidget {
+  final TerminalSession session;
+  final Widget child;
+  const _WindowsImeInputLayer({required this.session, required this.child});
+
+  @override
+  State<_WindowsImeInputLayer> createState() => _WindowsImeInputLayerState();
+}
+
+class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
+  final TextEditingController _ctrl = TextEditingController();
+  late final FocusNode _focus = FocusNode(onKeyEvent: _onKey);
+
+  // Named keys that must become terminal control sequences rather than text.
+  static final _special = <LogicalKeyboardKey>{
+    LogicalKeyboardKey.enter, LogicalKeyboardKey.numpadEnter,
+    LogicalKeyboardKey.backspace, LogicalKeyboardKey.tab,
+    LogicalKeyboardKey.escape, LogicalKeyboardKey.delete,
+    LogicalKeyboardKey.arrowUp, LogicalKeyboardKey.arrowDown,
+    LogicalKeyboardKey.arrowLeft, LogicalKeyboardKey.arrowRight,
+    LogicalKeyboardKey.home, LogicalKeyboardKey.end,
+    LogicalKeyboardKey.pageUp, LogicalKeyboardKey.pageDown,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  // Forward committed (non-composing) text to the PTY, then reset to empty so the
+  // field is a pure input funnel. While the IME is composing we wait for commit.
+  void _onChanged() {
+    final v = _ctrl.value;
+    if (v.composing.isValid || v.text.isEmpty) return;
+    widget.session.sendText(v.text);
+    _ctrl.clear();
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent) return KeyEventResult.ignored;
+    // During IME composition every key belongs to the input method.
+    if (_ctrl.value.composing.isValid) return KeyEventResult.ignored;
+    final hw = HardwareKeyboard.instance;
+    final ctrl = hw.isControlPressed;
+    final alt = hw.isAltPressed;
+    final shift = hw.isShiftPressed;
+    // Let Ctrl+V paste through the field (→ _onChanged → PTY); let plain printable
+    // keys flow to the field/IME as text (they arrive via the text-input channel).
+    if (ctrl && event.logicalKey == LogicalKeyboardKey.keyV) {
+      return KeyEventResult.ignored;
+    }
+    final isControl = _special.contains(event.logicalKey) || ctrl || alt;
+    if (!isControl) return KeyEventResult.ignored;
+    final tk = keyToTerminalKey(event.logicalKey);
+    if (tk == null) return KeyEventResult.ignored;
+    final handled = widget.session.terminal
+        .keyInput(tk, ctrl: ctrl, alt: alt, shift: shift);
+    return handled ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => _focus.requestFocus(),
+      child: Stack(
+        children: [
+          ExcludeFocus(child: widget.child),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: EditableText(
+                controller: _ctrl,
+                focusNode: _focus,
+                maxLines: 1,
+                style: const TextStyle(color: Color(0x00000000), fontSize: 1),
+                cursorColor: const Color(0x00000000),
+                backgroundCursorColor: const Color(0x00000000),
+                keyboardType: TextInputType.text,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

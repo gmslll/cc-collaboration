@@ -1,4 +1,5 @@
 export 'src/terminal_view.dart';
+export 'src/ui/input_map.dart' show keyToTerminalKey;
 export 'src/ui/controller.dart';
 export 'src/ui/cursor_type.dart';
 export 'src/ui/keyboard_visibility.dart';
