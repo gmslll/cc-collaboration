@@ -53,6 +53,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   int _tab = 0; // 0 = 会话, 1 = 代码, 2 = Git
   // Collapsed project groups in the sessions tab, keyed by project path.
   final Set<String> _collapsedProjects = <String>{};
+  // Project focus mode: when non-null, the sessions tab shows only this
+  // project's sessions (tap a project name to enter, the top chip's ✕ to exit).
+  // Persisted so the focus survives an app restart; '' in Prefs means no focus.
+  String? _focusedProjectPath;
   DateTime? _pausedAt; // when the app last backgrounded (for resume reconnect)
   final List<String> _dirStack =
       []; // breadcrumb of opened dirs (empty = roots)
@@ -63,6 +67,8 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final focus = Prefs.getString('remote.focusProject', def: '');
+    if (focus.isNotEmpty) _focusedProjectPath = focus;
     _c.addListener(_onClientChange);
     _c.onFileReceived = (name, path) {
       if (!mounted) return;
@@ -539,6 +545,31 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       }
     }
 
+    // Project focus: show only the focused project's sessions, headed by a chip
+    // that exits focus. If the focused project isn't currently shared, fall
+    // through to the normal grouped view (focus self-heals if it reappears).
+    final focusPath = _focusedProjectPath;
+    if (focusPath != null) {
+      final fp = _c.roots.where((r) => r.path == focusPath).firstOrNull;
+      if (fp != null) {
+        final ss = byProject[focusPath] ?? const <RemoteSession>[];
+        return ListView(
+          children: [
+            _focusChip(fp),
+            if (ss.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(
+                  child: Text('该项目暂无会话', style: TextStyle(color: CcColors.muted)),
+                ),
+              )
+            else
+              for (final s in ss) _sessionRow(s, root: fp),
+          ],
+        );
+      }
+    }
+
     final children = <Widget>[];
     for (final entry in byWs.entries) {
       final projects = entry.value
@@ -554,13 +585,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             p.name,
             count: ss.length,
             collapsed: collapsed,
-            onTap: () => setState(() {
+            onToggle: () => setState(() {
               if (collapsed) {
                 _collapsedProjects.remove(p.path);
               } else {
                 _collapsedProjects.add(p.path);
               }
             }),
+            onFocus: () => _enterFocus(p.path),
           ),
         );
         if (!collapsed) {
@@ -579,29 +611,87 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     return ListView(children: children);
   }
 
-  // _projectSubHeader is a tappable project group header: a chevron (collapsed/
-  // expanded), the folder + name, and the session count. Tapping toggles whether
-  // its session rows are shown (see _collapsedProjects).
+  void _enterFocus(String path) {
+    setState(() => _focusedProjectPath = path);
+    Prefs.setString('remote.focusProject', path);
+  }
+
+  void _exitFocus() {
+    setState(() => _focusedProjectPath = null);
+    Prefs.setString('remote.focusProject', '');
+  }
+
+  // _focusChip is the top-of-list banner shown while a project is focused: the
+  // project name plus a ✕ to leave focus mode.
+  Widget _focusChip(RemoteRootInfo p) => Container(
+    margin: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+    padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+    decoration: BoxDecoration(
+      color: CcColors.accent.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      children: [
+        const Icon(
+          Icons.center_focus_strong_rounded,
+          size: 15,
+          color: CcColors.accentBright,
+        ),
+        const SizedBox(width: 6),
+        const Text('专注：', style: TextStyle(fontSize: 12.5, color: CcColors.subtle)),
+        Expanded(
+          child: Text(
+            p.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: CcColors.text,
+            ),
+          ),
+        ),
+        InkWell(
+          onTap: _exitFocus,
+          borderRadius: BorderRadius.circular(20),
+          child: const Padding(
+            padding: EdgeInsets.all(4),
+            child: Icon(Icons.close_rounded, size: 16, color: CcColors.muted),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  // _projectSubHeader is a project group header: a chevron that toggles whether
+  // its session rows show (onToggle), the folder + name (tapping the name enters
+  // project focus — onFocus), and the session count.
   Widget _projectSubHeader(
     String name, {
     required int count,
     required bool collapsed,
-    required VoidCallback onTap,
-  }) => InkWell(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(10, 6, 14, 2),
-      child: Row(
-        children: [
-          Icon(
+    required VoidCallback onToggle,
+    required VoidCallback onFocus,
+  }) => Padding(
+    padding: const EdgeInsets.fromLTRB(10, 6, 14, 2),
+    child: Row(
+      children: [
+        InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(4),
+          child: Icon(
             collapsed ? Icons.chevron_right_rounded : Icons.expand_more_rounded,
             size: 18,
             color: CcColors.muted,
           ),
-          const SizedBox(width: 2),
-          const Icon(Icons.folder_rounded, size: 14, color: CcColors.muted),
-          const SizedBox(width: 6),
-          Expanded(
+        ),
+        const SizedBox(width: 2),
+        const Icon(Icons.folder_rounded, size: 14, color: CcColors.muted),
+        const SizedBox(width: 6),
+        Expanded(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onFocus,
             child: Text(
               name,
               maxLines: 1,
@@ -613,9 +703,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
               ),
             ),
           ),
-          Text('$count', style: CcType.code(size: 11, color: CcColors.subtle)),
-        ],
-      ),
+        ),
+        Text('$count', style: CcType.code(size: 11, color: CcColors.subtle)),
+      ],
     ),
   );
 
@@ -688,36 +778,82 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       snack(context, '没有可用项目');
       return;
     }
-    var project = _c.roots.first;
+    // Default to the focused project when one is active.
+    var project = _c.roots.firstWhere(
+      (r) => r.path == _focusedProjectPath,
+      orElse: () => _c.roots.first,
+    );
     var agent = 'claude';
+    var workdir = project.path; // '主仓' by default; a worktree path otherwise
+    _c.loadWorktrees(project.path); // populate the worktree dropdown
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
           title: const Text('新建会话'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButton<RemoteRootInfo>(
-                isExpanded: true,
-                value: project,
-                items: [
-                  for (final r in _c.roots)
-                    DropdownMenuItem(value: r, child: Text(r.name)),
+          // Rebuild on _c changes so the worktree list appears when wt.list.ok
+          // lands; local state (project/agent/workdir) lives in the StatefulBuilder.
+          content: ListenableBuilder(
+            listenable: _c,
+            builder: (ctx, _) {
+              // Worktrees for THIS project only (the list is trusted once
+              // wtProject matches); drop the main checkout — it's the '主仓' item.
+              final wts = _c.wtProject == project.path
+                  ? _c.worktrees
+                        .where((w) => w.path != project.path)
+                        .toList()
+                  : const <RemoteWorktree>[];
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButton<RemoteRootInfo>(
+                    isExpanded: true,
+                    value: project,
+                    items: [
+                      for (final r in _c.roots)
+                        DropdownMenuItem(value: r, child: Text(r.name)),
+                    ],
+                    onChanged: (v) => setLocal(() {
+                      if (v == null || v == project) return;
+                      project = v;
+                      workdir = v.path; // reset to 主仓 for the new project
+                      _c.loadWorktrees(v.path);
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    value: workdir,
+                    items: [
+                      DropdownMenuItem(
+                        value: project.path,
+                        child: Text('主仓 (${project.name})'),
+                      ),
+                      for (final w in wts)
+                        DropdownMenuItem(
+                          value: w.path,
+                          child: Text(
+                            w.branch.isEmpty
+                                ? w.path.split('/').last
+                                : w.branch,
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) => setLocal(() => workdir = v ?? workdir),
+                  ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'claude', label: Text('Claude')),
+                      ButtonSegment(value: 'codex', label: Text('Codex')),
+                    ],
+                    selected: {agent},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (s) => setLocal(() => agent = s.first),
+                  ),
                 ],
-                onChanged: (v) => setLocal(() => project = v ?? project),
-              ),
-              const SizedBox(height: 12),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'claude', label: Text('Claude')),
-                  ButtonSegment(value: 'codex', label: Text('Codex')),
-                ],
-                selected: {agent},
-                showSelectedIcon: false,
-                onSelectionChanged: (s) => setLocal(() => agent = s.first),
-              ),
-            ],
+              );
+            },
           ),
           actions: [
             TextButton(
@@ -726,7 +862,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             ),
             FilledButton(
               onPressed: () {
-                _c.newSession(project.path, agent);
+                _c.newSession(project.path, agent, workdir: workdir);
                 Navigator.pop(ctx);
               },
               child: const Text('启动'),
@@ -1520,6 +1656,14 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
         Prefs.getString('remote.historyMode', def: 'text');
     widget.client.onReplyText = _onReplyText;
     widget.client.onAgentStatus = _onAgentStatus;
+    widget.client.onTerminalReset = _onTerminalReset;
+  }
+
+  // After a reconnect-driven resync the client recreates this session's Terminal
+  // (reloadTerminal); rebuild so the TerminalView rebinds to the fresh object and
+  // shows the host's replayed latest screen — no manual 刷新 needed.
+  void _onTerminalReset() {
+    if (mounted) setState(() {});
   }
 
   void _onAgentStatus(String sid, bool working, String text) {
@@ -1558,6 +1702,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     }
     if (widget.client.onAgentStatus == _onAgentStatus) {
       widget.client.onAgentStatus = null;
+    }
+    if (widget.client.onTerminalReset == _onTerminalReset) {
+      widget.client.onTerminalReset = null;
     }
     if (_laStarted) LiveActivity.end();
     _stopScroll();
@@ -1669,6 +1816,31 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     final text = data?.text;
     // term.paste routes through term.onOutput → term.input, so it reaches the host.
     if (text != null && text.isNotEmpty) _term.paste(text);
+  }
+
+  // _sendImage picks an image and streams it up to the computer tagged with this
+  // session's sid. The host saves it and pastes the saved path into this
+  // session's terminal — same as the desktop paste-image flow, so the agent can
+  // read the picture from disk.
+  Future<void> _sendImage() async {
+    final res = await FilePicker.platform.pickFiles(type: FileType.image);
+    final path = res?.files.single.path;
+    if (path == null || !mounted) return; // cancelled
+    final name = path.split('/').last;
+    snack(context, '正在发送图片 $name…', clearPrevious: true);
+    widget.client.sendFile(
+      path,
+      sid: widget.session.sid,
+      onDone: (ok, msg) {
+        if (!mounted) return;
+        snack(
+          context,
+          ok ? '🖼️ 已发送，已贴到会话' : '发送失败：$msg',
+          background: ok ? CcColors.ok : CcColors.danger,
+          clearPrevious: true,
+        );
+      },
+    );
   }
 
   // Recreate the session's terminal (empty buffer) and re-open it; the host
@@ -1825,6 +1997,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   _term,
                   controller: _controller,
                   theme: ccTerminalTheme,
+                  // Only raise the keyboard when tapping the agent's input line
+                  // (cursor row and below) — tapping output to read/scroll won't
+                  // pop the IME, avoiding accidental taps on the phone.
+                  keyboardOnInputLineOnly: true,
                   textStyle: const TerminalStyle(
                     fontFamily: 'JetBrainsMono',
                     fontSize: 12.5,
@@ -1902,6 +2078,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   // Functional buttons are pinned at the front (not reorderable).
                   btn('复制', _copy),
                   btn('粘贴', _paste),
+                  btn('图片', _sendImage),
                   btn(switch (_vmode) {
                     _VoiceMode.off => '🎙️ 听写',
                     _VoiceMode.dictating => '🔴 听写中',

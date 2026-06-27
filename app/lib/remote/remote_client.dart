@@ -267,6 +267,7 @@ class RemoteClient extends RemoteChannel {
   // live FileXfer tracks progress and a successful send is recorded in sentFiles.
   FileSendHandle sendFile(
     String path, {
+    String? sid,
     void Function(int sent, int total)? onProgress,
     void Function(bool ok, String msg)? onDone,
   }) {
@@ -275,6 +276,7 @@ class RemoteClient extends RemoteChannel {
     h = sendFileOverChannel(
       path: path,
       send: send,
+      sid: sid,
       requireAccept: true,
       onProgress: (sent, total) {
         final x = _xfer(h.xid);
@@ -431,10 +433,39 @@ class RemoteClient extends RemoteChannel {
   @override
   void onPeer(int connId, String role, bool connected) {
     if (role != 'host') return;
-    _hostOnline = connected;
     if (connected) send({'t': 'list'});
+    _setHostOnline(connected);
     notifyListeners();
   }
+
+  // _setHostOnline centralizes the host-online flag so a false→true transition
+  // (we (re)connected to an online host, or the host reappeared) auto re-subscribes
+  // our open terminals — the mirror self-heals without a manual 刷新.
+  void _setHostOnline(bool v) {
+    if (v && !_hostOnline) {
+      _hostOnline = true;
+      _resyncOpenTerminals();
+    } else {
+      _hostOnline = v;
+    }
+  }
+
+  // _resyncOpenTerminals re-opens every currently-open terminal: a reconnect gives
+  // us a new connId, so the host no longer mirrors our previously-open sessions
+  // (its watchers were keyed to the old connId). reloadTerminal re-sends term.open
+  // → the host re-subscribes us and replays the latest screen. The active session
+  // page rebinds its TerminalView via onTerminalReset (it isn't a client Listenable).
+  void _resyncOpenTerminals() {
+    if (_terminals.isEmpty) return;
+    for (final sid in _terminals.keys.toList()) {
+      reloadTerminal(sid);
+    }
+    onTerminalReset?.call();
+  }
+
+  // Fired after a reconnect-driven terminal reload so the foreground session page
+  // can setState and rebind to the freshly-recreated Terminal.
+  void Function()? onTerminalReset;
 
   @override
   void onFrame(Map<String, dynamic> f) {
@@ -457,7 +488,7 @@ class RemoteClient extends RemoteChannel {
               (s['agent'] as String?) ?? 'claude',
             ),
         ];
-        _hostOnline = true;
+        _setHostOnline(true);
         notifyListeners();
       case 'roots':
         roots = [
@@ -649,8 +680,14 @@ class RemoteClient extends RemoteChannel {
   }
 
   // Session write actions (the host re-broadcasts `sessions` after each).
-  void newSession(String projectPath, String agent) =>
-      send({'t': 'session.new', 'project': projectPath, 'agent': agent});
+  // workdir targets a worktree under the project (the host validates it lives in
+  // the project root or its .worktrees/); omitted/equal to project = main checkout.
+  void newSession(String projectPath, String agent, {String? workdir}) => send({
+    't': 'session.new',
+    'project': projectPath,
+    'agent': agent,
+    if (workdir != null && workdir != projectPath) 'workdir': workdir,
+  });
   void closeSession(String sid) => send({'t': 'session.close', 'sid': sid});
   void renameSession(String sid, String name) =>
       send({'t': 'session.rename', 'sid': sid, 'name': name});

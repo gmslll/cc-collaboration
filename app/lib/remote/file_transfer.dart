@@ -129,7 +129,11 @@ class IncomingFile {
   final int size;
   final String? mime;
   final int from; // sender's connId, for routing the ack back
-  IncomingFile(this.xid, this.name, this.size, this.mime, this.from);
+  // sid ties this file to a session: when set (phone sent it from inside a
+  // session, e.g. an image), the host pastes the saved path into that session's
+  // terminal instead of just notifying. null for a plain file push.
+  final String? sid;
+  IncomingFile(this.xid, this.name, this.size, this.mime, this.from, {this.sid});
 }
 
 // Direction of a transfer, from the local end's point of view.
@@ -303,6 +307,7 @@ class FileReceiver {
       size,
       f['mime'] as String?,
       from,
+      sid: f['sid'] as String?,
     );
     final inc = _Incoming(info);
     _live[xid] = inc;

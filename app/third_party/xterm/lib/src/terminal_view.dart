@@ -48,6 +48,7 @@ class TerminalView extends StatefulWidget {
     this.onKeyEvent,
     this.readOnly = false,
     this.hardwareKeyboardOnly = false,
+    this.keyboardOnInputLineOnly = false,
     this.simulateScroll = true,
   });
 
@@ -134,6 +135,12 @@ class TerminalView extends StatefulWidget {
   /// True if only hardware keyboard events should be used as input. This will
   /// also prevent any on-screen keyboard to be shown.
   final bool hardwareKeyboardOnly;
+
+  /// PATCH cc-handoff: if true, a tap raises the on-screen keyboard ONLY when it
+  /// lands on or below the cursor's row (the shell/agent input line); tapping the
+  /// output/scrollback above just dismisses the keyboard. Avoids accidental IME
+  /// pops while reading on a touch device. No effect when [hardwareKeyboardOnly].
+  final bool keyboardOnInputLineOnly;
 
   /// If true, when the terminal is in alternate buffer (for example running
   /// vim, man, etc), if the application does not declare that it can handle
@@ -345,16 +352,29 @@ class TerminalViewState extends State<TerminalView> {
     widget.onTapUp?.call(details, offset);
   }
 
-  void _onTapDown(_) {
+  void _onTapDown(TapDownDetails details) {
     if (_controller.selection != null) {
       _controller.clearSelection();
-    } else {
-      if (!widget.hardwareKeyboardOnly) {
+      return;
+    }
+    if (widget.hardwareKeyboardOnly) {
+      _focusNode.requestFocus();
+      return;
+    }
+    // PATCH cc-handoff: gate the soft keyboard to taps on/below the cursor row
+    // (the input line) so tapping output to read doesn't pop the IME on a phone;
+    // tapping the output area instead dismisses an already-open keyboard.
+    if (widget.keyboardOnInputLineOnly) {
+      final tappedRow = renderTerminal.getCellOffset(details.localPosition).y;
+      if (tappedRow >= widget.terminal.buffer.absoluteCursorY) {
         _customTextEditKey.currentState?.requestKeyboard();
       } else {
         _focusNode.requestFocus();
+        _customTextEditKey.currentState?.closeKeyboard();
       }
+      return;
     }
+    _customTextEditKey.currentState?.requestKeyboard();
   }
 
   void _onSecondaryTapDown(TapDownDetails details) {

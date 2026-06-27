@@ -27,6 +27,11 @@ bool _isHighSurrogate(int u) => u >= 0xd800 && u <= 0xdbff;
 // backlog-replay slice size. Bounds frame size (and worst-case latency).
 const int _maxFrameChars = 64 * 1024;
 
+// Cap on how many recent rows term.open replays. Keeps opening / auto-resyncing
+// a session fast and avoids dumping a big block of old scrollback to the phone
+// (a few screens of context is enough; the live stream takes over after).
+const int _maxReplayLines = 400;
+
 // _OutputBatcher coalesces a session's PTY output before it goes on the wire.
 // Without it every PTY chunk became one WS frame + one synchronous terminal.write
 // on the phone — the main cause of mirror jank under streaming output. It uses
@@ -40,7 +45,7 @@ class _OutputBatcher {
   Timer? _timer;
   final Stopwatch _since = Stopwatch()..start();
 
-  static const Duration window = Duration(milliseconds: 12); // tunable knob
+  static const Duration window = Duration(milliseconds: 8); // tunable knob
 
   void add(String chunk) {
     _buf.write(chunk);
@@ -86,7 +91,11 @@ class RemoteHost extends RemoteChannel {
   final List<RemoteRoot> Function() roots;
   // Write actions that must touch WorkspacePage state (launch/close/rename a
   // session). Null on hosts that only expose read access.
-  final void Function(String projectPath, String agent)? onNewSession;
+  // workdir is an optional worktree path under the project; the handler validates
+  // it against the project root / its .worktrees/ before launching (the desktop
+  // layer owns the real project list, so the check lives there, not here).
+  final void Function(String projectPath, String agent, String? workdir)?
+      onNewSession;
   final void Function(String sid)? onCloseSession;
   final void Function(String sid, String name)? onRenameSession;
   // Config mutations (worktree/workspace/project add/remove) — run the matching
@@ -125,6 +134,13 @@ class RemoteHost extends RemoteChannel {
   // ~/Downloads/cc-recv (the workspace pops a desktop notification).
   void Function(String name, String path)? onFileReceived;
 
+  // onSessionFile fires when a phone sends a file from inside a session (the
+  // offer carried a sid — e.g. an image picked in the terminal screen) and it
+  // finished landing. The host has already pasted the saved path into that
+  // session's terminal (mirroring the desktop paste-image flow) so the agent can
+  // read it from disk; this callback just lets the workspace surface a toast.
+  void Function(String sid, String name, String path)? onSessionFile;
+
   // _fileRx assembles inbound file.* frames from clients into ~/Downloads/cc-recv.
   // No onOffer handler → the host auto-accepts (it trusts its own user's phone
   // pushes), immediately acking so the phone's sender starts streaming.
@@ -132,8 +148,21 @@ class RemoteHost extends RemoteChannel {
   FileReceiver get _fileRx => _fileRxInst ??= FileReceiver(
     openSink: (info) => openReceiveSink(info, host: true),
     sendFrame: send,
-    onComplete: (info, path) => onFileReceived?.call(info.name, path),
+    onComplete: _onFileComplete,
   );
+
+  // _onFileComplete routes a finished inbound file: a session-tagged file (sid)
+  // is pasted into that session's terminal as a path the agent can read; an
+  // untagged push just notifies via onFileReceived.
+  void _onFileComplete(IncomingFile info, String path) {
+    final sid = info.sid;
+    if (sid != null) {
+      _sessionById(sid)?.pasteText(path);
+      onSessionFile?.call(sid, info.name, path);
+    } else {
+      onFileReceived?.call(info.name, path);
+    }
+  }
 
   // Connected phones by connId → display name (from their hello frame), so a
   // desktop→phone send can fan out to each and label its progress row.
@@ -331,6 +360,7 @@ class RemoteHost extends RemoteChannel {
         onNewSession?.call(
           (f['project'] as String?) ?? '',
           (f['agent'] as String?) ?? 'claude',
+          f['workdir'] as String?,
         );
       case 'session.close':
         final sid = f['sid'] as String?;
@@ -471,7 +501,9 @@ class RemoteHost extends RemoteChannel {
     // 'ansi' = coloured re-wrap (historyAnsi), anything else = plain text
     // (default). Both re-wrap at the phone's width; 'text' drops colour.
     final mode = (f['historyMode'] ?? 'text').toString();
-    final bl = mode == 'ansi' ? s.historyAnsi() : s.historyText();
+    final bl = mode == 'ansi'
+        ? s.historyAnsi(maxLines: _maxReplayLines)
+        : s.historyText(maxLines: _maxReplayLines);
     for (var i = 0; i < bl.length;) {
       var end = min(i + _maxFrameChars, bl.length);
       if (end < bl.length && _isHighSurrogate(bl.codeUnitAt(end - 1))) end++;

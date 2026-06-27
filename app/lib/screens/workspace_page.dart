@@ -408,6 +408,12 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
       );
     };
+    // A file sent from inside a session (an image): the host already pasted its
+    // path into that session's terminal, so just confirm it landed.
+    _remoteHost.onSessionFile = (sid, name, path) {
+      if (!mounted) return;
+      snack(context, '手机发来图片：$name（已粘贴到会话）', clearPrevious: true);
+    };
     // Keep the mic button in sync with the recognizer (handles silence/timeout
     // auto-stop, not just explicit stop).
     _voice.onListeningChange = (v) {
@@ -1083,11 +1089,20 @@ class _WorkspacePageState extends State<WorkspacePage>
   };
 
   // --- remote (phone) session actions; wired into _remoteHost ---
-  void _remoteNewSession(String projectPath, String agent) {
+  void _remoteNewSession(String projectPath, String agent, String? workdir) {
     for (final ws in _cfg.workspaces) {
       for (final p in ws.projects) {
         if (p.path == projectPath) {
-          _launch(p.path, agent == 'codex' ? 'codex' : 'claude', ws.preLaunch);
+          // workdir lets the phone target a worktree. Only honor it when it's
+          // the project root or under its .worktrees/ — never launch the agent
+          // at an arbitrary directory a client asks for.
+          final dir =
+              (workdir != null &&
+                  (workdir == p.path ||
+                      workdir.startsWith('${p.path}/.worktrees/')))
+              ? workdir
+              : p.path;
+          _launch(dir, agent == 'codex' ? 'codex' : 'claude', ws.preLaunch);
           return;
         }
       }
