@@ -142,17 +142,9 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   void _openOrCloseInputConnectionIfNeeded() {
-    // PATCH cc-handoff: open the TextInput connection whenever the node has
-    // focus, instead of gating on consumeKeyboardToken(). Printable characters
-    // only reach the terminal through this connection (keyToTerminalKey returns
-    // null for letters), and on Windows/Linux desktop the keyboard token isn't
-    // reliably granted for a programmatic requestFocus() (tap → requestKeyboard),
-    // so the connection never attached and typing did nothing while paste — which
-    // writes to the PTY directly — still worked. macOS granted the token, hiding
-    // the bug. Opening on focus is safe on every platform (no soft keyboard here).
-    if (widget.focusNode.hasFocus) {
+    if (widget.focusNode.hasFocus && widget.focusNode.consumeKeyboardToken()) {
       _openInputConnection();
-    } else {
+    } else if (!widget.focusNode.hasFocus) {
       _closeInputConnectionIfNeeded();
     }
   }

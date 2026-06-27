@@ -827,6 +827,12 @@ class _TerminalPaneState extends State<TerminalPane> {
     return TerminalView(
       _terminal,
       controller: _controller,
+      // Windows: drive input from raw hardware key events (CustomKeyboardListener)
+      // instead of xterm's IME TextInput connection, which doesn't reliably
+      // deliver typed characters on Windows desktop — typing did nothing while
+      // paste (a direct PTY write) worked. macOS stays on the IME path (false),
+      // unchanged, so CJK composing in the terminal keeps working there.
+      hardwareKeyboardOnly: Platform.isWindows,
       onSecondaryTapDown: (details, _) => _showMenu(details.globalPosition),
       onKeyEvent: _onKeyEvent,
       theme: ccTerminalTheme,
