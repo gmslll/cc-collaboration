@@ -6,7 +6,9 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../local/agent_transcript.dart';
 import '../local/local_bus.dart';
+import '../local/prefs.dart';
 import '../notifications.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -444,6 +446,45 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     if (target == null) return err;
     out.write(target.renderSnapshot(lines));
     return null;
+  }
+
+  // readOutput is the bus-facing read entry (LocalBus.readOutput): it owns the
+  // screen-vs-transcript policy — the per-call `--transcript` flag OR the app's
+  // `ws.read_transcript` toggle — so the bus stays plumbing, then delegates to
+  // readTranscript / readSnapshot.
+  Future<String?> readOutput(String to, int lines, bool transcript, StringSink out) {
+    if (transcript || Prefs.getBool('ws.read_transcript')) {
+      return readTranscript(to, lines, out);
+    }
+    return Future.value(readSnapshot(to, lines, out));
+  }
+
+  // readTranscript is the structured alternative to readSnapshot: it renders the
+  // target's recent agent output from its on-disk transcript JSONL (assistant
+  // text + `[tool: …]` markers) instead of scraping the rendered screen, so the
+  // reader gets semantic content unaffected by TUI folding/wrapping/scroll. Used
+  // by the `msg read` channel when `--transcript` or the App toggle is on. Async
+  // (reads a file); same error contract as readSnapshot.
+  Future<String?> readTranscript(String to, int lines, StringSink out) async {
+    final (target, err) = _resolveTarget(to);
+    if (target == null) return err;
+    if (!target.isAgent) return '会话「${target.label}」不是 agent,没有 transcript';
+    final path = await resolveTranscriptPath(
+      agentKind: target.agentKind,
+      agentSessionId: target.agentSessionId,
+      workdir: target.workdir,
+    );
+    if (path == null) {
+      return '找不到「${target.label}」的 transcript(未捕获 session id 或日志不存在)';
+    }
+    try {
+      out.write(
+        await renderTranscriptTail(path, lines: lines, agentKind: target.agentKind),
+      );
+      return null;
+    } catch (e) {
+      return '读取 transcript 失败: $e';
+    }
   }
 
   // _sendToPeer is the menu callback: human forwards fill the target's input

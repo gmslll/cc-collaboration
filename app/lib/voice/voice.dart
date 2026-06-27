@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../local/agent_transcript.dart';
 import '../screens/terminal_pane.dart';
 import 'speaker.dart';
 import 'stt.dart';
@@ -164,79 +165,13 @@ class VoiceService {
     if (cached != null && cached.isNotEmpty && await File(cached).exists()) {
       return cached;
     }
-    final home = Platform.environment['HOME'] ?? '';
-    if (home.isEmpty) return null;
-    if (s.agentKind == 'codex') return _newestCodexRollout(home, s.workdir);
-    // claude: prefer the exact minted id (glob in case the cwd-encoded dir name
-    // differs from our guess), then fall back to the cwd's newest log — which
-    // covers legacy / `claude --continue` sessions that have no minted id.
-    final id = s.agentSessionId;
-    if (id != null && id.isNotEmpty) {
-      final projects = Directory('$home/.claude/projects');
-      if (await projects.exists()) {
-        await for (final d in projects.list(followLinks: false)) {
-          if (d is Directory) {
-            final f = File('${d.path}/$id.jsonl');
-            if (await f.exists()) return f.path;
-          }
-        }
-      }
-    }
-    return _newestClaudeInCwd(home, s.workdir);
-  }
-
-  // _newestClaudeInCwd returns the newest session log in claude's project dir for
-  // [workdir]. claude encodes the cwd as the dir name with '/' and '.' replaced
-  // by '-' (e.g. /a/github.com/b -> -a-github-com-b).
-  Future<String?> _newestClaudeInCwd(String home, String workdir) async {
-    final enc = workdir.replaceAll(RegExp(r'[/.]'), '-');
-    final dir = Directory('$home/.claude/projects/$enc');
-    if (!await dir.exists()) return null;
-    String? best;
-    DateTime? bestMod;
-    await for (final e in dir.list(followLinks: false)) {
-      if (e is! File || !e.path.endsWith('.jsonl')) continue;
-      final mod = (await e.stat()).modified;
-      if (bestMod == null || mod.isAfter(bestMod)) {
-        best = e.path;
-        bestMod = mod;
-      }
-    }
-    return best;
-  }
-
-  // _newestCodexRollout finds the most-recent rollout whose session_meta.cwd
-  // matches [workdir] (codex has no pre-assignable id, so we match by cwd). We
-  // sort candidates newest-first by mtime and read only each file's first line
-  // until one matches — so the common case (the active session is the newest
-  // rollout) costs a single JSON parse, not one per historical rollout.
-  Future<String?> _newestCodexRollout(String home, String workdir) async {
-    final root = Directory('$home/.codex/sessions');
-    if (!await root.exists()) return null;
-    final files = <(DateTime, String)>[];
-    await for (final e in root.list(recursive: true, followLinks: false)) {
-      if (e is File &&
-          e.path.endsWith('.jsonl') &&
-          e.path.contains('rollout-')) {
-        files.add(((await e.stat()).modified, e.path));
-      }
-    }
-    files.sort((a, b) => b.$1.compareTo(a.$1)); // newest first
-    for (final (_, path) in files) {
-      try {
-        final first = await File(path)
-            .openRead()
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .first;
-        if ((jsonDecode(first) as Map)['payload']?['cwd'] == workdir) {
-          return path;
-        }
-      } catch (_) {
-        continue;
-      }
-    }
-    return null;
+    // Resolution (claude id/cwd, codex rollout) lives in the shared
+    // agent_transcript module, reused by the local-bus transcript read.
+    return resolveTranscriptPath(
+      agentKind: s.agentKind,
+      agentSessionId: s.agentSessionId,
+      workdir: s.workdir,
+    );
   }
 
   // --- STT: voice → text (delegated to the shared SpeechInput) ---------------

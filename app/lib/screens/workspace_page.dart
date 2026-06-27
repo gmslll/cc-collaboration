@@ -202,7 +202,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   late final LocalBus _localBus = LocalBus(
     registry: localBusRegistry,
     deliver: deliverLocalMessage,
-    readSnapshot: readSnapshot,
+    readOutput: readOutput,
   );
 
   // Relay presence: while the workspace is open we hold an SSE subscription (so
@@ -223,6 +223,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   final VoiceService _voice = VoiceService();
   bool _ttsOn = Prefs.getBool('ws.tts');
   bool _listening = false;
+  // When on, `cc-handoff msg read` reads a peer's structured transcript (assistant
+  // text + tool markers, from its on-disk JSONL) instead of scraping the screen.
+  // `msg read --transcript` forces it per-call regardless of this toggle. Read in
+  // LocalBus._process via Prefs('ws.read_transcript').
+  bool _readTranscript = Prefs.getBool('ws.read_transcript');
 
   void _onRemoteChange() {
     if (!mounted) return;
@@ -2506,12 +2511,34 @@ class _WorkspacePageState extends State<WorkspacePage>
             _parkedBadge(),
           ],
           const SizedBox(width: 4),
+          _transcriptToggle(),
           _ttsToggle(),
           _micButton(),
         ],
       ),
     );
   }
+
+  // _transcriptToggle switches how `msg read` reads a peer's output: structured
+  // transcript (on) vs screen-scrape (off). Persisted; LocalBus reads the same
+  // Pref. `msg read --transcript` overrides it per-call.
+  Widget _transcriptToggle() => IconButton(
+    tooltip: _readTranscript
+        ? '读对方输出: transcript 结构化 (点击切回截屏)'
+        : '读对方输出: 截屏 (点击切到 transcript 结构化)',
+    visualDensity: VisualDensity.compact,
+    onPressed: () {
+      final on = !_readTranscript;
+      setState(() => _readTranscript = on);
+      Prefs.setBool('ws.read_transcript', on);
+      _snack(on ? 'msg read 改用 transcript(结构化)' : 'msg read 改回截屏');
+    },
+    icon: Icon(
+      _readTranscript ? Icons.article_rounded : Icons.article_outlined,
+      size: 18,
+      color: _readTranscript ? CcColors.accent : CcColors.muted,
+    ),
+  );
 
   // _ttsToggle turns reading-agent-replies-aloud on/off (persisted). Enabling it
   // arms the baseline on the active session so only future turns are read.

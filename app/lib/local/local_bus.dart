@@ -35,16 +35,22 @@ class LocalBus {
   // or a human-readable error (target missing/ambiguous/self) the bus writes
   // back as <id>.err so `msg send` can report it.
   final String? Function(LocalMsg msg) deliver;
-  // readSnapshot renders a target session's recent output into [out] for a
-  // kind:"read" request; returns null on success (and the rendered text becomes
-  // the <id>.ok payload `msg read` reads) or a human-readable error → <id>.err.
-  // Same error contract as [deliver].
-  final String? Function(String to, int lines, StringSink out) readSnapshot;
+  // readOutput renders a target session's recent output into [out] for a
+  // kind:"read" request: [transcript] carries the per-call --transcript flag, and
+  // the HOST decides screen-scrape vs structured transcript (also consulting its
+  // own toggle) — the bus stays dumb plumbing, no UI policy here. Returns null on
+  // success (the rendered text becomes the <id>.ok payload) or an error → <id>.err.
+  final Future<String?> Function(
+    String to,
+    int lines,
+    bool transcript,
+    StringSink out,
+  ) readOutput;
 
   LocalBus({
     required this.registry,
     required this.deliver,
-    required this.readSnapshot,
+    required this.readOutput,
   });
 
   StreamSubscription<FileSystemEvent>? _watch;
@@ -142,7 +148,12 @@ class LocalBus {
           if (kind == 'read') {
             final lines = (m['lines'] is num) ? (m['lines'] as num).toInt() : 200;
             final out = StringBuffer();
-            err = readSnapshot((m['to'] ?? '').toString(), lines, out);
+            err = await readOutput(
+              (m['to'] ?? '').toString(),
+              lines,
+              m['transcript'] == true,
+              out,
+            );
             if (err == null) okBody = out.toString();
           } else {
             err = deliver(LocalMsg(
