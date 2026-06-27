@@ -320,20 +320,38 @@ class TerminalSession {
       shell = Platform.environment['SHELL'] ?? '/bin/sh';
       args = cmd.isEmpty ? const ['-i', '-l'] : ['-i', '-c', cmd];
     }
-    final pty = Pty.start(
-      shell,
-      arguments: args,
-      // Declare a real terminal type so full-screen TUIs (claude/codex) enable
-      // mouse reporting → wheel scroll reaches them. A Finder-launched .app may
-      // otherwise have no TERM. flutter_pty merges this over Platform.environment.
-      // The CC_* vars wire this session into the local message bus: the agent
-      // inside calls `"$CC_HANDOFF_BIN" msg send <peer> …` (or bare `cc-handoff`
-      // — its dir is prepended to PATH) to reach a sibling session.
-      environment: _sessionEnv(),
-      workingDirectory: workdir,
-      rows: terminal.viewHeight,
-      columns: terminal.viewWidth,
-    );
+    // Resolve the working directory: expand a leading ~ and fall back to the home
+    // dir if it doesn't exist, so a stale or Unix-style path can't make the spawn
+    // throw (Pty.start hands workingDirectory straight to the OS).
+    var wd = workdir;
+    if (wd.startsWith('~')) {
+      wd = wd == '~' ? homeDir() : '${homeDir()}${wd.substring(1)}';
+    }
+    if (wd.isEmpty || !Directory(wd).existsSync()) wd = homeDir();
+
+    final Pty pty;
+    try {
+      pty = Pty.start(
+        shell,
+        arguments: args,
+        // Declare a real terminal type so full-screen TUIs (claude/codex) enable
+        // mouse reporting → wheel scroll reaches them. The CC_* vars wire this
+        // session into the local message bus: the agent inside calls
+        // `"$CC_HANDOFF_BIN" msg send <peer> …` (or bare `cc-handoff` — its dir is
+        // prepended to PATH) to reach a sibling session. NOTE: flutter_pty forwards
+        // only a fixed env allowlist plus this map — NOT the full parent env — so
+        // _sessionEnv() seeds the full environment on Windows itself (without it
+        // cmd.exe has no SystemRoot and the terminal spawns blank).
+        environment: _sessionEnv(),
+        workingDirectory: wd,
+        rows: terminal.viewHeight,
+        columns: terminal.viewWidth,
+      );
+    } catch (e) {
+      // A spawn failure used to leave a silent blank terminal — surface it.
+      terminal.write('\r\n\x1b[31m[启动失败] 无法启动 $shell:\r\n$e\x1b[0m\r\n');
+      return;
+    }
     _pty = pty;
     pty.output
         .cast<List<int>>()
@@ -345,7 +363,9 @@ class TerminalSession {
           if (isAgent) _markActivity(chunk);
         });
     pty.exitCode.then((code) {
-      terminal.write('\r\n\x1b[90m[已退出: $code]\x1b[0m\r\n');
+      // Non-zero exits in red so a process that dies on startup isn't mistaken
+      // for an empty terminal.
+      terminal.write('\r\n\x1b[${code == 0 ? '90' : '31'}m[已退出: $code]\x1b[0m\r\n');
       // 127 = command not found: the agent binary couldn't be launched. Point
       // the user at the per-agent override so they can fix it.
       if (code == 127 && (agent == 'claude' || agent == 'codex')) {
@@ -468,9 +488,17 @@ class TerminalSession {
   // mouse) plus the local-bus wiring (CC_SESSION_ID/NAME for identity, CC_BUS_DIR
   // + CC_HANDOFF_BIN for the `msg` CLI). The cc-handoff dir is prepended to PATH
   // so a bundled (non-system) binary is still callable by bare name.
+  //
+  // flutter_pty 0.4.2 does NOT forward the full parent environment — it copies
+  // only a fixed POSIX allowlist (HOME/PATH/USER/LOGNAME/DISPLAY/LC_TYPE) plus
+  // whatever we pass here. That's enough for /bin/sh on macOS, but cmd.exe can't
+  // even start without SystemRoot (and needs ComSpec/PATHEXT/TEMP/…), so on
+  // Windows we must seed the full Platform.environment ourselves — otherwise the
+  // terminal spawns blank. macOS keeps the lean map (don't change what works).
   Map<String, String> _sessionEnv() {
     final bin = Cli.binPath();
     final env = <String, String>{
+      if (Platform.isWindows) ...Platform.environment,
       'TERM': 'xterm-256color',
       'COLORTERM': 'truecolor',
       'CC_SESSION_ID': id,
