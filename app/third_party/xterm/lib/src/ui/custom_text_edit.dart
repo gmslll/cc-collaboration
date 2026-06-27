@@ -2,12 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-// PATCH cc-handoff (TEMP DIAGNOSTIC): when the app sets this, input-pipeline
-// events are mirrored out so we can see — on a packaged Windows build — exactly
-// where keystrokes are lost (focus change, connection attach, raw key events,
-// updateEditingValue). Remove once Windows IME input is sorted.
-void Function(String msg)? kXtermInputDebug;
-
 class CustomTextEdit extends StatefulWidget {
   CustomTextEdit({
     super.key,
@@ -157,8 +151,6 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   KeyEventResult _onKeyEvent(FocusNode focusNode, KeyEvent event) {
-    kXtermInputDebug?.call(
-        'key ${event.runtimeType} ${event.logicalKey.keyLabel} ch="${event.character}" comp=${_currentEditingState.composing}');
     if (_currentEditingState.composing.isCollapsed) {
       return widget.onKeyEvent(focusNode, event);
     }
@@ -167,8 +159,6 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   void _openOrCloseInputConnectionIfNeeded() {
-    kXtermInputDebug?.call(
-        'focuschg hasFocus=${widget.focusNode.hasFocus} hasConn=$hasInputConnection');
     // PATCH cc-handoff: open the connection whenever the node has focus, instead
     // of gating on consumeKeyboardToken() — on Windows desktop the token isn't
     // reliably granted for a tap-driven requestFocus, so the connection never
@@ -200,7 +190,6 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
       );
 
       _connection = TextInput.attach(this, config);
-      kXtermInputDebug?.call('conn attached');
 
       _connection!.show();
 
@@ -246,7 +235,6 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
   @override
   void updateEditingValue(TextEditingValue value) {
-    kXtermInputDebug?.call('uev "${value.text}" comp=${value.composing}');
     _currentEditingState = value;
 
     // Get input after composing is done
@@ -294,7 +282,7 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
   @override
   void connectionClosed() {
-    kXtermInputDebug?.call('conn closed');
+    // print('connectionClosed');
   }
 
   @override

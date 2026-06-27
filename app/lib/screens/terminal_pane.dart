@@ -350,11 +350,6 @@ class TerminalSession {
       return;
     }
     _pty = pty;
-    // TEMP DIAGNOSTIC: mirror xterm's input-pipeline events into this terminal so
-    // we can see, on a packaged Windows build, exactly where keystrokes are lost
-    // (focus / connection attach / key events / updateEditingValue). Remove with
-    // the xterm diagnostic patch once Windows IME input is sorted.
-    kXtermInputDebug = (s) => terminal.write('\x1b[35m‹$s›\x1b[0m\r\n');
     pty.output
         .cast<List<int>>()
         .transform(const Utf8Decoder(allowMalformed: true))
@@ -857,11 +852,14 @@ class _TerminalPaneState extends State<TerminalPane> {
     return TerminalView(
       _terminal,
       controller: _controller,
-      // All platforms use xterm's IME TextInput path so input-method (Chinese)
-      // composition reaches the terminal, not just raw ASCII. Two vendored-xterm
-      // patches make this work on Windows: open the connection on focus, and
-      // report the terminal's real size+transform so the platform routes input
-      // there (see custom_text_edit.dart, marked PATCH cc-handoff).
+      // Windows: raw hardware key events (CustomKeyboardListener) — diagnostics
+      // proved the Flutter Windows engine delivers KEY events (with .character) to
+      // xterm's custom text client but never delivers text-input/IME
+      // (updateEditingValue), so ASCII is driven from key events here. IME (CJK)
+      // can't reach the terminal this way (the IME consumes the keys and the dead
+      // connection swallows the composition) — handled separately. macOS (false)
+      // keeps the full IME path, so Chinese composing works there.
+      hardwareKeyboardOnly: Platform.isWindows,
       onSecondaryTapDown: (details, _) => _showMenu(details.globalPosition),
       onKeyEvent: _onKeyEvent,
       theme: ccTerminalTheme,
