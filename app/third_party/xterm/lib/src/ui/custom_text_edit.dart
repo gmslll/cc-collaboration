@@ -142,9 +142,16 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   void _openOrCloseInputConnectionIfNeeded() {
-    if (widget.focusNode.hasFocus && widget.focusNode.consumeKeyboardToken()) {
+    // PATCH cc-handoff: open the IME TextInput connection whenever the node has
+    // focus, instead of gating on consumeKeyboardToken(). All typed text — ASCII
+    // and IME composition (Chinese etc.) — reaches the terminal only through this
+    // connection, and on Windows desktop the keyboard token isn't reliably granted
+    // for a tap-driven requestFocus, so the connection never attached and nothing
+    // could be typed. Opening on focus is safe on every platform (no soft keyboard
+    // here); macOS already granted the token, so its behaviour is unchanged.
+    if (widget.focusNode.hasFocus) {
       _openInputConnection();
-    } else if (!widget.focusNode.hasFocus) {
+    } else {
       _closeInputConnectionIfNeeded();
     }
   }
