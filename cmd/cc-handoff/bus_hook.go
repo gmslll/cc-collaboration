@@ -36,6 +36,14 @@ func runBusHook(ctx context.Context, args []string) error {
 type busHookEvent struct {
 	HookEventName  string `json:"hook_event_name"`
 	StopHookActive bool   `json:"stop_hook_active"`
+	// AgentID is present ONLY when the hook fires inside a Task subagent call
+	// (per Claude Code's documented hook payload). A subagent inherits the
+	// parent's CC_SESSION_ID via env, so without this gate its tool calls would
+	// drain the PARENT session's inbox into the subagent's context and delete
+	// it — the parent agent and user would never see those peer messages. We
+	// skip draining whenever AgentID is set so messages stay parked for the
+	// parent's own next tool boundary / Stop / the app's idle sweep.
+	AgentID string `json:"agent_id"`
 }
 
 func runBusHookDrain() error {
@@ -55,11 +63,19 @@ func runBusHookDrain() error {
 		return nil
 	}
 
+	// Running inside a Task subagent: the inherited CC_SESSION_ID points at the
+	// PARENT's inbox, so draining here would steal the parent's peer messages
+	// into this subagent's context (and ClearMsgs would delete them). Bail so
+	// they stay parked for the parent session itself. See busHookEvent.AgentID.
+	if ev.AgentID != "" {
+		return nil
+	}
+
 	// A Stop already inside a hook-driven continuation must not re-block (a
 	// wake-loop). Bail BEFORE draining so the messages stay parked for the next
 	// tool boundary (PostToolUse) or a later top-level Stop — clearing them here
 	// would silently drop them.
-	if (ev.HookEventName == "Stop" || ev.HookEventName == "SubagentStop") && ev.StopHookActive {
+	if ev.HookEventName == "Stop" && ev.StopHookActive {
 		return nil
 	}
 
@@ -92,15 +108,15 @@ func runBusHookDrain() error {
 	return nil
 }
 
-// busHookResponse shapes the hook output for the event. Stop/SubagentStop block
-// to pull the agent into a fresh turn with the messages (the cross-machine
-// wake-on-comment pattern); every other event (PostToolUse, and the empty
-// default) injects additionalContext without blocking so the running turn keeps
-// going. The "Stop already inside a continuation" case is handled upstream in
-// runBusHookDrain (it bails before draining so messages stay parked), so this
-// is only reached when a response is actually wanted.
+// busHookResponse shapes the hook output for the event. Stop blocks to pull the
+// agent into a fresh turn with the messages (the cross-machine wake-on-comment
+// pattern); every other event (PostToolUse, and the empty default) injects
+// additionalContext without blocking so the running turn keeps going. The "Stop
+// already inside a continuation" case is handled upstream in runBusHookDrain (it
+// bails before draining so messages stay parked), so this is only reached when a
+// response is actually wanted.
 func busHookResponse(ev busHookEvent, ctxText string, n int) map[string]any {
-	if ev.HookEventName == "Stop" || ev.HookEventName == "SubagentStop" {
+	if ev.HookEventName == "Stop" {
 		return map[string]any{
 			"decision": "block",
 			"reason":   fmt.Sprintf("cc-handoff: 收到 %d 条同机会话消息,见 hookSpecificOutput.additionalContext。", n),
