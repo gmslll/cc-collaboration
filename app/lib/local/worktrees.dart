@@ -19,9 +19,16 @@ class Worktree {
 // path + branch of each worktree. Returns [] on any error (not a repo, no git).
 Future<List<Worktree>> listWorktrees(String projectPath) async {
   try {
-    final shell = Platform.environment['SHELL'] ?? '/bin/sh';
-    final r = await Process.run(shell,
-        ['-lc', 'git -C ${shQuote(projectPath)} worktree list --porcelain']);
+    final ProcessResult r;
+    if (Platform.isWindows) {
+      // No POSIX shell on Windows; run git directly (the GUI inherits PATH).
+      r = await Process.run(
+          'git', ['-C', projectPath, 'worktree', 'list', '--porcelain']);
+    } else {
+      final shell = Platform.environment['SHELL'] ?? '/bin/sh';
+      r = await Process.run(shell,
+          ['-lc', 'git -C ${shQuote(projectPath)} worktree list --porcelain']);
+    }
     if (r.exitCode != 0) return const [];
 
     final res = <Worktree>[];

@@ -9,16 +9,25 @@ class GitException implements Exception {
   String toString() => message;
 }
 
-// _git runs a git command in [dir] via the login shell (so a double-clicked app
-// inherits the user's PATH, same as worktrees.dart) and returns stdout. Throws
-// GitException(stderr) on a non-zero exit.
+// _git runs a git command in [dir] and returns stdout, throwing
+// GitException(stderr) on an unexpected exit. On POSIX it goes through the login
+// shell so a double-clicked app inherits the user's PATH (same as
+// worktrees.dart). On Windows there is no POSIX shell — and the GUI already
+// inherits the full user environment — so git runs directly, with the
+// shQuote-built command reversed into an argv list (cmd.exe can't parse the
+// POSIX quotes, and wrapping git in cmd.exe would also swallow its exit code).
 Future<String> _git(
   String dir,
   String args, {
   Set<int> okExit = const {0},
 }) async {
-  final shell = Platform.environment['SHELL'] ?? '/bin/sh';
-  final r = await Process.run(shell, ['-lc', 'git -C ${shQuote(dir)} $args']);
+  final ProcessResult r;
+  if (Platform.isWindows) {
+    r = await Process.run('git', splitPosixCommand('-C ${shQuote(dir)} $args'));
+  } else {
+    final shell = Platform.environment['SHELL'] ?? '/bin/sh';
+    r = await Process.run(shell, ['-lc', 'git -C ${shQuote(dir)} $args']);
+  }
   if (!okExit.contains(r.exitCode)) {
     final err = (r.stderr as String).trim();
     throw GitException(err.isNotEmpty ? err : 'git 失败 (exit ${r.exitCode})');

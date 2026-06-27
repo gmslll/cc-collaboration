@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:toml/toml.dart';
 
+import 'platform.dart';
+
 // A project inside a workspace: a name + its absolute local path + the GitHub
 // URL it was cloned from (empty if added by local path), used for the PR view.
 class ProjectCfg {
@@ -70,7 +72,7 @@ class AppConfig {
 
   String? repoPath(String name) => repos[name];
 
-  static String configPath() => '${_home()}/.config/cc-handoff/config.toml';
+  static String configPath() => '${ccConfigDir()}/config.toml';
 
   // saveAuth writes/merges the auth keys (relay_url/token/identity) into the same
   // config.toml the CLI reads, so the bundled/installed cc-handoff CLI the app
@@ -146,7 +148,7 @@ class AppConfig {
         final name = (p['name'] ?? '').toString();
         if (name.isEmpty) continue;
         var path = _expand((p['path'] ?? '').toString());
-        if (path.isNotEmpty && !path.startsWith('/')) path = '$base/$path';
+        if (path.isNotEmpty && !_isAbsolutePath(path)) path = '$base/$path';
         if (path.isEmpty) continue;
         // A project name is its identity within a workspace (repos map, CLI
         // remove, worktree lookup all key by it). Skip duplicate [[project]]
@@ -165,7 +167,13 @@ class AppConfig {
   }
 }
 
-String _home() => Platform.environment['HOME'] ?? '';
+String _home() => homeDir();
+
+// _isAbsolutePath accepts POSIX (/…) and Windows (C:\…, C:/…, \\unc) roots so a
+// project's absolute path in config.toml isn't mistaken for relative and
+// prefixed with the workspace base dir on Windows.
+bool _isAbsolutePath(String p) =>
+    p.startsWith('/') || p.startsWith(r'\') || RegExp(r'^[A-Za-z]:').hasMatch(p);
 
 String _expand(String p) {
   if (p == '~') return _home();

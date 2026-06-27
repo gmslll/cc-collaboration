@@ -13,6 +13,7 @@ import 'package:xterm/xterm.dart';
 import '../local/agent_resolver.dart';
 import '../local/cli.dart';
 import '../local/local_bus.dart';
+import '../local/platform.dart';
 import '../terminal_theme.dart';
 import '../terminal_mouse.dart';
 import '../widgets.dart';
@@ -304,11 +305,21 @@ class TerminalSession {
       _invocation = await AgentResolver.resolve(agent);
     }
     if (_disposed) return; // closed during the async resolve
-    final shell = Platform.environment['SHELL'] ?? '/bin/sh';
-    // Empty command = a plain interactive login shell (typeable + scrollable);
+    // Empty command = a plain interactive shell (typeable + scrollable);
     // otherwise run the (resolved) agent command and let the shell exit with it.
     final cmd = _resolvedCommand();
-    final args = cmd.isEmpty ? const ['-i', '-l'] : ['-i', '-c', cmd];
+    final String shell;
+    final List<String> args;
+    if (Platform.isWindows) {
+      // Windows has no /bin/sh and no SHELL; use the command processor. A bare
+      // cmd.exe gives an interactive prompt; `/c <cmd>` runs the agent and exits
+      // with it. (POSIX `-i -l` flags would make cmd.exe error out.)
+      shell = Platform.environment['COMSPEC'] ?? 'cmd.exe';
+      args = cmd.isEmpty ? const [] : ['/c', cmd];
+    } else {
+      shell = Platform.environment['SHELL'] ?? '/bin/sh';
+      args = cmd.isEmpty ? const ['-i', '-l'] : ['-i', '-c', cmd];
+    }
     final pty = Pty.start(
       shell,
       arguments: args,
@@ -378,8 +389,7 @@ class TerminalSession {
   }
 
   Future<void> _captureCodexId(DateTime since) async {
-    final home = Platform.environment['CODEX_HOME'] ??
-        '${Platform.environment['HOME'] ?? ''}/.codex';
+    final home = Platform.environment['CODEX_HOME'] ?? '${homeDir()}/.codex';
     final sessions = Directory('$home/sessions');
     for (var attempt = 0; attempt < 30; attempt++) {
       await Future.delayed(const Duration(milliseconds: 600));

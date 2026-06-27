@@ -2,15 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'platform.dart';
+
 // localBusDir is the per-user directory the local session bus lives in. Sessions
 // the desktop app spawns get CC_BUS_DIR pointing here; the bundled `cc-handoff
 // msg` CLI reads sessions.json and drops outgoing messages into outbox/ for the
-// running app to deliver. Mirrors AppConfig's ~/.config/cc-handoff convention so
-// everything cc-handoff lives under one tree.
-String localBusDir() {
-  final home = Platform.environment['HOME'] ?? '';
-  return '$home/.config/cc-handoff/local-bus';
-}
+// running app to deliver. Mirrors AppConfig's cc-handoff config dir (ccConfigDir)
+// so everything cc-handoff lives under one tree on every platform.
+String localBusDir() => '${ccConfigDir()}/local-bus';
 
 // LocalMsg is one point-to-point note from one local session to another. [to]
 // may be a session id (ts0) or a label; [submit] appends a newline so the

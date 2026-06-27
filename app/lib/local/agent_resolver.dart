@@ -49,6 +49,7 @@ class AgentResolver {
   }
 
   static Future<String> _probe(String agent) async {
+    if (Platform.isWindows) return _probeWindows(agent);
     // Login + interactive shell so nvm/rc-file PATH additions apply.
     final shell = Platform.environment['SHELL'] ?? '/bin/sh';
     try {
@@ -71,6 +72,33 @@ class AgentResolver {
       '$home/.bun/bin/$agent',
     ]) {
       if (File(p).existsSync()) return p;
+    }
+    return '';
+  }
+
+  // _probeWindows resolves the agent on Windows: `where` (the PATH lookup the
+  // GUI inherits the full environment for), then the npm-global install spot
+  // (%AppData%\npm\<agent>.cmd) most CLIs land in. Returns '' to fall back to
+  // the bare name. POSIX `command -v` / ~/.cac|.bun paths don't apply here.
+  static Future<String> _probeWindows(String agent) async {
+    try {
+      final r = await Process.run('where', [agent]);
+      if (r.exitCode == 0) {
+        final line = (r.stdout as String)
+            .split('\n')
+            .map((s) => s.trim())
+            .firstWhere((s) => s.isNotEmpty, orElse: () => '');
+        if (line.isNotEmpty && File(line).existsSync()) return line;
+      }
+    } catch (_) {}
+    final appData = Platform.environment['APPDATA'] ?? '';
+    if (appData.isNotEmpty) {
+      for (final p in <String>[
+        '$appData\\npm\\$agent.cmd',
+        '$appData\\npm\\$agent.exe',
+      ]) {
+        if (File(p).existsSync()) return p;
+      }
     }
     return '';
   }
