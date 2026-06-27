@@ -14,6 +14,27 @@
 // failed with "Failed to create process" for e.g. a Chinese working directory.
 // These now decode properly with MultiByteToWideChar(CP_UTF8, …).
 
+// utf8_to_wide decodes a NUL-terminated UTF-8 string into a freshly malloc'd
+// UTF-16 string (caller frees). NULL on NULL input or conversion failure.
+static LPWSTR utf8_to_wide(const char *src)
+{
+    if (src == NULL)
+    {
+        return NULL;
+    }
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
+    if (wlen <= 0)
+    {
+        return NULL;
+    }
+    LPWSTR wide = malloc(wlen * sizeof(WCHAR));
+    if (wide != NULL)
+    {
+        MultiByteToWideChar(CP_UTF8, 0, src, -1, wide, wlen);
+    }
+    return wide;
+}
+
 static LPWSTR build_command(char *executable, char **arguments)
 {
     // Assemble the UTF-8 command line, then decode it to UTF-16 in one pass.
@@ -55,13 +76,7 @@ static LPWSTR build_command(char *executable, char **arguments)
     }
     utf8[pos] = 0;
 
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
-    LPWSTR command = (wlen > 0) ? malloc(wlen * sizeof(WCHAR)) : NULL;
-    if (command != NULL)
-    {
-        MultiByteToWideChar(CP_UTF8, 0, utf8, -1, command, wlen);
-    }
-
+    LPWSTR command = utf8_to_wide(utf8);
     free(utf8);
     return command;
 }
@@ -114,24 +129,7 @@ static LPWSTR build_environment(char **environment)
 
 static LPWSTR build_working_directory(char *working_directory)
 {
-    if (working_directory == NULL)
-    {
-        return NULL;
-    }
-
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, working_directory, -1, NULL, 0);
-    if (wlen <= 0)
-    {
-        return NULL;
-    }
-
-    LPWSTR block = malloc(wlen * sizeof(WCHAR));
-    if (block != NULL)
-    {
-        MultiByteToWideChar(CP_UTF8, 0, working_directory, -1, block, wlen);
-    }
-
-    return block;
+    return utf8_to_wide(working_directory);
 }
 
 typedef struct ReadLoopOptions
