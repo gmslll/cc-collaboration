@@ -120,13 +120,30 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     if (!hasInputConnection) {
       return;
     }
+    _updateSizeAndTransform();
+    final box = context.findRenderObject();
+    if (box is RenderBox && box.hasSize) {
+      // caretRect arrives in global coords; map it into the editable's local
+      // space (matching the transform reported by _updateSizeAndTransform).
+      _connection?.setCaretRect(box.globalToLocal(caretRect.topLeft) & caretRect.size);
+    }
+  }
 
-    _connection?.setEditableSizeAndTransform(
-      rect.size,
-      Matrix4.translationValues(0, 0, 0),
-    );
-
-    _connection?.setCaretRect(caretRect);
+  // PATCH cc-handoff: report the terminal's true size and transform-to-window so
+  // the platform text input (and IME) routes characters here. Upstream sent a
+  // bogus rect.size + identity transform, which Windows treats as an invalid
+  // field and silently drops ALL input (ASCII and IME composition alike) — the
+  // terminal could be typed into on macOS (lenient) but not on Windows. This
+  // mirrors what Flutter's own EditableText does (getTransformTo(null)).
+  void _updateSizeAndTransform() {
+    if (!hasInputConnection) {
+      return;
+    }
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) {
+      return;
+    }
+    _connection!.setEditableSizeAndTransform(box.size, box.getTransformTo(null));
   }
 
   void _onFocusChange() {
@@ -142,13 +159,10 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   void _openOrCloseInputConnectionIfNeeded() {
-    // PATCH cc-handoff: open the IME TextInput connection whenever the node has
-    // focus, instead of gating on consumeKeyboardToken(). All typed text — ASCII
-    // and IME composition (Chinese etc.) — reaches the terminal only through this
-    // connection, and on Windows desktop the keyboard token isn't reliably granted
-    // for a tap-driven requestFocus, so the connection never attached and nothing
-    // could be typed. Opening on focus is safe on every platform (no soft keyboard
-    // here); macOS already granted the token, so its behaviour is unchanged.
+    // PATCH cc-handoff: open the connection whenever the node has focus, instead
+    // of gating on consumeKeyboardToken() — on Windows desktop the token isn't
+    // reliably granted for a tap-driven requestFocus, so the connection never
+    // attached. Safe on every platform (no soft keyboard here).
     if (widget.focusNode.hasFocus) {
       _openInputConnection();
     } else {
@@ -179,9 +193,14 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
       _connection!.show();
 
-      // setEditableRect(Rect.zero, Rect.zero);
-
       _connection!.setEditingState(_initEditingState);
+
+      // PATCH cc-handoff: push the editable size/transform once the connection is
+      // up (don't wait for the next terminal repaint to call setEditableRect), so
+      // input routes immediately on Windows.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updateSizeAndTransform();
+      });
     }
   }
 

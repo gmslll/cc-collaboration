@@ -852,10 +852,11 @@ class _TerminalPaneState extends State<TerminalPane> {
     return TerminalView(
       _terminal,
       controller: _controller,
-      // All platforms use xterm's IME TextInput path so input-method (Chinese
-      // etc.) composition reaches the terminal — not just raw ASCII keys. The
-      // connection is made to attach reliably on Windows by the open-on-focus
-      // patch in third_party/xterm/.../custom_text_edit.dart.
+      // All platforms use xterm's IME TextInput path so input-method (Chinese)
+      // composition reaches the terminal, not just raw ASCII. Two vendored-xterm
+      // patches make this work on Windows: open the connection on focus, and
+      // report the terminal's real size+transform so the platform routes input
+      // there (see custom_text_edit.dart, marked PATCH cc-handoff).
       onSecondaryTapDown: (details, _) => _showMenu(details.globalPosition),
       onKeyEvent: _onKeyEvent,
       theme: ccTerminalTheme,
