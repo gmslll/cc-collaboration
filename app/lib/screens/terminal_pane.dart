@@ -514,8 +514,45 @@ class TerminalSession {
   // programmatically delivered message; sendText stays raw for keystrokes.
   void pasteText(String s, {bool submit = false}) {
     sendText('\x1b[200~$s\x1b[201~');
-    if (submit) sendText('\r');
+    if (!submit) return;
+    // Send Enter after a short delay (a \r in the same instant as ESC[201~ lands
+    // before the TUI has committed the paste and gets swallowed → text sits in
+    // the input box unsent). The delay alone is a guess, so [_ensureSubmitted] is
+    // the backstop: it verifies the box actually cleared and re-sends Enter if not.
+    Future.delayed(_submitDelay, () {
+      if (_disposed) return;
+      final before = renderSnapshot(_submitCheckLines);
+      sendText('\r');
+      _ensureSubmitted(before, 0);
+    });
   }
+
+  // _ensureSubmitted is the auto-submit backstop. [before] is the bottom input
+  // region snapshotted with our text sitting in it, right before the \r. Shortly
+  // after, we snapshot again: if it's UNCHANGED the \r was swallowed (text still
+  // parked unsent) → resend Enter, up to [_submitRetries] times. Any change
+  // (input cleared, message echoed back, agent started) means it submitted →
+  // stop checking. Comparing before/after (not text-matching our message) avoids
+  // a false hit from the just-submitted message echoing near the bottom; a stray
+  // resend (if it had already submitted) is a harmless Enter on an empty prompt.
+  void _ensureSubmitted(String before, int attempt) {
+    if (attempt >= _submitRetries) return;
+    Future.delayed(_submitCheckDelay, () {
+      if (_disposed) return;
+      if (renderSnapshot(_submitCheckLines) != before) return; // cleared → sent
+      sendText('\r'); // unchanged → \r was swallowed → resend
+      _ensureSubmitted(before, attempt + 1);
+    });
+  }
+
+  // Auto-submit timing/backstop knobs. _submitDelay: human-scale gap after the
+  // paste before the first Enter. The backstop re-checks after _submitCheckDelay,
+  // up to _submitRetries times, over the bottom _submitCheckLines lines (the
+  // input-box region). Only gates programmatic delivery, never typing.
+  static const Duration _submitDelay = Duration(milliseconds: 300);
+  static const Duration _submitCheckDelay = Duration(milliseconds: 350);
+  static const int _submitRetries = 2;
+  static const int _submitCheckLines = 8;
 
   // resizeFromRemote lets a connected phone size the PTY to its viewport.
   void resizeFromRemote(int rows, int cols) {
