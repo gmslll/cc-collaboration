@@ -163,6 +163,10 @@ class RemoteClient extends RemoteChannel {
   // per `sessions` entry, enriched with overview[sid] when present (degrades to
   // title-only otherwise).
   Map<String, SessionCard> overview = {};
+  // screens holds the latest one-shot terminal snapshot per session id, fetched
+  // by the quick-reply popup via requestScreen (distinct from the full mirror's
+  // streamed output). Updated on each `screen` reply.
+  Map<String, String> screens = {};
 
   // onReplyText fires when the desktop pushes an agent's clean reply text for a
   // watched session (the terminal screen reads it aloud). Not a ChangeNotifier
@@ -527,6 +531,12 @@ class RemoteClient extends RemoteChannel {
         }
         overview = ov;
         notifyListeners();
+      case 'screen':
+        final sid = f['sid'] as String?;
+        if (sid != null) {
+          screens[sid] = (f['text'] as String?) ?? '';
+          notifyListeners();
+        }
       case 'roots':
         roots = [
           for (final r in (f['items'] as List? ?? []))
@@ -685,6 +695,11 @@ class RemoteClient extends RemoteChannel {
     touchSession(sid); // input is an operation → keep this session's cache warm
     send({'t': 'term.input', 'sid': sid, 'd': data});
   }
+
+  // requestScreen asks the host for a one-shot snapshot of [sid]'s current
+  // screen (→ a `screen` reply into `screens`). Drives the quick-reply popup
+  // without opening the full mirror.
+  void requestScreen(String sid) => send({'t': 'screen', 'sid': sid});
 
   // terminalFor returns (creating on first use) the xterm Terminal for a session,
   // wired so host output is written in and local keystrokes/resizes go back.

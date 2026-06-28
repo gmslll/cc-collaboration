@@ -531,6 +531,24 @@ class _WorkspacePageState extends State<WorkspacePage>
       reopenTermView(i);
       if (_terminalCollapsed) setState(() => _terminalCollapsed = false);
     };
+    // Quick-reply popup support: inject input into a live session and read its
+    // current screen, so the overview can confirm/reply without switching here.
+    widget.overviewStore.inputHandler = (sid, text, {submit = false}) {
+      final s = sessionById(sid);
+      if (s == null) return;
+      if (text.isNotEmpty) {
+        if (submit) {
+          s.pasteText(text); // bracketed paste …
+          s.sendText('\r'); // … then submit
+        } else {
+          s.sendText(text); // raw keys (menu digit / y / Esc)
+        }
+      } else if (submit) {
+        s.sendText('\r'); // bare 确认
+      }
+    };
+    widget.overviewStore.previewHandler = (sid) async =>
+        sessionById(sid)?.renderSnapshot(30); // live screen incl. any prompt
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
@@ -644,6 +662,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     _overviewTicker?.cancel();
     widget.overviewStore.observed.removeListener(_syncOverviewTicker);
     widget.overviewStore.openHandler = null;
+    widget.overviewStore.inputHandler = null;
+    widget.overviewStore.previewHandler = null;
     _voice.dispose();
     disposeTerms();
     super.dispose();

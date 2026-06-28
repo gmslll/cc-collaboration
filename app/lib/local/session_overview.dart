@@ -93,6 +93,11 @@ class SessionOverviewStore extends ChangeNotifier {
   List<SessionCard> cards = const [];
   final ValueNotifier<bool> observed = ValueNotifier(false);
   void Function(String sid)? openHandler;
+  // inputHandler injects text/keys into a live session; previewHandler returns a
+  // deeper live-screen snapshot. Both registered by WorkspacePage so the quick-
+  // reply popup can preview + reply without switching to the workspace.
+  void Function(String sid, String text, {bool submit})? inputHandler;
+  Future<String?> Function(String sid)? previewHandler;
 
   void publish(List<SessionCard> c) {
     cards = c;
@@ -100,4 +105,13 @@ class SessionOverviewStore extends ChangeNotifier {
   }
 
   void requestOpen(String sid) => openHandler?.call(sid);
+
+  // sendInput delivers a quick reply: submit=true pastes [text] then presses
+  // Enter (or a bare Enter when text is empty — "确认"); submit=false sends the
+  // raw keys verbatim (e.g. a menu digit, 'y', or Esc).
+  void sendInput(String sid, String text, {bool submit = false}) =>
+      inputHandler?.call(sid, text, submit: submit);
+
+  Future<String?> loadPreview(String sid) async =>
+      previewHandler == null ? null : await previewHandler!(sid);
 }

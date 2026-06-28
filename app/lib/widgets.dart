@@ -409,21 +409,27 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) =>
 };
 
 // sessionStatusRow is the status dot + label line, with an optional
-// right-aligned token-usage label.
+// right-aligned token-usage label. A `working` session animates (breathing dot
+// + cycling 思考中… ellipsis) so it reads as alive at a glance; the calmer
+// states stay static.
 Widget sessionStatusRow(SessionStatus status, String? usageLabel) {
   final st = sessionStatusStyle(status);
   return Row(
     children: [
-      statusDot(st.color, glow: st.glow),
-      const SizedBox(width: 6),
-      Text(
-        statusLabel(status),
-        style: TextStyle(
-          color: st.color,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
+      if (status == SessionStatus.working)
+        const _WorkingIndicator()
+      else ...[
+        statusDot(st.color, glow: st.glow),
+        const SizedBox(width: 6),
+        Text(
+          statusLabel(status),
+          style: TextStyle(
+            color: st.color,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      ),
+      ],
       const Spacer(),
       if (usageLabel != null)
         Flexible(
@@ -437,6 +443,184 @@ Widget sessionStatusRow(SessionStatus status, String? usageLabel) {
         ),
     ],
   );
+}
+
+// _WorkingIndicator is the animated "思考中" status: a breathing glow dot and a
+// cycling 0–3 dot ellipsis (in a fixed-width box so the row doesn't reflow each
+// frame). Honours the platform reduce-motion setting (falls back to a static
+// glow dot + label).
+class _WorkingIndicator extends StatefulWidget {
+  const _WorkingIndicator();
+
+  @override
+  State<_WorkingIndicator> createState() => _WorkingIndicatorState();
+}
+
+class _WorkingIndicatorState extends State<_WorkingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const color = CcColors.accentBright;
+    final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduce) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          statusDot(color, glow: true),
+          const SizedBox(width: 6),
+          const Text(
+            '思考中',
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      );
+    }
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, _) {
+        final pulse = 1 - (2 * _c.value - 1).abs(); // triangle 0→1→0
+        final dots = (_c.value * 4).floor() % 4; // 0,1,2,3 cycling
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.25 + 0.55 * pulse),
+                    blurRadius: 3 + 7 * pulse,
+                    spreadRadius: 0.6 * pulse,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              '思考中',
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(
+              width: 14, // reserve 3 dots so the row width stays stable
+              child: Text(
+                '.' * dots,
+                style: const TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// BreathingGlow wraps a card with a soft, slowly-pulsing outer glow while
+// [active] (used to make a "working" session pop in the overview grid). Zero
+// overhead when inactive (returns the child untouched); a static glow under
+// reduce-motion. The [radius] should match the wrapped card's corner radius so
+// the glow hugs its shape.
+class BreathingGlow extends StatefulWidget {
+  final Widget child;
+  final bool active;
+  final Color color;
+  final double radius;
+  const BreathingGlow({
+    super.key,
+    required this.child,
+    required this.active,
+    this.color = CcColors.accent,
+    this.radius = CcRadius.md,
+  });
+
+  @override
+  State<BreathingGlow> createState() => _BreathingGlowState();
+}
+
+class _BreathingGlowState extends State<BreathingGlow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  );
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.active) {
+      if (_c.isAnimating) _c.stop();
+      return widget.child;
+    }
+    final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final radius = BorderRadius.circular(widget.radius);
+    if (reduce) {
+      if (_c.isAnimating) _c.stop();
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          boxShadow: [
+            BoxShadow(
+              color: widget.color.withValues(alpha: 0.22),
+              blurRadius: 16,
+              spreadRadius: 0.5,
+            ),
+          ],
+        ),
+        child: widget.child,
+      );
+    }
+    if (!_c.isAnimating) _c.repeat(reverse: true); // 0→1→0 breathing
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, child) {
+        final t = _c.value;
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: [
+              BoxShadow(
+                color: widget.color.withValues(alpha: 0.12 + 0.30 * t),
+                blurRadius: 10 + 16 * t,
+                spreadRadius: 0.5 + 1.5 * t,
+              ),
+            ],
+          ),
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
+  }
 }
 
 // sessionPreviewBox is the bordered monospace pane showing an agent's latest
@@ -546,10 +730,7 @@ class _RobotPainter extends CustomPainter {
 
     // rounded background tile (avatar chip)
     canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Offset.zero & size,
-        Radius.circular(u(0.22)),
-      ),
+      RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(u(0.22))),
       Paint()..color = color.withValues(alpha: 0.16),
     );
 
@@ -565,8 +746,16 @@ class _RobotPainter extends CustomPainter {
       canvas.drawLine(Offset(u(0.5), u(0.13)), Offset(u(0.5), u(0.3)), stroke);
       canvas.drawCircle(Offset(u(0.5), u(0.12)), u(0.055), fill);
     } else {
-      canvas.drawLine(Offset(u(0.35), u(0.16)), Offset(u(0.41), u(0.3)), stroke);
-      canvas.drawLine(Offset(u(0.65), u(0.16)), Offset(u(0.59), u(0.3)), stroke);
+      canvas.drawLine(
+        Offset(u(0.35), u(0.16)),
+        Offset(u(0.41), u(0.3)),
+        stroke,
+      );
+      canvas.drawLine(
+        Offset(u(0.65), u(0.16)),
+        Offset(u(0.59), u(0.3)),
+        stroke,
+      );
       canvas.drawCircle(Offset(u(0.35), u(0.15)), u(0.045), fill);
       canvas.drawCircle(Offset(u(0.65), u(0.15)), u(0.045), fill);
     }
@@ -579,8 +768,14 @@ class _RobotPainter extends CustomPainter {
       ),
       fill,
     );
-    for (final earX in [Rect.fromLTRB(u(0.11), u(0.46), u(0.18), u(0.64)), Rect.fromLTRB(u(0.82), u(0.46), u(0.89), u(0.64))]) {
-      canvas.drawRRect(RRect.fromRectAndRadius(earX, Radius.circular(u(0.03))), fill);
+    for (final earX in [
+      Rect.fromLTRB(u(0.11), u(0.46), u(0.18), u(0.64)),
+      Rect.fromLTRB(u(0.82), u(0.46), u(0.89), u(0.64)),
+    ]) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(earX, Radius.circular(u(0.03))),
+        fill,
+      );
     }
 
     // eyes
@@ -593,7 +788,11 @@ class _RobotPainter extends CustomPainter {
       for (final x in [lx, rx]) {
         canvas.drawRRect(
           RRect.fromRectAndRadius(
-            Rect.fromCenter(center: Offset(x, ey), width: u(0.14), height: u(0.14)),
+            Rect.fromCenter(
+              center: Offset(x, ey),
+              width: u(0.14),
+              height: u(0.14),
+            ),
             Radius.circular(u(0.02)),
           ),
           cut,
@@ -612,7 +811,11 @@ class _RobotPainter extends CustomPainter {
       for (final x in [lx, rx]) {
         canvas.drawRRect(
           RRect.fromRectAndRadius(
-            Rect.fromCenter(center: Offset(x, ey), width: u(0.15), height: u(0.045)),
+            Rect.fromCenter(
+              center: Offset(x, ey),
+              width: u(0.15),
+              height: u(0.045),
+            ),
             Radius.circular(u(0.02)),
           ),
           cut,
@@ -632,7 +835,10 @@ class _RobotPainter extends CustomPainter {
       );
     } else if (mouthStyle == 1) {
       for (var i = 0; i < 3; i++) {
-        canvas.drawRect(Rect.fromLTWH(u(0.38) + i * u(0.09), my, u(0.06), u(0.06)), cut);
+        canvas.drawRect(
+          Rect.fromLTWH(u(0.38) + i * u(0.09), my, u(0.06), u(0.06)),
+          cut,
+        );
       }
     } else if (mouthStyle == 3) {
       // smile: lower half of an ellipse (0 → π sweeps the bottom arc)
@@ -739,13 +945,19 @@ Widget _diffLine(String line, {String? langId}) {
     child = Text.rich(
       TextSpan(
         children: [
-          TextSpan(text: prefix, style: baseStyle.copyWith(color: fg)),
+          TextSpan(
+            text: prefix,
+            style: baseStyle.copyWith(color: fg),
+          ),
           span ?? TextSpan(text: content, style: baseStyle),
         ],
       ),
     );
   } else {
-    child = Text(line.isEmpty ? ' ' : line, style: baseStyle.copyWith(color: fg));
+    child = Text(
+      line.isEmpty ? ' ' : line,
+      style: baseStyle.copyWith(color: fg),
+    );
   }
   return Container(
     color: bg,
@@ -1026,7 +1238,9 @@ PopupMenuItem<String> ccMenuItem({
         Expanded(
           child: Text(
             label,
-            style: danger && on ? const TextStyle(color: CcColors.danger) : null,
+            style: danger && on
+                ? const TextStyle(color: CcColors.danger)
+                : null,
           ),
         ),
         if (shortcut != null) ...[
@@ -1085,7 +1299,8 @@ Future<String?> showGroupedSendMenu(
     position: menuPosAt(context, globalPos),
     items: [
       ...extraTop,
-      if (extraTop.isNotEmpty && (sendItems.isNotEmpty || extraBottom.isNotEmpty))
+      if (extraTop.isNotEmpty &&
+          (sendItems.isNotEmpty || extraBottom.isNotEmpty))
         const PopupMenuDivider(),
       ...sendItems,
       if (extraBottom.isNotEmpty && sendItems.isNotEmpty)

@@ -347,6 +347,20 @@ class RemoteHost extends RemoteChannel {
         if (s != null && s.isAgent && (d.contains('\r') || d.contains('\n'))) {
           broadcastStatus(s.id, true, '思考中…', usage: s.usage.value?.shortLabel());
         }
+      case 'screen':
+        // One-shot current-screen snapshot for the phone's quick-reply popup —
+        // the live terminal (incl. any permission prompt), without opening the
+        // full mirror. Re-requested on a timer while the popup is open.
+        final from = (f['from'] as num?)?.toInt();
+        final s = _sessionById(f['sid'] as String?);
+        if (from != null) {
+          send({
+            't': 'screen',
+            'to': from,
+            'sid': f['sid'],
+            'text': s?.renderSnapshot(30) ?? '',
+          });
+        }
       case 'term.resize':
         _sessionById(f['sid'] as String?)?.resizeFromRemote(
           (f['rows'] as num?)?.toInt() ?? 0,

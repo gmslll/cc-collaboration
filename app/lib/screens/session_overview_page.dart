@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../local/session_overview.dart';
@@ -55,11 +57,29 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
     if (mounted) setState(() {});
   }
 
+  // _openQuickReply pops the preview + quick-reply dialog for a session, so the
+  // user can read its latest screen and confirm/reply without switching to the
+  // workspace. The dialog's "在工作区打开" escape hatch still jumps there.
+  void _openQuickReply(SessionCard c) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _QuickReplyDialog(
+        card: c,
+        store: _store,
+        onOpenInWorkspace: () {
+          Navigator.of(context).pop();
+          widget.onOpenSession(c.sid);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cards = _store.cards;
-    final reviewCount =
-        cards.where((c) => c.status == SessionStatus.needsReview).length;
+    final reviewCount = cards
+        .where((c) => c.status == SessionStatus.needsReview)
+        .length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -90,7 +110,8 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
           style: CcType.code(size: 12.5, color: CcColors.muted),
         ),
         const Spacer(),
-        if (reviewCount > 0) tag('待 review $reviewCount', CcColors.warning, bold: true),
+        if (reviewCount > 0)
+          tag('待 review $reviewCount', CcColors.warning, bold: true),
       ],
     ),
   );
@@ -121,7 +142,11 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
             padding: const EdgeInsets.fromLTRB(22, 6, 20, 4),
             child: Row(
               children: [
-                const Icon(Icons.folder_rounded, size: 15, color: CcColors.muted),
+                const Icon(
+                  Icons.folder_rounded,
+                  size: 15,
+                  color: CcColors.muted,
+                ),
                 const SizedBox(width: 6),
                 Text(
                   projEntry.key,
@@ -169,37 +194,231 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
         }
       }
     }
-    return ListView(padding: const EdgeInsets.only(bottom: 24), children: sections);
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: sections,
+    );
   }
 
   Widget _card(SessionCard c) {
     return SizedBox(
       width: 320,
-      child: HoverLift(
-        onTap: () => widget.onOpenSession(c.sid),
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                sessionAvatar(seed: c.sid, isAgent: c.isAgent),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    c.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+      child: BreathingGlow(
+        active: c.status == SessionStatus.working,
+        child: HoverLift(
+          onTap: () => _openQuickReply(c),
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  sessionAvatar(seed: c.sid, isAgent: c.isAgent),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      c.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              sessionStatusRow(c.status, c.usageLabel),
+              const SizedBox(height: 8),
+              sessionPreviewBox(c.preview),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// _QuickReplyDialog previews a session's live screen and lets the user
+// confirm/reply to it in place — no workspace switch. It pulls a deeper screen
+// snapshot (via the store) on open and on a short timer so a running agent's
+// output and any permission prompt stay current; sends route back through the
+// store to the live session.
+class _QuickReplyDialog extends StatefulWidget {
+  final SessionCard card;
+  final SessionOverviewStore store;
+  final VoidCallback onOpenInWorkspace;
+  const _QuickReplyDialog({
+    required this.card,
+    required this.store,
+    required this.onOpenInWorkspace,
+  });
+
+  @override
+  State<_QuickReplyDialog> createState() => _QuickReplyDialogState();
+}
+
+class _QuickReplyDialogState extends State<_QuickReplyDialog> {
+  final _ctl = TextEditingController();
+  String _preview = '';
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _preview = widget.card.preview;
+    _refresh();
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 1500),
+      (_) => _refresh(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    final p = await widget.store.loadPreview(widget.card.sid);
+    if (mounted && p != null && p != _preview) setState(() => _preview = p);
+  }
+
+  // _bump re-reads the screen shortly after a send so the agent's reaction shows
+  // without waiting for the next timer tick.
+  void _bump() => Future.delayed(const Duration(milliseconds: 350), _refresh);
+
+  void _keys(String keys) {
+    widget.store.sendInput(widget.card.sid, keys);
+    _bump();
+  }
+
+  void _confirm() {
+    widget.store.sendInput(widget.card.sid, '', submit: true);
+    _bump();
+  }
+
+  void _sendText() {
+    final t = _ctl.text;
+    if (t.trim().isEmpty) return;
+    widget.store.sendInput(widget.card.sid, t, submit: true);
+    _ctl.clear();
+    _bump();
+  }
+
+  Widget _quick(String label, VoidCallback onTap) => OutlinedButton(
+    onPressed: onTap,
+    style: OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      minimumSize: const Size(0, 32),
+    ),
+    child: Text(label, style: CcType.code(size: 12.5)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.card;
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  sessionAvatar(seed: c.sid, isAgent: c.isAgent, size: 24),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      c.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '刷新',
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    onPressed: _refresh,
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              sessionStatusRow(c.status, c.usageLabel),
+              const SizedBox(height: 10),
+              Container(
+                height: 280,
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: CcColors.bg,
+                  borderRadius: BorderRadius.circular(CcRadius.sm),
+                  border: Border.all(color: CcColors.border),
+                ),
+                child: SingleChildScrollView(
+                  reverse: true, // keep the latest output (the prompt) in view
+                  child: SelectableText(
+                    _preview.trim().isEmpty ? '（暂无输出）' : _preview,
+                    style: CcType.code(size: 12, color: CcColors.muted),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            sessionStatusRow(c.status, c.usageLabel),
-            const SizedBox(height: 8),
-            sessionPreviewBox(c.preview),
-          ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _quick('↵ 确认', _confirm),
+                  _quick('1', () => _keys('1')),
+                  _quick('2', () => _keys('2')),
+                  _quick('3', () => _keys('3')),
+                  _quick('y', () => _keys('y')),
+                  _quick('n', () => _keys('n')),
+                  _quick('Esc', () => _keys('\x1b')),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _ctl,
+                      autofocus: true,
+                      maxLines: 1,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _sendText(),
+                      decoration: const InputDecoration(
+                        hintText: '快捷回复…（回车发送）',
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(onPressed: _sendText, child: const Text('发送')),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: widget.onOpenInWorkspace,
+                  icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                  label: const Text('在工作区打开'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

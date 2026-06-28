@@ -11,6 +11,7 @@ import 'package:xterm/xterm.dart';
 import '../live_activity/live_activity.dart';
 import '../local/diff_parse.dart';
 import '../local/prefs.dart';
+import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
 import '../remote/file_transfer.dart';
 import '../remote/remote_client.dart';
@@ -350,7 +351,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Widget _fileSectionEmpty() => const Padding(
     padding: EdgeInsets.all(20),
-    child: Center(child: Text('暂无', style: TextStyle(color: CcColors.muted))),
+    child: Center(
+      child: Text('暂无', style: TextStyle(color: CcColors.muted)),
+    ),
   );
 
   Widget _fileTile(String name, DateTime at, String path) => ListTile(
@@ -560,7 +563,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
               const Padding(
                 padding: EdgeInsets.all(24),
                 child: Center(
-                  child: Text('该项目暂无会话', style: TextStyle(color: CcColors.muted)),
+                  child: Text(
+                    '该项目暂无会话',
+                    style: TextStyle(color: CcColors.muted),
+                  ),
                 ),
               )
             else
@@ -634,7 +640,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           color: CcColors.accentBright,
         ),
         const SizedBox(width: 6),
-        const Text('专注：', style: TextStyle(fontSize: 12.5, color: CcColors.subtle)),
+        const Text(
+          '专注：',
+          style: TextStyle(fontSize: 12.5, color: CcColors.subtle),
+        ),
         Expanded(
           child: Text(
             p.name,
@@ -705,6 +714,27 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     ),
   );
 
+  // _openQuickReply pops a preview + quick-reply sheet for a session so the user
+  // can read its live screen and confirm/reply in place; "打开终端" still opens
+  // the full mirror when more is needed.
+  void _openQuickReply(RemoteSession s) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _QuickReplyDialog(
+        client: _c,
+        session: s,
+        onOpenTerminal: () {
+          Navigator.of(context).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   // _sessionCardWrap lays a project/worktree group's sessions out as a flowing
   // grid of glanceable cards (1 col on a phone, 2 on a wider tablet/landscape).
   Widget _sessionCardWrap(List<RemoteSession> ss, {RemoteRootInfo? root}) {
@@ -739,84 +769,83 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     }
     return SizedBox(
       width: width,
-      child: HoverLift(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
-          ),
-        ),
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                sessionAvatar(seed: s.sid, isAgent: s.agent.isNotEmpty),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    s.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                SizedBox(
-                  height: 26,
-                  width: 26,
-                  child: PopupMenuButton<String>(
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.more_vert_rounded, size: 18),
-                    onSelected: (v) {
-                      if (v == 'rename') _renameSessionDialog(s);
-                      if (v == 'close') _c.closeSession(s.sid);
-                    },
-                    itemBuilder: (_) => [
-                      ccMenuItem(
-                        value: 'rename',
-                        icon: Icons.edit_rounded,
-                        label: '重命名',
-                      ),
-                      ccMenuItem(
-                        value: 'close',
-                        icon: Icons.close_rounded,
-                        label: '关闭',
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            if (sub != null) ...[
-              const SizedBox(height: 4),
+      child: BreathingGlow(
+        active: ov?.status == SessionStatus.working,
+        child: HoverLift(
+          onTap: () => _openQuickReply(s),
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
                 children: [
-                  if (inWorktree) ...[
-                    const Icon(
-                      Icons.account_tree_rounded,
-                      size: 12,
-                      color: CcColors.subtle,
-                    ),
-                    const SizedBox(width: 3),
-                  ],
+                  sessionAvatar(seed: s.sid, isAgent: s.agent.isNotEmpty),
+                  const SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      sub,
+                      s.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: CcType.code(size: 11, color: CcColors.subtle),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 26,
+                    width: 26,
+                    child: PopupMenuButton<String>(
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.more_vert_rounded, size: 18),
+                      onSelected: (v) {
+                        if (v == 'rename') _renameSessionDialog(s);
+                        if (v == 'close') _c.closeSession(s.sid);
+                      },
+                      itemBuilder: (_) => [
+                        ccMenuItem(
+                          value: 'rename',
+                          icon: Icons.edit_rounded,
+                          label: '重命名',
+                        ),
+                        ccMenuItem(
+                          value: 'close',
+                          icon: Icons.close_rounded,
+                          label: '关闭',
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-            ],
-            if (ov != null) ...[
+              if (sub != null) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    if (inWorktree) ...[
+                      const Icon(
+                        Icons.account_tree_rounded,
+                        size: 12,
+                        color: CcColors.subtle,
+                      ),
+                      const SizedBox(width: 3),
+                    ],
+                    Expanded(
+                      child: Text(
+                        sub,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: CcType.code(size: 11, color: CcColors.subtle),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (ov != null) ...[
+                const SizedBox(height: 8),
+                sessionStatusRow(ov.status, ov.usageLabel),
+              ],
               const SizedBox(height: 8),
-              sessionStatusRow(ov.status, ov.usageLabel),
+              sessionPreviewBox(ov?.preview ?? ''),
             ],
-            const SizedBox(height: 8),
-            sessionPreviewBox(ov?.preview ?? ''),
-          ],
+          ),
         ),
       ),
     );
@@ -848,9 +877,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
               // Worktrees for THIS project only (the list is trusted once
               // wtProject matches); drop the main checkout — it's the '主仓' item.
               final wts = _c.wtProject == project.path
-                  ? _c.worktrees
-                        .where((w) => w.path != project.path)
-                        .toList()
+                  ? _c.worktrees.where((w) => w.path != project.path).toList()
                   : const <RemoteWorktree>[];
               return Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1097,9 +1124,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                         onTap: c.untracked
                             ? null
                             : () => _openDiff(
-                                () => _c.requestWorkingDiff(_gitRepo!, c.path,
-                                    full: Prefs.getBool('diff.fullContext',
-                                        def: false)),
+                                () => _c.requestWorkingDiff(
+                                  _gitRepo!,
+                                  c.path,
+                                  full: Prefs.getBool(
+                                    'diff.fullContext',
+                                    def: false,
+                                  ),
+                                ),
                                 c.path,
                               ),
                       ),
@@ -1127,9 +1159,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                           ),
                         ),
                         onTap: () {
-                          _c.requestCommitDiff(_gitRepo!, c.hash, c.subject,
-                              full: Prefs.getBool('diff.fullContext',
-                                  def: false));
+                          _c.requestCommitDiff(
+                            _gitRepo!,
+                            c.hash,
+                            c.subject,
+                            full: Prefs.getBool('diff.fullContext', def: false),
+                          );
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => _RemoteCommitFiles(
@@ -1715,8 +1750,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     // History replay mode ('text'/'ansi') lives on the client and rides every
     // term.open; load the saved pref before the first _term access (build →
     // terminalFor → term.open) so the initial replay uses it.
-    widget.client.historyMode =
-        Prefs.getString('remote.historyMode', def: 'text');
+    widget.client.historyMode = Prefs.getString(
+      'remote.historyMode',
+      def: 'text',
+    );
     widget.client.onReplyText = _onReplyText;
     widget.client.onAgentStatus = _onAgentStatus;
     widget.client.onTerminalReset = _onTerminalReset;
@@ -1770,15 +1807,18 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     }
     // Fold the usage label into the Live Activity / Dynamic Island text so the
     // 灵动岛 shows "思考中…  ·  opus 4.8 · ctx 45% · 1.2M tok · ~$3.40".
-    final laText = (usage != null && usage.isNotEmpty) ? '$text  ·  $usage' : text;
+    final laText = (usage != null && usage.isNotEmpty)
+        ? '$text  ·  $usage'
+        : text;
     if (working && !_laStarted) {
       _laStarted = true;
       final title = widget.session.title.isNotEmpty
           ? widget.session.title
           : widget.session.agent;
-      LiveActivity.start(title: title, sessionId: sid).then(
-        (_) => LiveActivity.update(working: working, text: laText),
-      );
+      LiveActivity.start(
+        title: title,
+        sessionId: sid,
+      ).then((_) => LiveActivity.update(working: working, text: laText));
     } else if (_laStarted) {
       LiveActivity.update(working: working, text: laText);
     }
@@ -1975,8 +2015,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   void _startScroll(bool up) {
     _wheel(up);
     _scrollHold?.cancel();
-    _scrollHold =
-        Timer.periodic(const Duration(milliseconds: 80), (_) => _wheel(up));
+    _scrollHold = Timer.periodic(
+      const Duration(milliseconds: 80),
+      (_) => _wheel(up),
+    );
   }
 
   void _stopScroll() {
@@ -2094,9 +2136,11 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
               ),
               PopupMenuItem(
                 value: 'histmode',
-                child: Text(widget.client.historyMode == 'ansi'
-                    ? '历史:彩色 → 切到文本'
-                    : '历史:文本 → 切到彩色'),
+                child: Text(
+                  widget.client.historyMode == 'ansi'
+                      ? '历史:彩色 → 切到文本'
+                      : '历史:文本 → 切到彩色',
+                ),
               ),
             ],
           ),
@@ -2620,7 +2664,9 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
         actions: [
           IconButton(
             tooltip: _editing ? '查看' : '编辑',
-            icon: Icon(_editing ? Icons.visibility_rounded : Icons.edit_rounded),
+            icon: Icon(
+              _editing ? Icons.visibility_rounded : Icons.edit_rounded,
+            ),
             onPressed: _loaded
                 ? () => setState(() => _editing = !_editing)
                 : null,
@@ -2645,30 +2691,27 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
                 ? centerMsg(c.fileError!)
                 : const Center(child: CircularProgressIndicator()))
           : _editing
-              // edit mode: plain editable text box (re_editor is desktop-only).
-              ? Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: TextField(
-                    controller: _ctl,
-                    maxLines: null,
-                    expands: true,
-                    keyboardType: TextInputType.multiline,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: CcType.code(size: 12.5),
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      isCollapsed: true,
-                    ),
-                  ),
-                )
-              // view mode: read-only syntax-highlighted (parity with the mac).
-              : ColoredBox(
-                  color: CcColors.bg,
-                  child: highlightedCode(
-                    _ctl.text,
-                    langIdForPath(widget.path),
-                  ),
+          // edit mode: plain editable text box (re_editor is desktop-only).
+          ? Padding(
+              padding: const EdgeInsets.all(12),
+              child: TextField(
+                controller: _ctl,
+                maxLines: null,
+                expands: true,
+                keyboardType: TextInputType.multiline,
+                textAlignVertical: TextAlignVertical.top,
+                style: CcType.code(size: 12.5),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  isCollapsed: true,
                 ),
+              ),
+            )
+          // view mode: read-only syntax-highlighted (parity with the mac).
+          : ColoredBox(
+              color: CcColors.bg,
+              child: highlightedCode(_ctl.text, langIdForPath(widget.path)),
+            ),
     );
   }
 }
@@ -2994,6 +3037,194 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
                 ),
         );
       },
+    );
+  }
+}
+
+// _QuickReplyDialog previews a remote session's live screen and lets the user
+// confirm/reply in place — no full-screen mirror. It pulls a one-shot screen
+// snapshot (requestScreen) on open and on a short timer so a running agent's
+// output and any permission prompt stay current; sends go via term.input.
+class _QuickReplyDialog extends StatefulWidget {
+  final RemoteClient client;
+  final RemoteSession session;
+  final VoidCallback onOpenTerminal;
+  const _QuickReplyDialog({
+    required this.client,
+    required this.session,
+    required this.onOpenTerminal,
+  });
+
+  @override
+  State<_QuickReplyDialog> createState() => _QuickReplyDialogState();
+}
+
+class _QuickReplyDialogState extends State<_QuickReplyDialog> {
+  final _ctl = TextEditingController();
+  Timer? _timer;
+
+  String get _sid => widget.session.sid;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.client.addListener(_onChange);
+    widget.client.requestScreen(_sid);
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 1500),
+      (_) => widget.client.requestScreen(_sid),
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.client.removeListener(_onChange);
+    _timer?.cancel();
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _onChange() {
+    if (mounted) setState(() {});
+  }
+
+  // _bump re-reads the screen shortly after a send so the reaction shows without
+  // waiting for the next timer tick.
+  void _bump() => Future.delayed(
+    const Duration(milliseconds: 350),
+    () => widget.client.requestScreen(_sid),
+  );
+
+  void _keys(String keys) {
+    widget.client.sendKeys(_sid, keys);
+    _bump();
+  }
+
+  void _confirm() => _keys('\r');
+
+  void _sendText() {
+    final t = _ctl.text;
+    if (t.trim().isEmpty) return;
+    widget.client.sendKeys(_sid, t);
+    widget.client.sendKeys(_sid, '\r');
+    _ctl.clear();
+    _bump();
+  }
+
+  Widget _quick(String label, VoidCallback onTap) => OutlinedButton(
+    onPressed: onTap,
+    style: OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      minimumSize: const Size(0, 32),
+    ),
+    child: Text(label, style: CcType.code(size: 12.5)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final ov = widget.client.overview[_sid];
+    final screen = (widget.client.screens[_sid] ?? ov?.preview ?? '').trim();
+    return Dialog(
+      insetPadding: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                sessionAvatar(
+                  seed: _sid,
+                  isAgent: widget.session.agent.isNotEmpty,
+                  size: 24,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    widget.session.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '关闭',
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            if (ov != null) ...[
+              const SizedBox(height: 4),
+              sessionStatusRow(ov.status, ov.usageLabel),
+            ],
+            const SizedBox(height: 10),
+            Container(
+              height: 220,
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: CcColors.bg,
+                borderRadius: BorderRadius.circular(CcRadius.sm),
+                border: Border.all(color: CcColors.border),
+              ),
+              child: SingleChildScrollView(
+                reverse: true,
+                child: SelectableText(
+                  screen.isEmpty ? '（暂无输出）' : screen,
+                  style: CcType.code(size: 10.5, color: CcColors.muted),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _quick('↵ 确认', _confirm),
+                _quick('1', () => _keys('1')),
+                _quick('2', () => _keys('2')),
+                _quick('3', () => _keys('3')),
+                _quick('y', () => _keys('y')),
+                _quick('n', () => _keys('n')),
+                _quick('Esc', () => _keys('\x1b')),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _ctl,
+                    maxLines: 1,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _sendText(),
+                    decoration: const InputDecoration(
+                      hintText: '快捷回复…',
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(onPressed: _sendText, child: const Text('发送')),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: widget.onOpenTerminal,
+                icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                label: const Text('打开终端'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
