@@ -53,7 +53,8 @@ build_macos() {
   rm -f "$ROOT"/app/build/macos/Build/Products/Release/*.app/Contents/MacOS/cc-handoff \
         "$ROOT"/app/build/macos/Build/Products/Release/*.app/Contents/MacOS/cc-handoff-mcp
   echo "==> macOS: flutter build macos --release"
-  (cd app && flutter build macos --release)
+  # --dart-define embeds the version so the in-app updater can compare (kAppVersion).
+  (cd app && flutter build macos --release --dart-define=APP_VERSION="${VERSION}")
 
   local appdir
   appdir=$(ls -d "$ROOT"/app/build/macos/Build/Products/Release/*.app 2>/dev/null | head -1)
@@ -93,7 +94,7 @@ build_android() {
   # The phone is a remote client (talks to the relay); it never calls the local
   # CLI, so no binary is embedded.
   echo "==> Android: flutter build apk --release"
-  (cd app && flutter build apk --release)
+  (cd app && flutter build apk --release --dart-define=APP_VERSION="${VERSION}")
   local apk="$ROOT/app/build/app/outputs/flutter-apk/app-release.apk"
   [ -f "$apk" ] || { echo "APK not found at $apk" >&2; exit 1; }
   cp "$apk" "$DIST/cc-handoff-android-v${VERSION}.apk"

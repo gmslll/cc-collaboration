@@ -57,7 +57,7 @@ foreach ($b in @(
 # 2. Flutter Windows build.
 Write-Host '==> flutter build windows --release'
 Push-Location app
-try { & flutter build windows --release } finally { Pop-Location }
+try { & flutter build windows --release --dart-define=APP_VERSION="$version" } finally { Pop-Location }
 
 # Locate the runner Release dir (x64 or arm64) by the one containing data\.
 $rel = Get-ChildItem -Path (Join-Path $root 'app\build\windows') -Recurse -Directory -Filter 'Release' -ErrorAction SilentlyContinue |

@@ -9,6 +9,7 @@ import '../build_info.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
 import '../local/prefs.dart';
+import '../local/update_service.dart';
 import '../theme.dart';
 import '../ui_scale.dart';
 import '../widgets.dart';
@@ -189,11 +190,22 @@ class _AccountPageState extends State<AccountPage> {
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 4),
-        // Build marker — confirm this device is on the latest build (desktop and
-        // phone must match for cross-device features to work).
-        Text(
-          '构建 $kBuildMarker',
-          style: const TextStyle(color: CcColors.subtle, fontSize: 11),
+        // Version + build marker (confirm this device is current) + manual update
+        // check. Apps ship via GitHub Releases, so update is in-app, not store.
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '版本 $kAppVersion · 构建 $kBuildMarker',
+                style: const TextStyle(color: CcColors.subtle, fontSize: 11),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => checkForUpdatesUi(context, silent: false),
+              icon: const Icon(Icons.system_update_alt_rounded, size: 16),
+              label: const Text('检查更新'),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
         Card(

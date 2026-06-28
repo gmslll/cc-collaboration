@@ -9,6 +9,7 @@ import 'local/config.dart';
 import 'local/prefs.dart';
 import 'local/session.dart';
 import 'local/session_overview.dart';
+import 'local/update_service.dart';
 import 'notifications.dart';
 import 'screens/account_page.dart';
 import 'screens/admin_page.dart';
@@ -119,6 +120,7 @@ class _HomeShellState extends State<HomeShell> {
   // Shared 会话总览 projection: WorkspacePage produces into it, SessionOverviewPage
   // renders from it. Owned here so the two sibling pages share one instance.
   final SessionOverviewStore _overviewStore = SessionOverviewStore();
+  bool _checkedUpdate = false; // one-shot on-launch update check guard
 
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -235,6 +237,16 @@ class _HomeShellState extends State<HomeShell> {
     }
     if (_client == null) {
       return const Scaffold(body: Center(child: Text('初始化失败')));
+    }
+
+    // Once per launch (after we're past login), quietly check GitHub Releases for
+    // a newer build and prompt to download/install. Post-frame so context has a
+    // Navigator/Messenger; silent so it says nothing when already current.
+    if (!_checkedUpdate) {
+      _checkedUpdate = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) checkForUpdatesUi(context, silent: true);
+      });
     }
 
     final isAdmin = _me?.isAdmin ?? false;
