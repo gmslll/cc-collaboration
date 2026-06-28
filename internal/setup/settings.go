@@ -89,10 +89,21 @@ const BusHookInvocation = "cc-handoff bus-hook"
 
 const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && ` + BusHookInvocation + ` || true`
 
-// busHookEvents are the two lifecycle events the bus hook rides: PostToolUse
-// surfaces a peer message mid-turn (next tool boundary), Stop catches it at
-// turn end when the turn made no further tool calls.
-var busHookEvents = []string{"PostToolUse", "Stop"}
+// busHookEvents are the lifecycle events the bus hook rides. PostToolUse + Stop
+// power local-bus interjection delivery; the broader set is also recorded as a
+// lightweight activity stream for the desktop/phone UI.
+var busHookEvents = []string{
+	"SessionStart",
+	"UserPromptSubmit",
+	"PreToolUse",
+	"PermissionRequest",
+	"PostToolUse",
+	"PreCompact",
+	"PostCompact",
+	"SubagentStart",
+	"SubagentStop",
+	"Stop",
+}
 
 // BusHooksPresent reports whether the bus hook is installed in the agent config
 // at [path] — i.e. the file exists and carries our hook. The canonical check for

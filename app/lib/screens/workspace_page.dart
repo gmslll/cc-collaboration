@@ -228,6 +228,8 @@ class _WorkspacePageState extends State<WorkspacePage>
   // Periodic preview refresh for the 会话总览; runs only while observed (overview
   // page visible) or a phone is connected — see _syncOverviewTicker.
   Timer? _overviewTicker;
+  Timer? _hookActivityTicker;
+  final Map<String, String> _hookActivityFingerprints = {};
 
   // Parked ("稍后") cross-user messages: persisted across restarts, surfaced as a
   // toolbar badge, injected later (manually, or auto when the target session
@@ -326,6 +328,20 @@ class _WorkspacePageState extends State<WorkspacePage>
     widget.overviewStore.publish(cards);
     _remoteHost.setOverview(cards);
     _remoteHost.broadcastOverview();
+  }
+
+  void _publishHookActivities() {
+    if (!mounted || _remoteHost.clientCount <= 0) return;
+    for (final s in terms) {
+      if (!s.isAgent || !_remoteHost.watching(s.id)) continue;
+      final items = localBusHookActivities(s.id, limit: 12);
+      final fp = items
+          .map((a) => '${a.at.microsecondsSinceEpoch}:${a.event}:${a.toolName}:${a.exitCode ?? ''}')
+          .join('|');
+      if (_hookActivityFingerprints[s.id] == fp) continue;
+      _hookActivityFingerprints[s.id] = fp;
+      _remoteHost.broadcastActivity(s.id, items);
+    }
   }
 
   // _refreshPreview caches a session's latest content: an agent's most-recent
@@ -593,6 +609,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     };
     _voice.init();
     _localBus.start();
+    _hookActivityTicker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _publishHookActivities(),
+    );
     // Wire the bus PostToolUse/Stop hooks so a busy agent session can be
     // interrupted by a sibling's message mid-turn. Idempotent + env-guarded;
     // fire-and-forget so a missing/old cc-handoff binary never blocks startup.
@@ -663,6 +683,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     _relaySse?.cancel();
     _sessionHeartbeat?.cancel();
     _overviewTicker?.cancel();
+    _hookActivityTicker?.cancel();
     widget.overviewStore.observed.removeListener(_syncOverviewTicker);
     widget.overviewStore.openHandler = null;
     widget.overviewStore.inputHandler = null;

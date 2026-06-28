@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math' show min;
 
 import '../local/git.dart';
+import '../local/hook_activity.dart';
+import '../local/local_bus.dart';
 import '../local/session_overview.dart';
 import '../local/worktrees.dart';
 import '../screens/terminal_pane.dart';
@@ -510,6 +512,14 @@ class RemoteHost extends RemoteChannel {
       final m = {'t': 'status', 'to': c, 'sid': sid, 'working': working, 'text': text};
       if (usage != null && usage.isNotEmpty) m['usage'] = usage;
       send(m);
+    }
+  }
+
+  void broadcastActivity(String sid, List<HookActivity> items) {
+    if (!connected) return;
+    final payload = [for (final a in items) a.toJson()];
+    for (final c in _watchers[sid] ?? const <int>{}) {
+      send({'t': 'activity', 'to': c, 'sid': sid, 'items': payload});
     }
   }
 

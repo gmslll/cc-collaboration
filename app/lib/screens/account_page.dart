@@ -18,7 +18,13 @@ import '../widgets.dart';
 class AccountPage extends StatefulWidget {
   final RelayClient client;
   final String identity;
-  const AccountPage({super.key, required this.client, required this.identity});
+  final VoidCallback? onSwitchAccount;
+  const AccountPage({
+    super.key,
+    required this.client,
+    required this.identity,
+    this.onSwitchAccount,
+  });
 
   @override
   State<AccountPage> createState() => _AccountPageState();
@@ -229,6 +235,15 @@ class _AccountPageState extends State<AccountPage> {
         Text(
           '账号 · ${widget.identity}',
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: widget.onSwitchAccount,
+            icon: const Icon(Icons.switch_account_rounded, size: 18),
+            label: const Text('切换账号'),
+          ),
         ),
         const SizedBox(height: 4),
         // Version + build marker (confirm this device is current) + manual update

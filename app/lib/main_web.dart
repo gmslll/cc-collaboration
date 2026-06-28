@@ -67,6 +67,23 @@ class _WebShellState extends State<WebShell> {
     setState(() => _session = s);
   }
 
+  Future<void> _switchAccount() async {
+    final current = _session;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => LoginScreen(
+          initialRelayUrl: current?.relayUrl ?? Uri.base.origin,
+          initialIdentity: current?.identity,
+          showCancel: true,
+          onLoggedIn: (s) async {
+            await _onLoggedIn(s);
+            if (mounted) Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _logout() async {
     await SessionStore.clear();
     if (!mounted) return;
@@ -88,6 +105,7 @@ class _WebShellState extends State<WebShell> {
     return RemoteWorkspacePage(
       relayUrl: s.relayUrl,
       token: s.token,
+      onSwitchAccount: _switchAccount,
       onLogout: _logout,
     );
   }

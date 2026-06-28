@@ -4,6 +4,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/hook_activity.dart';
 import '../local/session_overview.dart';
 import '../notifications.dart';
 import '../terminal_mouse.dart';
@@ -170,6 +171,7 @@ class RemoteClient extends RemoteChannel {
   // by the quick-reply popup via requestScreen (distinct from the full mirror's
   // streamed output). Updated on each `screen` reply.
   Map<String, String> screens = {};
+  Map<String, List<HookActivity>> activities = {};
 
   // onReplyText fires when the desktop pushes an agent's clean reply text for a
   // watched session (the terminal screen reads it aloud). Not a ChangeNotifier
@@ -581,6 +583,15 @@ class RemoteClient extends RemoteChannel {
             (f['text'] as String?) ?? '',
             f['usage'] as String?,
           );
+        }
+      case 'activity':
+        final sid = f['sid'] as String?;
+        if (sid != null) {
+          activities[sid] = [
+            for (final m in (f['items'] as List? ?? []))
+              if (m is Map) HookActivity.fromWire(m),
+          ];
+          notifyListeners();
         }
       case 'fs.list.ok':
         fsPath = f['path'] as String?;

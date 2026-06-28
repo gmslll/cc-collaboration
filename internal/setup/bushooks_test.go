@@ -54,7 +54,7 @@ func TestEnsureClaudeBusHooks_CreatesAndIdempotent(t *testing.T) {
 	if hooks == nil {
 		t.Fatalf("missing hooks block: %+v", root)
 	}
-	for _, ev := range []string{"PostToolUse", "Stop"} {
+	for _, ev := range busHookEvents {
 		if got := firstHookCommand(t, hooks, ev); got != BusHookCommand {
 			t.Errorf("%s command=%q, want %q", ev, got, BusHookCommand)
 		}
@@ -137,7 +137,7 @@ func TestEnsureCodexBusHooks_NestedUnderHooks(t *testing.T) {
 	if hooks == nil {
 		t.Fatalf("missing top-level hooks object: %+v", root)
 	}
-	for _, ev := range []string{"PostToolUse", "Stop"} {
+	for _, ev := range busHookEvents {
 		if got := firstHookCommand(t, hooks, ev); got != BusHookCommand {
 			t.Errorf("%s command=%q, want %q", ev, got, BusHookCommand)
 		}
@@ -182,7 +182,7 @@ func TestEnsureCodexBusHooks_MigratesRootLayout(t *testing.T) {
 	if hooks == nil {
 		t.Fatalf("migration did not create a hooks object: %+v", root)
 	}
-	for _, ev := range []string{"PostToolUse", "Stop"} {
+	for _, ev := range busHookEvents {
 		arr, _ := hooks[ev].([]any)
 		if len(arr) != 1 {
 			t.Errorf("%s should have exactly 1 entry after migration, got %d", ev, len(arr))

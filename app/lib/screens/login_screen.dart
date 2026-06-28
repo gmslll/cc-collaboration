@@ -7,8 +7,16 @@ import '../widgets.dart';
 
 class LoginScreen extends StatefulWidget {
   final String? initialRelayUrl;
+  final String? initialIdentity;
+  final bool showCancel;
   final Future<void> Function(Session) onLoggedIn;
-  const LoginScreen({super.key, this.initialRelayUrl, required this.onLoggedIn});
+  const LoginScreen({
+    super.key,
+    this.initialRelayUrl,
+    this.initialIdentity,
+    this.showCancel = false,
+    required this.onLoggedIn,
+  });
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -16,7 +24,9 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   late final _relay = TextEditingController(text: widget.initialRelayUrl ?? '');
-  final _identity = TextEditingController();
+  late final _identity = TextEditingController(
+    text: widget.initialIdentity ?? '',
+  );
   final _password = TextEditingController();
   bool _busy = false;
   bool _isRegisterMode = false;
@@ -176,6 +186,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             }),
                     child: Text(_isRegisterMode ? '已有账号?去登录' : '没有账号?去注册'),
                   ),
+                  if (widget.showCancel) ...[
+                    const SizedBox(height: 2),
+                    TextButton(
+                      onPressed: _busy ? null : () => Navigator.pop(context),
+                      child: const Text('取消'),
+                    ),
+                  ],
                 ],
               ),
             ),

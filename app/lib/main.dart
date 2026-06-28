@@ -199,6 +199,24 @@ class _HomeShellState extends State<HomeShell> {
     await _bootstrap();
   }
 
+  Future<void> _switchAccount() async {
+    final currentRelay = _cfg?.relayUrl ?? _relayHint;
+    final currentIdentity = _cfg?.identity;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => LoginScreen(
+          initialRelayUrl: currentRelay,
+          initialIdentity: currentIdentity,
+          showCancel: true,
+          onLoggedIn: (s) async {
+            await _onLoggedIn(s);
+            if (mounted) Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _logout() async {
     // Switch to the login screen immediately so the button always responds,
     // even if the secure-store writes below are slow or throw.
@@ -286,7 +304,11 @@ class _HomeShellState extends State<HomeShell> {
         RemoteWorkspacePage(relayUrl: _cfg!.relayUrl, token: _cfg!.token),
       HandoffsPage(client: _client!, config: _cfg!, showTerminal: _isDesktop),
       ProjectsPage(client: _client!),
-      AccountPage(client: _client!, identity: _cfg!.identity),
+      AccountPage(
+        client: _client!,
+        identity: _cfg!.identity,
+        onSwitchAccount: _switchAccount,
+      ),
       if (isAdmin) AdminPage(client: _client!),
     ];
     // dests and pages are built with matching `if (_isDesktop)` / `if (isAdmin)`
@@ -457,9 +479,20 @@ class _HomeShellState extends State<HomeShell> {
         tooltip: '账号',
         icon: const Icon(Icons.account_circle_rounded),
         onSelected: (v) {
+          if (v == 'switch') _switchAccount();
           if (v == 'logout') _logout();
         },
         itemBuilder: (_) => const [
+          PopupMenuItem(
+            value: 'switch',
+            child: Row(
+              children: [
+                Icon(Icons.switch_account_rounded, size: 16),
+                SizedBox(width: 8),
+                Text('切换账号'),
+              ],
+            ),
+          ),
           PopupMenuItem(
             value: 'logout',
             child: Row(

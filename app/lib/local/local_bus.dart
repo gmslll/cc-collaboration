@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'hook_activity.dart';
 import 'platform.dart';
 
 // localBusDir is the per-user directory the local session bus lives in. Sessions
@@ -26,6 +27,30 @@ String? localBusAgentSessionId(String sessionId) {
     return (id != null && id.isNotEmpty) ? id : null;
   } catch (_) {
     return null;
+  }
+}
+
+List<HookActivity> localBusHookActivities(String sessionId, {int limit = 20}) {
+  try {
+    final dir = Directory('${localBusDir()}/events/$sessionId');
+    if (!dir.existsSync()) return const [];
+    final files =
+        dir
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.json'))
+            .toList()
+          ..sort((a, b) => b.path.compareTo(a.path));
+    final out = <HookActivity>[];
+    for (final f in files.take(limit)) {
+      try {
+        final m = jsonDecode(f.readAsStringSync());
+        if (m is Map) out.add(HookActivity.fromJson(m));
+      } catch (_) {}
+    }
+    return out;
+  } catch (_) {
+    return const [];
   }
 }
 

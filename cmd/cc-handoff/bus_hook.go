@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/cc-collaboration/internal/agent"
 	"github.com/cc-collaboration/internal/localbus"
@@ -101,6 +103,8 @@ func runBusHookDrain() error {
 		return nil
 	}
 
+	recordHookActivity(busDir, sid, raw, ev)
+
 	// Running inside a Task subagent: the inherited CC_SESSION_ID points at the
 	// PARENT's inbox, so draining here would steal the parent's peer messages
 	// into this subagent's context (and ClearMsgs would delete them). Bail so
@@ -149,6 +153,202 @@ func runBusHookDrain() error {
 		fmt.Fprintf(os.Stderr, "bus-hook: encode JSON: %v\n", err)
 	}
 	return nil
+}
+
+func recordHookActivity(busDir, sid string, raw []byte, ev busHookEvent) {
+	if busDir == "" || sid == "" || len(raw) == 0 {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return
+	}
+	event := str(m["hook_event_name"])
+	if event == "" {
+		event = ev.HookEventName
+	}
+	if event == "" {
+		event = "Hook"
+	}
+	at := time.Now().UTC()
+	out := map[string]any{
+		"at":              at.Format(time.RFC3339Nano),
+		"event":           event,
+		"session_id":      str(m["session_id"]),
+		"turn_id":         str(m["turn_id"]),
+		"agent_id":        str(m["agent_id"]),
+		"cwd":             str(m["cwd"]),
+		"model":           str(m["model"]),
+		"permission_mode": str(m["permission_mode"]),
+		"transcript_path": str(m["transcript_path"]),
+		"tool_name":       str(m["tool_name"]),
+		"tool_use_id":     str(m["tool_use_id"]),
+		"exit_code":       m["exit_code"],
+		"source":          str(m["source"]),
+		"stop_active":     m["stop_hook_active"],
+	}
+	addSnippet(out, "prompt", m["prompt"], 1200)
+	addSnippet(out, "tool_input", m["tool_input"], 2000)
+	addSnippet(out, "tool_response", firstPresent(m, "tool_response", "tool_output"), 2000)
+	addSnippet(out, "last_assistant_message", m["last_assistant_message"], 2000)
+
+	dir := filepath.Join(busDir, "events", sid)
+	name := fmt.Sprintf("%020d-%s.json", at.UnixNano(), sanitizeEventName(event))
+	_ = writePrivateAtomic(filepath.Join(dir, name), mustJSON(out))
+	pruneHookActivities(dir, 200)
+}
+
+func writePrivateAtomic(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	_ = os.Chmod(filepath.Dir(path), 0o700)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func firstPresent(m map[string]any, keys ...string) any {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			return v
+		}
+	}
+	return nil
+}
+
+func addSnippet(out map[string]any, key string, v any, limit int) {
+	s := snippet(v, limit)
+	if s != "" {
+		out[key] = s
+	}
+}
+
+func str(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func snippet(v any, limit int) string {
+	if v == nil {
+		return ""
+	}
+	var b strings.Builder
+	appendSnippetValue(&b, v, limit)
+	s := b.String()
+	s = strings.TrimSpace(s)
+	if len(s) > limit {
+		return s[:limit] + "…"
+	}
+	return s
+}
+
+func appendSnippetValue(b *strings.Builder, v any, limit int) {
+	if b.Len() >= limit {
+		return
+	}
+	write := func(s string) {
+		if b.Len() >= limit {
+			return
+		}
+		if b.Len()+len(s) > limit {
+			s = s[:limit-b.Len()]
+		}
+		b.WriteString(s)
+	}
+	switch x := v.(type) {
+	case string:
+		write(x)
+	case nil:
+		write("null")
+	case bool:
+		write(fmt.Sprint(x))
+	case float64:
+		write(fmt.Sprint(x))
+	case json.Number:
+		write(x.String())
+	case []any:
+		write("[")
+		for i, item := range x {
+			if i >= 6 || b.Len() >= limit {
+				write("…")
+				break
+			}
+			if i > 0 {
+				write(", ")
+			}
+			appendSnippetValue(b, item, limit)
+		}
+		write("]")
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		write("{")
+		for i, k := range keys {
+			if i >= 12 || b.Len() >= limit {
+				write("…")
+				break
+			}
+			if i > 0 {
+				write(", ")
+			}
+			write(k + ": ")
+			appendSnippetValue(b, x[k], limit)
+		}
+		write("}")
+	default:
+		write(fmt.Sprint(x))
+	}
+}
+
+func sanitizeEventName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "Hook"
+	}
+	return b.String()
+}
+
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte("{}")
+	}
+	return append(b, '\n')
+}
+
+func pruneHookActivities(dir string, keep int) {
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) <= keep {
+		return
+	}
+	var names []string
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+			names = append(names, f.Name())
+		}
+	}
+	if len(names) <= keep {
+		return
+	}
+	sort.Strings(names)
+	for _, n := range names[:len(names)-keep] {
+		_ = os.Remove(filepath.Join(dir, n))
+	}
 }
 
 // busHookResponse shapes the hook output for the event. Stop blocks to pull the

@@ -6,6 +6,17 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-06-29
+
+### Added
+
+- **账号切换** — 桌面端、手机端和 Web 远程页都支持从当前账号直接登录另一个账号；新账号登录成功后才切换，取消或登录失败不会影响当前会话。
+- **Hook 活动流** — `cc-handoff bus-hook` 现在记录轻量结构化事件摘要，并覆盖 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PreCompact`、`PostCompact`、`SubagentStart`、`SubagentStop`、`Stop`。桌面端会把正在手机端观看的会话活动推送到手机，远程终端页新增可折叠「活动」浮层，显示最近工具调用、prompt、退出码等信息。
+
+### Security
+
+- Hook 活动摘要包含 prompt/tool 输入输出片段，落盘时使用本地私有权限目录/文件，避免复用普通配置写入的宽权限。
+
 ## [0.6.5] - 2026-06-29
 
 ### Fixed
@@ -172,7 +183,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.6...HEAD
+[0.6.6]: https://github.com/gmslll/cc-collaboration/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/gmslll/cc-collaboration/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/gmslll/cc-collaboration/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/gmslll/cc-collaboration/compare/v0.6.2...v0.6.3

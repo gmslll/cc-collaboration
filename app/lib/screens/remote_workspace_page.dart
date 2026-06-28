@@ -10,6 +10,7 @@ import 'package:xterm/xterm.dart';
 
 import '../live_activity/live_activity.dart';
 import '../local/diff_parse.dart';
+import '../local/hook_activity.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
@@ -30,15 +31,17 @@ import '../terminal_theme.dart';
 class RemoteWorkspacePage extends StatefulWidget {
   final String relayUrl;
   final String token;
-  // onLogout, when set, adds a logout action to the AppBar. The phone leaves it
-  // null (logout lives in its 账号 tab); the web client passes it since this is
-  // the whole app there.
+  // onLogout/onSwitchAccount, when set, add account actions to the AppBar. The
+  // phone leaves them null (account actions live in its 账号 tab); the web client
+  // passes them since this is the whole app there.
   final Future<void> Function()? onLogout;
+  final Future<void> Function()? onSwitchAccount;
   const RemoteWorkspacePage({
     super.key,
     required this.relayUrl,
     required this.token,
     this.onLogout,
+    this.onSwitchAccount,
   });
 
   @override
@@ -435,11 +438,38 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
               icon: const Icon(Icons.refresh_rounded),
               onPressed: _c.connected ? _c.refresh : null,
             ),
-            if (widget.onLogout != null)
-              IconButton(
-                tooltip: '登出',
-                icon: const Icon(Icons.logout_rounded),
-                onPressed: widget.onLogout,
+            if (widget.onLogout != null || widget.onSwitchAccount != null)
+              PopupMenuButton<String>(
+                tooltip: '账号',
+                icon: const Icon(Icons.account_circle_rounded),
+                onSelected: (v) {
+                  if (v == 'switch') widget.onSwitchAccount?.call();
+                  if (v == 'logout') widget.onLogout?.call();
+                },
+                itemBuilder: (_) => [
+                  if (widget.onSwitchAccount != null)
+                    const PopupMenuItem(
+                      value: 'switch',
+                      child: Row(
+                        children: [
+                          Icon(Icons.switch_account_rounded, size: 16),
+                          SizedBox(width: 8),
+                          Text('切换账号'),
+                        ],
+                      ),
+                    ),
+                  if (widget.onLogout != null)
+                    const PopupMenuItem(
+                      value: 'logout',
+                      child: Row(
+                        children: [
+                          Icon(Icons.logout_rounded, size: 16),
+                          SizedBox(width: 8),
+                          Text('登出'),
+                        ],
+                      ),
+                    ),
+                ],
               ),
           ],
         ),
@@ -1771,6 +1801,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // tokens · est. cost); null until the first status carries one. Shown as a
   // small chip over the mirrored terminal and folded into the Live Activity text.
   String? _usageLabel;
+  bool _activityOpen = false;
 
   // Terminal font size (phone). Smaller = more columns, so a wide full-screen
   // TUI like codex lays out properly instead of cramming into too few columns.
@@ -1799,6 +1830,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     widget.client.onReplyText = _onReplyText;
     widget.client.onAgentStatus = _onAgentStatus;
     widget.client.onTerminalReset = _onTerminalReset;
+    widget.client.addListener(_onClientChange);
     // Mark this session as the one being viewed (guards it from idle eviction).
     // If its local history went stale while we were away, it's dropped here and
     // re-pulled fresh from the desktop before the first build binds the view.
@@ -1891,6 +1923,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     if (widget.client.onTerminalReset == _onTerminalReset) {
       widget.client.onTerminalReset = null;
     }
+    widget.client.removeListener(_onClientChange);
     // Stop guarding this session from eviction; its idle TTL counts from now.
     widget.client.leaveViewedSession(widget.session.sid);
     if (_laStarted) LiveActivity.end();
@@ -1901,6 +1934,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     _voice.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  void _onClientChange() {
+    if (mounted) setState(() {});
   }
 
   Terminal get _term => widget.client.terminalFor(widget.session.sid);
@@ -2278,6 +2315,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                       ),
                     ),
                   ),
+                _activityOverlay(),
               ],
             ),
           ),
@@ -2291,6 +2329,116 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // _voiceHud is a thin diagnostics line above the key bar (only while the voice
   // monitor is on) showing the recognizer's latest event — status / partial /
   // final / error — so a silent failure is visible at a glance.
+  Widget _activityOverlay() {
+    final items = widget.client.activities[widget.session.sid] ?? const <HookActivity>[];
+    if (items.isEmpty) return const SizedBox.shrink();
+    final shown = _activityOpen ? items.take(5).toList() : items.take(1).toList();
+    return Positioned(
+      left: 8,
+      right: 8,
+      bottom: 8,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _activityOpen = !_activityOpen),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xDD16181C),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0x33FFFFFF)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.bolt_rounded,
+                      size: 14,
+                      color: CcColors.accentBright,
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      '活动',
+                      style: TextStyle(
+                        color: CcColors.text,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      _activityOpen
+                          ? Icons.keyboard_arrow_down_rounded
+                          : Icons.keyboard_arrow_up_rounded,
+                      size: 16,
+                      color: CcColors.muted,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                for (final a in shown) _activityRow(a),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _activityRow(HookActivity a) {
+    final detail = a.detail;
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _clock(a.at),
+            style: const TextStyle(
+              color: CcColors.subtle,
+              fontSize: 10,
+              fontFamily: CcType.mono,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  a.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: CcColors.text, fontSize: 11),
+                ),
+                if (_activityOpen && detail.isNotEmpty)
+                  Text(
+                    detail,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: CcColors.muted,
+                      fontSize: 10.5,
+                      fontFamily: CcType.mono,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _clock(DateTime t) {
+    final l = t.toLocal();
+    return '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}:${l.second.toString().padLeft(2, '0')}';
+  }
+
   Widget _voiceHud() => Container(
     width: double.infinity,
     color: Colors.black87,
