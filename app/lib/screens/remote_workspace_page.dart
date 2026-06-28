@@ -1620,6 +1620,15 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // Owned controller so the copy button can read the long-press selection.
   final TerminalController _controller = TerminalController();
 
+  // Drives the TerminalView's inner Scrollable so we can force it to the bottom
+  // after the host replays history on entry/reload — otherwise the view can land
+  // at the TOP of the backlog (xterm disables stick-to-bottom when the Scrollable
+  // attaches at offset 0 with content already present) and the user must scroll
+  // down to reach the latest output. _stickTimer re-asserts bottom for a short
+  // window to catch the async replay chunks; once at the bottom xterm sticks.
+  final ScrollController _termScroll = ScrollController();
+  Timer? _stickTimer;
+
   // Customizable on-screen key bar (shared across sessions via Prefs).
   late List<_KeyButton> _keys = _loadKeyButtons();
 
@@ -1657,6 +1666,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     widget.client.onReplyText = _onReplyText;
     widget.client.onAgentStatus = _onAgentStatus;
     widget.client.onTerminalReset = _onTerminalReset;
+    _stickToBottomSoon(); // land at the latest output once the replay arrives
   }
 
   // After a reconnect-driven resync the client recreates this session's Terminal
@@ -1664,6 +1674,28 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // shows the host's replayed latest screen — no manual 刷新 needed.
   void _onTerminalReset() {
     if (mounted) setState(() {});
+    _stickToBottomSoon(); // the re-pull replays fresh content — re-anchor to bottom
+  }
+
+  // _stickToBottomSoon nudges the terminal to its bottom a few times over the
+  // next ~750ms, so the host's async (chunked) history replay lands at the latest
+  // output instead of the top. Once it's at the bottom xterm keeps sticking, so
+  // this stops; it only runs on entry/reset, never fighting a mid-session scroll.
+  void _stickToBottomSoon() {
+    _stickTimer?.cancel();
+    var ticks = 0;
+    _scrollTermToBottom();
+    _stickTimer = Timer.periodic(const Duration(milliseconds: 150), (t) {
+      _scrollTermToBottom();
+      if (++ticks >= 5 || !mounted) t.cancel();
+    });
+  }
+
+  void _scrollTermToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_termScroll.hasClients) return;
+      _termScroll.jumpTo(_termScroll.position.maxScrollExtent);
+    });
   }
 
   void _onAgentStatus(String sid, bool working, String text) {
@@ -1708,6 +1740,8 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     }
     if (_laStarted) LiveActivity.end();
     _stopScroll();
+    _stickTimer?.cancel();
+    _termScroll.dispose();
     _speaker.stop();
     _voice.dispose();
     _controller.dispose();
@@ -1985,6 +2019,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             child: Listener(
               onPointerDown: (_) {
                 _scrollAccum = 0;
+                // Touching the terminal cancels the brief auto-stick-to-bottom so
+                // the user can scroll back through history right after entering —
+                // we only want to land at the bottom when they DON'T touch.
+                _stickTimer?.cancel();
                 // A new touch clears any prior selection: a plain drag then
                 // scrolls (no selection to gate it), a long-press re-selects,
                 // and a tap acts as "deselect". Tapping 复制 is on the key bar
@@ -1996,6 +2034,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                 TerminalView(
                   _term,
                   controller: _controller,
+                  scrollController: _termScroll,
                   theme: ccTerminalTheme,
                   // Only raise the keyboard when tapping the agent's input line
                   // (cursor row and below) — tapping output to read/scroll won't

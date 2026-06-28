@@ -415,6 +415,11 @@ class RemoteClient extends RemoteChannel {
 
   final Map<String, Terminal> _terminals = {};
   final Map<String, Timer> _resizeTimers = {}; // debounce phone resize per session
+  // Sessions whose phone viewport size has already been reported to the host.
+  // The first term.open is replayed at the COMPUTER's size (the phone's size
+  // isn't known until the TerminalView lays out), so the first time we learn the
+  // real size we report it immediately (no debounce) instead of 120ms later.
+  final Set<String> _sizedSids = {};
 
   bool get hostOnline => _hostOnline;
   String? get error => lastError;
@@ -657,9 +662,19 @@ class RemoteClient extends RemoteChannel {
     // without it xterm's default handler drops the wheel while the app tracks.
     term.mouseHandler = const WheelMouseHandler();
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
-    // Debounce resize: rotation / window drags fire a burst of onResize calls;
-    // sending only the last one ~120ms later spares the PTY a string of redraws.
     term.onResize = (w, h, pw, ph) {
+      // The first term.open was replayed at the COMPUTER's size (the phone's
+      // viewport wasn't known yet). Report the real size the moment we learn it
+      // (no debounce) so the host redraws at the phone's dimensions promptly; the
+      // live stream then reflows the screen. (Replayed history is plain text and
+      // re-wraps at the phone width, so it stays readable.)
+      if (_sizedSids.add(sid)) {
+        send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+        return;
+      }
+      // Debounce later resizes: rotation / keyboard show/hide fire a burst of
+      // onResize calls; sending only the last one ~120ms later spares the PTY a
+      // string of redraws.
       _resizeTimers[sid]?.cancel();
       _resizeTimers[sid] = Timer(const Duration(milliseconds: 120), () {
         send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});

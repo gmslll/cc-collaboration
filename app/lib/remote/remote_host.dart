@@ -27,11 +27,6 @@ bool _isHighSurrogate(int u) => u >= 0xd800 && u <= 0xdbff;
 // backlog-replay slice size. Bounds frame size (and worst-case latency).
 const int _maxFrameChars = 64 * 1024;
 
-// Cap on how many recent rows term.open replays. Keeps opening / auto-resyncing
-// a session fast and avoids dumping a big block of old scrollback to the phone
-// (a few screens of context is enough; the live stream takes over after).
-const int _maxReplayLines = 400;
-
 // _OutputBatcher coalesces a session's PTY output before it goes on the wire.
 // Without it every PTY chunk became one WS frame + one synchronous terminal.write
 // on the phone — the main cause of mirror jank under streaming output. It uses
@@ -501,9 +496,9 @@ class RemoteHost extends RemoteChannel {
     // 'ansi' = coloured re-wrap (historyAnsi), anything else = plain text
     // (default). Both re-wrap at the phone's width; 'text' drops colour.
     final mode = (f['historyMode'] ?? 'text').toString();
-    final bl = mode == 'ansi'
-        ? s.historyAnsi(maxLines: _maxReplayLines)
-        : s.historyText(maxLines: _maxReplayLines);
+    // Replay the FULL backlog so the phone can scroll back through history; the
+    // phone re-wraps the plain text at its own width, so this stays readable.
+    final bl = mode == 'ansi' ? s.historyAnsi() : s.historyText();
     for (var i = 0; i < bl.length;) {
       var end = min(i + _maxFrameChars, bl.length);
       if (end < bl.length && _isHighSurrogate(bl.codeUnitAt(end - 1))) end++;

@@ -184,15 +184,9 @@ class TerminalSession {
   // renders mis-wrapped at another width; this strips ANSI/colour so the phone's
   // terminal re-wraps each line at its own width. getText joins rows with '\n';
   // a terminal needs '\r\n' to also return to column 0, so normalise.
-  String historyText({int? maxLines}) {
+  String historyText() {
     final all = terminal.buffer.getText().replaceFirst(_trailingBlank, '');
-    var lines = all.split(RegExp(r'\r?\n'));
-    // Cap to the most recent [maxLines] rows so replaying a long scrollback to a
-    // phone is fast and doesn't dump a big block of old content.
-    if (maxLines != null && lines.length > maxLines) {
-      lines = lines.sublist(lines.length - maxLines);
-    }
-    return lines.join('\r\n');
+    return all.split(RegExp(r'\r?\n')).join('\r\n');
   }
 
   // historyAnsi is historyText with COLOUR: it walks the buffer's cells and
@@ -201,7 +195,7 @@ class TerminalSession {
   // carry no line break (isWrapped) so the phone re-flows them. Encoding per
   // xterm core/cell.dart (CellColor packs type<<25 | 0xRRGGBB-or-index; CellAttr
   // bit flags). Absolute-positioned TUI chrome flattens, same as historyText.
-  String historyAnsi({int? maxLines}) {
+  String historyAnsi() {
     String colorSgr(int c, bool fg) {
       final v = c & CellColor.valueMask;
       switch (c & CellColor.typeMask) {
@@ -236,14 +230,11 @@ class TerminalSession {
     while (last >= 0 && buf.lines[last].getTrimmedLength() == 0) {
       last--; // drop trailing blank lines (idle TUI bottom rows)
     }
-    // Cap to the most recent [maxLines] rows (same intent as historyText): start
-    // later in the buffer, never before row 0.
-    final start = (maxLines != null && last >= maxLines) ? last - maxLines + 1 : 0;
     final out = StringBuffer();
     int? pf, pb, pa; // last-emitted fg/bg/attrs, to only emit SGR on change
-    for (var y = start; y <= last; y++) {
+    for (var y = 0; y <= last; y++) {
       final line = buf.lines[y];
-      if (y != start && !line.isWrapped) out.write('\r\n');
+      if (y != 0 && !line.isWrapped) out.write('\r\n');
       final len = line.getTrimmedLength();
       for (var x = 0; x < len; x++) {
         if (line.getWidth(x) == 0) continue; // wide-char continuation cell
