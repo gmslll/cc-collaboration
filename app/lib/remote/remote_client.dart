@@ -431,6 +431,18 @@ class RemoteClient extends RemoteChannel {
   // real size we report it immediately (no debounce) instead of 120ms later.
   final Set<String> _sizedSids = {};
 
+  // Local terminal-history cache + idle eviction. Each opened session keeps its
+  // xterm buffer (replayed history + accumulated live output); left untouched it
+  // drifts stale (mis-wrapped backlog, dropped frames). A session not viewed /
+  // operated for [_historyTtl] has its buffer dropped — by a periodic sweep and a
+  // check when its screen re-opens — so the next open re-pulls a clean copy from
+  // the desktop. _viewedSid is the session whose screen is open now: never evicted
+  // out from under the user.
+  final Map<String, DateTime> _lastActive = {};
+  static const Duration _historyTtl = Duration(minutes: 5);
+  String? _viewedSid;
+  Timer? _evictTimer;
+
   bool get hostOnline => _hostOnline;
   String? get error => lastError;
 
@@ -669,8 +681,10 @@ class RemoteClient extends RemoteChannel {
 
   // sendKeys injects raw bytes into a session (for an on-screen key bar — phone
   // soft keyboards lack Esc / Ctrl / arrows that agent TUIs need).
-  void sendKeys(String sid, String data) =>
-      send({'t': 'term.input', 'sid': sid, 'd': data});
+  void sendKeys(String sid, String data) {
+    touchSession(sid); // input is an operation → keep this session's cache warm
+    send({'t': 'term.input', 'sid': sid, 'd': data});
+  }
 
   // terminalFor returns (creating on first use) the xterm Terminal for a session,
   // wired so host output is written in and local keystrokes/resizes go back.
@@ -701,6 +715,7 @@ class RemoteClient extends RemoteChannel {
         send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
       });
     };
+    touchSession(sid); // brand-new buffer is fresh
     send({'t': 'term.open', 'sid': sid, 'historyMode': historyMode});
     return term;
   }
@@ -713,6 +728,66 @@ class RemoteClient extends RemoteChannel {
     _terminals.remove(sid);
     _resizeTimers.remove(sid)?.cancel();
     terminalFor(sid); // recreate + send term.open now → host replays backlog
+  }
+
+  // --- Local history cache eviction -----------------------------------------
+
+  // touchSession stamps a session as just-operated so its cached buffer stays
+  // warm (called on open, key/text input, and on leaving its screen).
+  void touchSession(String sid) => _lastActive[sid] = DateTime.now();
+
+  // setViewedSession marks [sid]'s screen as the one on top (guarded from
+  // eviction). If its cached buffer has gone idle past the TTL it's dropped and
+  // re-pulled fresh from the host first. Returns true when it re-pulled, so the
+  // screen can hint the user. Call leaveViewedSession when the screen closes.
+  bool setViewedSession(String sid) {
+    _ensureEvictTimer();
+    final t = _lastActive[sid];
+    final stale = t == null || DateTime.now().difference(t) > _historyTtl;
+    final refreshed = stale && _terminals.containsKey(sid);
+    if (refreshed) {
+      reloadTerminal(sid); // drop stale local history → fresh replay from desktop
+    }
+    _viewedSid = sid;
+    touchSession(sid);
+    return refreshed;
+  }
+
+  // leaveViewedSession is called when a session's screen closes: stamp the leave
+  // time (the idle TTL counts from here) and stop guarding it from eviction.
+  void leaveViewedSession(String sid) {
+    touchSession(sid);
+    if (_viewedSid == sid) _viewedSid = null;
+  }
+
+  void _ensureEvictTimer() {
+    _evictTimer ??=
+        Timer.periodic(const Duration(minutes: 1), (_) => _sweepIdleHistory());
+  }
+
+  // _sweepIdleHistory drops the local buffer of any session idle past the TTL
+  // (never the one being viewed). Frees memory and guarantees the next open
+  // re-pulls fresh instead of showing stale accumulated history.
+  void _sweepIdleHistory() {
+    final now = DateTime.now();
+    for (final sid in _terminals.keys.toList()) {
+      if (sid == _viewedSid) continue;
+      final t = _lastActive[sid];
+      if (t == null || now.difference(t) > _historyTtl) _evictTerminal(sid);
+    }
+  }
+
+  void _evictTerminal(String sid) {
+    _terminals.remove(sid);
+    _resizeTimers.remove(sid)?.cancel();
+    _sizedSids.remove(sid);
+    _lastActive.remove(sid);
+  }
+
+  @override
+  void dispose() {
+    _evictTimer?.cancel();
+    super.dispose();
   }
 
   // Session write actions (the host re-broadcasts `sessions` after each).

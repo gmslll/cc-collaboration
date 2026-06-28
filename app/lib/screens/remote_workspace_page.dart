@@ -1720,7 +1720,18 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     widget.client.onReplyText = _onReplyText;
     widget.client.onAgentStatus = _onAgentStatus;
     widget.client.onTerminalReset = _onTerminalReset;
+    // Mark this session as the one being viewed (guards it from idle eviction).
+    // If its local history went stale while we were away, it's dropped here and
+    // re-pulled fresh from the desktop before the first build binds the view.
+    final refreshed = widget.client.setViewedSession(widget.session.sid);
     _stickToBottomSoon(); // land at the latest output once the replay arrives
+    if (refreshed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          snack(context, '已从电脑拉取最新（本地旧历史已清理）', clearPrevious: true);
+        }
+      });
+    }
   }
 
   // After a reconnect-driven resync the client recreates this session's Terminal
@@ -1798,6 +1809,8 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     if (widget.client.onTerminalReset == _onTerminalReset) {
       widget.client.onTerminalReset = null;
     }
+    // Stop guarding this session from eviction; its idle TTL counts from now.
+    widget.client.leaveViewedSession(widget.session.sid);
     if (_laStarted) LiveActivity.end();
     _stopScroll();
     _stickTimer?.cancel();
