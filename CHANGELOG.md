@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-06-29
+
+### Fixed
+
+- **手机端 codex 会话可以上滑查看历史记录** — codex 的 transcript 在 main buffer 里有真实 scrollback，即使它启用了 mouse reporting，手机端也不应像 Claude 全屏 TUI 那样禁用本地 scrollback 并只发 host wheel。现在手机端识别为 codex 的会话保留原生本地滚动；Claude 仍沿用原来的 host wheel 滚动路径。
+
 ## [0.6.4] - 2026-06-28
 
 ### Fixed
@@ -166,7 +172,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/gmslll/cc-collaboration/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/gmslll/cc-collaboration/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/gmslll/cc-collaboration/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/gmslll/cc-collaboration/compare/v0.6.1...v0.6.2
