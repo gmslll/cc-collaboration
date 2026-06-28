@@ -134,8 +134,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     // one it mints after launch (TerminalSession._maybeCaptureCodexId) and asks
     // us to persist it via onPersist.
     final sid = agent == 'claude' ? _genUuid() : null;
-    setState(() {
-      terms.add(
+    final session =
         TerminalSession(
           workdir,
           command,
@@ -145,10 +144,18 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         )
           ..onDone = _onSessionDone
           ..onBusyChanged = _onSessionBusyChanged
-          ..onPersist = persistTerms,
-      );
+          ..onPersist = persistTerms;
+    setState(() {
+      terms.add(session);
       activeTerm = terms.length - 1;
     });
+    // Launch the PTY now — NOT lazily when a TerminalPane first builds. A session
+    // created remotely (from the phone) while the desktop's terminal deck isn't
+    // currently rendered (panel collapsed / another view) would otherwise never
+    // start its agent until the desktop UI changed and built the pane, leaving the
+    // phone mirroring an empty terminal. start() is idempotent, so the pane's own
+    // initState start() stays a no-op.
+    session.start();
     onTermsChanged?.call();
     onTermAdded?.call();
     _activeChanged();
