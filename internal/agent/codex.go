@@ -23,18 +23,23 @@ func (codexAgent) Name() string    { return "codex" }
 func (codexAgent) CLI() string     { return "codex" }
 func (codexAgent) Available() bool { return onPath("codex") }
 
+// codexBypass vouches for cc-handoff's own bus hook so codex doesn't show its
+// blocking "trust hooks" dialog (which would stall a non-interactive launch).
+// Global flag → goes right after `codex`, before any subcommand.
+const codexBypass = "codex --dangerously-bypass-hook-trust"
+
 func (codexAgent) POSIXPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string {
-	invocation := "codex"
+	invocation := codexBypass
 	if !interactive {
-		invocation = `codex exec "$(cat ` + POSIXSingleQuote(promptFile) + `)"`
+		invocation = codexBypass + ` exec "$(cat ` + POSIXSingleQuote(promptFile) + `)"`
 	}
 	return posixCompose(cwd, preLaunch, invocation)
 }
 
 func (codexAgent) PowerShellPromptCmd(cwd, promptFile, preLaunch string, interactive bool) string {
-	invocation := "codex"
+	invocation := codexBypass
 	if !interactive {
-		invocation = "codex exec (Get-Content -Raw -LiteralPath " + PSSingleQuote(promptFile) + ")"
+		invocation = codexBypass + " exec (Get-Content -Raw -LiteralPath " + PSSingleQuote(promptFile) + ")"
 	}
 	return psCompose(cwd, preLaunch, invocation)
 }

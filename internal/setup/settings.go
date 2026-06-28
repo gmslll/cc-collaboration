@@ -133,24 +133,41 @@ func EnsureClaudeBusHooks(settingsPath string) (EnsureResult, error) {
 }
 
 // EnsureCodexBusHooks does the same for a Codex hooks.json (typically
-// $CODEX_HOME/hooks.json, default ~/.codex/hooks.json). Codex's hooks.json puts
-// the lifecycle events at the file root (no "hooks" wrapper), but the matcher
-// group / command-handler shape is identical to Claude's — same BusHookCommand,
-// same env-guard scoping.
+// $CODEX_HOME/hooks.json, default ~/.codex/hooks.json). Codex expects everything
+// under a top-level "hooks" object — the same nested matcher-group shape as
+// Claude's settings.json. Older builds wrote the events at the FILE ROOT, which
+// codex rejects ("unknown field `PostToolUse`, expected `hooks`") and then
+// ignores the whole file; we migrate that layout here.
 func EnsureCodexBusHooks(hooksPath string) (EnsureResult, error) {
 	root, err := loadSettings(hooksPath)
 	if err != nil {
 		return EnsureAlreadyPresent, err
 	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
 	changed := false
+	// Migrate the old rejected layout: lift any event arrays written at the file
+	// root under "hooks" and drop them from the root.
 	for _, ev := range busHookEvents {
-		if ensureHookEntry(root, ev, BusHookCommand) {
+		if old, ok := root[ev]; ok {
+			if _, exists := hooks[ev]; !exists {
+				hooks[ev] = old
+			}
+			delete(root, ev)
+			changed = true
+		}
+	}
+	for _, ev := range busHookEvents {
+		if ensureHookEntry(hooks, ev, BusHookCommand) {
 			changed = true
 		}
 	}
 	if !changed {
 		return EnsureAlreadyPresent, nil
 	}
+	root["hooks"] = hooks
 	return EnsureWritten, marshalWrite(hooksPath, root)
 }
 

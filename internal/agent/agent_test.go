@@ -100,7 +100,7 @@ func TestClaudePOSIXPromptCmdPreLaunchAndInteractive(t *testing.T) {
 
 func TestCodexPOSIXPromptCmd(t *testing.T) {
 	got := codexAgent{}.POSIXPromptCmd("/repo", "/repo/.cc-handoff/inbox/h_x/prompt.md", "", false)
-	want := `cd '/repo' && codex exec "$(cat '/repo/.cc-handoff/inbox/h_x/prompt.md')"`
+	want := `cd '/repo' && codex --dangerously-bypass-hook-trust exec "$(cat '/repo/.cc-handoff/inbox/h_x/prompt.md')"`
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
@@ -108,7 +108,7 @@ func TestCodexPOSIXPromptCmd(t *testing.T) {
 
 func TestCodexPowerShellPromptCmd(t *testing.T) {
 	got := codexAgent{}.PowerShellPromptCmd(`C:\repo`, `C:\repo\.cc-handoff\inbox\h_x\prompt.md`, "", false)
-	want := `Set-Location -LiteralPath 'C:\repo'; codex exec (Get-Content -Raw -LiteralPath 'C:\repo\.cc-handoff\inbox\h_x\prompt.md')`
+	want := `Set-Location -LiteralPath 'C:\repo'; codex --dangerously-bypass-hook-trust exec (Get-Content -Raw -LiteralPath 'C:\repo\.cc-handoff\inbox\h_x\prompt.md')`
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}

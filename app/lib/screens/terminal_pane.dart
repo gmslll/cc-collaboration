@@ -397,12 +397,19 @@ class TerminalSession {
           : '$prefix$inv --resume $agentSessionId';
     }
     // codex can't be given a session id at launch; we capture the one it mints
-    // (see _maybeCaptureCodexId) and resume that EXACT session on reopen, falling
+    // (see _maybeCaptureAgentId) and resume that EXACT session on reopen, falling
     // back to the cwd's most-recent rollout if we never captured one.
-    if (!resume) return '$prefix$inv';
+    //
+    // --dangerously-bypass-hook-trust: codex shows a blocking "trust hooks"
+    // dialog whenever a hook config is new/changed (we install the bus hook into
+    // ~/.codex/hooks.json). For the app's own env-guarded hook that dialog is
+    // just friction — and it would stall non-interactive launches — so we vouch
+    // for our own hook here (global flag, before the subcommand).
+    final cdx = '$inv --dangerously-bypass-hook-trust';
+    if (!resume) return '$prefix$cdx';
     return agentSessionId == null
-        ? '$prefix$inv resume --last'
-        : '$prefix$inv resume ${agentSessionId!}';
+        ? '$prefix$cdx resume --last'
+        : '$prefix$cdx resume ${agentSessionId!}';
   }
 
   void start() {

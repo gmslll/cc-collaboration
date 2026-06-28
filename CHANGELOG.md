@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-06-28
+
+### Fixed
+
+- **codex rejected our `hooks.json` ("unknown field `PostToolUse`, expected `hooks`")** — the bus-hook installer wrote the lifecycle events at the file root, but codex requires them under a top-level `hooks` object (same nested matcher-group shape as Claude's `settings.json`). It now writes the correct shape and migrates an existing root-layout file in place. Because codex shows a blocking "trust hooks" dialog for any new/changed hook config, app-spawned codex sessions now launch with `--dangerously-bypass-hook-trust` (the app vouches for its own env-guarded bus hook), so the hook actually runs — interjections + hook-based session capture work on codex — without a dialog stalling interactive or automated launches.
+
 ## [0.6.3] - 2026-06-28
 
 ### Fixed
@@ -160,7 +166,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/gmslll/cc-collaboration/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/gmslll/cc-collaboration/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/gmslll/cc-collaboration/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/gmslll/cc-collaboration/compare/v0.6.0...v0.6.1

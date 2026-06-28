@@ -118,7 +118,7 @@ func TestEnsureClaudeBusHooks_PreservesExistingHooks(t *testing.T) {
 	}
 }
 
-func TestEnsureCodexBusHooks_RootEvents(t *testing.T) {
+func TestEnsureCodexBusHooks_NestedUnderHooks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".codex", "hooks.json")
 	res, err := EnsureCodexBusHooks(path)
 	if err != nil {
@@ -127,14 +127,68 @@ func TestEnsureCodexBusHooks_RootEvents(t *testing.T) {
 	if res != EnsureWritten {
 		t.Fatalf("expected EnsureWritten, got %v", res)
 	}
-	// Codex hooks.json puts events at the file root (no "hooks" wrapper).
+	// Codex requires events under a top-level "hooks" object (not the file root,
+	// which it rejects with "unknown field `PostToolUse`, expected `hooks`").
 	root := loadJSON(t, path)
+	if _, atRoot := root["PostToolUse"]; atRoot {
+		t.Error("events must NOT be at the file root for codex")
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		t.Fatalf("missing top-level hooks object: %+v", root)
+	}
 	for _, ev := range []string{"PostToolUse", "Stop"} {
-		if got := firstHookCommand(t, root, ev); got != BusHookCommand {
+		if got := firstHookCommand(t, hooks, ev); got != BusHookCommand {
 			t.Errorf("%s command=%q, want %q", ev, got, BusHookCommand)
 		}
 	}
 	if res2, _ := EnsureCodexBusHooks(path); res2 != EnsureAlreadyPresent {
 		t.Errorf("expected idempotent re-run, got %v", res2)
+	}
+}
+
+// A file written by an older build (events at the root) must be migrated under
+// "hooks" so codex stops rejecting it — with no duplicate/leftover root entries.
+func TestEnsureCodexBusHooks_MigratesRootLayout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	group := func() []any {
+		return []any{
+			map[string]any{
+				"hooks": []any{
+					map[string]any{"type": "command", "command": BusHookCommand},
+				},
+			},
+		}
+	}
+	// Old (rejected) layout: events at the file root, no "hooks" wrapper.
+	seed, err := json.Marshal(map[string]any{
+		"PostToolUse": group(),
+		"Stop":        group(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, seed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureCodexBusHooks(path); err != nil {
+		t.Fatalf("EnsureCodexBusHooks: %v", err)
+	}
+	root := loadJSON(t, path)
+	if _, atRoot := root["PostToolUse"]; atRoot {
+		t.Error("old root-level PostToolUse must be removed after migration")
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		t.Fatalf("migration did not create a hooks object: %+v", root)
+	}
+	for _, ev := range []string{"PostToolUse", "Stop"} {
+		arr, _ := hooks[ev].([]any)
+		if len(arr) != 1 {
+			t.Errorf("%s should have exactly 1 entry after migration, got %d", ev, len(arr))
+		}
+		if got := firstHookCommand(t, hooks, ev); got != BusHookCommand {
+			t.Errorf("%s command=%q, want %q", ev, got, BusHookCommand)
+		}
 	}
 }
