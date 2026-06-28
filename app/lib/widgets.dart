@@ -408,39 +408,45 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) =>
   SessionStatus.shell => (color: CcColors.subtle, glow: false),
 };
 
-// sessionStatusRow is the status dot + label line, with an optional
-// right-aligned token-usage label. A `working` session animates (breathing dot
-// + cycling 思考中… ellipsis) so it reads as alive at a glance; the calmer
-// states stay static.
+// sessionStatusRow is the status line + (when present) the full token-usage
+// label on its OWN line below it — usage (model · ctx% · tokens · cost) is too
+// long to share the status row without being truncated, so it gets the full card
+// width and may wrap to 2 lines. A `working` session animates (breathing dot +
+// cycling 思考中… ellipsis); the calmer states stay static.
 Widget sessionStatusRow(SessionStatus status, String? usageLabel) {
   final st = sessionStatusStyle(status);
-  return Row(
+  final Widget statusPart = status == SessionStatus.working
+      ? const _WorkingIndicator()
+      : Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            statusDot(st.color, glow: st.glow),
+            const SizedBox(width: 6),
+            Text(
+              statusLabel(status),
+              style: TextStyle(
+                color: st.color,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        );
+  if (usageLabel == null || usageLabel.isEmpty) {
+    return Align(alignment: Alignment.centerLeft, child: statusPart);
+  }
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
     children: [
-      if (status == SessionStatus.working)
-        const _WorkingIndicator()
-      else ...[
-        statusDot(st.color, glow: st.glow),
-        const SizedBox(width: 6),
-        Text(
-          statusLabel(status),
-          style: TextStyle(
-            color: st.color,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-      const Spacer(),
-      if (usageLabel != null)
-        Flexible(
-          child: Text(
-            usageLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.right,
-            style: CcType.code(size: 10.5, color: CcColors.subtle),
-          ),
-        ),
+      statusPart,
+      const SizedBox(height: 5),
+      Text(
+        usageLabel,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: CcType.code(size: 10.5, color: CcColors.muted),
+      ),
     ],
   );
 }
