@@ -94,6 +94,17 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // The workspace uses it to re-arm voice TTS on the now-active session.
   void Function()? onActiveTermChanged;
 
+  // _activeChanged is the internal chokepoint behind onActiveTermChanged: it
+  // refreshes the now-front session's token usage (so the overlay chip is current
+  // the instant you switch to it — not frozen at its last turn boundary), then
+  // fans out to the host hook (voice TTS re-arm).
+  void _activeChanged() {
+    if (activeTerm >= 0 && activeTerm < terms.length) {
+      unawaited(terms[activeTerm].refreshUsage());
+    }
+    onActiveTermChanged?.call();
+  }
+
   // _onSessionDone is wired onto every session's onDone: show the local desktop
   // banner, then let the host fan it out (phone push) via onAgentDone.
   void _onSessionDone(TerminalSession s) {
@@ -130,7 +141,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     });
     onTermsChanged?.call();
     onTermAdded?.call();
-    onActiveTermChanged?.call();
+    _activeChanged();
     unawaited(_save());
   }
 
@@ -144,7 +155,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       }
     });
     onTermsChanged?.call();
-    onActiveTermChanged?.call();
+    _activeChanged();
     unawaited(_save());
   }
 
@@ -163,7 +174,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         if (next != null) activeTerm = next;
       }
     });
-    onActiveTermChanged?.call();
+    _activeChanged();
   }
 
   // reopenTermView un-hides a session's tab and makes it active — the project
@@ -174,7 +185,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       _hiddenTabs.remove(terms[i].id);
       activeTerm = i;
     });
-    onActiveTermChanged?.call();
+    _activeChanged();
   }
 
   // _nearestVisible returns the index of the closest non-hidden tab to [from]
@@ -255,7 +266,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         activeTerm = 0;
       });
       onTermsChanged?.call();
-      onActiveTermChanged?.call();
+      _activeChanged();
       // Only rewrite when a legacy entry was actually recovered — steady-state
       // restarts (all entries already structured) skip the redundant write.
       if (upgraded) unawaited(_save());
@@ -536,7 +547,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     hiddenIds: hideClosedTabs ? _hiddenTabs : null,
     onSwitch: (i) {
       setState(() => activeTerm = i);
-      onActiveTermChanged?.call();
+      _activeChanged();
     },
     onClose: hideClosedTabs ? closeTermView : closeTerm,
     onCollapse: onCollapse,
