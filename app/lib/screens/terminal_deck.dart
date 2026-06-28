@@ -83,6 +83,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // push the notification to a connected phone.
   void Function(TerminalSession session)? onAgentDone;
 
+  // onAgentBusyChanged fires when an agent session's busy state flips (turn
+  // start / finish). A host with a session-overview projection (the workspace)
+  // sets it to republish the snapshot so "思考中"/"待 review" stay live.
+  void Function(TerminalSession session)? onAgentBusyChanged;
+
   // onSendToOnline forwards a terminal selection to the cross-user
   // "发送到在线用户" picker (a remote user + their session). The workspace sets
   // it; hosts that leave it null hide the menu entry. Threaded into both
@@ -113,6 +118,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     onAgentDone?.call(s);
   }
 
+  // _onSessionBusyChanged fans a session's busy transition out to the host so it
+  // can refresh the overview projection (no local banner — just a state change).
+  void _onSessionBusyChanged(TerminalSession s) => onAgentBusyChanged?.call(s);
+
   void addTerm(
     String workdir,
     String command, {
@@ -135,6 +144,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           agentSessionId: sid,
         )
           ..onDone = _onSessionDone
+          ..onBusyChanged = _onSessionBusyChanged
           ..onPersist = persistTerms,
       );
       activeTerm = terms.length - 1;
@@ -255,6 +265,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           resume: true,
         )
           ..onDone = _onSessionDone
+          ..onBusyChanged = _onSessionBusyChanged
           ..onPersist = persistTerms;
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
@@ -755,10 +766,10 @@ class TerminalTabBar extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          Icons.terminal_rounded,
-                          size: 14,
-                          color: isActive ? CcColors.accent : CcColors.muted,
+                        sessionAvatar(
+                          seed: term.id,
+                          isAgent: term.isAgent,
+                          size: 16,
                         ),
                         const SizedBox(width: 6),
                         Text(

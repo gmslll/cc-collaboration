@@ -87,6 +87,20 @@ class TerminalSession {
   // onPersist asks the host to re-save the session list — fired after a codex
   // session id is captured so a reopened tab can resume the exact conversation.
   void Function()? onPersist;
+  // onBusyChanged fires whenever the agent's busy state flips (turn start /
+  // finish) — a host with a session-overview projection (the workspace) sets it
+  // to republish the snapshot so "思考中"/"待 review" stay live. Routed through
+  // _setBusy so every busy transition (local input, remote input, finishing
+  // bell) emits exactly once.
+  void Function(TerminalSession session)? onBusyChanged;
+  // needsReview = this agent finished a user-kicked turn and hasn't been opened
+  // since (set in _fireDone, cleared by the workspace when the session is made
+  // active). Drives the overview's "待 review" highlight.
+  bool needsReview = false;
+  // overviewPreview caches the last computed glance preview (agent transcript
+  // tail / terminal tail) so each overview broadcast reuses it instead of
+  // re-reading the log. Refreshed by the workspace on turn boundaries.
+  String? overviewPreview;
   Timer? _belTimer;
   bool _belArmed = false; // a bell rang; waiting for output to settle to confirm
   bool _sawInput = false; // user has typed/sent into this session at least once
@@ -99,6 +113,14 @@ class TerminalSession {
   // bell (_fireDone).
   bool _busy = false;
   bool get busy => isAgent && _busy;
+  // _setBusy is the single chokepoint for the busy flag: it fires onBusyChanged
+  // only on an actual transition so the overview projection updates once per
+  // turn boundary (not per keystroke).
+  void _setBusy(bool v) {
+    if (_busy == v) return;
+    _busy = v;
+    onBusyChanged?.call(this);
+  }
   static const Duration _belSettle =
       Duration(milliseconds: 1200); // quiet-after-bell → done
 
@@ -135,19 +157,26 @@ class TerminalSession {
   final UsageAccumulator _usageAcc = UsageAccumulator();
   String? _usagePath; // cached transcript path once resolved
 
+  // transcriptPath lazily resolves and caches this agent session's on-disk log
+  // path, shared by usage scanning and the overview preview so it's resolved
+  // once (not per refresh/tick). Null for non-agent sessions / before the log
+  // exists (left uncached so it keeps retrying until it appears).
+  Future<String?> transcriptPath() async {
+    if (!isAgent) return null;
+    return _usagePath ??= await resolveTranscriptPath(
+      agentKind: agentKind,
+      agentSessionId: agentSessionId,
+      workdir: workdir,
+    );
+  }
+
   // refreshUsage folds any newly-appended transcript bytes into the accumulator
   // and republishes [usage]. Called on each turn boundary (start + finish) so the
   // numbers and the busy flag track the live session; also safe to call ad-hoc
   // (the bus `usage` read does). Returns the fresh snapshot, or null when this
   // session isn't an agent / has no transcript yet.
   Future<SessionUsage?> refreshUsage() async {
-    if (!isAgent) return null;
-    _usagePath ??= await resolveTranscriptPath(
-      agentKind: agentKind,
-      agentSessionId: agentSessionId,
-      workdir: workdir,
-    );
-    final path = _usagePath;
+    final path = await transcriptPath();
     if (path == null) return null;
     try {
       await scanUsageInto(_usageAcc, path: path, agentKind: agentKind);
@@ -413,7 +442,7 @@ class TerminalSession {
       // A local Enter into an agent starts a turn → mark busy so a peer message
       // arriving now routes to the bus inbox (hook injection) not a paste queue.
       if (isAgent && data.contains('\r')) {
-        _busy = true;
+        _setBusy(true);
         unawaited(refreshUsage()); // turn starting → reflect busy + any new usage
       }
       pty.write(const Utf8Encoder().convert(data));
@@ -558,7 +587,7 @@ class TerminalSession {
     // A lone CR submitting to an agent starts a turn (remote Enter, or the
     // submit \r pasteText sends after a delivered message) → mark busy.
     if (isAgent && s == '\r') {
-      _busy = true;
+      _setBusy(true);
       unawaited(refreshUsage());
     }
     _pty?.write(const Utf8Encoder().convert(s));
@@ -582,9 +611,15 @@ class TerminalSession {
   // prompt — and disarms so the next turn needs a fresh bell.
   void _fireDone() {
     _belArmed = false;
-    _busy = false; // bell settled → agent is idle/waiting again
     unawaited(refreshUsage()); // turn ended → fold the new assistant message in
-    if (!_sawInput) return;
+    if (!_sawInput) {
+      _setBusy(false); // disarm-only (user never kicked it) → just clear busy
+      return;
+    }
+    // A user-kicked turn finished → flag for review BEFORE clearing busy so the
+    // onBusyChanged-driven overview republish already reflects "待 review".
+    needsReview = true;
+    _setBusy(false); // bell settled → agent is idle/waiting again
     onDone?.call(this);
   }
 

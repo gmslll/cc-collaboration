@@ -12,11 +12,13 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/sse.dart';
 import '../local/cli.dart';
+import '../local/agent_transcript.dart';
 import '../local/config.dart';
 import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/local_bus.dart';
 import '../local/prefs.dart';
+import '../local/session_overview.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
 import '../remote/file_transfer.dart';
@@ -164,7 +166,16 @@ class _ParkedMessage {
 class WorkspacePage extends StatefulWidget {
   final RelayClient client;
   final AppConfig config;
-  const WorkspacePage({super.key, required this.client, required this.config});
+  // overviewStore is the shared 会话总览 projection: WorkspacePage produces into
+  // it, the top-level SessionOverviewPage renders from it (created + injected by
+  // HomeShell so both pages share one instance).
+  final SessionOverviewStore overviewStore;
+  const WorkspacePage({
+    super.key,
+    required this.client,
+    required this.config,
+    required this.overviewStore,
+  });
 
   @override
   State<WorkspacePage> createState() => _WorkspacePageState();
@@ -211,6 +222,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   // open sessions on a heartbeat so a peer can target a specific one.
   StreamSubscription<SseEvent>? _relaySse;
   Timer? _sessionHeartbeat;
+  // Periodic preview refresh for the 会话总览; runs only while observed (overview
+  // page visible) or a phone is connected — see _syncOverviewTicker.
+  Timer? _overviewTicker;
 
   // Parked ("稍后") cross-user messages: persisted across restarts, surfaced as a
   // toolbar badge, injected later (manually, or auto when the target session
@@ -247,7 +261,115 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     _remoteWasConnected = h.connected;
     _remoteLastClients = h.clientCount;
+    _syncOverviewTicker(); // a phone connecting/leaving toggles the observer set
     setState(() {});
+  }
+
+  // ----------------------------------------------- 会话总览 (session overview) --
+  //
+  // WorkspacePage is the single producer of the overview snapshot (it owns the
+  // live sessions + can read their transcripts). It publishes to the in-process
+  // SessionOverviewStore (the desktop top-level page) AND to the RemoteHost
+  // (broadcast to phones) from the same built list, so the preview is computed
+  // once and both ends agree.
+
+  // _cardFor projects one live session into its overview snapshot: the
+  // workspace/project/worktree hierarchy (reusing _projectForFile's longest-
+  // prefix match; the worktree comes from the <project>/.worktrees/<name>
+  // layout), the derived status, current usage, and the cached preview.
+  SessionCard _cardFor(TerminalSession s) {
+    final hit = _projectForFile(s.workdir);
+    String workspace = '', project = '';
+    String? worktree;
+    if (hit != null) {
+      project = hit.project.name;
+      final rel = hit.rel;
+      if (rel.startsWith('.worktrees/')) {
+        worktree = rel.substring('.worktrees/'.length).split('/').first;
+      } else if (rel.isNotEmpty) {
+        worktree = rel.split('/').first;
+      }
+      for (final w in _cfg.workspaces) {
+        if (w.projects.any((p) => p.path == hit.project.path)) {
+          workspace = w.name;
+          break;
+        }
+      }
+    }
+    final status = s.busy
+        ? SessionStatus.working
+        : !s.isAgent
+        ? SessionStatus.shell
+        : s.needsReview
+        ? SessionStatus.needsReview
+        : SessionStatus.idle;
+    return SessionCard(
+      sid: s.id,
+      label: s.label,
+      agentKind: s.isAgent ? s.agentKind : '',
+      isAgent: s.isAgent,
+      workspace: workspace,
+      project: project,
+      worktree: worktree,
+      status: status,
+      usageLabel: s.usage.value?.shortLabel(),
+      preview: s.overviewPreview ?? '',
+    );
+  }
+
+  void _publishOverview() {
+    if (!mounted) return;
+    final cards = [for (final s in terms) _cardFor(s)];
+    widget.overviewStore.publish(cards);
+    _remoteHost.setOverview(cards);
+    _remoteHost.broadcastOverview();
+  }
+
+  // _refreshPreview caches a session's latest content: an agent's most-recent
+  // reply from its on-disk transcript (falling back to the terminal tail before
+  // the first reply), or the terminal tail for a plain shell. Best-effort —
+  // never throws. Does NOT publish; callers publish once after a batch.
+  Future<void> _refreshPreview(TerminalSession s) async {
+    try {
+      String preview;
+      if (s.isAgent) {
+        final path = await s.transcriptPath(); // cached resolution
+        preview = path == null
+            ? ''
+            : await renderTranscriptTail(path, lines: 6, agentKind: s.agentKind);
+        if (preview.trim().isEmpty) preview = s.renderSnapshot(6);
+      } else {
+        preview = s.renderSnapshot(6);
+      }
+      s.overviewPreview = preview;
+    } catch (_) {
+      // transient (file rotated / mid-write) — keep the previous preview.
+    }
+  }
+
+  // _refreshAllPreviews refreshes every session's preview concurrently, then
+  // publishes the snapshot ONCE (not per session).
+  Future<void> _refreshAllPreviews() async {
+    await Future.wait([for (final s in terms.toList()) _refreshPreview(s)]);
+    _publishOverview();
+  }
+
+  // _syncOverviewTicker starts a ~4s preview refresh only while someone is
+  // looking (overview page visible, or a phone connected), and stops it
+  // otherwise so idle workspaces do no transcript I/O.
+  void _syncOverviewTicker() {
+    final want =
+        widget.overviewStore.observed.value || _remoteHost.clientCount > 0;
+    if (want && _overviewTicker == null) {
+      unawaited(_refreshAllPreviews()); // immediate first pass
+      _overviewTicker = Timer.periodic(
+        const Duration(seconds: 4),
+        (_) => unawaited(_refreshAllPreviews()),
+      );
+    } else if (!want && _overviewTicker != null) {
+      _overviewTicker!.cancel();
+      _overviewTicker = null;
+    }
   }
 
   void _remoteSnack(String msg, {bool error = false}) => snack(
@@ -347,7 +469,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       _remoteHost.broadcastSessions();
       _localBus.syncRegistry(); // keep sessions.json current for `msg list`
       _publishSessions(); // keep the relay's session registry current too
+      _publishOverview(); // membership changed → refresh the 会话总览 snapshot
+      unawaited(_refreshAllPreviews()); // pull a preview for any new session
     };
+    // A session's busy state flipped (turn start/finish) → keep the overview's
+    // 思考中/待 review state live on both the desktop page and connected phones.
+    onAgentBusyChanged = (s) => _publishOverview();
     // An agent finishing a turn pops a desktop banner (TerminalHost) and pushes
     // the same "任务通知" to any connected phone (reuses the shared copy helper).
     onAgentDone = (s) {
@@ -358,6 +485,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       // toggle is on for the active session (so multiple agents don't talk over
       // each other), and/or push it to a phone watching this session so it can
       // read the reply aloud too.
+      // Turn finished → refresh this session's reply preview (the just-produced
+      // assistant message is what the user reviews) then republish. needsReview
+      // was already set in _fireDone and republished via onBusyChanged.
+      unawaited(_refreshPreview(s).then((_) => _publishOverview()));
       final speakLocal =
           _ttsOn && terms.isNotEmpty && terms[activeTerm].id == s.id;
       final phoneWants = _remoteHost.watching(s.id);
@@ -384,7 +515,26 @@ class _WorkspacePageState extends State<WorkspacePage>
     // backlog or another tab's.
     onActiveTermChanged = () {
       if (_ttsOn && terms.isNotEmpty) _voice.armBaseline(terms[activeTerm]);
+      // Bringing a session to the front = the user is looking at it → clear its
+      // "待 review" flag (the "完成且未查看" semantics), then republish.
+      if (activeTerm >= 0 && activeTerm < terms.length) {
+        terms[activeTerm].needsReview = false;
+      }
+      _publishOverview();
     };
+    // The 会话总览 page (a top-level nav sibling that can't reach `terms`) opens a
+    // session through the shared store: reopen its tab, focus it, reveal the
+    // bottom terminal. onActiveTermChanged (above) then clears its 待 review.
+    widget.overviewStore.openHandler = (sid) {
+      final i = terms.indexWhere((t) => t.id == sid);
+      if (i < 0) return;
+      reopenTermView(i);
+      if (_terminalCollapsed) setState(() => _terminalCollapsed = false);
+    };
+    // Run the light preview-refresh ticker only while the overview page is on
+    // screen or a phone is connected (both observe the snapshot).
+    widget.overviewStore.observed.addListener(_syncOverviewTicker);
+    _publishOverview(); // seed the store (restore + later changes republish)
     // When a phone opens a session, baseline its reading cursor so we push it
     // future replies (not the backlog) for phone-side TTS.
     _remoteHost.onSessionWatched = (sid) {
@@ -491,6 +641,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     _localBus.dispose();
     _relaySse?.cancel();
     _sessionHeartbeat?.cancel();
+    _overviewTicker?.cancel();
+    widget.overviewStore.observed.removeListener(_syncOverviewTicker);
+    widget.overviewStore.openHandler = null;
     _voice.dispose();
     disposeTerms();
     super.dispose();
@@ -7277,14 +7430,10 @@ class _WorkspacePageState extends State<WorkspacePage>
               contentPadding: const EdgeInsets.only(left: 12, right: 2),
               horizontalTitleGap: 8,
               selected: active,
-              leading: Text(
-                '❯',
-                style: TextStyle(
-                  fontFamily: CcType.mono,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: active ? CcColors.accentBright : CcColors.muted,
-                ),
+              leading: sessionAvatar(
+                seed: e.s.id,
+                isAgent: e.s.isAgent,
+                size: 20,
               ),
               title: Text(
                 display,

@@ -564,7 +564,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 ),
               )
             else
-              for (final s in ss) _sessionRow(s, root: fp),
+              _sessionCardWrap(ss, root: fp),
           ],
         );
       }
@@ -596,17 +596,13 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           ),
         );
         if (!collapsed) {
-          for (final s in ss) {
-            children.add(_sessionRow(s, root: p));
-          }
+          children.add(_sessionCardWrap(ss, root: p));
         }
       }
     }
     if (orphans.isNotEmpty) {
       children.add(_gitSection('其他'));
-      for (final s in orphans) {
-        children.add(_sessionRow(s, root: null));
-      }
+      children.add(_sessionCardWrap(orphans, root: null));
     }
     return ListView(children: children);
   }
@@ -709,8 +705,28 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     ),
   );
 
-  Widget _sessionRow(RemoteSession s, {RemoteRootInfo? root}) {
-    // Worktree sessions live under <root>/.worktrees/<name>; show that name.
+  // _sessionCardWrap lays a project/worktree group's sessions out as a flowing
+  // grid of glanceable cards (1 col on a phone, 2 on a wider tablet/landscape).
+  Widget _sessionCardWrap(List<RemoteSession> ss, {RemoteRootInfo? root}) {
+    final w = MediaQuery.of(context).size.width;
+    final cols = w >= 720 ? 2 : 1;
+    final cardW = (w - 12 * 2 - (cols - 1) * 10) / cols;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [for (final s in ss) _sessionCard(s, cardW, root: root)],
+      ),
+    );
+  }
+
+  // _sessionCard renders one session: title + path + (when the desktop has
+  // pushed an overview snapshot) status dot + token usage + a preview of the
+  // agent's latest reply. Tapping opens the full-screen mirrored terminal, same
+  // as before. Degrades gracefully (title + path only) until overview arrives.
+  Widget _sessionCard(RemoteSession s, double width, {RemoteRootInfo? root}) {
+    final ov = _c.overview[s.sid];
     final inWorktree = root != null && s.workdir != root.path;
     String? sub;
     if (root == null) {
@@ -721,53 +737,86 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           ? rel.substring('.worktrees/'.length)
           : rel;
     }
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.only(left: 22, right: 4),
-      leading: Icon(
-        s.agent == 'codex'
-            ? Icons.smart_toy_outlined
-            : Icons.play_arrow_rounded,
-        color: CcColors.accentBright,
-      ),
-      title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: sub == null
-          ? null
-          : Row(
-              mainAxisSize: MainAxisSize.min,
+    return SizedBox(
+      width: width,
+      child: HoverLift(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
+          ),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                if (inWorktree) ...[
-                  const Icon(
-                    Icons.account_tree_rounded,
-                    size: 12,
-                    color: CcColors.subtle,
-                  ),
-                  const SizedBox(width: 3),
-                ],
-                Flexible(
+                sessionAvatar(seed: s.sid, isAgent: s.agent.isNotEmpty),
+                const SizedBox(width: 9),
+                Expanded(
                   child: Text(
-                    sub,
+                    s.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: CcType.code(size: 11.5, color: CcColors.subtle),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                SizedBox(
+                  height: 26,
+                  width: 26,
+                  child: PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.more_vert_rounded, size: 18),
+                    onSelected: (v) {
+                      if (v == 'rename') _renameSessionDialog(s);
+                      if (v == 'close') _c.closeSession(s.sid);
+                    },
+                    itemBuilder: (_) => [
+                      ccMenuItem(
+                        value: 'rename',
+                        icon: Icons.edit_rounded,
+                        label: '重命名',
+                      ),
+                      ccMenuItem(
+                        value: 'close',
+                        icon: Icons.close_rounded,
+                        label: '关闭',
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-      trailing: PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert_rounded),
-        onSelected: (v) {
-          if (v == 'rename') _renameSessionDialog(s);
-          if (v == 'close') _c.closeSession(s.sid);
-        },
-        itemBuilder: (_) => [
-          ccMenuItem(value: 'rename', icon: Icons.edit_rounded, label: '重命名'),
-          ccMenuItem(value: 'close', icon: Icons.close_rounded, label: '关闭'),
-        ],
-      ),
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
+            if (sub != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  if (inWorktree) ...[
+                    const Icon(
+                      Icons.account_tree_rounded,
+                      size: 12,
+                      color: CcColors.subtle,
+                    ),
+                    const SizedBox(width: 3),
+                  ],
+                  Expanded(
+                    child: Text(
+                      sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: CcType.code(size: 11, color: CcColors.subtle),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (ov != null) ...[
+              const SizedBox(height: 8),
+              sessionStatusRow(ov.status, ov.usageLabel),
+            ],
+            const SizedBox(height: 8),
+            sessionPreviewBox(ov?.preview ?? ''),
+          ],
         ),
       ),
     );
@@ -1983,7 +2032,23 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.session.title),
+        title: Row(
+          children: [
+            sessionAvatar(
+              seed: widget.session.sid,
+              isAgent: widget.session.agent.isNotEmpty,
+              size: 24,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.session.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: Icon(

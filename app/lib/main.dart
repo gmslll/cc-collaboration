@@ -8,6 +8,7 @@ import 'api/relay_client.dart';
 import 'local/config.dart';
 import 'local/prefs.dart';
 import 'local/session.dart';
+import 'local/session_overview.dart';
 import 'notifications.dart';
 import 'screens/account_page.dart';
 import 'screens/admin_page.dart';
@@ -15,6 +16,7 @@ import 'screens/handoffs_page.dart';
 import 'screens/login_screen.dart';
 import 'screens/projects_page.dart';
 import 'screens/remote_workspace_page.dart';
+import 'screens/session_overview_page.dart';
 import 'screens/workspace_page.dart';
 import 'theme.dart';
 import 'ui_scale.dart';
@@ -114,6 +116,9 @@ class _HomeShellState extends State<HomeShell> {
   // Top-level nav rail (工作区/收件箱/项目/账号) starts hidden for more canvas
   // width; toggled from the AppBar, remembered across launches.
   bool _navRailHidden = Prefs.getBool('nav.railHidden', def: true);
+  // Shared 会话总览 projection: WorkspacePage produces into it, SessionOverviewPage
+  // renders from it. Owned here so the two sibling pages share one instance.
+  final SessionOverviewStore _overviewStore = SessionOverviewStore();
 
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -212,6 +217,14 @@ class _HomeShellState extends State<HomeShell> {
     } catch (_) {}
   }
 
+  // _openSessionInWorkspace is invoked from the 会话总览 cards: switch to the
+  // 工作区 (desktop index 0) and ask WorkspacePage (via the shared store) to
+  // reopen + focus that session's tab.
+  void _openSessionInWorkspace(String sid) {
+    setState(() => _index = 0);
+    _overviewStore.requestOpen(sid);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -230,6 +243,8 @@ class _HomeShellState extends State<HomeShell> {
     final dests = <_Dest>[
       if (_isDesktop)
         const _Dest('工作区', Icons.workspaces_rounded, Icons.workspaces_rounded),
+      if (_isDesktop)
+        const _Dest('会话总览', Icons.grid_view_rounded, Icons.grid_view_rounded),
       if (!_isDesktop)
         const _Dest('远程', Icons.cast_rounded, Icons.cast_connected_rounded),
       const _Dest('收件箱', Icons.inbox_rounded, Icons.inbox_rounded),
@@ -241,7 +256,20 @@ class _HomeShellState extends State<HomeShell> {
     if (_index >= dests.length) _index = 0;
 
     final pages = <Widget>[
-      if (_isDesktop) WorkspacePage(client: _client!, config: _cfg!),
+      if (_isDesktop)
+        WorkspacePage(
+          client: _client!,
+          config: _cfg!,
+          overviewStore: _overviewStore,
+        ),
+      // 会话总览 sits right after 工作区 on desktop (index 1) — keep in sync with
+      // _openSessionInWorkspace, which switches back to index 0 to focus a tab.
+      if (_isDesktop)
+        SessionOverviewPage(
+          store: _overviewStore,
+          onOpenSession: _openSessionInWorkspace,
+          active: _index == 1,
+        ),
       if (!_isDesktop)
         RemoteWorkspacePage(relayUrl: _cfg!.relayUrl, token: _cfg!.token),
       HandoffsPage(client: _client!, config: _cfg!, showTerminal: _isDesktop),

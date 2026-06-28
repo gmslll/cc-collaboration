@@ -4,6 +4,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/session_overview.dart';
 import '../notifications.dart';
 import '../terminal_mouse.dart';
 import 'file_fs.dart';
@@ -155,6 +156,13 @@ class RemoteClient extends RemoteChannel {
 
   List<RemoteSession> sessions = [];
   List<RemoteRootInfo> roots = [];
+  // overview holds the rich per-session snapshot (status + usage + reply
+  // preview) the desktop pushes for the 总览 grid, keyed by session id. Distinct
+  // from `sessions` (membership): membership updates whenever a session is
+  // added/closed; overview updates on turn boundaries. The grid renders one card
+  // per `sessions` entry, enriched with overview[sid] when present (degrades to
+  // title-only otherwise).
+  Map<String, SessionCard> overview = {};
 
   // onReplyText fires when the desktop pushes an agent's clean reply text for a
   // watched session (the terminal screen reads it aloud). Not a ChangeNotifier
@@ -496,6 +504,16 @@ class RemoteClient extends RemoteChannel {
             ),
         ];
         _setHostOnline(true);
+        notifyListeners();
+      case 'overview':
+        final ov = <String, SessionCard>{};
+        for (final m in (f['items'] as List? ?? [])) {
+          if (m is Map) {
+            final c = SessionCard.fromJson(m);
+            ov[c.sid] = c;
+          }
+        }
+        overview = ov;
         notifyListeners();
       case 'roots':
         roots = [

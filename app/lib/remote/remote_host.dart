@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' show min;
 
 import '../local/git.dart';
+import '../local/session_overview.dart';
 import '../local/worktrees.dart';
 import '../screens/terminal_pane.dart';
 import '../widgets.dart' show kIgnoredEntries;
@@ -423,6 +424,21 @@ class RemoteHost extends RemoteChannel {
   void _replyList(int to) {
     send({'t': 'sessions', 'to': to, 'items': _sessionItems()});
     send({'t': 'roots', 'to': to, 'items': _rootItems()});
+    // A newly-connected phone gets the latest rich overview snapshot (status +
+    // usage + reply preview per session) so its 总览 grid is populated at once,
+    // without waiting for the next turn-boundary broadcast.
+    send({'t': 'overview', 'to': to, 'items': _overview});
+  }
+
+  // _overview caches the latest session-overview snapshot (built by the
+  // workspace, which owns the live sessions + can read transcripts). The host
+  // just relays it: setOverview swaps the cache, broadcastOverview pushes it to
+  // all phones, and _replyList replays it on connect.
+  List<Map<String, dynamic>> _overview = const [];
+  void setOverview(List<SessionCard> cards) =>
+      _overview = [for (final c in cards) c.toJson()];
+  void broadcastOverview() {
+    if (connected) send({'t': 'overview', 'to': 0, 'items': _overview});
   }
 
   // broadcastSessions/Roots push the current lists to ALL connected clients

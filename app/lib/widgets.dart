@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import 'local/prefs.dart';
+import 'local/session_overview.dart';
 import 'syntax.dart';
 import 'theme.dart';
 
@@ -389,6 +390,269 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) =>
             : null,
       ),
     );
+
+// --- session overview (会话总览) shared card bits ---------------------------
+//
+// The desktop overview page and the phone overview grid render the same card
+// shell differently (the desktop has hierarchy headers + a fixed width; the
+// phone adds a path subtitle + a ⋮ menu + a flexible width), but these inner
+// leaves — the status colour, the status row, and the preview pane — are
+// identical, so they live here and both compose them.
+
+// sessionStatusStyle maps a SessionStatus to its dot/label colour, glowing for
+// the attention states (working / needs-review).
+({Color color, bool glow}) sessionStatusStyle(SessionStatus s) => switch (s) {
+  SessionStatus.working => (color: CcColors.accentBright, glow: true),
+  SessionStatus.needsReview => (color: CcColors.warning, glow: true),
+  SessionStatus.idle => (color: CcColors.ok, glow: false),
+  SessionStatus.shell => (color: CcColors.subtle, glow: false),
+};
+
+// sessionStatusRow is the status dot + label line, with an optional
+// right-aligned token-usage label.
+Widget sessionStatusRow(SessionStatus status, String? usageLabel) {
+  final st = sessionStatusStyle(status);
+  return Row(
+    children: [
+      statusDot(st.color, glow: st.glow),
+      const SizedBox(width: 6),
+      Text(
+        statusLabel(status),
+        style: TextStyle(
+          color: st.color,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const Spacer(),
+      if (usageLabel != null)
+        Flexible(
+          child: Text(
+            usageLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+            style: CcType.code(size: 10.5, color: CcColors.subtle),
+          ),
+        ),
+    ],
+  );
+}
+
+// sessionPreviewBox is the bordered monospace pane showing an agent's latest
+// reply (or a muted placeholder when there's nothing yet).
+Widget sessionPreviewBox(String preview, {double height = 100}) {
+  final empty = preview.trim().isEmpty;
+  return Container(
+    width: double.infinity,
+    height: height,
+    padding: const EdgeInsets.all(8),
+    decoration: BoxDecoration(
+      color: CcColors.bg.withValues(alpha: 0.4),
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+      border: Border.all(color: CcColors.borderSoft),
+    ),
+    child: Text(
+      empty ? '（暂无输出）' : preview,
+      maxLines: 6,
+      overflow: TextOverflow.ellipsis,
+      style: CcType.code(
+        size: 11,
+        color: empty ? CcColors.subtle : CcColors.muted,
+      ),
+    ),
+  );
+}
+
+// --- robot avatar (per-session generated icon) -----------------------------
+//
+// Each agent session gets a little robot drawn deterministically from its
+// session id: same id → same robot, on the desktop and the mirrored phone alike
+// (a stable FNV-1a hash, not String.hashCode which isn't guaranteed identical
+// across runs/platforms). "Random at creation" falls out of ids being minted in
+// sequence (ts0, ts1, …). Eight colours × a few eye/antenna/mouth variants give
+// plenty of distinct faces so sessions are tellable apart at a glance.
+
+const List<Color> _robotPalette = [
+  Color(0xFF7EB1FF), // blue
+  Color(0xFF6AAB73), // green
+  Color(0xFFFFC66D), // amber
+  Color(0xFFFF8FA3), // pink
+  Color(0xFFB388FF), // purple
+  Color(0xFF4DD0E1), // cyan
+  Color(0xFFFFB74D), // orange
+  Color(0xFF9CCC65), // lime
+  Color(0xFFF06292), // rose
+  Color(0xFF4DB6AC), // teal
+  Color(0xFFBA68C8), // violet
+  Color(0xFFFFD54F), // yellow
+  Color(0xFFA1887F), // taupe
+  Color(0xFF90A4AE), // steel
+  Color(0xFFFF7043), // coral
+  Color(0xFF7986CB), // indigo
+];
+
+int _fnv1a(String s) {
+  var h = 0x811c9dc5;
+  for (final c in s.codeUnits) {
+    h = ((h ^ c) * 0x01000193) & 0xffffffff;
+  }
+  return h;
+}
+
+// sessionAvatar is a session's leading glyph: a generated robot for an AI agent
+// (distinct per session id), a terminal glyph for a plain shell. Both occupy the
+// same [size] box so rows line up.
+Widget sessionAvatar({
+  required String seed,
+  required bool isAgent,
+  double size = 26,
+}) => isAgent
+    ? RobotAvatar(seed, size: size)
+    : SizedBox(
+        width: size,
+        height: size,
+        child: Icon(
+          Icons.terminal_rounded,
+          size: size * 0.66,
+          color: CcColors.accentBright,
+        ),
+      );
+
+class RobotAvatar extends StatelessWidget {
+  final String seed;
+  final double size;
+  const RobotAvatar(this.seed, {super.key, this.size = 26});
+
+  @override
+  Widget build(BuildContext context) =>
+      CustomPaint(size: Size.square(size), painter: _RobotPainter(seed));
+}
+
+class _RobotPainter extends CustomPainter {
+  final String seed;
+  _RobotPainter(this.seed);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final h = _fnv1a(seed);
+    // Disjoint bit slices so colour/eyes/antenna/mouth vary independently.
+    final color = _robotPalette[h % _robotPalette.length]; // bits 0-3
+    final eyeStyle = (h >> 4) % 4; // bits 4-5
+    final antennaStyle = (h >> 6) % 2; // bit 6
+    final mouthStyle = (h >> 7) % 4; // bits 7-8
+    final s = size.width;
+    double u(double f) => f * s; // fraction of the box → px
+
+    // rounded background tile (avatar chip)
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Offset.zero & size,
+        Radius.circular(u(0.22)),
+      ),
+      Paint()..color = color.withValues(alpha: 0.16),
+    );
+
+    final fill = Paint()..color = color;
+    final cut = Paint()..color = CcColors.bg; // eye/mouth cut-outs
+
+    // antenna(s)
+    final stroke = Paint()
+      ..color = color
+      ..strokeWidth = u(0.05)
+      ..strokeCap = StrokeCap.round;
+    if (antennaStyle == 0) {
+      canvas.drawLine(Offset(u(0.5), u(0.13)), Offset(u(0.5), u(0.3)), stroke);
+      canvas.drawCircle(Offset(u(0.5), u(0.12)), u(0.055), fill);
+    } else {
+      canvas.drawLine(Offset(u(0.35), u(0.16)), Offset(u(0.41), u(0.3)), stroke);
+      canvas.drawLine(Offset(u(0.65), u(0.16)), Offset(u(0.59), u(0.3)), stroke);
+      canvas.drawCircle(Offset(u(0.35), u(0.15)), u(0.045), fill);
+      canvas.drawCircle(Offset(u(0.65), u(0.15)), u(0.045), fill);
+    }
+
+    // head + side ears
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTRB(u(0.18), u(0.3), u(0.82), u(0.85)),
+        Radius.circular(u(0.16)),
+      ),
+      fill,
+    );
+    for (final earX in [Rect.fromLTRB(u(0.11), u(0.46), u(0.18), u(0.64)), Rect.fromLTRB(u(0.82), u(0.46), u(0.89), u(0.64))]) {
+      canvas.drawRRect(RRect.fromRectAndRadius(earX, Radius.circular(u(0.03))), fill);
+    }
+
+    // eyes
+    const eyeY = 0.52;
+    final lx = u(0.37), rx = u(0.63), ey = u(eyeY);
+    if (eyeStyle == 0) {
+      canvas.drawCircle(Offset(lx, ey), u(0.07), cut);
+      canvas.drawCircle(Offset(rx, ey), u(0.07), cut);
+    } else if (eyeStyle == 1) {
+      for (final x in [lx, rx]) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(center: Offset(x, ey), width: u(0.14), height: u(0.14)),
+            Radius.circular(u(0.02)),
+          ),
+          cut,
+        );
+      }
+    } else if (eyeStyle == 2) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTRB(u(0.3), u(0.46), u(0.7), u(0.58)),
+          Radius.circular(u(0.06)),
+        ),
+        cut,
+      );
+    } else {
+      // sleepy: two short horizontal dashes
+      for (final x in [lx, rx]) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(center: Offset(x, ey), width: u(0.15), height: u(0.045)),
+            Radius.circular(u(0.02)),
+          ),
+          cut,
+        );
+      }
+    }
+
+    // mouth (style 2 → none, eyes-only)
+    final my = u(0.71);
+    if (mouthStyle == 0) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTRB(u(0.37), my, u(0.63), u(0.76)),
+          Radius.circular(u(0.02)),
+        ),
+        cut,
+      );
+    } else if (mouthStyle == 1) {
+      for (var i = 0; i < 3; i++) {
+        canvas.drawRect(Rect.fromLTWH(u(0.38) + i * u(0.09), my, u(0.06), u(0.06)), cut);
+      }
+    } else if (mouthStyle == 3) {
+      // smile: lower half of an ellipse (0 → π sweeps the bottom arc)
+      canvas.drawArc(
+        Rect.fromLTRB(u(0.38), u(0.62), u(0.62), u(0.8)),
+        0,
+        3.14159,
+        false,
+        Paint()
+          ..color = CcColors.bg
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = u(0.05)
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RobotPainter old) => old.seed != seed;
+}
 
 // diffText renders a unified-diff string with +/− line coloring (mono), lazily
 // via ListView so big diffs stay smooth. Shared by the local git diff viewer
