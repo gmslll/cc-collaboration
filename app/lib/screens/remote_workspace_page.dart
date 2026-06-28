@@ -898,7 +898,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
               ],
               if (ov != null) ...[
                 const SizedBox(height: 8),
-                sessionStatusRow(ov.status, ov.usageLabel),
+                sessionStatusRow(
+                  ov.status,
+                  ov.usageLabel,
+                  statusDetail: ov.statusDetail,
+                ),
               ],
               const SizedBox(height: 8),
               sessionPreviewBox(ov?.preview ?? ''),
@@ -3382,7 +3386,11 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
             ),
             if (ov != null) ...[
               const SizedBox(height: 4),
-              sessionStatusRow(ov.status, ov.usageLabel),
+              sessionStatusRow(
+                ov.status,
+                ov.usageLabel,
+                statusDetail: ov.statusDetail,
+              ),
             ],
             const SizedBox(height: 10),
             Container(

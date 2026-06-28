@@ -228,7 +228,11 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
                 ],
               ),
               const SizedBox(height: 8),
-              sessionStatusRow(c.status, c.usageLabel),
+              sessionStatusRow(
+                c.status,
+                c.usageLabel,
+                statusDetail: c.statusDetail,
+              ),
               const SizedBox(height: 8),
               sessionPreviewBox(c.preview),
             ],
@@ -361,7 +365,11 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                 ],
               ),
               const SizedBox(height: 4),
-              sessionStatusRow(c.status, c.usageLabel),
+              sessionStatusRow(
+                c.status,
+                c.usageLabel,
+                statusDetail: c.statusDetail,
+              ),
               const SizedBox(height: 10),
               Container(
                 height: 280,

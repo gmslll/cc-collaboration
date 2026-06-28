@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-06-29
+
+### Added
+
+- **会话总览状态更丰富** — 总览卡片在原有「思考中 / 待 review / 空闲 / shell」主状态下新增细状态，基于 hook 活动流显示正在运行的工具、工具完成或失败、权限等待、prompt 已提交、上下文压缩、完成待查看等信息；桌面总览、手机远程会话卡和快捷预览同步显示。
+
 ## [0.6.7] - 2026-06-29
 
 ### Fixed
@@ -189,7 +195,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.7...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.8...HEAD
+[0.6.8]: https://github.com/gmslll/cc-collaboration/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/gmslll/cc-collaboration/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/gmslll/cc-collaboration/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/gmslll/cc-collaboration/compare/v0.6.4...v0.6.5

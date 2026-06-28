@@ -413,7 +413,11 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) =>
 // long to share the status row without being truncated, so it gets the full card
 // width and may wrap to 2 lines. A `working` session animates (breathing dot +
 // cycling 思考中… ellipsis); the calmer states stay static.
-Widget sessionStatusRow(SessionStatus status, String? usageLabel) {
+Widget sessionStatusRow(
+  SessionStatus status,
+  String? usageLabel, {
+  String statusDetail = '',
+}) {
   final st = sessionStatusStyle(status);
   final Widget statusPart = status == SessionStatus.working
       ? const _WorkingIndicator()
@@ -432,7 +436,8 @@ Widget sessionStatusRow(SessionStatus status, String? usageLabel) {
             ),
           ],
         );
-  if (usageLabel == null || usageLabel.isEmpty) {
+  final detail = statusDetail.trim();
+  if ((usageLabel == null || usageLabel.isEmpty) && detail.isEmpty) {
     return Align(alignment: Alignment.centerLeft, child: statusPart);
   }
   return Column(
@@ -440,13 +445,24 @@ Widget sessionStatusRow(SessionStatus status, String? usageLabel) {
     mainAxisSize: MainAxisSize.min,
     children: [
       statusPart,
-      const SizedBox(height: 5),
-      Text(
-        usageLabel,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: CcType.code(size: 10.5, color: CcColors.muted),
-      ),
+      if (detail.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        Text(
+          detail,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: CcColors.muted, fontSize: 11),
+        ),
+      ],
+      if (usageLabel != null && usageLabel.isNotEmpty) ...[
+        const SizedBox(height: 5),
+        Text(
+          usageLabel,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: CcType.code(size: 10.5, color: CcColors.muted),
+        ),
+      ],
     ],
   );
 }

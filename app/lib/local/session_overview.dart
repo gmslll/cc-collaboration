@@ -39,6 +39,7 @@ class SessionCard {
   final String project; // project name ('' if unmapped/orphan)
   final String? worktree; // worktree name (null at project root)
   final SessionStatus status;
+  final String statusDetail; // richer live state derived from recent hook events
   final String? usageLabel; // SessionUsage.shortLabel(), or null
   final String preview; // latest assistant reply / terminal tail
 
@@ -51,6 +52,7 @@ class SessionCard {
     required this.project,
     required this.worktree,
     required this.status,
+    this.statusDetail = '',
     required this.usageLabel,
     required this.preview,
   });
@@ -64,6 +66,7 @@ class SessionCard {
     'proj': project,
     'wt': worktree,
     'status': status.name,
+    'statusDetail': statusDetail,
     'usage': usageLabel,
     'preview': preview,
   };
@@ -77,6 +80,7 @@ class SessionCard {
     project: (m['proj'] ?? '').toString(),
     worktree: m['wt']?.toString(),
     status: sessionStatusFromName(m['status'] as String?),
+    statusDetail: (m['statusDetail'] ?? '').toString(),
     usageLabel: m['usage']?.toString(),
     preview: (m['preview'] ?? '').toString(),
   );
