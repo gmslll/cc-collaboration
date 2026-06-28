@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android native (NDK/CMake) build output — e.g. vendored plugins under third_party
+**/.cxx/
