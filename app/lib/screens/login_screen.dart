@@ -30,7 +30,19 @@ class _LoginScreenState extends State<LoginScreen> {
   final _password = TextEditingController();
   bool _busy = false;
   bool _isRegisterMode = false;
+  List<SavedAccount> _accounts = const [];
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAccounts();
+  }
+
+  Future<void> _loadAccounts() async {
+    final accounts = await SessionStore.accounts();
+    if (mounted) setState(() => _accounts = accounts);
+  }
 
   @override
   void dispose() {
@@ -66,6 +78,23 @@ class _LoginScreenState extends State<LoginScreen> {
         _busy = false;
         _error = '${_isRegisterMode ? '注册' : '登录'}失败:$e';
       });
+    }
+  }
+
+  Future<void> _useSaved(SavedAccount account) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onLoggedIn(account.toSession());
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = '切换失败:$e';
+        });
+      }
     }
   }
 
@@ -113,6 +142,26 @@ class _LoginScreenState extends State<LoginScreen> {
                   Text(_isRegisterMode ? '注册新账号' : '登录',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: CcColors.muted)),
+                  if (_accounts.isNotEmpty && !_isRegisterMode) ...[
+                    const SizedBox(height: 16),
+                    for (final account in _accounts.take(4))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: OutlinedButton.icon(
+                          onPressed: _busy ? null : () => _useSaved(account),
+                          icon: const Icon(Icons.account_circle_rounded, size: 18),
+                          label: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '${account.identity} · ${_hostOf(account.relayUrl)}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    const Divider(),
+                  ],
                   const SizedBox(height: 20),
                   TextField(
                     controller: _relay,
@@ -201,5 +250,13 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
       ),
     );
+  }
+}
+
+String _hostOf(String url) {
+  try {
+    return Uri.parse(url).host;
+  } catch (_) {
+    return url;
   }
 }

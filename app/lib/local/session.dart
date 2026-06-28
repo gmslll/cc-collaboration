@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'session_kv.dart';
 
 // Session is the active relay auth: where + who + token. It comes from an
@@ -23,10 +25,54 @@ class Session {
       );
 }
 
+class SavedAccount {
+  final String relayUrl;
+  final String token;
+  final String identity;
+  final bool isAdmin;
+
+  const SavedAccount({
+    required this.relayUrl,
+    required this.token,
+    required this.identity,
+    this.isAdmin = false,
+  });
+
+  Session toSession() => Session(
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+        isAdmin: isAdmin,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'relay_url': relayUrl,
+        'token': token,
+        'identity': identity,
+        'is_admin': isAdmin,
+      };
+
+  static SavedAccount? fromJson(Object? v) {
+    if (v is! Map) return null;
+    final relayUrl = (v['relay_url'] ?? '').toString();
+    final token = (v['token'] ?? '').toString();
+    final identity = (v['identity'] ?? '').toString();
+    if (relayUrl.isEmpty || token.isEmpty || identity.isEmpty) return null;
+    return SavedAccount(
+      relayUrl: relayUrl,
+      token: token,
+      identity: identity,
+      isAdmin: v['is_admin'] == true || v['is_admin'] == 'true',
+    );
+  }
+}
+
 // SessionStore persists a logged-in session via a per-platform key-value backend
 // (OS secure store on desktop/mobile, browser localStorage on web — see
 // session_kv.dart), so a client with no config.toml stays logged in.
 class SessionStore {
+  static const _accountsKey = 'accounts';
+
   static Future<Session?> load() async {
     final url = await kvRead('relay_url');
     final token = await kvRead('token');
@@ -46,6 +92,7 @@ class SessionStore {
     await kvWrite('token', s.token);
     await kvWrite('identity', s.identity);
     await kvWrite('is_admin', s.isAdmin.toString());
+    await _upsertAccount(s);
     // A fresh login cancels any prior explicit logout (see markLoggedOut).
     await kvDelete(_loggedOutKey);
   }
@@ -54,6 +101,41 @@ class SessionStore {
     for (final k in ['relay_url', 'token', 'identity', 'is_admin']) {
       await kvDelete(k);
     }
+  }
+
+  static Future<List<SavedAccount>> accounts() async {
+    final raw = await kvRead(_accountsKey);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      final accounts = <SavedAccount>[];
+      for (final item in decoded) {
+        final account = SavedAccount.fromJson(item);
+        if (account != null) accounts.add(account);
+      }
+      return accounts;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Future<void> _upsertAccount(Session s) async {
+    final list = await accounts();
+    final next = <SavedAccount>[
+      SavedAccount(
+        relayUrl: s.relayUrl,
+        token: s.token,
+        identity: s.identity,
+        isAdmin: s.isAdmin,
+      ),
+      for (final a in list)
+        if (a.relayUrl != s.relayUrl || a.identity != s.identity) a,
+    ];
+    await kvWrite(
+      _accountsKey,
+      jsonEncode(next.map((a) => a.toJson()).toList()),
+    );
   }
 
   // --- explicit-logout sentinel -------------------------------------------

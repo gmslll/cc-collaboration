@@ -12,8 +12,7 @@ import '../widgets.dart';
 // In-app updater: the apps ship via GitHub Releases (no app store), so this
 // checks the public latest release, compares it to the build's kAppVersion, and
 // — when newer — downloads the platform asset and hands it to the OS installer
-// (Android) or reveals it (desktop; an ad-hoc/un-notarized macOS app can't
-// self-install silently). Public repo → no token needed.
+// (Android) or replaces the desktop app bundle. Public repo → no token needed.
 const String _repo = 'gmslll/cc-collaboration';
 
 class UpdateInfo {
@@ -207,9 +206,9 @@ Future<void> _downloadAndInstall(BuildContext context, UpdateInfo info) async {
     await _openExternally(info.releaseUrl);
     return;
   }
-  // Android installs from temp; desktop downloads to ~/Downloads so the user
-  // can find/keep it.
-  final dir = Platform.isAndroid
+  // Android/macOS install from temp; Windows downloads to ~/Downloads so the
+  // user can find/keep it.
+  final dir = Platform.isAndroid || Platform.isMacOS
       ? await getTemporaryDirectory()
       : (await getDownloadsDirectory()) ?? await getTemporaryDirectory();
   final path = '${dir.path}/${info.assetName}';
@@ -251,15 +250,104 @@ Future<void> _downloadAndInstall(BuildContext context, UpdateInfo info) async {
     if (r.type != ResultType.done && context.mounted) {
       snack(context, '已下载，但无法调起安装器（${r.message}）。请在「下载」里手动安装。');
     }
+  } else if (Platform.isMacOS) {
+    await _installMacOSUpdate(context, path);
   } else {
-    // Desktop: open the zip (macOS Archive Utility unzips it) + reveal it; the
-    // user drags the new .app into 应用程序. An ad-hoc app can't self-replace.
+    // Windows/Linux: open the downloaded archive for the platform installer.
     await _openExternally(path);
     if (context.mounted) {
-      snack(context, '已下载到「下载」文件夹并解压，请把新版拖入「应用程序」覆盖旧版');
+      snack(context, '已下载到「下载」文件夹，请按系统提示安装');
     }
   }
 }
+
+Future<void> _installMacOSUpdate(BuildContext context, String zipPath) async {
+  final currentApp = _currentMacAppBundle();
+  if (currentApp == null) {
+    await _openExternally(zipPath);
+    if (context.mounted) snack(context, '已下载更新包，请手动解压安装');
+    return;
+  }
+
+  final temp = await Directory.systemTemp.createTemp('cc-handoff-update-');
+  final unzip =
+      await Process.run('/usr/bin/ditto', ['-x', '-k', zipPath, temp.path]);
+  if (unzip.exitCode != 0) {
+    await _openExternally(zipPath);
+    if (context.mounted) snack(context, '自动解压失败，请手动安装');
+    return;
+  }
+  final newApp = await _findFirstApp(temp);
+  if (newApp == null) {
+    await _openExternally(zipPath);
+    if (context.mounted) snack(context, '更新包里没有找到 .app，请手动安装');
+    return;
+  }
+
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('准备安装更新'),
+      content: const Text('应用将退出，自动替换为新版后重新打开。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('稍后'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('重启安装'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+
+  final script = File('${temp.path}/install-update.zsh');
+  await script.writeAsString('''
+#!/bin/zsh
+set -e
+while kill -0 $pid 2>/dev/null; do
+  sleep 0.2
+done
+rm -rf ${_sh(currentApp.path)}
+/usr/bin/ditto ${_sh(newApp.path)} ${_sh(currentApp.path)}
+/usr/bin/open ${_sh(currentApp.path)}
+''');
+  await Process.run('/bin/chmod', ['700', script.path]);
+  await Process.start(
+    '/bin/zsh',
+    [script.path],
+    mode: ProcessStartMode.detached,
+  );
+  exit(0);
+}
+
+Directory? _currentMacAppBundle() {
+  var dir = File(Platform.resolvedExecutable).parent;
+  while (true) {
+    if (dir.path.endsWith('.app')) return dir;
+    final parent = dir.parent;
+    if (parent.path == dir.path) return null;
+    dir = parent;
+  }
+}
+
+Future<Directory?> _findFirstApp(Directory root) async {
+  final queue = <Directory>[root];
+  while (queue.isNotEmpty) {
+    final dir = queue.removeAt(0);
+    await for (final e in dir.list(followLinks: false)) {
+      if (e is Directory) {
+        if (e.path.endsWith('.app')) return e;
+        queue.add(e);
+      }
+    }
+  }
+  return null;
+}
+
+String _sh(String s) => "'${s.replaceAll("'", "'\\''")}'";
 
 class _DownloadDialog extends StatelessWidget {
   final ValueNotifier<double> progress;

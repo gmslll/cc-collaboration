@@ -6,6 +6,16 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-06-29
+
+### Added
+
+- **账号切换保留多个账号** — 成功登录过的账号会保存在本地账号列表，桌面、手机和 Web 都可以从「切换账号」或登录页直接点选已保存账号，不需要先退出再重新输入密码；当前活跃账号仍会同步写入 `config.toml` 供 CLI/hook 使用。
+
+### Fixed
+
+- **Mac 更新下载安装会自动替换应用** — macOS 下载新版 zip 后会自动解压，点击「重启安装」后退出当前 app、覆盖当前 `.app` 并重新打开，不再只下载文件让用户手动拖拽覆盖。
+
 ## [0.6.10] - 2026-06-29
 
 ### Fixed
@@ -207,7 +217,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.10...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.11...HEAD
+[0.6.11]: https://github.com/gmslll/cc-collaboration/compare/v0.6.10...v0.6.11
 [0.6.10]: https://github.com/gmslll/cc-collaboration/compare/v0.6.9...v0.6.10
 [0.6.9]: https://github.com/gmslll/cc-collaboration/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/gmslll/cc-collaboration/compare/v0.6.7...v0.6.8

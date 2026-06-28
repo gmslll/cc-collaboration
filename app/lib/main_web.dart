@@ -69,11 +69,70 @@ class _WebShellState extends State<WebShell> {
 
   Future<void> _switchAccount() async {
     final current = _session;
+    final accounts = await SessionStore.accounts();
+    if (!mounted) return;
+    final action = await showDialog<Object>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        title: const Text('切换账号'),
+        children: [
+          for (final a in accounts)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, a),
+              child: Row(
+                children: [
+                  Icon(
+                    a.identity == current?.identity &&
+                            a.relayUrl == current?.relayUrl
+                        ? Icons.check_circle_rounded
+                        : Icons.account_circle_rounded,
+                    size: 20,
+                    color: a.identity == current?.identity &&
+                            a.relayUrl == current?.relayUrl
+                        ? CcColors.accent
+                        : CcColors.muted,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(a.identity),
+                        Text(
+                          _hostOf(a.relayUrl),
+                          style: const TextStyle(
+                            color: CcColors.subtle,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'add'),
+            child: const Row(
+              children: [
+                Icon(Icons.add_rounded, size: 20),
+                SizedBox(width: 10),
+                Text('添加账号'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action is SavedAccount) {
+      await _onLoggedIn(action.toSession());
+      return;
+    }
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => LoginScreen(
           initialRelayUrl: current?.relayUrl ?? Uri.base.origin,
-          initialIdentity: current?.identity,
           showCancel: true,
           onLoggedIn: (s) async {
             await _onLoggedIn(s);
@@ -108,5 +167,13 @@ class _WebShellState extends State<WebShell> {
       onSwitchAccount: _switchAccount,
       onLogout: _logout,
     );
+  }
+}
+
+String _hostOf(String url) {
+  try {
+    return Uri.parse(url).host;
+  } catch (_) {
+    return url;
   }
 }
