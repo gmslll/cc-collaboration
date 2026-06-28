@@ -2041,12 +2041,29 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     snack(context, '正在从电脑刷新…');
   }
 
-  // Full-screen agents (claude/codex) run in the alternate screen (no
-  // scrollback), so the phone scrolls them by sending wheel reports to the
-  // host like a Mac wheel would. terminalWheel returns null when the app isn't
-  // in a scroll-reporting mode (plain shell) — then we leave it to the
-  // TerminalView's native touch scrollback.
+  // Claude runs as a full-screen TUI, so the phone scrolls it by sending wheel
+  // reports to the host like a Mac wheel would. Codex keeps its transcript in
+  // the main buffer with real scrollback; even when it enables mouse reporting,
+  // the phone must keep native scrollback enabled so swipe-up can read history.
+  bool get _usesHostWheelScroll =>
+      widget.session.agent.trim().toLowerCase() != 'codex' &&
+      _term.mouseMode.reportScroll;
+
+  void _scrollLocal(bool up, {int ticks = 1}) {
+    if (!_termScroll.hasClients) return;
+    final pos = _termScroll.position;
+    final delta = _linePx * ticks * (up ? -1 : 1);
+    final next = (pos.pixels + delta)
+        .clamp(0.0, pos.maxScrollExtent)
+        .toDouble();
+    _termScroll.jumpTo(next);
+  }
+
   void _wheel(bool up, {int ticks = 1}) {
+    if (!_usesHostWheelScroll) {
+      _scrollLocal(up, ticks: ticks);
+      return;
+    }
     final seq = terminalWheel(_term, up: up);
     if (seq != null) widget.client.sendKeys(widget.session.sid, seq * ticks);
   }
@@ -2095,10 +2112,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   static const double _linePx = 22;
 
   void _onPointerMove(PointerMoveEvent e) {
-    // Only synthesize wheel for scroll-reporting TUIs; a plain shell keeps its
+    // Only synthesize wheel for host-scrolled TUIs. Codex and plain shells keep
     // native touch scrollback (and selection) untouched since Listener doesn't
     // claim the gesture.
-    if (!_term.mouseMode.reportScroll) return;
+    if (!_usesHostWheelScroll) return;
     // Don't scroll while a long-press selection is in progress, or the screen
     // would scroll out from under the selection (selectWord sets the selection
     // on long-press start; cleared on the next pointer-down — see the Listener).
@@ -2111,17 +2128,12 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     }
   }
 
-  // _wrapScroll disables the TerminalView's OWN inner Scrollable for
-  // scroll-reporting TUIs (claude/codex). Those scroll by sending wheel reports
-  // to the host (see _onPointerMove and the 滚↑/↓ buttons), and the host redraws
-  // at the current width. If the local Scrollable also moved on a finger drag it
-  // would expose the phone's local buffer — history laid out at the COMPUTER's
-  // width — which renders mis-wrapped ("乱码"). Killing only user scrolling here
-  // (programmatic stick-to-bottom still works) leaves the clean host-wheel path
-  // as the sole scroll path. Plain shells (no reportScroll) keep native
-  // scrollback. The inner Scrollable sets no explicit physics, so a
-  // ScrollConfiguration override takes effect.
-  Widget _wrapScroll(Widget child) => _term.mouseMode.reportScroll
+  // _wrapScroll disables the TerminalView's OWN inner Scrollable only for
+  // host-scrolled TUIs. Codex must keep native scrollback because its transcript
+  // lives in the main buffer; otherwise swipe-up cannot reveal past output.
+  // The inner Scrollable sets no explicit physics, so a ScrollConfiguration
+  // override takes effect.
+  Widget _wrapScroll(Widget child) => _usesHostWheelScroll
       ? ScrollConfiguration(behavior: const _NoUserScroll(), child: child)
       : child;
 
