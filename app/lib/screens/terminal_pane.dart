@@ -102,6 +102,11 @@ class TerminalSession {
   // re-reading the log. Refreshed by the workspace on turn boundaries.
   String? overviewPreview;
   Timer? _belTimer;
+  // Ticks refreshUsage() every few seconds while the agent is mid-turn so the
+  // usage chip climbs as tool-round messages land in the transcript, not just at
+  // turn start/finish. Lives only for the busy window (started/stopped in
+  // _setBusy); incremental scan keeps each tick cheap.
+  Timer? _usageTicker;
   bool _belArmed = false; // a bell rang; waiting for output to settle to confirm
   bool _sawInput = false; // user has typed/sent into this session at least once
   // _busy = this agent is mid-turn (we submitted input; no finishing bell yet).
@@ -119,6 +124,14 @@ class TerminalSession {
   void _setBusy(bool v) {
     if (_busy == v) return;
     _busy = v;
+    if (v) {
+      _usageTicker ??= Timer.periodic(const Duration(seconds: 3), (_) {
+        if (_busy && !_disposed) unawaited(refreshUsage());
+      });
+    } else {
+      _usageTicker?.cancel();
+      _usageTicker = null;
+    }
     onBusyChanged?.call(this);
   }
   static const Duration _belSettle =
@@ -687,6 +700,7 @@ class TerminalSession {
   void dispose() {
     _disposed = true; // stops the codex id-capture poll
     _belTimer?.cancel();
+    _usageTicker?.cancel();
     usage.dispose();
     controller.dispose();
     _pty?.kill();
