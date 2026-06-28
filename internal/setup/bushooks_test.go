@@ -74,6 +74,32 @@ func TestEnsureClaudeBusHooks_CreatesAndIdempotent(t *testing.T) {
 	}
 }
 
+// BusHooksPresent must return true for a file the installer just wrote. Guards
+// the JSON-escaping trap: BusHookCommand has quotes/`&&` that are escaped on disk
+// (`\"$CC_BUS_DIR\"`), so matching the full command against raw bytes fails —
+// detection must key off BusHookInvocation, which survives escaping verbatim.
+func TestBusHooksPresent_MatchesWrittenConfig(t *testing.T) {
+	claude := filepath.Join(t.TempDir(), ".claude", "settings.json")
+	if _, err := EnsureClaudeBusHooks(claude); err != nil {
+		t.Fatalf("EnsureClaudeBusHooks: %v", err)
+	}
+	if !BusHooksPresent(claude) {
+		t.Errorf("BusHooksPresent=false for a freshly installed claude config")
+	}
+
+	codex := filepath.Join(t.TempDir(), ".codex", "hooks.json")
+	if _, err := EnsureCodexBusHooks(codex); err != nil {
+		t.Fatalf("EnsureCodexBusHooks: %v", err)
+	}
+	if !BusHooksPresent(codex) {
+		t.Errorf("BusHooksPresent=false for a freshly installed codex config")
+	}
+
+	if BusHooksPresent(filepath.Join(t.TempDir(), "nope.json")) {
+		t.Errorf("BusHooksPresent=true for a missing file")
+	}
+}
+
 func TestEnsureClaudeBusHooks_PreservesExistingHooks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	// A pre-existing unrelated Stop hook (e.g. the wake-on-comment one) must

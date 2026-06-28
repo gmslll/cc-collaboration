@@ -82,7 +82,12 @@ func EnsureStopHook(repoRoot string) (EnsureResult, error) {
 // only does real work (`cc-handoff bus-hook` drains the session's bus inbox)
 // inside an app-spawned session. That env guard is how one user-global hook
 // stays scoped to "only the app's sessions".
-const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && cc-handoff bus-hook || true`
+// BusHookInvocation is the bare command the hook runs — the part that survives
+// JSON-escaping verbatim (no quotes, &, < or > to escape), so it's the reliable
+// signature to detect in a written config (see BusHooksPresent).
+const BusHookInvocation = "cc-handoff bus-hook"
+
+const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && ` + BusHookInvocation + ` || true`
 
 // busHookEvents are the two lifecycle events the bus hook rides: PostToolUse
 // surfaces a peer message mid-turn (next tool boundary), Stop catches it at
@@ -90,11 +95,14 @@ const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && cc-handoff bus-hook || true`
 var busHookEvents = []string{"PostToolUse", "Stop"}
 
 // BusHooksPresent reports whether the bus hook is installed in the agent config
-// at [path] — i.e. the file exists and carries BusHookCommand. The canonical
-// check for `bus-hook status`, so the self-check can't drift from the installer.
+// at [path] — i.e. the file exists and carries our hook. The canonical check for
+// `bus-hook status`. It matches BusHookInvocation, NOT the full BusHookCommand:
+// the latter's embedded quotes / `&&` are JSON-escaped when written to the config
+// (`\"$CC_BUS_DIR\"`, `&&`), so a raw-bytes contains() of the full
+// command would never match a properly written file.
 func BusHooksPresent(path string) bool {
 	b, err := os.ReadFile(path)
-	return err == nil && strings.Contains(string(b), BusHookCommand)
+	return err == nil && strings.Contains(string(b), BusHookInvocation)
 }
 
 // EnsureClaudeBusHooks merges the bus PostToolUse + Stop hooks into a Claude

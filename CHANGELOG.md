@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-06-28
+
+### Fixed
+
+- **Account-page hook self-check wrongly reported "未安装"** — the desktop hook status (and the reinstall prompt) always showed the bus hook as missing even when it was installed, because the check matched the full shell command against the raw config file, whose embedded quotes and `&&` are JSON-escaped on disk. It now matches the escaping-invariant `cc-handoff bus-hook` invocation. The hook itself always worked — only the status display was wrong.
+
 ## [0.6.1] - 2026-06-28
 
 ### Fixed
@@ -148,7 +154,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/gmslll/cc-collaboration/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/gmslll/cc-collaboration/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/gmslll/cc-collaboration/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/gmslll/cc-collaboration/compare/v0.3.0...v0.5.0
