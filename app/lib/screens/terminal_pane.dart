@@ -227,9 +227,10 @@ class TerminalSession {
        title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
            : workdir {
-    // Fix xterm 4.0.0's broken wheel reporting so scroll reaches full-screen
-    // agent TUIs (claude/codex), which scroll fine in real terminals.
-    terminal.mouseHandler = const WheelMouseHandler();
+    // Claude is a full-screen TUI, so wheel events should reach the process.
+    // Codex keeps its transcript in the main buffer; sending wheel events into
+    // its mouse-reporting path prevents normal scrollback from moving.
+    if (agentKind != 'codex') terminal.mouseHandler = const WheelMouseHandler();
   }
 
   // label is what the UI shows: the user-given name, else the derived title.
