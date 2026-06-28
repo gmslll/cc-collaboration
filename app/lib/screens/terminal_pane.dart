@@ -25,7 +25,20 @@ import '../widgets.dart';
 // the active one (e.g. paste the materialized prompt).
 class TerminalSession {
   static int _seq = 0;
-  final String id = 'ts${_seq++}'; // stable per-run id (for remote addressing)
+  // Stable id used for remote addressing (the phone's term.open/input target) and
+  // the local bus. PERSISTED + restored so it survives a desktop restart —
+  // otherwise a restart re-mints ids and a phone holding the old id mirrors a
+  // blank terminal forever (its term.open targets a session that no longer
+  // exists). New sessions mint 'ts<N>'; restored ones pass their saved id.
+  final String id;
+  // reserveId advances the mint counter past a restored id so a freshly minted
+  // 'ts<N>' never collides with a persisted one within the same run.
+  static void reserveId(String id) {
+    if (!id.startsWith('ts')) return;
+    final n = int.tryParse(id.substring(2));
+    if (n != null && n >= _seq) _seq = n + 1;
+  }
+
   final String workdir;
   final String command;
   final String title;
@@ -205,11 +218,13 @@ class TerminalSession {
   TerminalSession(
     this.workdir,
     this.command, {
+    String? id,
     this.agent = '',
     this.preLaunch = '',
     this.agentSessionId,
     this.resume = false,
-  }) : title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
+  }) : id = id ?? 'ts${_seq++}',
+       title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
            : workdir {
     // Fix xterm 4.0.0's broken wheel reporting so scroll reaches full-screen

@@ -263,9 +263,14 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
             upgraded = true;
           }
         }
+        // Restore the saved stable id (so a phone holding it still resolves after
+        // this restart); reserve it so a freshly minted id can't collide.
+        final savedId = (e['id'] ?? '').toString();
+        if (savedId.isNotEmpty) TerminalSession.reserveId(savedId);
         final ts = TerminalSession(
           wd,
           cmd,
+          id: savedId.isEmpty ? null : savedId,
           agent: agent,
           preLaunch: preLaunch,
           agentSessionId: sid.isEmpty ? null : sid,
@@ -311,6 +316,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           terms
               .map(
                 (s) => {
+                  'id': s.id, // stable remote-addressing id (survives restart)
                   'workdir': s.workdir,
                   'command': s.command,
                   if (s.name?.isNotEmpty ?? false) 'name': s.name,
