@@ -1772,6 +1772,20 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // small chip over the mirrored terminal and folded into the Live Activity text.
   String? _usageLabel;
 
+  // Terminal font size (phone). Smaller = more columns, so a wide full-screen
+  // TUI like codex lays out properly instead of cramming into too few columns.
+  // Persisted; changing it re-measures the view → term.resize → host repaints.
+  double _fontSize = Prefs.getDouble('remote.termFontSize', def: 12.5);
+  static const double _fontMin = 7.0;
+  static const double _fontMax = 18.0;
+
+  void _bumpFont(double delta) {
+    final v = (_fontSize + delta).clamp(_fontMin, _fontMax);
+    if (v == _fontSize) return;
+    setState(() => _fontSize = v);
+    Prefs.setDouble('remote.termFontSize', v);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2150,6 +2164,16 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             tooltip: '刷新(拉取电脑最新)',
             onPressed: _reload,
           ),
+          IconButton(
+            icon: const Icon(Icons.text_decrease_rounded),
+            tooltip: '字号−(更多列，适配 codex 等宽布局)',
+            onPressed: () => _bumpFont(-1),
+          ),
+          IconButton(
+            icon: const Icon(Icons.text_increase_rounded),
+            tooltip: '字号+',
+            onPressed: () => _bumpFont(1),
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             tooltip: '更多',
@@ -2206,9 +2230,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                         // (cursor row and below) — tapping output to read/scroll
                         // won't pop the IME, avoiding accidental taps on the phone.
                         keyboardOnInputLineOnly: true,
-                        textStyle: const TerminalStyle(
+                        textStyle: TerminalStyle(
                           fontFamily: 'JetBrainsMono',
-                          fontSize: 12.5,
+                          fontSize: _fontSize,
                         ),
                         padding: const EdgeInsets.all(8),
                       ),
