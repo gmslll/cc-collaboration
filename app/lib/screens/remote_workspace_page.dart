@@ -1655,6 +1655,11 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // and ended when leaving this session. No-op off iOS / when disabled.
   bool _laStarted = false;
 
+  // Latest usage label pushed alongside the agent status (model · context% ·
+  // tokens · est. cost); null until the first status carries one. Shown as a
+  // small chip over the mirrored terminal and folded into the Live Activity text.
+  String? _usageLabel;
+
   @override
   void initState() {
     super.initState();
@@ -1698,18 +1703,24 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     });
   }
 
-  void _onAgentStatus(String sid, bool working, String text) {
+  void _onAgentStatus(String sid, bool working, String text, String? usage) {
     if (sid != widget.session.sid) return;
+    if (usage != null && usage != _usageLabel && mounted) {
+      setState(() => _usageLabel = usage); // refresh the on-terminal chip
+    }
+    // Fold the usage label into the Live Activity / Dynamic Island text so the
+    // 灵动岛 shows "思考中…  ·  opus 4.8 · ctx 45% · 1.2M tok · ~$3.40".
+    final laText = (usage != null && usage.isNotEmpty) ? '$text  ·  $usage' : text;
     if (working && !_laStarted) {
       _laStarted = true;
       final title = widget.session.title.isNotEmpty
           ? widget.session.title
           : widget.session.agent;
       LiveActivity.start(title: title, sessionId: sid).then(
-        (_) => LiveActivity.update(working: working, text: text),
+        (_) => LiveActivity.update(working: working, text: laText),
       );
     } else if (_laStarted) {
-      LiveActivity.update(working: working, text: text);
+      LiveActivity.update(working: working, text: laText);
     }
   }
 
@@ -2016,37 +2027,72 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       body: Column(
         children: [
           Expanded(
-            child: Listener(
-              onPointerDown: (_) {
-                _scrollAccum = 0;
-                // Touching the terminal cancels the brief auto-stick-to-bottom so
-                // the user can scroll back through history right after entering —
-                // we only want to land at the bottom when they DON'T touch.
-                _stickTimer?.cancel();
-                // A new touch clears any prior selection: a plain drag then
-                // scrolls (no selection to gate it), a long-press re-selects,
-                // and a tap acts as "deselect". Tapping 复制 is on the key bar
-                // (outside this Listener) so it keeps the selection.
-                if (_controller.selection != null) _controller.clearSelection();
-              },
-              onPointerMove: _onPointerMove,
-              child: _wrapScroll(
-                TerminalView(
-                  _term,
-                  controller: _controller,
-                  scrollController: _termScroll,
-                  theme: ccTerminalTheme,
-                  // Only raise the keyboard when tapping the agent's input line
-                  // (cursor row and below) — tapping output to read/scroll won't
-                  // pop the IME, avoiding accidental taps on the phone.
-                  keyboardOnInputLineOnly: true,
-                  textStyle: const TerminalStyle(
-                    fontFamily: 'JetBrainsMono',
-                    fontSize: 12.5,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: Listener(
+                    onPointerDown: (_) {
+                      _scrollAccum = 0;
+                      // Touching the terminal cancels the brief auto-stick-to-bottom
+                      // so the user can scroll back through history right after
+                      // entering — we only land at the bottom when they DON'T touch.
+                      _stickTimer?.cancel();
+                      // A new touch clears any prior selection: a plain drag then
+                      // scrolls (no selection to gate it), a long-press re-selects,
+                      // and a tap acts as "deselect". Tapping 复制 is on the key bar
+                      // (outside this Listener) so it keeps the selection.
+                      if (_controller.selection != null) {
+                        _controller.clearSelection();
+                      }
+                    },
+                    onPointerMove: _onPointerMove,
+                    child: _wrapScroll(
+                      TerminalView(
+                        _term,
+                        controller: _controller,
+                        scrollController: _termScroll,
+                        theme: ccTerminalTheme,
+                        // Only raise the keyboard when tapping the agent's input line
+                        // (cursor row and below) — tapping output to read/scroll
+                        // won't pop the IME, avoiding accidental taps on the phone.
+                        keyboardOnInputLineOnly: true,
+                        textStyle: const TerminalStyle(
+                          fontFamily: 'JetBrainsMono',
+                          fontSize: 12.5,
+                        ),
+                        padding: const EdgeInsets.all(8),
+                      ),
+                    ),
                   ),
-                  padding: const EdgeInsets.all(8),
                 ),
-              ),
+                if (_usageLabel != null)
+                  Positioned(
+                    top: 4,
+                    right: 8,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xCC1E1E1E),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0x33FFFFFF)),
+                        ),
+                        child: Text(
+                          _usageLabel!,
+                          style: const TextStyle(
+                            color: Color(0xFFD7DAE0),
+                            fontSize: 10.5,
+                            fontFamily: 'JetBrainsMono',
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           if (_vmode != _VoiceMode.off) _voiceHud(),

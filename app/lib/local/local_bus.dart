@@ -46,11 +46,17 @@ class LocalBus {
     bool transcript,
     StringSink out,
   ) readOutput;
+  // readUsage serves a kind:"usage" request: it resolves the target session and
+  // writes its token/cost usage as a JSON object into [out] (the <id>.ok body).
+  // Returns null on success or an error → <id>.err. Same shape as readOutput, no
+  // lines/transcript flags — usage is always the structured snapshot.
+  final Future<String?> Function(String to, StringSink out) readUsage;
 
   LocalBus({
     required this.registry,
     required this.deliver,
     required this.readOutput,
+    required this.readUsage,
   });
 
   StreamSubscription<FileSystemEvent>? _watch;
@@ -154,6 +160,10 @@ class LocalBus {
               m['transcript'] == true,
               out,
             );
+            if (err == null) okBody = out.toString();
+          } else if (kind == 'usage') {
+            final out = StringBuffer();
+            err = await readUsage((m['to'] ?? '').toString(), out);
             if (err == null) okBody = out.toString();
           } else {
             err = deliver(LocalMsg(

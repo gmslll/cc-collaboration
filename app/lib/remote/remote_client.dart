@@ -162,9 +162,11 @@ class RemoteClient extends RemoteChannel {
   void Function(String sid, String text)? onReplyText;
 
   // onAgentStatus fires when the desktop pushes a watched session's working/idle
-  // state (+ a short text). The terminal screen drives an iOS Live Activity /
+  // state (+ a short text, + an optional usage label e.g. "opus 4.8 · ctx 45% ·
+  // 1.2M tok · ~$3.40"). The terminal screen drives an iOS Live Activity /
   // Dynamic Island from it so the user can leave the app and still see progress.
-  void Function(String sid, bool working, String text)? onAgentStatus;
+  void Function(String sid, bool working, String text, String? usage)?
+      onAgentStatus;
 
   // Files received from the desktop (newest first) + a one-shot arrival callback
   // for a toast. _fileRx assembles inbound file.* frames into Documents/cc-recv.
@@ -531,6 +533,7 @@ class RemoteClient extends RemoteChannel {
             sid,
             (f['working'] as bool?) ?? false,
             (f['text'] as String?) ?? '',
+            f['usage'] as String?,
           );
         }
       case 'fs.list.ok':

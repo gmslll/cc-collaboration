@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../local/agent_transcript.dart';
+import '../local/agent_usage.dart';
 import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../notifications.dart';
@@ -485,6 +486,28 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     } catch (e) {
       return '读取 transcript 失败: $e';
     }
+  }
+
+  // readUsage is the bus-facing entry for a `kind:"usage"` request from
+  // `cc-handoff msg usage`: it resolves the target session, recomputes its
+  // token/cost usage from the on-disk transcript, and writes the JSON snapshot
+  // into [out]. Same resolution + error contract as readTranscript. Self-read is
+  // fine. Returns null on success or a Chinese error → <id>.err.
+  Future<String?> readUsage(String to, StringSink out) async {
+    final (target, err) = _resolveTarget(to);
+    if (target == null) return err;
+    if (!target.isAgent) return '会话「${target.label}」不是 agent,没有用量';
+    final SessionUsage? u;
+    try {
+      u = await target.refreshUsage();
+    } catch (e) {
+      return '读取用量失败: $e';
+    }
+    if (u == null) {
+      return '找不到「${target.label}」的 transcript(未捕获 session id 或日志不存在)';
+    }
+    out.write(jsonEncode(u.toJson()));
+    return null;
   }
 
   // _sendToPeer is the menu callback: human forwards fill the target's input

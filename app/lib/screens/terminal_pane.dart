@@ -11,6 +11,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:xterm/xterm.dart';
 
 import '../local/agent_resolver.dart';
+import '../local/agent_transcript.dart';
+import '../local/agent_usage.dart';
 import '../local/cli.dart';
 import '../local/local_bus.dart';
 import '../local/platform.dart';
@@ -121,6 +123,42 @@ class TerminalSession {
   }
 
   String get backlog => _backlog.join();
+
+  // --- token usage / cost (claude+codex) ----------------------------------
+  //
+  // usage publishes the latest per-session token/cost snapshot (null until first
+  // computed / for non-agent sessions); the pane watches it for the overlay chip
+  // and the local-bus `usage` channel serialises it for peers. Incremental: the
+  // resolved transcript path and a running accumulator are cached so each refresh
+  // only parses the bytes appended since the previous one. See agent_usage.dart.
+  final ValueNotifier<SessionUsage?> usage = ValueNotifier(null);
+  final UsageAccumulator _usageAcc = UsageAccumulator();
+  String? _usagePath; // cached transcript path once resolved
+
+  // refreshUsage folds any newly-appended transcript bytes into the accumulator
+  // and republishes [usage]. Called on each turn boundary (start + finish) so the
+  // numbers and the busy flag track the live session; also safe to call ad-hoc
+  // (the bus `usage` read does). Returns the fresh snapshot, or null when this
+  // session isn't an agent / has no transcript yet.
+  Future<SessionUsage?> refreshUsage() async {
+    if (!isAgent) return null;
+    _usagePath ??= await resolveTranscriptPath(
+      agentKind: agentKind,
+      agentSessionId: agentSessionId,
+      workdir: workdir,
+    );
+    final path = _usagePath;
+    if (path == null) return null;
+    try {
+      await scanUsageInto(_usageAcc, path: path, agentKind: agentKind);
+    } catch (_) {
+      return usage.value;
+    }
+    final u =
+        SessionUsage.fromAccumulator(_usageAcc, agentKind: agentKind, busy: busy);
+    if (!_disposed) usage.value = u;
+    return u;
+  }
 
   TerminalSession(
     this.workdir,
@@ -374,7 +412,10 @@ class TerminalSession {
       _sawInput = true; // local keystrokes count as "the user gave it work"
       // A local Enter into an agent starts a turn → mark busy so a peer message
       // arriving now routes to the bus inbox (hook injection) not a paste queue.
-      if (isAgent && data.contains('\r')) _busy = true;
+      if (isAgent && data.contains('\r')) {
+        _busy = true;
+        unawaited(refreshUsage()); // turn starting → reflect busy + any new usage
+      }
       pty.write(const Utf8Encoder().convert(data));
     };
     // A phone mirroring this session (remoteSink set) owns the PTY size; don't
@@ -516,7 +557,10 @@ class TerminalSession {
     _sawInput = true; // remote keys / delivered messages also arm the detector
     // A lone CR submitting to an agent starts a turn (remote Enter, or the
     // submit \r pasteText sends after a delivered message) → mark busy.
-    if (isAgent && s == '\r') _busy = true;
+    if (isAgent && s == '\r') {
+      _busy = true;
+      unawaited(refreshUsage());
+    }
     _pty?.write(const Utf8Encoder().convert(s));
   }
 
@@ -539,6 +583,7 @@ class TerminalSession {
   void _fireDone() {
     _belArmed = false;
     _busy = false; // bell settled → agent is idle/waiting again
+    unawaited(refreshUsage()); // turn ended → fold the new assistant message in
     if (!_sawInput) return;
     onDone?.call(this);
   }
@@ -607,6 +652,7 @@ class TerminalSession {
   void dispose() {
     _disposed = true; // stops the codex id-capture poll
     _belTimer?.cancel();
+    usage.dispose();
     controller.dispose();
     _pty?.kill();
   }
@@ -658,6 +704,9 @@ class _TerminalPaneState extends State<TerminalPane> {
   void initState() {
     super.initState();
     widget.session.start();
+    // Populate the usage chip immediately for a resumed session (whose transcript
+    // already exists on disk); a fresh session fills in on its first turn.
+    unawaited(widget.session.refreshUsage());
   }
 
   void _copy() {
@@ -867,8 +916,72 @@ class _TerminalPaneState extends State<TerminalPane> {
     // can't reach the terminal through it. On Windows we overlay a REAL EditableText
     // — which the engine DOES feed IME — to capture typing + composition and forward
     // it to the PTY, while the TerminalView underneath keeps display/scroll/selection.
-    if (!Platform.isWindows) return view;
-    return _WindowsImeInputLayer(session: widget.session, child: view);
+    final base = Platform.isWindows
+        ? _WindowsImeInputLayer(session: widget.session, child: view)
+        : view;
+    // Agent sessions get a compact usage chip in the top-right corner (model ·
+    // context% · tokens · est. cost). IgnorePointer so it never steals selection.
+    if (!widget.session.isAgent) return base;
+    return Stack(
+      children: [
+        Positioned.fill(child: base),
+        Positioned(
+          top: 4,
+          right: 8,
+          child: ValueListenableBuilder<SessionUsage?>(
+            valueListenable: widget.session.usage,
+            builder: (_, u, _) =>
+                u == null ? const SizedBox.shrink() : _UsageChip(u),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// _UsageChip is the small overlay showing a session's token usage / est. cost.
+// Dot = idle (green) / busy (amber); text = SessionUsage.shortLabel().
+class _UsageChip extends StatelessWidget {
+  final SessionUsage usage;
+  const _UsageChip(this.usage);
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xCC1E1E1E),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0x33FFFFFF)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              margin: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: usage.busy
+                    ? const Color(0xFFE5C07B)
+                    : const Color(0xFF98C379),
+              ),
+            ),
+            Text(
+              usage.shortLabel(),
+              style: const TextStyle(
+                color: Color(0xFFD7DAE0),
+                fontSize: 10.5,
+                fontFamily: 'JetBrainsMono',
+                height: 1.0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

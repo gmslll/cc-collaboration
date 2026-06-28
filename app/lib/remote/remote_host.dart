@@ -344,7 +344,7 @@ class RemoteHost extends RemoteChannel {
         // A submit (Enter) sent to an agent session means it's now working —
         // flip the phone's Live Activity to "thinking" until onAgentDone.
         if (s != null && s.isAgent && (d.contains('\r') || d.contains('\n'))) {
-          broadcastStatus(s.id, true, '思考中…');
+          broadcastStatus(s.id, true, '思考中…', usage: s.usage.value?.shortLabel());
         }
       case 'term.resize':
         _sessionById(f['sid'] as String?)?.resizeFromRemote(
@@ -462,10 +462,12 @@ class RemoteHost extends RemoteChannel {
   // broadcastStatus pushes an agent's working/idle state (+ a short text) to the
   // phones watching [sid] so they can drive a Live Activity / Dynamic Island
   // while the user is in another app. Only watchers receive it.
-  void broadcastStatus(String sid, bool working, String text) {
+  void broadcastStatus(String sid, bool working, String text, {String? usage}) {
     if (!connected) return;
     for (final c in _watchers[sid] ?? const <int>{}) {
-      send({'t': 'status', 'to': c, 'sid': sid, 'working': working, 'text': text});
+      final m = {'t': 'status', 'to': c, 'sid': sid, 'working': working, 'text': text};
+      if (usage != null && usage.isNotEmpty) m['usage'] = usage;
+      send(m);
     }
   }
 

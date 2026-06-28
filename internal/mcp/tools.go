@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -36,6 +37,7 @@ const (
 	ToolRetractHandoff  = "retract_handoff"
 	ToolListLocalInbox  = "list_local_inbox"
 	ToolListOnlineUsers = "list_online_users"
+	ToolSessionUsage    = "session_usage"
 	ToolCheckDrift      = "check_drift"
 	ToolLinkLinear      = "link_linear"
 	ToolLinearSync      = "linear_sync"
@@ -64,6 +66,7 @@ func DefaultTools() []Tool {
 		retractHandoffTool(),
 		listLocalInboxTool(),
 		listOnlineUsersTool(),
+		sessionUsageTool(),
 		checkDriftTool(),
 		linkLinearTool(),
 		linearSyncTool(),
@@ -946,6 +949,53 @@ func writeDraftSummary(inboxDir, content string) error {
 
 func textResult(s string) ToolResult {
 	return ToolResult{Content: []ContentBlock{{Type: ContentTypeText, Text: s}}}
+}
+
+// --- session_usage ----------------------------------------------------------
+
+func sessionUsageTool() Tool {
+	schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "session_id": {"type": "string", "description": "目标本地会话 ID(如 ts2)或名称(见 msg list)。读取它对应的 claude/codex 的 token 用量。"}
+  },
+  "required": ["session_id"]
+}`)
+	return Tool{
+		Name:        ToolSessionUsage,
+		Description: "Read a same-machine peer session's token usage for the claude/codex running in it: cumulative tokens (input/output/cache), current context-window %, estimated USD cost, model, and busy/idle. Local-bus only — the target must be a session on THIS machine and the desktop app must be running (it computes the usage from the agent's on-disk transcript). Returns the raw JSON snapshot.",
+		InputSchema: schema,
+		Handler:     sessionUsageHandler,
+	}
+}
+
+func sessionUsageHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+	var a struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ToolResult{}, err
+	}
+	if strings.TrimSpace(a.SessionID) == "" {
+		return textResult("session_id 不能为空"), nil
+	}
+	// Reuse the CLI's local-bus handshake by invoking ourselves: the MCP server IS
+	// the cc-handoff binary, spawned by the agent's session, so it inherits the
+	// app-injected CC_BUS_DIR / CC_SESSION_ID that `msg usage` needs. Shelling to
+	// self keeps one source of truth for the outbox protocol (see msg.go).
+	self, err := os.Executable()
+	if err != nil {
+		return textResult("无法定位 cc-handoff 可执行文件: " + err.Error()), nil
+	}
+	out, err := exec.CommandContext(ctx, self, "msg", "usage", a.SessionID).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return textResult("读取用量失败: " + msg), nil
+	}
+	return textResult(strings.TrimSpace(string(out))), nil
 }
 
 // --- status_handoff ---------------------------------------------------------

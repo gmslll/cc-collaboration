@@ -203,6 +203,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     registry: localBusRegistry,
     deliver: deliverLocalMessage,
     readOutput: readOutput,
+    readUsage: readUsage,
   );
 
   // Relay presence: while the workspace is open we hold an SSE subscription (so
