@@ -6,9 +6,27 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-28
+
 ### Added
 
+- **Session overview (会话总览)** — a desktop top-level page + a phone grid that lay every open session out flat, grouped by workspace → project → worktree; each card shows the agent's latest-reply preview, status (working / needs-review / idle), and token usage so you can see at a glance which sessions finished and need review. Each session gets a deterministic generated "robot" avatar (consistent across the tab strip, project tree, overview, and phone), and working sessions get a subtle breathing animation.
+- **Quick-reply popup** — tapping a session in the overview opens a live, *colored* terminal preview plus confirm/reply controls (↵ / 1·2·3 / y·n / Esc / free text) so you can act without switching to the workspace or the full-screen mirror. The phone pulls the current screen via a new `screen` frame; an 账号 toggle makes the popup the default tap action (else the tap opens the full terminal).
+- **Per-session token usage / estimated cost** (claude + codex) — a desktop overlay chip and the phone overview / Live Activity, computed incrementally from each session's on-disk transcript.
+- **Phone mirror improvements** — full pre-connect history replay + stick-to-bottom on open + first-frame sizing reported at the phone's width; bidirectional in-session file transfer + terminal sync; an idle session-history cache that re-pulls fresh; an adjustable terminal font size (so a wide full-screen TUI like codex lays out with enough columns to read).
+- **Cross-device workspace/project sync** — desktop-side create/remove of a workspace or project now propagates to connected phones, and the `roots` frame carries all workspace names so an empty workspace is visible (and can receive its first project) from the phone's 管理 tab.
+- **In-app update** — checks the public GitHub Releases and offers one-tap download + install (Android → system installer; macOS → download + reveal, since an ad-hoc/un-notarized app can't self-install silently). The build's version is injected at build time via `--dart-define=APP_VERSION` (from the `VERSION` file).
+- **Three-platform app packaging to Releases** — `package-apps.yml` attaches the macOS / Windows / Android packages to the GitHub Release on a `v*` tag (alongside the Go CLI binaries from `release.yml`).
+- **Android AI status** (foreground service + persistent notification, a Live-Activity equivalent) and **iOS** device-info integration.
+- **Diff full/changed toggle + read-only code view** on the phone; `msg read` gains a structured `transcript` channel that reads a peer session's on-disk transcript instead of screen-scraping.
 - Local session bus **mid-turn interjection** — a peer message sent to a *busy* agent session (mid-turn) no longer just queues behind the running turn. The desktop app now routes by the target's busy/idle state (derived from the existing BEL "turn finished" detector): an **idle** target still gets the message pasted straight into its PTY (immediate turn), while a **busy** target gets it parked in a per-session bus inbox (`$CC_BUS_DIR/inbox/<session-id>/`, `internal/localbus`) that the target's **PostToolUse** hook drains as `additionalContext` at the next tool boundary — surfacing the message inside the running turn without interrupting it — with a **Stop** hook as the turn-end backstop. One `cc-handoff bus-hook` binary serves both Claude Code and Codex (identical hook contract); `cc-handoff bus-hook install` (run on app start) idempotently wires the hooks into `~/.claude/settings.json` and `~/.codex/hooks.json`. The hook command self-gates on `$CC_BUS_DIR`, so it's a sub-millisecond no-op in any session the app didn't spawn — the user's other Claude/Codex sessions are untouched.
+
+### Fixed
+
+- Local-bus subagent hooks no longer steal the parent session's inbox.
+- Switching sessions refreshes that session's usage chip immediately (no longer frozen at the previous turn boundary).
+- Windows terminal fixes — Chinese IME input (vendored + patched `flutter_pty`), Chinese-path launch failures, and a missing `SystemRoot`/environment on `cmd.exe`.
+- `pasteText` auto-submit gains a fallback resend.
 
 ## [0.3.0] - 2026-06-05
 
@@ -110,7 +128,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/gmslll/cc-collaboration/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/gmslll/cc-collaboration/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gmslll/cc-collaboration/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/gmslll/cc-collaboration/compare/v0.1.1...v0.1.2
