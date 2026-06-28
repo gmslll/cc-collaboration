@@ -358,7 +358,7 @@ class RemoteHost extends RemoteChannel {
             't': 'screen',
             'to': from,
             'sid': f['sid'],
-            'text': s?.renderSnapshot(30) ?? '',
+            'text': s?.snapshotAnsi(60) ?? '', // coloured tail (ANSI)
           });
         }
       case 'term.resize':

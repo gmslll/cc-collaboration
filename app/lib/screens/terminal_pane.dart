@@ -275,7 +275,26 @@ class TerminalSession {
   // carry no line break (isWrapped) so the phone re-flows them. Encoding per
   // xterm core/cell.dart (CellColor packs type<<25 | 0xRRGGBB-or-index; CellAttr
   // bit flags). Absolute-positioned TUI chrome flattens, same as historyText.
-  String historyAnsi() {
+  String historyAnsi() => _ansiFrom(0);
+
+  // snapshotAnsi is historyAnsi limited to the last [rows] non-blank rows — a
+  // bounded coloured tail for a small live preview (so a popup doesn't re-emit a
+  // multi-thousand-line buffer each refresh).
+  String snapshotAnsi(int rows) {
+    final buf = terminal.buffer;
+    var last = buf.height - 1;
+    while (last >= 0 && buf.lines[last].getTrimmedLength() == 0) {
+      last--;
+    }
+    final start = (rows <= 0 || last - rows + 1 < 0) ? 0 : last - rows + 1;
+    return _ansiFrom(start);
+  }
+
+  // _ansiFrom walks buffer rows [start .. last-non-blank], re-emitting each cell
+  // with inline SGR (only on style change). Shared by historyAnsi (start 0) and
+  // snapshotAnsi (a tail). The first emitted row gets no leading newline; soft-
+  // wrapped rows carry none so a terminal re-flows them.
+  String _ansiFrom(int start) {
     String colorSgr(int c, bool fg) {
       final v = c & CellColor.valueMask;
       switch (c & CellColor.typeMask) {
@@ -312,9 +331,9 @@ class TerminalSession {
     }
     final out = StringBuffer();
     int? pf, pb, pa; // last-emitted fg/bg/attrs, to only emit SGR on change
-    for (var y = 0; y <= last; y++) {
+    for (var y = start; y <= last; y++) {
       final line = buf.lines[y];
-      if (y != 0 && !line.isWrapped) out.write('\r\n');
+      if (y != start && !line.isWrapped) out.write('\r\n');
       final len = line.getTrimmedLength();
       for (var x = 0; x < len; x++) {
         if (line.getWidth(x) == 0) continue; // wide-char continuation cell

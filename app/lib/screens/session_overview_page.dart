@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:xterm/xterm.dart';
 
 import '../local/session_overview.dart';
+import '../terminal_theme.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -258,13 +260,15 @@ class _QuickReplyDialog extends StatefulWidget {
 
 class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
-  String _preview = '';
+  // A throwaway terminal we paint the session's coloured screen snapshot into —
+  // a real xterm view, not stripped text. Independent of the live session's
+  // Terminal so it never fights it for PTY size; small buffer = cheap rewrites.
+  final Terminal _term = Terminal(maxLines: 200);
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _preview = widget.card.preview;
     _refresh();
     _timer = Timer.periodic(
       const Duration(milliseconds: 1500),
@@ -280,8 +284,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   }
 
   Future<void> _refresh() async {
-    final p = await widget.store.loadPreview(widget.card.sid);
-    if (mounted && p != null && p != _preview) setState(() => _preview = p);
+    final ansi = await widget.store.loadPreview(widget.card.sid);
+    if (!mounted || ansi == null) return;
+    _term.write('\x1b[3J\x1b[2J\x1b[H'); // clear scrollback + screen, home
+    _term.write(ansi);
   }
 
   // _bump re-reads the screen shortly after a send so the agent's reaction shows
@@ -360,18 +366,21 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
               Container(
                 height: 280,
                 width: double.infinity,
-                padding: const EdgeInsets.all(10),
+                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
-                  color: CcColors.bg,
+                  color: ccTerminalTheme.background,
                   borderRadius: BorderRadius.circular(CcRadius.sm),
                   border: Border.all(color: CcColors.border),
                 ),
-                child: SingleChildScrollView(
-                  reverse: true, // keep the latest output (the prompt) in view
-                  child: SelectableText(
-                    _preview.trim().isEmpty ? '（暂无输出）' : _preview,
-                    style: CcType.code(size: 12, color: CcColors.muted),
+                child: TerminalView(
+                  _term,
+                  theme: ccTerminalTheme,
+                  textStyle: const TerminalStyle(
+                    fontFamily: 'JetBrainsMono',
+                    fontSize: 12,
                   ),
+                  padding: const EdgeInsets.all(8),
+                  readOnly: true,
                 ),
               ),
               const SizedBox(height: 10),

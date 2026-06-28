@@ -3061,6 +3061,10 @@ class _QuickReplyDialog extends StatefulWidget {
 
 class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
+  // A throwaway terminal we paint the host's coloured screen snapshot into — a
+  // real xterm view, not stripped text.
+  final Terminal _term = Terminal(maxLines: 200);
+  String? _lastScreen;
   Timer? _timer;
 
   String get _sid => widget.session.sid;
@@ -3085,7 +3089,14 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   }
 
   void _onChange() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final scr = widget.client.screens[_sid];
+    if (scr != null && scr != _lastScreen) {
+      _lastScreen = scr;
+      _term.write('\x1b[3J\x1b[2J\x1b[H'); // clear scrollback + screen, home
+      _term.write(scr);
+    }
+    setState(() {}); // status/usage may have changed
   }
 
   // _bump re-reads the screen shortly after a send so the reaction shows without
@@ -3123,7 +3134,6 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   @override
   Widget build(BuildContext context) {
     final ov = widget.client.overview[_sid];
-    final screen = (widget.client.screens[_sid] ?? ov?.preview ?? '').trim();
     return Dialog(
       insetPadding: const EdgeInsets.all(16),
       child: Padding(
@@ -3166,18 +3176,21 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
             Container(
               height: 220,
               width: double.infinity,
-              padding: const EdgeInsets.all(10),
+              clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
-                color: CcColors.bg,
+                color: ccTerminalTheme.background,
                 borderRadius: BorderRadius.circular(CcRadius.sm),
                 border: Border.all(color: CcColors.border),
               ),
-              child: SingleChildScrollView(
-                reverse: true,
-                child: SelectableText(
-                  screen.isEmpty ? '（暂无输出）' : screen,
-                  style: CcType.code(size: 10.5, color: CcColors.muted),
+              child: TerminalView(
+                _term,
+                theme: ccTerminalTheme,
+                textStyle: const TerminalStyle(
+                  fontFamily: 'JetBrainsMono',
+                  fontSize: 11,
                 ),
+                padding: const EdgeInsets.all(8),
+                readOnly: true,
               ),
             ),
             const SizedBox(height: 10),

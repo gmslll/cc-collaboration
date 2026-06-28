@@ -548,7 +548,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       }
     };
     widget.overviewStore.previewHandler = (sid) async =>
-        sessionById(sid)?.renderSnapshot(30); // live screen incl. any prompt
+        sessionById(sid)?.snapshotAnsi(60); // coloured live screen (incl. prompt)
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
