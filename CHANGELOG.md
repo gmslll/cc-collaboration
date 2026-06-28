@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-06-28
+
+### Fixed
+
+- **codex终端满屏后不滚动、只替换最后一行** — codex renders its transcript in the main buffer with a scroll region that reserves the bottom rows for its composer (`ESC[1;5r`). The vendored xterm's `index()` grew scrollback (inserting a line below the margin) whenever the top margin was 0, which — once scrollback existed — inserted at a non-end index of the circular buffer (silent corruption in release) and pinned output to the last line. A region with a real bottom margin now scrolls in place. (claude was unaffected because it uses the alternate screen.) Guarded by a regression test that replays a real codex byte stream.
+
 ## [0.6.2] - 2026-06-28
 
 ### Fixed
@@ -154,7 +160,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/gmslll/cc-collaboration/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/gmslll/cc-collaboration/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/gmslll/cc-collaboration/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/gmslll/cc-collaboration/compare/v0.5.0...v0.6.0

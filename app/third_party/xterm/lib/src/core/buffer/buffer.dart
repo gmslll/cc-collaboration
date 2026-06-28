@@ -235,7 +235,13 @@ class Buffer {
   void index() {
     if (isInVerticalMargin) {
       if (_cursorY == _marginBottom) {
-        if (marginTop == 0 && !isAltBuffer) {
+        // Grow scrollback ONLY for a full-screen region (no reserved bottom
+        // rows). With a real bottom margin — e.g. codex sets `ESC[1;5r` to
+        // reserve the bottom rows for its composer — inserting a line below the
+        // margin both corrupts the circular buffer (insert at a non-end index)
+        // and pins output to the last line instead of scrolling; such a region
+        // must scroll IN PLACE.
+        if (marginTop == 0 && _marginBottom == viewHeight - 1 && !isAltBuffer) {
           lines.insert(absoluteMarginBottom + 1, _newEmptyLine());
         } else {
           scrollUp(1);
