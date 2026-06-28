@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-28
+
+### Fixed
+
+- **Android updates install in place (no more "软件包冲突")** — release APKs are now signed with a stable, committed keystore instead of a per-machine/per-CI debug key, so an update installs over the previous one and the in-app updater works. The APK's versionName/versionCode are derived from the `VERSION` file (e.g. 0.6.1 → versionCode 601) so each release outranks the last. (One-time migration: uninstall the old debug-signed app once, then install this; future updates are seamless.)
+
 ## [0.6.0] - 2026-06-28
 
 ### Added
@@ -142,7 +148,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/gmslll/cc-collaboration/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/gmslll/cc-collaboration/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/gmslll/cc-collaboration/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/gmslll/cc-collaboration/compare/v0.2.0...v0.3.0

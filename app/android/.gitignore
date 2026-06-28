@@ -7,8 +7,7 @@ gradle-wrapper.jar
 GeneratedPluginRegistrant.java
 .cxx/
 
-# Remember to never publicly share your keystore.
-# See https://flutter.dev/to/reference-keystore
-key.properties
-**/*.keystore
-**/*.jks
+# NOTE: key.properties + cc-handoff-release.jks are committed ON PURPOSE so CI
+# signs releases with a stable key without secrets. This is a deliberate tradeoff
+# for a public sideloaded app (see build.gradle.kts); the default Flutter ignore
+# rules for them are removed below.

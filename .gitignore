@@ -5,10 +5,8 @@ bin/
 *.apk
 *.test
 *.out
-# Android release signing — secrets, NEVER commit
-app/android/key.properties
-app/android/*.jks
-app/android/*.keystore
+# Android release signing (key.properties + cc-handoff-release.jks) is committed
+# on purpose so CI signs with a stable key without secrets — see build.gradle.kts.
 /cc-handoff
 .DS_Store
 .idea/
