@@ -5,6 +5,11 @@ bin/
 *.apk
 *.test
 *.out
+# Android release signing — secrets, NEVER commit
+app/android/key.properties
+app/android/*.jks
+app/android/*.keystore
+/cc-handoff
 .DS_Store
 .idea/
 .vscode/

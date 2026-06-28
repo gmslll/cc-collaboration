@@ -28,6 +28,14 @@ mkdir -p "$DIST" "$ROOT/bin"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing required tool: $1" >&2; exit 1; }; }
 
+# android_version_code maps a semver to a strictly-increasing integer
+# (major*10000 + minor*100 + patch), so each release outranks the last — Android
+# refuses to install/update to a lower versionCode. (minor/patch assumed < 100.)
+android_version_code() {
+  local v="$1"; local IFS=.; set -- $v
+  echo $(( ${1:-0} * 10000 + ${2:-0} * 100 + ${3:-0} ))
+}
+
 build_macos() {
   need go; need flutter; need lipo; need ditto; need codesign
   echo "==> macOS: building universal cc-handoff CLI + cc-handoff-mcp"
@@ -94,7 +102,14 @@ build_android() {
   # The phone is a remote client (talks to the relay); it never calls the local
   # CLI, so no binary is embedded.
   echo "==> Android: flutter build apk --release"
-  (cd app && flutter build apk --release --dart-define=APP_VERSION="${VERSION}")
+  # --build-name/-number drive the APK's versionName/versionCode from VERSION
+  # (not pubspec's fixed 1.0.0+1), so each release is a proper, higher-versioned
+  # update. Signing comes from app/android/key.properties when present (CI writes
+  # it from secrets; see scripts notes) — else the debug key.
+  local code; code=$(android_version_code "$VERSION")
+  (cd app && flutter build apk --release \
+    --build-name="${VERSION}" --build-number="${code}" \
+    --dart-define=APP_VERSION="${VERSION}")
   local apk="$ROOT/app/build/app/outputs/flutter-apk/app-release.apk"
   [ -f "$apk" ] || { echo "APK not found at $apk" >&2; exit 1; }
   cp "$apk" "$DIST/cc-handoff-android-v${VERSION}.apk"

@@ -1,7 +1,22 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Release signing: load android/key.properties if present — created locally once
+// (via keytool) or materialized in CI from repo secrets. When absent we fall back
+// to the debug key so dev `flutter run --release` still works WITHOUT a keystore;
+// but a debug-signed release can't install over a properly-signed one (different
+// signature → "软件包冲突"), and CI's debug key differs every run, so real
+// releases must carry this keystore.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val hasReleaseKeystore = keystorePropertiesFile.exists()
+val keystoreProperties = Properties().apply {
+    if (hasReleaseKeystore) FileInputStream(keystorePropertiesFile).use { load(it) }
 }
 
 android {
@@ -31,11 +46,24 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Sign with the release keystore when present (key.properties), else
+            // the debug key (dev convenience — see the note at the top of file).
+            signingConfig = signingConfigs.getByName(
+                if (hasReleaseKeystore) "release" else "debug",
+            )
         }
     }
 }
