@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-06-29
+
+### Fixed
+
+- **手机连接 Codex 终端不再变成竖排文字** — 手机端 TerminalView 初始布局可能短暂上报极小宽度，之前会立刻把 Mac 端 PTY resize 到 1 列，导致 Codex 每个字符单独换行。现在手机端忽略过小 resize，Mac 端也拒绝无效远程终端尺寸；刷新终端会重新等待首个有效手机尺寸。
+
 ## [0.6.8] - 2026-06-29
 
 ### Added
@@ -195,7 +201,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.8...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.9...HEAD
+[0.6.9]: https://github.com/gmslll/cc-collaboration/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/gmslll/cc-collaboration/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/gmslll/cc-collaboration/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/gmslll/cc-collaboration/compare/v0.6.5...v0.6.6

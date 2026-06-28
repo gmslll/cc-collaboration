@@ -434,6 +434,8 @@ class RemoteClient extends RemoteChannel {
 
   final Map<String, Terminal> _terminals = {};
   final Map<String, Timer> _resizeTimers = {}; // debounce phone resize per session
+  static const int _minTerminalCols = 20;
+  static const int _minTerminalRows = 6;
   // Sessions whose phone viewport size has already been reported to the host.
   // The first term.open is replayed at the COMPUTER's size (the phone's size
   // isn't known until the TerminalView lays out), so the first time we learn the
@@ -730,6 +732,10 @@ class RemoteClient extends RemoteChannel {
     term.mouseHandler = const WheelMouseHandler();
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) {
+      // TerminalView can briefly report a tiny width while the mobile route is
+      // still laying out. Never let that transient value resize the host PTY:
+      // a 1-column PTY makes Codex redraw every character on its own line.
+      if (w < _minTerminalCols || h < _minTerminalRows) return;
       // The first term.open was replayed at the COMPUTER's size (the phone's
       // viewport wasn't known yet). Report the real size the moment we learn it
       // (no debounce) so the host redraws at the phone's dimensions promptly; the
@@ -759,6 +765,7 @@ class RemoteClient extends RemoteChannel {
   void reloadTerminal(String sid) {
     _terminals.remove(sid);
     _resizeTimers.remove(sid)?.cancel();
+    _sizedSids.remove(sid);
     terminalFor(sid); // recreate + send term.open now → host replays backlog
   }
 

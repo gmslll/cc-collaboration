@@ -854,7 +854,7 @@ class TerminalSession {
 
   // resizeFromRemote lets a connected phone size the PTY to its viewport.
   void resizeFromRemote(int rows, int cols) {
-    if (rows > 0 && cols > 0) _pty?.resize(rows, cols);
+    if (rows >= 6 && cols >= 20) _pty?.resize(rows, cols);
   }
 
   // restoreLocalSize: the last phone detached — resize the PTY back to the
