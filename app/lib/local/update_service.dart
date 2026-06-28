@@ -29,6 +29,13 @@ class UpdateInfo {
   });
 }
 
+class UpdateCheck {
+  final UpdateInfo? update;
+  final String? error;
+  const UpdateCheck.update(this.update) : error = null;
+  const UpdateCheck.error(this.error) : update = null;
+}
+
 // _cmpVer compares dotted numeric versions ("0.4.10" > "0.4.2"); pre-release
 // suffixes on a part are ignored (split on '-').
 int _cmpVer(String a, String b) {
@@ -44,6 +51,8 @@ int _cmpVer(String a, String b) {
 bool _isNewer(String latest, String current) =>
     current != 'dev' && current.isNotEmpty && _cmpVer(latest, current) > 0;
 
+String _versionFromTag(String tag) => tag.startsWith('v') ? tag.substring(1) : tag;
+
 // _assetMatches picks this platform's release asset by the names scripts/package.*
 // produce: <App>-macos-v*.zip / cc-handoff-windows-*-v*.zip / *-android-*.apk.
 bool _assetMatches(String name) {
@@ -54,23 +63,51 @@ bool _assetMatches(String name) {
   return false;
 }
 
-// checkForUpdate returns the latest release when it's newer than this build (and
-// resolves this platform's asset), else null. Never throws.
-Future<UpdateInfo?> checkForUpdate() async {
+String? _tagFromReleaseUrl(Uri uri) {
+  final parts = uri.pathSegments;
+  final i = parts.indexOf('tag');
+  if (i >= 0 && i + 1 < parts.length) return parts[i + 1];
+  return null;
+}
+
+// _latestTagViaWeb resolves GitHub's public /releases/latest redirect. This is
+// deliberately separate from the REST API because unauthenticated API calls are
+// easily rate-limited on shared networks; the web redirect is enough to decide
+// whether a newer version exists.
+Future<String> _latestTagViaWeb(Dio dio) async {
+  final res = await dio.get(
+    'https://github.com/$_repo/releases/latest',
+    options: Options(
+      followRedirects: false,
+      validateStatus: (s) => s != null && s >= 200 && s < 400,
+    ),
+  );
+  final loc = res.headers.value('location');
+  final uri = loc == null
+      ? res.realUri
+      : res.realUri.resolve(loc);
+  final tag = _tagFromReleaseUrl(uri);
+  if (tag == null || tag.isEmpty) {
+    throw StateError('无法解析 GitHub 最新版本');
+  }
+  return tag;
+}
+
+Future<UpdateInfo> _releaseInfo(Dio dio, String tag, String version) async {
+  String? url;
+  var name = '';
+  var releaseUrl = 'https://github.com/$_repo/releases/tag/$tag';
   try {
-    final res = await Dio().get(
-      'https://api.github.com/repos/$_repo/releases/latest',
+    final res = await dio.get(
+      'https://api.github.com/repos/$_repo/releases/tags/$tag',
       options: Options(
         headers: {'Accept': 'application/vnd.github+json'},
         responseType: ResponseType.json,
       ),
     );
     final data = res.data as Map;
-    final tag = (data['tag_name'] ?? '').toString();
-    final version = tag.startsWith('v') ? tag.substring(1) : tag;
-    if (!_isNewer(version, kAppVersion)) return null;
-    String? url;
-    var name = '';
+    final htmlUrl = (data['html_url'] ?? '').toString();
+    if (htmlUrl.isNotEmpty) releaseUrl = htmlUrl;
     for (final a in (data['assets'] as List? ?? []).whereType<Map>()) {
       final n = (a['name'] ?? '').toString();
       if (_assetMatches(n)) {
@@ -79,14 +116,35 @@ Future<UpdateInfo?> checkForUpdate() async {
         break;
       }
     }
-    return UpdateInfo(
-      version: version,
-      assetUrl: url,
-      assetName: name,
-      releaseUrl: (data['html_url'] ?? '').toString(),
-    );
   } catch (_) {
-    return null; // offline / rate-limited / parse error — stay quiet
+    // Latest tag is already known via the web redirect. If REST is rate-limited
+    // or offline, still surface the update and open the release page as fallback.
+  }
+  return UpdateInfo(
+    version: version,
+    assetUrl: url,
+    assetName: name,
+    releaseUrl: releaseUrl,
+  );
+}
+
+// checkForUpdate returns a newer release when one exists, null when current, or
+// an error when the check itself failed. Manual checks must not turn failures
+// (offline / GitHub rate limit / parse errors) into a false "已是最新".
+Future<UpdateCheck> checkForUpdate() async {
+  if (kAppVersion == 'dev' || kAppVersion.isEmpty) {
+    return const UpdateCheck.update(null);
+  }
+  final dio = Dio();
+  try {
+    final tag = await _latestTagViaWeb(dio);
+    final version = _versionFromTag(tag);
+    if (!_isNewer(version, kAppVersion)) {
+      return const UpdateCheck.update(null);
+    }
+    return UpdateCheck.update(await _releaseInfo(dio, tag, version));
+  } catch (e) {
+    return UpdateCheck.error(errorText(e));
   }
 }
 
@@ -94,8 +152,15 @@ Future<UpdateInfo?> checkForUpdate() async {
 // download + install. silent suppresses the "已是最新" / failure feedback (for the
 // automatic on-launch check); pass false for a user-tapped "检查更新".
 Future<void> checkForUpdatesUi(BuildContext context, {bool silent = true}) async {
-  final info = await checkForUpdate();
+  final check = await checkForUpdate();
   if (!context.mounted) return;
+  if (check.error != null) {
+    if (!silent) {
+      snack(context, '检查更新失败：${check.error}', background: CcColors.danger);
+    }
+    return;
+  }
+  final info = check.update;
   if (info == null) {
     if (!silent) {
       snack(

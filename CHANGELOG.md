@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-06-29
+
+### Fixed
+
+- **Mac 端检查更新不再把检查失败误报为“已是最新”** — 更新检查以前完全依赖未认证 GitHub REST `releases/latest`，公共 IP 被限流或网络失败时会返回空结果，UI 误显示当前版本已是最新。现在先用 GitHub 网页 `/releases/latest` 跳转解析最新 tag，只有确认没有新版才显示“已是最新”；REST 只用于获取平台安装包资产，失败时仍会提示新版并打开 release 页面。
+
 ## [0.6.6] - 2026-06-29
 
 ### Added
@@ -183,7 +189,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.6...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.7...HEAD
+[0.6.7]: https://github.com/gmslll/cc-collaboration/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/gmslll/cc-collaboration/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/gmslll/cc-collaboration/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/gmslll/cc-collaboration/compare/v0.6.3...v0.6.4
