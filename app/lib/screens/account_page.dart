@@ -7,6 +7,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
+import '../local/prefs.dart';
 import '../theme.dart';
 import '../ui_scale.dart';
 import '../widgets.dart';
@@ -40,6 +41,10 @@ class _AccountPageState extends State<AccountPage> {
   final _claudeCmd = TextEditingController();
   final _codexCmd = TextEditingController();
   bool _savingCfg = false;
+
+  // Phone: tap a session card → open the full terminal (default) or first show
+  // the quick-reply preview popup. Persisted; read live by the remote workspace.
+  bool _tapPreview = Prefs.getBool('remote.tapPreview');
 
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -334,6 +339,23 @@ class _AccountPageState extends State<AccountPage> {
             ),
           ),
         ),
+        if (!_isDesktop) ...[
+          const SizedBox(height: 16),
+          Card(
+            child: SwitchListTile(
+              value: _tapPreview,
+              onChanged: (v) {
+                Prefs.setBool('remote.tapPreview', v);
+                setState(() => _tapPreview = v);
+              },
+              title: const Text('点击会话先弹快捷预览'),
+              subtitle: const Text(
+                '默认点击会话直接进终端；开启后先弹快捷预览/回复，弹窗里再「打开终端」',
+                style: TextStyle(color: CcColors.muted, fontSize: 12),
+              ),
+            ),
+          ),
+        ],
         if (_isDesktop && _cfg != null) ...[
           const SizedBox(height: 16),
           _localConfigCard(),

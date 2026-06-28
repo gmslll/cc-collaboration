@@ -156,6 +156,9 @@ class RemoteClient extends RemoteChannel {
 
   List<RemoteSession> sessions = [];
   List<RemoteRootInfo> roots = [];
+  // All workspace names the host advertises (incl. empty ones with no projects),
+  // so the manage view can show + add projects to a freshly-created workspace.
+  List<String> workspaceNames = [];
   // overview holds the rich per-session snapshot (status + usage + reply
   // preview) the desktop pushes for the 总览 grid, keyed by session id. Distinct
   // from `sessions` (membership): membership updates whenever a session is
@@ -545,6 +548,9 @@ class RemoteClient extends RemoteChannel {
               r['path'] as String,
               (r['workspace'] as String?) ?? '',
             ),
+        ];
+        workspaceNames = [
+          for (final w in (f['workspaces'] as List? ?? [])) w.toString(),
         ];
         notifyListeners();
       case 'notify':

@@ -196,6 +196,9 @@ class _WorkspacePageState extends State<WorkspacePage>
       for (final ws in _cfg.workspaces)
         for (final p in ws.projects) RemoteRoot(p.name, p.path, ws.name),
     ],
+    // All workspace names (incl. empty ones) so the phone can see + add projects
+    // to a workspace that has no projects yet.
+    workspaces: () => [for (final ws in _cfg.workspaces) ws.name],
     onNewSession: _remoteNewSession,
     onCloseSession: _remoteCloseSession,
     onRenameSession: _remoteRenameSession,
@@ -1068,7 +1071,12 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Future<void> _reloadConfig() async {
     final cfg = await AppConfig.load();
-    if (cfg != null && mounted) setState(() => _cfg = cfg);
+    if (cfg != null && mounted) {
+      setState(() => _cfg = cfg);
+      // Desktop-initiated workspace/project/worktree changes must reach connected
+      // phones too — otherwise they only see config edits the phone itself made.
+      _remoteHost.broadcastRoots();
+    }
   }
 
   Future<void> _reloadWorktrees(String path) async {

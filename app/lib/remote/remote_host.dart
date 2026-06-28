@@ -85,6 +85,10 @@ class _OutputBatcher {
 class RemoteHost extends RemoteChannel {
   final List<TerminalSession> Function() sessions;
   final List<RemoteRoot> Function() roots;
+  // workspaces lists ALL workspace names (incl. ones with no projects yet) so a
+  // phone can show + add projects to an empty workspace — roots only carries
+  // projects, so an empty workspace would otherwise be invisible. Null = none.
+  final List<String> Function()? workspaces;
   // Write actions that must touch WorkspacePage state (launch/close/rename a
   // session). Null on hosts that only expose read access.
   // workdir is an optional worktree path under the project; the handler validates
@@ -104,6 +108,7 @@ class RemoteHost extends RemoteChannel {
     required super.token,
     required this.sessions,
     required this.roots,
+    this.workspaces,
     this.onNewSession,
     this.onCloseSession,
     this.onRenameSession,
@@ -435,9 +440,16 @@ class RemoteHost extends RemoteChannel {
       .map((r) => {'name': r.name, 'path': r.path, 'workspace': r.workspace})
       .toList();
 
+  // _rootsPayload is the `roots` frame body: the project list plus ALL workspace
+  // names (so empty workspaces show on the phone). Shared by reply + broadcast.
+  Map<String, dynamic> _rootsPayload() => {
+        'items': _rootItems(),
+        'workspaces': workspaces?.call() ?? const <String>[],
+      };
+
   void _replyList(int to) {
     send({'t': 'sessions', 'to': to, 'items': _sessionItems()});
-    send({'t': 'roots', 'to': to, 'items': _rootItems()});
+    send({'t': 'roots', 'to': to, ..._rootsPayload()});
     // A newly-connected phone gets the latest rich overview snapshot (status +
     // usage + reply preview per session) so its 总览 grid is populated at once,
     // without waiting for the next turn-boundary broadcast.
@@ -462,7 +474,7 @@ class RemoteHost extends RemoteChannel {
   }
 
   void broadcastRoots() {
-    if (connected) send({'t': 'roots', 'to': 0, 'items': _rootItems()});
+    if (connected) send({'t': 'roots', 'to': 0, ..._rootsPayload()});
   }
 
   // broadcastNotify pushes a one-shot notification (e.g. an agent finished a

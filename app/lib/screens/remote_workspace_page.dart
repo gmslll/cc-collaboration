@@ -530,6 +530,20 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     return byWs;
   }
 
+  // _manageWorkspaces is _rootsByWorkspace seeded with ALL workspace names, so a
+  // workspace with no projects yet still shows (with an empty list) — the manage
+  // view needs it to add the first project / delete the workspace.
+  Map<String, List<RemoteRootInfo>> _manageWorkspaces() {
+    final byWs = <String, List<RemoteRootInfo>>{};
+    for (final name in _c.workspaceNames) {
+      byWs.putIfAbsent(name, () => []);
+    }
+    for (final r in _c.roots) {
+      (byWs[r.workspace] ??= []).add(r);
+    }
+    return byWs;
+  }
+
   Widget _sessionsTab() {
     if (_c.sessions.isEmpty) {
       return centerMsg('没有会话。\n在电脑端起一个 Claude/Codex 会话，并打开工具栏的「共享给手机」。');
@@ -714,6 +728,24 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     ),
   );
 
+  // _openTerminal pushes the full-screen mirrored terminal for a session.
+  void _openTerminal(RemoteSession s) => Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
+    ),
+  );
+
+  // _tapSession routes a card tap by the user's preference: straight into the
+  // terminal by default, or the quick-reply preview popup when enabled (账号 ·
+  // 点击会话先弹快捷预览). Read live so toggling it takes effect immediately.
+  void _tapSession(RemoteSession s) {
+    if (Prefs.getBool('remote.tapPreview')) {
+      _openQuickReply(s);
+    } else {
+      _openTerminal(s);
+    }
+  }
+
   // _openQuickReply pops a preview + quick-reply sheet for a session so the user
   // can read its live screen and confirm/reply in place; "打开终端" still opens
   // the full mirror when more is needed.
@@ -725,11 +757,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         session: s,
         onOpenTerminal: () {
           Navigator.of(context).pop();
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => _RemoteTerminalScreen(client: _c, session: s),
-            ),
-          );
+          _openTerminal(s);
         },
       ),
     );
@@ -772,7 +800,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       child: BreathingGlow(
         active: ov?.status == SessionStatus.working,
         child: HoverLift(
-          onTap: () => _openQuickReply(s),
+          onTap: () => _tapSession(s),
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1430,7 +1458,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   // --- 管理 (workspace / project / worktree) ---
 
   Widget _manageTab() {
-    final byWs = _rootsByWorkspace();
+    final byWs = _manageWorkspaces();
     return ListView(
       children: [
         Padding(
@@ -1444,7 +1472,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         if (byWs.isEmpty)
           const Padding(
             padding: EdgeInsets.all(16),
-            child: Text('电脑端未共享项目', style: TextStyle(color: CcColors.muted)),
+            child: Text('电脑端未共享工作区', style: TextStyle(color: CcColors.muted)),
           ),
         for (final entry in byWs.entries) ...[
           _gitSection(entry.key.isEmpty ? '(默认工作区)' : entry.key),
