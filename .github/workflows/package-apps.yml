@@ -6,8 +6,10 @@ name: Package apps
 # CLI next to its executable (desktop) so it needs no separate install; the
 # Android APK is a remote client and embeds nothing.
 #
-# Run it manually from the Actions tab ("Run workflow"), or it fires on a v* tag.
-# Output: downloadable artifacts on the run (Windows/macOS zips, Android APK).
+# Run it manually from the Actions tab ("Run workflow") for throwaway run
+# artifacts, or push a v* tag to ALSO attach the three packages to that tag's
+# GitHub Release for download (Windows/macOS zips, Android APK) — run artifacts
+# expire; release assets are permanent.
 
 on:
   workflow_dispatch:
@@ -94,3 +96,29 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+
+  # On a v* tag, gather the three packages and attach them to that tag's GitHub
+  # Release so people can download them (run artifacts above expire; release
+  # assets are permanent). One upload step (not per-matrix-job) avoids racing to
+  # create the release. Coexists with release.yml (the Go CLI binaries) on the
+  # same release — both append their own files; this job sets no `body`, so it
+  # won't clobber release.yml's CHANGELOG notes.
+  release:
+    name: attach to release
+    needs: [windows, macos, android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: download all packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*
+          fail_on_unmatched_files: true
