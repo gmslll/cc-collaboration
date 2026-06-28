@@ -80,6 +80,13 @@ type Agent interface {
 	// so Codex installs it too even though SupportsHooks() stays false for it.
 	InstallBusHooks(out io.Writer) error
 
+	// BusHookConfigPath returns the user-global config file the bus hooks are
+	// installed into (Claude: ~/.claude/settings.json, Codex:
+	// $CODEX_HOME/hooks.json), the single source of truth shared by InstallBusHooks
+	// and `bus-hook status`. Empty string for agents without a hook system
+	// (manual), so callers skip them.
+	BusHookConfigPath() (string, error)
+
 	// InstallCommands materializes any per-agent workflow prompt templates.
 	// Claude receives slash commands under the repo; Codex receives a user
 	// skill under CODEX_HOME. No-op for agents whose SupportsCommands returns

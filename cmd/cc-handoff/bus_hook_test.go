@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cc-collaboration/internal/localbus"
@@ -133,5 +135,75 @@ func TestBusHookDrain_TopLevelDrainsInbox(t *testing.T) {
 	}
 	if len(left) != 0 {
 		t.Fatalf("top-level hook must drain the inbox, %d message(s) left", len(left))
+	}
+}
+
+// readSessionMap reads the CC_SESSION_ID -> agent session id mapping the hook
+// records under $CC_BUS_DIR/sessions/<ccID>.json.
+func readSessionMap(t *testing.T, bus, ccID string) (map[string]any, bool) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(bus, "sessions", ccID+".json"))
+	if os.IsNotExist(err) {
+		return nil, false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("session map not valid JSON: %v", err)
+	}
+	return m, true
+}
+
+// A top-level hook carrying the agent's session_id must record the mapping the
+// desktop app reads to resume the tab's exact agent session.
+func TestBusHookDrain_RecordsAgentSession(t *testing.T) {
+	bus := t.TempDir()
+	const ccID = "ts7"
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", ccID)
+
+	runDrainWith(t, `{"hook_event_name":"PostToolUse","session_id":"codex-abc-123","cwd":"/repo"}`)
+
+	m, ok := readSessionMap(t, bus, ccID)
+	if !ok {
+		t.Fatal("expected a session mapping file to be written")
+	}
+	if m["id"] != "codex-abc-123" {
+		t.Errorf("id=%v, want codex-abc-123", m["id"])
+	}
+	if m["cwd"] != "/repo" {
+		t.Errorf("cwd=%v, want /repo", m["cwd"])
+	}
+}
+
+// A subagent hook (agent_id set) carries the SUBAGENT's session_id, not the
+// tab's — recording it would bind the parent tab to the wrong session. The
+// agent_id gate must skip recording (it bails before recordAgentSession).
+func TestBusHookDrain_SubagentDoesNotRecordSession(t *testing.T) {
+	bus := t.TempDir()
+	const ccID = "ts7"
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", ccID)
+
+	runDrainWith(t, `{"hook_event_name":"PostToolUse","agent_id":"sub-1","session_id":"subagent-xyz","cwd":"/repo"}`)
+
+	if _, ok := readSessionMap(t, bus, ccID); ok {
+		t.Error("a subagent hook must not record a session mapping for the parent tab")
+	}
+}
+
+// A hook with no session_id (or outside an app session) must not write a file.
+func TestBusHookDrain_NoSessionIdNoRecord(t *testing.T) {
+	bus := t.TempDir()
+	const ccID = "ts7"
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", ccID)
+
+	runDrainWith(t, `{"hook_event_name":"PostToolUse","cwd":"/repo"}`)
+
+	if _, ok := readSessionMap(t, bus, ccID); ok {
+		t.Error("no session_id in payload should write no mapping")
 	}
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -48,6 +49,13 @@ class _AccountPageState extends State<AccountPage> {
   // the quick-reply preview popup. Persisted; read live by the remote workspace.
   bool _tapPreview = Prefs.getBool('remote.tapPreview');
 
+  // Local-bus / session-id hooks self-check (desktop only). The app auto-installs
+  // the PostToolUse+Stop hook into ~/.claude/settings.json + ~/.codex/hooks.json
+  // on start; this shows whether they're actually present (e.g. on a fresh
+  // machine) and offers a manual reinstall.
+  List<({String name, String path, bool ok})>? _hooks;
+  bool _reinstalling = false;
+
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
@@ -56,6 +64,7 @@ class _AccountPageState extends State<AccountPage> {
     super.initState();
     _loadTokens();
     _loadLocalConfig();
+    _loadHookStatus();
   }
 
   @override
@@ -93,6 +102,38 @@ class _AccountPageState extends State<AccountPage> {
       _claudeCmd.text = c.claudeCommand;
       _codexCmd.text = c.codexCommand;
     });
+  }
+
+  // _loadHookStatus asks the cc-handoff CLI which agents have the bus/session-id
+  // hook installed (`bus-hook status`), so the config paths + "installed"
+  // criterion stay owned by Go (the installer) and can't drift from this UI.
+  Future<void> _loadHookStatus() async {
+    if (!_isDesktop) return;
+    try {
+      final out = await Cli.run(['bus-hook', 'status']);
+      final list = (jsonDecode(out) as List).cast<Map<String, dynamic>>();
+      if (!mounted) return;
+      setState(() => _hooks = [
+            for (final h in list)
+              (
+                name: (h['agent'] ?? '').toString(),
+                path: (h['path'] ?? '').toString(),
+                ok: h['installed'] == true,
+              ),
+          ]);
+    } catch (_) {
+      if (mounted) setState(() => _hooks = const []);
+    }
+  }
+
+  Future<void> _reinstallHooks() async {
+    setState(() => _reinstalling = true);
+    await Cli.installBusHooks();
+    await _loadHookStatus();
+    if (!mounted) return;
+    setState(() => _reinstalling = false);
+    final all = _hooks?.every((h) => h.ok) ?? false;
+    snack(context, all ? 'hook 已安装' : 'hook 安装未全部成功,请检查 agent 是否已安装');
   }
 
   Future<void> _saveLocalConfig() async {
@@ -376,11 +417,104 @@ class _AccountPageState extends State<AccountPage> {
             ),
           ),
         ],
+        if (_isDesktop) ...[
+          const SizedBox(height: 16),
+          _hookStatusCard(),
+        ],
         if (_isDesktop && _cfg != null) ...[
           const SizedBox(height: 16),
           _localConfigCard(),
         ],
       ],
+    );
+  }
+
+  Widget _hookStatusCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '会话 hook(精准恢复会话 id)',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _reinstalling ? null : _reinstallHooks,
+                  icon: _reinstalling
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded, size: 16),
+                  label: const Text('重新安装'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            const Text(
+              '装进 claude/codex 配置,会话一开始就记录其 agent 会话 id,重启或换机后能精准恢复。'
+              'macOS/Linux 另有 lsof 兜底;Windows 上的 codex 全靠它。开 app 会自动装,这里可手动补装。',
+              style: TextStyle(color: CcColors.muted, fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            if (_hooks == null)
+              const Padding(
+                padding: EdgeInsets.all(4),
+                child: LinearProgressIndicator(),
+              )
+            else
+              ..._hooks!.map(_hookRow),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _hookRow(({String name, String path, bool ok}) h) {
+    final color = h.ok ? CcColors.ok : CcColors.danger;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(
+            h.ok ? Icons.check_circle_rounded : Icons.cancel_rounded,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 52,
+            child: Text(
+              h.name,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              h.path,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: CcColors.subtle,
+                fontSize: 11,
+                fontFamily: CcType.mono,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            h.ok ? '已安装' : '未安装',
+            style: TextStyle(fontSize: 11, color: color),
+          ),
+        ],
+      ),
     );
   }
 

@@ -11,6 +11,24 @@ import 'platform.dart';
 // so everything cc-handoff lives under one tree on every platform.
 String localBusDir() => '${ccConfigDir()}/local-bus';
 
+// localBusAgentSessionId reads the agent's own session id that `cc-handoff
+// bus-hook` recorded for the tab whose CC_SESSION_ID is [sessionId] — written
+// from each Claude/Codex hook payload to <bus>/sessions/<id>.json. Lets a tab
+// bind to (and resume) the agent's exact session. null until the session's
+// first hook fires.
+String? localBusAgentSessionId(String sessionId) {
+  try {
+    final f = File('${localBusDir()}/sessions/$sessionId.json');
+    if (!f.existsSync()) return null;
+    final m = jsonDecode(f.readAsStringSync());
+    if (m is! Map) return null;
+    final id = m['id']?.toString();
+    return (id != null && id.isNotEmpty) ? id : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 // LocalMsg is one point-to-point note from one local session to another. [to]
 // may be a session id (ts0) or a label; [submit] appends a newline so the
 // receiving agent runs it immediately instead of just filling its input box.

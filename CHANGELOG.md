@@ -6,6 +6,20 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-28
+
+### Added
+
+- **Exact agent session-id binding & recovery (claude + codex)** — a reopened or restarted session now resumes the *exact* prior conversation instead of guessing. codex's session id (which can't be set at launch) is captured the moment it starts from the rollout file it holds open (asked of the OS via `lsof` on the codex process under the PTY), so it no longer races on file mtimes. On resume with no captured id, the tab picks *this folder's* newest rollout (`codex resume <id>`) instead of the blind `codex resume --last`, so it can't resume a different directory's session.
+- **Hook-based session-id capture** — the existing `cc-handoff bus-hook` (PostToolUse/Stop, installed for both Claude Code and Codex) now also records each session's own agent session id to `$CC_BUS_DIR/sessions/<id>.json`, keyed by the tab's `CC_SESSION_ID`. Event-driven and authoritative (the agent reporting its own id via the hook payload), and the only capture path on Windows where `lsof` is unavailable. Writes are skipped when unchanged.
+- **Hook self-check (账号 page, desktop)** — shows whether the bus hook is installed in each agent's config (claude `~/.claude/settings.json`, codex `$CODEX_HOME/hooks.json`) with a one-tap reinstall, backed by a new `cc-handoff bus-hook status` so the paths and "installed" criterion have one source of truth in the CLI.
+
+### Fixed
+
+- **Phone-created sessions no longer start blank** — the PTY launches immediately on creation instead of waiting for the desktop to render the terminal pane, so a session created from the phone (while the desktop's terminal panel is collapsed or on another view) starts its agent right away.
+- **Desktop restart no longer leaves the phone mirroring a permanently blank terminal** — session ids are persisted and restored, so a phone holding an id still resolves it after the desktop restarts (ids no longer re-mint from zero each launch).
+- **codex sessions no longer go blank or resume the wrong conversation** after a desktop restart — fixed by the stable ids plus the exact session-id capture above.
+
 ## [0.5.0] - 2026-06-28
 
 ### Added
@@ -128,7 +142,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/gmslll/cc-collaboration/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/gmslll/cc-collaboration/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/gmslll/cc-collaboration/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gmslll/cc-collaboration/compare/v0.1.2...v0.2.0

@@ -41,6 +41,9 @@ func (manualAgent) InstallCommands(_, _ string, _ setup.PromptFunc, _ io.Writer)
 // InstallBusHooks is a no-op: manual has no hook system to wire the bus into.
 func (manualAgent) InstallBusHooks(_ io.Writer) error { return nil }
 
+// BusHookConfigPath is empty: manual has no hook config, so callers skip it.
+func (manualAgent) BusHookConfigPath() (string, error) { return "", nil }
+
 func (manualAgent) RegisterMCP(_ context.Context, opts setup.MCPRegisterOptions, out io.Writer) error {
 	if opts.BinPath == "" {
 		return errors.New("MCPRegisterOptions.BinPath is required")

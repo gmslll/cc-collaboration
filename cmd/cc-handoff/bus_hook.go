@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cc-collaboration/internal/agent"
 	"github.com/cc-collaboration/internal/localbus"
+	"github.com/cc-collaboration/internal/setup"
 )
 
 // runBusHook is the local-bus counterpart of runStopHook. Two modes:
@@ -28,7 +31,35 @@ func runBusHook(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "install" {
 		return runBusHookInstall(args[1:])
 	}
+	if len(args) > 0 && args[0] == "status" {
+		return runBusHookStatus()
+	}
 	return runBusHookDrain()
+}
+
+// runBusHookStatus prints, as JSON, whether the bus hook is installed in each
+// agent's config. Backs the desktop app's hook self-check so the config paths
+// and the "installed" criterion have ONE source of truth (the agent package +
+// setup.BusHooksPresent) instead of being reimplemented in the app.
+func runBusHookStatus() error {
+	type entry struct {
+		Agent     string `json:"agent"`
+		Path      string `json:"path"`
+		Installed bool   `json:"installed"`
+	}
+	out := []entry{}
+	for _, ag := range agent.All() {
+		path, err := ag.BusHookConfigPath()
+		if err != nil || path == "" {
+			continue // no hook config for this agent (manual)
+		}
+		out = append(out, entry{
+			Agent:     ag.Name(),
+			Path:      path,
+			Installed: setup.BusHooksPresent(path),
+		})
+	}
+	return json.NewEncoder(os.Stdout).Encode(out)
 }
 
 // busHookEvent is the slice of the agent's hook payload we care about. Both
@@ -44,6 +75,13 @@ type busHookEvent struct {
 	// skip draining whenever AgentID is set so messages stay parked for the
 	// parent's own next tool boundary / Stop / the app's idle sweep.
 	AgentID string `json:"agent_id"`
+	// SessionID + Cwd are the agent's OWN session identity, carried in every
+	// Claude Code and Codex hook event. We record CC_SESSION_ID -> SessionID so
+	// the desktop app can bind a tab to the agent's exact session for resume
+	// (see recordAgentSession). codex (unlike claude) can't be told an id at
+	// launch, so this hook is its authoritative, event-driven id source.
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
 }
 
 func runBusHookDrain() error {
@@ -70,6 +108,11 @@ func runBusHookDrain() error {
 	if ev.AgentID != "" {
 		return nil
 	}
+
+	// Record this tab's agent session id for the desktop app to resume exactly.
+	// Done on EVERY top-level hook (before the no-messages early return below), so
+	// it lands within the session's first turn regardless of bus traffic.
+	recordAgentSession(busDir, sid, ev.SessionID, ev.Cwd)
 
 	// A Stop already inside a hook-driven continuation must not re-block (a
 	// wake-loop). Bail BEFORE draining so the messages stay parked for the next
@@ -136,6 +179,29 @@ func busHookResponse(ev busHookEvent, ctxText string, n int) map[string]any {
 			"additionalContext": ctxText,
 		},
 	}
+}
+
+// recordAgentSession persists the mapping CC_SESSION_ID -> agent session_id that
+// every Claude/Codex hook payload carries, to $CC_BUS_DIR/sessions/<ccID>.json.
+// The desktop app reads it (keyed by the tab's CC_SESSION_ID) to bind the tab to
+// the agent's exact session — the event-driven counterpart to its lsof/rollout
+// scan, and the only capture path that works on Windows. Best-effort: the hook's
+// real job is draining the inbox, so all errors here are swallowed.
+func recordAgentSession(busDir, ccID, agentSessionID, cwd string) {
+	if busDir == "" || ccID == "" || agentSessionID == "" {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{"id": agentSessionID, "cwd": cwd})
+	if err != nil {
+		return
+	}
+	dst := filepath.Join(busDir, "sessions", ccID+".json")
+	// The hook fires on EVERY tool call; the mapping rarely changes, so skip the
+	// rewrite when the file already holds it (marshal is key-sorted = stable).
+	if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, payload) {
+		return
+	}
+	_ = setup.WriteAtomic(dst, payload) // best-effort; draining is the hook's real job
 }
 
 func runBusHookInstall(args []string) error {

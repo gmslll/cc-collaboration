@@ -56,15 +56,23 @@ func (claudeAgent) RegisterMCP(ctx context.Context, opts setup.MCPRegisterOption
 	return setup.Register(ctx, opts, out)
 }
 
-// InstallBusHooks merges the bus PostToolUse + Stop hooks into the user-global
-// ~/.claude/settings.json so they fire in any app-spawned Claude session
-// regardless of cwd (the env guard keeps them no-ops elsewhere).
-func (claudeAgent) InstallBusHooks(out io.Writer) error {
+// BusHookConfigPath is the user-global ~/.claude/settings.json the bus hooks
+// live in, so they fire in any app-spawned Claude session regardless of cwd.
+func (claudeAgent) BusHookConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude", "settings.json"), nil
+}
+
+// InstallBusHooks merges the bus PostToolUse + Stop hooks into the config at
+// BusHookConfigPath (the env guard keeps them no-ops outside app sessions).
+func (a claudeAgent) InstallBusHooks(out io.Writer) error {
+	path, err := a.BusHookConfigPath()
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(home, ".claude", "settings.json")
 	res, err := setup.EnsureClaudeBusHooks(path)
 	if err != nil {
 		return err

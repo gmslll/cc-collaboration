@@ -419,6 +419,19 @@ class TerminalSession {
       _invocation = await AgentResolver.resolve(agent);
     }
     if (_disposed) return; // closed during the async resolve
+    // codex restore with no captured id: rather than the blind `resume --last`
+    // (which resumes whatever codex ran most recently — possibly a DIFFERENT
+    // folder's session), resolve THIS workdir's newest rollout and resume that
+    // exact one. Persist it so the next restart is instant. Falls back to --last
+    // only when no rollout for this folder is found (see _resolvedCommand).
+    if (agent == 'codex' && resume && agentSessionId == null) {
+      final id = await _newestCodexIdForWorkdir();
+      if (_disposed) return;
+      if (id != null) {
+        agentSessionId = id;
+        onPersist?.call();
+      }
+    }
     // Empty command = a plain interactive shell (typeable + scrollable);
     // otherwise run the (resolved) agent command and let the shell exit with it.
     final cmd = _resolvedCommand();
@@ -500,35 +513,54 @@ class TerminalSession {
     terminal.onResize = (w, h, pw, ph) {
       if (remoteSink == null) pty.resize(h, w);
     };
-    _maybeCaptureCodexId();
+    _maybeCaptureAgentId();
   }
 
-  // --- codex session-id capture -------------------------------------------
+  // --- agent session-id capture -------------------------------------------
   //
-  // codex (unlike claude) can't be told a session id at launch, but it writes a
-  // rollout file $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl whose
-  // first line (session_meta) carries {id, cwd}. After a FRESH codex launch we
-  // poll for the rollout written since launch whose cwd matches this session's
-  // workdir, capture its uuid into agentSessionId, and ask the host to persist —
-  // so a reopened tab resumes that EXACT conversation (`codex resume <uuid>`)
-  // instead of the fragile `codex resume --last`. Best-effort: on miss the
-  // session simply keeps the --last behaviour.
-  bool _codexCaptureStarted = false;
+  // We only run this when we DON'T already know the agent's session id: codex
+  // (which can't be told an id at launch) always, and a restored legacy claude
+  // tab with no stored id (fresh claude is launched with a minted --session-id,
+  // so it's known up front). Three exact sources, in order of immediacy:
+  //   1. lsof — the rollout codex currently holds open (codex only; instant).
+  //   2. the bus hook — `cc-handoff bus-hook` records CC_SESSION_ID -> the
+  //      session_id every Claude/Codex hook payload carries (event-driven, the
+  //      only path on Windows); see _hookAgentId.
+  //   3. directory scan — newest rollout in today's bucket whose cwd matches
+  //      (codex only; fragile mtime/cwd fallback).
+  // On capture we persist so a reopened tab resumes that EXACT conversation; a
+  // total miss degrades codex to `resume --last` (claude to `--continue`).
+  bool _agentCaptureStarted = false;
 
-  void _maybeCaptureCodexId() {
-    if (_codexCaptureStarted) return;
-    if (agent != 'codex' || resume || agentSessionId != null) return;
-    _codexCaptureStarted = true;
-    unawaited(_captureCodexId(DateTime.now()));
+  void _maybeCaptureAgentId() {
+    if (_agentCaptureStarted) return;
+    if (agentSessionId != null) return; // already minted (claude) / resolved
+    if (agent != 'codex' && agent != 'claude') return;
+    _agentCaptureStarted = true;
+    unawaited(_captureAgentId(DateTime.now()));
   }
 
-  Future<void> _captureCodexId(DateTime since) async {
+  Future<void> _captureAgentId(DateTime since) async {
     final home = Platform.environment['CODEX_HOME'] ?? '${homeDir()}/.codex';
     final sessions = Directory('$home/sessions');
+    final isCodex = agent == 'codex';
     for (var attempt = 0; attempt < 30; attempt++) {
       await Future.delayed(const Duration(milliseconds: 600));
       if (_disposed) return;
-      final id = await _findCodexRollout(sessions, since);
+      // claude: the hook is the only thing that can tell us a session id we
+      // didn't mint ourselves (legacy --continue restore). codex: lsof (exact,
+      // earliest) → hook → the newest rollout written since launch in this cwd.
+      final id = isCodex
+          ? await _codexRolloutViaLsof() ??
+              localBusAgentSessionId(this.id) ??
+              await _scanCodexRolloutId(
+                {
+                  _codexBucket(sessions, since),
+                  _codexBucket(sessions, since.subtract(const Duration(hours: 6))),
+                },
+                floor: since.subtract(const Duration(seconds: 5)),
+              )
+          : localBusAgentSessionId(this.id);
       if (id != null) {
         agentSessionId = id;
         onPersist?.call();
@@ -537,19 +569,42 @@ class TerminalSession {
     }
   }
 
-  // _findCodexRollout returns the codex session id of the newest rollout under
-  // [sessions] written at/after [since] whose cwd matches this session, or null.
-  // Only today's (and a 6h-earlier, for the midnight boundary) date bucket is
-  // scanned, so cost is bounded no matter how many old sessions exist.
-  Future<String?> _findCodexRollout(Directory sessions, DateTime since) async {
-    String bucket(DateTime d) =>
-        '${sessions.path}/${d.year.toString().padLeft(4, '0')}/'
-        '${d.month.toString().padLeft(2, '0')}/'
-        '${d.day.toString().padLeft(2, '0')}';
-    final dirs = <String>{
-      bucket(since),
-      bucket(since.subtract(const Duration(hours: 6))),
-    };
+  String _codexBucket(Directory sessions, DateTime d) =>
+      '${sessions.path}/${d.year.toString().padLeft(4, '0')}/'
+      '${d.month.toString().padLeft(2, '0')}/'
+      '${d.day.toString().padLeft(2, '0')}';
+
+  // _newestCodexIdForWorkdir returns the id of the newest rollout whose cwd
+  // matches this session's workdir, scanning the last few day-buckets with no
+  // time floor — used to turn a captured-id-less codex *resume* into an exact
+  // `codex resume <id>` for THIS folder instead of the blind `resume --last`.
+  Future<String?> _newestCodexIdForWorkdir() async {
+    final home = Platform.environment['CODEX_HOME'] ?? '${homeDir()}/.codex';
+    final sessions = Directory('$home/sessions');
+    final now = DateTime.now();
+    return _scanCodexRolloutId({
+      for (var d = 0; d < 3; d++)
+        _codexBucket(sessions, now.subtract(Duration(days: d))),
+    });
+  }
+
+  // _scanCodexRolloutId returns the newest rollout id under [dirs] whose cwd
+  // matches this session. [floor], when set, stops the scan once files predate
+  // it (the post-launch capture ignores pre-existing rollouts; the resume
+  // resolver leaves it null to accept any age). One statSync per file.
+  Future<String?> _scanCodexRolloutId(Set<String> dirs, {DateTime? floor}) async {
+    final dated = [
+      for (final f in await _rolloutFilesIn(dirs)) (f, f.statSync().modified),
+    ]..sort((a, b) => b.$2.compareTo(a.$2));
+    for (final (f, mtime) in dated) {
+      if (floor != null && mtime.isBefore(floor)) break;
+      final id = await _rolloutId(f);
+      if (id != null) return id;
+    }
+    return null;
+  }
+
+  Future<List<File>> _rolloutFilesIn(Set<String> dirs) async {
     final files = <File>[];
     for (final p in dirs) {
       final d = Directory(p);
@@ -564,20 +619,81 @@ class TerminalSession {
         }
       } catch (_) {}
     }
-    files.sort(
-        (a, b) => b.statSync().modified.compareTo(a.statSync().modified));
-    final floor = since.subtract(const Duration(seconds: 5));
-    for (final f in files) {
-      if (f.statSync().modified.isBefore(floor)) break;
-      final id = await _rolloutId(f);
-      if (id != null) return id;
+    return files;
+  }
+
+  // _codexRolloutViaLsof asks the OS which rollout-*.jsonl the codex process
+  // under our PTY currently holds open, and returns its session id. Exact: it's
+  // the file codex is literally writing, so it needs no mtime/cwd guesswork. The
+  // PTY child is a shell — codex may BE it (sh -c can exec the command) or a
+  // descendant — so we check the whole subtree. macOS/Linux only; null on miss.
+  Future<String?> _codexRolloutViaLsof() async {
+    if (Platform.isWindows) return null;
+    final root = _pty?.pid;
+    if (root == null) return null;
+    for (final pid in await _descendantPids(root)) {
+      try {
+        final r = await Process.run('lsof', ['-p', '$pid', '-Fn']);
+        if (r.exitCode != 0) continue;
+        for (final line in (r.stdout as String).split('\n')) {
+          if (!line.startsWith('n')) continue; // -Fn: name records start with 'n'
+          final path = line.substring(1);
+          if (path.contains('rollout-') && path.endsWith('.jsonl')) {
+            // The process identity already pins this to our session, so read the
+            // id regardless of the recorded cwd (which can differ by symlink).
+            final id = await _rolloutId(File(path), checkCwd: false);
+            if (id != null) return id;
+          }
+        }
+      } catch (_) {}
     }
     return null;
   }
 
-  // _rolloutId reads a rollout file's session_meta (first line) and returns its
-  // id iff its cwd matches this session's workdir.
-  Future<String?> _rolloutId(File f) async {
+  // _descendantPids returns [root] plus its descendant pids, from one `ps`
+  // snapshot. Best-effort: at minimum [root].
+  Future<List<int>> _descendantPids(int root) async {
+    final out = <int>[root];
+    try {
+      final r = await Process.run('ps', ['-axo', 'pid=,ppid=']);
+      if (r.exitCode != 0) return out;
+      final kids = <int, List<int>>{};
+      for (final line in (r.stdout as String).split('\n')) {
+        final parts = line.trim().split(RegExp(r'\s+'));
+        if (parts.length < 2) continue;
+        final pid = int.tryParse(parts[0]);
+        final ppid = int.tryParse(parts[1]);
+        if (pid == null || ppid == null) continue;
+        (kids[ppid] ??= <int>[]).add(pid);
+      }
+      final stack = <int>[root];
+      while (stack.isNotEmpty) {
+        for (final c in kids[stack.removeLast()] ?? const <int>[]) {
+          if (!out.contains(c)) {
+            out.add(c);
+            stack.add(c);
+          }
+        }
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  // _rolloutId returns a rollout's session id, or null. With checkCwd (the
+  // directory scan, where the file is only a candidate) it must also match this
+  // session's workdir; the lsof path passes checkCwd:false since the open file
+  // already belongs to this session's process (and its recorded cwd may differ
+  // by symlink).
+  Future<String?> _rolloutId(File f, {bool checkCwd = true}) async {
+    final meta = await _readRolloutMeta(f);
+    if (meta == null) return null;
+    if (checkCwd && !_cwdMatches(meta['cwd']?.toString())) return null;
+    final id = meta['id']?.toString();
+    return (id != null && id.isNotEmpty) ? id : null;
+  }
+
+  // _readRolloutMeta reads a rollout's session_meta payload (first JSONL line).
+  Future<Map?> _readRolloutMeta(File f) async {
     try {
       final firstLine = await f
           .openRead()
@@ -587,12 +703,25 @@ class TerminalSession {
       final m = jsonDecode(firstLine);
       if (m is! Map) return null;
       final payload = m['payload'];
-      if (payload is! Map) return null;
-      if (payload['cwd']?.toString() != workdir) return null;
-      final id = payload['id']?.toString();
-      return (id != null && id.isNotEmpty) ? id : null;
+      return payload is Map ? payload : null;
     } catch (_) {
       return null;
+    }
+  }
+
+  // _cwdMatches compares a rollout's recorded cwd to this session's workdir,
+  // tolerating a trailing slash and symlinked paths (so /tmp vs /private/tmp,
+  // common on macOS, still matches).
+  bool _cwdMatches(String? cwd) {
+    if (cwd == null || cwd.isEmpty) return false;
+    String trim(String p) =>
+        p.length > 1 && p.endsWith('/') ? p.substring(0, p.length - 1) : p;
+    if (trim(cwd) == trim(workdir)) return true;
+    try {
+      return Directory(cwd).resolveSymbolicLinksSync() ==
+          Directory(workdir).resolveSymbolicLinksSync();
+    } catch (_) {
+      return false;
     }
   }
 

@@ -69,7 +69,7 @@ func EnsureStopHook(repoRoot string) (EnsureResult, error) {
 	}
 	pretty = append(pretty, '\n')
 
-	if err := writeAtomic(path, pretty); err != nil {
+	if err := WriteAtomic(path, pretty); err != nil {
 		return EnsureAlreadyPresent, err
 	}
 	return EnsureWritten, nil
@@ -88,6 +88,14 @@ const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && cc-handoff bus-hook || true`
 // surfaces a peer message mid-turn (next tool boundary), Stop catches it at
 // turn end when the turn made no further tool calls.
 var busHookEvents = []string{"PostToolUse", "Stop"}
+
+// BusHooksPresent reports whether the bus hook is installed in the agent config
+// at [path] — i.e. the file exists and carries BusHookCommand. The canonical
+// check for `bus-hook status`, so the self-check can't drift from the installer.
+func BusHooksPresent(path string) bool {
+	b, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(b), BusHookCommand)
+}
 
 // EnsureClaudeBusHooks merges the bus PostToolUse + Stop hooks into a Claude
 // Code settings.json (typically the user-global ~/.claude/settings.json so it
@@ -197,7 +205,7 @@ func marshalWrite(path string, root map[string]any) error {
 		return err
 	}
 	pretty = append(pretty, '\n')
-	return writeAtomic(path, pretty)
+	return WriteAtomic(path, pretty)
 }
 
 // loadSettings parses <path> into a generic map. Missing file returns an
@@ -226,9 +234,9 @@ func loadSettings(path string) (map[string]any, error) {
 	return out, nil
 }
 
-// writeAtomic does mkdir + WriteFile(tmp) + Rename so a crash mid-write
+// WriteAtomic does mkdir + WriteFile(tmp) + Rename so a crash mid-write
 // can't corrupt the user's settings.json.
-func writeAtomic(path string, data []byte) error {
+func WriteAtomic(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

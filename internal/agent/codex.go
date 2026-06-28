@@ -73,18 +73,26 @@ func (codexAgent) RegisterMCP(ctx context.Context, opts setup.MCPRegisterOptions
 // in the command keeps it a no-op outside app-spawned sessions. (Note: an
 // automated/non-interactive Codex launch may also need
 // --dangerously-bypass-hook-trust; the desktop app passes it.)
-func (codexAgent) InstallBusHooks(out io.Writer) error {
-	home, err := codexHome()
+func (a codexAgent) InstallBusHooks(out io.Writer) error {
+	path, err := a.BusHookConfigPath()
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(home, "hooks.json")
 	res, err := setup.EnsureCodexBusHooks(path)
 	if err != nil {
 		return err
 	}
 	reportBusHook(out, "codex", path, res)
 	return nil
+}
+
+// BusHookConfigPath is $CODEX_HOME/hooks.json (default ~/.codex/hooks.json).
+func (codexAgent) BusHookConfigPath() (string, error) {
+	home, err := codexHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "hooks.json"), nil
 }
 
 // codexHome resolves $CODEX_HOME (default ~/.codex), the root for Codex's
