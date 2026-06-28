@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../api/models.dart';
 import '../api/relay_client.dart';
+import '../build_info.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
 import '../local/prefs.dart';
@@ -186,6 +187,13 @@ class _AccountPageState extends State<AccountPage> {
         Text(
           '账号 · ${widget.identity}',
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        // Build marker — confirm this device is on the latest build (desktop and
+        // phone must match for cross-device features to work).
+        Text(
+          '构建 $kBuildMarker',
+          style: const TextStyle(color: CcColors.subtle, fontSize: 11),
         ),
         const SizedBox(height: 16),
         Card(
