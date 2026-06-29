@@ -434,6 +434,12 @@ class RemoteClient extends RemoteChannel {
 
   final Map<String, Terminal> _terminals = {};
   final Map<String, Timer> _resizeTimers = {}; // debounce client resize per session
+  // Sessions whose viewport size has already been reported to the host. The
+  // first onResize for a sid is sent immediately (no debounce) so the host
+  // redraws at this device's size promptly; later resizes debounce. Dropped on
+  // eviction so a re-opened session reports its (possibly new device's) size
+  // afresh. adoptSize() additionally re-asserts size when switching devices.
+  final Set<String> _sizedSids = {};
 
   // Local terminal-history cache + idle eviction. Each opened session keeps its
   // xterm buffer (replayed history + accumulated live output); left untouched it
@@ -725,16 +731,18 @@ class RemoteClient extends RemoteChannel {
     term.mouseHandler = const WheelMouseHandler();
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) {
-      // Whoever's watching redraws: the watching client's viewport size drives
-      // the host PTY, and the agent redraws to it. Only debounce the burst that
-      // window-drag / rotation / keyboard show-hide fires (send just the last
-      // size ~120ms later) — the final, settled size always reaches the host, so
-      // a wide browser is never left stuck at the desktop's spawn width.
-      // No tiny-size guard here: render.dart already refuses to resize the local
-      // buffer below 2 cols/rows at the source, so onResize never sees a sliver.
+      // Whoever's watching redraws: the watching client's viewport drives the
+      // host PTY. Report this device's real size the moment we first learn it
+      // (no debounce) so the host redraws promptly; later resizes debounce.
+      if (_sizedSids.add(sid)) {
+        send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+        return;
+      }
+      // Debounce later resizes: rotation / keyboard show-hide fire a burst of
+      // onResize calls; sending only the last one ~120ms later spares the PTY a
+      // string of redraws.
       _resizeTimers[sid]?.cancel();
       _resizeTimers[sid] = Timer(const Duration(milliseconds: 120), () {
-        _resizeTimers.remove(sid);
         send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
       });
     };
@@ -803,7 +811,25 @@ class RemoteClient extends RemoteChannel {
   void _evictTerminal(String sid) {
     _terminals.remove(sid);
     _resizeTimers.remove(sid)?.cancel();
+    _sizedSids.remove(sid); // re-opened session reports its size afresh
     _lastActive.remove(sid);
+  }
+
+  // adoptSize makes the device that's currently viewing [sid] re-assert its own
+  // viewport size onto the host PTY — "whoever's watching redraws". onResize
+  // only fires when the local Terminal's size CHANGES, so re-opening a cached
+  // session (size unchanged) never re-reports it, and the PTY can stay stuck at
+  // another device's width (e.g. web left it at 125 cols, then you open it on
+  // the phone). Called when a session screen opens / rebinds, and from the
+  // 适配 button. Sends the local Terminal's current cells, which the host
+  // resizes the PTY to → the agent redraws at this device's width.
+  void adoptSize(String sid) {
+    final t = _terminals[sid];
+    if (t == null) return;
+    final w = t.viewWidth, h = t.viewHeight;
+    if (w > 0 && h > 0) {
+      send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+    }
   }
 
   @override

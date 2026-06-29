@@ -6,7 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
-## [0.6.13] - 2026-06-29
+## [0.6.14] - 2026-06-29
+
+### Fixed
+
+- **远程终端尺寸回到 0.6.5 正常基线，并新增「当前设备主动适配」** — 0.6.5 的尺寸逻辑（client onResize 首次立即上报、`render.dart` 无退化 guard、host `resizeFromRemote` 用 `rows>0&&cols>0`）原本工作正常；之后 0.6.9 为防竖排叠的一套尺寸 guard、以及随后两版（render `cols<2` guard、把 `_sizedSids` 拆成纯 debounce）反而把它越改越偏，表现为 web/手机看终端时内容缩在中间、看历史记录不正常。现把这几处尺寸改动全部回退到 0.6.5 基线（codex 滚动等不碰尺寸的修复保持不变）。
+- **多设备看同一会话「以正在看的为准」** — 此前 host PTY 被「先设过尺寸的设备」固定：web 看过一个会话后切到手机看，PTY 仍是 web 宽度（手机看就缩在中间），因为手机再次打开缓存会话时本地终端尺寸没变、`onResize` 不触发、不会重发尺寸。新增 `RemoteClient.adoptSize`：进入/重连会话页时按本设备视口主动把尺寸推给 host，agent 据此重画；并在终端页工具栏加「适配」按钮（`Icons.fit_screen`）手动兜底——谁在看、谁点，就按谁的屏幕重画。
 
 ### Fixed
 

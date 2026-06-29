@@ -1840,6 +1840,13 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     // re-pulled fresh from the desktop before the first build binds the view.
     final refreshed = widget.client.setViewedSession(widget.session.sid);
     _stickToBottomSoon(); // land at the latest output once the replay arrives
+    // Whoever's watching redraws: once this screen has laid out, push THIS
+    // device's viewport size to the host so the PTY follows the device that's
+    // actually looking now — even if the cached Terminal's size didn't change
+    // (so onResize wouldn't fire) and the PTY was left at another device's width.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.client.adoptSize(widget.session.sid);
+    });
     if (refreshed) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -1855,6 +1862,11 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   void _onTerminalReset() {
     if (mounted) setState(() {});
     _stickToBottomSoon(); // the re-pull replays fresh content — re-anchor to bottom
+    // The reconnect rebuilt the Terminal at the default 80x24; re-assert this
+    // device's size once the rebound view lays out so the PTY follows it again.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.client.adoptSize(widget.session.sid);
+    });
   }
 
   // _stickToBottomSoon nudges the terminal to its bottom a few times over the
@@ -2216,6 +2228,14 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             icon: const Icon(Icons.refresh_rounded),
             tooltip: '刷新(拉取电脑最新)',
             onPressed: _reload,
+          ),
+          IconButton(
+            icon: const Icon(Icons.fit_screen_rounded),
+            tooltip: '适配当前屏幕(按本设备重画)',
+            onPressed: () {
+              widget.client.adoptSize(widget.session.sid);
+              snack(context, '已按当前屏幕重新适配');
+            },
           ),
           IconButton(
             icon: const Icon(Icons.text_decrease_rounded),
