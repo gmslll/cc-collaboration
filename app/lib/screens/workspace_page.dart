@@ -545,6 +545,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     _ => null,
   };
 
+  void _ensureSupervisorDocs(String dir) {
+    unawaited(
+      Cli.run(['supervisor', 'init', '--dir', dir]).catchError((_) => ''),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -557,7 +563,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     };
     // A session's busy state flipped (turn start/finish) → keep the overview's
     // 思考中/待 review state live on both the desktop page and connected phones.
-    onAgentBusyChanged = (s) => _publishOverview();
+    onAgentBusyChanged = (s) {
+      unawaited(_localBus.syncRegistry());
+      _publishOverview();
+    };
     // An agent finishing a turn pops a desktop banner (TerminalHost) and pushes
     // the same "任务通知" to any connected phone (reuses the shared copy helper).
     onAgentDone = (s) {
@@ -571,7 +580,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       // Turn finished → refresh this session's reply preview (the just-produced
       // assistant message is what the user reviews) then republish. needsReview
       // was already set in _fireDone and republished via onBusyChanged.
-      unawaited(_refreshPreview(s).then((_) => _publishOverview()));
+      unawaited(_refreshPreview(s).then((_) {
+        unawaited(_localBus.syncRegistry());
+        _publishOverview();
+      }));
       final speakLocal =
           _ttsOn && terms.isNotEmpty && terms[activeTerm].id == s.id;
       final phoneWants = _remoteHost.watching(s.id);
@@ -603,6 +615,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (activeTerm >= 0 && activeTerm < terms.length) {
         terms[activeTerm].needsReview = false;
       }
+      unawaited(_localBus.syncRegistry());
       _publishOverview();
     };
     // The 会话总览 page (a top-level nav sibling that can't reach `terms`) opens a
@@ -1200,19 +1213,37 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
-  void _launch(String dir, String agent, String preLaunch) {
+  void _launch(
+    String dir,
+    String agent,
+    String preLaunch, {
+    bool supervisor = false,
+  }) {
+    if (supervisor) _ensureSupervisorDocs(dir);
     // Pass agent + preLaunch structured (not pre-joined): addTerm mints a fixed
     // session id for claude and TerminalSession rebuilds the actual command with
     // the right resume binding, so a reopened tab returns to its conversation.
-    addTerm(dir, agent, agent: agent, preLaunch: preLaunch.trim());
+    addTerm(
+      dir,
+      agent,
+      agent: agent,
+      preLaunch: preLaunch.trim(),
+      supervisor: supervisor,
+    );
   }
 
   // _openAgent launches a session in [dir] under project [p], then expands the
   // project so its new session node (the "tab") is visible in the tree.
-  void _openAgent(ProjectCfg p, String dir, String agent, String preLaunch) {
+  void _openAgent(
+    ProjectCfg p,
+    String dir,
+    String agent,
+    String preLaunch, {
+    bool supervisor = false,
+  }) {
     // _launch → addTerm → onTermAdded already surfaces + expands the terminal
     // panel; just expand the project so its new session node is visible.
-    _launch(dir, agent, preLaunch);
+    _launch(dir, agent, preLaunch, supervisor: supervisor);
     final ctl = _ctlFor(p.path);
     if (!ctl.isExpanded) ctl.expand();
   }
@@ -1372,6 +1403,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               : p.path;
           if (kind.isEmpty || kind == 'shell') {
             addTerm(dir, ''); // '' = plain interactive shell
+          } else if (kind == 'supervisor') {
+            _launch(dir, 'claude', ws.preLaunch, supervisor: true);
           } else {
             _launch(dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
           }
@@ -2773,6 +2806,11 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
           _runChip('Claude', Icons.play_arrow_rounded, _launchDefaultClaude),
           _runChip('Codex', Icons.smart_toy_outlined, _launchDefaultCodex),
+          _runChip(
+            '总管',
+            Icons.account_tree_outlined,
+            _launchDefaultSupervisor,
+          ),
         ],
         pinnedTrailing: [
           if (_busy)
@@ -2977,6 +3015,21 @@ class _WorkspacePageState extends State<WorkspacePage>
       return;
     }
     _openAgent(d.project, d.project.path, 'codex', d.ws.preLaunch);
+  }
+
+  void _launchDefaultSupervisor() {
+    final d = _defaultProject();
+    if (d == null) {
+      _snack('没有可启动的项目');
+      return;
+    }
+    _openAgent(
+      d.project,
+      d.project.path,
+      'claude',
+      d.ws.preLaunch,
+      supervisor: true,
+    );
   }
 
   Widget _toolButton({

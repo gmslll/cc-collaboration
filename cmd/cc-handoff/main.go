@@ -55,6 +55,8 @@ func main() {
 		err = runOnline(ctx, args)
 	case "msg":
 		err = runMsg(ctx, args)
+	case "supervisor":
+		err = runSupervisor(ctx, args)
 	case "ui":
 		err = runUI(ctx, args)
 	case "desktop":
@@ -118,6 +120,8 @@ Both sides:
   cc-handoff msg          list | send <target> <text...> [--no-submit] | read <target> [--lines N] [--json] | whoami
                                                         local point-to-point messaging between sibling app sessions (no relay; run inside an app-spawned terminal)
                                                         read = pull a plain-text snapshot of another session's screen
+  cc-handoff supervisor   init | context | overview | queue | read <target> | send <target> <text...> | decide [--dir DIR] <title> <body...>
+                                                        supervisor-agent helpers over the same local session bus + repo knowledge files
   cc-handoff ui           [--open] [--show-token]       print/open the relay management UI
   cc-handoff desktop      [--width N] [--height N] [--chrome PATH]
                                                         open the UI in a Chromium app window (Chrome/Edge/Brave)

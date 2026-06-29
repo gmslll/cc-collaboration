@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../local/agent_transcript.dart';
 import '../local/agent_usage.dart';
+import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../notifications.dart';
@@ -127,6 +128,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     String command, {
     String agent = '',
     String preLaunch = '',
+    bool supervisor = false,
   }) {
     // Mint a fixed session id for claude up front so it launches with
     // --session-id and can be --resume'd on the next app start. The immediate
@@ -140,11 +142,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           command,
           agent: agent,
           preLaunch: preLaunch,
+          supervisor: supervisor,
           agentSessionId: sid,
         )
           ..onDone = _onSessionDone
           ..onBusyChanged = _onSessionBusyChanged
           ..onPersist = persistTerms;
+    if (supervisor) session.name = '总管';
     setState(() {
       terms.add(session);
       activeTerm = terms.length - 1;
@@ -246,6 +250,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         if (wd.isEmpty || cmd.isEmpty || !Directory(wd).existsSync()) continue;
         var agent = (e['agent'] ?? '').toString();
         var preLaunch = (e['preLaunch'] ?? '').toString();
+        final supervisor = e['supervisor'] == true;
         final sid = (e['sessionId'] ?? '').toString();
         // Back-compat: pre-upgrade entries from _launch have no 'agent' field and
         // baked preLaunch into command as "pre && claude"/"pre && codex" (or a
@@ -273,6 +278,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           id: savedId.isEmpty ? null : savedId,
           agent: agent,
           preLaunch: preLaunch,
+          supervisor: supervisor,
           agentSessionId: sid.isEmpty ? null : sid,
           resume: true,
         )
@@ -281,6 +287,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           ..onPersist = persistTerms;
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
+        if (nm.isEmpty && supervisor) ts.name = '总管';
         restored.add(ts);
       }
       if (restored.isEmpty || !mounted) return;
@@ -324,6 +331,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
                   // tab --resume its exact conversation next launch.
                   if (s.agent.isNotEmpty) 'agent': s.agent,
                   if (s.preLaunch.isNotEmpty) 'preLaunch': s.preLaunch,
+                  if (s.supervisor) 'supervisor': true,
                   if (s.agentSessionId != null) 'sessionId': s.agentSessionId,
                 },
               )
@@ -377,8 +385,45 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         if (s.name?.isNotEmpty ?? false) 'name': s.name,
         'workdir': s.workdir,
         if (s.pid != null) 'pid': s.pid,
+        if (s.agentKind.isNotEmpty) 'agent': s.agentKind,
+        if (s.supervisor) 'supervisor': true,
+        'status': _busStatusName(s),
+        'statusDetail': _busStatusDetail(s),
+        if (s.usage.value != null) 'usage': s.usage.value!.shortLabel(),
+        if (s.overviewPreview?.isNotEmpty ?? false) 'preview': s.overviewPreview,
       },
   ];
+
+  String _busStatusName(TerminalSession s) {
+    if (s.busy) return 'working';
+    if (!s.isAgent) return 'shell';
+    if (s.needsReview) return 'needsReview';
+    return 'idle';
+  }
+
+  String _busStatusDetail(TerminalSession s) {
+    if (!s.isAgent) return s.workdir;
+    final recent = localBusHookActivities(s.id, limit: 8);
+    HookActivity? latest;
+    for (final a in recent) {
+      if (a.event != 'SessionStart') {
+        latest = a;
+        break;
+      }
+    }
+    if (s.needsReview) return '已完成，等待查看';
+    final a = latest;
+    if (a == null) return s.busy ? '正在处理' : '等待输入';
+    final tool = a.toolName.isEmpty ? a.event : '${a.event} ${a.toolName}';
+    if (a.event == 'PermissionRequest') {
+      return a.toolName.isEmpty ? '等待权限确认' : '等待权限：${a.toolName}';
+    }
+    if (a.exitCode != null && a.exitCode != 0) {
+      return '$tool 失败 exit ${a.exitCode}';
+    }
+    if (s.busy) return '正在处理：$tool';
+    return '空闲：$tool';
+  }
 
   // _resolveTarget maps a local-bus address (id or label) to a live session.
   // Returns (session, null) on success or (null, error) for an empty, unknown,

@@ -22,11 +22,17 @@ import (
 
 // busSession mirrors one entry of the app's sessions.json registry.
 type busSession struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Name    string `json:"name,omitempty"`
-	Workdir string `json:"workdir"`
-	PID     int    `json:"pid,omitempty"`
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	Name         string `json:"name,omitempty"`
+	Workdir      string `json:"workdir"`
+	PID          int    `json:"pid,omitempty"`
+	Agent        string `json:"agent,omitempty"`
+	Status       string `json:"status,omitempty"`
+	StatusDetail string `json:"statusDetail,omitempty"`
+	Usage        string `json:"usage,omitempty"`
+	Preview      string `json:"preview,omitempty"`
+	Supervisor   bool   `json:"supervisor,omitempty"`
 }
 
 // msgUsage is the self-describing help for `cc-handoff msg`, printed for `msg`,

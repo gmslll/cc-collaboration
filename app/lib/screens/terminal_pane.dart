@@ -32,11 +32,27 @@ class TerminalSession {
       '<message>` to talk to one, and `cc-handoff msg read <target>` to read '
       'its terminal. Prefer session IDs like ts2 when names are ambiguous.';
 
+  static const String _supervisorInstructions =
+      'You are the supervisor AI for this workspace. Your job is to oversee '
+      'the other local AI sessions, review sessions that need confirmation, '
+      'resolve disagreements using the PRD and project knowledge, and ask the '
+      'user before high-risk actions. Use `cc-handoff supervisor overview` to '
+      'inspect sessions, `cc-handoff supervisor queue` to find sessions needing '
+      'attention, `cc-handoff supervisor read <target>` to read a structured '
+      'transcript, `cc-handoff supervisor send <target> <message>` to respond, '
+      '`cc-handoff supervisor context` to read .cc-handoff/supervisor docs, '
+      'and `cc-handoff supervisor decide <title> <decision>` to record product '
+      'or architecture decisions.';
+
   static String _argQuote(String value) =>
       Platform.isWindows ? '"${value.replaceAll('"', r'\"')}"' : shQuote(value);
 
-  static String _codexDeveloperInstructionsConfig() =>
-      'developer_instructions=$_startupMsgInstructions';
+  String _startupInstructions() => supervisor
+      ? '$_startupMsgInstructions $_supervisorInstructions'
+      : _startupMsgInstructions;
+
+  String _codexDeveloperInstructionsConfig() =>
+      'developer_instructions=${_startupInstructions()}';
 
   static int _seq = 0;
   // Stable id used for remote addressing (the phone's term.open/input target) and
@@ -67,6 +83,7 @@ class TerminalSession {
   // is true only when this session is being reopened from persistence.
   final String agent;
   final String preLaunch;
+  final bool supervisor;
   // Mutable: claude gets a fixed id at construction; codex can't be given one at
   // launch, so it's captured from codex's rollout file after start (see
   // _maybeCaptureCodexId) and then persisted.
@@ -235,6 +252,7 @@ class TerminalSession {
     String? id,
     this.agent = '',
     this.preLaunch = '',
+    this.supervisor = false,
     this.agentSessionId,
     this.resume = false,
   }) : id = id ?? 'ts${_seq++}',
@@ -414,8 +432,7 @@ class TerminalSession {
         ? _invocation!
         : agent;
     if (agent == 'claude') {
-      final c =
-          '$inv --append-system-prompt ${_argQuote(_startupMsgInstructions)}';
+      final c = '$inv --append-system-prompt ${_argQuote(_startupInstructions())}';
       if (!resume) {
         return agentSessionId == null
             ? '$prefix$c'
@@ -796,6 +813,7 @@ class TerminalSession {
       'CC_SESSION_NAME': label,
       'CC_BUS_DIR': localBusDir(),
       'CC_HANDOFF_BIN': bin,
+      if (supervisor) 'CC_SUPERVISOR': '1',
     };
     if (bin.contains(Platform.pathSeparator)) {
       final binDir = File(bin).parent.path;
