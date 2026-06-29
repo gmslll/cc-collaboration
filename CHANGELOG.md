@@ -6,6 +6,13 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.25] - 2026-06-29
+
+### Fixed
+
+- **Codex inline 模式现在真正写入原生 scrollback** — 0.6.24 已改用 `--no-alt-screen`，但 Codex inline 仍会设置「顶部滚动区 + 底部 composer 保留区」；此前 xterm 为避免 circular buffer 中间 `insert` 崩坏，把这种 scroll region 只做原地滚动，导致诊断里仍是 `lines == viewHeight`、鼠标没有历史可滚。本版给 Codex 会话单独 opt-in：滚动区顶行复制进 scrollback，再只在可见滚动区内滚动，桌面/手机/Web 后续 live mirror 都能积累可滚历史。
+- **不污染 Claude 和默认 xterm 行为** — 新路径默认关闭，只在 `agent == codex` 的会话打开；默认 reserved-bottom scroll region 和 Claude-style alt buffer/full-screen TUI 均保持原行为，并新增回归测试覆盖。
+
 ## [0.6.24] - 2026-06-29
 
 ### Fixed

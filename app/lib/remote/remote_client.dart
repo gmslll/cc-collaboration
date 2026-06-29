@@ -183,7 +183,7 @@ class RemoteClient extends RemoteChannel {
   // 1.2M tok · ~$3.40"). The terminal screen drives an iOS Live Activity /
   // Dynamic Island from it so the user can leave the app and still see progress.
   void Function(String sid, bool working, String text, String? usage)?
-      onAgentStatus;
+  onAgentStatus;
 
   // Files received from the desktop (newest first) + a one-shot arrival callback
   // for a toast. _fileRx assembles inbound file.* frames into Documents/cc-recv.
@@ -433,7 +433,8 @@ class RemoteClient extends RemoteChannel {
   }
 
   final Map<String, Terminal> _terminals = {};
-  final Map<String, Timer> _resizeTimers = {}; // debounce client resize per session
+  final Map<String, Timer> _resizeTimers =
+      {}; // debounce client resize per session
   // Sessions whose viewport size has already been reported to the host. The
   // first onResize for a sid is sent immediately (no debounce) so the host
   // redraws at this device's size promptly; later resizes debounce. Dropped on
@@ -536,6 +537,9 @@ class RemoteClient extends RemoteChannel {
               (s['agent'] as String?) ?? 'claude',
             ),
         ];
+        for (final entry in _terminals.entries) {
+          _configureTerminalForSession(entry.key, entry.value);
+        }
         _setHostOnline(true);
         notifyListeners();
       case 'overview':
@@ -737,12 +741,16 @@ class RemoteClient extends RemoteChannel {
     if (existing != null) return existing;
     final term = Terminal(maxLines: 5000);
     _terminals[sid] = term;
+    _configureTerminalForSession(sid, term);
     // Same wheel fix as the desktop so touch-scroll reaches full-screen TUIs;
     // without it xterm's default handler drops the wheel while the app tracks.
     term.mouseHandler = const WheelMouseHandler();
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) {
-      _lastViewport[sid] = (cols: w, rows: h); // remembered for the next term.open
+      _lastViewport[sid] = (
+        cols: w,
+        rows: h,
+      ); // remembered for the next term.open
       _lastKnownViewport = (cols: w, rows: h); // this phone's screen size
       // Whoever's watching redraws: the watching client's viewport drives the
       // host PTY. Report this device's real size the moment we first learn it
@@ -776,6 +784,17 @@ class RemoteClient extends RemoteChannel {
     return term;
   }
 
+  void _configureTerminalForSession(String sid, Terminal term) {
+    var agent = '';
+    for (final s in sessions) {
+      if (s.sid == sid) {
+        agent = s.agent.trim().toLowerCase();
+        break;
+      }
+    }
+    term.inlineScrollRegionScrollback = agent == 'codex';
+  }
+
   // reloadTerminal drops the cached Terminal and recreates it, so the phone's
   // buffer starts empty and the host's term.open reply (backlog replay) shows
   // the computer's current screen/history instead of appending to stale
@@ -802,7 +821,9 @@ class RemoteClient extends RemoteChannel {
     final stale = t == null || DateTime.now().difference(t) > _historyTtl;
     final refreshed = stale && _terminals.containsKey(sid);
     if (refreshed) {
-      reloadTerminal(sid); // drop stale local history → fresh replay from desktop
+      reloadTerminal(
+        sid,
+      ); // drop stale local history → fresh replay from desktop
     }
     _viewedSid = sid;
     touchSession(sid);
@@ -817,8 +838,10 @@ class RemoteClient extends RemoteChannel {
   }
 
   void _ensureEvictTimer() {
-    _evictTimer ??=
-        Timer.periodic(const Duration(minutes: 1), (_) => _sweepIdleHistory());
+    _evictTimer ??= Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _sweepIdleHistory(),
+    );
   }
 
   // _sweepIdleHistory drops the local buffer of any session idle past the TTL
@@ -935,8 +958,12 @@ class RemoteClient extends RemoteChannel {
     send({'t': 'git.diff', 'path': repo, 'file': file, 'full': full});
   }
 
-  void requestCommitDiff(String repo, String hash, String title,
-      {bool full = false}) {
+  void requestCommitDiff(
+    String repo,
+    String hash,
+    String title, {
+    bool full = false,
+  }) {
     diffTitle = title;
     diffContent = null;
     diffLoading = true;

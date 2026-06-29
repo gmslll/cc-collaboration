@@ -227,6 +227,13 @@ class TerminalSession {
        title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
            : workdir {
+    // Codex is launched with --no-alt-screen (inline mode), but it still uses a
+    // top scroll region with reserved composer rows. Opt this session into the
+    // compatibility path that copies outgoing transcript rows into native
+    // scrollback. Keep Claude/full-screen TUIs on the vendored xterm defaults.
+    if (agent == 'codex') {
+      terminal.inlineScrollRegionScrollback = true;
+    }
     // claude AND codex are full-screen TUIs that enable mouse reporting and
     // scroll their OWN view in response to wheel reports (cmux scrolls codex
     // fine this way). Forward the wheel with the correct X11 codes for every

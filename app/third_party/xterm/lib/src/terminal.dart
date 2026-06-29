@@ -82,6 +82,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     this.mouseHandler = defaultMouseHandler,
     this.onPrivateOSC,
     this.reflowEnabled = true,
+    this.inlineScrollRegionScrollback = false,
     this.wordSeparators,
   });
 
@@ -220,6 +221,9 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// simply truncates lines. true by default.
   @override
   bool reflowEnabled;
+
+  @override
+  bool inlineScrollRegionScrollback;
 
   /// Writes the data from the underlying program to the terminal. Calling this
   /// updates the states of the terminal and emits events such as [onBell] or
