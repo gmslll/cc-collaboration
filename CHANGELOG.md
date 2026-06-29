@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.21] - 2026-06-29
+
+### Fixed
+
+- **首次看某会话也按本设备宽度，不再落到默认 80 / 别的设备宽度** — 根因是 `Terminal` 创建时是 xterm 硬编码的默认 80 列、布局后才 resize 到真实视口；手机首次看一个会话时（没有该会话自己的视口记录）`term.open`/`adoptSize` 拿不到尺寸，host 就用上一个设备（web 的 151）回放。现在记住本设备的「最近一次任意会话的真实视口」作为兜底——手机只要看过任何一个会话就知道自己屏幕多宽，新会话/首次看直接用它，从根上避免默认 80 和别的设备宽度可乘之机。
+
 ## [0.6.20] - 2026-06-29
 
 ### Fixed

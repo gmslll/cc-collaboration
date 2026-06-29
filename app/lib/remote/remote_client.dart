@@ -446,6 +446,11 @@ class RemoteClient extends RemoteChannel {
   // screen) comes back at the desktop's width and overflows the phone, which a
   // non-active session never auto-corrects (idle agent doesn't redraw).
   final Map<String, ({int cols, int rows})> _lastViewport = {};
+  // The most recent viewport laid out for ANY session on this device — i.e.
+  // THIS phone's screen size. Used as the fallback when opening a session this
+  // device hasn't sized yet (first-ever open), so term.open/adoptSize send the
+  // phone's real width instead of falling back to the Terminal's default 80.
+  ({int cols, int rows})? _lastKnownViewport;
 
   // Local terminal-history cache + idle eviction. Each opened session keeps its
   // xterm buffer (replayed history + accumulated live output); left untouched it
@@ -738,6 +743,7 @@ class RemoteClient extends RemoteChannel {
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) {
       _lastViewport[sid] = (cols: w, rows: h); // remembered for the next term.open
+      _lastKnownViewport = (cols: w, rows: h); // this phone's screen size
       // Whoever's watching redraws: the watching client's viewport drives the
       // host PTY. Report this device's real size the moment we first learn it
       // (no debounce) so the host redraws promptly; later resizes debounce.
@@ -754,11 +760,12 @@ class RemoteClient extends RemoteChannel {
       });
     };
     touchSession(sid); // brand-new buffer is fresh
-    // Carry this device's last-known viewport so the host sizes the PTY to the
-    // phone BEFORE replaying — non-active sessions (and reload) otherwise replay
-    // at the desktop's width and overflow. Absent on a true first-ever open
-    // (viewport unknown until layout); the onResize above then drives it.
-    final vp = _lastViewport[sid];
+    // Carry this device's viewport so the host sizes the PTY to the phone
+    // BEFORE replaying — non-active sessions (and reload) otherwise replay at
+    // the desktop/another-device's width and overflow. Fall back to this phone's
+    // last-known screen size for a first-ever open of this sid, so we send the
+    // real width instead of nothing (which leaves the PTY at the other device's).
+    final vp = _lastViewport[sid] ?? _lastKnownViewport;
     send({
       't': 'term.open',
       'sid': sid,
@@ -843,10 +850,11 @@ class RemoteClient extends RemoteChannel {
   // resizes the PTY to → the agent redraws at this device's width.
   // Returns a short status (what was sent / why not) for a diagnostic snack.
   String adoptSize(String sid) {
-    // Prefer the last real laid-out viewport (recorded on every onResize) over
-    // the Terminal's current viewWidth, which can still be the default 80 right
-    // after a rebuild before the TerminalView has laid out.
-    final vp = _lastViewport[sid];
+    // Prefer the last real laid-out viewport (recorded on every onResize) — for
+    // this sid, else this phone's last-known screen size — over the Terminal's
+    // current viewWidth, which can still be the default 80 right after a rebuild
+    // before the TerminalView has laid out.
+    final vp = _lastViewport[sid] ?? _lastKnownViewport;
     final t = _terminals[sid];
     final w = vp?.cols ?? t?.viewWidth ?? 0;
     final h = vp?.rows ?? t?.viewHeight ?? 0;
