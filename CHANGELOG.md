@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.23] - 2026-06-29
+
+### Fixed
+
+- **codex 终端滚轮终于能滚（改用 PageUp/PageDown，不再转发滚轮）** — 实测 codex-cli 0.142.4：它**完全无视鼠标滚轮**（喂 SGR/X10 滚轮报告 0 字节反应），启动/聊天界面都不开任何鼠标上报模式（`?1000/1002/1003/1006`），而是用绝对光标定位原地重绘 transcript、**不留终端 scrollback**（`lines` 恒 = 视口高）。所以之前「把滚轮转发给 codex（像 cmux）」整条路走不通——codex 根本不读鼠标。实测它只认 **PageUp(`\x1b[5~`)/PageDown(`\x1b[6~`)** 翻页。新增 `Terminal.pageScroll` 标志（codex 置 true），`scroll_handler` 把每格滚轮翻译成一次翻页键发给进程；桌面（terminal_pane）、镜像（remote_client.terminalFor 按会话 agent 判定）、手机触摸（remote_workspace_page 滑动/滚动键，按页阈值）三处一致。claude 仍走原本的滚轮转发，不变。
+
 ## [0.6.22] - 2026-06-29
 
 ### Fixed

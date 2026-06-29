@@ -537,6 +537,7 @@ class RemoteClient extends RemoteChannel {
             ),
         ];
         _setHostOnline(true);
+        _refreshPageScroll(); // list may arrive after a terminal was created
         notifyListeners();
       case 'overview':
         final ov = <String, SessionCard>{};
@@ -732,6 +733,22 @@ class RemoteClient extends RemoteChannel {
 
   // terminalFor returns (creating on first use) the xterm Terminal for a session,
   // wired so host output is written in and local keystrokes/resizes go back.
+  // _isCodexSid reports whether the session [sid] runs codex, per the host's
+  // session list. Codex scrolls only on PageUp/PageDown (it ignores the mouse
+  // and keeps no scrollback), so its mirror terminal is put in page-scroll mode.
+  bool _isCodexSid(String sid) {
+    for (final s in sessions) {
+      if (s.sid == sid) return s.agent.trim().toLowerCase() == 'codex';
+    }
+    return false;
+  }
+
+  // _refreshPageScroll re-applies page-scroll mode to already-created terminals
+  // once the session list (which carries each session's agent) is known.
+  void _refreshPageScroll() {
+    _terminals.forEach((sid, term) => term.pageScroll = _isCodexSid(sid));
+  }
+
   Terminal terminalFor(String sid) {
     final existing = _terminals[sid];
     if (existing != null) return existing;
@@ -740,6 +757,12 @@ class RemoteClient extends RemoteChannel {
     // Same wheel fix as the desktop so touch-scroll reaches full-screen TUIs;
     // without it xterm's default handler drops the wheel while the app tracks.
     term.mouseHandler = const WheelMouseHandler();
+    // codex ignores the mouse and keeps no scrollback (it scrolls its transcript
+    // only on PageUp/PageDown). Mark its mirror so a wheel becomes page keys,
+    // mirroring the desktop. The agent kind comes from the session list, which
+    // is populated by the time a session is opened to view; reloadTerminal and
+    // refreshPageScroll re-apply it if the list arrives later.
+    term.pageScroll = _isCodexSid(sid);
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) {
       _lastViewport[sid] = (cols: w, rows: h); // remembered for the next term.open

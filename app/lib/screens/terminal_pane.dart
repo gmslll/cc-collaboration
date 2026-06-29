@@ -227,13 +227,16 @@ class TerminalSession {
        title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
            : workdir {
-    // claude AND codex are full-screen TUIs that enable mouse reporting and
-    // scroll their OWN view in response to wheel reports (cmux scrolls codex
-    // fine this way). Forward the wheel with the correct X11 codes for every
-    // agent; the scroll_handler routes the wheel into mouseInput whenever the
-    // app reports scroll — for both alt and main buffer — so codex (main buffer)
-    // now scrolls too instead of its wheel being eaten by a local Scrollable.
+    // claude is a full-screen TUI that enables mouse reporting and scrolls its
+    // own view in response to wheel reports; the WheelMouseHandler emits the
+    // correct X11 codes so the scroll_handler can forward the wheel to it.
     terminal.mouseHandler = const WheelMouseHandler();
+    // codex (verified on 0.142.4) does NOT enable mouse reporting and keeps no
+    // terminal scrollback — it repaints its transcript in place and scrolls it
+    // only on PageUp/PageDown (the mouse wheel is ignored outright). Mark its
+    // terminal so the wheel is translated into page keys; otherwise the wheel
+    // does nothing (no mouse mode to report to, no scrollback to move).
+    terminal.pageScroll = agentKind == 'codex';
   }
 
   // label is what the UI shows: the user-given name, else the derived title.
