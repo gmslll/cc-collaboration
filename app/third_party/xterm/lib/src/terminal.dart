@@ -135,6 +135,14 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   MouseReportMode _mouseReportMode = MouseReportMode.normal;
 
+  // When true, the app (DECSET 1000/1002/1003/1006) cannot enable mouse
+  // reporting on this terminal: mouseMode stays `none`, so the wheel is never
+  // reported to the process and scroll/selection stay local. Set per-session for
+  // agents (codex) whose scrollback lives in xterm, not in the process — see
+  // TerminalSession. claude leaves this false so its alt-screen wheel reporting
+  // works as before.
+  bool ignoreMouseReports = false;
+
   bool _cursorBlinkMode = false;
 
   bool _cursorVisibleMode = true;
@@ -697,6 +705,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void setMouseMode(MouseMode mode) {
+    if (ignoreMouseReports) return; // keep mouseMode none → wheel stays local
     _mouseMode = mode;
   }
 
@@ -737,6 +746,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void setMouseReportMode(MouseReportMode mode) {
+    if (ignoreMouseReports) return; // paired with setMouseMode no-op
     _mouseReportMode = mode;
   }
 

@@ -6,7 +6,15 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
-## [0.6.14] - 2026-06-29
+## [0.6.15] - 2026-06-29
+
+### Fixed
+
+- **桌面端 Codex 终端不再把鼠标滚轮/拖拽上报给进程** — Codex 启用 mouse reporting 后，桌面端 xterm 把滚轮和拖拽都当 mouse-report 发给 Codex 进程，但 Codex 的 scrollback 在 xterm（不在进程）、文本选择也该走 GUI，导致滚轮翻不动历史、拖拽选不中（旧版 Codex 也一直如此）。新增 `Terminal.ignoreMouseReports`，Codex 会话置真后 `setMouseMode/setMouseReportMode` 不再生效、mouseMode 恒为 none，滚轮与拖拽回到 xterm 本地路径；Claude（alt-screen，靠 wheel 上报滚自己）不受影响。
+
+### Diagnostics
+
+- 终端右键菜单临时加「诊断(复制)」项，复制当前会话的 `agent/isUsingAltBuffer/mouseMode/lines/view/sel` 运行时状态，用于定位 Codex 选区失效根因（alt vs main buffer / 拖拽是否真的设置了选区）；修复定位后移除。
 
 ### Fixed
 
