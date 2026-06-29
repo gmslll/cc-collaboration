@@ -336,10 +336,22 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       return;
     }
 
-    final viewportSize = TerminalSize(
-      size.width ~/ _painter.cellSize.width,
-      _viewportHeight ~/ _painter.cellSize.height,
-    );
+    final cols = size.width ~/ _painter.cellSize.width;
+    final rows = _viewportHeight ~/ _painter.cellSize.height;
+
+    // A route push/pop animation briefly lays this out as a thin sliver, so
+    // `cols` floors to 1. Resizing the buffer to one column collapses it (每字
+    // 一行/稀疏散落), and via onResize/adoptSize it pins the host PTY to 1 col,
+    // so the agent redraws its whole UI into a single column. Ignore such
+    // degenerate transient layouts: a real terminal viewport is never 1×N or
+    // N×1. This guard is ORTHOGONAL to the "whoever's watching redraws" size
+    // negotiation — it only filters degenerate 1-col/1-row values, never a real
+    // viewport size — so it doesn't reintroduce the size-pinning it once caused.
+    if (cols < 2 || rows < 2) {
+      return;
+    }
+
+    final viewportSize = TerminalSize(cols, rows);
 
     if (_viewportSize != viewportSize) {
       _viewportSize = viewportSize;

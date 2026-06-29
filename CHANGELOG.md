@@ -6,7 +6,13 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
-## [0.6.15] - 2026-06-29
+## [0.6.16] - 2026-06-29
+
+### Fixed
+
+- **手机端「竖排 / 内容稀疏散落」再修（host PTY 被钉成 1 列）** — 实测有会话的 host PTY 是 `1×79`：路由切换的细条布局把列数 floor 成 1，经 onResize/adoptSize 把 host PTY 钉到 1 列，agent 就把整屏 UI 画进一列（每字一行或几个元素散落在一条竖线上）。0.6.14 为「回 0.6.5 基线」撤掉了 `render.dart` 的退化保护和 host 下限，使其再现。现把退化保护加回（`_updateViewportSize` 忽略 cols<2/rows<2 的瞬时布局），并给 host `resizeFromRemote` 加 `>=2` 兜底（旧版 client 发来的 cols=1 也拒绝）。**此保护与「谁在看就重画谁的」尺寸协商正交**——只过滤退化的 1 列/1 行值，绝不碰真实视口尺寸，所以不会重新引入它当初造成的尺寸钉死。补回 0.6.14 误删的 widget 回归测试，防止该 guard 再被无意撤掉。
+
+> 注：已经被钉成 1 列的旧会话需在手机上重开该会话（或点工具栏「适配」）触发一次正常 resize 才会恢复；新发生的会被上述保护挡住。
 
 ### Fixed
 
