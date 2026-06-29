@@ -1357,6 +1357,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // --- remote (phone) session actions; wired into _remoteHost ---
   void _remoteNewSession(String projectPath, String agent, String? workdir) {
+    final kind = agent.trim().toLowerCase();
     for (final ws in _cfg.workspaces) {
       for (final p in ws.projects) {
         if (p.path == projectPath) {
@@ -1369,7 +1370,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                       workdir.startsWith('${p.path}/.worktrees/')))
               ? workdir
               : p.path;
-          _launch(dir, agent == 'codex' ? 'codex' : 'claude', ws.preLaunch);
+          if (kind.isEmpty || kind == 'shell') {
+            addTerm(dir, ''); // '' = plain interactive shell
+          } else {
+            _launch(dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
+          }
           return;
         }
       }

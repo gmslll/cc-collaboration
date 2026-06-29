@@ -576,7 +576,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Widget _sessionsTab() {
     if (_c.sessions.isEmpty) {
-      return centerMsg('没有会话。\n在电脑端起一个 Claude/Codex 会话，并打开工具栏的「共享给手机」。');
+      return centerMsg('没有会话。\n点右下角 + 可新建 Shell / Claude / Codex 会话。');
     }
     // Group sessions by workspace → project (matching workdir to a root); any
     // session not under a known root falls into "其他".
@@ -982,6 +982,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                   const SizedBox(height: 12),
                   SegmentedButton<String>(
                     segments: const [
+                      ButtonSegment(
+                        value: '',
+                        icon: Icon(Icons.terminal_rounded, size: 16),
+                        label: Text('Shell'),
+                      ),
                       ButtonSegment(value: 'claude', label: Text('Claude')),
                       ButtonSegment(value: 'codex', label: Text('Codex')),
                     ],

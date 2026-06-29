@@ -936,7 +936,7 @@ class RemoteClient extends RemoteChannel {
   void newSession(String projectPath, String agent, {String? workdir}) => send({
     't': 'session.new',
     'project': projectPath,
-    'agent': agent,
+    'agent': agent.trim().isEmpty ? 'shell' : agent,
     if (workdir != null && workdir != projectPath) 'workdir': workdir,
   });
   void closeSession(String sid) => send({'t': 'session.close', 'sid': sid});

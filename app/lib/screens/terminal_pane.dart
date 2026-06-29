@@ -258,8 +258,12 @@ class TerminalSession {
   // agentKind is the authoritative agent name ('claude'/'codex') for labels and
   // notifications: the explicit field when the launcher set it, else the legacy
   // command sniff (pickup / pre-upgrade sessions that carry no agent field).
-  String get agentKind =>
-      agent.isNotEmpty ? agent : (command.contains('codex') ? 'codex' : 'claude');
+  String get agentKind {
+    if (agent.isNotEmpty) return agent;
+    if (command.contains('codex')) return 'codex';
+    if (command.contains('claude')) return 'claude';
+    return '';
+  }
 
   // selectedText is the current selection's text, or null when nothing is
   // selected. The host reads it to forward a selection to another session.

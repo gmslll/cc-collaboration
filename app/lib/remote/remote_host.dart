@@ -5,7 +5,6 @@ import 'dart:math' show min;
 
 import '../local/git.dart';
 import '../local/hook_activity.dart';
-import '../local/local_bus.dart';
 import '../local/session_overview.dart';
 import '../local/worktrees.dart';
 import '../screens/terminal_pane.dart';
