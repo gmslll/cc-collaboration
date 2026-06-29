@@ -340,14 +340,16 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final rows = _viewportHeight ~/ _painter.cellSize.height;
 
     // A route push/pop animation briefly lays this out as a thin sliver, so
-    // `cols` floors to 1. Resizing the buffer to one column collapses it (每字
-    // 一行/稀疏散落), and via onResize/adoptSize it pins the host PTY to 1 col,
-    // so the agent redraws its whole UI into a single column. Ignore such
-    // degenerate transient layouts: a real terminal viewport is never 1×N or
-    // N×1. This guard is ORTHOGONAL to the "whoever's watching redraws" size
-    // negotiation — it only filters degenerate 1-col/1-row values, never a real
-    // viewport size — so it doesn't reintroduce the size-pinning it once caused.
-    if (cols < 2 || rows < 2) {
+    // `cols` floors to a tiny value (1, 3, 8…). Resizing the buffer that narrow
+    // collapses it (每字一行/稀疏散落), and via onResize/adoptSize it pins the
+    // host PTY that narrow, so the agent redraws its whole UI into a sliver.
+    // Ignore any such degenerate transient layout: a real terminal viewport is
+    // never this small — even the largest font on the narrowest phone is ~30
+    // cols, and the shortest landscape/keyboard-up layout is well over 8 rows.
+    // This guard is ORTHOGONAL to the "whoever's watching redraws" size
+    // negotiation — it only filters degenerate values, never a real viewport —
+    // so it doesn't reintroduce the size-pinning it once caused.
+    if (cols < 20 || rows < 8) {
       return;
     }
 

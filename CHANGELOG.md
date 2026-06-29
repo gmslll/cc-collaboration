@@ -6,7 +6,11 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
-## [0.6.16] - 2026-06-29
+## [0.6.17] - 2026-06-29
+
+### Changed
+
+- **退化布局保护阈值从「<2」抬到「<20 列 / <8 行」** — 0.6.16 的保护只挡死 1 列，路由动画里 3/5/8 列那种窄中间帧仍会钻过去。真实手机视口不会那么小（最大字号竖屏也有 ~30 列，最矮横屏/键盘弹出也远超 8 行），所以把整个退化区间挡掉：`render.dart` 与 host `resizeFromRemote` 一致地忽略 `cols<20 || rows<8` 的尺寸。仍与「谁在看就重画谁的」正交（只过滤明显退化的窄值）。
 
 ### Fixed
 
