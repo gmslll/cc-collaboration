@@ -853,9 +853,12 @@ class TerminalSession {
   static const int _submitRetries = 2;
   static const int _submitCheckLines = 8;
 
-  // resizeFromRemote lets a connected phone size the PTY to its viewport.
+  // resizeFromRemote lets a connected client (phone / web) size the PTY to its
+  // viewport — whoever's watching redraws. No min-size clamp: the client's
+  // render layer never reports a degenerate (<2 col/row) size, so any value
+  // arriving here is a real viewport the agent should redraw to.
   void resizeFromRemote(int rows, int cols) {
-    if (rows >= 6 && cols >= 20) _pty?.resize(rows, cols);
+    if (rows > 0 && cols > 0) _pty?.resize(rows, cols);
   }
 
   // restoreLocalSize: the last phone detached — resize the PTY back to the

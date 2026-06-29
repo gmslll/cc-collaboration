@@ -433,14 +433,7 @@ class RemoteClient extends RemoteChannel {
   }
 
   final Map<String, Terminal> _terminals = {};
-  final Map<String, Timer> _resizeTimers = {}; // debounce phone resize per session
-  static const int _minTerminalCols = 20;
-  static const int _minTerminalRows = 6;
-  // Sessions whose phone viewport size has already been reported to the host.
-  // The first term.open is replayed at the COMPUTER's size (the phone's size
-  // isn't known until the TerminalView lays out), so the first time we learn the
-  // real size we report it immediately (no debounce) instead of 120ms later.
-  final Set<String> _sizedSids = {};
+  final Map<String, Timer> _resizeTimers = {}; // debounce client resize per session
 
   // Local terminal-history cache + idle eviction. Each opened session keeps its
   // xterm buffer (replayed history + accumulated live output); left untouched it
@@ -732,24 +725,16 @@ class RemoteClient extends RemoteChannel {
     term.mouseHandler = const WheelMouseHandler();
     term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) {
-      // TerminalView can briefly report a tiny width while the mobile route is
-      // still laying out. Never let that transient value resize the host PTY:
-      // a 1-column PTY makes Codex redraw every character on its own line.
-      if (w < _minTerminalCols || h < _minTerminalRows) return;
-      // The first term.open was replayed at the COMPUTER's size (the phone's
-      // viewport wasn't known yet). Report the real size the moment we learn it
-      // (no debounce) so the host redraws at the phone's dimensions promptly; the
-      // live stream then reflows the screen. (Replayed history is plain text and
-      // re-wraps at the phone width, so it stays readable.)
-      if (_sizedSids.add(sid)) {
-        send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
-        return;
-      }
-      // Debounce later resizes: rotation / keyboard show/hide fire a burst of
-      // onResize calls; sending only the last one ~120ms later spares the PTY a
-      // string of redraws.
+      // Whoever's watching redraws: the watching client's viewport size drives
+      // the host PTY, and the agent redraws to it. Only debounce the burst that
+      // window-drag / rotation / keyboard show-hide fires (send just the last
+      // size ~120ms later) — the final, settled size always reaches the host, so
+      // a wide browser is never left stuck at the desktop's spawn width.
+      // No tiny-size guard here: render.dart already refuses to resize the local
+      // buffer below 2 cols/rows at the source, so onResize never sees a sliver.
       _resizeTimers[sid]?.cancel();
       _resizeTimers[sid] = Timer(const Duration(milliseconds: 120), () {
+        _resizeTimers.remove(sid);
         send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
       });
     };
@@ -765,7 +750,6 @@ class RemoteClient extends RemoteChannel {
   void reloadTerminal(String sid) {
     _terminals.remove(sid);
     _resizeTimers.remove(sid)?.cancel();
-    _sizedSids.remove(sid);
     terminalFor(sid); // recreate + send term.open now → host replays backlog
   }
 
@@ -819,7 +803,6 @@ class RemoteClient extends RemoteChannel {
   void _evictTerminal(String sid) {
     _terminals.remove(sid);
     _resizeTimers.remove(sid)?.cancel();
-    _sizedSids.remove(sid);
     _lastActive.remove(sid);
   }
 

@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-06-29
+
+### Fixed
+
+- **远程终端尺寸改回「谁在看就重画谁的」，修 web 端内容只占中间一条** — web/手机连上会话后，host 端 PTY 应当跟随当前观看 client 的视口尺寸、agent 据此重画。0.6.9 为防竖排叠加的一套尺寸协商（`_sizedSids`「首次立即发、后续 debounce」+ client `w<20` / host `cols>=20` 的 guard）会把某个中间尺寸定死：实测被镜像会话的 host PTY 卡在桌面 spawn 的 132 列（一批会话都是这个统一初值），没跟随更宽的 web 浏览器视口，于是 claude 终端内容只铺到中间、左右大片空白。现在拆掉 `_sizedSids` 与那些 app 层尺寸 guard，onResize 改回「最终稳定视口尺寸经一次 debounce 直接送达 host PTY」，host `resizeFromRemote` 放回 `rows>0 && cols>0`。竖排防护已由 0.6.12 的 `render.dart` 源头保护（cols 永不 <2）独立承担，与尺寸协商干净解耦；`remoteSink` 让权 + 手机断开 `restoreLocalSize` 恢复桌面宽度保持不变。
+
 ## [0.6.12] - 2026-06-29
 
 ### Fixed
