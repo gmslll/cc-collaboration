@@ -227,17 +227,13 @@ class TerminalSession {
        title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
            : workdir {
-    // Claude is a full-screen TUI, so wheel events should reach the process.
-    if (agentKind == 'codex') {
-      // Codex's scrollback lives in xterm, not in the process. If codex enables
-      // mouse reporting (DECSET 1000/1002/1003/1006) the wheel and drag get
-      // reported to codex instead of scrolling/selecting locally — and codex
-      // doesn't scroll its history from those reports. Refuse mouse reporting so
-      // wheel + selection stay local (scroll-wheel scrollback, drag-select).
-      terminal.ignoreMouseReports = true;
-    } else {
-      terminal.mouseHandler = const WheelMouseHandler();
-    }
+    // claude AND codex are full-screen TUIs that enable mouse reporting and
+    // scroll their OWN view in response to wheel reports (cmux scrolls codex
+    // fine this way). Forward the wheel with the correct X11 codes for every
+    // agent; the scroll_handler routes the wheel into mouseInput whenever the
+    // app reports scroll — for both alt and main buffer — so codex (main buffer)
+    // now scrolls too instead of its wheel being eaten by a local Scrollable.
+    terminal.mouseHandler = const WheelMouseHandler();
   }
 
   // label is what the UI shows: the user-given name, else the derived title.

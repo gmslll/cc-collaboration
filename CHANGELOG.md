@@ -6,6 +6,14 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.19] - 2026-06-29
+
+### Fixed
+
+- **Codex 终端滚轮恢复滚动（把滚轮转发给 codex，像 cmux 那样）** — 之前判断错了方向：codex 的历史不是靠终端 scrollback，而是它**自己响应鼠标滚轮事件滚动自己的视图**（cmux 正是这样滚 codex 的）。v0.6.15 的 `ignoreMouseReports` 反而把 codex 的 mouse reporting 压成了 none，让它收不到滚轮、彻底滚不动；再加上 main buffer 的滚轮被内层 Scrollable 吞去滚根本不存在的 scrollback。现在：撤销 `ignoreMouseReports`（codex 正常启用 mouse reporting）、codex 也设 `WheelMouseHandler`（发标准 X11 滚轮码）、`scroll_handler` 在程序声明了 scroll 上报时（不止 alt buffer，main buffer 同样）把滚轮转发给进程。claude（alt buffer）行为不变；普通 shell（无上报）仍走本地 scrollback。
+
+> 注：codex 的**拖拽选区**仍未解（codex 这种全屏 mouse-capturing TUI 里，本地文本选择通常要靠修饰键如 Shift+拖拽来绕过 mouse 上报，另议）。临时「诊断」菜单项暂留，用于核对撤销后 codex 的真实 mouseMode。
+
 ## [0.6.18] - 2026-06-29
 
 ### Fixed

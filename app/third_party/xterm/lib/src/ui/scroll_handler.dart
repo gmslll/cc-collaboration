@@ -42,6 +42,12 @@ class _TerminalScrollGestureHandlerState
   /// widget does nothing.
   var isAltBuffer = false;
 
+  /// Whether the application declared it wants mouse-wheel (scroll) reports.
+  /// When true, the wheel is forwarded to the process — which scrolls its OWN
+  /// view (e.g. codex in the main buffer, which keeps no terminal scrollback) —
+  /// instead of moving a local Scrollable. Same forwarding path as the alt buf.
+  var reportsScroll = false;
+
   /// The variable that tracks the line offset in last scroll event. Used to
   /// determine how many the scroll events should be sent to the terminal.
   var lastLineOffset = 0;
@@ -54,6 +60,7 @@ class _TerminalScrollGestureHandlerState
   void initState() {
     widget.terminal.addListener(_onTerminalUpdated);
     isAltBuffer = widget.terminal.isUsingAltBuffer;
+    reportsScroll = widget.terminal.mouseMode.reportScroll;
     super.initState();
   }
 
@@ -69,13 +76,17 @@ class _TerminalScrollGestureHandlerState
       oldWidget.terminal.removeListener(_onTerminalUpdated);
       widget.terminal.addListener(_onTerminalUpdated);
       isAltBuffer = widget.terminal.isUsingAltBuffer;
+      reportsScroll = widget.terminal.mouseMode.reportScroll;
     }
     super.didUpdateWidget(oldWidget);
   }
 
   void _onTerminalUpdated() {
-    if (isAltBuffer != widget.terminal.isUsingAltBuffer) {
-      isAltBuffer = widget.terminal.isUsingAltBuffer;
+    final alt = widget.terminal.isUsingAltBuffer;
+    final scroll = widget.terminal.mouseMode.reportScroll;
+    if (isAltBuffer != alt || reportsScroll != scroll) {
+      isAltBuffer = alt;
+      reportsScroll = scroll;
       setState(() {});
     }
   }
@@ -113,7 +124,10 @@ class _TerminalScrollGestureHandlerState
 
   @override
   Widget build(BuildContext context) {
-    if (!isAltBuffer) {
+    // Forward the wheel to the process when it's in the alt buffer OR it asked
+    // for scroll reports (codex in the main buffer). Otherwise (plain shell)
+    // fall through to the local Scrollable that moves terminal scrollback.
+    if (!isAltBuffer && !reportsScroll) {
       return widget.child;
     }
 
