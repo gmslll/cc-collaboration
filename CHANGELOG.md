@@ -6,6 +6,14 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.28] - 2026-06-30
+
+### Fixed
+
+- **检查更新优先直接下载 GUI 安装包，不再误跳 GitHub 页面** — 当 GitHub REST assets 获取失败或限流时，会按 release 打包命名直接构造当前平台安装包 URL；Windows 严格匹配 `cc-handoff-windows-<arch>-v*.zip`，避免误下载 CLI-only 的 `cc-handoff_v*_windows_*.zip`。
+- **Windows 检查更新支持自替换安装** — 下载新版 Windows GUI zip 后，点击「重启安装」会退出当前应用、用 PowerShell 等待进程结束、解压新版、备份/替换当前安装目录并重新启动应用；失败时尽量恢复旧目录并写入临时安装日志。
+- **macOS 更新替换更稳健** — 先把新版 `.app` 复制到 `.new`，再把当前 `.app` 移到 `.old` 后切换，成功后删除备份，减少直接删除当前应用后安装失败的风险。
+
 ## [0.6.26] - 2026-06-29
 
 ### Fixed

@@ -52,14 +52,34 @@ bool _isNewer(String latest, String current) =>
 
 String _versionFromTag(String tag) => tag.startsWith('v') ? tag.substring(1) : tag;
 
-// _assetMatches picks this platform's release asset by the names scripts/package.*
-// produce: <App>-macos-v*.zip / cc-handoff-windows-*-v*.zip / *-android-*.apk.
-bool _assetMatches(String name) {
+// _assetMatches picks this platform's GUI app release asset by the names
+// scripts/package.* produce. Be strict on Windows: release.yml also uploads CLI
+// archives named cc-handoff_v*_windows_*.zip, which are NOT app updates.
+bool _assetMatches(String name, String version) {
   final n = name.toLowerCase();
-  if (Platform.isAndroid) return n.endsWith('.apk');
-  if (Platform.isMacOS) return n.contains('macos') && n.endsWith('.zip');
-  if (Platform.isWindows) return n.contains('windows') && n.endsWith('.zip');
+  if (Platform.isAndroid) return n == 'cc-handoff-android-v$version.apk';
+  if (Platform.isMacOS) return n == 'app-macos-v$version.zip';
+  if (Platform.isWindows) {
+    return n == 'cc-handoff-windows-${_windowsPackageArch()}-v$version.zip';
+  }
   return false;
+}
+
+String _windowsPackageArch() {
+  final arch = [
+    Platform.environment['PROCESSOR_ARCHITECTURE'],
+    Platform.environment['PROCESSOR_ARCHITEW6432'],
+  ].whereType<String>().join(' ').toLowerCase();
+  return arch.contains('arm64') || arch.contains('aarch64') ? 'arm64' : 'amd64';
+}
+
+String? _fallbackAssetName(String version) {
+  if (Platform.isAndroid) return 'cc-handoff-android-v$version.apk';
+  if (Platform.isMacOS) return 'app-macos-v$version.zip';
+  if (Platform.isWindows) {
+    return 'cc-handoff-windows-${_windowsPackageArch()}-v$version.zip';
+  }
+  return null;
 }
 
 String? _tagFromReleaseUrl(Uri uri) {
@@ -109,7 +129,7 @@ Future<UpdateInfo> _releaseInfo(Dio dio, String tag, String version) async {
     if (htmlUrl.isNotEmpty) releaseUrl = htmlUrl;
     for (final a in (data['assets'] as List? ?? []).whereType<Map>()) {
       final n = (a['name'] ?? '').toString();
-      if (_assetMatches(n)) {
+      if (_assetMatches(n, version)) {
         url = (a['browser_download_url'] ?? '').toString();
         name = n;
         break;
@@ -118,6 +138,11 @@ Future<UpdateInfo> _releaseInfo(Dio dio, String tag, String version) async {
   } catch (_) {
     // Latest tag is already known via the web redirect. If REST is rate-limited
     // or offline, still surface the update and open the release page as fallback.
+  }
+  final fallbackName = _fallbackAssetName(version);
+  if ((url == null || url.isEmpty) && fallbackName != null) {
+    name = fallbackName;
+    url = 'https://github.com/$_repo/releases/download/$tag/$fallbackName';
   }
   return UpdateInfo(
     version: version,
@@ -206,11 +231,9 @@ Future<void> _downloadAndInstall(BuildContext context, UpdateInfo info) async {
     await _openExternally(info.releaseUrl);
     return;
   }
-  // Android/macOS install from temp; Windows downloads to ~/Downloads so the
-  // user can find/keep it.
-  final dir = Platform.isAndroid || Platform.isMacOS
-      ? await getTemporaryDirectory()
-      : (await getDownloadsDirectory()) ?? await getTemporaryDirectory();
+  // Installers/self-updaters run from temp. Keeping Windows zips in Downloads
+  // used to force a manual install; now Windows self-replaces like macOS.
+  final dir = await getTemporaryDirectory();
   final path = '${dir.path}/${info.assetName}';
   if (!context.mounted) return;
 
@@ -252,13 +275,100 @@ Future<void> _downloadAndInstall(BuildContext context, UpdateInfo info) async {
     }
   } else if (Platform.isMacOS) {
     await _installMacOSUpdate(context, path);
+  } else if (Platform.isWindows) {
+    await _installWindowsUpdate(context, path);
   } else {
-    // Windows/Linux: open the downloaded archive for the platform installer.
+    // Linux: open the downloaded archive for manual install.
     await _openExternally(path);
     if (context.mounted) {
-      snack(context, '已下载到「下载」文件夹，请按系统提示安装');
+      snack(context, '已下载更新包，请按系统提示安装');
     }
   }
+}
+
+Future<void> _installWindowsUpdate(BuildContext context, String zipPath) async {
+  final currentExe = File(Platform.resolvedExecutable);
+  final currentDir = currentExe.parent;
+  final exeName = currentExe.path.split(Platform.pathSeparator).last;
+  final temp = await Directory.systemTemp.createTemp('cc-handoff-update-');
+  if (!context.mounted) return;
+
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('准备安装更新'),
+      content: const Text('应用将退出，自动替换为新版后重新打开。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('稍后'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('重启安装'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+
+  final script = File('${temp.path}${Platform.pathSeparator}install-update.ps1');
+  final stagedDir = '${currentDir.path}.new';
+  final backupDir = '${currentDir.path}.old';
+  final logPath = '${temp.path}${Platform.pathSeparator}install-update.log';
+  await script.writeAsString('''
+\$ErrorActionPreference = 'Stop'
+\$pidToWait = $pid
+\$zipPath = ${_ps(zipPath)}
+\$currentDir = ${_ps(currentDir.path)}
+\$stagedDir = ${_ps(stagedDir)}
+\$backupDir = ${_ps(backupDir)}
+\$exeName = ${_ps(exeName)}
+\$logPath = ${_ps(logPath)}
+
+while (Get-Process -Id \$pidToWait -ErrorAction SilentlyContinue) {
+  Start-Sleep -Milliseconds 200
+}
+
+try {
+  Set-Location -LiteralPath ([System.IO.Path]::GetTempPath())
+  if (Test-Path -LiteralPath \$stagedDir) {
+    Remove-Item -LiteralPath \$stagedDir -Recurse -Force
+  }
+  if (Test-Path -LiteralPath \$backupDir) {
+    Remove-Item -LiteralPath \$backupDir -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path \$stagedDir | Out-Null
+  Expand-Archive -LiteralPath \$zipPath -DestinationPath \$stagedDir -Force
+  Move-Item -LiteralPath \$currentDir -Destination \$backupDir
+  Move-Item -LiteralPath \$stagedDir -Destination \$currentDir
+  Remove-Item -LiteralPath \$backupDir -Recurse -Force
+  Start-Process -FilePath (Join-Path \$currentDir \$exeName)
+} catch {
+  \$msg = "\$(Get-Date -Format o) update failed: \$_"
+  Add-Content -LiteralPath \$logPath -Value \$msg
+  if (!(Test-Path -LiteralPath \$currentDir) -and (Test-Path -LiteralPath \$backupDir)) {
+    Move-Item -LiteralPath \$backupDir -Destination \$currentDir
+  }
+  if (Test-Path -LiteralPath (Join-Path \$currentDir \$exeName)) {
+    Start-Process -FilePath (Join-Path \$currentDir \$exeName)
+  }
+  exit 1
+}
+''');
+  await Process.start(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      script.path,
+    ],
+    workingDirectory: temp.path,
+    mode: ProcessStartMode.detached,
+  );
+  exit(0);
 }
 
 Future<void> _installMacOSUpdate(BuildContext context, String zipPath) async {
@@ -283,6 +393,7 @@ Future<void> _installMacOSUpdate(BuildContext context, String zipPath) async {
     if (context.mounted) snack(context, '更新包里没有找到 .app，请手动安装');
     return;
   }
+  if (!context.mounted) return;
 
   final ok = await showDialog<bool>(
     context: context,
@@ -304,14 +415,19 @@ Future<void> _installMacOSUpdate(BuildContext context, String zipPath) async {
   if (ok != true) return;
 
   final script = File('${temp.path}/install-update.zsh');
+  final stagedApp = '${currentApp.path}.new';
+  final backupApp = '${currentApp.path}.old';
   await script.writeAsString('''
 #!/bin/zsh
 set -e
 while kill -0 $pid 2>/dev/null; do
   sleep 0.2
 done
-rm -rf ${_sh(currentApp.path)}
-/usr/bin/ditto ${_sh(newApp.path)} ${_sh(currentApp.path)}
+rm -rf ${_sh(stagedApp)} ${_sh(backupApp)}
+/usr/bin/ditto ${_sh(newApp.path)} ${_sh(stagedApp)}
+mv ${_sh(currentApp.path)} ${_sh(backupApp)}
+mv ${_sh(stagedApp)} ${_sh(currentApp.path)}
+rm -rf ${_sh(backupApp)}
 /usr/bin/open ${_sh(currentApp.path)}
 ''');
   await Process.run('/bin/chmod', ['700', script.path]);
@@ -348,6 +464,8 @@ Future<Directory?> _findFirstApp(Directory root) async {
 }
 
 String _sh(String s) => "'${s.replaceAll("'", "'\\''")}'";
+
+String _ps(String s) => "'${s.replaceAll("'", "''")}'";
 
 class _DownloadDialog extends StatelessWidget {
   final ValueNotifier<double> progress;
