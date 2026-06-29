@@ -16,6 +16,7 @@ import '../local/agent_usage.dart';
 import '../local/cli.dart';
 import '../local/local_bus.dart';
 import '../local/platform.dart';
+import '../local/shell.dart';
 import '../terminal_theme.dart';
 import '../terminal_mouse.dart';
 import '../widgets.dart';
@@ -24,6 +25,19 @@ import '../widgets.dart';
 // these (one per pickup/worktree) for multi-session tabs and can sendText into
 // the active one (e.g. paste the materialized prompt).
 class TerminalSession {
+  static const String _startupMsgInstructions =
+      'When the user asks you to coordinate with another local project/session '
+      'or another AI agent, use the local cc-handoff message bus: run '
+      '`cc-handoff msg list` to find sessions, `cc-handoff msg send <target> '
+      '<message>` to talk to one, and `cc-handoff msg read <target>` to read '
+      'its terminal. Prefer session IDs like ts2 when names are ambiguous.';
+
+  static String _argQuote(String value) =>
+      Platform.isWindows ? '"${value.replaceAll('"', r'\"')}"' : shQuote(value);
+
+  static String _codexDeveloperInstructionsConfig() =>
+      'developer_instructions=$_startupMsgInstructions';
+
   static int _seq = 0;
   // Stable id used for remote addressing (the phone's term.open/input target) and
   // the local bus. PERSISTED + restored so it survives a desktop restart —
@@ -400,16 +414,18 @@ class TerminalSession {
         ? _invocation!
         : agent;
     if (agent == 'claude') {
+      final c =
+          '$inv --append-system-prompt ${_argQuote(_startupMsgInstructions)}';
       if (!resume) {
         return agentSessionId == null
-            ? '$prefix$inv'
-            : '$prefix$inv --session-id $agentSessionId';
+            ? '$prefix$c'
+            : '$prefix$c --session-id $agentSessionId';
       }
       // Reopen: resume the exact id; fall back to most-recent if we never minted
       // one (e.g. a pre-upgrade persisted session).
       return agentSessionId == null
-          ? '$prefix$inv --continue'
-          : '$prefix$inv --resume $agentSessionId';
+          ? '$prefix$c --continue'
+          : '$prefix$c --resume $agentSessionId';
     }
     // codex can't be given a session id at launch; we capture the one it mints
     // (see _maybeCaptureAgentId) and resume that EXACT session on reopen, falling
@@ -428,7 +444,9 @@ class TerminalSession {
     // ~/.codex/hooks.json). For the app's own env-guarded hook that dialog is
     // just friction — and it would stall non-interactive launches — so we vouch
     // for our own hook here (global flag, before the subcommand).
-    final cdx = '$inv --no-alt-screen --dangerously-bypass-hook-trust';
+    final cdx =
+        '$inv --no-alt-screen --dangerously-bypass-hook-trust '
+        '-c ${_argQuote(_codexDeveloperInstructionsConfig())}';
     if (!resume) return '$prefix$cdx';
     return agentSessionId == null
         ? '$prefix$cdx resume --last'
