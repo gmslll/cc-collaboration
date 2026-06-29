@@ -435,6 +435,8 @@ class RemoteClient extends RemoteChannel {
   final Map<String, Terminal> _terminals = {};
   final Map<String, Timer> _resizeTimers =
       {}; // debounce client resize per session
+  final Map<String, Timer> _resizeRefreshTimers = {};
+  final Map<String, ({int rows, int cols})> _resizeRefreshAttempted = {};
   // Sessions whose viewport size has already been reported to the host. The
   // first onResize for a sid is sent immediately (no debounce) so the host
   // redraws at this device's size promptly; later resizes debounce. Dropped on
@@ -452,6 +454,10 @@ class RemoteClient extends RemoteChannel {
   // device hasn't sized yet (first-ever open), so term.open/adoptSize send the
   // phone's real width instead of falling back to the Terminal's default 80.
   ({int cols, int rows})? _lastKnownViewport;
+  // User/program fallback for the first open before xterm has reported a real
+  // onResize. The terminal screen keeps this updated from its current viewport
+  // estimate; the menu can also set a user default.
+  ({int cols, int rows})? defaultViewport;
 
   // Local terminal-history cache + idle eviction. Each opened session keeps its
   // xterm buffer (replayed history + accumulated live output); left untouched it
@@ -582,7 +588,11 @@ class RemoteClient extends RemoteChannel {
       case 'term.output':
         final sid = f['sid'] as String?;
         final d = f['d'] as String?;
-        if (sid != null && d != null) _terminals[sid]?.write(d);
+        if (sid != null && d != null) {
+          _resizeRefreshTimers.remove(sid)?.cancel();
+          _resizeRefreshAttempted.remove(sid);
+          _terminals[sid]?.write(d);
+        }
       case 'reply':
         // The desktop pushed an agent's clean reply text for a watched session;
         // the terminal screen reads it aloud if its TTS toggle is on.
@@ -756,7 +766,7 @@ class RemoteClient extends RemoteChannel {
       // host PTY. Report this device's real size the moment we first learn it
       // (no debounce) so the host redraws promptly; later resizes debounce.
       if (_sizedSids.add(sid)) {
-        send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+        _sendResize(sid, rows: h, cols: w);
         return;
       }
       // Debounce later resizes: rotation / keyboard show-hide fire a burst of
@@ -764,7 +774,7 @@ class RemoteClient extends RemoteChannel {
       // string of redraws.
       _resizeTimers[sid]?.cancel();
       _resizeTimers[sid] = Timer(const Duration(milliseconds: 120), () {
-        send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+        _sendResize(sid, rows: h, cols: w);
       });
     };
     touchSession(sid); // brand-new buffer is fresh
@@ -773,7 +783,7 @@ class RemoteClient extends RemoteChannel {
     // the desktop/another-device's width and overflow. Fall back to this phone's
     // last-known screen size for a first-ever open of this sid, so we send the
     // real width instead of nothing (which leaves the PTY at the other device's).
-    final vp = _lastViewport[sid] ?? _lastKnownViewport;
+    final vp = _lastViewport[sid] ?? _lastKnownViewport ?? defaultViewport;
     send({
       't': 'term.open',
       'sid': sid,
@@ -800,6 +810,7 @@ class RemoteClient extends RemoteChannel {
   // the computer's current screen/history instead of appending to stale
   // content. The caller rebuilds so the TerminalView rebinds to the new term.
   void reloadTerminal(String sid) {
+    _resizeRefreshTimers.remove(sid)?.cancel();
     _terminals.remove(sid);
     _resizeTimers.remove(sid)?.cancel();
     terminalFor(sid); // recreate + send term.open now → host replays backlog
@@ -859,8 +870,29 @@ class RemoteClient extends RemoteChannel {
   void _evictTerminal(String sid) {
     _terminals.remove(sid);
     _resizeTimers.remove(sid)?.cancel();
+    _resizeRefreshTimers.remove(sid)?.cancel();
+    _resizeRefreshAttempted.remove(sid);
     _sizedSids.remove(sid); // re-opened session reports its size afresh
     _lastActive.remove(sid);
+  }
+
+  void _sendResize(String sid, {required int rows, required int cols}) {
+    send({'t': 'term.resize', 'sid': sid, 'rows': rows, 'cols': cols});
+    // Some TUIs accept SIGWINCH but don't repaint until their next real output.
+    // If the host sends output after the resize, term.output cancels this. If it
+    // stays quiet, re-open the watched terminal so the host replays the current
+    // buffer at the viewport we just reported instead of leaving the old layout
+    // visible until the agent's next answer.
+    _resizeRefreshTimers.remove(sid)?.cancel();
+    final attempted = _resizeRefreshAttempted[sid];
+    if (attempted?.rows == rows && attempted?.cols == cols) return;
+    _resizeRefreshTimers[sid] = Timer(const Duration(milliseconds: 650), () {
+      _resizeRefreshTimers.remove(sid);
+      if (_viewedSid != sid || !_terminals.containsKey(sid)) return;
+      _resizeRefreshAttempted[sid] = (rows: rows, cols: cols);
+      reloadTerminal(sid);
+      onTerminalReset?.call();
+    });
   }
 
   // adoptSize makes the device that's currently viewing [sid] re-assert its own
@@ -878,11 +910,11 @@ class RemoteClient extends RemoteChannel {
     // viewWidth — that's the default 80 until the view lays out, and sending it
     // would pin the PTY to a wrong width (the bug being fixed). A large font
     // makes a legit narrow viewport, so only the degenerate <2 is skipped.
-    final vp = _lastViewport[sid] ?? _lastKnownViewport;
+    final vp = _lastViewport[sid] ?? _lastKnownViewport ?? defaultViewport;
     if (vp == null) return 'no-viewport-yet';
     final w = vp.cols, h = vp.rows;
     if (w >= 2 && h >= 2) {
-      send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+      _sendResize(sid, rows: h, cols: w);
       return '${w}x$h';
     }
     return 'skip ${w}x$h';
@@ -891,6 +923,10 @@ class RemoteClient extends RemoteChannel {
   @override
   void dispose() {
     _evictTimer?.cancel();
+    for (final t in _resizeRefreshTimers.values) {
+      t.cancel();
+    }
+    _resizeRefreshAttempted.clear();
     super.dispose();
   }
 

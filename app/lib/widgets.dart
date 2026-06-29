@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
@@ -62,6 +64,17 @@ String errorText(Object e) {
   return '$e';
 }
 
+OverlayEntry? _topSnackEntry;
+Timer? _topSnackTimer;
+
+void _removeTopSnack() {
+  _topSnackTimer?.cancel();
+  _topSnackTimer = null;
+  final entry = _topSnackEntry;
+  _topSnackEntry = null;
+  if (entry?.mounted ?? false) entry!.remove();
+}
+
 void snack(
   BuildContext context,
   String message, {
@@ -69,16 +82,48 @@ void snack(
   Duration? duration,
   bool clearPrevious = false,
 }) {
-  final m = ScaffoldMessenger.of(context);
-  if (clearPrevious) m.clearSnackBars();
-  m.showSnackBar(
-    SnackBar(
-      content: Text(message),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: background,
-      duration: duration ?? const Duration(seconds: 4),
+  final overlay = Overlay.maybeOf(context);
+  if (overlay == null) return;
+  if (clearPrevious) _removeTopSnack();
+  _removeTopSnack();
+  final d = duration ?? const Duration(seconds: 4);
+  _topSnackEntry = OverlayEntry(
+    builder: (ctx) => Positioned(
+      top: MediaQuery.paddingOf(ctx).top + 10,
+      left: 12,
+      right: 12,
+      child: Material(
+        color: Colors.transparent,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: background ?? const Color(0xF0181B20),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0x33FFFFFF)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 18,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Text(
+              message,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: CcColors.text, fontSize: 13),
+            ),
+          ),
+        ),
+      ),
     ),
   );
+  overlay.insert(_topSnackEntry!);
+  _topSnackTimer = Timer(d, () {
+    _removeTopSnack();
+  });
 }
 
 // confirm shows a yes/no dialog; returns true only if the user confirms.

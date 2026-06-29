@@ -1805,7 +1805,6 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // tokens · est. cost); null until the first status carries one. Shown as a
   // small chip over the mirrored terminal and folded into the Live Activity text.
   String? _usageLabel;
-  bool _activityOpen = false;
 
   // Terminal font size (phone). Smaller = more columns, so a wide full-screen
   // TUI like codex lays out properly instead of cramming into too few columns.
@@ -1814,11 +1813,39 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   static const double _fontMin = 7.0;
   static const double _fontMax = 18.0;
 
+  ({int cols, int rows}) _preferredViewport(BuildContext context) {
+    final userCols = Prefs.getDouble('remote.defaultCols', def: 0).round();
+    final userRows = Prefs.getDouble('remote.defaultRows', def: 0).round();
+    if (userCols >= 2 && userRows >= 2) {
+      return (cols: userCols, rows: userRows);
+    }
+    final mq = MediaQuery.of(context);
+    final width = mq.size.width - 16; // TerminalView horizontal padding.
+    final height =
+        mq.size.height -
+        mq.padding.top -
+        kToolbarHeight -
+        44 - // key bar
+        mq.padding.bottom -
+        16; // TerminalView vertical padding.
+    final cellW = _fontSize * 0.62;
+    final cellH = _fontSize * 1.38;
+    return (
+      cols: (width / cellW).floor().clamp(2, 500),
+      rows: (height / cellH).floor().clamp(2, 500),
+    );
+  }
+
+  void _updateDefaultViewport(BuildContext context) {
+    widget.client.defaultViewport = _preferredViewport(context);
+  }
+
   void _bumpFont(double delta) {
     final v = (_fontSize + delta).clamp(_fontMin, _fontMax);
     if (v == _fontSize) return;
     setState(() => _fontSize = v);
     Prefs.setDouble('remote.termFontSize', v);
+    _updateDefaultViewport(context);
   }
 
   @override
@@ -2159,6 +2186,92 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     _reload(); // re-pulls history in the new mode + rebuilds the label (its snack)
   }
 
+  Future<void> _setDefaultViewport() async {
+    final current = _preferredViewport(context);
+    final raw = await textPrompt(
+      context,
+      title: '默认终端尺寸',
+      hint: '例如 ${current.cols}x${current.rows}',
+      initial: '${current.cols}x${current.rows}',
+      okLabel: '保存',
+    );
+    if (!mounted) return;
+    if (raw == null) return;
+    final m = RegExp(r'^\s*(\d+)\s*[xX*×,， ]\s*(\d+)\s*$').firstMatch(raw);
+    if (m == null) {
+      if (mounted) snack(context, '格式应为 列x行，例如 42x50');
+      return;
+    }
+    final cols = int.parse(m.group(1)!);
+    final rows = int.parse(m.group(2)!);
+    if (cols < 2 || rows < 2) {
+      if (mounted) snack(context, '尺寸太小，至少 2x2');
+      return;
+    }
+    Prefs.setDouble('remote.defaultCols', cols.toDouble());
+    Prefs.setDouble('remote.defaultRows', rows.toDouble());
+    widget.client.defaultViewport = (cols: cols, rows: rows);
+    if (mounted) snack(context, '默认尺寸已设为 ${cols}x$rows');
+  }
+
+  void _clearDefaultViewport() {
+    Prefs.setDouble('remote.defaultCols', 0);
+    Prefs.setDouble('remote.defaultRows', 0);
+    _updateDefaultViewport(context);
+    snack(context, '已改回自动估算尺寸');
+  }
+
+  void _showActivitySheet() {
+    final items =
+        widget.client.activities[widget.session.sid] ?? const <HookActivity>[];
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: CcColors.panel,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 360,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Text(
+                  '活动',
+                  style: TextStyle(
+                    color: CcColors.text,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: items.isEmpty
+                    ? const Center(
+                        child: Text(
+                          '暂无活动',
+                          style: TextStyle(color: CcColors.muted),
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        children: [
+                          for (final a in items.take(40))
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _activityRow(a, expanded: true),
+                            ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // Accumulated vertical drag distance, converted to wheel ticks once it
   // crosses a line-height threshold (swipe-to-scroll).
   double _scrollAccum = 0;
@@ -2192,6 +2305,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _updateDefaultViewport(context);
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -2251,10 +2365,25 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             icon: const Icon(Icons.more_vert),
             tooltip: '更多',
             onSelected: (v) {
+              if (v == 'activity') _showActivitySheet();
+              if (v == 'default_size') unawaited(_setDefaultViewport());
+              if (v == 'clear_default_size') _clearDefaultViewport();
               if (v == 'clear') _clearScrollback();
               if (v == 'histmode') _toggleHistoryMode();
             },
             itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'activity',
+                child: Text(
+                  '活动${(widget.client.activities[widget.session.sid] ?? const <HookActivity>[]).isEmpty ? "" : " (${(widget.client.activities[widget.session.sid] ?? const <HookActivity>[]).length})"}',
+                ),
+              ),
+              const PopupMenuItem(value: 'default_size', child: Text('设置默认尺寸')),
+              const PopupMenuItem(
+                value: 'clear_default_size',
+                child: Text('默认尺寸改回自动'),
+              ),
+              const PopupMenuDivider(),
               const PopupMenuItem(
                 value: 'clear',
                 child: Text('清空本地历史(消除上滑乱码)'),
@@ -2339,7 +2468,6 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                       ),
                     ),
                   ),
-                _activityOverlay(),
               ],
             ),
           ),
@@ -2353,67 +2481,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // _voiceHud is a thin diagnostics line above the key bar (only while the voice
   // monitor is on) showing the recognizer's latest event — status / partial /
   // final / error — so a silent failure is visible at a glance.
-  Widget _activityOverlay() {
-    final items = widget.client.activities[widget.session.sid] ?? const <HookActivity>[];
-    if (items.isEmpty) return const SizedBox.shrink();
-    final shown = _activityOpen ? items.take(5).toList() : items.take(1).toList();
-    return Positioned(
-      left: 8,
-      right: 8,
-      bottom: 8,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() => _activityOpen = !_activityOpen),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: const Color(0xDD16181C),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0x33FFFFFF)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.bolt_rounded,
-                      size: 14,
-                      color: CcColors.accentBright,
-                    ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      '活动',
-                      style: TextStyle(
-                        color: CcColors.text,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const Spacer(),
-                    Icon(
-                      _activityOpen
-                          ? Icons.keyboard_arrow_down_rounded
-                          : Icons.keyboard_arrow_up_rounded,
-                      size: 16,
-                      color: CcColors.muted,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                for (final a in shown) _activityRow(a),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _activityRow(HookActivity a) {
+  Widget _activityRow(HookActivity a, {bool expanded = false}) {
     final detail = a.detail;
     return Padding(
       padding: const EdgeInsets.only(top: 2),
@@ -2439,7 +2507,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: CcColors.text, fontSize: 11),
                 ),
-                if (_activityOpen && detail.isNotEmpty)
+                if (expanded && detail.isNotEmpty)
                   Text(
                     detail,
                     maxLines: 2,
