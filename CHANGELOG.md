@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.18] - 2026-06-29
+
+### Fixed
+
+- **手机端非活跃会话不再按电脑宽度排版溢出（term.open 带上手机尺寸）** — 手机打开一个「没在聊天」的会话时，电脑端 `_termOpen` 在收到手机尺寸**之前**就按当前（电脑）PTY 宽度回放了历史，而空闲 agent 不会自动重画，于是历史按电脑宽度排版、超出手机屏右边、单词挤成一团；点「适配」「刷新」也没用（reload 重置后回放仍早于 resize）。现在 client 记住每个会话上次的手机视口尺寸，`term.open` 带上它；host 收到后**先把 PTY resize 到手机宽度、让全屏 agent 据此重画，再回放历史**。仍受退化保护约束（cols>=20 && rows>=8 才生效）。
+
 ## [0.6.17] - 2026-06-29
 
 ### Changed
