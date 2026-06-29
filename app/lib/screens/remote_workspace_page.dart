@@ -2233,8 +2233,8 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             icon: const Icon(Icons.fit_screen_rounded),
             tooltip: '适配当前屏幕(按本设备重画)',
             onPressed: () {
-              widget.client.adoptSize(widget.session.sid);
-              snack(context, '已按当前屏幕重新适配');
+              final sent = widget.client.adoptSize(widget.session.sid);
+              snack(context, '已适配 → 发送尺寸 $sent');
             },
           ),
           IconButton(

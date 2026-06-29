@@ -841,13 +841,21 @@ class RemoteClient extends RemoteChannel {
   // the phone). Called when a session screen opens / rebinds, and from the
   // 适配 button. Sends the local Terminal's current cells, which the host
   // resizes the PTY to → the agent redraws at this device's width.
-  void adoptSize(String sid) {
+  // Returns a short status (what was sent / why not) for a diagnostic snack.
+  String adoptSize(String sid) {
+    // Prefer the last real laid-out viewport (recorded on every onResize) over
+    // the Terminal's current viewWidth, which can still be the default 80 right
+    // after a rebuild before the TerminalView has laid out.
+    final vp = _lastViewport[sid];
     final t = _terminals[sid];
-    if (t == null) return;
-    final w = t.viewWidth, h = t.viewHeight;
-    if (w > 0 && h > 0) {
+    final w = vp?.cols ?? t?.viewWidth ?? 0;
+    final h = vp?.rows ?? t?.viewHeight ?? 0;
+    if (t == null && vp == null) return 'no-term';
+    if (w >= 20 && h >= 8) {
       send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
+      return '${w}x$h';
     }
+    return 'skip ${w}x$h (vw=${t?.viewWidth})';
   }
 
   @override

@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.20] - 2026-06-29
+
+### Fixed
+
+- **多设备「夺回尺寸」更可靠 + 适配按钮回显发送尺寸** — 实测从 web 看过的会话 host PTY 被钉成 web 的 151 列、手机再看夺不回。`adoptSize` 之前读 `Terminal.viewWidth`，刚 rebuild 还没布局时它可能仍是默认 80，发出去就是错的；现在优先用 `onResize` 记录的最后真实视口 `_lastViewport`（不足退化阈值则跳过不发）。同时「适配」按钮的提示改成回显实际发送的尺寸（如「已适配 → 发送尺寸 41x52」），用于定位手机到底发了多大、是否真的没夺回。
+
 ## [0.6.19] - 2026-06-29
 
 ### Fixed
