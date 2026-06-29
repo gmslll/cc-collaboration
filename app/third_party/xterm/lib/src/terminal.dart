@@ -59,15 +59,6 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   TerminalMouseHandler? mouseHandler;
 
-  /// When true, the mouse wheel is translated into PageUp/PageDown keys instead
-  /// of moving a local Scrollable or being reported to the app. Set by the app
-  /// for TUIs (e.g. Codex) that ignore mouse reporting AND keep no terminal
-  /// scrollback — they repaint their transcript in place and only scroll it in
-  /// response to PageUp/PageDown. For such an app the wheel would otherwise do
-  /// nothing (no scrollback to move, no mouse mode to report to). See
-  /// [TerminalScrollGestureHandler].
-  bool pageScroll = false;
-
   /// The callback that is called when the terminal receives a unrecognized
   /// escape sequence.
   void Function(String code, List<String> args)? onPrivateOSC;

@@ -2095,16 +2095,12 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   }
 
   // Claude runs as a full-screen TUI, so the phone scrolls it by sending wheel
-  // reports to the host like a Mac wheel would.
+  // reports to the host like a Mac wheel would. Codex keeps its transcript in
+  // the main buffer with real scrollback; even when it enables mouse reporting,
+  // the phone must keep native scrollback enabled so swipe-up can read history.
   bool get _usesHostWheelScroll =>
-      !_isCodex && _term.mouseMode.reportScroll;
-
-  // codex (verified on 0.142.4) ignores the mouse and keeps NO terminal
-  // scrollback — it repaints its transcript in place and scrolls it only on
-  // PageUp/PageDown. So the phone drives the HOST codex with page keys (it then
-  // scrolls and rebroadcasts the repaint) rather than scrolling a local
-  // scrollback that doesn't exist.
-  bool get _isCodex => widget.session.agent.trim().toLowerCase() == 'codex';
+      widget.session.agent.trim().toLowerCase() != 'codex' &&
+      _term.mouseMode.reportScroll;
 
   void _scrollLocal(bool up, {int ticks = 1}) {
     if (!_termScroll.hasClients) return;
@@ -2117,13 +2113,6 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   }
 
   void _wheel(bool up, {int ticks = 1}) {
-    if (_isCodex) {
-      // PageUp = \x1b[5~, PageDown = \x1b[6~. One page key per tick, sent to the
-      // host codex so it scrolls its transcript and the repaint streams back.
-      widget.client
-          .sendKeys(widget.session.sid, (up ? '\x1b[5~' : '\x1b[6~') * ticks);
-      return;
-    }
     if (!_usesHostWheelScroll) {
       _scrollLocal(up, ticks: ticks);
       return;
@@ -2174,34 +2163,30 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // crosses a line-height threshold (swipe-to-scroll).
   double _scrollAccum = 0;
   static const double _linePx = 22;
-  // codex scrolls a whole page per PageUp/PageDown, so require a longer swipe
-  // per key than the per-line wheel tick — a flick shouldn't fly through pages.
-  static const double _pagePx = 140;
 
   void _onPointerMove(PointerMoveEvent e) {
-    // Synthesize scroll for host-scrolled TUIs (wheel-per-line) and for codex
-    // (page-per-swipe). Plain shells keep native touch scrollback untouched.
-    if (!_isCodex && !_usesHostWheelScroll) return;
+    // Only synthesize wheel for host-scrolled TUIs. Codex and plain shells keep
+    // native touch scrollback (and selection) untouched since Listener doesn't
+    // claim the gesture.
+    if (!_usesHostWheelScroll) return;
     // Don't scroll while a long-press selection is in progress, or the screen
     // would scroll out from under the selection (selectWord sets the selection
     // on long-press start; cleared on the next pointer-down — see the Listener).
     if (_controller.selection != null) return;
-    final threshold = _isCodex ? _pagePx : _linePx;
     _scrollAccum += e.delta.dy;
-    while (_scrollAccum.abs() >= threshold) {
+    while (_scrollAccum.abs() >= _linePx) {
       final up = _scrollAccum > 0; // finger down → reveal earlier output
       _wheel(up);
-      _scrollAccum += up ? -threshold : threshold;
+      _scrollAccum += up ? -_linePx : _linePx;
     }
   }
 
-  // _wrapScroll disables the TerminalView's OWN inner Scrollable for the TUIs
-  // whose scroll we synthesize ourselves: host-wheel TUIs (claude) and codex
-  // (page keys). codex keeps no scrollback, so its inner Scrollable has nothing
-  // to move and would only swallow the swipe — disabling it lets _onPointerMove
-  // drive the host. The inner Scrollable sets no explicit physics, so a
-  // ScrollConfiguration override takes effect.
-  Widget _wrapScroll(Widget child) => (_usesHostWheelScroll || _isCodex)
+  // _wrapScroll disables the TerminalView's OWN inner Scrollable only for
+  // host-scrolled TUIs. Codex must keep native scrollback because its transcript
+  // lives in the main buffer; otherwise swipe-up cannot reveal past output.
+  // The inner Scrollable sets no explicit physics, so a ScrollConfiguration
+  // override takes effect.
+  Widget _wrapScroll(Widget child) => _usesHostWheelScroll
       ? ScrollConfiguration(behavior: const _NoUserScroll(), child: child)
       : child;
 

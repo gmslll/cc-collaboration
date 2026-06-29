@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/widgets.dart';
 import 'package:xterm/core.dart';
 import 'package:xterm/src/ui/infinite_scroll_view.dart';
@@ -125,27 +124,6 @@ class _TerminalScrollGestureHandlerState
 
   @override
   Widget build(BuildContext context) {
-    // Page-scroll TUIs (e.g. Codex): the app ignores the mouse entirely AND
-    // keeps no terminal scrollback — it repaints its transcript in place and
-    // only scrolls it on PageUp/PageDown. Neither forwarding the wheel (no
-    // mouse mode) nor a local Scrollable (no scrollback) does anything, so
-    // translate each wheel notch into one page key sent to the process. (Main
-    // buffer only; an alt screen still forwards the wheel below.)
-    if (widget.terminal.pageScroll && !isAltBuffer) {
-      return Listener(
-        onPointerSignal: (event) {
-          if (event is PointerScrollEvent) {
-            widget.terminal.keyInput(
-              event.scrollDelta.dy < 0
-                  ? TerminalKey.pageUp
-                  : TerminalKey.pageDown,
-            );
-          }
-        },
-        child: widget.child,
-      );
-    }
-
     // Forward the wheel to the process when it's in the alt buffer OR it asked
     // for scroll reports (codex in the main buffer). Otherwise (plain shell)
     // fall through to the local Scrollable that moves terminal scrollback.

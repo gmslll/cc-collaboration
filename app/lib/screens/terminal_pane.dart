@@ -227,16 +227,13 @@ class TerminalSession {
        title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
            : workdir {
-    // claude is a full-screen TUI that enables mouse reporting and scrolls its
-    // own view in response to wheel reports; the WheelMouseHandler emits the
-    // correct X11 codes so the scroll_handler can forward the wheel to it.
+    // claude AND codex are full-screen TUIs that enable mouse reporting and
+    // scroll their OWN view in response to wheel reports (cmux scrolls codex
+    // fine this way). Forward the wheel with the correct X11 codes for every
+    // agent; the scroll_handler routes the wheel into mouseInput whenever the
+    // app reports scroll — for both alt and main buffer — so codex (main buffer)
+    // now scrolls too instead of its wheel being eaten by a local Scrollable.
     terminal.mouseHandler = const WheelMouseHandler();
-    // codex (verified on 0.142.4) does NOT enable mouse reporting and keeps no
-    // terminal scrollback — it repaints its transcript in place and scrolls it
-    // only on PageUp/PageDown (the mouse wheel is ignored outright). Mark its
-    // terminal so the wheel is translated into page keys; otherwise the wheel
-    // does nothing (no mouse mode to report to, no scrollback to move).
-    terminal.pageScroll = agentKind == 'codex';
   }
 
   // label is what the UI shows: the user-given name, else the derived title.
@@ -407,12 +404,20 @@ class TerminalSession {
     // (see _maybeCaptureAgentId) and resume that EXACT session on reopen, falling
     // back to the cwd's most-recent rollout if we never captured one.
     //
+    // --no-alt-screen: run codex in INLINE mode so it commits its transcript to
+    // the terminal's native scrollback instead of repainting a fixed full-screen
+    // view in place. Verified (codex 0.142.4): the default full-screen view keeps
+    // NO scrollback and ignores the mouse — its conversation can't be scrolled by
+    // wheel/PageUp/arrows (history is only reachable via a pop-up transcript
+    // pager). Inline mode makes the wheel scroll native scrollback AND makes the
+    // scrolled-up history selectable/copyable, with no per-surface key synthesis.
+    //
     // --dangerously-bypass-hook-trust: codex shows a blocking "trust hooks"
     // dialog whenever a hook config is new/changed (we install the bus hook into
     // ~/.codex/hooks.json). For the app's own env-guarded hook that dialog is
     // just friction — and it would stall non-interactive launches — so we vouch
     // for our own hook here (global flag, before the subcommand).
-    final cdx = '$inv --dangerously-bypass-hook-trust';
+    final cdx = '$inv --no-alt-screen --dangerously-bypass-hook-trust';
     if (!resume) return '$prefix$cdx';
     return agentSessionId == null
         ? '$prefix$cdx resume --last'

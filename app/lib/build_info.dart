@@ -2,7 +2,7 @@
 // confirm AT A GLANCE which build a device is actually running — desktop and
 // phone must both show the latest tag for cross-device features (e.g. remote
 // workspace/project sync) to work. Bump it whenever you cut a build to verify.
-const String kBuildMarker = 'b31 · 2026-06-29 · codex 滚动改翻页键(实测无视滚轮,只认PageUp/PageDown)';
+const String kBuildMarker = 'b32 · 2026-06-29 · codex 改 inline 模式(--no-alt-screen)→原生滚轮滚动+选区';
 
 // kAppVersion is the semver this build reports (matches the v<X.Y.Z> release
 // tag), injected at build time from the repo VERSION file via

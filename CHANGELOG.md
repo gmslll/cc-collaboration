@@ -6,11 +6,17 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
-## [0.6.23] - 2026-06-29
+## [0.6.24] - 2026-06-29
 
 ### Fixed
 
-- **codex 终端滚轮终于能滚（改用 PageUp/PageDown，不再转发滚轮）** — 实测 codex-cli 0.142.4：它**完全无视鼠标滚轮**（喂 SGR/X10 滚轮报告 0 字节反应），启动/聊天界面都不开任何鼠标上报模式（`?1000/1002/1003/1006`），而是用绝对光标定位原地重绘 transcript、**不留终端 scrollback**（`lines` 恒 = 视口高）。所以之前「把滚轮转发给 codex（像 cmux）」整条路走不通——codex 根本不读鼠标。实测它只认 **PageUp(`\x1b[5~`)/PageDown(`\x1b[6~`)** 翻页。新增 `Terminal.pageScroll` 标志（codex 置 true），`scroll_handler` 把每格滚轮翻译成一次翻页键发给进程；桌面（terminal_pane）、镜像（remote_client.terminalFor 按会话 agent 判定）、手机触摸（remote_workspace_page 滑动/滚动键，按页阈值）三处一致。claude 仍走原本的滚轮转发，不变。
+- **codex 终端终于能滚动 + 选区（改用 inline 模式 `--no-alt-screen`，回退 0.6.23 的翻页键方案）** — 实测坐实（codex 0.142.4，PTY 抓包 + 视觉对比 + 二进制 keymap）：codex 默认在主缓冲里**整屏原地重绘**对话、**不留终端 scrollback**，且**完全无视鼠标**——它的主聊天界面**结构上就不支持原地滚动**（滚轮/PageUp/方向键都不行；历史只能靠一个弹出式 transcript 分页器看）。所以 0.6.23 的「滚轮→PageUp」必然无效（PageUp 只在那个分页器里管用），本版**全部回退**。改用 codex 官方 flag `--no-alt-screen`（inline 模式，"preserving terminal scrollback history"）：codex 把对话提交进终端原生 scrollback，于是 cc-handoff 终端的**原生滚轮滚动 + 拖拽选区/复制一起可用**，桌面/web/手机同一套路径、无需合成按键。claude 路径不变。注意：**已在运行的 codex 会话仍是老模式，需重开该会话才生效**。
+
+## [0.6.23] - 2026-06-29
+
+### Reverted
+
+- 本版的「codex 滚轮→PageUp」尝试已在 0.6.24 全部回退（PageUp 在 codex 主界面无效，详见 0.6.24）。原始尝试：新增 `Terminal.pageScroll` 把滚轮翻译成翻页键发给 codex。
 
 ## [0.6.22] - 2026-06-29
 
