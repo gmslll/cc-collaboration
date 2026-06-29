@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cc-handoff screen share</title>
+    <link rel="stylesheet" href="./screen-share.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar">
+        <div>
+          <div class="eyebrow">P2P Screen Share</div>
+          <h1>屏幕共享</h1>
+        </div>
+        <div class="identity" id="identity">未登录</div>
+      </section>
+
+      <section class="panel auth-panel" id="authPanel" hidden>
+        <h2>需要登录</h2>
+        <p>请先在同一个 relay 的 Web 客户端登录，电脑端和观看端需要使用同一个账号。</p>
+        <a class="button primary" href="/app/">打开 Web 客户端登录</a>
+      </section>
+
+      <section class="panel control-panel" id="controlPanel">
+        <div class="mode">
+          <button id="hostMode" class="mode-button" type="button">发起共享</button>
+          <button id="viewerMode" class="mode-button" type="button">观看</button>
+        </div>
+
+        <label class="field">
+          <span>房间码</span>
+          <input id="roomInput" autocomplete="off" spellcheck="false" maxlength="64" />
+        </label>
+
+        <div class="actions">
+          <button id="startButton" class="button primary" type="button">开始</button>
+          <button id="stopButton" class="button" type="button" disabled>停止</button>
+        </div>
+
+        <div class="share-link" id="shareLinkWrap" hidden>
+          <span>观看链接</span>
+          <button id="copyLink" class="link-button" type="button">复制</button>
+          <input id="shareLink" readonly />
+        </div>
+      </section>
+
+      <section class="stage">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="empty" id="emptyState">等待开始</div>
+      </section>
+
+      <section class="status" id="status">未连接</section>
+    </main>
+
+    <script src="./screen-share.js"></script>
+  </body>
+</html>

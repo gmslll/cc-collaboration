@@ -7,6 +7,7 @@ import '../local/git.dart';
 import '../local/hook_activity.dart';
 import '../local/session_overview.dart';
 import '../local/worktrees.dart';
+import '../screen_share/webrtc.dart';
 import '../screens/terminal_pane.dart';
 import '../widgets.dart' show kIgnoredEntries;
 import 'file_fs.dart';
@@ -152,6 +153,10 @@ class RemoteHost extends RemoteChannel {
     sendFrame: send,
     onComplete: _onFileComplete,
   );
+
+  NativeShareHost? _shareHostInst;
+  NativeShareHost get _shareHost =>
+      _shareHostInst ??= NativeShareHost(sendFrame: send);
 
   // _onFileComplete routes a finished inbound file: a session-tagged file (sid)
   // is pasted into that session's terminal as a path the agent can read; an
@@ -315,6 +320,7 @@ class RemoteHost extends RemoteChannel {
       _clients--;
       _dropClient(connId);
       _cancelClientXfers(connId); // abort any in-flight send to this phone
+      if (_shareHostInst?.viewer == connId) unawaited(_shareHost.stop());
       _clientNames.remove(connId);
     }
     notifyListeners();
@@ -328,6 +334,10 @@ class RemoteHost extends RemoteChannel {
     // to the receiver. See _dispatchFile.
     if (t is String && t.startsWith('file.')) {
       _dispatchFile(t, f);
+      return;
+    }
+    if (t is String && t.startsWith('share.')) {
+      unawaited(_dispatchShare(t, f));
       return;
     }
     switch (t) {
@@ -423,6 +433,46 @@ class RemoteHost extends RemoteChannel {
         _cfgOp(f);
       case 'wt.list':
         _wtList(f);
+    }
+  }
+
+  Future<void> _dispatchShare(String t, Map<String, dynamic> f) async {
+    final from = (f['from'] as num?)?.toInt();
+    if (from == null) return;
+    try {
+      switch (t) {
+        case 'share.sources':
+          final sources = await _shareHost.listSources();
+          send({
+            't': 'share.sources.ok',
+            'to': from,
+            'items': [for (final s in sources) s.toJson()],
+          });
+        case 'share.start':
+          final sourceId = (f['sourceId'] as String?) ?? '';
+          if (sourceId.isEmpty) {
+            send({'t': 'share.err', 'to': from, 'msg': 'source required'});
+            return;
+          }
+          final currentViewer = _shareHostInst?.viewer;
+          if (currentViewer != null && currentViewer != from) {
+            send({'t': 'share.err', 'to': from, 'msg': '屏幕共享正在被另一台设备观看'});
+            return;
+          }
+          await _shareHost.start(from, sourceId);
+        case 'share.answer':
+          if (_shareHostInst?.viewer != from) return;
+          await _shareHost.applyAnswer(f['sdp']);
+        case 'share.ice':
+          if (_shareHostInst?.viewer != from) return;
+          await _shareHost.addIce(f['candidate']);
+        case 'share.stop':
+          if (_shareHostInst?.viewer != from) return;
+          await _shareHost.stop();
+          send({'t': 'share.stopped', 'to': from});
+      }
+    } catch (e) {
+      send({'t': 'share.err', 'to': from, 'msg': '$e'});
     }
   }
 
@@ -946,5 +996,11 @@ class RemoteHost extends RemoteChannel {
     } catch (e) {
       send({'t': 'cfg.err', 'to': to, 'msg': '$e'});
     }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_shareHostInst?.stop());
+    super.dispose();
   }
 }

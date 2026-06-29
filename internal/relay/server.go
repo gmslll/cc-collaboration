@@ -40,6 +40,9 @@ var uiFiles embed.FS
 //go:embed all:app
 var appFiles embed.FS
 
+//go:embed screen_share/*
+var screenShareFiles embed.FS
+
 type Server struct {
 	Store  *store.Store
 	Tokens *auth.Tokens
@@ -53,6 +56,10 @@ type Server struct {
 	// /v1/users/{id}/sessions). Lazily created in Handler; in-memory/transient,
 	// TTL'd and cleared on presence offline.
 	Sessions *sessionRegistry
+	// ScreenShareBroker pipes WebRTC signaling frames for the browser screen
+	// share feature. It is separate from WsBroker so remote-workspace frames and
+	// screen-share SDP/ICE frames cannot cross streams.
+	ScreenShareBroker *screenShareBroker
 	// SeedAdmins are operator-configured admin identities (from -admins /
 	// RELAY_ADMINS). They are always admin even without a users row, so an
 	// operator can never be locked out. Effective admin = SeedAdmins ∪
@@ -73,6 +80,9 @@ func (s *Server) Handler() http.Handler {
 	if s.Sessions == nil {
 		s.Sessions = newSessionRegistry()
 	}
+	if s.ScreenShareBroker == nil {
+		s.ScreenShareBroker = newScreenShareBroker()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
@@ -80,6 +90,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ui", s.uiIndex)
 	mux.Handle("GET /ui/", http.FileServerFS(uiFiles))
 	mux.Handle("GET /app/", http.FileServerFS(appFiles))
+	mux.HandleFunc("/share", s.screenShareIndex)
+	mux.Handle("GET /share/", screenShareFileServer())
 
 	api := http.NewServeMux()
 	api.HandleFunc("POST /v1/handoffs", s.submit)
@@ -140,6 +152,8 @@ func (s *Server) Handler() http.Handler {
 	// /v1/login special-case above.
 	mux.Handle("GET /v1/ws",
 		auth.MiddlewareAllowingQueryToken(resolver)(http.HandlerFunc(s.ws)))
+	mux.Handle("GET /v1/screen-share/ws",
+		auth.MiddlewareAllowingQueryToken(resolver)(http.HandlerFunc(s.screenShareWS)))
 	mux.Handle("/v1/", auth.Middleware(resolver)(api))
 	return logging(mux)
 }
@@ -206,6 +220,15 @@ func (s *Server) uiIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/ui/", http.StatusFound)
+}
+
+func (s *Server) screenShareIndex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	http.Redirect(w, r, "/share/", http.StatusFound)
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {

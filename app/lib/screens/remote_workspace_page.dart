@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:xterm/xterm.dart';
@@ -16,6 +17,7 @@ import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
 import '../remote/file_transfer.dart';
 import '../remote/remote_client.dart';
+import '../screen_share/models.dart';
 import '../syntax.dart';
 import '../terminal_mouse.dart' show terminalWheel;
 import '../theme.dart';
@@ -284,6 +286,96 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     );
   }
 
+  void _showScreenShare() {
+    _c.requestShareSources();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: CcColors.panel,
+      builder: (_) => SafeArea(
+        child: ListenableBuilder(
+          listenable: _c,
+          builder: (context, _) {
+            final sources = _c.shareSources;
+            return ListView(
+              shrinkWrap: true,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: Text(
+                    '屏幕共享',
+                    style: TextStyle(
+                      color: CcColors.text,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (_c.shareLoading)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_c.shareError != null)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      '无法获取共享源：${_c.shareError}',
+                      style: const TextStyle(color: CcColors.danger),
+                    ),
+                  )
+                else if (sources.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text(
+                      '电脑端没有返回可共享的屏幕或窗口。请确认电脑端已开启「共享工作区」，并已授予屏幕录制权限。',
+                      style: TextStyle(color: CcColors.muted),
+                    ),
+                  )
+                else
+                  for (final source in sources)
+                    ListTile(
+                      leading: Icon(
+                        source.type.contains('window')
+                            ? Icons.web_asset_rounded
+                            : Icons.monitor_rounded,
+                        color: CcColors.accentBright,
+                      ),
+                      title: Text(
+                        source.name,
+                        style: const TextStyle(color: CcColors.text),
+                      ),
+                      subtitle: Text(
+                        source.type,
+                        style: const TextStyle(color: CcColors.muted),
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openScreenShare(source);
+                      },
+                    ),
+                ListTile(
+                  leading: const Icon(Icons.refresh_rounded),
+                  title: const Text('刷新列表'),
+                  onTap: _c.requestShareSources,
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openScreenShare(ShareSource source) async {
+    await _c.shareViewer.init();
+    _c.startShare(source);
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ScreenShareViewerPage(client: _c, source: source),
+      ),
+    );
+  }
+
   // _xferTile renders one in-flight transfer: a direction icon, the file name,
   // a progress bar (indeterminate while still 等待接受) and a status line.
   Widget _xferTile(FileXfer x) {
@@ -424,6 +516,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 ),
                 onPressed: _c.connected ? _showFileTransfer : null,
               ),
+            IconButton(
+              tooltip: '屏幕共享',
+              icon: const Icon(Icons.desktop_windows_rounded),
+              onPressed: _c.connected ? _showScreenShare : null,
+            ),
             IconButton(
               tooltip: '通知',
               icon: Badge(
@@ -1636,6 +1733,100 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       okLabel: '添加',
     );
     if (src != null) _c.addProject(ws, src);
+  }
+}
+
+class ScreenShareViewerPage extends StatefulWidget {
+  final RemoteClient client;
+  final ShareSource source;
+
+  const ScreenShareViewerPage({
+    super.key,
+    required this.client,
+    required this.source,
+  });
+
+  @override
+  State<ScreenShareViewerPage> createState() => _ScreenShareViewerPageState();
+}
+
+class _ScreenShareViewerPageState extends State<ScreenShareViewerPage> {
+  RemoteClient get _c => widget.client;
+
+  @override
+  void dispose() {
+    unawaited(_c.stopShare());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _c,
+      builder: (context, _) => Scaffold(
+        appBar: AppBar(
+          title: Text(widget.source.name),
+          actions: [
+            IconButton(
+              tooltip: '停止共享',
+              icon: const Icon(Icons.stop_circle_outlined),
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+          ],
+        ),
+        body: DecoratedBox(
+          decoration: appGradient,
+          child: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                color: CcColors.panel,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 7,
+                ),
+                child: Row(
+                  children: [
+                    statusDot(
+                      _c.shareError == null ? CcColors.ok : CcColors.danger,
+                      size: 7,
+                      glow: true,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _c.shareError ?? _c.shareStatus,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _c.shareError == null
+                              ? CcColors.muted
+                              : CcColors.danger,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  color: Colors.black,
+                  child: _c.shareViewer.initialized
+                      ? RTCVideoView(
+                          _c.shareViewer.renderer,
+                          objectFit:
+                              RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                        )
+                      : const Center(child: CircularProgressIndicator()),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

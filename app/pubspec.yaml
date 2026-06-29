@@ -54,6 +54,7 @@ dependencies:
   file_picker: ^8.0.0 # pick a file to send (Mac host + phone client)
   share_plus: ^10.0.0 # share a received file out to the phone's Files app
   device_info_plus: ^10.1.0 # phone reports its device name to the desktop host
+  flutter_webrtc: ^1.2.0 # app-native screen/window sharing over WebRTC
 dev_dependencies:
   flutter_test:
     sdk: flutter

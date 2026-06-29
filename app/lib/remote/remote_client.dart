@@ -7,6 +7,8 @@ import 'package:xterm/xterm.dart';
 import '../local/hook_activity.dart';
 import '../local/session_overview.dart';
 import '../notifications.dart';
+import '../screen_share/models.dart';
+import '../screen_share/webrtc.dart';
 import '../terminal_mouse.dart';
 import 'file_fs.dart';
 import 'file_transfer.dart';
@@ -172,6 +174,22 @@ class RemoteClient extends RemoteChannel {
   // streamed output). Updated on each `screen` reply.
   Map<String, String> screens = {};
   Map<String, List<HookActivity>> activities = {};
+
+  List<ShareSource> shareSources = [];
+  bool shareLoading = false;
+  String? shareError;
+  String shareStatus = '未连接';
+  Timer? _shareSourcesTimer;
+  NativeShareViewer? _shareViewer;
+  NativeShareViewer get shareViewer =>
+      _shareViewer ??= NativeShareViewer(sendFrame: send)
+        ..addListener(_onShareViewerChanged);
+
+  void _onShareViewerChanged() {
+    final viewer = _shareViewer;
+    if (viewer != null) shareStatus = viewer.status;
+    notifyListeners();
+  }
 
   // onReplyText fires when the desktop pushes an agent's clean reply text for a
   // watched session (the terminal screen reads it aloud). Not a ChangeNotifier
@@ -483,7 +501,16 @@ class RemoteClient extends RemoteChannel {
   }
 
   @override
-  void onDisconnected() => _hostOnline = false;
+  void onDisconnected() {
+    _hostOnline = false;
+    _shareSourcesTimer?.cancel();
+    _shareSourcesTimer = null;
+    if (shareLoading) {
+      shareLoading = false;
+      shareError = '连接已断开';
+    }
+    unawaited(_shareViewer?.stop(closeRenderer: false));
+  }
 
   @override
   void onPeer(int connId, String role, bool connected) {
@@ -530,6 +557,10 @@ class RemoteClient extends RemoteChannel {
     // file) go to the receiver.
     if (t is String && t.startsWith('file.')) {
       _dispatchFile(t, f);
+      return;
+    }
+    if (t is String && t.startsWith('share.')) {
+      unawaited(_dispatchShare(t, f));
       return;
     }
     switch (t) {
@@ -732,6 +763,87 @@ class RemoteClient extends RemoteChannel {
 
   void refresh() => send({'t': 'list'});
 
+  Future<void> _dispatchShare(String t, Map<String, dynamic> f) async {
+    try {
+      switch (t) {
+        case 'share.sources.ok':
+          _shareSourcesTimer?.cancel();
+          _shareSourcesTimer = null;
+          final next = <ShareSource>[];
+          for (final item in (f['items'] as List? ?? [])) {
+            final source = ShareSource.fromJson(item);
+            if (source != null) next.add(source);
+          }
+          shareSources = next;
+          shareLoading = false;
+          shareError = null;
+          notifyListeners();
+        case 'share.offer':
+          final from = (f['from'] as num?)?.toInt();
+          if (from == null) return;
+          shareStatus = '正在建立连接';
+          notifyListeners();
+          await shareViewer.applyOffer(from, f['sdp']);
+        case 'share.ice':
+          await shareViewer.addIce(f['candidate']);
+        case 'share.state':
+          shareStatus = (f['state'] as String?) ?? shareStatus;
+          notifyListeners();
+        case 'share.stopped':
+          await shareViewer.stop(closeRenderer: false);
+          shareStatus = '电脑已停止共享';
+          notifyListeners();
+        case 'share.err':
+          _shareSourcesTimer?.cancel();
+          _shareSourcesTimer = null;
+          shareLoading = false;
+          shareError = (f['msg'] as String?) ?? '屏幕共享失败';
+          shareStatus = shareError!;
+          notifyListeners();
+      }
+    } catch (e) {
+      shareLoading = false;
+      shareError = '$e';
+      shareStatus = '$e';
+      notifyListeners();
+    }
+  }
+
+  void requestShareSources() {
+    _shareSourcesTimer?.cancel();
+    if (!_hostOnline) {
+      shareSources = [];
+      shareLoading = false;
+      shareError = '电脑端未在线，请先在电脑端开启「共享工作区」';
+      notifyListeners();
+      return;
+    }
+    shareSources = [];
+    shareLoading = true;
+    shareError = null;
+    notifyListeners();
+    send({'t': 'share.sources'});
+    _shareSourcesTimer = Timer(const Duration(seconds: 8), () {
+      shareLoading = false;
+      shareError = '电脑端没有响应';
+      notifyListeners();
+    });
+  }
+
+  void startShare(ShareSource source) {
+    shareStatus = '正在请求电脑共享 ${source.name}';
+    shareError = null;
+    notifyListeners();
+    send({'t': 'share.start', 'sourceId': source.id});
+  }
+
+  Future<void> stopShare() async {
+    send({'t': 'share.stop'});
+    await _shareViewer?.stop(closeRenderer: false);
+    shareStatus = '已停止';
+    notifyListeners();
+  }
+
   // sendKeys injects raw bytes into a session (for an on-screen key bar — phone
   // soft keyboards lack Esc / Ctrl / arrows that agent TUIs need).
   void sendKeys(String sid, String data) {
@@ -927,6 +1039,9 @@ class RemoteClient extends RemoteChannel {
       t.cancel();
     }
     _resizeRefreshAttempted.clear();
+    _shareSourcesTimer?.cancel();
+    _shareViewer?.removeListener(_onShareViewerChanged);
+    unawaited(_shareViewer?.stop());
     super.dispose();
   }
 
