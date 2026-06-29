@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-06-29
+
+### Fixed
+
+- **手机 Codex 终端竖排 / 滚动只见一列，从根上修复** — 0.6.9 在应用层拦截「过小 resize」只挡住了「手机→电脑」这一条路径，没挡住手机本地 xterm 缓冲区本身。路由切换/键盘动画时 TerminalView 的渲染框会短暂变成「细条」（满高、约 1 格宽），vendored xterm 的 `_updateViewportSize` 把列数向下取整成 1，直接把**手机本地缓冲区重排成 1 列**——每个字符单独换行（竖排）。Claude 用备用屏幕、电脑会重绘自愈；Codex 历史在主缓冲区滚动条里、没有重绘机制，于是竖排定格，上滑也只是看到更多单列行（即「能滚但只有一列」）。现在在 `render.dart` 退化布局保护里忽略 1×N / N×1 的瞬时布局；电脑 PTY、手机→电脑 resize 全部源于这次 resize，一处即护住所有路径。真机全屏终端不可能只有 1~2 列，故无副作用；0.6.9 的应用层保护保留作双保险。新增 widget 回归测试：细条布局不再把终端压成 1 列。
+
 ## [0.6.11] - 2026-06-29
 
 ### Added

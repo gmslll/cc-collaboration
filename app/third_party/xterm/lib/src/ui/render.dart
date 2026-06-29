@@ -336,10 +336,23 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       return;
     }
 
-    final viewportSize = TerminalSize(
-      size.width ~/ _painter.cellSize.width,
-      _viewportHeight ~/ _painter.cellSize.height,
-    );
+    final cols = size.width ~/ _painter.cellSize.width;
+    final rows = _viewportHeight ~/ _painter.cellSize.height;
+
+    // During a route push/pop animation the render box is briefly a thin sliver
+    // (full height, ~1 cell wide), so `cols` floors to 1. Reshaping the buffer
+    // to a single column wraps every glyph onto its own line ("竖排"), and a
+    // main-buffer TUI whose scrollback lives in this buffer (codex) has no way
+    // to redraw out of it — the collapsed history just stays, and scrolling it
+    // only reveals more single-column rows. Ignore such degenerate transient
+    // layouts: a real terminal viewport is never 1×N or N×1. The host PTY / the
+    // phone→host resize all flow from this resize, so guarding here protects
+    // every path at once.
+    if (cols < 2 || rows < 2) {
+      return;
+    }
+
+    final viewportSize = TerminalSize(cols, rows);
 
     if (_viewportSize != viewportSize) {
       _viewportSize = viewportSize;
