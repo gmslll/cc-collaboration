@@ -557,7 +557,7 @@ class RemoteHost extends RemoteChannel {
     // never redraws to correct it.
     final cols = (f['cols'] as num?)?.toInt() ?? 0;
     final rows = (f['rows'] as num?)?.toInt() ?? 0;
-    if (cols >= 20 && rows >= 8) s.resizeFromRemote(rows, cols);
+    if (cols >= 2 && rows >= 2) s.resizeFromRemote(rows, cols);
     final mode = (f['historyMode'] ?? 'text').toString();
     // Replay the FULL backlog so the phone can scroll back through history; the
     // phone re-wraps the plain text at its own width, so this stays readable.

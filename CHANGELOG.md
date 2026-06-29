@@ -6,6 +6,13 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.22] - 2026-06-29
+
+### Fixed
+
+- **大字号手机视口不再被误挡成默认 80（退化阈值降回 <2）** — 0.6.17 把退化保护抬到 `cols<20`，但字号调大后手机视口本就可能窄于 20 列，于是 render guard 一直挡、Terminal 卡在 xterm 默认 80、真实视口从没被记录（点「适配」只能发出 80×24）、内容溢出。降回只挡真正退化的 `cols<2`（仍防竖排，120ms debounce 吸收动画中间的窄帧）；host 下限、`adoptSize`、`term.open` 预 resize 同步降回 `>=2`。合法的窄视口（大字号）现在能正确被记录和发送。
+- **「适配」获取不到正确尺寸就不发送** — `adoptSize` 改为只用真实视口（本会话 `onResize` 记录的，或本机最近一次任意会话的屏幕尺寸），**不再 fallback 到 Terminal 的默认 80**；取不到（从没布局过）或退化（<2）时直接不发、按钮提示显示原因，绝不用错误尺寸覆盖 host PTY。
+
 ## [0.6.21] - 2026-06-29
 
 ### Fixed

@@ -850,20 +850,19 @@ class RemoteClient extends RemoteChannel {
   // resizes the PTY to → the agent redraws at this device's width.
   // Returns a short status (what was sent / why not) for a diagnostic snack.
   String adoptSize(String sid) {
-    // Prefer the last real laid-out viewport (recorded on every onResize) — for
-    // this sid, else this phone's last-known screen size — over the Terminal's
-    // current viewWidth, which can still be the default 80 right after a rebuild
-    // before the TerminalView has laid out.
+    // Use the real laid-out viewport (recorded on every onResize) for this sid,
+    // else this phone's last-known screen size. Deliberately NOT the Terminal's
+    // viewWidth — that's the default 80 until the view lays out, and sending it
+    // would pin the PTY to a wrong width (the bug being fixed). A large font
+    // makes a legit narrow viewport, so only the degenerate <2 is skipped.
     final vp = _lastViewport[sid] ?? _lastKnownViewport;
-    final t = _terminals[sid];
-    final w = vp?.cols ?? t?.viewWidth ?? 0;
-    final h = vp?.rows ?? t?.viewHeight ?? 0;
-    if (t == null && vp == null) return 'no-term';
-    if (w >= 20 && h >= 8) {
+    if (vp == null) return 'no-viewport-yet';
+    final w = vp.cols, h = vp.rows;
+    if (w >= 2 && h >= 2) {
       send({'t': 'term.resize', 'sid': sid, 'rows': h, 'cols': w});
       return '${w}x$h';
     }
-    return 'skip ${w}x$h (vw=${t?.viewWidth})';
+    return 'skip ${w}x$h';
   }
 
   @override

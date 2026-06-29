@@ -857,13 +857,12 @@ class TerminalSession {
   static const int _submitCheckLines = 8;
 
   // resizeFromRemote lets a connected client (phone / web) size the PTY to its
-  // viewport — whoever's watching redraws. The client's render layer already
-  // refuses degenerate (<20 col / <8 row) sizes, but a stale/old client could
-  // still send a sliver; reject it here too so the PTY is never pinned that
-  // narrow (which collapses the agent's UI into 竖排/稀疏散落). The floor only
-  // filters degenerate values — any real remote viewport is far larger.
+  // viewport — whoever's watching redraws. Only reject a truly degenerate
+  // sliver (<2 col/row, which would collapse the agent's UI into 竖排); a large
+  // font makes a legit phone viewport narrow (well under 20 cols), so don't
+  // reject that — it must reach the PTY or the phone overflows.
   void resizeFromRemote(int rows, int cols) {
-    if (rows >= 8 && cols >= 20) _pty?.resize(rows, cols);
+    if (rows >= 2 && cols >= 2) _pty?.resize(rows, cols);
   }
 
   // restoreLocalSize: the last phone detached — resize the PTY back to the
