@@ -165,9 +165,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   final TerminalPainter _painter;
   final _linePictureCache = <int, _LinePictureCache>{};
+  final _overlayRowPictureCache = <int, _OverlayRowPictureCache>{};
   final _overlayDirtyRows = _RowDirtyTracker();
   _ViewportContentCache? _viewportContentCache;
   TerminalPaintReason _nextPaintReason = TerminalPaintReason.initial;
+  BufferRange? _lastOverlaySelection;
+  List<BufferRange> _lastOverlayHighlights = const [];
+  int? _lastOverlayCursorRow;
+  String? _lastOverlayComposingText;
 
   var _stickToBottom = true;
   var _lastUsingAltBuffer = false;
@@ -264,6 +269,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   @override
   void dispose() {
     _clearViewportContentCache();
+    _clearOverlayRowPictureCache();
     _clearLinePictureCache();
     super.dispose();
   }
@@ -565,47 +571,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _pruneLinePictureCache(effectFirstLine, effectLastLine);
     profile?.cachedPictures = _linePictureCache.length;
 
-    if (_terminal.buffer.absoluteCursorY >= effectFirstLine &&
-        _terminal.buffer.absoluteCursorY <= effectLastLine) {
-      if (_isComposingText) {
-        _paintComposingText(canvas, offset + cursorOffset);
-        profile?.composingPaints++;
-      }
-
-      if (_shouldShowCursor) {
-        _painter.paintCursor(
-          canvas,
-          offset + cursorOffset,
-          cursorType: _cursorType,
-          hasFocus: _focusNode.hasFocus,
-        );
-        profile?.cursorPaints++;
-      }
-    }
-
-    _paintHighlights(
+    _paintOverlayLayer(
       canvas,
       offset,
-      _controller.highlights,
       effectFirstLine,
       effectLastLine,
       profile,
+      trustCleanRows: !_contentMayHaveChanged(paintReason),
     );
-
-    if (_controller.selection != null) {
-      _paintSelection(
-        canvas,
-        offset,
-        _controller.selection!,
-        effectFirstLine,
-        effectLastLine,
-        profile,
-      );
-    }
 
     if (debugProfilePaint) {
       lastPaintProfile = profile;
     }
+    _rememberOverlayState();
     _overlayDirtyRows.clear();
     _nextPaintReason = TerminalPaintReason.unknown;
   }
@@ -635,29 +613,56 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _markCursorDirtyRow(int firstLine, int lastLine) {
+    final previousRow = _lastOverlayCursorRow;
+    if (previousRow != null &&
+        previousRow >= firstLine &&
+        previousRow <= lastLine) {
+      _overlayDirtyRows.markRow(previousRow);
+    }
+    if (_lastOverlayComposingText != _composingText && previousRow != null) {
+      _overlayDirtyRows.markRow(previousRow);
+    }
     final row = _terminal.buffer.absoluteCursorY;
     if (row < firstLine || row > lastLine) return;
     _overlayDirtyRows.markRow(row);
   }
 
   void _markSelectionDirtyRows(int firstLine, int lastLine) {
+    final previous = _lastOverlaySelection?.normalized;
+    if (previous != null) {
+      _markRangeDirtyRows(previous, firstLine, lastLine);
+    }
     final selection = _controller.selection?.normalized;
     if (selection == null) return;
+    _markRangeDirtyRows(selection, firstLine, lastLine);
+  }
+
+  void _markRangeDirtyRows(BufferRange range, int firstLine, int lastLine) {
     _overlayDirtyRows.markRange(
-      selection.begin.y.clamp(firstLine, lastLine + 1),
-      (selection.end.y + 1).clamp(firstLine, lastLine + 1),
+      range.begin.y.clamp(firstLine, lastLine + 1),
+      (range.end.y + 1).clamp(firstLine, lastLine + 1),
     );
   }
 
   void _markHighlightDirtyRows(int firstLine, int lastLine) {
+    for (final range in _lastOverlayHighlights) {
+      _markRangeDirtyRows(range.normalized, firstLine, lastLine);
+    }
     for (final highlight in _controller.highlights) {
       final range = highlight.range?.normalized;
       if (range == null) continue;
-      _overlayDirtyRows.markRange(
-        range.begin.y.clamp(firstLine, lastLine + 1),
-        (range.end.y + 1).clamp(firstLine, lastLine + 1),
-      );
+      _markRangeDirtyRows(range, firstLine, lastLine);
     }
+  }
+
+  void _rememberOverlayState() {
+    _lastOverlaySelection = _controller.selection?.normalized;
+    _lastOverlayHighlights = [
+      for (final highlight in _controller.highlights)
+        if (highlight.range != null) highlight.range!.normalized,
+    ];
+    _lastOverlayCursorRow = _terminal.buffer.absoluteCursorY;
+    _lastOverlayComposingText = _composingText;
   }
 
   void _paintContentLayer(
@@ -741,6 +746,205 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         line.isWrapped,
         line.revision,
       );
+    }
+    return signature;
+  }
+
+  void _paintOverlayLayer(
+    Canvas canvas,
+    Offset offset,
+    int firstLine,
+    int lastLine,
+    TerminalRenderProfile? profile, {
+    required bool trustCleanRows,
+  }) {
+    _pruneOverlayRowPictureCache(firstLine, lastLine);
+    final charHeight = _painter.cellSize.height;
+    for (var row = firstLine; row <= lastLine; row++) {
+      var entry = _overlayRowPictureCache[row];
+      if (trustCleanRows && !_overlayDirtyRows.isDirty(row) && entry != null) {
+        profile?.overlayRowSignatureSkips++;
+        profile?.overlayRowCacheHits++;
+        _drawOverlayRowPicture(canvas, offset, row, charHeight, entry, profile);
+        continue;
+      }
+
+      final signature = _overlayRowSignature(row);
+      if (entry == null || entry.signature != signature) {
+        profile?.overlayRowCacheMisses++;
+        entry?.dispose();
+        Picture? picture;
+        if (signature != 0) {
+          final recorder = PictureRecorder();
+          final rowCanvas = Canvas(
+            recorder,
+            Rect.fromLTWH(0, 0, size.width, charHeight),
+          );
+          _paintOverlayRow(
+            rowCanvas,
+            Offset(0, -row * charHeight - _lineOffset),
+            row,
+            profile,
+          );
+          picture = recorder.endRecording();
+        }
+        entry = _OverlayRowPictureCache(signature, picture);
+        _overlayRowPictureCache[row] = entry;
+      } else {
+        profile?.overlayRowCacheHits++;
+      }
+
+      _drawOverlayRowPicture(canvas, offset, row, charHeight, entry, profile);
+    }
+    _pruneOverlayRowPictureCache(firstLine, lastLine);
+  }
+
+  void _drawOverlayRowPicture(
+    Canvas canvas,
+    Offset offset,
+    int row,
+    double charHeight,
+    _OverlayRowPictureCache entry,
+    TerminalRenderProfile? profile,
+  ) {
+    final picture = entry.picture;
+    if (picture == null) {
+      return;
+    }
+    canvas.save();
+    canvas.translate(
+      offset.dx,
+      offset.dy + (row * charHeight + _lineOffset).truncateToDouble(),
+    );
+    canvas.drawPicture(picture);
+    profile?.overlayRowPictureDraws++;
+    canvas.restore();
+  }
+
+  void _paintOverlayRow(
+    Canvas canvas,
+    Offset offset,
+    int row,
+    TerminalRenderProfile? profile,
+  ) {
+    if (_terminal.buffer.absoluteCursorY == row) {
+      if (_isComposingText) {
+        _paintComposingText(canvas, offset + cursorOffset);
+        profile?.composingPaints++;
+      }
+
+      if (_shouldShowCursor) {
+        _painter.paintCursor(
+          canvas,
+          offset + cursorOffset,
+          cursorType: _cursorType,
+          hasFocus: _focusNode.hasFocus,
+        );
+        profile?.cursorPaints++;
+      }
+    }
+
+    _paintHighlights(
+      canvas,
+      offset,
+      _controller.highlights,
+      row,
+      row,
+      profile,
+    );
+
+    final selection = _controller.selection;
+    if (selection != null) {
+      _paintSelection(
+        canvas,
+        offset,
+        selection,
+        row,
+        row,
+        profile,
+      );
+    }
+  }
+
+  int _overlayRowSignature(int row) {
+    var signature = 0;
+
+    for (final highlight in _controller.highlights) {
+      final range = highlight.range?.normalized;
+      if (range == null || range.begin.y > row || range.end.y < row) {
+        continue;
+      }
+      signature = Object.hash(
+        signature,
+        'h',
+        highlight.color,
+        _segmentSignatureForRow(range.toSegments(), row),
+      );
+    }
+
+    final selection = _controller.selection?.normalized;
+    if (selection != null &&
+        selection.begin.y <= row &&
+        selection.end.y >= row) {
+      signature = Object.hash(
+        signature,
+        's',
+        _painter.theme.selection,
+        _segmentSignatureForRow(selection.toSegments(), row),
+      );
+    }
+
+    if (_terminal.buffer.absoluteCursorY == row) {
+      if (_isComposingText) {
+        signature = Object.hash(
+          signature,
+          'i',
+          _composingText,
+          _terminal.cursor.foreground,
+          _painter.paintRevision,
+          _painter.cellSize.width,
+          _painter.cellSize.height,
+          _painter.textScaler,
+        );
+      }
+
+      if (_shouldShowCursor) {
+        signature = Object.hash(
+          signature,
+          'c',
+          _terminal.buffer.cursorX,
+          _cursorType,
+          _focusNode.hasFocus,
+          _painter.paintRevision,
+          _painter.cellSize.width,
+          _painter.cellSize.height,
+        );
+      }
+    }
+
+    if (signature == 0) {
+      return 0;
+    }
+    return Object.hash(signature, row, size.width, _painter.paintRevision);
+  }
+
+  int _segmentSignatureForRow(Iterable<BufferSegment> segments, int row) {
+    var signature = 0;
+    for (final segment in segments) {
+      if (segment.line < row) {
+        continue;
+      }
+      if (segment.line > row) {
+        break;
+      }
+      final start = (segment.start ?? 0).clamp(0, _terminal.viewWidth).toInt();
+      final end = (segment.end ?? _terminal.viewWidth)
+          .clamp(0, _terminal.viewWidth)
+          .toInt();
+      if (end <= start) {
+        continue;
+      }
+      signature = Object.hash(signature, start, end);
     }
     return signature;
   }
@@ -963,6 +1167,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _linePictureCache.clear();
   }
 
+  void _pruneOverlayRowPictureCache(int firstLine, int lastLine) {
+    _overlayRowPictureCache.removeWhere((line, entry) {
+      final remove = line < firstLine || line > lastLine;
+      if (remove) entry.dispose();
+      return remove;
+    });
+  }
+
+  void _clearOverlayRowPictureCache() {
+    for (final entry in _overlayRowPictureCache.values) {
+      entry.dispose();
+    }
+    _overlayRowPictureCache.clear();
+  }
+
   void _clearViewportContentCache() {
     _viewportContentCache?.dispose();
     _viewportContentCache = null;
@@ -1120,6 +1339,10 @@ class TerminalRenderProfile {
   var viewportContentCacheMisses = 0;
   var viewportContentPictureDraws = 0;
   var contentPicturesDrawn = 0;
+  var overlayRowCacheHits = 0;
+  var overlayRowCacheMisses = 0;
+  var overlayRowSignatureSkips = 0;
+  var overlayRowPictureDraws = 0;
   var cursorPaints = 0;
   var composingPaints = 0;
   var selectionRuns = 0;
@@ -1156,6 +1379,10 @@ class TerminalRenderProfile {
         'viewportContentCacheMisses: $viewportContentCacheMisses, '
         'viewportContentPictureDraws: $viewportContentPictureDraws, '
         'contentPicturesDrawn: $contentPicturesDrawn, '
+        'overlayRowCacheHits: $overlayRowCacheHits, '
+        'overlayRowCacheMisses: $overlayRowCacheMisses, '
+        'overlayRowSignatureSkips: $overlayRowSignatureSkips, '
+        'overlayRowPictureDraws: $overlayRowPictureDraws, '
         'cursorPaints: $cursorPaints, '
         'composingPaints: $composingPaints, '
         'selectionRuns: $selectionRuns, '
@@ -1198,6 +1425,10 @@ class _RowDirtyTracker {
       if (_rows[i] != 0) count++;
     }
     return count;
+  }
+
+  bool isDirty(int row) {
+    return row >= 0 && row < _rows.length && _rows[row] != 0;
   }
 
   void markRange(int from, int toExclusive) {
@@ -1248,5 +1479,16 @@ class _ViewportContentCache {
 
   void dispose() {
     picture.dispose();
+  }
+}
+
+class _OverlayRowPictureCache {
+  _OverlayRowPictureCache(this.signature, [this.picture]);
+
+  final int signature;
+  final Picture? picture;
+
+  void dispose() {
+    picture?.dispose();
   }
 }

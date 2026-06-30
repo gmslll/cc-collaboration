@@ -162,6 +162,73 @@ void main() {
     expect(firstLineAgain.renderPlanCacheHits, 0);
   });
 
+  test('terminal painter chunks long ascii runs', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+    final line = BufferLine(600);
+    final style = CursorStyle();
+    for (var i = 0; i < line.length; i++) {
+      line.setCell(i, 'a'.codeUnitAt(0), 1, style);
+    }
+
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+    recorder.endRecording().dispose();
+    final profile = painter.takeProfile()!;
+
+    expect(profile.asciiRuns, 3);
+    expect(profile.runParagraphCacheMisses, 2);
+    expect(profile.runParagraphCacheHits, 1);
+  });
+
+  test('terminal painter merges tiny text run chunk tails', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+    final line = BufferLine(258);
+    final style = CursorStyle();
+    for (var i = 0; i < line.length; i++) {
+      line.setCell(i, 'a'.codeUnitAt(0), 1, style);
+    }
+
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+    recorder.endRecording().dispose();
+    final profile = painter.takeProfile()!;
+
+    expect(profile.asciiRuns, 1);
+    expect(profile.singleCells, 0);
+  });
+
+  test('terminal painter batches safe non-ascii text runs', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+    final line = BufferLine(12);
+    final style = CursorStyle();
+    for (var i = 0; i < 10; i++) {
+      line.setCell(i, 'é'.codeUnitAt(0), 1, style);
+    }
+
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+    recorder.endRecording().dispose();
+    final profile = painter.takeProfile()!;
+
+    expect(profile.runParagraphCacheMisses, 1);
+    expect(profile.asciiRuns + profile.asciiRunFallbacks, 1);
+  });
+
   test('terminal painter geometry glyph picture cache is bounded', () {
     final painter = TerminalPainter(
       theme: TerminalThemes.defaultTheme,
@@ -259,7 +326,35 @@ void main() {
       expect(RenderTerminal.lastPaintProfile!.lineSignatureChecks, isZero);
       expect(RenderTerminal.lastPaintProfile!.overlayAnyDirty, isTrue);
       expect(RenderTerminal.lastPaintProfile!.overlayDirtyRows, isPositive);
+      expect(RenderTerminal.lastPaintProfile!.overlayRowCacheHits, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.overlayRowCacheMisses,
+        isPositive,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.overlayRowPictureDraws,
+        isPositive,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.overlayRowSignatureSkips,
+        isPositive,
+      );
       expect(RenderTerminal.lastPaintProfile!.selectionRuns, isPositive);
+
+      controller.clearSelection();
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.controller,
+      );
+      expect(RenderTerminal.lastPaintProfile!.overlayAnyDirty, isTrue);
+      expect(RenderTerminal.lastPaintProfile!.overlayDirtyRows, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.overlayRowCacheMisses,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.selectionRuns, isZero);
 
       term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
       final renderTerminal = tester.renderObject<RenderTerminal>(
@@ -303,6 +398,16 @@ void main() {
       );
       expect(RenderTerminal.lastPaintProfile!.overlayAnyDirty, isTrue);
       expect(RenderTerminal.lastPaintProfile!.overlayDirtyRows, 1);
+      expect(RenderTerminal.lastPaintProfile!.overlayRowCacheHits, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.overlayRowCacheMisses,
+        isPositive,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.overlayRowSignatureSkips,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.cursorPaints, isPositive);
 
       RenderTerminal.debugProfilePaint = false;
       term.write('next line\r\n');

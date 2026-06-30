@@ -18,6 +18,7 @@ import '../local/local_bus.dart';
 import '../local/platform.dart';
 import '../local/shell.dart';
 import '../ghostty_shadow.dart';
+import '../terminal_snapshot_formatter.dart';
 import '../terminal_theme.dart';
 import '../terminal_mouse.dart';
 import '../widgets.dart';
@@ -228,7 +229,6 @@ class TerminalSession {
   static const int _backlogCap = 256 * 1024;
 
   // Trailing-whitespace matcher for renderSnapshot; compiled once, not per call.
-  static final RegExp _trailingBlank = RegExp(r'\s+$');
 
   void _appendBacklog(String chunk) {
     _backlog.add(chunk);
@@ -343,7 +343,9 @@ class TerminalSession {
   String? get selectedText {
     final sel = controller.selection;
     if (sel == null) return null;
-    final t = terminal.buffer.getText(sel);
+    final t = XtermSnapshotFormatter(
+      terminal,
+    ).plain(range: sel, trimTrailingBlankLines: false);
     return t.isEmpty ? null : t;
   }
 
@@ -354,16 +356,7 @@ class TerminalSession {
   // so a full-screen TUI (claude/codex) reads as the visible screen rather than
   // a stream of redraw escape codes. [lines] <= 0 returns the whole buffer.
   String renderSnapshot(int lines) {
-    final ghost = ghostty?.plainText(trim: true);
-    if (ghost != null) {
-      if (lines <= 0) return ghost;
-      final ls = ghost.split(RegExp(r'\r?\n'));
-      return ls.length <= lines
-          ? ghost
-          : ls.sublist(ls.length - lines).join('\n');
-    }
-    // Drop trailing blank lines (a TUI's idle bottom rows) for a tidy snapshot.
-    final all = terminal.buffer.getText().replaceFirst(_trailingBlank, '');
+    final all = XtermSnapshotFormatter(terminal).plain();
     if (lines <= 0) return all;
     final ls = all.split('\n');
     return ls.length <= lines ? all : ls.sublist(ls.length - lines).join('\n');
@@ -376,10 +369,7 @@ class TerminalSession {
   // terminal re-wraps each line at its own width. getText joins rows with '\n';
   // a terminal needs '\r\n' to also return to column 0, so normalise.
   String historyText() {
-    final ghost = ghostty?.plainText(trim: true);
-    if (ghost != null) return ghost.split(RegExp(r'\r?\n')).join('\r\n');
-    final all = terminal.buffer.getText().replaceFirst(_trailingBlank, '');
-    return all.split(RegExp(r'\r?\n')).join('\r\n');
+    return XtermSnapshotFormatter(terminal).plain(lineEnding: '\r\n');
   }
 
   // historyAnsi is historyText with COLOUR: it walks the buffer's cells and
@@ -388,85 +378,13 @@ class TerminalSession {
   // carry no line break (isWrapped) so the phone re-flows them. Encoding per
   // xterm core/cell.dart (CellColor packs type<<25 | 0xRRGGBB-or-index; CellAttr
   // bit flags). Absolute-positioned TUI chrome flattens, same as historyText.
-  String historyAnsi() => ghostty?.vtText(trim: true) ?? _ansiFrom(0);
+  String historyAnsi() => XtermSnapshotFormatter(terminal).ansi();
 
   // snapshotAnsi is historyAnsi limited to the last [rows] non-blank rows — a
   // bounded coloured tail for a small live preview (so a popup doesn't re-emit a
   // multi-thousand-line buffer each refresh).
   String snapshotAnsi(int rows) {
-    final ghost = ghostty?.vtTailSelection(rows);
-    if (ghost != null) return ghost;
-    final buf = terminal.buffer;
-    var last = buf.height - 1;
-    while (last >= 0 && buf.lines[last].getTrimmedLength() == 0) {
-      last--;
-    }
-    final start = (rows <= 0 || last - rows + 1 < 0) ? 0 : last - rows + 1;
-    return _ansiFrom(start);
-  }
-
-  // _ansiFrom walks buffer rows [start .. last-non-blank], re-emitting each cell
-  // with inline SGR (only on style change). Shared by historyAnsi (start 0) and
-  // snapshotAnsi (a tail). The first emitted row gets no leading newline; soft-
-  // wrapped rows carry none so a terminal re-flows them.
-  String _ansiFrom(int start) {
-    String colorSgr(int c, bool fg) {
-      final v = c & CellColor.valueMask;
-      switch (c & CellColor.typeMask) {
-        case CellColor.named:
-          return '${v < 8 ? (fg ? 30 : 40) + v : (fg ? 90 : 100) + (v - 8)}';
-        case CellColor.palette:
-          return '${fg ? 38 : 48};5;$v';
-        case CellColor.rgb:
-          return '${fg ? 38 : 48};2;${(v >> 16) & 0xff};${(v >> 8) & 0xff};${v & 0xff}';
-        default: // normal → default fg/bg
-          return fg ? '39' : '49';
-      }
-    }
-
-    String sgr(int fg, int bg, int at) {
-      final p = <String>['0']; // reset, then re-apply the full style — robust
-      if ((at & CellAttr.bold) != 0) p.add('1');
-      if ((at & CellAttr.faint) != 0) p.add('2');
-      if ((at & CellAttr.italic) != 0) p.add('3');
-      if ((at & CellAttr.underline) != 0) p.add('4');
-      if ((at & CellAttr.blink) != 0) p.add('5');
-      if ((at & CellAttr.inverse) != 0) p.add('7');
-      if ((at & CellAttr.invisible) != 0) p.add('8');
-      if ((at & CellAttr.strikethrough) != 0) p.add('9');
-      p.add(colorSgr(fg, true));
-      p.add(colorSgr(bg, false));
-      return '\x1b[${p.join(';')}m';
-    }
-
-    final buf = terminal.buffer;
-    var last = buf.height - 1;
-    while (last >= 0 && buf.lines[last].getTrimmedLength() == 0) {
-      last--; // drop trailing blank lines (idle TUI bottom rows)
-    }
-    final out = StringBuffer();
-    int? pf, pb, pa; // last-emitted fg/bg/attrs, to only emit SGR on change
-    for (var y = start; y <= last; y++) {
-      final line = buf.lines[y];
-      if (y != start && !line.isWrapped) out.write('\r\n');
-      final len = line.getTrimmedLength();
-      for (var x = 0; x < len; x++) {
-        if (line.getWidth(x) == 0) continue; // wide-char continuation cell
-        final fg = line.getForeground(x);
-        final bg = line.getBackground(x);
-        final at = line.getAttributes(x);
-        if (fg != pf || bg != pb || at != pa) {
-          out.write(sgr(fg, bg, at));
-          pf = fg;
-          pb = bg;
-          pa = at;
-        }
-        final cp = line.getCodePoint(x);
-        out.writeCharCode(cp == 0 ? 0x20 : cp);
-      }
-    }
-    out.write('\x1b[0m');
-    return out.toString();
+    return XtermSnapshotFormatter(terminal).ansiTail(rows);
   }
 
   // _resolvedCommand is the shell command actually run for this session. For a
@@ -1053,7 +971,9 @@ class _TerminalPaneState extends State<TerminalPane> {
   String? get _currentSelectionText {
     final sel = _controller.selection;
     if (sel == null) return null;
-    final text = _terminal.buffer.getText(sel);
+    final text = XtermSnapshotFormatter(
+      _terminal,
+    ).plain(range: sel, trimTrailingBlankLines: false);
     return text.isEmpty ? null : text;
   }
 

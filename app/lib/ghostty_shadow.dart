@@ -65,6 +65,44 @@ class GhosttyShadowTerminal {
 
   String? vtTail(int rows) => _tail(vtText(), rows);
 
+  String? plainSelection({
+    required int startRow,
+    required int startCol,
+    required int endRow,
+    required int endCol,
+    bool trim = true,
+    bool unwrap = false,
+  }) {
+    return _formatSelection(
+      ghostty.FormatterFormat.plain,
+      startRow: startRow,
+      startCol: startCol,
+      endRow: endRow,
+      endCol: endCol,
+      trim: trim,
+      unwrap: unwrap,
+    );
+  }
+
+  String? vtSelection({
+    required int startRow,
+    required int startCol,
+    required int endRow,
+    required int endCol,
+    bool trim = true,
+    bool unwrap = false,
+  }) {
+    return _formatSelection(
+      ghostty.FormatterFormat.vt,
+      startRow: startRow,
+      startCol: startCol,
+      endRow: endRow,
+      endCol: endCol,
+      trim: trim,
+      unwrap: unwrap,
+    );
+  }
+
   String? vtTailSelection(int rows) {
     if (_disposed || rows <= 0) return vtText();
     try {
@@ -73,25 +111,14 @@ class GhosttyShadowTerminal {
       final endRow = _lastNonBlankScreenRow(totalRows);
       if (endRow == null) return '';
       final startRow = endRow + 1 > rows ? endRow + 1 - rows : 0;
-      final start = ghostty.GridRef.at(
-        _terminal,
-        ghostty.Position(row: startRow, col: 0),
-        pointTag: ghostty.PointTag.screen,
-      );
-      final end = ghostty.GridRef.at(
-        _terminal,
-        ghostty.Position(row: endRow, col: _cols - 1),
-        pointTag: ghostty.PointTag.screen,
-      );
-      final selection = ghostty.Selection.fromRefs(
-        start: start,
-        end: end,
-      );
-      return _format(
+      return _formatSelection(
         ghostty.FormatterFormat.vt,
+        startRow: startRow,
+        startCol: 0,
+        endRow: endRow,
+        endCol: _cols - 1,
         trim: true,
         unwrap: false,
-        selection: selection,
       );
     } catch (_) {
       return null;
@@ -110,6 +137,42 @@ class GhosttyShadowTerminal {
       }
     }
     return null;
+  }
+
+  String? _formatSelection(
+    ghostty.FormatterFormat format, {
+    required int startRow,
+    required int startCol,
+    required int endRow,
+    required int endCol,
+    required bool trim,
+    required bool unwrap,
+  }) {
+    if (_disposed) return null;
+    try {
+      final totalRows = _terminal.totalRows;
+      if (totalRows <= 0 || _cols <= 0) {
+        return _format(format, trim: trim, unwrap: unwrap);
+      }
+      final safeStartRow = startRow.clamp(0, totalRows - 1);
+      final safeEndRow = endRow.clamp(0, totalRows - 1);
+      final safeStartCol = startCol.clamp(0, _cols - 1);
+      final safeEndCol = endCol.clamp(0, _cols - 1);
+      final start = ghostty.GridRef.at(
+        _terminal,
+        ghostty.Position(row: safeStartRow, col: safeStartCol),
+        pointTag: ghostty.PointTag.screen,
+      );
+      final end = ghostty.GridRef.at(
+        _terminal,
+        ghostty.Position(row: safeEndRow, col: safeEndCol),
+        pointTag: ghostty.PointTag.screen,
+      );
+      final selection = ghostty.Selection.fromRefs(start: start, end: end);
+      return _format(format, trim: trim, unwrap: unwrap, selection: selection);
+    } catch (_) {
+      return null;
+    }
   }
 
   String? _format(

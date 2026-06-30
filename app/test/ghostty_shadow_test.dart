@@ -43,4 +43,33 @@ void main() {
     expect(tail, contains('\x1b['));
     expect(tail, isNot(contains('one')));
   });
+
+  test('explicit VT selection formats the requested coordinates', () {
+    final shadow = GhosttyShadowTerminal.create(cols: 20, rows: 3);
+    expect(shadow, isNotNull);
+    addTearDown(shadow!.dispose);
+
+    shadow.writeString('\x1b[31mred\x1b[0m\r\n');
+    shadow.writeString('\x1b[32mgreen\x1b[0m\r\n');
+    shadow.writeString('plain\r\n');
+
+    final vt = shadow.vtSelection(
+      startRow: 1,
+      startCol: 0,
+      endRow: 1,
+      endCol: 19,
+    );
+    final plain = shadow.plainSelection(
+      startRow: 1,
+      startCol: 0,
+      endRow: 1,
+      endCol: 19,
+    );
+
+    expect(vt, contains('green'));
+    expect(vt, contains('\x1b['));
+    expect(vt, isNot(contains('red')));
+    expect(plain, contains('green'));
+    expect(plain, isNot(contains('\x1b[')));
+  });
 }

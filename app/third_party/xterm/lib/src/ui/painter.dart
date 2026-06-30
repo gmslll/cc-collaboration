@@ -12,12 +12,13 @@ import 'package:xterm/xterm.dart';
 class TerminalPainter {
   static const _maxLineRenderPlans = 512;
   static const _maxGlyphPictures = 2048;
-  static const _asciiRunFontFeatures = [
+  static const _maxTextRunChunkCells = 256;
+  static const _textRunFontFeatures = [
     FontFeature.disable('liga'),
     FontFeature.disable('clig'),
     FontFeature.disable('calt'),
   ];
-  static const _minAsciiRunLength = 4;
+  static const _minTextRunLength = 4;
 
   TerminalPainter({
     required TerminalTheme theme,
@@ -212,9 +213,9 @@ class TerminalPainter {
 
     for (final span in plan.foregroundSpans) {
       switch (span) {
-        case _AsciiRunSpan():
-          if (span.text.length < _minAsciiRunLength) {
-            _paintAsciiRunCells(
+        case _TextRunSpan():
+          if (span.text.length < _minTextRunLength) {
+            _paintTextRunCells(
               canvas,
               offset.translate(span.start * cellWidth, 0),
               span.text,
@@ -223,7 +224,7 @@ class TerminalPainter {
               span.flags,
             );
             profile?.singleCells += span.text.length;
-          } else if (_paintAsciiRun(
+          } else if (_paintTextRun(
             canvas,
             offset.translate(span.start * cellWidth, 0),
             span.text,
@@ -235,6 +236,32 @@ class TerminalPainter {
           } else {
             profile?.asciiRunFallbacks++;
           }
+        case _GeometryGlyphRunSpan():
+          final color = _foregroundColor(
+            span.foreground,
+            span.background,
+            span.flags,
+          );
+          for (var i = 0; i < span.charCodes.length; i++) {
+            final charCode = span.charCodes[i];
+            if (!_paintTerminalGlyph(
+              canvas,
+              offset.translate((span.start + i) * cellWidth, 0),
+              charCode,
+              span.flags,
+              color,
+            )) {
+              _paintTextRunCell(
+                canvas,
+                offset.translate((span.start + i) * cellWidth, 0),
+                charCode,
+                span.foreground,
+                span.background,
+                span.flags,
+              );
+            }
+          }
+          profile?.singleCells += span.charCodes.length;
         case _CellForegroundSpan():
           paintCellForeground(
             canvas,
@@ -313,7 +340,7 @@ class TerminalPainter {
       line.getCellData(i, cellData);
 
       final charWidth = cellData.content >> CellContent.widthShift;
-      if (_canStartAsciiRun(cellData)) {
+      if (_canStartTextRun(cellData)) {
         final runStart = i;
         final foreground = cellData.foreground;
         final background = cellData.background;
@@ -324,7 +351,7 @@ class TerminalPainter {
 
         while (i < line.length) {
           line.getCellData(i, cellData);
-          if (!_canContinueAsciiRun(cellData, foreground, background, flags)) {
+          if (!_canContinueTextRun(cellData, foreground, background, flags)) {
             break;
           }
           text.writeCharCode(cellData.content & CellContent.codepointMask);
@@ -332,10 +359,45 @@ class TerminalPainter {
         }
 
         final runText = text.toString();
+        _addTextRunSpans(
+          foregroundSpans,
+          runStart,
+          runText,
+          foreground,
+          background,
+          flags,
+        );
+        continue;
+      }
+
+      if (_canStartGeometryGlyphRun(cellData)) {
+        final runStart = i;
+        final foreground = cellData.foreground;
+        final background = cellData.background;
+        final flags = cellData.flags;
+        final charCodes = <int>[
+          cellData.content & CellContent.codepointMask,
+        ];
+        i++;
+
+        while (i < line.length) {
+          line.getCellData(i, cellData);
+          if (!_canContinueGeometryGlyphRun(
+            cellData,
+            foreground,
+            background,
+            flags,
+          )) {
+            break;
+          }
+          charCodes.add(cellData.content & CellContent.codepointMask);
+          i++;
+        }
+
         foregroundSpans.add(
-          _AsciiRunSpan(
+          _GeometryGlyphRunSpan(
             runStart,
-            runText,
+            charCodes,
             foreground,
             background,
             flags,
@@ -376,6 +438,43 @@ class TerminalPainter {
     );
     _pruneLineRenderPlanCache();
     return plan;
+  }
+
+  void _addTextRunSpans(
+    List<_ForegroundSpan> spans,
+    int start,
+    String text,
+    int foreground,
+    int background,
+    int flags,
+  ) {
+    if (text.length <= _maxTextRunChunkCells) {
+      spans.add(_TextRunSpan(start, text, foreground, background, flags));
+      return;
+    }
+
+    for (var offset = 0; offset < text.length;) {
+      final remaining = text.length - offset;
+      var chunkLength = remaining;
+      if (remaining > _maxTextRunChunkCells) {
+        chunkLength = _maxTextRunChunkCells;
+        final tailLength = remaining - chunkLength;
+        if (tailLength > 0 && tailLength < _minTextRunLength) {
+          chunkLength += tailLength;
+        }
+      }
+      final end = offset + chunkLength;
+      spans.add(
+        _TextRunSpan(
+          start + offset,
+          text.substring(offset, end),
+          foreground,
+          background,
+          flags,
+        ),
+      );
+      offset = end;
+    }
   }
 
   void _pruneLineRenderPlanCache() {
@@ -459,15 +558,15 @@ class TerminalPainter {
     );
   }
 
-  bool _canStartAsciiRun(CellData cellData) {
+  bool _canStartTextRun(CellData cellData) {
     final charCode = cellData.content & CellContent.codepointMask;
-    if (charCode <= 0x20 || charCode > 0x7E) {
+    if (!_isBatchableTextRunCodepoint(charCode, allowSpace: false)) {
       return false;
     }
-    return _canPaintAsciiRunCell(cellData);
+    return _canPaintTextRunCell(cellData);
   }
 
-  bool _canContinueAsciiRun(
+  bool _canContinueTextRun(
     CellData cellData,
     int foreground,
     int background,
@@ -479,13 +578,13 @@ class TerminalPainter {
       return false;
     }
     final charCode = cellData.content & CellContent.codepointMask;
-    if (charCode < 0x20 || charCode > 0x7E) {
+    if (!_isBatchableTextRunCodepoint(charCode, allowSpace: true)) {
       return false;
     }
-    return _canPaintAsciiRunCell(cellData);
+    return _canPaintTextRunCell(cellData);
   }
 
-  bool _canPaintAsciiRunCell(CellData cellData) {
+  bool _canPaintTextRunCell(CellData cellData) {
     final charWidth = cellData.content >> CellContent.widthShift;
     if (charWidth != 1) {
       return false;
@@ -494,7 +593,66 @@ class TerminalPainter {
     return (cellData.flags & textOnlyFlags) == 0;
   }
 
-  bool _paintAsciiRun(
+  bool _canStartGeometryGlyphRun(CellData cellData) {
+    final charCode = cellData.content & CellContent.codepointMask;
+    if (!_isTerminalGlyphCodepoint(charCode)) {
+      return false;
+    }
+    return _canPaintGeometryGlyphRunCell(cellData);
+  }
+
+  bool _canContinueGeometryGlyphRun(
+    CellData cellData,
+    int foreground,
+    int background,
+    int flags,
+  ) {
+    if (cellData.foreground != foreground ||
+        cellData.background != background ||
+        cellData.flags != flags) {
+      return false;
+    }
+    final charCode = cellData.content & CellContent.codepointMask;
+    if (!_isTerminalGlyphCodepoint(charCode)) {
+      return false;
+    }
+    return _canPaintGeometryGlyphRunCell(cellData);
+  }
+
+  bool _canPaintGeometryGlyphRunCell(CellData cellData) {
+    final charWidth = cellData.content >> CellContent.widthShift;
+    if (charWidth != 1) {
+      return false;
+    }
+    const textOnlyFlags = CellFlags.italic | CellFlags.underline;
+    return (cellData.flags & textOnlyFlags) == 0;
+  }
+
+  bool _isBatchableTextRunCodepoint(int charCode, {required bool allowSpace}) {
+    if (charCode == 0x20) {
+      return allowSpace;
+    }
+    if (charCode <= 0x20 || charCode > 0xFFFF) {
+      return false;
+    }
+    if (charCode >= 0x7F && charCode <= 0x9F) {
+      return false;
+    }
+    if (_isTerminalGlyphCodepoint(charCode)) {
+      return false;
+    }
+    return !_isCombiningCodepoint(charCode);
+  }
+
+  bool _isCombiningCodepoint(int charCode) {
+    return (charCode >= 0x0300 && charCode <= 0x036F) ||
+        (charCode >= 0x1AB0 && charCode <= 0x1AFF) ||
+        (charCode >= 0x1DC0 && charCode <= 0x1DFF) ||
+        (charCode >= 0x20D0 && charCode <= 0x20FF) ||
+        (charCode >= 0xFE20 && charCode <= 0xFE2F);
+  }
+
+  bool _paintTextRun(
     Canvas canvas,
     Offset offset,
     String text,
@@ -519,7 +677,7 @@ class TerminalPainter {
         bold: flags & CellFlags.bold != 0,
         italic: false,
         underline: false,
-        fontFeatures: _asciiRunFontFeatures,
+        fontFeatures: _textRunFontFeatures,
       );
       paragraph = _runParagraphCache.performAndCacheLayout(
         text,
@@ -534,14 +692,14 @@ class TerminalPainter {
     final measuredWidth = paragraph.maxIntrinsicWidth;
     final tolerance = _cellSize.width * 0.08;
     if ((measuredWidth - expectedWidth).abs() > tolerance) {
-      _paintAsciiRunCells(canvas, offset, text, foreground, background, flags);
+      _paintTextRunCells(canvas, offset, text, foreground, background, flags);
       return false;
     }
     canvas.drawParagraph(paragraph, offset);
     return true;
   }
 
-  void _paintAsciiRunCells(
+  void _paintTextRunCells(
     Canvas canvas,
     Offset offset,
     String text,
@@ -550,7 +708,7 @@ class TerminalPainter {
     int flags,
   ) {
     for (var i = 0; i < text.length; i++) {
-      _paintAsciiRunCell(
+      _paintTextRunCell(
         canvas,
         offset.translate(i * _cellSize.width, 0),
         text.codeUnitAt(i),
@@ -561,7 +719,7 @@ class TerminalPainter {
     }
   }
 
-  void _paintAsciiRunCell(
+  void _paintTextRunCell(
     Canvas canvas,
     Offset offset,
     int charCode,
@@ -1172,8 +1330,8 @@ sealed class _ForegroundSpan {
   const _ForegroundSpan();
 }
 
-class _AsciiRunSpan extends _ForegroundSpan {
-  const _AsciiRunSpan(
+class _TextRunSpan extends _ForegroundSpan {
+  const _TextRunSpan(
     this.start,
     this.text,
     this.foreground,
@@ -1183,6 +1341,22 @@ class _AsciiRunSpan extends _ForegroundSpan {
 
   final int start;
   final String text;
+  final int foreground;
+  final int background;
+  final int flags;
+}
+
+class _GeometryGlyphRunSpan extends _ForegroundSpan {
+  const _GeometryGlyphRunSpan(
+    this.start,
+    this.charCodes,
+    this.foreground,
+    this.background,
+    this.flags,
+  );
+
+  final int start;
+  final List<int> charCodes;
   final int foreground;
   final int background;
   final int flags;
