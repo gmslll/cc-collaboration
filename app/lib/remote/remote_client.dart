@@ -10,6 +10,7 @@ import '../notifications.dart';
 import '../screen_share/models.dart';
 import '../screen_share/webrtc.dart';
 import '../terminal_mouse.dart';
+import '../terminal_theme.dart';
 import 'file_fs.dart';
 import 'file_transfer.dart';
 import 'remote_channel.dart';
@@ -866,7 +867,7 @@ class RemoteClient extends RemoteChannel {
   Terminal terminalFor(String sid) {
     final existing = _terminals[sid];
     if (existing != null) return existing;
-    final term = Terminal(maxLines: 5000);
+    final term = ccTerminal(maxLines: 5000);
     _terminals[sid] = term;
     _configureTerminalForSession(sid, term);
     // Same wheel fix as the desktop so touch-scroll reaches full-screen TUIs;

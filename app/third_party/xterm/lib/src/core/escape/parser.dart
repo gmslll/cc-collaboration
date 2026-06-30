@@ -1072,6 +1072,18 @@ class EscapeParser {
         case '2':
           handler.setTitle(pt);
           return true;
+        case '10':
+          if (pt == '?') {
+            handler.queryDefaultForegroundColor();
+            return true;
+          }
+          break;
+        case '11':
+          if (pt == '?') {
+            handler.queryDefaultBackgroundColor();
+            return true;
+          }
+          break;
       }
     }
 

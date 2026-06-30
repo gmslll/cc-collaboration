@@ -673,9 +673,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Widget _sessionsTab() {
     if (_c.sessions.isEmpty) {
-      return centerMsg(
-        '没有会话。\n点右下角 + 可新建 Shell / Claude / Codex / 总管会话。',
-      );
+      return centerMsg('没有会话。\n点右下角 + 可新建 Shell / Claude / Codex / 总管会话。');
     }
     // Group sessions by workspace → project (matching workdir to a root); any
     // session not under a known root falls into "其他".
@@ -1833,8 +1831,8 @@ class _ScreenShareViewerPageState extends State<ScreenShareViewerPage> {
                   child: _c.shareViewer.initialized
                       ? RTCVideoView(
                           _c.shareViewer.renderer,
-                          objectFit:
-                              RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                          objectFit: RTCVideoViewObjectFit
+                              .RTCVideoViewObjectFitContain,
                         )
                       : const Center(child: CircularProgressIndicator()),
                 ),
@@ -3587,7 +3585,7 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
   // A throwaway terminal we paint the host's coloured screen snapshot into — a
   // real xterm view, not stripped text.
-  final Terminal _term = Terminal(maxLines: 200);
+  final Terminal _term = ccTerminal(maxLines: 200);
   String? _lastScreen;
   Timer? _timer;
 

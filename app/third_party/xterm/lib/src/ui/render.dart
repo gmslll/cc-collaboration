@@ -152,6 +152,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   final TerminalPainter _painter;
 
   var _stickToBottom = true;
+  var _lastUsingAltBuffer = false;
+  double? _savedMainScrollOffset;
+  var _restoreMainScrollOffset = false;
 
   void _onScroll() {
     _stickToBottom = _scrollOffset >= _maxScrollExtent;
@@ -164,8 +167,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _onTerminalChange() {
+    _syncActiveBufferScrollState();
     markNeedsLayout();
     _notifyEditableRect();
+  }
+
+  void _syncActiveBufferScrollState() {
+    final usingAltBuffer = _terminal.isUsingAltBuffer;
+    if (usingAltBuffer == _lastUsingAltBuffer) return;
+
+    if (usingAltBuffer) {
+      _savedMainScrollOffset = _scrollOffset;
+    } else {
+      _restoreMainScrollOffset = true;
+    }
+    _lastUsingAltBuffer = usingAltBuffer;
   }
 
   void _onControllerUpdate() {
@@ -212,7 +228,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     _updateScrollOffset();
 
-    if (_stickToBottom) {
+    if (_restoreMainScrollOffset) {
+      final target = (_savedMainScrollOffset ?? _maxScrollExtent)
+          .clamp(0.0, _maxScrollExtent);
+      _offset.correctBy(target - _scrollOffset);
+      _stickToBottom = target >= _maxScrollExtent;
+      _restoreMainScrollOffset = false;
+    } else if (_stickToBottom) {
       _offset.correctBy(_maxScrollExtent - _scrollOffset);
     }
   }
@@ -243,6 +265,15 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   /// Get the [CellOffset] of the cell that [offset] is in.
   CellOffset getCellOffset(Offset offset) {
+    return _getCellOffset(offset, clamp: true);
+  }
+
+  /// Converts a local pixel offset into a cell offset.
+  ///
+  /// Selection needs the unclamped position first so dragging outside the
+  /// viewport can still extend in the intended direction. This mirrors flterm's
+  /// flow: convert pixels to a raw cell, then clamp at the gesture boundary.
+  CellOffset _getCellOffset(Offset offset, {required bool clamp}) {
     final x = offset.dx - _padding.left;
     // PATCH(cc-handoff): 在 alt buffer(全屏 TUI,被 ScrollHandler 包进 InfiniteScrollView)
     // 里,手势 localPosition 已是滚动后的内容坐标,再叠加 _scrollOffset 会重复计入,把
@@ -253,6 +284,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         (_terminal.isUsingAltBuffer ? 0 : _scrollOffset);
     final row = y ~/ _painter.cellSize.height;
     final col = x ~/ _painter.cellSize.width;
+    if (!clamp) {
+      return CellOffset(col, row);
+    }
     return CellOffset(
       col.clamp(0, _terminal.viewWidth - 1),
       row.clamp(0, _terminal.buffer.lines.length - 1),
@@ -286,16 +320,26 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// Selects characters in the terminal that starts from [from] to [to]. At
   /// least one cell is selected even if [from] and [to] are same.
   void selectCharacters(Offset from, [Offset? to]) {
-    final fromPosition = getCellOffset(from);
+    final fromPosition = _getCellOffset(from, clamp: true);
     if (to == null) {
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(fromPosition),
         _terminal.buffer.createAnchorFromOffset(fromPosition),
       );
     } else {
-      var toPosition = getCellOffset(to);
-      if (toPosition.x >= fromPosition.x) {
-        toPosition = CellOffset(toPosition.x + 1, toPosition.y);
+      final rawToPosition = _getCellOffset(to, clamp: false);
+      var toPosition = CellOffset(
+        rawToPosition.x.clamp(0, _terminal.viewWidth - 1),
+        rawToPosition.y.clamp(0, _terminal.buffer.lines.length - 1),
+      );
+      final extendsForward = rawToPosition.y > fromPosition.y ||
+          (rawToPosition.y == fromPosition.y &&
+              rawToPosition.x >= fromPosition.x);
+      if (extendsForward) {
+        toPosition = CellOffset(
+          (toPosition.x + 1).clamp(0, _terminal.viewWidth),
+          toPosition.y,
+        );
       }
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(fromPosition),

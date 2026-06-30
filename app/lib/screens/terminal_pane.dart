@@ -17,6 +17,7 @@ import '../local/cli.dart';
 import '../local/local_bus.dart';
 import '../local/platform.dart';
 import '../local/shell.dart';
+import '../ghostty_shadow.dart';
 import '../terminal_theme.dart';
 import '../terminal_mouse.dart';
 import '../widgets.dart';
@@ -89,7 +90,8 @@ class TerminalSession {
   // _maybeCaptureCodexId) and then persisted.
   String? agentSessionId;
   final bool resume;
-  final Terminal terminal = Terminal(maxLines: 10000);
+  final Terminal terminal = ccTerminal(maxLines: 10000);
+  final GhosttyShadowTerminal? ghostty;
   // The selection/copy controller lives on the session (not the pane) so the
   // host can read the current selection — e.g. to forward it to another session.
   //
@@ -102,8 +104,9 @@ class TerminalSession {
   // that doesn't consult pointerInputs). Focus-on-click still works (onTapDown
   // fires regardless). Trade-off: clicks no longer reach the TUI (keyboard- and
   // wheel-driven, so fine for claude/codex; shells never had mouse mode anyway).
-  final TerminalController controller =
-      TerminalController(pointerInputs: const PointerInputs.none());
+  final TerminalController controller = TerminalController(
+    pointerInputs: const PointerInputs.none(),
+  );
   Pty? _pty;
   bool _started = false;
   bool _disposed = false;
@@ -151,7 +154,8 @@ class TerminalSession {
   // turn start/finish. Lives only for the busy window (started/stopped in
   // _setBusy); incremental scan keeps each tick cheap.
   Timer? _usageTicker;
-  bool _belArmed = false; // a bell rang; waiting for output to settle to confirm
+  bool _belArmed =
+      false; // a bell rang; waiting for output to settle to confirm
   bool _sawInput = false; // user has typed/sent into this session at least once
   // _busy = this agent is mid-turn (we submitted input; no finishing bell yet).
   // Read via [busy], which ANDs isAgent so it's only ever meaningful for agent
@@ -162,6 +166,19 @@ class TerminalSession {
   // bell (_fireDone).
   bool _busy = false;
   bool get busy => isAgent && _busy;
+
+  static final RegExp _terminalProtocolReply = RegExp(
+    r'^(?:'
+    r'\x1b\](?:10|11);rgb:[0-9a-fA-F]{4}/[0-9a-fA-F]{4}/[0-9a-fA-F]{4}\x1b\\'
+    r'|\x1b\[\?1;2c'
+    r'|\x1b\[>0;0;0c'
+    r'|\x1bP!\|00000000\x1b\\'
+    r'|\x1b\[0n'
+    r'|\x1b\[\d+;\d+R'
+    r'|\x1b\[8;\d+;\d+t'
+    r')$',
+  );
+
   // _setBusy is the single chokepoint for the busy flag: it fires onBusyChanged
   // only on an actual transition so the overview projection updates once per
   // turn boundary (not per keystroke).
@@ -178,8 +195,10 @@ class TerminalSession {
     }
     onBusyChanged?.call(this);
   }
-  static const Duration _belSettle =
-      Duration(milliseconds: 1200); // quiet-after-bell → done
+
+  static const Duration _belSettle = Duration(
+    milliseconds: 1200,
+  ); // quiet-after-bell → done
 
   // Rolling buffer of recent raw PTY output so a phone connecting mid-session
   // can replay it and see the current screen / scrollback instead of a blank
@@ -240,8 +259,11 @@ class TerminalSession {
     } catch (_) {
       return usage.value;
     }
-    final u =
-        SessionUsage.fromAccumulator(_usageAcc, agentKind: agentKind, busy: busy);
+    final u = SessionUsage.fromAccumulator(
+      _usageAcc,
+      agentKind: agentKind,
+      busy: busy,
+    );
     if (!_disposed) usage.value = u;
     return u;
   }
@@ -256,6 +278,7 @@ class TerminalSession {
     this.agentSessionId,
     this.resume = false,
   }) : id = id ?? 'ts${_seq++}',
+       ghostty = GhosttyShadowTerminal.create(cols: 80, rows: 24),
        title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
            ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
            : workdir {
@@ -313,6 +336,14 @@ class TerminalSession {
   // so a full-screen TUI (claude/codex) reads as the visible screen rather than
   // a stream of redraw escape codes. [lines] <= 0 returns the whole buffer.
   String renderSnapshot(int lines) {
+    final ghost = ghostty?.plainText(trim: true);
+    if (ghost != null) {
+      if (lines <= 0) return ghost;
+      final ls = ghost.split(RegExp(r'\r?\n'));
+      return ls.length <= lines
+          ? ghost
+          : ls.sublist(ls.length - lines).join('\n');
+    }
     // Drop trailing blank lines (a TUI's idle bottom rows) for a tidy snapshot.
     final all = terminal.buffer.getText().replaceFirst(_trailingBlank, '');
     if (lines <= 0) return all;
@@ -327,6 +358,8 @@ class TerminalSession {
   // terminal re-wraps each line at its own width. getText joins rows with '\n';
   // a terminal needs '\r\n' to also return to column 0, so normalise.
   String historyText() {
+    final ghost = ghostty?.plainText(trim: true);
+    if (ghost != null) return ghost.split(RegExp(r'\r?\n')).join('\r\n');
     final all = terminal.buffer.getText().replaceFirst(_trailingBlank, '');
     return all.split(RegExp(r'\r?\n')).join('\r\n');
   }
@@ -337,12 +370,14 @@ class TerminalSession {
   // carry no line break (isWrapped) so the phone re-flows them. Encoding per
   // xterm core/cell.dart (CellColor packs type<<25 | 0xRRGGBB-or-index; CellAttr
   // bit flags). Absolute-positioned TUI chrome flattens, same as historyText.
-  String historyAnsi() => _ansiFrom(0);
+  String historyAnsi() => ghostty?.vtText(trim: true) ?? _ansiFrom(0);
 
   // snapshotAnsi is historyAnsi limited to the last [rows] non-blank rows — a
   // bounded coloured tail for a small live preview (so a popup doesn't re-emit a
   // multi-thousand-line buffer each refresh).
   String snapshotAnsi(int rows) {
+    final ghost = ghostty?.vtTailSelection(rows);
+    if (ghost != null) return ghost;
     final buf = terminal.buffer;
     var last = buf.height - 1;
     while (last >= 0 && buf.lines[last].getTrimmedLength() == 0) {
@@ -432,7 +467,8 @@ class TerminalSession {
         ? _invocation!
         : agent;
     if (agent == 'claude') {
-      final c = '$inv --append-system-prompt ${_argQuote(_startupInstructions())}';
+      final c =
+          '$inv --append-system-prompt ${_argQuote(_startupInstructions())}';
       if (!resume) {
         return agentSessionId == null
             ? '$prefix$c'
@@ -542,11 +578,27 @@ class TerminalSession {
       return;
     }
     _pty = pty;
+    terminal.onOutput = (data) {
+      final protocolReply = _terminalProtocolReply.hasMatch(data);
+      if (!protocolReply) {
+        _sawInput = true; // local keystrokes count as "the user gave it work"
+        // A local Enter into an agent starts a turn → mark busy so a peer message
+        // arriving now routes to the bus inbox (hook injection) not a paste queue.
+        if (isAgent && data.contains('\r')) {
+          _setBusy(true);
+          unawaited(
+            refreshUsage(),
+          ); // turn starting → reflect busy + any new usage
+        }
+      }
+      pty.write(const Utf8Encoder().convert(data));
+    };
     pty.output
         .cast<List<int>>()
         .transform(const Utf8Decoder(allowMalformed: true))
         .listen((chunk) {
           terminal.write(chunk);
+          ghostty?.writeString(chunk);
           _appendBacklog(chunk);
           remoteSink?.call(chunk);
           if (isAgent) _markActivity(chunk);
@@ -554,28 +606,23 @@ class TerminalSession {
     pty.exitCode.then((code) {
       // Non-zero exits in red so a process that dies on startup isn't mistaken
       // for an empty terminal.
-      terminal.write('\r\n\x1b[${code == 0 ? '90' : '31'}m[已退出: $code]\x1b[0m\r\n');
+      terminal.write(
+        '\r\n\x1b[${code == 0 ? '90' : '31'}m[已退出: $code]\x1b[0m\r\n',
+      );
       // 127 = command not found: the agent binary couldn't be launched. Point
       // the user at the per-agent override so they can fix it.
       if (code == 127 && (agent == 'claude' || agent == 'codex')) {
-        terminal.write('\x1b[33m未找到 $agent。可在「账号 · config.toml」设置 '
-            '${agent}_command(绝对路径或启动命令)后重开。\x1b[0m\r\n');
+        terminal.write(
+          '\x1b[33m未找到 $agent。可在「账号 · config.toml」设置 '
+          '${agent}_command(绝对路径或启动命令)后重开。\x1b[0m\r\n',
+        );
       }
     });
-    terminal.onOutput = (data) {
-      _sawInput = true; // local keystrokes count as "the user gave it work"
-      // A local Enter into an agent starts a turn → mark busy so a peer message
-      // arriving now routes to the bus inbox (hook injection) not a paste queue.
-      if (isAgent && data.contains('\r')) {
-        _setBusy(true);
-        unawaited(refreshUsage()); // turn starting → reflect busy + any new usage
-      }
-      pty.write(const Utf8Encoder().convert(data));
-    };
     // A phone mirroring this session (remoteSink set) owns the PTY size; don't
     // let local (Mac window) resizes fight it — last-writer-wins between the
     // wide Mac and the narrow phone is what garbles the mirror.
     terminal.onResize = (w, h, pw, ph) {
+      ghostty?.resize(w, h);
       if (remoteSink == null) pty.resize(h, w);
     };
     _maybeCaptureAgentId();
@@ -617,14 +664,14 @@ class TerminalSession {
       // earliest) → hook → the newest rollout written since launch in this cwd.
       final id = isCodex
           ? await _codexRolloutViaLsof() ??
-              localBusAgentSessionId(this.id) ??
-              await _scanCodexRolloutId(
-                {
+                localBusAgentSessionId(this.id) ??
+                await _scanCodexRolloutId({
                   _codexBucket(sessions, since),
-                  _codexBucket(sessions, since.subtract(const Duration(hours: 6))),
-                },
-                floor: since.subtract(const Duration(seconds: 5)),
-              )
+                  _codexBucket(
+                    sessions,
+                    since.subtract(const Duration(hours: 6)),
+                  ),
+                }, floor: since.subtract(const Duration(seconds: 5)))
           : localBusAgentSessionId(this.id);
       if (id != null) {
         agentSessionId = id;
@@ -657,7 +704,10 @@ class TerminalSession {
   // matches this session. [floor], when set, stops the scan once files predate
   // it (the post-launch capture ignores pre-existing rollouts; the resume
   // resolver leaves it null to accept any age). One statSync per file.
-  Future<String?> _scanCodexRolloutId(Set<String> dirs, {DateTime? floor}) async {
+  Future<String?> _scanCodexRolloutId(
+    Set<String> dirs, {
+    DateTime? floor,
+  }) async {
     final dated = [
       for (final f in await _rolloutFilesIn(dirs)) (f, f.statSync().modified),
     ]..sort((a, b) => b.$2.compareTo(a.$2));
@@ -701,7 +751,9 @@ class TerminalSession {
         final r = await Process.run('lsof', ['-p', '$pid', '-Fn']);
         if (r.exitCode != 0) continue;
         for (final line in (r.stdout as String).split('\n')) {
-          if (!line.startsWith('n')) continue; // -Fn: name records start with 'n'
+          if (!line.startsWith('n')) {
+            continue; // -Fn: name records start with 'n'
+          }
           final path = line.substring(1);
           if (path.contains('rollout-') && path.endsWith('.jsonl')) {
             // The process identity already pins this to our session, so read the
@@ -917,7 +969,10 @@ class TerminalSession {
   // font makes a legit phone viewport narrow (well under 20 cols), so don't
   // reject that — it must reach the PTY or the phone overflows.
   void resizeFromRemote(int rows, int cols) {
-    if (rows >= 2 && cols >= 2) _pty?.resize(rows, cols);
+    if (rows >= 2 && cols >= 2) {
+      ghostty?.resize(cols, rows);
+      _pty?.resize(rows, cols);
+    }
   }
 
   // restoreLocalSize: the last phone detached — resize the PTY back to the
@@ -927,7 +982,10 @@ class TerminalSession {
   // PTY), so they hold the desktop's current size even after the phone shrank it.
   void restoreLocalSize() {
     final r = terminal.viewHeight, c = terminal.viewWidth;
-    if (r > 0 && c > 0) _pty?.resize(r, c);
+    if (r > 0 && c > 0) {
+      ghostty?.resize(c, r);
+      _pty?.resize(r, c);
+    }
   }
 
   void dispose() {
@@ -936,6 +994,7 @@ class TerminalSession {
     _usageTicker?.cancel();
     usage.dispose();
     controller.dispose();
+    ghostty?.dispose();
     _pty?.kill();
   }
 }
@@ -1004,7 +1063,8 @@ class _TerminalPaneState extends State<TerminalPane> {
   // whether a drag actually set a selection. Remove once the bug is fixed.
   void _copyDiag() {
     final t = _terminal;
-    final info = 'agent=${widget.session.agentKind} '
+    final info =
+        'agent=${widget.session.agentKind} '
         'alt=${t.isUsingAltBuffer} mouse=${t.mouseMode} '
         'report=${t.mouseReportMode} lines=${t.lines.length} '
         'view=${t.viewWidth}x${t.viewHeight} '
@@ -1178,7 +1238,9 @@ class _TerminalPaneState extends State<TerminalPane> {
           _interjectSelectionTo(pick.substring('interject:'.length));
         }
       default:
-        if (v.startsWith('send:')) _sendSelectionTo(v.substring('send:'.length));
+        if (v.startsWith('send:')) {
+          _sendSelectionTo(v.substring('send:'.length));
+        }
     }
   }
 
@@ -1309,13 +1371,20 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
 
   // Named keys that must become terminal control sequences rather than text.
   static final _special = <LogicalKeyboardKey>{
-    LogicalKeyboardKey.enter, LogicalKeyboardKey.numpadEnter,
-    LogicalKeyboardKey.backspace, LogicalKeyboardKey.tab,
-    LogicalKeyboardKey.escape, LogicalKeyboardKey.delete,
-    LogicalKeyboardKey.arrowUp, LogicalKeyboardKey.arrowDown,
-    LogicalKeyboardKey.arrowLeft, LogicalKeyboardKey.arrowRight,
-    LogicalKeyboardKey.home, LogicalKeyboardKey.end,
-    LogicalKeyboardKey.pageUp, LogicalKeyboardKey.pageDown,
+    LogicalKeyboardKey.enter,
+    LogicalKeyboardKey.numpadEnter,
+    LogicalKeyboardKey.backspace,
+    LogicalKeyboardKey.tab,
+    LogicalKeyboardKey.escape,
+    LogicalKeyboardKey.delete,
+    LogicalKeyboardKey.arrowUp,
+    LogicalKeyboardKey.arrowDown,
+    LogicalKeyboardKey.arrowLeft,
+    LogicalKeyboardKey.arrowRight,
+    LogicalKeyboardKey.home,
+    LogicalKeyboardKey.end,
+    LogicalKeyboardKey.pageUp,
+    LogicalKeyboardKey.pageDown,
   };
 
   @override
@@ -1357,8 +1426,12 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
     if (!isControl) return KeyEventResult.ignored;
     final tk = keyToTerminalKey(event.logicalKey);
     if (tk == null) return KeyEventResult.ignored;
-    final handled = widget.session.terminal
-        .keyInput(tk, ctrl: ctrl, alt: alt, shift: shift);
+    final handled = widget.session.terminal.keyInput(
+      tk,
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+    );
     return handled ? KeyEventResult.handled : KeyEventResult.ignored;
   }
 

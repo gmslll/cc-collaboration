@@ -589,6 +589,16 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void queryDefaultForegroundColor() {
+    onCommand('queryDefaultForegroundColor()');
+  }
+
+  @override
+  void queryDefaultBackgroundColor() {
+    onCommand('queryDefaultBackgroundColor()');
+  }
+
+  @override
   void unknownOSC(String code, List<String> args) {
     onCommand('unknownOSC($code, $args)', error: true);
   }
