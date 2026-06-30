@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../file_icons.dart';
 import '../theme.dart';
@@ -15,26 +16,319 @@ const double _kChevronW = 16; // column reserved for the disclosure chevron
 
 // FileBrowserPage is a lazy file tree of a project root; tapping a file opens it
 // in the editor. Each directory lists its children on first expand.
-class FileBrowserPage extends StatelessWidget {
+class FileBrowserPage extends StatefulWidget {
   final String root;
   final String name;
   const FileBrowserPage({super.key, required this.root, required this.name});
 
   @override
+  State<FileBrowserPage> createState() => _FileBrowserPageState();
+}
+
+class _FileBrowserPageState extends State<FileBrowserPage> {
+  int _refreshToken = 0;
+  String? _selectedPath;
+
+  String _join(String dir, String name) =>
+      dir.endsWith('/') || dir.endsWith(r'\') ? '$dir$name' : '$dir/$name';
+
+  String _baseName(String path) {
+    final slash = path.lastIndexOf('/');
+    final backslash = path.lastIndexOf(r'\');
+    final i = slash > backslash ? slash : backslash;
+    return i < 0 ? path : path.substring(i + 1);
+  }
+
+  String _parentDir(String path) {
+    final slash = path.lastIndexOf('/');
+    final backslash = path.lastIndexOf(r'\');
+    final i = slash > backslash ? slash : backslash;
+    return i < 0 ? '' : path.substring(0, i);
+  }
+
+  void _markChanged([String? selectedPath]) {
+    setState(() {
+      _refreshToken++;
+      if (selectedPath != null) _selectedPath = selectedPath;
+    });
+  }
+
+  bool _validName(String name) =>
+      name.trim().isNotEmpty && !name.contains('/') && !name.contains(r'\');
+
+  Future<String?> _nameDialog(
+    String title,
+    String label, {
+    String initial = '',
+    String hint = '',
+  }) async {
+    final ctl = TextEditingController(text: initial);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: ctl,
+          autofocus: true,
+          decoration: InputDecoration(labelText: label, hintText: hint),
+          onSubmitted: (_) => Navigator.pop(ctx, true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return null;
+    final name = ctl.text.trim();
+    if (!_validName(name)) {
+      if (!mounted) return null;
+      snack(context, '名称不能为空，也不能包含路径分隔符');
+      return null;
+    }
+    return name;
+  }
+
+  Future<bool> _confirm(String title, String message) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _newFile(String dir) async {
+    final name = await _nameDialog('新建文件', '文件名', hint: 'README.md');
+    if (name == null) return;
+    final path = _join(dir, name);
+    try {
+      await File(path).create(exclusive: true);
+      _markChanged(path);
+      if (mounted) {
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => EditorPage(path: path)));
+      }
+    } catch (e) {
+      if (mounted) snack(context, '新建文件失败：$e');
+    }
+  }
+
+  Future<void> _newDirectory(String dir) async {
+    final name = await _nameDialog('新建目录', '目录名', hint: 'src');
+    if (name == null) return;
+    final path = _join(dir, name);
+    try {
+      await Directory(path).create();
+      _markChanged(path);
+    } catch (e) {
+      if (mounted) snack(context, '新建目录失败：$e');
+    }
+  }
+
+  Future<void> _renamePath(String path, bool isDir) async {
+    if (path == widget.root) {
+      snack(context, '不能重命名项目根目录');
+      return;
+    }
+    final name = await _nameDialog('重命名', '名称', initial: _baseName(path));
+    if (name == null) return;
+    final target = _join(_parentDir(path), name);
+    try {
+      if (isDir) {
+        await Directory(path).rename(target);
+      } else {
+        await File(path).rename(target);
+      }
+      _markChanged(target);
+    } catch (e) {
+      if (mounted) snack(context, '重命名失败：$e');
+    }
+  }
+
+  Future<void> _deletePath(String path, bool isDir) async {
+    if (path == widget.root) {
+      snack(context, '不能删除项目根目录');
+      return;
+    }
+    final ok = await _confirm('删除「${_baseName(path)}」?', '此操作会删除磁盘文件。');
+    if (!ok) return;
+    try {
+      if (isDir) {
+        await Directory(path).delete(recursive: true);
+      } else {
+        await File(path).delete();
+      }
+      _markChanged(_parentDir(path));
+    } catch (e) {
+      if (mounted) snack(context, '删除失败：$e');
+    }
+  }
+
+  Future<void> _revealInSystem(String path) async {
+    try {
+      if (Platform.isMacOS) {
+        await Process.run('open', ['-R', path]);
+      } else if (Platform.isWindows) {
+        await Process.run('explorer', ['/select,', path]);
+      } else {
+        final target = FileSystemEntity.isDirectorySync(path)
+            ? path
+            : _parentDir(path);
+        await Process.run('xdg-open', [target]);
+      }
+    } catch (e) {
+      if (mounted) snack(context, '打开系统文件管理器失败：$e');
+    }
+  }
+
+  Future<void> _openExternally(String path) async {
+    try {
+      if (Platform.isMacOS) {
+        await Process.run('open', [path]);
+      } else if (Platform.isWindows) {
+        await Process.run('explorer', [path]);
+      } else {
+        await Process.run('xdg-open', [path]);
+      }
+    } catch (e) {
+      if (mounted) snack(context, '打开失败：$e');
+    }
+  }
+
+  void _handleMenu(String value, String path, bool isDir) {
+    setState(() => _selectedPath = path);
+    switch (value) {
+      case 'open':
+        if (isDir) {
+          _markChanged(path);
+        } else {
+          Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => EditorPage(path: path)));
+        }
+      case 'newFile':
+        _newFile(isDir ? path : _parentDir(path));
+      case 'newDir':
+        _newDirectory(isDir ? path : _parentDir(path));
+      case 'rename':
+        _renamePath(path, isDir);
+      case 'delete':
+        _deletePath(path, isDir);
+      case 'copyPath':
+        Clipboard.setData(ClipboardData(text: path));
+        snack(context, '已复制路径');
+      case 'reveal':
+        _revealInSystem(path);
+      case 'openExternal':
+        _openExternally(path);
+      case 'refresh':
+        _markChanged(path);
+    }
+  }
+
+  PopupMenuButton<String> _pathMenu(String path, bool isDir) =>
+      PopupMenuButton<String>(
+        tooltip: 'File actions',
+        icon: const Icon(Icons.more_vert_rounded, size: 16),
+        padding: EdgeInsets.zero,
+        onOpened: () => setState(() => _selectedPath = path),
+        onSelected: (v) => _handleMenu(v, path, isDir),
+        itemBuilder: (_) => [
+          ccMenuItem(
+            value: 'open',
+            icon: isDir
+                ? Icons.folder_open_rounded
+                : Icons.description_outlined,
+            label: isDir ? 'Open Folder' : 'Open',
+          ),
+          const PopupMenuDivider(),
+          ccMenuItem(
+            value: 'newFile',
+            icon: Icons.note_add_outlined,
+            label: 'New File',
+          ),
+          ccMenuItem(
+            value: 'newDir',
+            icon: Icons.create_new_folder_outlined,
+            label: 'New Directory',
+          ),
+          const PopupMenuDivider(),
+          ccMenuItem(
+            value: path == widget.root ? null : 'rename',
+            icon: Icons.drive_file_rename_outline_rounded,
+            label: 'Rename',
+          ),
+          ccMenuItem(
+            value: path == widget.root ? null : 'delete',
+            icon: Icons.delete_outline_rounded,
+            label: 'Delete',
+            danger: true,
+          ),
+          const PopupMenuDivider(),
+          ccMenuItem(
+            value: 'copyPath',
+            icon: Icons.content_copy_rounded,
+            label: 'Copy Path',
+          ),
+          ccMenuItem(
+            value: 'reveal',
+            icon: Icons.my_location_rounded,
+            label: 'Reveal in System',
+          ),
+          ccMenuItem(
+            value: 'openExternal',
+            icon: Icons.open_in_new_rounded,
+            label: 'Open In',
+          ),
+          const PopupMenuDivider(),
+          ccMenuItem(
+            value: 'refresh',
+            icon: Icons.refresh_rounded,
+            label: 'Reload from Disk',
+          ),
+        ],
+      );
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('文件 · $name')),
+      appBar: AppBar(title: Text('文件 · ${widget.name}')),
       body: DecoratedBox(
         decoration: appGradient,
         child: ListView(
           padding: const EdgeInsets.symmetric(vertical: 4),
           children: [
             FileTree(
-              root: root,
-              label: name,
+              root: widget.root,
+              label: widget.name,
               onOpenFile: (path) => Navigator.of(
                 context,
               ).push(MaterialPageRoute(builder: (_) => EditorPage(path: path))),
+              selectedPath: _selectedPath,
+              refreshToken: _refreshToken,
+              fileMenuBuilder: (path) => _pathMenu(path, false),
+              directoryMenuBuilder: (path) => _pathMenu(path, true),
             ),
           ],
         ),
@@ -49,7 +343,9 @@ class FileTree extends StatelessWidget {
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
+  final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
+  final int refreshToken;
   const FileTree({
     super.key,
     required this.root,
@@ -57,7 +353,9 @@ class FileTree extends StatelessWidget {
     required this.onOpenFile,
     this.selectedPath,
     this.fileMenuBuilder,
+    this.directoryMenuBuilder,
     this.pathStatusBuilder,
+    this.refreshToken = 0,
   });
 
   @override
@@ -69,7 +367,9 @@ class FileTree extends StatelessWidget {
     onOpenFile: onOpenFile,
     selectedPath: selectedPath,
     fileMenuBuilder: fileMenuBuilder,
+    directoryMenuBuilder: directoryMenuBuilder,
     pathStatusBuilder: pathStatusBuilder,
+    refreshToken: refreshToken,
   );
 }
 
@@ -81,7 +381,9 @@ class DirTile extends StatefulWidget {
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
+  final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
+  final int refreshToken;
   const DirTile({
     super.key,
     required this.dir,
@@ -91,7 +393,9 @@ class DirTile extends StatefulWidget {
     this.initiallyExpanded = false,
     this.selectedPath,
     this.fileMenuBuilder,
+    this.directoryMenuBuilder,
     this.pathStatusBuilder,
+    this.refreshToken = 0,
   });
 
   @override
@@ -115,16 +419,30 @@ class _DirTileState extends State<DirTile> {
     super.didUpdateWidget(oldWidget);
     // Reveal-in-project: when the selection moves into this dir, open + load so
     // the highlighted descendant becomes visible.
-    if (oldWidget.selectedPath != widget.selectedPath && _containsSelectedPath) {
+    if (oldWidget.selectedPath != widget.selectedPath &&
+        _containsSelectedPath) {
       if (!_open) setState(() => _open = true);
       _loadChildren();
+    }
+    if (oldWidget.refreshToken != widget.refreshToken) {
+      _children = null;
+      if (_open || _containsSelectedPath) _loadChildren();
     }
   }
 
   bool get _containsSelectedPath {
     final selected = widget.selectedPath;
     if (selected == null || selected.isEmpty) return false;
-    return selected == widget.dir || selected.startsWith('${widget.dir}/');
+    return selected == widget.dir ||
+        selected.startsWith('${widget.dir}/') ||
+        selected.startsWith('${widget.dir}\\');
+  }
+
+  String _baseName(String path) {
+    final slash = path.lastIndexOf('/');
+    final backslash = path.lastIndexOf(r'\');
+    final i = slash > backslash ? slash : backslash;
+    return i < 0 ? path : path.substring(i + 1);
   }
 
   Future<void> _loadChildren() async {
@@ -133,17 +451,15 @@ class _DirTileState extends State<DirTile> {
     final entries = <FileSystemEntity>[];
     try {
       await for (final e in Directory(widget.dir).list(followLinks: false)) {
-        if (!kIgnoredEntries.contains(e.path.split('/').last)) entries.add(e);
+        if (!kIgnoredEntries.contains(_baseName(e.path))) entries.add(e);
       }
     } catch (_) {}
     entries.sort((a, b) {
       final ad = a is Directory, bd = b is Directory;
       if (ad != bd) return ad ? -1 : 1; // directories first
-      return a.path
-          .split('/')
-          .last
-          .toLowerCase()
-          .compareTo(b.path.split('/').last.toLowerCase());
+      return _baseName(
+        a.path,
+      ).toLowerCase().compareTo(_baseName(b.path).toLowerCase());
     });
     if (mounted) {
       setState(() {
@@ -163,28 +479,30 @@ class _DirTileState extends State<DirTile> {
     final selectedInDir = _containsSelectedPath;
     final selected = widget.selectedPath == widget.dir;
     final ancestor = selectedInDir && !selected;
+    final menu = widget.directoryMenuBuilder?.call(widget.dir);
+    final row = _treeRow(
+      depth: widget.depth,
+      selected: selected,
+      bold: selected || ancestor,
+      onTap: _toggle,
+      iconAsset: folderIconAsset,
+      iconSize: 16,
+      label: widget.label,
+      status: widget.pathStatusBuilder?.call(widget.dir),
+      chevron: AnimatedRotation(
+        turns: _open ? 0.25 : 0.0,
+        duration: const Duration(milliseconds: 150),
+        child: Icon(
+          Icons.chevron_right_rounded,
+          size: 16,
+          color: selected || ancestor ? CcColors.muted : CcColors.subtle,
+        ),
+      ),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _treeRow(
-          depth: widget.depth,
-          selected: selected,
-          bold: selected || ancestor,
-          onTap: _toggle,
-          iconAsset: folderIconAsset,
-          iconSize: 16,
-          label: widget.label,
-          status: widget.pathStatusBuilder?.call(widget.dir),
-          chevron: AnimatedRotation(
-            turns: _open ? 0.25 : 0.0,
-            duration: const Duration(milliseconds: 150),
-            child: Icon(
-              Icons.chevron_right_rounded,
-              size: 16,
-              color: selected || ancestor ? CcColors.muted : CcColors.subtle,
-            ),
-          ),
-        ),
+        menu == null ? row : _menuGesture(row, menu),
         if (_open) ..._childWidgets(),
       ],
     );
@@ -250,7 +568,8 @@ class _DirTileState extends State<DirTile> {
       return [
         Padding(
           padding: EdgeInsets.only(
-            left: _kRowBaseLeft + (widget.depth + 1) * _kIndentStep + _kChevronW,
+            left:
+                _kRowBaseLeft + (widget.depth + 1) * _kIndentStep + _kChevronW,
             top: 2,
             bottom: 4,
           ),
@@ -270,15 +589,17 @@ class _DirTileState extends State<DirTile> {
         if (e is Directory)
           DirTile(
             dir: e.path,
-            label: e.path.split('/').last,
+            label: _baseName(e.path),
             depth: d,
             onOpenFile: widget.onOpenFile,
             selectedPath: widget.selectedPath,
             fileMenuBuilder: widget.fileMenuBuilder,
+            directoryMenuBuilder: widget.directoryMenuBuilder,
             pathStatusBuilder: widget.pathStatusBuilder,
+            refreshToken: widget.refreshToken,
           )
         else
-          _fileTile(e.path, e.path.split('/').last, d),
+          _fileTile(e.path, _baseName(e.path), d),
     ];
   }
 
@@ -306,6 +627,10 @@ class _DirTileState extends State<DirTile> {
     );
     if (menu == null) return row;
     // Right-click anywhere on the file row pops the same actions (no ⋮ button).
+    return _menuGesture(row, menu);
+  }
+
+  Widget _menuGesture(Widget row, PopupMenuButton<String> menu) {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onSecondaryTapDown: (d) async {

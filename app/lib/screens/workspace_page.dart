@@ -154,9 +154,9 @@ class _ParkedMessage {
   Map<String, dynamic> toJson() =>
       {'from': from, 'session_id': sessionId, 'body': body};
   _ParkedMessage.fromJson(Map j)
-      : from = (j['from'] ?? '').toString(),
-        sessionId = (j['session_id'] ?? '').toString(),
-        body = (j['body'] ?? '').toString();
+    : from = (j['from'] ?? '').toString(),
+      sessionId = (j['session_id'] ?? '').toString(),
+      body = (j['body'] ?? '').toString();
 }
 
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
@@ -402,7 +402,9 @@ class _WorkspacePageState extends State<WorkspacePage>
           .join('|');
       if (_hookActivityFingerprints[s.id] == fp) continue;
       _hookActivityFingerprints[s.id] = fp;
-      if (_remoteHost.watching(s.id)) _remoteHost.broadcastActivity(s.id, items);
+      if (_remoteHost.watching(s.id)) {
+        _remoteHost.broadcastActivity(s.id, items);
+      }
       changed = true;
     }
     if (changed) _publishOverview();
@@ -476,6 +478,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   // project path -> worktrees. Key absent = not loaded; value null = loading;
   // value list = loaded (possibly empty).
   final Map<String, List<Worktree>?> _worktrees = {};
+  int _fileTreeRefreshToken = 0;
   // expansion controllers per project path, so launching a session can expand
   // its project to reveal the new session node.
   final Map<String, ExpansibleController> _proj = {};
@@ -1743,6 +1746,207 @@ class _WorkspacePageState extends State<WorkspacePage>
     _snack('已复制路径');
   }
 
+  String _pathJoin(String dir, String name) =>
+      dir.endsWith('/') || dir.endsWith(r'\') ? '$dir$name' : '$dir/$name';
+
+  String _pathBaseName(String path) {
+    final slash = path.lastIndexOf('/');
+    final backslash = path.lastIndexOf(r'\');
+    final i = slash > backslash ? slash : backslash;
+    return i < 0 ? path : path.substring(i + 1);
+  }
+
+  String _pathParent(String path) {
+    final slash = path.lastIndexOf('/');
+    final backslash = path.lastIndexOf(r'\');
+    final i = slash > backslash ? slash : backslash;
+    return i < 0 ? '' : path.substring(0, i);
+  }
+
+  bool _pathWithin(String path, String root) =>
+      path == root || path.startsWith('$root/') || path.startsWith('$root\\');
+
+  bool _validEntryName(String name) =>
+      name.trim().isNotEmpty && !name.contains('/') && !name.contains(r'\');
+
+  Future<String?> _nameDialog(
+    String title,
+    String label, {
+    String initial = '',
+    String hint = '',
+  }) async {
+    final ctl = TextEditingController(text: initial);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: ctl,
+          autofocus: true,
+          decoration: InputDecoration(labelText: label, hintText: hint),
+          onSubmitted: (_) => Navigator.pop(ctx, true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return null;
+    final name = ctl.text.trim();
+    if (!_validEntryName(name)) {
+      _snack('$label 不能为空，也不能包含路径分隔符');
+      return null;
+    }
+    return name;
+  }
+
+  void _refreshFileTrees([String? selectedPath]) {
+    setState(() {
+      _fileTreeRefreshToken++;
+      if (selectedPath != null) _revealedProjectFilePath = selectedPath;
+    });
+  }
+
+  Future<bool> _closeAffectedOpenFiles(String path, bool isDir) async {
+    final affected = _codeFiles
+        .where(
+          (f) =>
+              !f.isDiff && (isDir ? _pathWithin(f.path, path) : f.path == path),
+        )
+        .toList();
+    final dirty = affected.where((f) => f.dirty).map((f) => f.path).toList();
+    if (dirty.isNotEmpty && !await _confirm('关闭未保存文件?', _previewList(dirty))) {
+      return false;
+    }
+    if (affected.isEmpty) return true;
+    setState(() {
+      _codeFiles.removeWhere(
+        (f) =>
+            !f.isDiff && (isDir ? _pathWithin(f.path, path) : f.path == path),
+      );
+      if (_codeFiles.isEmpty) {
+        _activeFile = -1;
+      } else if (_activeFile >= _codeFiles.length) {
+        _activeFile = _codeFiles.length - 1;
+      }
+    });
+    return true;
+  }
+
+  Future<void> _newFileInDir(String dir) async {
+    final name = await _nameDialog('新建文件', '文件名', hint: 'README.md');
+    if (name == null) return;
+    final path = _pathJoin(dir, name);
+    try {
+      await File(path).create(exclusive: true);
+      _refreshFileTrees(path);
+      _openCodeFile(path);
+    } catch (e) {
+      _snack('新建文件失败：$e');
+    }
+  }
+
+  Future<void> _newDirectoryInDir(String dir) async {
+    final name = await _nameDialog('新建目录', '目录名', hint: 'src');
+    if (name == null) return;
+    final path = _pathJoin(dir, name);
+    try {
+      await Directory(path).create();
+      _refreshFileTrees(path);
+    } catch (e) {
+      _snack('新建目录失败：$e');
+    }
+  }
+
+  Future<void> _renameFsPath(String path, bool isDir, String rootPath) async {
+    if (path == rootPath) {
+      _snack('不能重命名项目根目录');
+      return;
+    }
+    final name = await _nameDialog('重命名', '名称', initial: _pathBaseName(path));
+    if (name == null || !await _closeAffectedOpenFiles(path, isDir)) return;
+    final target = _pathJoin(_pathParent(path), name);
+    try {
+      if (isDir) {
+        await Directory(path).rename(target);
+      } else {
+        await File(path).rename(target);
+      }
+      _refreshFileTrees(target);
+      if (!isDir) _openCodeFile(target);
+    } catch (e) {
+      _snack('重命名失败：$e');
+    }
+  }
+
+  Future<void> _deleteFsPath(String path, bool isDir, String rootPath) async {
+    if (path == rootPath) {
+      _snack('不能删除项目根目录');
+      return;
+    }
+    if (!await _confirm('删除「${_pathBaseName(path)}」?', '此操作会删除磁盘文件。')) {
+      return;
+    }
+    if (!await _closeAffectedOpenFiles(path, isDir)) return;
+    try {
+      if (isDir) {
+        await Directory(path).delete(recursive: true);
+      } else {
+        await File(path).delete();
+      }
+      _refreshFileTrees(_pathParent(path));
+      await _refreshGit();
+    } catch (e) {
+      _snack('删除失败：$e');
+    }
+  }
+
+  Future<void> _revealInSystem(String path) async {
+    try {
+      if (Platform.isMacOS) {
+        await Process.run('open', ['-R', path]);
+      } else if (Platform.isWindows) {
+        await Process.run('explorer', ['/select,', path]);
+      } else {
+        final target = FileSystemEntity.isDirectorySync(path)
+            ? path
+            : _pathParent(path);
+        await Process.run('xdg-open', [target]);
+      }
+    } catch (e) {
+      _snack('打开系统文件管理器失败：$e');
+    }
+  }
+
+  Future<void> _openExternally(String path) async {
+    try {
+      if (Platform.isMacOS) {
+        await Process.run('open', [path]);
+      } else if (Platform.isWindows) {
+        await Process.run('explorer', [path]);
+      } else {
+        await Process.run('xdg-open', [path]);
+      }
+    } catch (e) {
+      _snack('打开失败：$e');
+    }
+  }
+
+  void _openShellAt(String path) {
+    final dir = FileSystemEntity.isDirectorySync(path)
+        ? path
+        : _pathParent(path);
+    addTerm(dir, '');
+    _setBottomTool(_BottomTool.terminal);
+  }
+
   void _expandProjectForFile(String path) {
     final hit = _projectForFile(path);
     if (hit == null) {
@@ -2037,6 +2241,41 @@ class _WorkspacePageState extends State<WorkspacePage>
     await _runCli(
       () => Cli.workspaceAdd(ws.name, v[0]),
       '已添加(URL 会先 clone)',
+      after: _reloadConfig,
+    );
+  }
+
+  String _workspaceBasePath(WorkspaceCfg ws) {
+    if (ws.path.trim().isNotEmpty) return ws.path.trim();
+    var root = _cfg.workspaceRoot.trim();
+    if (root.startsWith('~/')) {
+      root = '${Platform.environment['HOME'] ?? ''}${root.substring(1)}';
+    }
+    if (root.isEmpty) {
+      root = '${Platform.environment['HOME'] ?? ''}/cc-handoff-workspaces';
+    }
+    return _pathJoin(root, ws.name.isEmpty ? 'default' : ws.name);
+  }
+
+  Future<void> _newEmptyProject(WorkspaceCfg ws) async {
+    final name = await _nameDialog('新建空项目', '项目名', hint: 'my-app');
+    if (name == null) return;
+    final path = _pathJoin(_workspaceBasePath(ws), name);
+    await _runCli(
+      () async {
+        final dir = Directory(path);
+        if (await FileSystemEntity.isFile(path)) {
+          throw CliException('目标路径已存在且不是目录：$path');
+        }
+        if (await dir.exists()) {
+          final hasEntries = !(await dir.list(followLinks: false).isEmpty);
+          if (hasEntries) throw CliException('目标目录不是空目录：$path');
+        } else {
+          await dir.create(recursive: true);
+        }
+        await Cli.workspaceAdd(ws.name, path);
+      },
+      '已创建空项目 $name',
       after: _reloadConfig,
     );
   }
@@ -4897,7 +5136,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       final files = parseUnifiedDiff(diff);
       if (files.isNotEmpty) {
         _openDiffTab(files, 'Stash · ${s.ref}',
-            reload: (ctx) async =>
+          reload: (ctx) async =>
                 parseUnifiedDiff(await gitStashShow(p.path, s.ref, context: ctx)));
       }
     } catch (e) {
@@ -5438,9 +5677,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     final p = _currentGitProject;
     if (_gitFiles.any((f) => f.path == path)) {
       _openDiffTab(_gitFiles, 'Working Tree', initialPath: path, showTree: false,
-          reload: p == null
-              ? null
-              : (ctx) async =>
+        reload: p == null
+            ? null
+            : (ctx) async =>
                   parseUnifiedDiff(await gitDiffWorking(p.path, context: ctx)));
       return;
     }
@@ -7301,7 +7540,9 @@ class _WorkspacePageState extends State<WorkspacePage>
           p.path,
           p.name,
           selectedPath: _revealedProjectFilePath,
-          fileMenuBuilder: (path) => _projectFileMenu(p, path),
+          fileMenuBuilder: (path) => _projectFileMenu(p, path, isDir: false),
+          directoryMenuBuilder: (path) =>
+              _projectFileMenu(p, path, isDir: true),
           pathStatusBuilder: (path) =>
               _pathStatus(p.path, p.name, _gitChanges, path),
         ),
@@ -7368,6 +7609,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     String label, {
     String? selectedPath,
     PopupMenuButton<String>? Function(String path)? fileMenuBuilder,
+    PopupMenuButton<String>? Function(String path)? directoryMenuBuilder,
     Widget Function(String path)? pathStatusBuilder,
   }) {
     final header = _sectionHeader(dir, 'files', 'FILES');
@@ -7386,7 +7628,9 @@ class _WorkspacePageState extends State<WorkspacePage>
             onOpenFile: _openCodeFile,
             selectedPath: selectedPath,
             fileMenuBuilder: fileMenuBuilder,
+            directoryMenuBuilder: directoryMenuBuilder,
             pathStatusBuilder: pathStatusBuilder,
+            refreshToken: _fileTreeRefreshToken,
           ),
         ),
       ],
@@ -7433,7 +7677,65 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  PopupMenuButton<String> _projectFileMenu(ProjectCfg project, String path) {
+  void _handleFsMenu(
+    String value,
+    String path, {
+    required String rootPath,
+    required bool isDir,
+    ProjectCfg? project,
+  }) {
+    setState(() => _revealedProjectFilePath = path);
+    final parent = isDir ? path : _pathParent(path);
+    final rel = project == null || path == project.path
+        ? ''
+        : path.substring(project.path.length + 1);
+    switch (value) {
+      case 'open':
+        if (isDir) {
+          _refreshFileTrees(path);
+        } else {
+          _openCodeFile(path);
+        }
+      case 'newFile':
+        _newFileInDir(parent);
+      case 'newDir':
+        _newDirectoryInDir(parent);
+      case 'rename':
+        _renameFsPath(path, isDir, rootPath);
+      case 'delete':
+        _deleteFsPath(path, isDir, rootPath);
+      case 'copyPath':
+        _copyFilePath(path);
+      case 'revealProject':
+        _revealFileInProject(path);
+      case 'revealSystem':
+        _revealInSystem(path);
+      case 'openExternal':
+        _openExternally(path);
+      case 'terminal':
+        _openShellAt(path);
+      case 'refresh':
+        _refreshFileTrees(path);
+      case 'compare':
+        if (project != null && !isDir && rel.isNotEmpty) {
+          _compareProjectFileWithHead(project, rel);
+        }
+      case 'history':
+        if (project != null && !isDir && rel.isNotEmpty) {
+          _showFileHistoryForProjectFile(project, rel);
+        }
+      case 'annotate':
+        if (project != null && !isDir && rel.isNotEmpty) {
+          _showBlameForProjectFile(project, rel);
+        }
+    }
+  }
+
+  PopupMenuButton<String> _projectFileMenu(
+    ProjectCfg project,
+    String path, {
+    required bool isDir,
+  }) {
     final rel = path == project.path
         ? ''
         : path.substring(project.path.length + 1);
@@ -7442,41 +7744,89 @@ class _WorkspacePageState extends State<WorkspacePage>
       icon: const Icon(Icons.more_vert_rounded, size: 16),
       padding: EdgeInsets.zero,
       onOpened: () => setState(() => _revealedProjectFilePath = path),
-      onSelected: (v) {
-        if (v == 'open') _openCodeFile(path);
-        if (v == 'copyPath') _copyFilePath(path);
-        if (v == 'reveal') _revealFileInProject(path);
-        if (v == 'compare') _compareProjectFileWithHead(project, rel);
-        if (v == 'history') _showFileHistoryForProjectFile(project, rel);
-        if (v == 'annotate') _showBlameForProjectFile(project, rel);
-      },
+      onSelected: (v) => _handleFsMenu(
+        v,
+        path,
+        rootPath: project.path,
+        isDir: isDir,
+        project: project,
+      ),
       itemBuilder: (_) => [
-        ccMenuItem(value: 'open', icon: Icons.description_outlined, label: 'Open'),
+        ccMenuItem(
+          value: 'open',
+          icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
+          label: isDir ? 'Open Folder' : 'Open',
+        ),
+        const PopupMenuDivider(),
+        ccMenuItem(
+          value: 'newFile',
+          icon: Icons.note_add_outlined,
+          label: 'New File',
+        ),
+        ccMenuItem(
+          value: 'newDir',
+          icon: Icons.create_new_folder_outlined,
+          label: 'New Directory',
+        ),
+        const PopupMenuDivider(),
+        ccMenuItem(
+          value: path == project.path ? null : 'rename',
+          icon: Icons.drive_file_rename_outline_rounded,
+          label: 'Rename',
+        ),
+        ccMenuItem(
+          value: path == project.path ? null : 'delete',
+          icon: Icons.delete_outline_rounded,
+          label: 'Delete',
+          danger: true,
+        ),
+        const PopupMenuDivider(),
         ccMenuItem(
           value: 'copyPath',
           icon: Icons.content_copy_rounded,
           label: 'Copy Path',
         ),
         ccMenuItem(
-          value: 'reveal',
+          value: 'revealProject',
           icon: Icons.my_location_rounded,
           label: 'Reveal in Project',
         ),
+        ccMenuItem(
+          value: 'revealSystem',
+          icon: Icons.folder_open_rounded,
+          label: 'Reveal in System',
+        ),
+        ccMenuItem(
+          value: 'openExternal',
+          icon: Icons.open_in_new_rounded,
+          label: 'Open In',
+        ),
+        ccMenuItem(
+          value: 'terminal',
+          icon: Icons.terminal_rounded,
+          label: 'Open Terminal Here',
+        ),
         const PopupMenuDivider(),
         ccMenuItem(
-          value: 'compare',
+          value: !isDir && rel.isNotEmpty ? 'compare' : null,
           icon: Icons.difference_rounded,
           label: 'Compare with HEAD',
         ),
         ccMenuItem(
-          value: 'history',
+          value: !isDir && rel.isNotEmpty ? 'history' : null,
           icon: Icons.history_rounded,
           label: 'File History',
         ),
         ccMenuItem(
-          value: 'annotate',
+          value: !isDir && rel.isNotEmpty ? 'annotate' : null,
           icon: Icons.format_align_left_rounded,
           label: 'Annotate / Blame',
+        ),
+        const PopupMenuDivider(),
+        ccMenuItem(
+          value: 'refresh',
+          icon: Icons.refresh_rounded,
+          label: 'Reload from Disk',
         ),
       ],
     );
@@ -7785,7 +8135,10 @@ class _WorkspacePageState extends State<WorkspacePage>
             _filesNode(
               w.path,
               title,
-              fileMenuBuilder: (path) => _worktreeFileMenu(path),
+              fileMenuBuilder: (path) =>
+                  _worktreeFileMenu(w.path, path, isDir: false),
+              directoryMenuBuilder: (path) =>
+                  _worktreeFileMenu(w.path, path, isDir: true),
               pathStatusBuilder: (path) => _pathStatus(
                 w.path,
                 title,
@@ -7801,30 +8154,74 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // worktree 文件树的轻量菜单。compare/history/blame 依赖项目 git 根,对 worktree
   // 不直接成立(各自是独立工作树),留作后续。
-  PopupMenuButton<String> _worktreeFileMenu(String path) =>
-      PopupMenuButton<String>(
-        tooltip: 'File actions',
-        icon: const Icon(Icons.more_vert_rounded, size: 16),
-        padding: EdgeInsets.zero,
-        onSelected: (v) {
-          if (v == 'open') _openCodeFile(path);
-          if (v == 'copyPath') _copyFilePath(path);
-          if (v == 'reveal') _revealFileInProject(path);
-        },
-        itemBuilder: (_) => [
-          ccMenuItem(value: 'open', icon: Icons.description_outlined, label: 'Open'),
-          ccMenuItem(
-            value: 'copyPath',
-            icon: Icons.content_copy_rounded,
-            label: 'Copy Path',
-          ),
-          ccMenuItem(
-            value: 'reveal',
-            icon: Icons.my_location_rounded,
-            label: 'Reveal',
-          ),
-        ],
-      );
+  PopupMenuButton<String> _worktreeFileMenu(
+    String rootPath,
+    String path, {
+    required bool isDir,
+  }) => PopupMenuButton<String>(
+    tooltip: 'File actions',
+    icon: const Icon(Icons.more_vert_rounded, size: 16),
+    padding: EdgeInsets.zero,
+    onOpened: () => setState(() => _revealedProjectFilePath = path),
+    onSelected: (v) => _handleFsMenu(v, path, rootPath: rootPath, isDir: isDir),
+    itemBuilder: (_) => [
+      ccMenuItem(
+        value: 'open',
+        icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
+        label: isDir ? 'Open Folder' : 'Open',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'newFile',
+        icon: Icons.note_add_outlined,
+        label: 'New File',
+      ),
+      ccMenuItem(
+        value: 'newDir',
+        icon: Icons.create_new_folder_outlined,
+        label: 'New Directory',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: path == rootPath ? null : 'rename',
+        icon: Icons.drive_file_rename_outline_rounded,
+        label: 'Rename',
+      ),
+      ccMenuItem(
+        value: path == rootPath ? null : 'delete',
+        icon: Icons.delete_outline_rounded,
+        label: 'Delete',
+        danger: true,
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'copyPath',
+        icon: Icons.content_copy_rounded,
+        label: 'Copy Path',
+      ),
+      ccMenuItem(
+        value: 'revealSystem',
+        icon: Icons.folder_open_rounded,
+        label: 'Reveal in System',
+      ),
+      ccMenuItem(
+        value: 'openExternal',
+        icon: Icons.open_in_new_rounded,
+        label: 'Open In',
+      ),
+      ccMenuItem(
+        value: 'terminal',
+        icon: Icons.terminal_rounded,
+        label: 'Open Terminal Here',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'refresh',
+        icon: Icons.refresh_rounded,
+        label: 'Reload from Disk',
+      ),
+    ],
+  );
 
   List<Widget> _taskNodes(ProjectCfg p) {
     final ts = _tasksByRepo[p.name] ?? const [];
@@ -7882,6 +8279,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         tooltip: '工作区操作',
         onSelected: (v) {
           switch (v) {
+            case 'new':
+              _newEmptyProject(ws);
             case 'add':
               _addProject(ws);
             case 'settings':
@@ -7892,10 +8291,16 @@ class _WorkspacePageState extends State<WorkspacePage>
         },
         itemBuilder: (_) => [
           ccMenuItem(
+            value: 'new',
+            icon: Icons.create_new_folder_rounded,
+            label: 'New Empty Project',
+          ),
+          ccMenuItem(
             value: 'add',
             icon: Icons.create_new_folder_outlined,
-            label: '添加项目',
+            label: 'Add Existing / Clone Project',
           ),
+          const PopupMenuDivider(),
           ccMenuItem(
             value: 'settings',
             icon: Icons.settings_rounded,
