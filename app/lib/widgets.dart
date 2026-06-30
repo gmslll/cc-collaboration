@@ -89,31 +89,62 @@ void snack(
   final d = duration ?? const Duration(seconds: 4);
   _topSnackEntry = OverlayEntry(
     builder: (ctx) => Positioned(
-      top: MediaQuery.paddingOf(ctx).top + 10,
+      top: MediaQuery.paddingOf(ctx).top + kToolbarHeight + 8,
       left: 12,
       right: 12,
       child: Material(
         color: Colors.transparent,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: background ?? const Color(0xF0181B20),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0x33FFFFFF)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x66000000),
-                blurRadius: 18,
-                offset: Offset(0, 8),
+        child: Dismissible(
+          key: UniqueKey(),
+          direction: DismissDirection.up,
+          onDismissed: (_) => _removeTopSnack(),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: background ?? const Color(0xF0181B20),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0x33FFFFFF)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x66000000),
+                  blurRadius: 18,
+                  offset: Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        message,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: CcColors.text,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: IconButton(
+                      tooltip: '关闭',
+                      padding: EdgeInsets.zero,
+                      iconSize: 18,
+                      color: CcColors.muted,
+                      onPressed: _removeTopSnack,
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Text(
-              message,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: CcColors.text, fontSize: 13),
             ),
           ),
         ),
