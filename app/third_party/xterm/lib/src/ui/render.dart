@@ -1093,6 +1093,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool validateSignature,
   }) {
     var entry = _linePictureCache[lineIndex];
+    var recordedLineCommands = false;
     if (entry != null && !validateSignature) {
       profile?.lineSignatureSkips++;
       profile?.lineCacheHits++;
@@ -1115,55 +1116,43 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           _paintUncachedLine(canvas, offset, line, profile);
           return;
         }
-        final recorder = PictureRecorder();
-        final lineCanvas = Canvas(
-          recorder,
-          Rect.fromLTWH(
-            0,
-            0,
-            line.length * _painter.cellSize.width,
-            _painter.cellSize.height,
-          ),
-        );
-        _painter.paintLine(
-          lineCanvas,
-          Offset.zero,
+        _recordLineBackgroundCommands(commands, offset, line, profile);
+        final textRunsCoverForeground = _recordLineTextRunCommands(
+          commands,
+          offset,
           line,
-          collectProfile: profile != null,
-          paintBackgrounds: false,
+          profile,
         );
-        if (profile != null) {
-          final painterProfile = _painter.takeProfile();
-          if (painterProfile != null) {
-            profile
-              ..backgroundRuns += painterProfile.backgroundRuns
-              ..asciiRuns += painterProfile.asciiRuns
-              ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
-              ..renderPlanCacheHits += painterProfile.renderPlanCacheHits
-              ..renderPlanCacheMisses += painterProfile.renderPlanCacheMisses
-              ..glyphPictureCacheHits += painterProfile.glyphPictureCacheHits
-              ..glyphPictureCacheMisses +=
-                  painterProfile.glyphPictureCacheMisses
-              ..glyphRunPictureCacheHits +=
-                  painterProfile.glyphRunPictureCacheHits
-              ..glyphRunPictureCacheMisses +=
-                  painterProfile.glyphRunPictureCacheMisses
-              ..glyphAtlasHits += painterProfile.glyphAtlasHits
-              ..glyphAtlasMisses += painterProfile.glyphAtlasMisses
-              ..glyphAtlasDraws += painterProfile.glyphAtlasDraws
-              ..glyphAtlasRunDraws += painterProfile.glyphAtlasRunDraws
-              ..emojiFallbackCells += painterProfile.emojiFallbackCells
-              ..wideGlyphFallbackCells += painterProfile.wideGlyphFallbackCells
-              ..paragraphCacheHits += painterProfile.paragraphCacheHits
-              ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
-              ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
-              ..runParagraphCacheMisses +=
-                  painterProfile.runParagraphCacheMisses
-              ..singleCells += painterProfile.singleCells
-              ..blankLines += painterProfile.blankLines;
+        recordedLineCommands = true;
+        if (textRunsCoverForeground) {
+          entry = _LinePictureCache(signature);
+        } else {
+          final recorder = PictureRecorder();
+          final lineCanvas = Canvas(
+            recorder,
+            Rect.fromLTWH(
+              0,
+              0,
+              line.length * _painter.cellSize.width,
+              _painter.cellSize.height,
+            ),
+          );
+          _painter.paintLine(
+            lineCanvas,
+            Offset.zero,
+            line,
+            collectProfile: profile != null,
+            paintBackgrounds: false,
+            paintTextRuns: false,
+          );
+          if (profile != null) {
+            final painterProfile = _painter.takeProfile();
+            if (painterProfile != null) {
+              _mergePainterProfile(profile, painterProfile);
+            }
           }
+          entry = _LinePictureCache(signature, recorder.endRecording());
         }
-        entry = _LinePictureCache(signature, recorder.endRecording());
         _linePictureCache[lineIndex] = entry;
       } else {
         profile?.lineCacheHits++;
@@ -1171,13 +1160,42 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
     entry = entry!;
 
-    _recordLineBackgroundCommands(commands, offset, line, profile);
+    if (!recordedLineCommands) {
+      _recordLineBackgroundCommands(commands, offset, line, profile);
+      _recordLineTextRunCommands(commands, offset, line, profile);
+    }
 
     final picture = entry.picture;
     if (picture == null) {
       return;
     }
     commands.addPicture(picture, offset);
+  }
+
+  bool _recordLineTextRunCommands(
+    _RenderCommandBuffer commands,
+    Offset offset,
+    BufferLine line,
+    TerminalRenderProfile? profile,
+  ) {
+    final coversForeground = _painter.recordTextRunParagraphs(
+      line,
+      offset,
+      (paragraph, paragraphOffset) {
+        commands.addParagraphAt(
+          paragraph,
+          paragraphOffset.dx,
+          paragraphOffset.dy,
+          kind: _RenderCommandKind.content,
+        );
+      },
+      collectProfile: profile != null,
+    );
+    final painterProfile = profile == null ? null : _painter.takeProfile();
+    if (profile != null && painterProfile != null) {
+      _mergePainterProfile(profile, painterProfile);
+    }
+    return coversForeground;
   }
 
   void _recordLineBackgroundCommands(
@@ -1251,6 +1269,34 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     return _painter.resolveBackgroundColor(background);
   }
 
+  void _mergePainterProfile(
+    TerminalRenderProfile profile,
+    TerminalPainterProfile painterProfile,
+  ) {
+    profile
+      ..backgroundRuns += painterProfile.backgroundRuns
+      ..asciiRuns += painterProfile.asciiRuns
+      ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
+      ..renderPlanCacheHits += painterProfile.renderPlanCacheHits
+      ..renderPlanCacheMisses += painterProfile.renderPlanCacheMisses
+      ..glyphPictureCacheHits += painterProfile.glyphPictureCacheHits
+      ..glyphPictureCacheMisses += painterProfile.glyphPictureCacheMisses
+      ..glyphRunPictureCacheHits += painterProfile.glyphRunPictureCacheHits
+      ..glyphRunPictureCacheMisses += painterProfile.glyphRunPictureCacheMisses
+      ..glyphAtlasHits += painterProfile.glyphAtlasHits
+      ..glyphAtlasMisses += painterProfile.glyphAtlasMisses
+      ..glyphAtlasDraws += painterProfile.glyphAtlasDraws
+      ..glyphAtlasRunDraws += painterProfile.glyphAtlasRunDraws
+      ..emojiFallbackCells += painterProfile.emojiFallbackCells
+      ..wideGlyphFallbackCells += painterProfile.wideGlyphFallbackCells
+      ..paragraphCacheHits += painterProfile.paragraphCacheHits
+      ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
+      ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
+      ..runParagraphCacheMisses += painterProfile.runParagraphCacheMisses
+      ..singleCells += painterProfile.singleCells
+      ..blankLines += painterProfile.blankLines;
+  }
+
   bool _contentMayHaveChanged(TerminalPaintReason reason) {
     switch (reason) {
       case TerminalPaintReason.terminal:
@@ -1291,29 +1337,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final renderProfile = profile;
     if (renderProfile != null && painterProfile != null) {
       renderProfile.uncachedLines++;
-      renderProfile
-        ..backgroundRuns += painterProfile.backgroundRuns
-        ..asciiRuns += painterProfile.asciiRuns
-        ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
-        ..renderPlanCacheHits += painterProfile.renderPlanCacheHits
-        ..renderPlanCacheMisses += painterProfile.renderPlanCacheMisses
-        ..glyphPictureCacheHits += painterProfile.glyphPictureCacheHits
-        ..glyphPictureCacheMisses += painterProfile.glyphPictureCacheMisses
-        ..glyphRunPictureCacheHits += painterProfile.glyphRunPictureCacheHits
-        ..glyphRunPictureCacheMisses +=
-            painterProfile.glyphRunPictureCacheMisses
-        ..glyphAtlasHits += painterProfile.glyphAtlasHits
-        ..glyphAtlasMisses += painterProfile.glyphAtlasMisses
-        ..glyphAtlasDraws += painterProfile.glyphAtlasDraws
-        ..glyphAtlasRunDraws += painterProfile.glyphAtlasRunDraws
-        ..emojiFallbackCells += painterProfile.emojiFallbackCells
-        ..wideGlyphFallbackCells += painterProfile.wideGlyphFallbackCells
-        ..paragraphCacheHits += painterProfile.paragraphCacheHits
-        ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
-        ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
-        ..runParagraphCacheMisses += painterProfile.runParagraphCacheMisses
-        ..singleCells += painterProfile.singleCells
-        ..blankLines += painterProfile.blankLines;
+      _mergePainterProfile(renderProfile, painterProfile);
     }
   }
 
@@ -1520,6 +1544,7 @@ class _RenderCommandBuffer {
 
   final _types = <_RenderCommandType>[];
   final _pictures = <Picture?>[];
+  final _paragraphs = <Paragraph?>[];
   final _dx = <double>[];
   final _dy = <double>[];
   final _width = <double>[];
@@ -1531,6 +1556,7 @@ class _RenderCommandBuffer {
   void clear() {
     _types.clear();
     _pictures.clear();
+    _paragraphs.clear();
     _dx.clear();
     _dy.clear();
     _width.clear();
@@ -1555,6 +1581,7 @@ class _RenderCommandBuffer {
   }) {
     _types.add(_RenderCommandType.picture);
     _pictures.add(picture);
+    _paragraphs.add(null);
     _dx.add(dx);
     _dy.add(dy);
     _width.add(0);
@@ -1574,11 +1601,29 @@ class _RenderCommandBuffer {
     if (width <= 0 || height <= 0) return;
     _types.add(_RenderCommandType.rect);
     _pictures.add(null);
+    _paragraphs.add(null);
     _dx.add(dx);
     _dy.add(dy);
     _width.add(width);
     _height.add(height);
     _colors.add(color);
+    _kinds.add(kind);
+  }
+
+  void addParagraphAt(
+    Paragraph paragraph,
+    double dx,
+    double dy, {
+    _RenderCommandKind kind = _RenderCommandKind.content,
+  }) {
+    _types.add(_RenderCommandType.paragraph);
+    _pictures.add(null);
+    _paragraphs.add(paragraph);
+    _dx.add(dx);
+    _dy.add(dy);
+    _width.add(0);
+    _height.add(0);
+    _colors.add(_transparent);
     _kinds.add(kind);
   }
 
@@ -1621,6 +1666,14 @@ class _RenderCommandBuffer {
             _rectPaint,
           );
           profile?.renderCommandRectDraws++;
+        case _RenderCommandType.paragraph:
+          final paragraph = _paragraphs[i];
+          if (paragraph == null) continue;
+          canvas.drawParagraph(
+            paragraph,
+            Offset(offset.dx + _dx[i], offset.dy + _dy[i]),
+          );
+          profile?.renderCommandParagraphDraws++;
       }
     }
   }
@@ -1629,6 +1682,7 @@ class _RenderCommandBuffer {
 enum _RenderCommandType {
   picture,
   rect,
+  paragraph,
 }
 
 enum _RenderCommandKind {
@@ -1671,6 +1725,7 @@ class TerminalRenderProfile {
   var renderCommands = 0;
   var renderCommandPictureDraws = 0;
   var renderCommandRectDraws = 0;
+  var renderCommandParagraphDraws = 0;
   var overlayRowCacheHits = 0;
   var overlayRowCacheMisses = 0;
   var overlayRowSignatureSkips = 0;
@@ -1725,6 +1780,7 @@ class TerminalRenderProfile {
         'renderCommands: $renderCommands, '
         'renderCommandPictureDraws: $renderCommandPictureDraws, '
         'renderCommandRectDraws: $renderCommandRectDraws, '
+        'renderCommandParagraphDraws: $renderCommandParagraphDraws, '
         'overlayRowCacheHits: $overlayRowCacheHits, '
         'overlayRowCacheMisses: $overlayRowCacheMisses, '
         'overlayRowSignatureSkips: $overlayRowSignatureSkips, '

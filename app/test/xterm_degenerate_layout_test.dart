@@ -350,7 +350,10 @@ void main() {
         RenderTerminal.lastPaintProfile!.paintReason,
         TerminalPaintReason.initial,
       );
-      expect(RenderTerminal.lastPaintProfile!.contentPicturesDrawn, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.renderCommandParagraphDraws,
+        isPositive,
+      );
       expect(
         RenderTerminal.lastPaintProfile!.viewportContentCacheMisses,
         isPositive,
@@ -430,6 +433,10 @@ void main() {
       expect(RenderTerminal.lastPaintProfile!.renderCommands, isPositive);
       expect(
         RenderTerminal.lastPaintProfile!.renderCommandPictureDraws,
+        isPositive,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.renderCommandParagraphDraws,
         isPositive,
       );
 

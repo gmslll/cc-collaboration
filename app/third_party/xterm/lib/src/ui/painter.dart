@@ -214,6 +214,7 @@ class TerminalPainter {
     BufferLine line, {
     bool collectProfile = false,
     bool paintBackgrounds = true,
+    bool paintTextRuns = true,
   }) {
     final profile = collectProfile ? TerminalPainterProfile() : null;
     _profile = profile;
@@ -245,17 +246,31 @@ class TerminalPainter {
               span.flags,
             );
             profile?.singleCells += span.text.length;
-          } else if (_paintTextRun(
-            canvas,
-            offset.translate(span.start * cellWidth, 0),
-            span.text,
-            span.foreground,
-            span.background,
-            span.flags,
-          )) {
-            profile?.asciiRuns++;
           } else {
-            profile?.asciiRunFallbacks++;
+            final paragraph = _textRunParagraph(
+              span.text,
+              span.foreground,
+              span.background,
+              span.flags,
+              collectProfile: paintTextRuns,
+            );
+            if (paragraph == null) {
+              _paintTextRunCells(
+                canvas,
+                offset.translate(span.start * cellWidth, 0),
+                span.text,
+                span.foreground,
+                span.background,
+                span.flags,
+              );
+              profile?.asciiRunFallbacks++;
+            } else if (paintTextRuns) {
+              canvas.drawParagraph(
+                paragraph,
+                offset.translate(span.start * cellWidth, 0),
+              );
+              profile?.asciiRuns++;
+            }
           }
         case _GeometryGlyphRunSpan():
           final spanOffset = offset.translate(span.start * cellWidth, 0);
@@ -288,6 +303,47 @@ class TerminalPainter {
           profile?.singleCells++;
       }
     }
+  }
+
+  bool recordTextRunParagraphs(
+    BufferLine line,
+    Offset offset,
+    void Function(Paragraph paragraph, Offset offset) record, {
+    bool collectProfile = false,
+  }) {
+    final profile = collectProfile ? TerminalPainterProfile() : null;
+    _profile = profile;
+    final plan = _lineRenderPlanFor(line, profile);
+    final cellWidth = _cellSize.width;
+    var coversForeground = true;
+
+    for (final span in plan.foregroundSpans) {
+      switch (span) {
+        case _TextRunSpan():
+          if (span.text.length < _minTextRunLength) {
+            coversForeground = false;
+            continue;
+          }
+          final paragraph = _textRunParagraph(
+            span.text,
+            span.foreground,
+            span.background,
+            span.flags,
+          );
+          if (paragraph == null) {
+            profile?.asciiRunFallbacks++;
+            coversForeground = false;
+            continue;
+          }
+          record(paragraph, offset.translate(span.start * cellWidth, 0));
+          profile?.asciiRuns++;
+        case _GeometryGlyphRunSpan():
+        case _CellForegroundSpan():
+          coversForeground = false;
+          continue;
+      }
+    }
+    return coversForeground;
   }
 
   _LineRenderPlan _lineRenderPlanFor(
@@ -677,14 +733,13 @@ class TerminalPainter {
         (charCode >= 0xFE20 && charCode <= 0xFE2F);
   }
 
-  bool _paintTextRun(
-    Canvas canvas,
-    Offset offset,
+  Paragraph? _textRunParagraph(
     String text,
     int foreground,
     int background,
-    int flags,
-  ) {
+    int flags, {
+    bool collectProfile = true,
+  }) {
     final color = _foregroundColor(foreground, background, flags);
     final cacheKey = Object.hash(
       text,
@@ -696,7 +751,9 @@ class TerminalPainter {
     );
     var paragraph = _runParagraphCache.getLayoutFromCache(cacheKey);
     if (paragraph == null) {
-      _profile?.runParagraphCacheMisses++;
+      if (collectProfile) {
+        _profile?.runParagraphCacheMisses++;
+      }
       final style = _textStyle.toTextStyle(
         color: color,
         bold: flags & CellFlags.bold != 0,
@@ -711,17 +768,17 @@ class TerminalPainter {
         cacheKey,
       );
     } else {
-      _profile?.runParagraphCacheHits++;
+      if (collectProfile) {
+        _profile?.runParagraphCacheHits++;
+      }
     }
     final expectedWidth = text.length * _cellSize.width;
     final measuredWidth = paragraph.maxIntrinsicWidth;
     final tolerance = _cellSize.width * 0.08;
     if ((measuredWidth - expectedWidth).abs() > tolerance) {
-      _paintTextRunCells(canvas, offset, text, foreground, background, flags);
-      return false;
+      return null;
     }
-    canvas.drawParagraph(paragraph, offset);
-    return true;
+    return paragraph;
   }
 
   void _paintTextRunCells(

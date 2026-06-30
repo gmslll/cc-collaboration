@@ -166,3 +166,14 @@ background spans use the same rect stream as overlay spans.
 This is the first content-layer split from line pictures toward span-level
 commands. Text shaping, emoji, and sprite foreground drawing remain on the
 existing conservative picture path.
+
+## 2026-07-01 Direct Safe Text Run Commands
+
+Change: safe fixed-width text runs now record cached `Paragraph` commands
+directly into the content command buffer. The line picture recorder skips those
+runs and remains responsible for short cells, width-mismatched fallback text,
+emoji/wide glyph fallback, and geometry/sprite foreground drawing.
+
+This moves the common ASCII/Latin foreground path out of line pictures while
+preserving Flutter paragraph shaping validation and the existing fallback path
+for complex text.
