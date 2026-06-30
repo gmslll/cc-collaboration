@@ -16,6 +16,17 @@ void main() {
     expect(output.toString(), '\x1b\x1c\x1d\x1e\x1f');
   });
 
+  test('ctrl shifted punctuation keys still encode as C0 controls', () {
+    final term = Terminal();
+    final output = StringBuffer();
+    term.onOutput = output.write;
+
+    term.keyInput(TerminalKey.digit6, ctrl: true, shift: true);
+    term.keyInput(TerminalKey.minus, ctrl: true, shift: true);
+
+    expect(output.toString(), '\x1e\x1f');
+  });
+
   test('normal mouse reporting uses one-based coordinates exactly once', () {
     final term = Terminal();
     final output = StringBuffer();
