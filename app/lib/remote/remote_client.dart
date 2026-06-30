@@ -455,6 +455,7 @@ class RemoteClient extends RemoteChannel {
       {}; // debounce client resize per session
   final Map<String, Timer> _resizeRefreshTimers = {};
   final Map<String, ({int rows, int cols})> _resizeRefreshAttempted = {};
+  final Map<String, DateTime> _resizeRefreshReplayUntil = {};
   // Sessions whose viewport size has already been reported to the host. The
   // first onResize for a sid is sent immediately (no debounce) so the host
   // redraws at this device's size promptly; later resizes debounce. Dropped on
@@ -621,7 +622,11 @@ class RemoteClient extends RemoteChannel {
         final d = f['d'] as String?;
         if (sid != null && d != null) {
           _resizeRefreshTimers.remove(sid)?.cancel();
-          _resizeRefreshAttempted.remove(sid);
+          final replayUntil = _resizeRefreshReplayUntil[sid];
+          if (replayUntil == null || DateTime.now().isAfter(replayUntil)) {
+            _resizeRefreshReplayUntil.remove(sid);
+            _resizeRefreshAttempted.remove(sid);
+          }
           _terminals[sid]?.write(d);
         }
       case 'reply':
@@ -984,6 +989,7 @@ class RemoteClient extends RemoteChannel {
     _resizeTimers.remove(sid)?.cancel();
     _resizeRefreshTimers.remove(sid)?.cancel();
     _resizeRefreshAttempted.remove(sid);
+    _resizeRefreshReplayUntil.remove(sid);
     _sizedSids.remove(sid); // re-opened session reports its size afresh
     _lastActive.remove(sid);
   }
@@ -998,10 +1004,13 @@ class RemoteClient extends RemoteChannel {
     _resizeRefreshTimers.remove(sid)?.cancel();
     final attempted = _resizeRefreshAttempted[sid];
     if (attempted?.rows == rows && attempted?.cols == cols) return;
-    _resizeRefreshTimers[sid] = Timer(const Duration(milliseconds: 650), () {
+    _resizeRefreshTimers[sid] = Timer(const Duration(milliseconds: 1200), () {
       _resizeRefreshTimers.remove(sid);
       if (_viewedSid != sid || !_terminals.containsKey(sid)) return;
       _resizeRefreshAttempted[sid] = (rows: rows, cols: cols);
+      _resizeRefreshReplayUntil[sid] = DateTime.now().add(
+        const Duration(seconds: 3),
+      );
       reloadTerminal(sid);
       onTerminalReset?.call();
     });
@@ -1039,6 +1048,7 @@ class RemoteClient extends RemoteChannel {
       t.cancel();
     }
     _resizeRefreshAttempted.clear();
+    _resizeRefreshReplayUntil.clear();
     _shareSourcesTimer?.cancel();
     _shareViewer?.removeListener(_onShareViewerChanged);
     unawaited(_shareViewer?.stop());
