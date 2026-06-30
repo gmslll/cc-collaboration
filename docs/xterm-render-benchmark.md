@@ -136,7 +136,7 @@ adds `renderCommandBuffers`, `renderCommands`, and
 
 ## 2026-07-01 Overlay Command Buffer
 
-Change: the render command buffer now reuses parallel picture/offset/kind
+Change: the render command buffer now reuses parallel picture/dx/dy/kind
 arrays instead of allocating a command object per draw. Overlay row pictures
 also use the same command stream as content line pictures, with command kinds
 keeping `contentPicturesDrawn` and `overlayRowPictureDraws` profile counters

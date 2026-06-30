@@ -974,12 +974,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (picture == null) {
       return;
     }
-    commands.addPicture(
+    commands.addPictureAt(
       picture,
-      Offset(
-        offset.dx,
-        offset.dy + (row * charHeight + _lineOffset).truncateToDouble(),
-      ),
+      offset.dx,
+      offset.dy + (row * charHeight + _lineOffset).truncateToDouble(),
       kind: _RenderCommandKind.overlay,
     );
   }
@@ -1527,12 +1525,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
 class _RenderCommandBuffer {
   final _pictures = <Picture>[];
-  final _offsets = <Offset>[];
+  final _dx = <double>[];
+  final _dy = <double>[];
   final _kinds = <_RenderCommandKind>[];
 
   void clear() {
     _pictures.clear();
-    _offsets.clear();
+    _dx.clear();
+    _dy.clear();
     _kinds.clear();
   }
 
@@ -1541,8 +1541,18 @@ class _RenderCommandBuffer {
     Offset offset, {
     _RenderCommandKind kind = _RenderCommandKind.content,
   }) {
+    addPictureAt(picture, offset.dx, offset.dy, kind: kind);
+  }
+
+  void addPictureAt(
+    Picture picture,
+    double dx,
+    double dy, {
+    _RenderCommandKind kind = _RenderCommandKind.content,
+  }) {
     _pictures.add(picture);
-    _offsets.add(offset);
+    _dx.add(dx);
+    _dy.add(dy);
     _kinds.add(kind);
   }
 
@@ -1551,11 +1561,10 @@ class _RenderCommandBuffer {
     profile?.renderCommandBuffers++;
     profile?.renderCommands += _pictures.length;
     for (var i = 0; i < _pictures.length; i++) {
-      final commandOffset = _offsets[i];
       canvas.save();
       canvas.translate(
-        offset.dx + commandOffset.dx,
-        offset.dy + commandOffset.dy,
+        offset.dx + _dx[i],
+        offset.dy + _dy[i],
       );
       canvas.drawPicture(_pictures[i]);
       canvas.restore();
