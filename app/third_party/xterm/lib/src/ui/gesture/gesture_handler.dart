@@ -1,4 +1,5 @@
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
@@ -7,6 +8,7 @@ import 'package:xterm/src/ui/controller.dart';
 import 'package:xterm/src/ui/gesture/gesture_detector.dart';
 import 'package:xterm/src/ui/pointer_input.dart';
 import 'package:xterm/src/ui/render.dart';
+import 'package:xterm/src/ui/selection_mode.dart';
 
 class TerminalGestureHandler extends StatefulWidget {
   const TerminalGestureHandler({
@@ -58,6 +60,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   DragStartDetails? _lastDragStartDetails;
 
   LongPressStartDetails? _lastLongPressStartDetails;
+
+  SelectionMode _dragSelectionMode = SelectionMode.line;
 
   @override
   Widget build(BuildContext context) {
@@ -177,15 +181,26 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void onDragStart(DragStartDetails details) {
     _lastDragStartDetails = details;
 
-    details.kind == PointerDeviceKind.mouse
-        ? renderTerminal.selectCharacters(details.localPosition)
-        : renderTerminal.selectWord(details.localPosition);
+    if (details.kind == PointerDeviceKind.mouse) {
+      _dragSelectionMode = HardwareKeyboard.instance.isAltPressed
+          ? SelectionMode.block
+          : SelectionMode.line;
+      renderTerminal.selectCharacters(
+        details.localPosition,
+        null,
+        _dragSelectionMode,
+      );
+    } else {
+      _dragSelectionMode = SelectionMode.line;
+      renderTerminal.selectWord(details.localPosition);
+    }
   }
 
   void onDragUpdate(DragUpdateDetails details) {
     renderTerminal.selectCharacters(
       _lastDragStartDetails!.localPosition,
       details.localPosition,
+      _dragSelectionMode,
     );
   }
 }

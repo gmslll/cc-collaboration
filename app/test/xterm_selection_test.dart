@@ -1,6 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xterm/src/ui/render.dart';
 import 'package:xterm/xterm.dart';
 
 void main() {
@@ -119,6 +121,98 @@ void main() {
     expect(selection, isNotNull);
     expect(term.buffer.getText(selection!), contains('offset selectable text'));
   });
+
+  testWidgets('mouse drag snaps wide character tail to full cell range', (
+    tester,
+  ) async {
+    final (:term, :controller, :render) = await _pumpWideTerminal(tester);
+    final cellWidth = render.cellSize.width;
+    final rowMid = render.cellSize.height / 2;
+    final wideTail =
+        render.getOffset(const CellOffset(1, 0)) +
+        Offset(cellWidth / 2, rowMid);
+    final wideTailEnd =
+        render.getOffset(const CellOffset(1, 0)) +
+        Offset(cellWidth * 0.75, rowMid);
+
+    await _drag(tester, wideTail, wideTailEnd);
+
+    final selection = controller.selection;
+    expect(selection, isNotNull);
+    expect(term.buffer.getText(selection!), '界');
+  });
+
+  testWidgets('double click word selection snaps wide character tail to head', (
+    tester,
+  ) async {
+    final (:term, :controller, :render) = await _pumpWideTerminal(tester);
+    final cellWidth = render.cellSize.width;
+    final rowMid = render.cellSize.height / 2;
+    final wideTail =
+        render.getOffset(const CellOffset(1, 0)) +
+        Offset(cellWidth / 2, rowMid);
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.down(wideTail);
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 20));
+    await gesture.down(wideTail);
+    await gesture.up();
+    await tester.pump();
+
+    final selection = controller.selection;
+    expect(selection, isNotNull);
+    expect(term.buffer.getText(selection!), '界a');
+  });
+
+  testWidgets('word selection crosses adjacent wide character tails', (
+    tester,
+  ) async {
+    final (:term, :controller, :render) = await _pumpWideTerminal(
+      tester,
+      text: '界世a',
+    );
+    final cellWidth = render.cellSize.width;
+    final rowMid = render.cellSize.height / 2;
+    final secondWideTail =
+        render.getOffset(const CellOffset(3, 0)) +
+        Offset(cellWidth / 2, rowMid);
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.down(secondWideTail);
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 20));
+    await gesture.down(secondWideTail);
+    await gesture.up();
+    await tester.pump();
+
+    final selection = controller.selection;
+    expect(selection, isNotNull);
+    expect(term.buffer.getText(selection!), '界世a');
+  });
+
+  testWidgets('alt mouse drag creates block selection', (tester) async {
+    final (:term, :controller, :render) = await _pumpWideTerminal(
+      tester,
+      text: 'abcde\r\nABCDE',
+    );
+    final cellWidth = render.cellSize.width;
+    final rowMid = render.cellSize.height / 2;
+    final start =
+        render.getOffset(const CellOffset(1, 0)) +
+        Offset(cellWidth / 2, rowMid);
+    final end =
+        render.getOffset(const CellOffset(3, 1)) +
+        Offset(cellWidth / 2, rowMid);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await _drag(tester, start, end);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+
+    final selection = controller.selection;
+    expect(selection, isA<BufferRangeBlock>());
+    expect(term.buffer.getText(selection!), 'bcd\nBCD');
+  });
 }
 
 Future<
@@ -151,6 +245,35 @@ _pumpTerminal(WidgetTester tester) async {
     box: box,
     origin: box.localToGlobal(Offset.zero),
   );
+}
+
+Future<({Terminal term, TerminalController controller, RenderTerminal render})>
+_pumpWideTerminal(WidgetTester tester, {String text = '界a'}) async {
+  final term = Terminal(maxLines: 1000);
+  final controller = TerminalController(
+    pointerInputs: const PointerInputs.none(),
+  );
+  term.write(text);
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 500,
+          height: 260,
+          child: TerminalView(term, controller: controller),
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+
+  final render = tester.renderObject<RenderTerminal>(
+    find.byWidgetPredicate(
+      (widget) => widget.runtimeType.toString() == '_TerminalView',
+    ),
+  );
+  return (term: term, controller: controller, render: render);
 }
 
 Future<void> _drag(WidgetTester tester, Offset start, Offset end) async {
