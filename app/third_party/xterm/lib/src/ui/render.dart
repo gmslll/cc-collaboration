@@ -1130,6 +1130,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           Offset.zero,
           line,
           collectProfile: profile != null,
+          paintBackgrounds: false,
         );
         if (profile != null) {
           final painterProfile = _painter.takeProfile();
@@ -1170,11 +1171,84 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
     entry = entry!;
 
+    _recordLineBackgroundCommands(commands, offset, line, profile);
+
     final picture = entry.picture;
     if (picture == null) {
       return;
     }
     commands.addPicture(picture, offset);
+  }
+
+  void _recordLineBackgroundCommands(
+    _RenderCommandBuffer commands,
+    Offset offset,
+    BufferLine line,
+    TerminalRenderProfile? profile,
+  ) {
+    final cellWidth = _painter.cellSize.width;
+    final cellHeight = _painter.cellSize.height;
+    Color? runColor;
+    var runStart = 0;
+    var runWidth = 0;
+
+    void flush() {
+      final color = runColor;
+      if (color == null || runWidth == 0) return;
+      commands.addRectAt(
+        offset.dx + runStart * cellWidth,
+        offset.dy,
+        runWidth * cellWidth + 1,
+        cellHeight,
+        color,
+        kind: _RenderCommandKind.content,
+      );
+      profile?.backgroundRuns++;
+      runColor = null;
+      runWidth = 0;
+    }
+
+    for (var i = 0; i < line.length; i++) {
+      final content = line.getContent(i);
+      final charWidth = content >> CellContent.widthShift;
+      final cellSpan = charWidth == 2 ? 2 : 1;
+      final flags = line.getAttributes(i);
+      final color = _lineCellBackgroundColor(
+        foreground: line.getForeground(i),
+        background: line.getBackground(i),
+        flags: flags,
+      );
+      if (color == null) {
+        flush();
+      } else if (runColor == color) {
+        runWidth += cellSpan;
+      } else {
+        flush();
+        runColor = color;
+        runStart = i;
+        runWidth = cellSpan;
+      }
+
+      if (charWidth == 2) {
+        i++;
+      }
+    }
+    flush();
+  }
+
+  Color? _lineCellBackgroundColor({
+    required int foreground,
+    required int background,
+    required int flags,
+  }) {
+    if (flags & CellFlags.inverse != 0) {
+      return _painter.resolveForegroundColor(foreground);
+    }
+    final colorType = background & CellColor.typeMask;
+    if (colorType == CellColor.normal) {
+      return null;
+    }
+    return _painter.resolveBackgroundColor(background);
   }
 
   bool _contentMayHaveChanged(TerminalPaintReason reason) {

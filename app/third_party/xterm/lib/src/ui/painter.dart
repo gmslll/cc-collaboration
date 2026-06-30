@@ -208,21 +208,28 @@ class TerminalPainter {
 
   /// Paints [line] to [canvas] at [offset]. The x offset of [offset] is usually
   /// 0, and the y offset is the top of the line.
-  void paintLine(Canvas canvas, Offset offset, BufferLine line,
-      {bool collectProfile = false}) {
+  void paintLine(
+    Canvas canvas,
+    Offset offset,
+    BufferLine line, {
+    bool collectProfile = false,
+    bool paintBackgrounds = true,
+  }) {
     final profile = collectProfile ? TerminalPainterProfile() : null;
     _profile = profile;
     final plan = _lineRenderPlanFor(line, profile);
     final cellWidth = _cellSize.width;
 
-    for (final span in plan.backgroundSpans) {
-      profile?.backgroundRuns++;
-      _paintBackgroundRun(
-        canvas,
-        offset.translate(span.start * cellWidth, 0),
-        span.width,
-        span.color,
-      );
+    if (paintBackgrounds) {
+      for (final span in plan.backgroundSpans) {
+        profile?.backgroundRuns++;
+        _paintBackgroundRun(
+          canvas,
+          offset.translate(span.start * cellWidth, 0),
+          span.width,
+          span.color,
+        );
+      }
     }
 
     for (final span in plan.foregroundSpans) {

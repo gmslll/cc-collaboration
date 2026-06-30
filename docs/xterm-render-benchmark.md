@@ -155,3 +155,14 @@ behavior, but regular overlay color spans no longer force row picture recording.
 
 This moves the most common overlay work toward a GPU-style rect stream while
 keeping cursor/composing correctness isolated in the conservative picture path.
+
+## 2026-07-01 Direct Content Background Commands
+
+Change: terminal cell background runs now record rectangle commands directly
+into the content command buffer. Line pictures are recorded without backgrounds,
+so the picture path carries foreground text/glyph fallback while regular
+background spans use the same rect stream as overlay spans.
+
+This is the first content-layer split from line pictures toward span-level
+commands. Text shaping, emoji, and sprite foreground drawing remain on the
+existing conservative picture path.

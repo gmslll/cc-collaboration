@@ -433,6 +433,19 @@ void main() {
         isPositive,
       );
 
+      term.write('\x1b[41mbackground rect command\x1b[0m\r\n');
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.terminal,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.renderCommandRectDraws,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.backgroundRuns, isPositive);
+
       term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
       final renderTerminal = tester.renderObject<RenderTerminal>(
         find.byWidgetPredicate(
