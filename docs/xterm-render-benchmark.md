@@ -114,3 +114,7 @@ This avoids re-recording a whole viewport picture on high-frequency terminal
 stream frames while preserving the existing line-level damage cache. Blank or
 shortened lines remain safe because direct drawing uses the freshly rebuilt line
 picture cache instead of compositing over an old viewport snapshot.
+
+Paint reasons are merged by priority so a terminal content update cannot be
+overwritten by a later scroll/cursor/controller signal in the same frame; this
+keeps line signature validation enabled whenever content may have changed.

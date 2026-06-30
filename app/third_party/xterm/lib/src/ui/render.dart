@@ -215,7 +215,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (_invalidatesContentLayer(reason)) {
       _clearViewportContentCache();
     }
-    _nextPaintReason = reason;
+    _mergeNextPaintReason(reason);
     markNeedsPaint();
   }
 
@@ -223,8 +223,33 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (_invalidatesContentLayer(reason)) {
       _clearViewportContentCache();
     }
-    _nextPaintReason = reason;
+    _mergeNextPaintReason(reason);
     markNeedsLayout();
+  }
+
+  void _mergeNextPaintReason(TerminalPaintReason reason) {
+    if (_paintReasonPriority(reason) >=
+        _paintReasonPriority(_nextPaintReason)) {
+      _nextPaintReason = reason;
+    }
+  }
+
+  int _paintReasonPriority(TerminalPaintReason reason) {
+    return switch (reason) {
+      TerminalPaintReason.unknown => 0,
+      TerminalPaintReason.controller ||
+      TerminalPaintReason.focus ||
+      TerminalPaintReason.cursor ||
+      TerminalPaintReason.composingText =>
+        1,
+      TerminalPaintReason.scroll => 2,
+      TerminalPaintReason.terminal => 3,
+      TerminalPaintReason.style ||
+      TerminalPaintReason.theme ||
+      TerminalPaintReason.layout ||
+      TerminalPaintReason.initial =>
+        4,
+    };
   }
 
   bool _invalidatesContentLayer(TerminalPaintReason reason) {
