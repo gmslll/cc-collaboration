@@ -90,7 +90,19 @@ void main() {
 
     line.setCell(0, 'A'.codeUnitAt(0), 1, style);
     expect(line.revision, greaterThan(initial));
+    expect(line.hasDirtyRange, isTrue);
+    expect(line.dirtyStart, 0);
+    expect(line.dirtyEnd, 1);
     final afterCell = line.revision;
+
+    line.clearDirtyRange();
+    expect(line.hasDirtyRange, isFalse);
+
+    line.setCell(3, 'B'.codeUnitAt(0), 1, style);
+    line.setCell(5, 'C'.codeUnitAt(0), 1, style);
+    expect(line.dirtyStart, 3);
+    expect(line.dirtyEnd, 6);
+    line.clearDirtyRange();
 
     line.isWrapped = true;
     expect(line.revision, greaterThan(afterCell));
@@ -344,6 +356,11 @@ void main() {
         ),
       );
       await tester.pump();
+      final renderTerminal = tester.renderObject<RenderTerminal>(
+        find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_TerminalView',
+        ),
+      );
 
       expect(RenderTerminal.lastPaintProfile, isNotNull);
       expect(
@@ -429,6 +446,7 @@ void main() {
       expect(RenderTerminal.lastPaintProfile!.viewportContentPictureDraws, 0);
       expect(RenderTerminal.lastPaintProfile!.viewportContentCacheMisses, 0);
       expect(RenderTerminal.lastPaintProfile!.lineSignatureChecks, isPositive);
+      expect(RenderTerminal.lastPaintProfile!.lineCommandCacheHits, isPositive);
       expect(RenderTerminal.lastPaintProfile!.renderCommandBuffers, isPositive);
       expect(RenderTerminal.lastPaintProfile!.renderCommands, isPositive);
       expect(
@@ -439,6 +457,25 @@ void main() {
         RenderTerminal.lastPaintProfile!.renderCommandParagraphDraws,
         isPositive,
       );
+
+      term.buffer.lines[term.buffer.absoluteCursorY].setCell(
+        4,
+        'X'.codeUnitAt(0),
+        1,
+        CursorStyle(),
+      );
+      renderTerminal.markNeedsPaint();
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.unknown,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.partialDirtyLinePaints,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.partialDirtyCells, lessThan(8));
 
       term.write('\x1b[41mbackground rect command\x1b[0m\r\n');
       await tester.pump();
@@ -470,12 +507,22 @@ void main() {
         isPositive,
       );
 
-      term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
-      final renderTerminal = tester.renderObject<RenderTerminal>(
-        find.byWidgetPredicate(
-          (widget) => widget.runtimeType.toString() == '_TerminalView',
-        ),
+      renderTerminal.markNeedsPaint();
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.unknown,
       );
+      expect(RenderTerminal.lastPaintProfile!.lineCommandCacheHits, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.glyphRunPictureCacheMisses +
+            RenderTerminal.lastPaintProfile!.glyphRunPictureCacheHits,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.contentPicturesDrawn, isPositive);
+
+      term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
       renderTerminal.markNeedsPaint();
       await tester.pump();
 

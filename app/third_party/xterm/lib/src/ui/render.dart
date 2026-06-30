@@ -169,6 +169,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   final _overlayDirtyRows = _RowDirtyTracker();
   final _contentCommandBuffer = _RenderCommandBuffer();
   final _overlayCommandBuffer = _RenderCommandBuffer();
+  final _lineCommandBuildBuffer = _RenderCommandBuffer();
   _ViewportContentCache? _viewportContentCache;
   TerminalPaintReason _nextPaintReason = TerminalPaintReason.initial;
   BufferRange? _lastOverlaySelection;
@@ -295,6 +296,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   @override
   void dispose() {
+    _lineCommandBuildBuffer.clear();
     _clearViewportContentCache();
     _clearOverlayRowPictureCache();
     _clearLinePictureCache();
@@ -1094,18 +1096,28 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }) {
     var entry = _linePictureCache[lineIndex];
     var recordedLineCommands = false;
-    if (entry != null && !validateSignature) {
+    if (entry != null && !validateSignature && !line.hasDirtyRange) {
       profile?.lineSignatureSkips++;
       profile?.lineCacheHits++;
+      if (entry.commandCache == null) {
+        profile?.lineCommandCacheMisses++;
+      } else {
+        profile?.lineCommandCacheHits++;
+      }
     } else {
       final signature = _linePaintSignature(line);
       profile?.lineSignatureChecks++;
       if (entry?.signature != signature) {
         profile?.lineCacheMisses++;
+        profile?.lineCommandCacheMisses++;
         entry?.dispose();
         if (_isBlankLine(line)) {
-          entry = _LinePictureCache(signature);
+          entry = _LinePictureCache(
+            signature,
+            commandCache: _LineCommandCache.empty,
+          );
           _linePictureCache[lineIndex] = entry;
+          line.clearDirtyRange();
           profile?.blankLines++;
           return;
         }
@@ -1114,24 +1126,46 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           commands.draw(canvas, Offset.zero, profile);
           commands.clear();
           _paintUncachedLine(canvas, offset, line, profile);
+          line.clearDirtyRange();
           return;
         }
-        _recordLineBackgroundCommands(commands, offset, line, profile);
+        if (entry != null &&
+            _canPartiallyRepaintLine(entry, line) &&
+            _paintPartiallyDirtyLine(
+              canvas,
+              commands,
+              offset,
+              line,
+              entry,
+              profile,
+            )) {
+          return;
+        }
+        final lineCommands = _lineCommandBuildBuffer..clear();
+        _recordLineBackgroundCommands(lineCommands, Offset.zero, line, profile);
         final textRunsCoverForeground = _recordLineTextRunCommands(
-          commands,
-          offset,
+          lineCommands,
+          Offset.zero,
           line,
           profile,
         );
         final geometryRunsCoverForeground = _recordLineGeometryCommands(
-          commands,
-          offset,
+          lineCommands,
+          Offset.zero,
           line,
           profile,
         );
+        final needsGeometryCommands = lineCommands.containsPictures;
+        final commandCache = lineCommands.snapshot(skipPictures: true);
+        lineCommands.replayInto(commands, offset);
         recordedLineCommands = true;
+        lineCommands.clear();
         if (textRunsCoverForeground || geometryRunsCoverForeground) {
-          entry = _LinePictureCache(signature);
+          entry = _LinePictureCache(
+            signature,
+            commandCache: commandCache,
+            needsGeometryCommands: needsGeometryCommands,
+          );
         } else {
           final recorder = PictureRecorder();
           final lineCanvas = Canvas(
@@ -1158,19 +1192,38 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
               _mergePainterProfile(profile, painterProfile);
             }
           }
-          entry = _LinePictureCache(signature, recorder.endRecording());
+          entry = _LinePictureCache(
+            signature,
+            picture: recorder.endRecording(),
+            commandCache: commandCache,
+            needsGeometryCommands: needsGeometryCommands,
+          );
         }
         _linePictureCache[lineIndex] = entry;
+        line.clearDirtyRange();
       } else {
         profile?.lineCacheHits++;
+        if (entry?.commandCache == null) {
+          profile?.lineCommandCacheMisses++;
+        } else {
+          profile?.lineCommandCacheHits++;
+        }
       }
     }
     entry = entry!;
 
     if (!recordedLineCommands) {
-      _recordLineBackgroundCommands(commands, offset, line, profile);
-      _recordLineTextRunCommands(commands, offset, line, profile);
-      _recordLineGeometryCommands(commands, offset, line, profile);
+      final commandCache = entry.commandCache;
+      if (commandCache == null) {
+        _recordLineBackgroundCommands(commands, offset, line, profile);
+        _recordLineTextRunCommands(commands, offset, line, profile);
+        _recordLineGeometryCommands(commands, offset, line, profile);
+      } else {
+        commandCache.replay(commands, offset);
+        if (entry.needsGeometryCommands) {
+          _recordLineGeometryCommands(commands, offset, line, profile);
+        }
+      }
     }
 
     final picture = entry.picture;
@@ -1178,6 +1231,65 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       return;
     }
     commands.addPicture(picture, offset);
+  }
+
+  bool _canPartiallyRepaintLine(_LinePictureCache entry, BufferLine line) {
+    if (!line.hasDirtyRange) return false;
+    if (entry.picture != null || entry.needsGeometryCommands) return false;
+    if (entry.commandCache == null) return false;
+    final dirtyCells = line.dirtyEnd - line.dirtyStart;
+    if (dirtyCells <= 0) return false;
+    return dirtyCells <= (line.length ~/ 2).clamp(8, 32);
+  }
+
+  bool _paintPartiallyDirtyLine(
+    Canvas canvas,
+    _RenderCommandBuffer commands,
+    Offset offset,
+    BufferLine line,
+    _LinePictureCache entry,
+    TerminalRenderProfile? profile,
+  ) {
+    final commandCache = entry.commandCache;
+    if (commandCache == null) return false;
+
+    commands.draw(canvas, Offset.zero, profile);
+    commands.clear();
+
+    final cellWidth = _painter.cellSize.width;
+    final cellHeight = _painter.cellSize.height;
+    final start = (line.dirtyStart - 1).clamp(0, line.length).toInt();
+    final end = (line.dirtyEnd + 1).clamp(0, line.length).toInt();
+    if (end <= start) return false;
+
+    final lineLeft = offset.dx;
+    final lineRight = offset.dx + line.length * cellWidth;
+    final dirtyLeft = offset.dx + start * cellWidth;
+    final dirtyRight = offset.dx + end * cellWidth;
+    final top = offset.dy;
+    final bottom = offset.dy + cellHeight;
+
+    void replayOldClip(double left, double right) {
+      if (right <= left) return;
+      canvas.save();
+      canvas.clipRect(Rect.fromLTRB(left, top, right, bottom));
+      commandCache.replay(commands, offset);
+      commands.draw(canvas, Offset.zero, profile);
+      commands.clear();
+      canvas.restore();
+    }
+
+    replayOldClip(lineLeft, dirtyLeft);
+    replayOldClip(dirtyRight, lineRight);
+
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(dirtyLeft, top, dirtyRight, bottom));
+    _paintUncachedLine(canvas, offset, line, profile);
+    canvas.restore();
+
+    profile?.partialDirtyLinePaints++;
+    profile?.partialDirtyCells += end - start;
+    return true;
   }
 
   bool _recordLineGeometryCommands(
@@ -1587,6 +1699,8 @@ class _RenderCommandBuffer {
   final _kinds = <_RenderCommandKind>[];
   final _rectPaint = Paint();
 
+  bool get containsPictures => _pictures.any((picture) => picture != null);
+
   void clear() {
     _types.clear();
     _pictures.clear();
@@ -1711,6 +1825,144 @@ class _RenderCommandBuffer {
       }
     }
   }
+
+  void replayInto(_RenderCommandBuffer commands, Offset offset) {
+    for (var i = 0; i < _types.length; i++) {
+      final dx = offset.dx + _dx[i];
+      final dy = offset.dy + _dy[i];
+      switch (_types[i]) {
+        case _RenderCommandType.picture:
+          final picture = _pictures[i];
+          if (picture == null) continue;
+          commands.addPictureAt(picture, dx, dy, kind: _kinds[i]);
+        case _RenderCommandType.rect:
+          commands.addRectAt(
+            dx,
+            dy,
+            _width[i],
+            _height[i],
+            _colors[i],
+            kind: _kinds[i],
+          );
+        case _RenderCommandType.paragraph:
+          final paragraph = _paragraphs[i];
+          if (paragraph == null) continue;
+          commands.addParagraphAt(paragraph, dx, dy, kind: _kinds[i]);
+      }
+    }
+  }
+
+  _LineCommandCache snapshot({bool skipPictures = false}) {
+    if (_types.isEmpty) return _LineCommandCache.empty;
+    if (!skipPictures) {
+      return _LineCommandCache(
+        List<_RenderCommandType>.of(_types),
+        List<Picture?>.of(_pictures),
+        List<Paragraph?>.of(_paragraphs),
+        List<double>.of(_dx),
+        List<double>.of(_dy),
+        List<double>.of(_width),
+        List<double>.of(_height),
+        List<Color>.of(_colors),
+        List<_RenderCommandKind>.of(_kinds),
+      );
+    }
+    final types = <_RenderCommandType>[];
+    final pictures = <Picture?>[];
+    final paragraphs = <Paragraph?>[];
+    final dx = <double>[];
+    final dy = <double>[];
+    final width = <double>[];
+    final height = <double>[];
+    final colors = <Color>[];
+    final kinds = <_RenderCommandKind>[];
+    for (var i = 0; i < _types.length; i++) {
+      if (_types[i] == _RenderCommandType.picture) continue;
+      types.add(_types[i]);
+      pictures.add(_pictures[i]);
+      paragraphs.add(_paragraphs[i]);
+      dx.add(_dx[i]);
+      dy.add(_dy[i]);
+      width.add(_width[i]);
+      height.add(_height[i]);
+      colors.add(_colors[i]);
+      kinds.add(_kinds[i]);
+    }
+    if (types.isEmpty) return _LineCommandCache.empty;
+    return _LineCommandCache(
+      types,
+      pictures,
+      paragraphs,
+      dx,
+      dy,
+      width,
+      height,
+      colors,
+      kinds,
+    );
+  }
+}
+
+class _LineCommandCache {
+  const _LineCommandCache(
+    this._types,
+    this._pictures,
+    this._paragraphs,
+    this._dx,
+    this._dy,
+    this._width,
+    this._height,
+    this._colors,
+    this._kinds,
+  );
+
+  static const empty = _LineCommandCache(
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+  );
+
+  final List<_RenderCommandType> _types;
+  final List<Picture?> _pictures;
+  final List<Paragraph?> _paragraphs;
+  final List<double> _dx;
+  final List<double> _dy;
+  final List<double> _width;
+  final List<double> _height;
+  final List<Color> _colors;
+  final List<_RenderCommandKind> _kinds;
+
+  void replay(_RenderCommandBuffer commands, Offset offset) {
+    for (var i = 0; i < _types.length; i++) {
+      final dx = offset.dx + _dx[i];
+      final dy = offset.dy + _dy[i];
+      switch (_types[i]) {
+        case _RenderCommandType.picture:
+          final picture = _pictures[i];
+          if (picture == null) continue;
+          commands.addPictureAt(picture, dx, dy, kind: _kinds[i]);
+        case _RenderCommandType.rect:
+          commands.addRectAt(
+            dx,
+            dy,
+            _width[i],
+            _height[i],
+            _colors[i],
+            kind: _kinds[i],
+          );
+        case _RenderCommandType.paragraph:
+          final paragraph = _paragraphs[i];
+          if (paragraph == null) continue;
+          commands.addParagraphAt(paragraph, dx, dy, kind: _kinds[i]);
+      }
+    }
+  }
 }
 
 enum _RenderCommandType {
@@ -1748,6 +2000,10 @@ class TerminalRenderProfile {
   var lineSignatureSkips = 0;
   var lineCacheHits = 0;
   var lineCacheMisses = 0;
+  var lineCommandCacheHits = 0;
+  var lineCommandCacheMisses = 0;
+  var partialDirtyLinePaints = 0;
+  var partialDirtyCells = 0;
   var cachedPictures = 0;
   var viewportContentCacheHits = 0;
   var viewportContentCacheMisses = 0;
@@ -1803,6 +2059,10 @@ class TerminalRenderProfile {
         'lineSignatureSkips: $lineSignatureSkips, '
         'lineCacheHits: $lineCacheHits, '
         'lineCacheMisses: $lineCacheMisses, '
+        'lineCommandCacheHits: $lineCommandCacheHits, '
+        'lineCommandCacheMisses: $lineCommandCacheMisses, '
+        'partialDirtyLinePaints: $partialDirtyLinePaints, '
+        'partialDirtyCells: $partialDirtyCells, '
         'cachedPictures: $cachedPictures, '
         'viewportContentCacheHits: $viewportContentCacheHits, '
         'viewportContentCacheMisses: $viewportContentCacheMisses, '
@@ -1900,10 +2160,17 @@ class _RowDirtyTracker {
 }
 
 class _LinePictureCache {
-  _LinePictureCache(this.signature, [this.picture]);
+  _LinePictureCache(
+    this.signature, {
+    this.picture,
+    this.commandCache = _LineCommandCache.empty,
+    this.needsGeometryCommands = false,
+  });
 
   final int signature;
   final Picture? picture;
+  final _LineCommandCache? commandCache;
+  final bool needsGeometryCommands;
 
   void dispose() {
     picture?.dispose();
