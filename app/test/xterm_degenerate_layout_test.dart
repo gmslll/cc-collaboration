@@ -65,7 +65,7 @@ void main() {
     tester,
   ) async {
     final term = Terminal(maxLines: 1000);
-    term.write('┌─┬─┐ █▀▄▌▐ ░▒▓ ▖▗▘▙▚▛▜▝▞▟ ⣿⠿⣀\r\n');
+    term.write('┌─┬─┐ ╔═╦═╗ ╭─╮ ┄┆ █▀▄▌▐ ░▒▓ ▖▗▘▙▚▛▜▝▞▟ ⣿⠿⣀\r\n');
     term.write('\x1b[4m└─┴─┘  \x1b[0m underline fallback\r\n');
 
     await tester.pumpWidget(
@@ -80,8 +80,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  test('buffer line revision tracks paint-affecting mutations', () {
+    final line = BufferLine(8);
+    final style = CursorStyle();
+    final initial = line.revision;
+
+    line.setCell(0, 'A'.codeUnitAt(0), 1, style);
+    expect(line.revision, greaterThan(initial));
+    final afterCell = line.revision;
+
+    line.isWrapped = true;
+    expect(line.revision, greaterThan(afterCell));
+    final afterWrap = line.revision;
+
+    line.eraseRange(0, 1, style);
+    expect(line.revision, greaterThan(afterWrap));
+    final afterErase = line.revision;
+
+    line.resize(12);
+    expect(line.revision, greaterThan(afterErase));
+  });
+
   testWidgets('terminal render profile is gated by debug flag', (tester) async {
     final term = Terminal(maxLines: 1000);
+    final controller = TerminalController();
     term.write('profile test\r\n');
 
     try {
@@ -90,13 +112,66 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: SizedBox(width: 500, height: 160, child: TerminalView(term)),
+            body: SizedBox(
+              width: 500,
+              height: 160,
+              child: TerminalView(term, controller: controller),
+            ),
           ),
         ),
       );
       await tester.pump();
 
       expect(RenderTerminal.lastPaintProfile, isNotNull);
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.initial,
+      );
+      expect(RenderTerminal.lastPaintProfile!.contentPicturesDrawn, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.viewportContentCacheMisses,
+        isPositive,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.runParagraphCacheMisses,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.cursorPaints, isPositive);
+
+      controller.setSelection(
+        term.buffer.createAnchorFromOffset(const CellOffset(0, 0)),
+        term.buffer.createAnchorFromOffset(const CellOffset(4, 0)),
+      );
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.controller,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.viewportContentCacheHits,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.lineSignatureChecks, isZero);
+      expect(RenderTerminal.lastPaintProfile!.selectionRuns, isPositive);
+
+      term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
+      final renderTerminal = tester.renderObject<RenderTerminal>(
+        find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_TerminalView',
+        ),
+      );
+      renderTerminal.markNeedsPaint();
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.unknown,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.viewportContentCacheMisses,
+        isPositive,
+      );
 
       RenderTerminal.debugProfilePaint = false;
       term.write('next line\r\n');
@@ -106,6 +181,7 @@ void main() {
     } finally {
       RenderTerminal.debugProfilePaint = false;
       RenderTerminal.lastPaintProfile = null;
+      controller.dispose();
     }
   });
 }

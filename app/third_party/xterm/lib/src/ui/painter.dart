@@ -12,6 +12,7 @@ class TerminalPainter {
     FontFeature.disable('clig'),
     FontFeature.disable('calt'),
   ];
+  static const _minAsciiRunLength = 4;
 
   TerminalPainter({
     required TerminalTheme theme,
@@ -245,10 +246,21 @@ class TerminalPainter {
           i++;
         }
 
-        if (_paintAsciiRun(
+        final runText = text.toString();
+        if (runText.length < _minAsciiRunLength) {
+          _paintAsciiRunCells(
+            canvas,
+            offset.translate(runStart * cellWidth, 0),
+            runText,
+            foreground,
+            background,
+            flags,
+          );
+          profile?.singleCells += runText.length;
+        } else if (_paintAsciiRun(
           canvas,
           offset.translate(runStart * cellWidth, 0),
-          text.toString(),
+          runText,
           foreground,
           background,
           flags,
@@ -298,6 +310,7 @@ class TerminalPainter {
     var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
 
     if (paragraph == null) {
+      _profile?.paragraphCacheMisses++;
       final style = _textStyle.toTextStyle(
         color: color,
         bold: cellFlags & CellFlags.bold != 0,
@@ -322,6 +335,8 @@ class TerminalPainter {
         _textScaler,
         cacheKey,
       );
+    } else {
+      _profile?.paragraphCacheHits++;
     }
 
     canvas.drawParagraph(paragraph, offset);
@@ -389,6 +404,7 @@ class TerminalPainter {
     );
     var paragraph = _runParagraphCache.getLayoutFromCache(cacheKey);
     if (paragraph == null) {
+      _profile?.runParagraphCacheMisses++;
       final style = _textStyle.toTextStyle(
         color: color,
         bold: flags & CellFlags.bold != 0,
@@ -402,25 +418,38 @@ class TerminalPainter {
         _textScaler,
         cacheKey,
       );
+    } else {
+      _profile?.runParagraphCacheHits++;
     }
     final expectedWidth = text.length * _cellSize.width;
     final measuredWidth = paragraph.maxIntrinsicWidth;
     final tolerance = _cellSize.width * 0.08;
     if ((measuredWidth - expectedWidth).abs() > tolerance) {
-      for (var i = 0; i < text.length; i++) {
-        _paintAsciiRunCell(
-          canvas,
-          offset.translate(i * _cellSize.width, 0),
-          text.codeUnitAt(i),
-          foreground,
-          background,
-          flags,
-        );
-      }
+      _paintAsciiRunCells(canvas, offset, text, foreground, background, flags);
       return false;
     }
     canvas.drawParagraph(paragraph, offset);
     return true;
+  }
+
+  void _paintAsciiRunCells(
+    Canvas canvas,
+    Offset offset,
+    String text,
+    int foreground,
+    int background,
+    int flags,
+  ) {
+    for (var i = 0; i < text.length; i++) {
+      _paintAsciiRunCell(
+        canvas,
+        offset.translate(i * _cellSize.width, 0),
+        text.codeUnitAt(i),
+        foreground,
+        background,
+        flags,
+      );
+    }
   }
 
   void _paintAsciiRunCell(
@@ -441,6 +470,7 @@ class TerminalPainter {
     );
     var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
     if (paragraph == null) {
+      _profile?.paragraphCacheMisses++;
       final style = _textStyle.toTextStyle(
         color: _foregroundColor(foreground, background, flags),
         bold: flags & CellFlags.bold != 0,
@@ -451,6 +481,8 @@ class TerminalPainter {
         _textScaler,
         cacheKey,
       );
+    } else {
+      _profile?.paragraphCacheHits++;
     }
     canvas.drawParagraph(paragraph, offset);
   }
@@ -638,6 +670,7 @@ class TerminalPainter {
     final midX = left + _cellSize.width / 2;
     final midY = top + _cellSize.height / 2;
     final baseStroke = _cellSize.shortestSide * 0.085;
+    final doubleGap = _cellSize.shortestSide * 0.12;
     final glyphBold = switch (charCode) {
       0x2501 ||
       0x2503 ||
@@ -669,14 +702,64 @@ class TerminalPainter {
       canvas.drawLine(Offset(midX, y1), Offset(midX, y2), paint);
     }
 
+    void hd(double x1, double x2) {
+      final segment = (x2 - x1) / 3;
+      h(x1, x1 + segment);
+      h(x2 - segment, x2);
+    }
+
+    void vd(double y1, double y2) {
+      final segment = (y2 - y1) / 3;
+      v(y1, y1 + segment);
+      v(y2 - segment, y2);
+    }
+
+    void hh(double x1, double x2) {
+      canvas.drawLine(
+        Offset(x1, midY - doubleGap),
+        Offset(x2, midY - doubleGap),
+        paint,
+      );
+      canvas.drawLine(
+        Offset(x1, midY + doubleGap),
+        Offset(x2, midY + doubleGap),
+        paint,
+      );
+    }
+
+    void vv(double y1, double y2) {
+      canvas.drawLine(
+        Offset(midX - doubleGap, y1),
+        Offset(midX - doubleGap, y2),
+        paint,
+      );
+      canvas.drawLine(
+        Offset(midX + doubleGap, y1),
+        Offset(midX + doubleGap, y2),
+        paint,
+      );
+    }
+
     switch (charCode) {
       case 0x2500: // ─
       case 0x2501: // ━
         h(left, right);
         return true;
+      case 0x2504: // ┄
+      case 0x2505: // ┅
+      case 0x2508: // ┈
+      case 0x2509: // ┉
+        hd(left, right);
+        return true;
       case 0x2502: // │
       case 0x2503: // ┃
         v(top, bottom);
+        return true;
+      case 0x2506: // ┆
+      case 0x2507: // ┇
+      case 0x250A: // ┊
+      case 0x250B: // ┋
+        vd(top, bottom);
         return true;
       case 0x250C: // ┌
       case 0x250F: // ┏
@@ -722,6 +805,64 @@ class TerminalPainter {
       case 0x254B: // ╋
         h(left, right);
         v(top, bottom);
+        return true;
+      case 0x2550: // ═
+        hh(left, right);
+        return true;
+      case 0x2551: // ║
+        vv(top, bottom);
+        return true;
+      case 0x2554: // ╔
+        hh(midX, right);
+        vv(midY, bottom);
+        return true;
+      case 0x2557: // ╗
+        hh(left, midX);
+        vv(midY, bottom);
+        return true;
+      case 0x255A: // ╚
+        hh(midX, right);
+        vv(top, midY);
+        return true;
+      case 0x255D: // ╝
+        hh(left, midX);
+        vv(top, midY);
+        return true;
+      case 0x2560: // ╠
+        hh(midX, right);
+        vv(top, bottom);
+        return true;
+      case 0x2563: // ╣
+        hh(left, midX);
+        vv(top, bottom);
+        return true;
+      case 0x2566: // ╦
+        hh(left, right);
+        vv(midY, bottom);
+        return true;
+      case 0x2569: // ╩
+        hh(left, right);
+        vv(top, midY);
+        return true;
+      case 0x256C: // ╬
+        hh(left, right);
+        vv(top, bottom);
+        return true;
+      case 0x256D: // ╭
+        h(midX, right);
+        v(midY, bottom);
+        return true;
+      case 0x256E: // ╮
+        h(left, midX);
+        v(midY, bottom);
+        return true;
+      case 0x256F: // ╯
+        h(left, midX);
+        v(top, midY);
+        return true;
+      case 0x2570: // ╰
+        h(midX, right);
+        v(top, midY);
         return true;
     }
     return false;
@@ -805,5 +946,10 @@ class TerminalPainterProfile {
   var backgroundRuns = 0;
   var asciiRuns = 0;
   var asciiRunFallbacks = 0;
+  var paragraphCacheHits = 0;
+  var paragraphCacheMisses = 0;
+  var runParagraphCacheHits = 0;
+  var runParagraphCacheMisses = 0;
   var singleCells = 0;
+  var blankLines = 0;
 }

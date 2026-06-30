@@ -7,6 +7,8 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/line.dart';
 import 'package:xterm/src/core/buffer/range.dart';
 import 'package:xterm/src/core/buffer/segment.dart';
+import 'package:xterm/src/core/buffer/cell_flags.dart';
+import 'package:xterm/src/core/cell.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/terminal.dart';
@@ -21,6 +23,9 @@ import 'package:xterm/src/ui/terminal_theme.dart';
 typedef EditableRectCallback = void Function(Rect rect, Rect caretRect);
 
 class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
+  static const _maxCachedLinePictures = 256;
+  static const _maxCachedLinePicturePixels = 2000000.0;
+
   static var debugProfilePaint = false;
   static TerminalRenderProfile? lastPaintProfile;
 
@@ -62,7 +67,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (attached) _terminal.addListener(_onTerminalChange);
     _clearLinePictureCache();
     _resizeTerminalIfNeeded();
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.terminal);
   }
 
   TerminalController _controller;
@@ -71,7 +76,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (attached) _controller.removeListener(_onControllerUpdate);
     _controller = controller;
     if (attached) _controller.addListener(_onControllerUpdate);
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.controller);
   }
 
   ViewportOffset _offset;
@@ -80,42 +85,42 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (attached) _offset.removeListener(_onScroll);
     _offset = value;
     if (attached) _offset.addListener(_onScroll);
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.scroll);
   }
 
   EdgeInsets _padding;
   set padding(EdgeInsets value) {
     if (value == _padding) return;
     _padding = value;
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.layout);
   }
 
   bool _autoResize;
   set autoResize(bool value) {
     if (value == _autoResize) return;
     _autoResize = value;
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.layout);
   }
 
   set textStyle(TerminalStyle value) {
     if (value == _painter.textStyle) return;
     _painter.textStyle = value;
     _clearLinePictureCache();
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.style);
   }
 
   set textScaler(TextScaler value) {
     if (value == _painter.textScaler) return;
     _painter.textScaler = value;
     _clearLinePictureCache();
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.style);
   }
 
   set theme(TerminalTheme value) {
     if (value == _painter.theme) return;
     _painter.theme = value;
     _clearLinePictureCache();
-    markNeedsPaint();
+    _markNeedsPaintFor(TerminalPaintReason.theme);
   }
 
   FocusNode _focusNode;
@@ -124,41 +129,43 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (attached) _focusNode.removeListener(_onFocusChange);
     _focusNode = value;
     if (attached) _focusNode.addListener(_onFocusChange);
-    markNeedsPaint();
+    _markNeedsPaintFor(TerminalPaintReason.focus);
   }
 
   TerminalCursorType _cursorType;
   set cursorType(TerminalCursorType value) {
     if (value == _cursorType) return;
     _cursorType = value;
-    markNeedsPaint();
+    _markNeedsPaintFor(TerminalPaintReason.cursor);
   }
 
   bool _alwaysShowCursor;
   set alwaysShowCursor(bool value) {
     if (value == _alwaysShowCursor) return;
     _alwaysShowCursor = value;
-    markNeedsPaint();
+    _markNeedsPaintFor(TerminalPaintReason.cursor);
   }
 
   EditableRectCallback? _onEditableRect;
   set onEditableRect(EditableRectCallback? value) {
     if (value == _onEditableRect) return;
     _onEditableRect = value;
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.layout);
   }
 
   String? _composingText;
   set composingText(String? value) {
     if (value == _composingText) return;
     _composingText = value;
-    markNeedsPaint();
+    _markNeedsPaintFor(TerminalPaintReason.composingText);
   }
 
   TerminalSize? _viewportSize;
 
   final TerminalPainter _painter;
   final _linePictureCache = <int, _LinePictureCache>{};
+  _ViewportContentCache? _viewportContentCache;
+  TerminalPaintReason _nextPaintReason = TerminalPaintReason.initial;
 
   var _stickToBottom = true;
   var _lastUsingAltBuffer = false;
@@ -167,17 +174,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   void _onScroll() {
     _stickToBottom = _scrollOffset >= _maxScrollExtent;
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.scroll);
     _notifyEditableRect();
   }
 
   void _onFocusChange() {
-    markNeedsPaint();
+    _markNeedsPaintFor(TerminalPaintReason.focus);
   }
 
   void _onTerminalChange() {
     _syncActiveBufferScrollState();
-    markNeedsLayout();
+    _markNeedsLayoutFor(TerminalPaintReason.terminal);
     _notifyEditableRect();
   }
 
@@ -194,7 +201,41 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _onControllerUpdate() {
+    _markNeedsLayoutFor(TerminalPaintReason.controller);
+  }
+
+  void _markNeedsPaintFor(TerminalPaintReason reason) {
+    if (_invalidatesContentLayer(reason)) {
+      _clearViewportContentCache();
+    }
+    _nextPaintReason = reason;
+    markNeedsPaint();
+  }
+
+  void _markNeedsLayoutFor(TerminalPaintReason reason) {
+    if (_invalidatesContentLayer(reason)) {
+      _clearViewportContentCache();
+    }
+    _nextPaintReason = reason;
     markNeedsLayout();
+  }
+
+  bool _invalidatesContentLayer(TerminalPaintReason reason) {
+    switch (reason) {
+      case TerminalPaintReason.terminal:
+      case TerminalPaintReason.scroll:
+      case TerminalPaintReason.style:
+      case TerminalPaintReason.theme:
+      case TerminalPaintReason.layout:
+      case TerminalPaintReason.initial:
+      case TerminalPaintReason.unknown:
+        return true;
+      case TerminalPaintReason.controller:
+      case TerminalPaintReason.focus:
+      case TerminalPaintReason.cursor:
+      case TerminalPaintReason.composingText:
+        return false;
+    }
   }
 
   @override
@@ -220,6 +261,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   @override
   void dispose() {
+    _clearViewportContentCache();
     _clearLinePictureCache();
     super.dispose();
   }
@@ -232,7 +274,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   @override
   void systemFontsDidChange() {
     _painter.clearFontCache();
+    _clearViewportContentCache();
     _clearLinePictureCache();
+    _nextPaintReason = TerminalPaintReason.style;
     super.systemFontsDidChange();
   }
 
@@ -479,8 +523,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   void _paint(PaintingContext context, Offset offset) {
     final canvas = context.canvas;
     final profile = debugProfilePaint ? TerminalRenderProfile() : null;
+    final paintReason = _nextPaintReason;
     if (profile == null) {
       lastPaintProfile = null;
+    } else {
+      profile.paintReason = paintReason;
     }
 
     final lines = _terminal.buffer.lines;
@@ -495,16 +542,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final effectFirstLine = firstLine.clamp(0, lines.length - 1);
     final effectLastLine = lastLine.clamp(0, lines.length - 1);
     profile?.visibleLines = effectLastLine - effectFirstLine + 1;
+    _pruneLinePictureCache(effectFirstLine, effectLastLine);
+    profile?.cacheEntriesBeforePaint = _linePictureCache.length;
 
-    for (var i = effectFirstLine; i <= effectLastLine; i++) {
-      _paintCachedLine(
-        canvas,
-        offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
-        i,
-        lines[i],
-        profile,
-      );
-    }
+    _paintContentLayer(
+      canvas,
+      offset,
+      effectFirstLine,
+      effectLastLine,
+      profile,
+      validateSignature: _contentMayHaveChanged(paintReason),
+    );
     _pruneLinePictureCache(effectFirstLine, effectLastLine);
     profile?.cachedPictures = _linePictureCache.length;
 
@@ -512,6 +560,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _terminal.buffer.absoluteCursorY <= effectLastLine) {
       if (_isComposingText) {
         _paintComposingText(canvas, offset + cursorOffset);
+        profile?.composingPaints++;
       }
 
       if (_shouldShowCursor) {
@@ -521,6 +570,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           cursorType: _cursorType,
           hasFocus: _focusNode.hasFocus,
         );
+        profile?.cursorPaints++;
       }
     }
 
@@ -530,6 +580,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _controller.highlights,
       effectFirstLine,
       effectLastLine,
+      profile,
     );
 
     if (_controller.selection != null) {
@@ -539,12 +590,99 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _controller.selection!,
         effectFirstLine,
         effectLastLine,
+        profile,
       );
     }
 
     if (debugProfilePaint) {
       lastPaintProfile = profile;
     }
+    _nextPaintReason = TerminalPaintReason.unknown;
+  }
+
+  void _paintContentLayer(
+    Canvas canvas,
+    Offset offset,
+    int firstLine,
+    int lastLine,
+    TerminalRenderProfile? profile, {
+    required bool validateSignature,
+  }) {
+    final geometrySignature = Object.hash(
+      firstLine,
+      lastLine,
+      size.width,
+      size.height,
+      _lineOffset,
+      _painter.cellSize.width,
+      _painter.cellSize.height,
+    );
+    final contentSignature = validateSignature
+        ? _viewportContentSignature(firstLine, lastLine, geometrySignature)
+        : null;
+    var cache = _viewportContentCache;
+    final cacheHit = cache != null &&
+        cache.geometrySignature == geometrySignature &&
+        (!validateSignature || cache.contentSignature == contentSignature);
+    if (cacheHit) {
+      profile?.viewportContentCacheHits++;
+    } else {
+      profile?.viewportContentCacheMisses++;
+      cache?.dispose();
+      final recorder = PictureRecorder();
+      final contentCanvas = Canvas(recorder, Offset.zero & size);
+      final lines = _terminal.buffer.lines;
+      final charHeight = _painter.cellSize.height;
+
+      for (var i = firstLine; i <= lastLine; i++) {
+        _paintCachedLine(
+          contentCanvas,
+          Offset(0, (i * charHeight + _lineOffset).truncateToDouble()),
+          i,
+          lines[i],
+          profile,
+          validateSignature: validateSignature,
+        );
+      }
+
+      cache = _ViewportContentCache(
+        geometrySignature: geometrySignature,
+        contentSignature: contentSignature ??
+            _viewportContentSignature(
+              firstLine,
+              lastLine,
+              geometrySignature,
+            ),
+        picture: recorder.endRecording(),
+      );
+      _viewportContentCache = cache;
+    }
+
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.drawPicture(cache.picture);
+    profile?.viewportContentPictureDraws++;
+    canvas.restore();
+  }
+
+  int _viewportContentSignature(
+    int firstLine,
+    int lastLine,
+    int geometrySignature,
+  ) {
+    var signature = geometrySignature;
+    final lines = _terminal.buffer.lines;
+    for (var i = firstLine; i <= lastLine; i++) {
+      final line = lines[i];
+      signature = Object.hash(
+        signature,
+        i,
+        line.length,
+        line.isWrapped,
+        line.revision,
+      );
+    }
+    return signature;
   }
 
   /// Paints the text that is currently being composed in IME to [canvas] at
@@ -584,70 +722,160 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     Offset offset,
     int lineIndex,
     BufferLine line,
-    TerminalRenderProfile? profile,
-  ) {
-    final signature = _linePaintSignature(line);
+    TerminalRenderProfile? profile, {
+    required bool validateSignature,
+  }) {
     var entry = _linePictureCache[lineIndex];
-    if (entry?.signature != signature) {
-      profile?.lineCacheMisses++;
-      entry?.dispose();
-      final recorder = PictureRecorder();
-      final lineCanvas = Canvas(
-        recorder,
-        Rect.fromLTWH(
-          0,
-          0,
-          line.length * _painter.cellSize.width,
-          _painter.cellSize.height,
-        ),
-      );
-      _painter.paintLine(
-        lineCanvas,
-        Offset.zero,
-        line,
-        collectProfile: profile != null,
-      );
-      if (profile != null) {
-        final painterProfile = _painter.takeProfile();
-        if (painterProfile != null) {
-          profile
-            ..backgroundRuns += painterProfile.backgroundRuns
-            ..asciiRuns += painterProfile.asciiRuns
-            ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
-            ..singleCells += painterProfile.singleCells;
-        }
-      }
-      entry = _LinePictureCache(signature, recorder.endRecording());
-      _linePictureCache[lineIndex] = entry;
-    } else {
+    if (entry != null && !validateSignature) {
+      profile?.lineSignatureSkips++;
       profile?.lineCacheHits++;
+    } else {
+      final signature = _linePaintSignature(line);
+      profile?.lineSignatureChecks++;
+      if (entry?.signature != signature) {
+        profile?.lineCacheMisses++;
+        entry?.dispose();
+        if (_isBlankLine(line)) {
+          entry = _LinePictureCache(signature);
+          _linePictureCache[lineIndex] = entry;
+          profile?.blankLines++;
+          return;
+        }
+        if (!_shouldCacheLine(lineIndex, line)) {
+          _linePictureCache.remove(lineIndex);
+          _paintUncachedLine(canvas, offset, line, profile);
+          return;
+        }
+        final recorder = PictureRecorder();
+        final lineCanvas = Canvas(
+          recorder,
+          Rect.fromLTWH(
+            0,
+            0,
+            line.length * _painter.cellSize.width,
+            _painter.cellSize.height,
+          ),
+        );
+        _painter.paintLine(
+          lineCanvas,
+          Offset.zero,
+          line,
+          collectProfile: profile != null,
+        );
+        if (profile != null) {
+          final painterProfile = _painter.takeProfile();
+          if (painterProfile != null) {
+            profile
+              ..backgroundRuns += painterProfile.backgroundRuns
+              ..asciiRuns += painterProfile.asciiRuns
+              ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
+              ..paragraphCacheHits += painterProfile.paragraphCacheHits
+              ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
+              ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
+              ..runParagraphCacheMisses +=
+                  painterProfile.runParagraphCacheMisses
+              ..singleCells += painterProfile.singleCells
+              ..blankLines += painterProfile.blankLines;
+          }
+        }
+        entry = _LinePictureCache(signature, recorder.endRecording());
+        _linePictureCache[lineIndex] = entry;
+      } else {
+        profile?.lineCacheHits++;
+      }
     }
     entry = entry!;
 
+    final picture = entry.picture;
+    if (picture == null) {
+      return;
+    }
     canvas.save();
     canvas.translate(offset.dx, offset.dy);
-    canvas.drawPicture(entry.picture);
+    canvas.drawPicture(picture);
+    profile?.contentPicturesDrawn++;
     canvas.restore();
   }
 
+  bool _contentMayHaveChanged(TerminalPaintReason reason) {
+    switch (reason) {
+      case TerminalPaintReason.terminal:
+      case TerminalPaintReason.style:
+      case TerminalPaintReason.theme:
+      case TerminalPaintReason.layout:
+      case TerminalPaintReason.initial:
+      case TerminalPaintReason.unknown:
+        return true;
+      case TerminalPaintReason.controller:
+      case TerminalPaintReason.scroll:
+      case TerminalPaintReason.focus:
+      case TerminalPaintReason.cursor:
+      case TerminalPaintReason.composingText:
+        return false;
+    }
+  }
+
   int _linePaintSignature(BufferLine line) {
-    var hash = Object.hash(
+    return Object.hash(
       _painter.paintRevision,
       line.length,
       line.isWrapped,
       _painter.cellSize.width,
       _painter.cellSize.height,
+      line.revision,
     );
-    final data = line.data;
-    final used = line.length * 4;
-    for (var i = 0; i < used; i++) {
-      hash = 0x1fffffff & (hash + data[i]);
-      hash = 0x1fffffff & (hash + ((0x0007ffff & hash) << 10));
-      hash ^= hash >> 6;
+  }
+
+  void _paintUncachedLine(
+    Canvas canvas,
+    Offset offset,
+    BufferLine line,
+    TerminalRenderProfile? profile,
+  ) {
+    _painter.paintLine(canvas, offset, line, collectProfile: profile != null);
+    final painterProfile = profile == null ? null : _painter.takeProfile();
+    final renderProfile = profile;
+    if (renderProfile != null && painterProfile != null) {
+      renderProfile.uncachedLines++;
+      renderProfile
+        ..backgroundRuns += painterProfile.backgroundRuns
+        ..asciiRuns += painterProfile.asciiRuns
+        ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
+        ..paragraphCacheHits += painterProfile.paragraphCacheHits
+        ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
+        ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
+        ..runParagraphCacheMisses += painterProfile.runParagraphCacheMisses
+        ..singleCells += painterProfile.singleCells
+        ..blankLines += painterProfile.blankLines;
     }
-    hash = 0x1fffffff & (hash + ((0x03ffffff & hash) << 3));
-    hash ^= hash >> 11;
-    return 0x1fffffff & (hash + ((0x00003fff & hash) << 15));
+  }
+
+  bool _shouldCacheLine(int lineIndex, BufferLine line) {
+    if (!_linePictureCache.containsKey(lineIndex) &&
+        _linePictureCache.length >= _maxCachedLinePictures) {
+      return false;
+    }
+    final pixels =
+        line.length * _painter.cellSize.width * _painter.cellSize.height;
+    return pixels <= _maxCachedLinePicturePixels;
+  }
+
+  bool _isBlankLine(BufferLine line) {
+    for (var i = 0; i < line.length; i++) {
+      final content = line.getContent(i);
+      if ((content & CellContent.codepointMask) != 0) {
+        return false;
+      }
+      final flags = line.getAttributes(i);
+      if ((flags & CellFlags.inverse) != 0) {
+        return false;
+      }
+      final background = line.getBackground(i);
+      if ((background & CellColor.typeMask) != CellColor.normal) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _pruneLinePictureCache(int firstLine, int lastLine) {
@@ -659,10 +887,16 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _clearLinePictureCache() {
+    _clearViewportContentCache();
     for (final entry in _linePictureCache.values) {
       entry.dispose();
     }
     _linePictureCache.clear();
+  }
+
+  void _clearViewportContentCache() {
+    _viewportContentCache?.dispose();
+    _viewportContentCache = null;
   }
 
   void _paintSelection(
@@ -671,8 +905,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     BufferRange selection,
     int firstLine,
     int lastLine,
+    TerminalRenderProfile? profile,
   ) {
-    _paintSegmentRuns(
+    final runs = _paintSegmentRuns(
       canvas,
       offset,
       selection.toSegments(),
@@ -680,6 +915,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       firstLine,
       lastLine,
     );
+    profile?.selectionRuns += runs;
   }
 
   void _paintHighlights(
@@ -688,6 +924,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     List<TerminalHighlight> highlights,
     int firstLine,
     int lastLine,
+    TerminalRenderProfile? profile,
   ) {
     for (var highlight in _controller.highlights) {
       final range = highlight.range?.normalized;
@@ -698,7 +935,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         continue;
       }
 
-      _paintSegmentRuns(
+      final runs = _paintSegmentRuns(
         canvas,
         offset,
         range.toSegments(),
@@ -706,10 +943,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         firstLine,
         lastLine,
       );
+      profile?.highlightRuns += runs;
     }
   }
 
-  void _paintSegmentRuns(
+  int _paintSegmentRuns(
     Canvas canvas,
     Offset offset,
     Iterable<BufferSegment> segments,
@@ -720,11 +958,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     int? runLine;
     var runStart = 0;
     var runEnd = 0;
+    var paintedRuns = 0;
 
     void flush() {
       final line = runLine;
       if (line == null || runEnd <= runStart) return;
       _paintSegmentRect(canvas, offset, line, runStart, runEnd, color);
+      paintedRuns++;
       runLine = null;
     }
 
@@ -761,6 +1001,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
 
     flush();
+    return paintedRuns;
   }
 
   @pragma('vm:prefer-inline')
@@ -781,34 +1022,100 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 }
 
+enum TerminalPaintReason {
+  initial,
+  unknown,
+  terminal,
+  controller,
+  scroll,
+  focus,
+  cursor,
+  composingText,
+  style,
+  theme,
+  layout,
+}
+
 class TerminalRenderProfile {
+  var paintReason = TerminalPaintReason.initial;
   var visibleLines = 0;
+  var cacheEntriesBeforePaint = 0;
+  var lineSignatureChecks = 0;
+  var lineSignatureSkips = 0;
   var lineCacheHits = 0;
   var lineCacheMisses = 0;
   var cachedPictures = 0;
+  var viewportContentCacheHits = 0;
+  var viewportContentCacheMisses = 0;
+  var viewportContentPictureDraws = 0;
+  var contentPicturesDrawn = 0;
+  var cursorPaints = 0;
+  var composingPaints = 0;
+  var selectionRuns = 0;
+  var highlightRuns = 0;
   var backgroundRuns = 0;
   var asciiRuns = 0;
   var asciiRunFallbacks = 0;
+  var paragraphCacheHits = 0;
+  var paragraphCacheMisses = 0;
+  var runParagraphCacheHits = 0;
+  var runParagraphCacheMisses = 0;
   var singleCells = 0;
+  var blankLines = 0;
+  var uncachedLines = 0;
 
   @override
   String toString() {
     return 'TerminalRenderProfile('
+        'paintReason: $paintReason, '
         'visibleLines: $visibleLines, '
+        'cacheEntriesBeforePaint: $cacheEntriesBeforePaint, '
+        'lineSignatureChecks: $lineSignatureChecks, '
+        'lineSignatureSkips: $lineSignatureSkips, '
         'lineCacheHits: $lineCacheHits, '
         'lineCacheMisses: $lineCacheMisses, '
         'cachedPictures: $cachedPictures, '
+        'viewportContentCacheHits: $viewportContentCacheHits, '
+        'viewportContentCacheMisses: $viewportContentCacheMisses, '
+        'viewportContentPictureDraws: $viewportContentPictureDraws, '
+        'contentPicturesDrawn: $contentPicturesDrawn, '
+        'cursorPaints: $cursorPaints, '
+        'composingPaints: $composingPaints, '
+        'selectionRuns: $selectionRuns, '
+        'highlightRuns: $highlightRuns, '
         'backgroundRuns: $backgroundRuns, '
         'asciiRuns: $asciiRuns, '
         'asciiRunFallbacks: $asciiRunFallbacks, '
-        'singleCells: $singleCells)';
+        'paragraphCacheHits: $paragraphCacheHits, '
+        'paragraphCacheMisses: $paragraphCacheMisses, '
+        'runParagraphCacheHits: $runParagraphCacheHits, '
+        'runParagraphCacheMisses: $runParagraphCacheMisses, '
+        'singleCells: $singleCells, '
+        'blankLines: $blankLines, '
+        'uncachedLines: $uncachedLines)';
   }
 }
 
 class _LinePictureCache {
-  _LinePictureCache(this.signature, this.picture);
+  _LinePictureCache(this.signature, [this.picture]);
 
   final int signature;
+  final Picture? picture;
+
+  void dispose() {
+    picture?.dispose();
+  }
+}
+
+class _ViewportContentCache {
+  _ViewportContentCache({
+    required this.geometrySignature,
+    required this.contentSignature,
+    required this.picture,
+  });
+
+  final int geometrySignature;
+  final int contentSignature;
   final Picture picture;
 
   void dispose() {
