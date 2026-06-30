@@ -1,3 +1,6 @@
+// ignore_for_file: prefer_collection_literals
+
+import 'dart:collection';
 import 'dart:ui';
 import 'package:flutter/painting.dart';
 
@@ -7,6 +10,8 @@ import 'package:xterm/xterm.dart';
 
 /// Encapsulates the logic for painting various terminal elements.
 class TerminalPainter {
+  static const _maxLineRenderPlans = 512;
+  static const _maxGlyphPictures = 2048;
   static const _asciiRunFontFeatures = [
     FontFeature.disable('liga'),
     FontFeature.disable('clig'),
@@ -33,6 +38,11 @@ class TerminalPainter {
   /// [_textStyle] is changed, or when the system font changes.
   final _paragraphCache = ParagraphCache(10240);
   final _runParagraphCache = ParagraphCache(2048);
+  // Keep insertion order so the oldest render plan can be evicted.
+  final _lineRenderPlanCache =
+      LinkedHashMap<BufferLine, _LineRenderPlanCache>();
+  // Keep insertion order so the oldest geometry glyph can be evicted.
+  final _glyphPictureCache = LinkedHashMap<_GlyphPictureKey, Picture>();
   final _cursorPaint = Paint();
   final _highlightPaint = Paint();
   final _backgroundPaint = Paint();
@@ -48,6 +58,8 @@ class TerminalPainter {
     _cellSize = _measureCharSize();
     _paragraphCache.clear();
     _runParagraphCache.clear();
+    _lineRenderPlanCache.clear();
+    _clearGlyphPictureCache();
     _paintRevision++;
   }
 
@@ -59,6 +71,8 @@ class TerminalPainter {
     _cellSize = _measureCharSize();
     _paragraphCache.clear();
     _runParagraphCache.clear();
+    _lineRenderPlanCache.clear();
+    _clearGlyphPictureCache();
     _paintRevision++;
   }
 
@@ -70,6 +84,8 @@ class TerminalPainter {
     _colorPalette = PaletteBuilder(value).build();
     _paragraphCache.clear();
     _runParagraphCache.clear();
+    _lineRenderPlanCache.clear();
+    _clearGlyphPictureCache();
     _paintRevision++;
   }
 
@@ -114,6 +130,8 @@ class TerminalPainter {
     _cellSize = _measureCharSize();
     _paragraphCache.clear();
     _runParagraphCache.clear();
+    _lineRenderPlanCache.clear();
+    _clearGlyphPictureCache();
     _paintRevision++;
   }
 
@@ -179,8 +197,77 @@ class TerminalPainter {
       {bool collectProfile = false}) {
     final profile = collectProfile ? TerminalPainterProfile() : null;
     _profile = profile;
-    final cellData = CellData.empty();
+    final plan = _lineRenderPlanFor(line, profile);
     final cellWidth = _cellSize.width;
+
+    for (final span in plan.backgroundSpans) {
+      profile?.backgroundRuns++;
+      _paintBackgroundRun(
+        canvas,
+        offset.translate(span.start * cellWidth, 0),
+        span.width,
+        span.color,
+      );
+    }
+
+    for (final span in plan.foregroundSpans) {
+      switch (span) {
+        case _AsciiRunSpan():
+          if (span.text.length < _minAsciiRunLength) {
+            _paintAsciiRunCells(
+              canvas,
+              offset.translate(span.start * cellWidth, 0),
+              span.text,
+              span.foreground,
+              span.background,
+              span.flags,
+            );
+            profile?.singleCells += span.text.length;
+          } else if (_paintAsciiRun(
+            canvas,
+            offset.translate(span.start * cellWidth, 0),
+            span.text,
+            span.foreground,
+            span.background,
+            span.flags,
+          )) {
+            profile?.asciiRuns++;
+          } else {
+            profile?.asciiRunFallbacks++;
+          }
+        case _CellForegroundSpan():
+          paintCellForeground(
+            canvas,
+            offset.translate(span.column * cellWidth, 0),
+            span.cellData,
+          );
+          profile?.singleCells++;
+      }
+    }
+  }
+
+  _LineRenderPlan _lineRenderPlanFor(
+    BufferLine line,
+    TerminalPainterProfile? profile,
+  ) {
+    final cached = _lineRenderPlanCache[line];
+    if (cached != null &&
+        cached.revision == line.revision &&
+        cached.length == line.length &&
+        cached.paintRevision == _paintRevision) {
+      _lineRenderPlanCache.remove(line);
+      _lineRenderPlanCache[line] = cached;
+      profile?.renderPlanCacheHits++;
+      return cached.plan;
+    }
+    if (cached != null) {
+      _lineRenderPlanCache.remove(line);
+    }
+
+    profile?.renderPlanCacheMisses++;
+    final cellData = CellData.empty();
+    final backgroundSpans = <_BackgroundSpan>[];
+    final foregroundSpans = <_ForegroundSpan>[];
     Color? backgroundRunColor;
     var backgroundRunStart = 0;
     var backgroundRunWidth = 0;
@@ -188,12 +275,12 @@ class TerminalPainter {
     void flushBackgroundRun() {
       final color = backgroundRunColor;
       if (color == null || backgroundRunWidth == 0) return;
-      profile?.backgroundRuns++;
-      _paintBackgroundRun(
-        canvas,
-        offset.translate(backgroundRunStart * cellWidth, 0),
-        backgroundRunWidth,
-        color,
+      backgroundSpans.add(
+        _BackgroundSpan(
+          backgroundRunStart,
+          backgroundRunWidth,
+          color,
+        ),
       );
       backgroundRunColor = null;
       backgroundRunWidth = 0;
@@ -226,8 +313,6 @@ class TerminalPainter {
       line.getCellData(i, cellData);
 
       final charWidth = cellData.content >> CellContent.widthShift;
-      final cellOffset = offset.translate(i * cellWidth, 0);
-
       if (_canStartAsciiRun(cellData)) {
         final runStart = i;
         final foreground = cellData.foreground;
@@ -247,38 +332,55 @@ class TerminalPainter {
         }
 
         final runText = text.toString();
-        if (runText.length < _minAsciiRunLength) {
-          _paintAsciiRunCells(
-            canvas,
-            offset.translate(runStart * cellWidth, 0),
+        foregroundSpans.add(
+          _AsciiRunSpan(
+            runStart,
             runText,
             foreground,
             background,
             flags,
-          );
-          profile?.singleCells += runText.length;
-        } else if (_paintAsciiRun(
-          canvas,
-          offset.translate(runStart * cellWidth, 0),
-          runText,
-          foreground,
-          background,
-          flags,
-        )) {
-          profile?.asciiRuns++;
-        } else {
-          profile?.asciiRunFallbacks++;
-        }
+          ),
+        );
         continue;
       }
 
-      paintCellForeground(canvas, cellOffset, cellData);
-      profile?.singleCells++;
+      if (_shouldPaintCellForeground(cellData)) {
+        foregroundSpans.add(
+          _CellForegroundSpan(
+            i,
+            CellData(
+              foreground: cellData.foreground,
+              background: cellData.background,
+              flags: cellData.flags,
+              content: cellData.content,
+            ),
+          ),
+        );
+      }
 
       if (charWidth == 2) {
         i++;
       }
       i++;
+    }
+
+    final plan = _LineRenderPlan(
+      backgroundSpans: backgroundSpans,
+      foregroundSpans: foregroundSpans,
+    );
+    _lineRenderPlanCache[line] = _LineRenderPlanCache(
+      revision: line.revision,
+      length: line.length,
+      paintRevision: _paintRevision,
+      plan: plan,
+    );
+    _pruneLineRenderPlanCache();
+    return plan;
+  }
+
+  void _pruneLineRenderPlanCache() {
+    while (_lineRenderPlanCache.length > _maxLineRenderPlans) {
+      _lineRenderPlanCache.remove(_lineRenderPlanCache.keys.first);
     }
   }
 
@@ -340,6 +442,13 @@ class TerminalPainter {
     }
 
     canvas.drawParagraph(paragraph, offset);
+  }
+
+  bool _shouldPaintCellForeground(CellData cellData) {
+    final charCode = cellData.content & CellContent.codepointMask;
+    if (charCode == 0) return false;
+    final cellFlags = cellData.flags;
+    return charCode != 0x20 || cellFlags & CellFlags.underline != 0;
   }
 
   Color _cellForegroundColor(CellData cellData) {
@@ -511,6 +620,61 @@ class TerminalPainter {
       return false;
     }
 
+    if (!_isTerminalGlyphCodepoint(charCode)) {
+      return false;
+    }
+
+    final key = _GlyphPictureKey(
+      charCode: charCode,
+      bold: cellFlags & CellFlags.bold != 0,
+      color: color,
+      cellWidth: _cellSize.width,
+      cellHeight: _cellSize.height,
+      paintRevision: _paintRevision,
+    );
+    var picture = _glyphPictureCache.remove(key);
+    if (picture == null) {
+      _profile?.glyphPictureCacheMisses++;
+      final recorder = PictureRecorder();
+      final glyphCanvas = Canvas(recorder, Offset.zero & _cellSize);
+      if (!_paintTerminalGlyphImmediate(
+        glyphCanvas,
+        Offset.zero,
+        charCode,
+        cellFlags,
+        color,
+      )) {
+        recorder.endRecording().dispose();
+        return false;
+      }
+      picture = recorder.endRecording();
+      _glyphPictureCache[key] = picture;
+      _pruneGlyphPictureCache();
+    } else {
+      _profile?.glyphPictureCacheHits++;
+      _glyphPictureCache[key] = picture;
+    }
+
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.drawPicture(picture);
+    canvas.restore();
+    return true;
+  }
+
+  bool _isTerminalGlyphCodepoint(int charCode) {
+    return (charCode >= 0x2500 && charCode <= 0x257F) ||
+        (charCode >= 0x2580 && charCode <= 0x259F) ||
+        (charCode >= 0x2800 && charCode <= 0x28FF);
+  }
+
+  bool _paintTerminalGlyphImmediate(
+    Canvas canvas,
+    Offset offset,
+    int charCode,
+    int cellFlags,
+    Color color,
+  ) {
     if (charCode >= 0x2500 && charCode <= 0x257F) {
       return _paintBoxDrawing(canvas, offset, charCode, cellFlags, color);
     }
@@ -521,6 +685,20 @@ class TerminalPainter {
       return _paintBraillePattern(canvas, offset, charCode, color);
     }
     return false;
+  }
+
+  void _pruneGlyphPictureCache() {
+    while (_glyphPictureCache.length > _maxGlyphPictures) {
+      final key = _glyphPictureCache.keys.first;
+      _glyphPictureCache.remove(key)?.dispose();
+    }
+  }
+
+  void _clearGlyphPictureCache() {
+    for (final picture in _glyphPictureCache.values) {
+      picture.dispose();
+    }
+    _glyphPictureCache.clear();
   }
 
   bool _paintBlockElement(
@@ -946,10 +1124,112 @@ class TerminalPainterProfile {
   var backgroundRuns = 0;
   var asciiRuns = 0;
   var asciiRunFallbacks = 0;
+  var renderPlanCacheHits = 0;
+  var renderPlanCacheMisses = 0;
+  var glyphPictureCacheHits = 0;
+  var glyphPictureCacheMisses = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;
   var runParagraphCacheMisses = 0;
   var singleCells = 0;
   var blankLines = 0;
+}
+
+class _LineRenderPlanCache {
+  _LineRenderPlanCache({
+    required this.revision,
+    required this.length,
+    required this.paintRevision,
+    required this.plan,
+  });
+
+  final int revision;
+  final int length;
+  final int paintRevision;
+  final _LineRenderPlan plan;
+}
+
+class _LineRenderPlan {
+  _LineRenderPlan({
+    required this.backgroundSpans,
+    required this.foregroundSpans,
+  });
+
+  final List<_BackgroundSpan> backgroundSpans;
+  final List<_ForegroundSpan> foregroundSpans;
+}
+
+class _BackgroundSpan {
+  _BackgroundSpan(this.start, this.width, this.color);
+
+  final int start;
+  final int width;
+  final Color color;
+}
+
+sealed class _ForegroundSpan {
+  const _ForegroundSpan();
+}
+
+class _AsciiRunSpan extends _ForegroundSpan {
+  const _AsciiRunSpan(
+    this.start,
+    this.text,
+    this.foreground,
+    this.background,
+    this.flags,
+  );
+
+  final int start;
+  final String text;
+  final int foreground;
+  final int background;
+  final int flags;
+}
+
+class _CellForegroundSpan extends _ForegroundSpan {
+  const _CellForegroundSpan(this.column, this.cellData);
+
+  final int column;
+  final CellData cellData;
+}
+
+class _GlyphPictureKey {
+  const _GlyphPictureKey({
+    required this.charCode,
+    required this.bold,
+    required this.color,
+    required this.cellWidth,
+    required this.cellHeight,
+    required this.paintRevision,
+  });
+
+  final int charCode;
+  final bool bold;
+  final Color color;
+  final double cellWidth;
+  final double cellHeight;
+  final int paintRevision;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _GlyphPictureKey &&
+        other.charCode == charCode &&
+        other.bold == bold &&
+        other.color == color &&
+        other.cellWidth == cellWidth &&
+        other.cellHeight == cellHeight &&
+        other.paintRevision == paintRevision;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        charCode,
+        bold,
+        color,
+        cellWidth,
+        cellHeight,
+        paintRevision,
+      );
 }

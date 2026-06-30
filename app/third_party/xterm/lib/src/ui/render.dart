@@ -1,4 +1,5 @@
 import 'dart:math' show max;
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/rendering.dart';
@@ -164,6 +165,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   final TerminalPainter _painter;
   final _linePictureCache = <int, _LinePictureCache>{};
+  final _overlayDirtyRows = _RowDirtyTracker();
   _ViewportContentCache? _viewportContentCache;
   TerminalPaintReason _nextPaintReason = TerminalPaintReason.initial;
 
@@ -542,6 +544,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final effectFirstLine = firstLine.clamp(0, lines.length - 1);
     final effectLastLine = lastLine.clamp(0, lines.length - 1);
     profile?.visibleLines = effectLastLine - effectFirstLine + 1;
+    _overlayDirtyRows.resize(lines.length);
+    _markOverlayDirtyRows(paintReason, effectFirstLine, effectLastLine);
+    profile?.overlayDirtyRows = _overlayDirtyRows.countDirtyInRange(
+      effectFirstLine,
+      effectLastLine + 1,
+    );
+    profile?.overlayAnyDirty = _overlayDirtyRows.anyDirty;
     _pruneLinePictureCache(effectFirstLine, effectLastLine);
     profile?.cacheEntriesBeforePaint = _linePictureCache.length;
 
@@ -597,7 +606,58 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (debugProfilePaint) {
       lastPaintProfile = profile;
     }
+    _overlayDirtyRows.clear();
     _nextPaintReason = TerminalPaintReason.unknown;
+  }
+
+  void _markOverlayDirtyRows(
+    TerminalPaintReason reason,
+    int firstLine,
+    int lastLine,
+  ) {
+    switch (reason) {
+      case TerminalPaintReason.controller:
+        _markSelectionDirtyRows(firstLine, lastLine);
+        _markHighlightDirtyRows(firstLine, lastLine);
+      case TerminalPaintReason.focus:
+      case TerminalPaintReason.cursor:
+      case TerminalPaintReason.composingText:
+        _markCursorDirtyRow(firstLine, lastLine);
+      case TerminalPaintReason.terminal:
+      case TerminalPaintReason.scroll:
+      case TerminalPaintReason.style:
+      case TerminalPaintReason.theme:
+      case TerminalPaintReason.layout:
+      case TerminalPaintReason.initial:
+      case TerminalPaintReason.unknown:
+        break;
+    }
+  }
+
+  void _markCursorDirtyRow(int firstLine, int lastLine) {
+    final row = _terminal.buffer.absoluteCursorY;
+    if (row < firstLine || row > lastLine) return;
+    _overlayDirtyRows.markRow(row);
+  }
+
+  void _markSelectionDirtyRows(int firstLine, int lastLine) {
+    final selection = _controller.selection?.normalized;
+    if (selection == null) return;
+    _overlayDirtyRows.markRange(
+      selection.begin.y.clamp(firstLine, lastLine + 1),
+      (selection.end.y + 1).clamp(firstLine, lastLine + 1),
+    );
+  }
+
+  void _markHighlightDirtyRows(int firstLine, int lastLine) {
+    for (final highlight in _controller.highlights) {
+      final range = highlight.range?.normalized;
+      if (range == null) continue;
+      _overlayDirtyRows.markRange(
+        range.begin.y.clamp(firstLine, lastLine + 1),
+        (range.end.y + 1).clamp(firstLine, lastLine + 1),
+      );
+    }
   }
 
   void _paintContentLayer(
@@ -769,6 +829,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
               ..backgroundRuns += painterProfile.backgroundRuns
               ..asciiRuns += painterProfile.asciiRuns
               ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
+              ..renderPlanCacheHits += painterProfile.renderPlanCacheHits
+              ..renderPlanCacheMisses += painterProfile.renderPlanCacheMisses
+              ..glyphPictureCacheHits += painterProfile.glyphPictureCacheHits
+              ..glyphPictureCacheMisses +=
+                  painterProfile.glyphPictureCacheMisses
               ..paragraphCacheHits += painterProfile.paragraphCacheHits
               ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
               ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -841,6 +906,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         ..backgroundRuns += painterProfile.backgroundRuns
         ..asciiRuns += painterProfile.asciiRuns
         ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
+        ..renderPlanCacheHits += painterProfile.renderPlanCacheHits
+        ..renderPlanCacheMisses += painterProfile.renderPlanCacheMisses
+        ..glyphPictureCacheHits += painterProfile.glyphPictureCacheHits
+        ..glyphPictureCacheMisses += painterProfile.glyphPictureCacheMisses
         ..paragraphCacheHits += painterProfile.paragraphCacheHits
         ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
         ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -1039,6 +1108,8 @@ enum TerminalPaintReason {
 class TerminalRenderProfile {
   var paintReason = TerminalPaintReason.initial;
   var visibleLines = 0;
+  var overlayDirtyRows = 0;
+  var overlayAnyDirty = false;
   var cacheEntriesBeforePaint = 0;
   var lineSignatureChecks = 0;
   var lineSignatureSkips = 0;
@@ -1056,6 +1127,10 @@ class TerminalRenderProfile {
   var backgroundRuns = 0;
   var asciiRuns = 0;
   var asciiRunFallbacks = 0;
+  var renderPlanCacheHits = 0;
+  var renderPlanCacheMisses = 0;
+  var glyphPictureCacheHits = 0;
+  var glyphPictureCacheMisses = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;
@@ -1069,6 +1144,8 @@ class TerminalRenderProfile {
     return 'TerminalRenderProfile('
         'paintReason: $paintReason, '
         'visibleLines: $visibleLines, '
+        'overlayDirtyRows: $overlayDirtyRows, '
+        'overlayAnyDirty: $overlayAnyDirty, '
         'cacheEntriesBeforePaint: $cacheEntriesBeforePaint, '
         'lineSignatureChecks: $lineSignatureChecks, '
         'lineSignatureSkips: $lineSignatureSkips, '
@@ -1086,6 +1163,10 @@ class TerminalRenderProfile {
         'backgroundRuns: $backgroundRuns, '
         'asciiRuns: $asciiRuns, '
         'asciiRunFallbacks: $asciiRunFallbacks, '
+        'renderPlanCacheHits: $renderPlanCacheHits, '
+        'renderPlanCacheMisses: $renderPlanCacheMisses, '
+        'glyphPictureCacheHits: $glyphPictureCacheHits, '
+        'glyphPictureCacheMisses: $glyphPictureCacheMisses, '
         'paragraphCacheHits: $paragraphCacheHits, '
         'paragraphCacheMisses: $paragraphCacheMisses, '
         'runParagraphCacheHits: $runParagraphCacheHits, '
@@ -1093,6 +1174,53 @@ class TerminalRenderProfile {
         'singleCells: $singleCells, '
         'blankLines: $blankLines, '
         'uncachedLines: $uncachedLines)';
+  }
+}
+
+class _RowDirtyTracker {
+  var _rows = Uint8List(0);
+  var _anyDirty = false;
+
+  bool get anyDirty => _anyDirty;
+
+  void clear() {
+    if (!_anyDirty) return;
+    _rows.fillRange(0, _rows.length, 0);
+    _anyDirty = false;
+  }
+
+  int countDirtyInRange(int from, int toExclusive) {
+    final start = from < 0 ? 0 : from;
+    final end = toExclusive > _rows.length ? _rows.length : toExclusive;
+    if (start >= end) return 0;
+    var count = 0;
+    for (var i = start; i < end; i++) {
+      if (_rows[i] != 0) count++;
+    }
+    return count;
+  }
+
+  void markRange(int from, int toExclusive) {
+    final start = from < 0 ? 0 : from;
+    final end = toExclusive > _rows.length ? _rows.length : toExclusive;
+    if (start >= end) return;
+    _rows.fillRange(start, end, 1);
+    _anyDirty = true;
+  }
+
+  void markRow(int row) {
+    if (row < 0 || row >= _rows.length) return;
+    _rows[row] = 1;
+    _anyDirty = true;
+  }
+
+  void resize(int rowCount) {
+    if (_rows.length != rowCount) {
+      _rows = Uint8List(rowCount);
+    } else {
+      _rows.fillRange(0, rowCount, 0);
+    }
+    _anyDirty = false;
   }
 }
 

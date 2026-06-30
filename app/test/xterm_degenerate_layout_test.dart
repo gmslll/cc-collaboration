@@ -1,5 +1,8 @@
+import 'dart:ui' show PictureRecorder;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xterm/src/ui/painter.dart';
 import 'package:xterm/src/ui/render.dart';
 import 'package:xterm/xterm.dart';
 
@@ -101,9 +104,106 @@ void main() {
     expect(line.revision, greaterThan(afterErase));
   });
 
+  test('terminal painter render plan cache follows line revision', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+    final line = BufferLine(16);
+    final style = CursorStyle();
+    for (var i = 0; i < 12; i++) {
+      line.setCell(i, 'a'.codeUnitAt(0) + i, 1, style);
+    }
+
+    TerminalPainterProfile paint() {
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+      recorder.endRecording().dispose();
+      return painter.takeProfile()!;
+    }
+
+    expect(paint().renderPlanCacheMisses, 1);
+    expect(paint().renderPlanCacheHits, 1);
+
+    line.setCell(0, 'Z'.codeUnitAt(0), 1, style);
+    final afterMutation = paint();
+    expect(afterMutation.renderPlanCacheMisses, 1);
+    expect(afterMutation.renderPlanCacheHits, 0);
+  });
+
+  test('terminal painter render plan cache is bounded', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+    final style = CursorStyle();
+
+    TerminalPainterProfile paint(BufferLine line) {
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+      recorder.endRecording().dispose();
+      return painter.takeProfile()!;
+    }
+
+    final firstLine = BufferLine(8)..setCell(0, 'A'.codeUnitAt(0), 1, style);
+    paint(firstLine);
+
+    for (var i = 0; i < 520; i++) {
+      final line = BufferLine(8)..setCell(0, 'B'.codeUnitAt(0), 1, style);
+      paint(line);
+    }
+
+    final firstLineAgain = paint(firstLine);
+    expect(firstLineAgain.renderPlanCacheMisses, 1);
+    expect(firstLineAgain.renderPlanCacheHits, 0);
+  });
+
+  test('terminal painter geometry glyph picture cache is bounded', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+
+    TerminalPainterProfile paint(BufferLine line) {
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+      recorder.endRecording().dispose();
+      return painter.takeProfile()!;
+    }
+
+    BufferLine glyphLine(int colorSeed) {
+      final style = CursorStyle()
+        ..setForegroundColorRgb(
+          colorSeed & 0xFF,
+          (colorSeed >> 8) & 0xFF,
+          (colorSeed >> 16) & 0xFF,
+        );
+      return BufferLine(1)..setCell(0, '┌'.codeUnitAt(0), 1, style);
+    }
+
+    final firstLine = glyphLine(1);
+    expect(paint(firstLine).glyphPictureCacheMisses, 1);
+    expect(paint(firstLine).glyphPictureCacheHits, 1);
+
+    for (var i = 0; i < 2050; i++) {
+      paint(glyphLine(i + 2));
+    }
+
+    final firstLineAgain = paint(firstLine);
+    expect(firstLineAgain.glyphPictureCacheMisses, 1);
+    expect(firstLineAgain.glyphPictureCacheHits, 0);
+  });
+
   testWidgets('terminal render profile is gated by debug flag', (tester) async {
     final term = Terminal(maxLines: 1000);
     final controller = TerminalController();
+    final focusNode = FocusNode();
     term.write('profile test\r\n');
 
     try {
@@ -115,7 +215,11 @@ void main() {
             body: SizedBox(
               width: 500,
               height: 160,
-              child: TerminalView(term, controller: controller),
+              child: TerminalView(
+                term,
+                controller: controller,
+                focusNode: focusNode,
+              ),
             ),
           ),
         ),
@@ -153,6 +257,8 @@ void main() {
         isPositive,
       );
       expect(RenderTerminal.lastPaintProfile!.lineSignatureChecks, isZero);
+      expect(RenderTerminal.lastPaintProfile!.overlayAnyDirty, isTrue);
+      expect(RenderTerminal.lastPaintProfile!.overlayDirtyRows, isPositive);
       expect(RenderTerminal.lastPaintProfile!.selectionRuns, isPositive);
 
       term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
@@ -173,6 +279,31 @@ void main() {
         isPositive,
       );
 
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 160,
+              child: TerminalView(
+                term,
+                controller: controller,
+                focusNode: focusNode,
+                cursorType: TerminalCursorType.underline,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.cursor,
+      );
+      expect(RenderTerminal.lastPaintProfile!.overlayAnyDirty, isTrue);
+      expect(RenderTerminal.lastPaintProfile!.overlayDirtyRows, 1);
+
       RenderTerminal.debugProfilePaint = false;
       term.write('next line\r\n');
       await tester.pump();
@@ -182,6 +313,7 @@ void main() {
       RenderTerminal.debugProfilePaint = false;
       RenderTerminal.lastPaintProfile = null;
       controller.dispose();
+      focusNode.dispose();
     }
   });
 }
