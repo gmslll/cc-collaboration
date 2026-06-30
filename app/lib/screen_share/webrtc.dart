@@ -35,6 +35,27 @@ RTCIceCandidate _candidateFromJson(Object? value) {
   );
 }
 
+Future<MediaStream> _getDisplayStream(String sourceId) async {
+  try {
+    return await navigator.mediaDevices.getDisplayMedia({
+      'audio': false,
+      'video': {
+        'deviceId': {'exact': sourceId},
+        'mandatory': {
+          'frameRate': 24,
+        },
+      },
+    });
+  } catch (e) {
+    final msg = '$e';
+    if (!msg.contains('NotFoundError')) rethrow;
+    return navigator.mediaDevices.getDisplayMedia({
+      'audio': false,
+      'video': true,
+    });
+  }
+}
+
 class NativeShareHost {
   NativeShareHost({required this.sendFrame});
 
@@ -72,17 +93,7 @@ class NativeShareHost {
       });
     };
 
-    final stream = await navigator.mediaDevices.getUserMedia({
-      'audio': false,
-      'video': {
-        'mandatory': {
-          'chromeMediaSource': 'desktop',
-          'chromeMediaSourceId': sourceId,
-          'minFrameRate': 15,
-          'maxFrameRate': 30,
-        },
-      },
-    });
+    final stream = await _getDisplayStream(sourceId);
     _stream = stream;
     for (final track in stream.getTracks()) {
       await pc.addTrack(track, stream);

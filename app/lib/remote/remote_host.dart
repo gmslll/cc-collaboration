@@ -472,8 +472,19 @@ class RemoteHost extends RemoteChannel {
           send({'t': 'share.stopped', 'to': from});
       }
     } catch (e) {
-      send({'t': 'share.err', 'to': from, 'msg': '$e'});
+      send({'t': 'share.err', 'to': from, 'msg': _shareErrorText(e)});
     }
+  }
+
+  String _shareErrorText(Object error) {
+    final msg = '$error';
+    if (msg.contains('NotAllowedError') || msg.contains('Permission')) {
+      return '电脑端没有屏幕录制权限，请在系统设置里允许 cc-handoff 录制屏幕';
+    }
+    if (msg.contains('NotFoundError')) {
+      return '电脑端找不到这个屏幕或窗口，请刷新共享源后重试';
+    }
+    return msg;
   }
 
   List<Map<String, dynamic>> _sessionItems() => sessions()
