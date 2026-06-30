@@ -60,6 +60,8 @@ class TerminalPainter {
   final _glyphFillPaint = Paint();
   final _glyphStrokePaint = Paint();
   final _glyphAtlasPaint = Paint()..filterQuality = FilterQuality.none;
+  final _glyphAtlasTransforms = <RSTransform>[];
+  final _glyphAtlasRects = <Rect>[];
   var _paintRevision = 0;
 
   TerminalStyle get textStyle => _textStyle;
@@ -511,6 +513,14 @@ class TerminalPainter {
 
     var color = _cellForegroundColor(cellData);
 
+    final charWidth = cellData.content >> CellContent.widthShift;
+    if (charWidth == 2) {
+      _profile?.wideGlyphFallbackCells++;
+    }
+    if (_isEmojiCodepoint(charCode)) {
+      _profile?.emojiFallbackCells++;
+    }
+
     if (_paintTerminalGlyph(canvas, offset, charCode, cellFlags, color)) {
       return;
     }
@@ -856,8 +866,8 @@ class TerminalPainter {
     int flags,
     Color color,
   ) {
-    final transforms = <RSTransform>[];
-    final rects = <Rect>[];
+    final transforms = _glyphAtlasTransforms..clear();
+    final rects = _glyphAtlasRects..clear();
     final cellWidth = _cellSize.width;
     final atlasGeneration = _glyphAtlas.generation;
 
@@ -1034,6 +1044,11 @@ class TerminalPainter {
         _isSupportedBlockElementCodepoint(charCode) ||
         (charCode >= 0x2800 && charCode <= 0x28FF) ||
         (charCode >= 0xE0B0 && charCode <= 0xE0BF);
+  }
+
+  bool _isEmojiCodepoint(int charCode) {
+    return (charCode >= 0x1F000 && charCode <= 0x1FAFF) ||
+        (charCode >= 0x2600 && charCode <= 0x27BF);
   }
 
   bool _isSupportedBlockElementCodepoint(int charCode) {
@@ -1738,6 +1753,8 @@ class TerminalPainterProfile {
   var glyphAtlasMisses = 0;
   var glyphAtlasDraws = 0;
   var glyphAtlasRunDraws = 0;
+  var emojiFallbackCells = 0;
+  var wideGlyphFallbackCells = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;

@@ -728,7 +728,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _painter.cellSize.height,
     );
     final contentSignature = validateSignature
-        ? _viewportContentSignature(firstLine, lastLine, geometrySignature)
+        ? _viewportContentSignature(
+            firstLine,
+            lastLine,
+            geometrySignature,
+            profile,
+          )
         : null;
     var cache = _viewportContentCache;
     final cacheHit = cache != null &&
@@ -762,6 +767,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
               firstLine,
               lastLine,
               geometrySignature,
+              profile,
             ),
         picture: recorder.endRecording(),
       );
@@ -779,9 +785,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     int firstLine,
     int lastLine,
     int geometrySignature,
+    TerminalRenderProfile? profile,
   ) {
     var signature = geometrySignature;
     final lines = _terminal.buffer.lines;
+    profile?.viewportContentSignatureRows += lastLine - firstLine + 1;
     for (var i = firstLine; i <= lastLine; i++) {
       final line = lines[i];
       signature = Object.hash(
@@ -1131,6 +1139,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
               ..glyphAtlasMisses += painterProfile.glyphAtlasMisses
               ..glyphAtlasDraws += painterProfile.glyphAtlasDraws
               ..glyphAtlasRunDraws += painterProfile.glyphAtlasRunDraws
+              ..emojiFallbackCells += painterProfile.emojiFallbackCells
+              ..wideGlyphFallbackCells += painterProfile.wideGlyphFallbackCells
               ..paragraphCacheHits += painterProfile.paragraphCacheHits
               ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
               ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -1214,6 +1224,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         ..glyphAtlasMisses += painterProfile.glyphAtlasMisses
         ..glyphAtlasDraws += painterProfile.glyphAtlasDraws
         ..glyphAtlasRunDraws += painterProfile.glyphAtlasRunDraws
+        ..emojiFallbackCells += painterProfile.emojiFallbackCells
+        ..wideGlyphFallbackCells += painterProfile.wideGlyphFallbackCells
         ..paragraphCacheHits += painterProfile.paragraphCacheHits
         ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
         ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -1437,6 +1449,7 @@ class TerminalRenderProfile {
   var cachedPictures = 0;
   var viewportContentCacheHits = 0;
   var viewportContentCacheMisses = 0;
+  var viewportContentSignatureRows = 0;
   var viewportContentPictureDraws = 0;
   var contentPicturesDrawn = 0;
   var overlayRowCacheHits = 0;
@@ -1460,6 +1473,8 @@ class TerminalRenderProfile {
   var glyphAtlasMisses = 0;
   var glyphAtlasDraws = 0;
   var glyphAtlasRunDraws = 0;
+  var emojiFallbackCells = 0;
+  var wideGlyphFallbackCells = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;
@@ -1483,6 +1498,7 @@ class TerminalRenderProfile {
         'cachedPictures: $cachedPictures, '
         'viewportContentCacheHits: $viewportContentCacheHits, '
         'viewportContentCacheMisses: $viewportContentCacheMisses, '
+        'viewportContentSignatureRows: $viewportContentSignatureRows, '
         'viewportContentPictureDraws: $viewportContentPictureDraws, '
         'contentPicturesDrawn: $contentPicturesDrawn, '
         'overlayRowCacheHits: $overlayRowCacheHits, '
@@ -1506,6 +1522,8 @@ class TerminalRenderProfile {
         'glyphAtlasMisses: $glyphAtlasMisses, '
         'glyphAtlasDraws: $glyphAtlasDraws, '
         'glyphAtlasRunDraws: $glyphAtlasRunDraws, '
+        'emojiFallbackCells: $emojiFallbackCells, '
+        'wideGlyphFallbackCells: $wideGlyphFallbackCells, '
         'paragraphCacheHits: $paragraphCacheHits, '
         'paragraphCacheMisses: $paragraphCacheMisses, '
         'runParagraphCacheHits: $runParagraphCacheHits, '

@@ -89,3 +89,16 @@ Painter microbenchmark, 600 cells:
 
 An unbounded `drawAtlas` path for long geometry runs measured around 66.7 us,
 so the atlas path is intentionally capped to short runs.
+
+## 2026-07-01 Atlas/Dirty Observability
+
+Change: atlas short-run drawing now reuses an internal transform/source buffer
+instead of allocating fresh lists for every run. Emoji and wide glyph cells are
+kept on the paragraph fallback path and are counted in render profiles, avoiding
+platform-specific emoji image atlas churn. Viewport content signature scans now
+report how many rows were hashed per paint.
+
+This keeps the Flutter Canvas renderer conservative: deterministic sprite glyphs
+use atlas batching, long dense geometry keeps picture-run caching, and emoji
+rendering stays with the platform text stack until an image atlas has stronger
+cross-platform test coverage.

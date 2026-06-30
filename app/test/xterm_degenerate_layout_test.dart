@@ -295,6 +295,30 @@ void main() {
     expect(profile.glyphRunPictureCacheMisses, 0);
   });
 
+  test('emoji and wide glyphs stay on paragraph fallback instead of atlas', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+    final line = BufferLine(2);
+    final style = CursorStyle();
+    line
+      ..setCell(0, 0x1F600, 2, style)
+      ..eraseCell(1, style);
+
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+    recorder.endRecording().dispose();
+    final profile = painter.takeProfile()!;
+
+    expect(profile.emojiFallbackCells, 1);
+    expect(profile.wideGlyphFallbackCells, 1);
+    expect(profile.glyphAtlasMisses, 0);
+    expect(profile.glyphAtlasDraws, 0);
+  });
+
   testWidgets('terminal render profile is gated by debug flag', (tester) async {
     final term = Terminal(maxLines: 1000);
     final controller = TerminalController();

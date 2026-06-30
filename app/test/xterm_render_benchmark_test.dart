@@ -160,6 +160,8 @@ String _painterProfileSummary(TerminalPainterProfile? profile) {
       'glyphAtlasMisses=${profile.glyphAtlasMisses} '
       'glyphAtlasDraws=${profile.glyphAtlasDraws} '
       'glyphAtlasRunDraws=${profile.glyphAtlasRunDraws} '
+      'emojiFallbackCells=${profile.emojiFallbackCells} '
+      'wideGlyphFallbackCells=${profile.wideGlyphFallbackCells} '
       'runParagraphHits=${profile.runParagraphCacheHits} '
       'runParagraphMisses=${profile.runParagraphCacheMisses} '
       'paragraphHits=${profile.paragraphCacheHits} '
