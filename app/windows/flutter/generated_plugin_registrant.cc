@@ -8,6 +8,7 @@
 
 #include <flutter_secure_storage_windows/flutter_secure_storage_windows_plugin.h>
 #include <flutter_tts/flutter_tts_plugin.h>
+#include <flutter_webrtc/flutter_web_r_t_c_plugin.h>
 #include <pasteboard/pasteboard_plugin.h>
 #include <share_plus/share_plus_windows_plugin_c_api.h>
 #include <speech_to_text_windows/speech_to_text_windows.h>
@@ -18,6 +19,8 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("FlutterSecureStorageWindowsPlugin"));
   FlutterTtsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("FlutterTtsPlugin"));
+  FlutterWebRTCPluginRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("FlutterWebRTCPlugin"));
   PasteboardPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("PasteboardPlugin"));
   SharePlusWindowsPluginCApiRegisterWithRegistrar(
