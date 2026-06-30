@@ -145,3 +145,13 @@ separate.
 This reduces short-lived allocations on scroll/selection frames and moves the
 renderer closer to a single GPU-style submit path while preserving the existing
 overlay row cache, cursor, selection, highlight, and composing text behavior.
+
+## 2026-07-01 Direct Overlay Rect Commands
+
+Change: selection and highlight overlays now record rectangle commands directly
+into the render command buffer. Cursor and IME composing text stay on the
+existing overlay row picture cache because they involve text/caret fallback
+behavior, but regular overlay color spans no longer force row picture recording.
+
+This moves the most common overlay work toward a GPU-style rect stream while
+keeping cursor/composing correctness isolated in the conservative picture path.

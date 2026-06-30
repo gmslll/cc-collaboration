@@ -902,8 +902,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool trustCleanRows,
   }) {
     _pruneOverlayRowPictureCache(firstLine, lastLine);
-    final rangeSegmentsCache = <BufferRange, List<BufferSegment>>{};
-    final segmentSignatureCache = <BufferRange, Map<int, int>>{};
     final charHeight = _painter.cellSize.height;
     final commands = _overlayCommandBuffer..clear();
     for (var row = firstLine; row <= lastLine; row++) {
@@ -921,11 +919,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         continue;
       }
 
-      final signature = _overlayRowSignature(
-        row,
-        rangeSegmentsCache,
-        segmentSignatureCache,
-      );
+      final signature = _overlayPictureRowSignature(row);
       if (entry == null || entry.signature != signature) {
         profile?.overlayRowCacheMisses++;
         entry?.dispose();
@@ -958,6 +952,20 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         entry,
       );
     }
+    _recordOverlayHighlightCommands(
+      commands,
+      offset,
+      firstLine,
+      lastLine,
+      profile,
+    );
+    _recordOverlaySelectionCommands(
+      commands,
+      offset,
+      firstLine,
+      lastLine,
+      profile,
+    );
     commands.draw(canvas, Offset.zero, profile);
     commands.clear();
     _pruneOverlayRowPictureCache(firstLine, lastLine);
@@ -1004,70 +1012,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         profile?.cursorPaints++;
       }
     }
-
-    _paintHighlights(
-      canvas,
-      offset,
-      _controller.highlights,
-      row,
-      row,
-      profile,
-    );
-
-    final selection = _controller.selection;
-    if (selection != null) {
-      _paintSelection(
-        canvas,
-        offset,
-        selection,
-        row,
-        row,
-        profile,
-      );
-    }
   }
 
-  int _overlayRowSignature(
-    int row,
-    Map<BufferRange, List<BufferSegment>> rangeSegmentsCache,
-    Map<BufferRange, Map<int, int>> segmentSignatureCache,
-  ) {
+  int _overlayPictureRowSignature(int row) {
     var signature = 0;
-
-    for (final highlight in _controller.highlights) {
-      final range = highlight.range?.normalized;
-      if (range == null || range.begin.y > row || range.end.y < row) {
-        continue;
-      }
-      signature = Object.hash(
-        signature,
-        'h',
-        highlight.color,
-        _segmentSignatureForRangeRow(
-          range,
-          row,
-          rangeSegmentsCache,
-          segmentSignatureCache,
-        ),
-      );
-    }
-
-    final selection = _controller.selection?.normalized;
-    if (selection != null &&
-        selection.begin.y <= row &&
-        selection.end.y >= row) {
-      signature = Object.hash(
-        signature,
-        's',
-        _painter.theme.selection,
-        _segmentSignatureForRangeRow(
-          selection,
-          row,
-          rangeSegmentsCache,
-          segmentSignatureCache,
-        ),
-      );
-    }
 
     if (_terminal.buffer.absoluteCursorY == row) {
       if (_isComposingText) {
@@ -1101,47 +1049,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       return 0;
     }
     return Object.hash(signature, row, size.width, _painter.paintRevision);
-  }
-
-  int _segmentSignatureForRangeRow(
-    BufferRange range,
-    int row,
-    Map<BufferRange, List<BufferSegment>> rangeSegmentsCache,
-    Map<BufferRange, Map<int, int>> cache,
-  ) {
-    final rowCache = cache.putIfAbsent(range, () => <int, int>{});
-    final cached = rowCache[row];
-    if (cached != null) {
-      return cached;
-    }
-    final segments = rangeSegmentsCache.putIfAbsent(
-      range,
-      () => range.toSegments().toList(growable: false),
-    );
-    final signature = _segmentSignatureForRow(segments, row);
-    rowCache[row] = signature;
-    return signature;
-  }
-
-  int _segmentSignatureForRow(Iterable<BufferSegment> segments, int row) {
-    var signature = 0;
-    for (final segment in segments) {
-      if (segment.line < row) {
-        continue;
-      }
-      if (segment.line > row) {
-        break;
-      }
-      final start = (segment.start ?? 0).clamp(0, _terminal.viewWidth).toInt();
-      final end = (segment.end ?? _terminal.viewWidth)
-          .clamp(0, _terminal.viewWidth)
-          .toInt();
-      if (end <= start) {
-        continue;
-      }
-      signature = Object.hash(signature, start, end);
-    }
-    return signature;
   }
 
   /// Paints the text that is currently being composed in IME to [canvas] at
@@ -1400,16 +1307,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _viewportContentCache = null;
   }
 
-  void _paintSelection(
-    Canvas canvas,
+  void _recordOverlaySelectionCommands(
+    _RenderCommandBuffer commands,
     Offset offset,
-    BufferRange selection,
     int firstLine,
     int lastLine,
     TerminalRenderProfile? profile,
   ) {
-    final runs = _paintSegmentRuns(
-      canvas,
+    final selection = _controller.selection;
+    if (selection == null) return;
+    final runs = _recordOverlaySegmentRunCommands(
+      commands,
       offset,
       selection.toSegments(),
       _painter.theme.selection,
@@ -1419,10 +1327,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     profile?.selectionRuns += runs;
   }
 
-  void _paintHighlights(
-    Canvas canvas,
+  void _recordOverlayHighlightCommands(
+    _RenderCommandBuffer commands,
     Offset offset,
-    List<TerminalHighlight> highlights,
     int firstLine,
     int lastLine,
     TerminalRenderProfile? profile,
@@ -1436,8 +1343,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         continue;
       }
 
-      final runs = _paintSegmentRuns(
-        canvas,
+      final runs = _recordOverlaySegmentRunCommands(
+        commands,
         offset,
         range.toSegments(),
         highlight.color,
@@ -1448,8 +1355,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
   }
 
-  int _paintSegmentRuns(
-    Canvas canvas,
+  int _recordOverlaySegmentRunCommands(
+    _RenderCommandBuffer commands,
     Offset offset,
     Iterable<BufferSegment> segments,
     Color color,
@@ -1464,7 +1371,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     void flush() {
       final line = runLine;
       if (line == null || runEnd <= runStart) return;
-      _paintSegmentRect(canvas, offset, line, runStart, runEnd, color);
+      _recordOverlaySegmentRectCommand(
+        commands,
+        offset,
+        line,
+        runStart,
+        runEnd,
+        color,
+      );
       paintedRuns++;
       runLine = null;
     }
@@ -1506,33 +1420,48 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   @pragma('vm:prefer-inline')
-  void _paintSegmentRect(
-    Canvas canvas,
+  void _recordOverlaySegmentRectCommand(
+    _RenderCommandBuffer commands,
     Offset offset,
     int line,
     int start,
     int end,
     Color color,
   ) {
-    final startOffset = Offset(
-      offset.dx + start * _painter.cellSize.width,
-      offset.dy + line * _painter.cellSize.height + _lineOffset,
+    final dx = offset.dx + start * _painter.cellSize.width;
+    final dy = offset.dy + line * _painter.cellSize.height + _lineOffset;
+    commands.addRectAt(
+      dx,
+      dy,
+      (end - start) * _painter.cellSize.width,
+      _painter.cellSize.height,
+      color,
+      kind: _RenderCommandKind.overlay,
     );
-
-    _painter.paintHighlight(canvas, startOffset, end - start, color);
   }
 }
 
 class _RenderCommandBuffer {
-  final _pictures = <Picture>[];
+  static const _transparent = Color(0x00000000);
+
+  final _types = <_RenderCommandType>[];
+  final _pictures = <Picture?>[];
   final _dx = <double>[];
   final _dy = <double>[];
+  final _width = <double>[];
+  final _height = <double>[];
+  final _colors = <Color>[];
   final _kinds = <_RenderCommandKind>[];
+  final _rectPaint = Paint();
 
   void clear() {
+    _types.clear();
     _pictures.clear();
     _dx.clear();
     _dy.clear();
+    _width.clear();
+    _height.clear();
+    _colors.clear();
     _kinds.clear();
   }
 
@@ -1550,35 +1479,82 @@ class _RenderCommandBuffer {
     double dy, {
     _RenderCommandKind kind = _RenderCommandKind.content,
   }) {
+    _types.add(_RenderCommandType.picture);
     _pictures.add(picture);
     _dx.add(dx);
     _dy.add(dy);
+    _width.add(0);
+    _height.add(0);
+    _colors.add(_transparent);
+    _kinds.add(kind);
+  }
+
+  void addRectAt(
+    double dx,
+    double dy,
+    double width,
+    double height,
+    Color color, {
+    _RenderCommandKind kind = _RenderCommandKind.content,
+  }) {
+    if (width <= 0 || height <= 0) return;
+    _types.add(_RenderCommandType.rect);
+    _pictures.add(null);
+    _dx.add(dx);
+    _dy.add(dy);
+    _width.add(width);
+    _height.add(height);
+    _colors.add(color);
     _kinds.add(kind);
   }
 
   void draw(Canvas canvas, Offset offset, TerminalRenderProfile? profile) {
-    if (_pictures.isEmpty) return;
+    if (_types.isEmpty) return;
     profile?.renderCommandBuffers++;
-    profile?.renderCommands += _pictures.length;
-    for (var i = 0; i < _pictures.length; i++) {
-      canvas.save();
-      canvas.translate(
-        offset.dx + _dx[i],
-        offset.dy + _dy[i],
-      );
-      canvas.drawPicture(_pictures[i]);
-      canvas.restore();
-      if (profile != null) {
-        profile.renderCommandPictureDraws += 1;
-        switch (_kinds[i]) {
-          case _RenderCommandKind.content:
-            profile.contentPicturesDrawn += 1;
-          case _RenderCommandKind.overlay:
-            profile.overlayRowPictureDraws += 1;
-        }
+    profile?.renderCommands += _types.length;
+    for (var i = 0; i < _types.length; i++) {
+      switch (_types[i]) {
+        case _RenderCommandType.picture:
+          final picture = _pictures[i];
+          if (picture == null) continue;
+          canvas.save();
+          canvas.translate(
+            offset.dx + _dx[i],
+            offset.dy + _dy[i],
+          );
+          canvas.drawPicture(picture);
+          canvas.restore();
+          if (profile != null) {
+            profile.renderCommandPictureDraws += 1;
+            switch (_kinds[i]) {
+              case _RenderCommandKind.content:
+                profile.contentPicturesDrawn += 1;
+              case _RenderCommandKind.overlay:
+                profile.overlayRowPictureDraws += 1;
+            }
+          }
+        case _RenderCommandType.rect:
+          _rectPaint
+            ..color = _colors[i]
+            ..style = PaintingStyle.fill;
+          canvas.drawRect(
+            Rect.fromLTWH(
+              offset.dx + _dx[i],
+              offset.dy + _dy[i],
+              _width[i],
+              _height[i],
+            ),
+            _rectPaint,
+          );
+          profile?.renderCommandRectDraws++;
       }
     }
   }
+}
+
+enum _RenderCommandType {
+  picture,
+  rect,
 }
 
 enum _RenderCommandKind {
@@ -1620,6 +1596,7 @@ class TerminalRenderProfile {
   var renderCommandBuffers = 0;
   var renderCommands = 0;
   var renderCommandPictureDraws = 0;
+  var renderCommandRectDraws = 0;
   var overlayRowCacheHits = 0;
   var overlayRowCacheMisses = 0;
   var overlayRowSignatureSkips = 0;
@@ -1673,6 +1650,7 @@ class TerminalRenderProfile {
         'renderCommandBuffers: $renderCommandBuffers, '
         'renderCommands: $renderCommands, '
         'renderCommandPictureDraws: $renderCommandPictureDraws, '
+        'renderCommandRectDraws: $renderCommandRectDraws, '
         'overlayRowCacheHits: $overlayRowCacheHits, '
         'overlayRowCacheMisses: $overlayRowCacheMisses, '
         'overlayRowSignatureSkips: $overlayRowSignatureSkips, '

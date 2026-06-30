@@ -379,10 +379,7 @@ void main() {
       expect(RenderTerminal.lastPaintProfile!.overlayAnyDirty, isTrue);
       expect(RenderTerminal.lastPaintProfile!.overlayDirtyRows, isPositive);
       expect(RenderTerminal.lastPaintProfile!.overlayRowCacheHits, isPositive);
-      expect(
-        RenderTerminal.lastPaintProfile!.overlayRowCacheMisses,
-        isPositive,
-      );
+      expect(RenderTerminal.lastPaintProfile!.overlayRowCacheMisses, isZero);
       expect(
         RenderTerminal.lastPaintProfile!.overlayRowPictureDraws,
         isPositive,
@@ -390,6 +387,10 @@ void main() {
       expect(RenderTerminal.lastPaintProfile!.renderCommandBuffers, isPositive);
       expect(
         RenderTerminal.lastPaintProfile!.renderCommandPictureDraws,
+        isPositive,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.renderCommandRectDraws,
         isPositive,
       );
       expect(RenderTerminal.lastPaintProfile!.contentPicturesDrawn, isZero);
@@ -408,10 +409,7 @@ void main() {
       );
       expect(RenderTerminal.lastPaintProfile!.overlayAnyDirty, isTrue);
       expect(RenderTerminal.lastPaintProfile!.overlayDirtyRows, isPositive);
-      expect(
-        RenderTerminal.lastPaintProfile!.overlayRowCacheMisses,
-        isPositive,
-      );
+      expect(RenderTerminal.lastPaintProfile!.overlayRowCacheMisses, isZero);
       expect(RenderTerminal.lastPaintProfile!.selectionRuns, isZero);
 
       term.write('terminal direct draw\r\n');
