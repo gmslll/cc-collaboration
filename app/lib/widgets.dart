@@ -479,7 +479,14 @@ Widget statusDot(Color color, {double size = 8, bool glow = false}) =>
 // the attention states (working / needs-review).
 ({Color color, bool glow}) sessionStatusStyle(SessionStatus s) => switch (s) {
   SessionStatus.working => (color: CcColors.accentBright, glow: true),
+  SessionStatus.runningTool => (color: CcColors.accentBright, glow: true),
+  SessionStatus.toolDone => (color: CcColors.ok, glow: true),
+  SessionStatus.toolFailed => (color: CcColors.danger, glow: true),
+  SessionStatus.waitingPermission => (color: CcColors.warning, glow: true),
+  SessionStatus.compacting => (color: CcColors.accent, glow: true),
+  SessionStatus.subagent => (color: CcColors.accent, glow: true),
   SessionStatus.needsReview => (color: CcColors.warning, glow: true),
+  SessionStatus.waitingInput => (color: CcColors.muted, glow: false),
   SessionStatus.idle => (color: CcColors.ok, glow: false),
   SessionStatus.shell => (color: CcColors.subtle, glow: false),
 };
@@ -495,8 +502,8 @@ Widget sessionStatusRow(
   String statusDetail = '',
 }) {
   final st = sessionStatusStyle(status);
-  final Widget statusPart = status == SessionStatus.working
-      ? const _WorkingIndicator()
+  final Widget statusPart = sessionStatusIsActive(status)
+      ? _WorkingIndicator(label: statusLabel(status), color: st.color)
       : Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -543,12 +550,14 @@ Widget sessionStatusRow(
   );
 }
 
-// _WorkingIndicator is the animated "思考中" status: a breathing glow dot and a
-// cycling 0–3 dot ellipsis (in a fixed-width box so the row doesn't reflow each
+// _WorkingIndicator is the animated active status: a breathing glow dot and a
+// cycling 0-3 dot ellipsis (in a fixed-width box so the row doesn't reflow each
 // frame). Honours the platform reduce-motion setting (falls back to a static
 // glow dot + label).
 class _WorkingIndicator extends StatefulWidget {
-  const _WorkingIndicator();
+  final String label;
+  final Color color;
+  const _WorkingIndicator({required this.label, required this.color});
 
   @override
   State<_WorkingIndicator> createState() => _WorkingIndicatorState();
@@ -569,7 +578,7 @@ class _WorkingIndicatorState extends State<_WorkingIndicator>
 
   @override
   Widget build(BuildContext context) {
-    const color = CcColors.accentBright;
+    final color = widget.color;
     final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     if (reduce) {
       return Row(
@@ -577,8 +586,8 @@ class _WorkingIndicatorState extends State<_WorkingIndicator>
         children: [
           statusDot(color, glow: true),
           const SizedBox(width: 6),
-          const Text(
-            '思考中',
+          Text(
+            widget.label,
             style: TextStyle(
               color: color,
               fontSize: 12,
@@ -612,8 +621,8 @@ class _WorkingIndicatorState extends State<_WorkingIndicator>
               ),
             ),
             const SizedBox(width: 6),
-            const Text(
-              '思考中',
+            Text(
+              widget.label,
               style: TextStyle(
                 color: color,
                 fontSize: 12,
@@ -624,7 +633,7 @@ class _WorkingIndicatorState extends State<_WorkingIndicator>
               width: 14, // reserve 3 dots so the row width stays stable
               child: Text(
                 '.' * dots,
-                style: const TextStyle(
+                style: TextStyle(
                   color: color,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

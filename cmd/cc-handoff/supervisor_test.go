@@ -17,7 +17,8 @@ func TestSupervisorQueueIncludesAttentionDetails(t *testing.T) {
 		{"id":"ts0","label":"Supervisor","status":"idle","supervisor":true},
 		{"id":"ts1","label":"Worker done","status":"needsReview"},
 		{"id":"ts2","label":"Worker failed","status":"idle","statusDetail":"上次工具失败：test exit 1"},
-		{"id":"ts3","label":"Worker idle","status":"idle"}
+		{"id":"ts3","label":"Worker tool failed","status":"toolFailed"},
+		{"id":"ts4","label":"Worker idle","status":"idle"}
 	]`
 	if err := os.WriteFile(filepath.Join(dir, "sessions.json"), []byte(registry), 0o600); err != nil {
 		t.Fatal(err)
@@ -34,7 +35,7 @@ func TestSupervisorQueueIncludesAttentionDetails(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("not valid JSON: %v (%s)", err, out)
 	}
-	if len(got) != 2 || got[0].ID != "ts1" || got[1].ID != "ts2" {
+	if len(got) != 3 || got[0].ID != "ts1" || got[1].ID != "ts2" || got[2].ID != "ts3" {
 		t.Fatalf("queue mismatch: %+v", got)
 	}
 }

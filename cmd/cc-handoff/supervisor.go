@@ -224,7 +224,14 @@ func runSupervisorOverview(args []string, queueOnly bool) error {
 
 func supervisorQueueCandidate(s busSession) bool {
 	switch s.Status {
-	case "needsReview", "working":
+	case "needsReview",
+		"working",
+		"runningTool",
+		"toolDone",
+		"toolFailed",
+		"waitingPermission",
+		"compacting",
+		"subagent":
 		return true
 	}
 	d := strings.ToLower(s.StatusDetail)

@@ -927,7 +927,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     return SizedBox(
       width: width,
       child: BreathingGlow(
-        active: ov?.status == SessionStatus.working,
+        active: ov == null ? false : sessionStatusIsActive(ov.status),
         child: HoverLift(
           onTap: () => _tapSession(s),
           padding: const EdgeInsets.all(12),

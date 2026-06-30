@@ -11,13 +11,32 @@ import 'package:flutter/foundation.dart';
 // layer share the same type.
 
 // SessionStatus is the at-a-glance state shown on each card. `shell` = a plain
-// (non-agent) terminal; the agent states are working (mid-turn) / needsReview
-// (finished a user-kicked turn, not yet opened) / idle.
-enum SessionStatus { working, needsReview, idle, shell }
+// (non-agent) terminal. Agent states combine the coarse terminal busy flag with
+// recent hook events so the overview can say what the agent is actually doing.
+enum SessionStatus {
+  working,
+  runningTool,
+  toolDone,
+  toolFailed,
+  waitingPermission,
+  compacting,
+  subagent,
+  needsReview,
+  waitingInput,
+  idle,
+  shell,
+}
 
 SessionStatus sessionStatusFromName(String? n) => switch (n) {
   'working' => SessionStatus.working,
+  'runningTool' => SessionStatus.runningTool,
+  'toolDone' => SessionStatus.toolDone,
+  'toolFailed' => SessionStatus.toolFailed,
+  'waitingPermission' => SessionStatus.waitingPermission,
+  'compacting' => SessionStatus.compacting,
+  'subagent' => SessionStatus.subagent,
   'needsReview' => SessionStatus.needsReview,
+  'waitingInput' => SessionStatus.waitingInput,
   'shell' => SessionStatus.shell,
   _ => SessionStatus.idle,
 };
@@ -25,9 +44,27 @@ SessionStatus sessionStatusFromName(String? n) => switch (n) {
 // statusLabel is the pure (no-material) Chinese label; UIs map the colour.
 String statusLabel(SessionStatus s) => switch (s) {
   SessionStatus.working => '思考中',
+  SessionStatus.runningTool => '运行工具',
+  SessionStatus.toolDone => '工具完成',
+  SessionStatus.toolFailed => '工具失败',
+  SessionStatus.waitingPermission => '待授权',
+  SessionStatus.compacting => '压缩中',
+  SessionStatus.subagent => '子代理',
   SessionStatus.needsReview => '待 review',
+  SessionStatus.waitingInput => '等待输入',
   SessionStatus.idle => '空闲',
   SessionStatus.shell => 'shell',
+};
+
+bool sessionStatusIsActive(SessionStatus s) => switch (s) {
+  SessionStatus.working ||
+  SessionStatus.runningTool ||
+  SessionStatus.toolDone ||
+  SessionStatus.toolFailed ||
+  SessionStatus.waitingPermission ||
+  SessionStatus.compacting ||
+  SessionStatus.subagent => true,
+  _ => false,
 };
 
 class SessionCard {

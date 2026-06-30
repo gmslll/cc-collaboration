@@ -6,6 +6,17 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.6.29] - 2026-06-30
+
+### Added
+
+- **会话总览支持更多 hook 派生状态** — 会话总览、手机端同步与 supervisor queue 现在能识别运行工具、工具完成、工具失败、待授权、压缩中、子代理、等待输入等状态，不再只显示待 review / 思考中 / 空闲。
+
+### Fixed
+
+- **手机连接通知不再挡住单文件查看页** — 顶部通知现在可以关闭，并避开单文件查看场景，避免遮住内容后只能退出整个 app。
+- **hook 状态同步不再依赖总览页打开** — agent hook 变化会持续刷新本地 session registry，只有真正需要展示时才广播总览和活动状态，避免 CLI/supervisor 读到过期状态。
+
 ## [0.6.28] - 2026-06-30
 
 ### Fixed

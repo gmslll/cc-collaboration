@@ -11,6 +11,7 @@ import '../local/agent_usage.dart';
 import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
 import '../local/prefs.dart';
+import '../local/session_overview.dart';
 import '../notifications.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -395,24 +396,23 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   ];
 
   String _busStatusName(TerminalSession s) {
-    if (s.busy) return 'working';
     if (!s.isAgent) return 'shell';
     if (s.needsReview) return 'needsReview';
+    final a = _busLatestHookActivity(s);
+    if (s.busy) return _busBusyStatus(a).name;
+    if (a == null) return 'waitingInput';
+    if (a.event == 'PermissionRequest') return 'waitingPermission';
+    if (a.event == 'PostToolUse' && a.exitCode != null && a.exitCode != 0) {
+      return 'toolFailed';
+    }
+    if (a.event == 'Stop' || a.event == 'SubagentStop') return 'waitingInput';
     return 'idle';
   }
 
   String _busStatusDetail(TerminalSession s) {
     if (!s.isAgent) return s.workdir;
-    final recent = localBusHookActivities(s.id, limit: 8);
-    HookActivity? latest;
-    for (final a in recent) {
-      if (a.event != 'SessionStart') {
-        latest = a;
-        break;
-      }
-    }
     if (s.needsReview) return '已完成，等待查看';
-    final a = latest;
+    final a = _busLatestHookActivity(s);
     if (a == null) return s.busy ? '正在处理' : '等待输入';
     final tool = a.toolName.isEmpty ? a.event : '${a.event} ${a.toolName}';
     if (a.event == 'PermissionRequest') {
@@ -423,6 +423,33 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     }
     if (s.busy) return '正在处理：$tool';
     return '空闲：$tool';
+  }
+
+  HookActivity? _busLatestHookActivity(TerminalSession s) {
+    final recent = localBusHookActivities(s.id, limit: 8);
+    for (final a in recent) {
+      if (a.event != 'SessionStart') return a;
+    }
+    return null;
+  }
+
+  SessionStatus _busBusyStatus(HookActivity? a) {
+    if (a == null) return SessionStatus.working;
+    if (a.event == 'PreToolUse') return SessionStatus.runningTool;
+    if (a.event == 'PostToolUse') {
+      if (a.exitCode != null && a.exitCode != 0) {
+        return SessionStatus.toolFailed;
+      }
+      return SessionStatus.toolDone;
+    }
+    if (a.event == 'PermissionRequest') return SessionStatus.waitingPermission;
+    if (a.event == 'SubagentStart' || a.event == 'SubagentStop') {
+      return SessionStatus.subagent;
+    }
+    if (a.event == 'PreCompact' || a.event == 'PostCompact') {
+      return SessionStatus.compacting;
+    }
+    return SessionStatus.working;
   }
 
   // _resolveTarget maps a local-bus address (id or label) to a live session.

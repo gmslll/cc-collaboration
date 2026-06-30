@@ -302,14 +302,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         }
       }
     }
-    final status = s.busy
-        ? SessionStatus.working
-        : !s.isAgent
-        ? SessionStatus.shell
-        : s.needsReview
-        ? SessionStatus.needsReview
-        : SessionStatus.idle;
-    final detail = _statusDetailFor(s, status);
+    final latest = _latestHookActivity(s);
+    final status = _statusFor(s, latest);
+    final detail = _statusDetailFor(s, status, latest);
     return SessionCard(
       sid: s.id,
       label: s.label,
@@ -325,47 +320,94 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  String _statusDetailFor(TerminalSession s, SessionStatus status) {
-    if (!s.isAgent) return s.workdir;
+  HookActivity? _latestHookActivity(TerminalSession s) {
+    if (!s.isAgent) return null;
     final recent = localBusHookActivities(s.id, limit: 8);
-    HookActivity? latest;
     for (final a in recent) {
       if (a.event != 'SessionStart') {
-        latest = a;
-        break;
+        return a;
       }
     }
-    final a = latest;
-    if (status == SessionStatus.needsReview) {
-      final msg = a?.lastAssistantMessage.trim();
-      return msg == null || msg.isEmpty ? '已完成，等待查看' : '已完成：${_clipStatus(msg)}';
+    return null;
+  }
+
+  SessionStatus _statusFor(TerminalSession s, HookActivity? a) {
+    if (!s.isAgent) return SessionStatus.shell;
+    if (s.needsReview) return SessionStatus.needsReview;
+    if (s.busy) return _busyStatusFromHook(a);
+    if (a == null) return SessionStatus.waitingInput;
+    if (a.event == 'PermissionRequest') return SessionStatus.waitingPermission;
+    if (a.event == 'PostToolUse' && a.exitCode != null && a.exitCode != 0) {
+      return SessionStatus.toolFailed;
     }
-    if (status == SessionStatus.idle) {
-      if (a == null) return '等待输入';
-      if (a.event == 'Stop' || a.event == 'SubagentStop') return '等待输入';
-      if (a.event == 'PostToolUse' && a.exitCode != null && a.exitCode != 0) {
-        return '上次工具失败：${a.toolName} exit ${a.exitCode}';
-      }
-      return '空闲 · 最近 ${_activityBrief(a)}';
+    if (a.event == 'Stop' || a.event == 'SubagentStop') {
+      return SessionStatus.waitingInput;
     }
-    if (status != SessionStatus.working) return '';
-    if (a == null) return '正在处理';
-    if (a.event == 'PreToolUse') return '正在运行 ${_toolLabel(a)}';
+    return SessionStatus.idle;
+  }
+
+  SessionStatus _busyStatusFromHook(HookActivity? a) {
+    if (a == null) return SessionStatus.working;
+    if (a.event == 'PreToolUse') return SessionStatus.runningTool;
     if (a.event == 'PostToolUse') {
       if (a.exitCode != null && a.exitCode != 0) {
-        return '${_toolLabel(a)} 失败 exit ${a.exitCode}，继续处理';
+        return SessionStatus.toolFailed;
       }
-      return '${_toolLabel(a)} 完成，继续处理';
+      return SessionStatus.toolDone;
     }
-    if (a.event == 'PermissionRequest') {
-      return a.toolName.isEmpty ? '等待权限确认' : '等待权限：${a.toolName}';
+    if (a.event == 'PermissionRequest') return SessionStatus.waitingPermission;
+    if (a.event == 'SubagentStart' || a.event == 'SubagentStop') {
+      return SessionStatus.subagent;
     }
+    if (a.event == 'PreCompact' || a.event == 'PostCompact') {
+      return SessionStatus.compacting;
+    }
+    return SessionStatus.working;
+  }
+
+  String _statusDetailFor(
+    TerminalSession s,
+    SessionStatus status,
+    HookActivity? a,
+  ) {
+    if (!s.isAgent) return s.workdir;
+    if (status == SessionStatus.needsReview) {
+      final msg = a?.lastAssistantMessage.trim();
+      return msg == null || msg.isEmpty
+          ? '已完成，等待查看'
+          : '已完成：${_clipStatus(msg)}';
+    }
+    if (status == SessionStatus.waitingInput) return '等待输入';
+    if (a == null) return '正在处理';
+    return switch (status) {
+      SessionStatus.runningTool => '正在运行 ${_toolLabel(a)}',
+      SessionStatus.toolDone => '${_toolLabel(a)} 完成，继续处理',
+      SessionStatus.toolFailed =>
+        '${_toolLabel(a)} 失败${a.exitCode == null ? '' : ' exit ${a.exitCode}'}',
+      SessionStatus.waitingPermission =>
+        a.toolName.isEmpty ? '等待权限确认' : '等待权限：${a.toolName}',
+      SessionStatus.compacting =>
+        a.event == 'PreCompact' ? '正在压缩上下文' : '上下文压缩完成',
+      SessionStatus.subagent =>
+        a.event == 'SubagentStart' ? '子代理开始处理' : '子代理完成，继续处理',
+      SessionStatus.idle => '空闲 · 最近 ${_activityBrief(a)}',
+      SessionStatus.working => _workingDetail(a),
+      _ => '',
+    };
+  }
+
+  String _workingDetail(HookActivity a) {
     if (a.event == 'UserPromptSubmit') return '已提交 prompt，开始处理';
-    if (a.event == 'SubagentStart') return '子代理开始处理';
-    if (a.event == 'SubagentStop') return '子代理完成，继续处理';
-    if (a.event == 'PreCompact') return '正在压缩上下文';
-    if (a.event == 'PostCompact') return '上下文压缩完成';
     return '正在处理 · ${_activityBrief(a)}';
+  }
+
+  String _statusTextFor(TerminalSession s) {
+    final latest = _latestHookActivity(s);
+    final status = _statusFor(s, latest);
+    final detail = _statusDetailFor(s, status, latest);
+    return detail.isEmpty
+        ? statusLabel(status)
+        : '${statusLabel(status)} · $detail';
   }
 
   String _activityBrief(HookActivity a) {
@@ -391,11 +433,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   void _publishHookActivities() {
     if (!mounted) return;
     var changed = false;
+    var overviewChanged = false;
+    final overviewObserved =
+        widget.overviewStore.observed.value || _remoteHost.clientCount > 0;
     for (final s in terms) {
       if (!s.isAgent) continue;
-      final observed =
-          widget.overviewStore.observed.value || _remoteHost.watching(s.id);
-      if (!observed) continue;
       final items = localBusHookActivities(s.id, limit: 12);
       final fp = items
           .map((a) => '${a.at.microsecondsSinceEpoch}:${a.event}:${a.toolName}:${a.exitCode ?? ''}')
@@ -404,10 +446,20 @@ class _WorkspacePageState extends State<WorkspacePage>
       _hookActivityFingerprints[s.id] = fp;
       if (_remoteHost.watching(s.id)) {
         _remoteHost.broadcastActivity(s.id, items);
+        _remoteHost.broadcastStatus(
+          s.id,
+          s.busy,
+          _statusTextFor(s),
+          usage: s.usage.value?.shortLabel(),
+        );
       }
       changed = true;
+      if (overviewObserved) overviewChanged = true;
     }
-    if (changed) _publishOverview();
+    if (changed) {
+      unawaited(_localBus.syncRegistry());
+      if (overviewChanged) _publishOverview();
+    }
   }
 
   // _refreshPreview caches a session's latest content: an agent's most-recent

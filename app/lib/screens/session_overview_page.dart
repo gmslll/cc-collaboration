@@ -206,7 +206,7 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
     return SizedBox(
       width: 320,
       child: BreathingGlow(
-        active: c.status == SessionStatus.working,
+        active: sessionStatusIsActive(c.status),
         child: HoverLift(
           onTap: () => _openQuickReply(c),
           padding: const EdgeInsets.all(12),
