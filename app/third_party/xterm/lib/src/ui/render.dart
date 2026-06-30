@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
+import 'package:xterm/src/core/buffer/line.dart';
 import 'package:xterm/src/core/buffer/range.dart';
 import 'package:xterm/src/core/buffer/segment.dart';
 import 'package:xterm/src/core/mouse/button.dart';
@@ -20,6 +21,9 @@ import 'package:xterm/src/ui/terminal_theme.dart';
 typedef EditableRectCallback = void Function(Rect rect, Rect caretRect);
 
 class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
+  static var debugProfilePaint = false;
+  static TerminalRenderProfile? lastPaintProfile;
+
   RenderTerminal({
     required Terminal terminal,
     required TerminalController controller,
@@ -56,6 +60,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (attached) _terminal.removeListener(_onTerminalChange);
     _terminal = terminal;
     if (attached) _terminal.addListener(_onTerminalChange);
+    _clearLinePictureCache();
     _resizeTerminalIfNeeded();
     markNeedsLayout();
   }
@@ -95,18 +100,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set textStyle(TerminalStyle value) {
     if (value == _painter.textStyle) return;
     _painter.textStyle = value;
+    _clearLinePictureCache();
     markNeedsLayout();
   }
 
   set textScaler(TextScaler value) {
     if (value == _painter.textScaler) return;
     _painter.textScaler = value;
+    _clearLinePictureCache();
     markNeedsLayout();
   }
 
   set theme(TerminalTheme value) {
     if (value == _painter.theme) return;
     _painter.theme = value;
+    _clearLinePictureCache();
     markNeedsPaint();
   }
 
@@ -150,6 +158,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   TerminalSize? _viewportSize;
 
   final TerminalPainter _painter;
+  final _linePictureCache = <int, _LinePictureCache>{};
 
   var _stickToBottom = true;
   var _lastUsingAltBuffer = false;
@@ -210,6 +219,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   @override
+  void dispose() {
+    _clearLinePictureCache();
+    super.dispose();
+  }
+
+  @override
   bool hitTestSelf(Offset position) {
     return true;
   }
@@ -217,6 +232,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   @override
   void systemFontsDidChange() {
     _painter.clearFontCache();
+    _clearLinePictureCache();
     super.systemFontsDidChange();
   }
 
@@ -462,6 +478,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   void _paint(PaintingContext context, Offset offset) {
     final canvas = context.canvas;
+    final profile = debugProfilePaint ? TerminalRenderProfile() : null;
+    if (profile == null) {
+      lastPaintProfile = null;
+    }
 
     final lines = _terminal.buffer.lines;
     final charHeight = _painter.cellSize.height;
@@ -474,14 +494,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     final effectFirstLine = firstLine.clamp(0, lines.length - 1);
     final effectLastLine = lastLine.clamp(0, lines.length - 1);
+    profile?.visibleLines = effectLastLine - effectFirstLine + 1;
 
     for (var i = effectFirstLine; i <= effectLastLine; i++) {
-      _painter.paintLine(
+      _paintCachedLine(
         canvas,
         offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
+        i,
         lines[i],
+        profile,
       );
     }
+    _pruneLinePictureCache(effectFirstLine, effectLastLine);
+    profile?.cachedPictures = _linePictureCache.length;
 
     if (_terminal.buffer.absoluteCursorY >= effectFirstLine &&
         _terminal.buffer.absoluteCursorY <= effectLastLine) {
@@ -501,6 +526,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     _paintHighlights(
       canvas,
+      offset,
       _controller.highlights,
       effectFirstLine,
       effectLastLine,
@@ -509,10 +535,15 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (_controller.selection != null) {
       _paintSelection(
         canvas,
+        offset,
         _controller.selection!,
         effectFirstLine,
         effectLastLine,
       );
+    }
+
+    if (debugProfilePaint) {
+      lastPaintProfile = profile;
     }
   }
 
@@ -545,33 +576,115 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     paragraph.layout(ParagraphConstraints(width: size.width));
 
     canvas.drawParagraph(paragraph, Offset(0, offset.dy));
+    paragraph.dispose();
+  }
+
+  void _paintCachedLine(
+    Canvas canvas,
+    Offset offset,
+    int lineIndex,
+    BufferLine line,
+    TerminalRenderProfile? profile,
+  ) {
+    final signature = _linePaintSignature(line);
+    var entry = _linePictureCache[lineIndex];
+    if (entry?.signature != signature) {
+      profile?.lineCacheMisses++;
+      entry?.dispose();
+      final recorder = PictureRecorder();
+      final lineCanvas = Canvas(
+        recorder,
+        Rect.fromLTWH(
+          0,
+          0,
+          line.length * _painter.cellSize.width,
+          _painter.cellSize.height,
+        ),
+      );
+      _painter.paintLine(
+        lineCanvas,
+        Offset.zero,
+        line,
+        collectProfile: profile != null,
+      );
+      if (profile != null) {
+        final painterProfile = _painter.takeProfile();
+        if (painterProfile != null) {
+          profile
+            ..backgroundRuns += painterProfile.backgroundRuns
+            ..asciiRuns += painterProfile.asciiRuns
+            ..asciiRunFallbacks += painterProfile.asciiRunFallbacks
+            ..singleCells += painterProfile.singleCells;
+        }
+      }
+      entry = _LinePictureCache(signature, recorder.endRecording());
+      _linePictureCache[lineIndex] = entry;
+    } else {
+      profile?.lineCacheHits++;
+    }
+    entry = entry!;
+
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.drawPicture(entry.picture);
+    canvas.restore();
+  }
+
+  int _linePaintSignature(BufferLine line) {
+    var hash = Object.hash(
+      _painter.paintRevision,
+      line.length,
+      line.isWrapped,
+      _painter.cellSize.width,
+      _painter.cellSize.height,
+    );
+    final data = line.data;
+    final used = line.length * 4;
+    for (var i = 0; i < used; i++) {
+      hash = 0x1fffffff & (hash + data[i]);
+      hash = 0x1fffffff & (hash + ((0x0007ffff & hash) << 10));
+      hash ^= hash >> 6;
+    }
+    hash = 0x1fffffff & (hash + ((0x03ffffff & hash) << 3));
+    hash ^= hash >> 11;
+    return 0x1fffffff & (hash + ((0x00003fff & hash) << 15));
+  }
+
+  void _pruneLinePictureCache(int firstLine, int lastLine) {
+    _linePictureCache.removeWhere((line, entry) {
+      final remove = line < firstLine || line > lastLine;
+      if (remove) entry.dispose();
+      return remove;
+    });
+  }
+
+  void _clearLinePictureCache() {
+    for (final entry in _linePictureCache.values) {
+      entry.dispose();
+    }
+    _linePictureCache.clear();
   }
 
   void _paintSelection(
     Canvas canvas,
+    Offset offset,
     BufferRange selection,
     int firstLine,
     int lastLine,
   ) {
-    for (final segment in selection.toSegments()) {
-      if (segment.line >= _terminal.buffer.lines.length) {
-        break;
-      }
-
-      if (segment.line < firstLine) {
-        continue;
-      }
-
-      if (segment.line > lastLine) {
-        break;
-      }
-
-      _paintSegment(canvas, segment, _painter.theme.selection);
-    }
+    _paintSegmentRuns(
+      canvas,
+      offset,
+      selection.toSegments(),
+      _painter.theme.selection,
+      firstLine,
+      lastLine,
+    );
   }
 
   void _paintHighlights(
     Canvas canvas,
+    Offset offset,
     List<TerminalHighlight> highlights,
     int firstLine,
     int lastLine,
@@ -585,30 +698,120 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         continue;
       }
 
-      for (var segment in range.toSegments()) {
-        if (segment.line < firstLine) {
-          continue;
-        }
-
-        if (segment.line > lastLine) {
-          break;
-        }
-
-        _paintSegment(canvas, segment, highlight.color);
-      }
+      _paintSegmentRuns(
+        canvas,
+        offset,
+        range.toSegments(),
+        highlight.color,
+        firstLine,
+        lastLine,
+      );
     }
   }
 
-  @pragma('vm:prefer-inline')
-  void _paintSegment(Canvas canvas, BufferSegment segment, Color color) {
-    final start = segment.start ?? 0;
-    final end = segment.end ?? _terminal.viewWidth;
+  void _paintSegmentRuns(
+    Canvas canvas,
+    Offset offset,
+    Iterable<BufferSegment> segments,
+    Color color,
+    int firstLine,
+    int lastLine,
+  ) {
+    int? runLine;
+    var runStart = 0;
+    var runEnd = 0;
 
+    void flush() {
+      final line = runLine;
+      if (line == null || runEnd <= runStart) return;
+      _paintSegmentRect(canvas, offset, line, runStart, runEnd, color);
+      runLine = null;
+    }
+
+    for (final segment in segments) {
+      if (segment.line >= _terminal.buffer.lines.length) {
+        break;
+      }
+      if (segment.line < firstLine) {
+        continue;
+      }
+      if (segment.line > lastLine) {
+        break;
+      }
+
+      final start = (segment.start ?? 0).clamp(0, _terminal.viewWidth).toInt();
+      final end = (segment.end ?? _terminal.viewWidth)
+          .clamp(0, _terminal.viewWidth)
+          .toInt();
+      if (end <= start) {
+        continue;
+      }
+
+      if (runLine == segment.line && start <= runEnd) {
+        if (end > runEnd) {
+          runEnd = end;
+        }
+        continue;
+      }
+
+      flush();
+      runLine = segment.line;
+      runStart = start;
+      runEnd = end;
+    }
+
+    flush();
+  }
+
+  @pragma('vm:prefer-inline')
+  void _paintSegmentRect(
+    Canvas canvas,
+    Offset offset,
+    int line,
+    int start,
+    int end,
+    Color color,
+  ) {
     final startOffset = Offset(
-      start * _painter.cellSize.width,
-      segment.line * _painter.cellSize.height + _lineOffset,
+      offset.dx + start * _painter.cellSize.width,
+      offset.dy + line * _painter.cellSize.height + _lineOffset,
     );
 
     _painter.paintHighlight(canvas, startOffset, end - start, color);
+  }
+}
+
+class TerminalRenderProfile {
+  var visibleLines = 0;
+  var lineCacheHits = 0;
+  var lineCacheMisses = 0;
+  var cachedPictures = 0;
+  var backgroundRuns = 0;
+  var asciiRuns = 0;
+  var asciiRunFallbacks = 0;
+  var singleCells = 0;
+
+  @override
+  String toString() {
+    return 'TerminalRenderProfile('
+        'visibleLines: $visibleLines, '
+        'lineCacheHits: $lineCacheHits, '
+        'lineCacheMisses: $lineCacheMisses, '
+        'cachedPictures: $cachedPictures, '
+        'backgroundRuns: $backgroundRuns, '
+        'asciiRuns: $asciiRuns, '
+        'asciiRunFallbacks: $asciiRunFallbacks, '
+        'singleCells: $singleCells)';
+  }
+}
+
+class _LinePictureCache {
+  _LinePictureCache(this.signature, this.picture);
+
+  final int signature;
+  final Picture picture;
+
+  void dispose() {
+    picture.dispose();
   }
 }

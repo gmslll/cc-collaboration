@@ -66,15 +66,13 @@ String errorText(Object e) {
 
 OverlayEntry? _topSnackEntry;
 Timer? _topSnackTimer;
-int _topSnackToken = 0;
 
 void _removeTopSnack() {
   _topSnackTimer?.cancel();
   _topSnackTimer = null;
-  _topSnackToken++;
   final entry = _topSnackEntry;
   _topSnackEntry = null;
-  if (entry?.mounted ?? false) entry!.remove();
+  entry?.remove();
 }
 
 void snack(
@@ -87,25 +85,26 @@ void snack(
   final overlay = Overlay.maybeOf(context);
   if (overlay == null) return;
   _removeTopSnack();
-  final token = ++_topSnackToken;
   final d = duration ?? const Duration(seconds: 4);
-  _topSnackEntry = OverlayEntry(
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
     builder: (ctx) => Positioned(
-      top: MediaQuery.paddingOf(ctx).top + kToolbarHeight + 8,
+      bottom: MediaQuery.paddingOf(ctx).bottom + 16,
       left: 12,
       right: 12,
       child: _TopSnack(
         message: message,
         background: background,
         onClose: () {
-          if (_topSnackToken == token) _removeTopSnack();
+          if (_topSnackEntry == entry) _removeTopSnack();
         },
       ),
     ),
   );
-  overlay.insert(_topSnackEntry!);
+  _topSnackEntry = entry;
+  overlay.insert(entry);
   _topSnackTimer = Timer(d, () {
-    if (_topSnackToken == token) _removeTopSnack();
+    if (_topSnackEntry == entry) _removeTopSnack();
   });
 }
 

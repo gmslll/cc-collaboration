@@ -82,6 +82,43 @@ void main() {
     expect(selected, contains('selectable text'));
     expect(selected, contains('next line'));
   });
+
+  testWidgets('selection paints after outer layout offset', (tester) async {
+    final term = Terminal(maxLines: 1000);
+    final controller = TerminalController(
+      pointerInputs: const PointerInputs.none(),
+    );
+    term.write('offset selectable text\r\nnext line');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.only(left: 37, top: 53),
+            child: SizedBox(
+              width: 500,
+              height: 260,
+              child: TerminalView(term, controller: controller),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final box = tester.renderObject<RenderBox>(find.byType(TerminalView));
+    final origin = box.localToGlobal(Offset.zero);
+    await _drag(
+      tester,
+      origin + const Offset(2, 6),
+      origin + Offset(box.size.width - 4, 6),
+    );
+
+    expect(tester.takeException(), isNull);
+    final selection = controller.selection;
+    expect(selection, isNotNull);
+    expect(term.buffer.getText(selection!), contains('offset selectable text'));
+  });
 }
 
 Future<

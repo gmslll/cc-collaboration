@@ -168,7 +168,7 @@ class TerminalSession {
   bool get busy => isAgent && _busy;
 
   static final RegExp _terminalProtocolReply = RegExp(
-    r'^(?:'
+    r'^(?:(?:'
     r'\x1b\](?:10|11);rgb:[0-9a-fA-F]{4}/[0-9a-fA-F]{4}/[0-9a-fA-F]{4}\x1b\\'
     r'|\x1b\[\?1;2c'
     r'|\x1b\[>0;0;0c'
@@ -176,7 +176,7 @@ class TerminalSession {
     r'|\x1b\[0n'
     r'|\x1b\[\d+;\d+R'
     r'|\x1b\[8;\d+;\d+t'
-    r')$',
+    r'))+$',
   );
 
   // _setBusy is the single chokepoint for the busy flag: it fires onBusyChanged
@@ -194,6 +194,24 @@ class TerminalSession {
       _usageTicker = null;
     }
     onBusyChanged?.call(this);
+  }
+
+  void _writeInputBytes(Uint8List bytes, {required bool allowProtocolReply}) {
+    final data = utf8.decode(bytes, allowMalformed: true);
+    final protocolReply = _terminalProtocolReply.hasMatch(data);
+    if (protocolReply && !allowProtocolReply) return;
+    if (!protocolReply) {
+      _sawInput = true; // local keystrokes count as "the user gave it work"
+      // A local Enter into an agent starts a turn → mark busy so a peer message
+      // arriving now routes to the bus inbox (hook injection) not a paste queue.
+      if (isAgent && data.contains('\r')) {
+        _setBusy(true);
+        unawaited(
+          refreshUsage(),
+        ); // turn starting → reflect busy + any new usage
+      }
+    }
+    _pty?.write(bytes);
   }
 
   static const Duration _belSettle = Duration(
@@ -579,19 +597,10 @@ class TerminalSession {
     }
     _pty = pty;
     terminal.onOutput = (data) {
-      final protocolReply = _terminalProtocolReply.hasMatch(data);
-      if (!protocolReply) {
-        _sawInput = true; // local keystrokes count as "the user gave it work"
-        // A local Enter into an agent starts a turn → mark busy so a peer message
-        // arriving now routes to the bus inbox (hook injection) not a paste queue.
-        if (isAgent && data.contains('\r')) {
-          _setBusy(true);
-          unawaited(
-            refreshUsage(),
-          ); // turn starting → reflect busy + any new usage
-        }
-      }
-      pty.write(const Utf8Encoder().convert(data));
+      _writeInputBytes(
+        Uint8List.fromList(const Utf8Encoder().convert(data)),
+        allowProtocolReply: true,
+      );
     };
     pty.output
         .cast<List<int>>()
@@ -606,16 +615,16 @@ class TerminalSession {
     pty.exitCode.then((code) {
       // Non-zero exits in red so a process that dies on startup isn't mistaken
       // for an empty terminal.
-      terminal.write(
-        '\r\n\x1b[${code == 0 ? '90' : '31'}m[已退出: $code]\x1b[0m\r\n',
-      );
+      final exitMessage =
+          '\r\n\x1b[${code == 0 ? '90' : '31'}m[已退出: $code]\x1b[0m\r\n';
+      terminal.write(exitMessage);
       // 127 = command not found: the agent binary couldn't be launched. Point
       // the user at the per-agent override so they can fix it.
       if (code == 127 && (agent == 'claude' || agent == 'codex')) {
-        terminal.write(
-          '\x1b[33m未找到 $agent。可在「账号 · config.toml」设置 '
-          '${agent}_command(绝对路径或启动命令)后重开。\x1b[0m\r\n',
-        );
+        final notFoundMessage =
+            '\x1b[33m未找到 $agent。可在「账号 · config.toml」设置 '
+            '${agent}_command(绝对路径或启动命令)后重开。\x1b[0m\r\n';
+        terminal.write(notFoundMessage);
       }
     });
     // A phone mirroring this session (remoteSink set) owns the PTY size; don't
@@ -1041,6 +1050,19 @@ class _TerminalPaneState extends State<TerminalPane> {
 
   Terminal get _terminal => widget.session.terminal;
 
+  String? get _currentSelectionText {
+    final sel = _controller.selection;
+    if (sel == null) return null;
+    final text = _terminal.buffer.getText(sel);
+    return text.isEmpty ? null : text;
+  }
+
+  bool get _hasSelection => _currentSelectionText != null;
+
+  void _clearSelection() {
+    _controller.clearSelection();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1051,10 +1073,10 @@ class _TerminalPaneState extends State<TerminalPane> {
   }
 
   void _copy() {
-    final sel = _controller.selection;
-    if (sel == null) return;
-    Clipboard.setData(ClipboardData(text: _terminal.buffer.getText(sel)));
-    _controller.clearSelection();
+    final text = _currentSelectionText;
+    if (text == null) return;
+    Clipboard.setData(ClipboardData(text: text));
+    _clearSelection();
     snack(context, '已复制');
   }
 
@@ -1083,7 +1105,7 @@ class _TerminalPaneState extends State<TerminalPane> {
     final text = data?.text;
     if (text != null && text.isNotEmpty) {
       _terminal.paste(text);
-      _controller.clearSelection();
+      _clearSelection();
       return;
     }
     await _pasteImage();
@@ -1134,10 +1156,10 @@ class _TerminalPaneState extends State<TerminalPane> {
     void Function(String fromId, String targetId, String text)? cb,
     String done,
   ) {
-    final sel = _controller.selection;
-    if (sel == null || cb == null) return;
-    cb(widget.session.id, targetId, _terminal.buffer.getText(sel));
-    _controller.clearSelection();
+    final text = _currentSelectionText;
+    if (text == null || cb == null) return;
+    cb(widget.session.id, targetId, text);
+    _clearSelection();
     final label = _peerLabel(targetId);
     snack(context, label != null ? '$done到 $label' : done);
   }
@@ -1153,15 +1175,15 @@ class _TerminalPaneState extends State<TerminalPane> {
   // _sendSelectionToOnline hands the current selection to the host's
   // "发送到在线用户" picker (a remote user + their session). No-op without one.
   void _sendSelectionToOnline() {
-    final sel = _controller.selection;
+    final text = _currentSelectionText;
     final cb = widget.onSendToOnline;
-    if (sel == null || cb == null) return;
-    cb(_terminal.buffer.getText(sel));
-    _controller.clearSelection();
+    if (text == null || cb == null) return;
+    cb(text);
+    _clearSelection();
   }
 
   Future<void> _showMenu(Offset globalPos) async {
-    final hasSelection = _controller.selection != null;
+    final hasSelection = _hasSelection;
     final hasTargets = widget.same.isNotEmpty || widget.others.isNotEmpty;
     final canSend = widget.onSendToPeer != null && hasTargets;
     final canInterject = widget.onInterjectToPeer != null && hasTargets;
@@ -1417,8 +1439,8 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
     final ctrl = hw.isControlPressed;
     final alt = hw.isAltPressed;
     final shift = hw.isShiftPressed;
-    // Let Ctrl+V paste through the field (→ _onChanged → PTY); let plain printable
-    // keys flow to the field/IME as text (they arrive via the text-input channel).
+    // Let Ctrl+V paste through the field (-> _onChanged -> PTY); let plain
+    // printable keys flow to the field/IME as text.
     if (ctrl && event.logicalKey == LogicalKeyboardKey.keyV) {
       return KeyEventResult.ignored;
     }
@@ -1460,6 +1482,3 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
     );
   }
 }
-
-// ccTerminalTheme moved to ../terminal_theme.dart (xterm-only) so the web client
-// can reuse it without pulling terminal_pane.dart's flutter_pty/dart:io deps.
