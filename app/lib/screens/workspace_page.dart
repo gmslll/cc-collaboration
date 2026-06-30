@@ -1390,8 +1390,20 @@ class _WorkspacePageState extends State<WorkspacePage>
   };
 
   // --- remote (phone) session actions; wired into _remoteHost ---
+  String? _supervisorAgentForKind(String kind) {
+    if (kind == 'supervisor') return 'claude';
+    if (kind == 'supervisor:claude' || kind == 'supervisor-claude') {
+      return 'claude';
+    }
+    if (kind == 'supervisor:codex' || kind == 'supervisor-codex') {
+      return 'codex';
+    }
+    return null;
+  }
+
   void _remoteNewSession(String projectPath, String agent, String? workdir) {
     final kind = agent.trim().toLowerCase();
+    final supervisorAgent = _supervisorAgentForKind(kind);
     for (final ws in _cfg.workspaces) {
       for (final p in ws.projects) {
         if (p.path == projectPath) {
@@ -1406,8 +1418,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               : p.path;
           if (kind.isEmpty || kind == 'shell') {
             addTerm(dir, ''); // '' = plain interactive shell
-          } else if (kind == 'supervisor') {
-            _launch(dir, 'claude', ws.preLaunch, supervisor: true);
+          } else if (supervisorAgent != null) {
+            _launch(dir, supervisorAgent, ws.preLaunch, supervisor: true);
           } else {
             _launch(dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
           }
@@ -3257,15 +3269,47 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   void _launchDefaultSupervisor() {
+    unawaited(_launchDefaultSupervisorFlow());
+  }
+
+  Future<void> _launchDefaultSupervisorFlow() async {
     final d = _defaultProject();
     if (d == null) {
       _snack('没有可启动的项目');
       return;
     }
+    final agent = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('启动总管'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.play_arrow_rounded),
+              title: const Text('Claude 总管'),
+              onTap: () => Navigator.of(ctx).pop('claude'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.smart_toy_outlined),
+              title: const Text('Codex 总管'),
+              onTap: () => Navigator.of(ctx).pop('codex'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    if (agent == null || !mounted) return;
     _openAgent(
       d.project,
       d.project.path,
-      'claude',
+      agent,
       d.ws.preLaunch,
       supervisor: true,
     );

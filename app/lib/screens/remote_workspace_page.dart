@@ -1023,6 +1023,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       orElse: () => _c.roots.first,
     );
     var agent = 'claude';
+    var supervisorAgent = 'claude';
     var workdir = project.path; // '主仓' by default; a worktree path otherwise
     _c.loadWorktrees(project.path); // populate the worktree dropdown
     await showDialog<void>(
@@ -1098,6 +1099,19 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                     showSelectedIcon: false,
                     onSelectionChanged: (s) => setLocal(() => agent = s.first),
                   ),
+                  if (agent == 'supervisor') ...[
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'claude', label: Text('Claude')),
+                        ButtonSegment(value: 'codex', label: Text('Codex')),
+                      ],
+                      selected: {supervisorAgent},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (s) =>
+                          setLocal(() => supervisorAgent = s.first),
+                    ),
+                  ],
                 ],
               );
             },
@@ -1109,7 +1123,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             ),
             FilledButton(
               onPressed: () {
-                _c.newSession(project.path, agent, workdir: workdir);
+                final selectedAgent = agent == 'supervisor'
+                    ? 'supervisor:$supervisorAgent'
+                    : agent;
+                _c.newSession(project.path, selectedAgent, workdir: workdir);
                 Navigator.pop(ctx);
               },
               child: const Text('启动'),
