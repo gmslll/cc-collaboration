@@ -1127,6 +1127,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
                   painterProfile.glyphRunPictureCacheHits
               ..glyphRunPictureCacheMisses +=
                   painterProfile.glyphRunPictureCacheMisses
+              ..glyphAtlasHits += painterProfile.glyphAtlasHits
+              ..glyphAtlasMisses += painterProfile.glyphAtlasMisses
+              ..glyphAtlasDraws += painterProfile.glyphAtlasDraws
+              ..glyphAtlasRunDraws += painterProfile.glyphAtlasRunDraws
               ..paragraphCacheHits += painterProfile.paragraphCacheHits
               ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
               ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -1206,6 +1210,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         ..glyphRunPictureCacheHits += painterProfile.glyphRunPictureCacheHits
         ..glyphRunPictureCacheMisses +=
             painterProfile.glyphRunPictureCacheMisses
+        ..glyphAtlasHits += painterProfile.glyphAtlasHits
+        ..glyphAtlasMisses += painterProfile.glyphAtlasMisses
+        ..glyphAtlasDraws += painterProfile.glyphAtlasDraws
+        ..glyphAtlasRunDraws += painterProfile.glyphAtlasRunDraws
         ..paragraphCacheHits += painterProfile.paragraphCacheHits
         ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
         ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -1448,6 +1456,10 @@ class TerminalRenderProfile {
   var glyphPictureCacheMisses = 0;
   var glyphRunPictureCacheHits = 0;
   var glyphRunPictureCacheMisses = 0;
+  var glyphAtlasHits = 0;
+  var glyphAtlasMisses = 0;
+  var glyphAtlasDraws = 0;
+  var glyphAtlasRunDraws = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;
@@ -1490,6 +1502,10 @@ class TerminalRenderProfile {
         'glyphPictureCacheMisses: $glyphPictureCacheMisses, '
         'glyphRunPictureCacheHits: $glyphRunPictureCacheHits, '
         'glyphRunPictureCacheMisses: $glyphRunPictureCacheMisses, '
+        'glyphAtlasHits: $glyphAtlasHits, '
+        'glyphAtlasMisses: $glyphAtlasMisses, '
+        'glyphAtlasDraws: $glyphAtlasDraws, '
+        'glyphAtlasRunDraws: $glyphAtlasRunDraws, '
         'paragraphCacheHits: $paragraphCacheHits, '
         'paragraphCacheMisses: $paragraphCacheMisses, '
         'runParagraphCacheHits: $runParagraphCacheHits, '

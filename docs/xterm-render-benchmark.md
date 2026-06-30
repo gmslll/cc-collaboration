@@ -70,3 +70,22 @@ the extra key/list overhead of run-level picture caching.
 Powerline private-use glyphs (`U+E0B0`-`U+E0BF`) now share the same cached sprite
 glyph path as box/block/braille drawing, so prompt separators avoid text layout
 when they can be represented by deterministic vector shapes.
+
+## 2026-07-01 Sprite Atlas Gate
+
+Change: deterministic terminal glyphs now have a small sprite atlas path.
+Single glyphs and short geometry runs draw from an atlas image; long dense
+geometry runs stay on the run-level picture cache because a single picture draw
+is faster than submitting hundreds of atlas sprites in Flutter.
+
+Painter microbenchmark, 600 cells:
+
+| Scenario | Previous avg us | Atlas-gated avg us | Notes |
+| --- | ---: | ---: | --- |
+| ASCII text | 7.0 | 7.6 | unchanged paragraph-run path |
+| Latin-1 text | 5.2 | 4.9 | unchanged paragraph-run path |
+| Geometry glyphs | 14.4 | 14.7 | long runs stay on glyph-run picture cache |
+| Mixed text/glyph | 54.9 | 48.7 | isolated geometry glyphs use atlas image draws |
+
+An unbounded `drawAtlas` path for long geometry runs measured around 66.7 us,
+so the atlas path is intentionally capped to short runs.

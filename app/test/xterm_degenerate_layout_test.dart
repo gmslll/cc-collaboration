@@ -229,7 +229,7 @@ void main() {
     expect(profile.asciiRuns + profile.asciiRunFallbacks, 1);
   });
 
-  test('terminal painter geometry glyph run picture cache is bounded', () {
+  test('terminal painter geometry glyph runs use the sprite atlas', () {
     final painter = TerminalPainter(
       theme: TerminalThemes.defaultTheme,
       textStyle: const TerminalStyle(),
@@ -259,16 +259,16 @@ void main() {
     }
 
     final firstLine = glyphLine(1);
-    expect(paint(firstLine).glyphRunPictureCacheMisses, 1);
-    expect(paint(firstLine).glyphRunPictureCacheHits, 1);
+    final firstPaint = paint(firstLine);
+    expect(firstPaint.glyphAtlasRunDraws, 1);
+    expect(firstPaint.glyphAtlasMisses, 3);
+    expect(firstPaint.glyphAtlasHits, 1);
+    expect(firstPaint.glyphRunPictureCacheMisses, 0);
 
-    for (var i = 0; i < 520; i++) {
-      paint(glyphLine(i + 2));
-    }
-
-    final firstLineAgain = paint(firstLine);
-    expect(firstLineAgain.glyphRunPictureCacheMisses, 1);
-    expect(firstLineAgain.glyphRunPictureCacheHits, 0);
+    final secondPaint = paint(firstLine);
+    expect(secondPaint.glyphAtlasRunDraws, 1);
+    expect(secondPaint.glyphAtlasHits, 4);
+    expect(secondPaint.glyphRunPictureCacheHits, 0);
   });
 
   testWidgets('terminal render profile is gated by debug flag', (tester) async {

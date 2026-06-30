@@ -13,8 +13,11 @@ class TerminalPainter {
   static const _maxLineRenderPlans = 512;
   static const _maxGlyphPictures = 2048;
   static const _maxGlyphRunPictures = 512;
+  static const _glyphAtlasInitialSize = 256;
+  static const _glyphAtlasMaxSize = 2048;
   static const _maxTextRunChunkCells = 256;
   static const _minGeometryGlyphRunLength = 4;
+  static const _maxGlyphAtlasRunLength = 32;
   static const _textRunFontFeatures = [
     FontFeature.disable('liga'),
     FontFeature.disable('clig'),
@@ -47,11 +50,16 @@ class TerminalPainter {
   // Keep insertion order so the oldest geometry glyph can be evicted.
   final _glyphPictureCache = LinkedHashMap<_GlyphPictureKey, Picture>();
   final _glyphRunPictureCache = LinkedHashMap<_GlyphRunPictureKey, Picture>();
+  final _glyphAtlas = _TerminalGlyphAtlas(
+    initialSize: _glyphAtlasInitialSize,
+    maxSize: _glyphAtlasMaxSize,
+  );
   final _cursorPaint = Paint();
   final _highlightPaint = Paint();
   final _backgroundPaint = Paint();
   final _glyphFillPaint = Paint();
   final _glyphStrokePaint = Paint();
+  final _glyphAtlasPaint = Paint()..filterQuality = FilterQuality.none;
   var _paintRevision = 0;
 
   TerminalStyle get textStyle => _textStyle;
@@ -60,11 +68,7 @@ class TerminalPainter {
     if (value == _textStyle) return;
     _textStyle = value;
     _cellSize = _measureCharSize();
-    _paragraphCache.clear();
-    _runParagraphCache.clear();
-    _lineRenderPlanCache.clear();
-    _clearGlyphPictureCache();
-    _clearGlyphRunPictureCache();
+    _clearRenderCaches();
     _paintRevision++;
   }
 
@@ -74,11 +78,7 @@ class TerminalPainter {
     if (value == _textScaler) return;
     _textScaler = value;
     _cellSize = _measureCharSize();
-    _paragraphCache.clear();
-    _runParagraphCache.clear();
-    _lineRenderPlanCache.clear();
-    _clearGlyphPictureCache();
-    _clearGlyphRunPictureCache();
+    _clearRenderCaches();
     _paintRevision++;
   }
 
@@ -88,11 +88,7 @@ class TerminalPainter {
     if (value == _theme) return;
     _theme = value;
     _colorPalette = PaletteBuilder(value).build();
-    _paragraphCache.clear();
-    _runParagraphCache.clear();
-    _lineRenderPlanCache.clear();
-    _clearGlyphPictureCache();
-    _clearGlyphRunPictureCache();
+    _clearRenderCaches();
     _paintRevision++;
   }
 
@@ -132,22 +128,23 @@ class TerminalPainter {
   TerminalPainterProfile? _profile;
 
   void dispose() {
+    _clearRenderCaches();
+  }
+
+  void _clearRenderCaches() {
     _paragraphCache.clear();
     _runParagraphCache.clear();
     _lineRenderPlanCache.clear();
     _clearGlyphPictureCache();
     _clearGlyphRunPictureCache();
+    _glyphAtlas.clear();
   }
 
   /// When the set of font available to the system changes, call this method to
   /// clear cached state related to font rendering.
   void clearFontCache() {
     _cellSize = _measureCharSize();
-    _paragraphCache.clear();
-    _runParagraphCache.clear();
-    _lineRenderPlanCache.clear();
-    _clearGlyphPictureCache();
-    _clearGlyphRunPictureCache();
+    _clearRenderCaches();
     _paintRevision++;
   }
 
@@ -786,6 +783,17 @@ class TerminalPainter {
     int flags,
   ) {
     final color = _foregroundColor(foreground, background, flags);
+    if (charCodes.length <= _maxGlyphAtlasRunLength &&
+        _paintGeometryGlyphAtlasRun(
+          canvas,
+          offset,
+          charCodes,
+          flags,
+          color,
+        )) {
+      return;
+    }
+
     final key = _GlyphRunPictureKey(
       charCodes: charCodes,
       bold: flags & CellFlags.bold != 0,
@@ -841,6 +849,56 @@ class TerminalPainter {
     canvas.restore();
   }
 
+  bool _paintGeometryGlyphAtlasRun(
+    Canvas canvas,
+    Offset offset,
+    List<int> charCodes,
+    int flags,
+    Color color,
+  ) {
+    final transforms = <RSTransform>[];
+    final rects = <Rect>[];
+    final cellWidth = _cellSize.width;
+    final atlasGeneration = _glyphAtlas.generation;
+
+    for (var i = 0; i < charCodes.length; i++) {
+      final entry = _ensureGlyphAtlasEntry(charCodes[i], flags, color);
+      if (entry == null) {
+        return false;
+      }
+      if (_glyphAtlas.generation != atlasGeneration) {
+        return false;
+      }
+      transforms.add(
+        RSTransform.fromComponents(
+          rotation: 0,
+          scale: 1,
+          anchorX: 0,
+          anchorY: 0,
+          translateX: offset.dx + i * cellWidth,
+          translateY: offset.dy,
+        ),
+      );
+      rects.add(entry.source);
+    }
+
+    final image = _glyphAtlas.image;
+    if (image == null) {
+      return false;
+    }
+    canvas.drawAtlas(
+      image,
+      transforms,
+      rects,
+      null,
+      null,
+      null,
+      _glyphAtlasPaint,
+    );
+    _profile?.glyphAtlasRunDraws++;
+    return true;
+  }
+
   void _paintGeometryGlyphCells(
     Canvas canvas,
     Offset offset,
@@ -887,6 +945,19 @@ class TerminalPainter {
       return false;
     }
 
+    final atlasEntry = _ensureGlyphAtlasEntry(charCode, cellFlags, color);
+    final atlasImage = _glyphAtlas.image;
+    if (atlasEntry != null && atlasImage != null) {
+      canvas.drawImageRect(
+        atlasImage,
+        atlasEntry.source,
+        offset & _cellSize,
+        _glyphAtlasPaint,
+      );
+      _profile?.glyphAtlasDraws++;
+      return true;
+    }
+
     final key = _GlyphPictureKey(
       charCode: charCode,
       bold: cellFlags & CellFlags.bold != 0,
@@ -923,6 +994,39 @@ class TerminalPainter {
     canvas.drawPicture(picture);
     canvas.restore();
     return true;
+  }
+
+  _GlyphAtlasEntry? _ensureGlyphAtlasEntry(
+    int charCode,
+    int cellFlags,
+    Color color,
+  ) {
+    final key = _GlyphPictureKey(
+      charCode: charCode,
+      bold: cellFlags & CellFlags.bold != 0,
+      color: color,
+      cellWidth: _cellSize.width,
+      cellHeight: _cellSize.height,
+      paintRevision: _paintRevision,
+    );
+    final cached = _glyphAtlas.entryFor(key);
+    if (cached != null) {
+      _profile?.glyphAtlasHits++;
+      return cached;
+    }
+
+    _profile?.glyphAtlasMisses++;
+    return _glyphAtlas.rasterize(
+      key,
+      _cellSize,
+      (glyphCanvas, offset) => _paintTerminalGlyphImmediate(
+        glyphCanvas,
+        offset,
+        charCode,
+        cellFlags,
+        color,
+      ),
+    );
   }
 
   bool _isTerminalGlyphCodepoint(int charCode) {
@@ -1553,6 +1657,10 @@ class TerminalPainterProfile {
   var glyphPictureCacheMisses = 0;
   var glyphRunPictureCacheHits = 0;
   var glyphRunPictureCacheMisses = 0;
+  var glyphAtlasHits = 0;
+  var glyphAtlasMisses = 0;
+  var glyphAtlasDraws = 0;
+  var glyphAtlasRunDraws = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;
@@ -1673,6 +1781,152 @@ class _GlyphPictureKey {
         cellHeight,
         paintRevision,
       );
+}
+
+class _GlyphAtlasEntry {
+  const _GlyphAtlasEntry(this.source);
+
+  final Rect source;
+}
+
+class _TerminalGlyphAtlas {
+  _TerminalGlyphAtlas({
+    required int initialSize,
+    required int maxSize,
+  })  : _initialSize = initialSize,
+        _maxSize = maxSize,
+        _width = initialSize,
+        _height = initialSize;
+
+  static const _padding = 1.0;
+
+  final int _initialSize;
+  final int _maxSize;
+  final _entries = LinkedHashMap<_GlyphPictureKey, _GlyphAtlasEntry>();
+  final _copyPaint = Paint()..filterQuality = FilterQuality.none;
+
+  int _width;
+  int _height;
+  double _packX = 0;
+  double _packY = 0;
+  double _rowHeight = 0;
+  Image? _image;
+  var _generation = 0;
+
+  Image? get image => _image;
+
+  int get generation => _generation;
+
+  _GlyphAtlasEntry? entryFor(_GlyphPictureKey key) => _entries[key];
+
+  _GlyphAtlasEntry? rasterize(
+    _GlyphPictureKey key,
+    Size cellSize,
+    bool Function(Canvas canvas, Offset offset) paintGlyph,
+  ) {
+    final existing = _entries[key];
+    if (existing != null) {
+      return existing;
+    }
+
+    var source = _allocate(cellSize);
+    if (source == null) {
+      clear();
+      source = _allocate(cellSize);
+    }
+    if (source == null) {
+      return null;
+    }
+
+    final recorder = PictureRecorder();
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, _width.toDouble(), _height.toDouble()),
+    );
+    final oldImage = _image;
+    if (oldImage != null) {
+      canvas.drawImage(oldImage, Offset.zero, _copyPaint);
+    }
+
+    canvas.save();
+    canvas.clipRect(source, doAntiAlias: false);
+    final painted = paintGlyph(canvas, source.topLeft);
+    canvas.restore();
+
+    final picture = recorder.endRecording();
+    if (!painted) {
+      picture.dispose();
+      return null;
+    }
+
+    final nextImage = picture.toImageSync(_width, _height);
+    picture.dispose();
+    oldImage?.dispose();
+    _image = nextImage;
+
+    final entry = _GlyphAtlasEntry(source);
+    _entries[key] = entry;
+    return entry;
+  }
+
+  Rect? _allocate(Size cellSize) {
+    final width = cellSize.width.ceilToDouble();
+    final height = cellSize.height.ceilToDouble();
+    if (width + _padding > _maxSize || height + _padding > _maxSize) {
+      return null;
+    }
+
+    while (width + _padding > _width || height + _padding > _height) {
+      if (!_grow()) {
+        return null;
+      }
+    }
+
+    if (_packX + width + _padding > _width) {
+      _packX = 0;
+      _packY += _rowHeight + _padding;
+      _rowHeight = 0;
+    }
+
+    while (_packY + height + _padding > _height) {
+      if (!_grow()) {
+        return null;
+      }
+    }
+
+    final source =
+        Rect.fromLTWH(_packX, _packY, cellSize.width, cellSize.height);
+    _packX += width + _padding;
+    if (height > _rowHeight) {
+      _rowHeight = height;
+    }
+    return source;
+  }
+
+  bool _grow() {
+    if ((_width <= _height && _width < _maxSize) ||
+        (_height >= _maxSize && _width < _maxSize)) {
+      _width = (_width * 2).clamp(_initialSize, _maxSize);
+      return true;
+    }
+    if (_height < _maxSize) {
+      _height = (_height * 2).clamp(_initialSize, _maxSize);
+      return true;
+    }
+    return false;
+  }
+
+  void clear() {
+    _image?.dispose();
+    _image = null;
+    _entries.clear();
+    _width = _initialSize;
+    _height = _initialSize;
+    _packX = 0;
+    _packY = 0;
+    _rowHeight = 0;
+    _generation++;
+  }
 }
 
 class _GlyphRunPictureKey {
