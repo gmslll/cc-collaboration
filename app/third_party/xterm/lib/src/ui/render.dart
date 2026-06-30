@@ -433,30 +433,29 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     Offset? to,
     SelectionMode mode = SelectionMode.line,
   ]) {
-    final fromPosition = _snapToCellHead(_getCellOffset(from, clamp: true));
+    final fromCell = _getCellOffset(from, clamp: true);
+    final fromHead = _snapToCellHead(fromCell);
+    final fromEnd = _snapToCellEnd(fromCell);
     if (to == null) {
       _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(fromPosition),
-        _terminal.buffer.createAnchorFromOffset(fromPosition),
+        _terminal.buffer.createAnchorFromOffset(fromHead),
+        _terminal.buffer.createAnchorFromOffset(fromEnd),
         mode: mode,
       );
     } else {
       final rawToPosition = _getCellOffset(to, clamp: false);
-      var toPosition = CellOffset(
+      final toCell = CellOffset(
         rawToPosition.x.clamp(0, _terminal.viewWidth - 1),
         rawToPosition.y.clamp(0, _terminal.buffer.lines.length - 1),
       );
-      final extendsForward = rawToPosition.y > fromPosition.y ||
-          (rawToPosition.y == fromPosition.y &&
-              rawToPosition.x >= fromPosition.x);
-      if (extendsForward) {
-        toPosition = _snapToCellEnd(toPosition);
-      } else {
-        toPosition = _snapToCellHead(toPosition);
-      }
+      final extendsForward = rawToPosition.y > fromHead.y ||
+          (rawToPosition.y == fromHead.y && rawToPosition.x >= fromHead.x);
+      final base = extendsForward ? fromHead : fromEnd;
+      final extent =
+          extendsForward ? _snapToCellEnd(toCell) : _snapToCellHead(toCell);
       _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(fromPosition),
-        _terminal.buffer.createAnchorFromOffset(toPosition),
+        _terminal.buffer.createAnchorFromOffset(base),
+        _terminal.buffer.createAnchorFromOffset(extent),
         mode: mode,
       );
     }

@@ -142,6 +142,29 @@ void main() {
     expect(term.buffer.getText(selection!), '界');
   });
 
+  testWidgets('backward mouse drag keeps the starting cell selected', (
+    tester,
+  ) async {
+    final (:term, :controller, :render) = await _pumpWideTerminal(
+      tester,
+      text: '界a',
+    );
+    final cellWidth = render.cellSize.width;
+    final rowMid = render.cellSize.height / 2;
+    final asciiCell =
+        render.getOffset(const CellOffset(2, 0)) +
+        Offset(cellWidth / 2, rowMid);
+    final wideTail =
+        render.getOffset(const CellOffset(1, 0)) +
+        Offset(cellWidth / 2, rowMid);
+
+    await _drag(tester, asciiCell, wideTail);
+
+    final selection = controller.selection;
+    expect(selection, isNotNull);
+    expect(term.buffer.getText(selection!), '界a');
+  });
+
   testWidgets('double click word selection snaps wide character tail to head', (
     tester,
   ) async {
@@ -203,6 +226,31 @@ void main() {
         Offset(cellWidth / 2, rowMid);
     final end =
         render.getOffset(const CellOffset(3, 1)) +
+        Offset(cellWidth / 2, rowMid);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await _drag(tester, start, end);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+
+    final selection = controller.selection;
+    expect(selection, isA<BufferRangeBlock>());
+    expect(term.buffer.getText(selection!), 'bcd\nBCD');
+  });
+
+  testWidgets('reverse alt mouse drag keeps block start cell selected', (
+    tester,
+  ) async {
+    final (:term, :controller, :render) = await _pumpWideTerminal(
+      tester,
+      text: 'abcde\r\nABCDE',
+    );
+    final cellWidth = render.cellSize.width;
+    final rowMid = render.cellSize.height / 2;
+    final start =
+        render.getOffset(const CellOffset(3, 1)) +
+        Offset(cellWidth / 2, rowMid);
+    final end =
+        render.getOffset(const CellOffset(1, 0)) +
         Offset(cellWidth / 2, rowMid);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);

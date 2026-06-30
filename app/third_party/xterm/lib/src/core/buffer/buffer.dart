@@ -533,7 +533,7 @@ class Buffer {
 
   BufferRangeLine? getWordBoundary(CellOffset position) {
     var separators = wordSeparators ?? defaultWordSeparators;
-    if (position.y >= lines.length) {
+    if (position.y < 0 || position.y >= lines.length) {
       return null;
     }
 
