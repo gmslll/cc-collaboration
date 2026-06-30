@@ -14,6 +14,7 @@ class TerminalPainter {
   static const _maxGlyphPictures = 2048;
   static const _maxGlyphRunPictures = 512;
   static const _maxTextRunChunkCells = 256;
+  static const _minGeometryGlyphRunLength = 4;
   static const _textRunFontFeatures = [
     FontFeature.disable('liga'),
     FontFeature.disable('clig'),
@@ -251,14 +252,26 @@ class TerminalPainter {
             profile?.asciiRunFallbacks++;
           }
         case _GeometryGlyphRunSpan():
-          _paintGeometryGlyphRun(
-            canvas,
-            offset.translate(span.start * cellWidth, 0),
-            span.charCodes,
-            span.foreground,
-            span.background,
-            span.flags,
-          );
+          final spanOffset = offset.translate(span.start * cellWidth, 0);
+          if (span.charCodes.length < _minGeometryGlyphRunLength) {
+            _paintGeometryGlyphCells(
+              canvas,
+              spanOffset,
+              span.charCodes,
+              span.foreground,
+              span.background,
+              span.flags,
+            );
+          } else {
+            _paintGeometryGlyphRun(
+              canvas,
+              spanOffset,
+              span.charCodes,
+              span.foreground,
+              span.background,
+              span.flags,
+            );
+          }
           profile?.singleCells += span.charCodes.length;
         case _CellForegroundSpan():
           paintCellForeground(
@@ -826,6 +839,36 @@ class TerminalPainter {
     canvas.translate(offset.dx, offset.dy);
     canvas.drawPicture(picture);
     canvas.restore();
+  }
+
+  void _paintGeometryGlyphCells(
+    Canvas canvas,
+    Offset offset,
+    List<int> charCodes,
+    int foreground,
+    int background,
+    int flags,
+  ) {
+    final color = _foregroundColor(foreground, background, flags);
+    for (var i = 0; i < charCodes.length; i++) {
+      final glyphOffset = offset.translate(i * _cellSize.width, 0);
+      if (!_paintTerminalGlyph(
+        canvas,
+        glyphOffset,
+        charCodes[i],
+        flags,
+        color,
+      )) {
+        _paintTextRunCell(
+          canvas,
+          glyphOffset,
+          charCodes[i],
+          foreground,
+          background,
+          flags,
+        );
+      }
+    }
   }
 
   bool _paintTerminalGlyph(

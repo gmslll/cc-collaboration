@@ -60,9 +60,9 @@ Painter microbenchmark, 600 cells:
 
 | Scenario | Before avg us | After run 1 avg us | After run 2 avg us | Notes |
 | --- | ---: | ---: | ---: | --- |
-| Geometry glyphs | ~266 | 14.2 | 14.3 | 1 glyph-run picture cache hit |
-| Mixed text/glyph | ~49-50 | 66.9 | 63.3 | 75 short glyph-run hits; mixed case is now dominated by many tiny runs |
+| Geometry glyphs | ~266 | 14.2 | 14.7 | 1 glyph-run picture cache hit |
+| Mixed text/glyph | ~49-50 | 66.9 | 55.6 | short glyph runs fall back to the single-glyph cache |
 
-Dense geometry improves by roughly 17x in this microbenchmark. The remaining
-mixed-case cost points to short alternating text/glyph runs; optimizing that
-would require reducing run fragmentation, not faster glyph drawing.
+Dense geometry improves by roughly 17x in this microbenchmark. Short
+alternating text/glyph runs stay on the older single-glyph cache path to avoid
+the extra key/list overhead of run-level picture caching.

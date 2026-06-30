@@ -251,9 +251,11 @@ void main() {
           (colorSeed >> 8) & 0xFF,
           (colorSeed >> 16) & 0xFF,
         );
-      return BufferLine(2)
+      return BufferLine(4)
         ..setCell(0, '┌'.codeUnitAt(0), 1, style)
-        ..setCell(1, '─'.codeUnitAt(0), 1, style);
+        ..setCell(1, '─'.codeUnitAt(0), 1, style)
+        ..setCell(2, '─'.codeUnitAt(0), 1, style)
+        ..setCell(3, '┐'.codeUnitAt(0), 1, style);
     }
 
     final firstLine = glyphLine(1);
