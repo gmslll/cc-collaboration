@@ -1992,6 +1992,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // window to catch the async replay chunks; once at the bottom xterm sticks.
   final ScrollController _termScroll = ScrollController();
   Timer? _stickTimer;
+  Timer? _wheelFlushTimer;
+  int _pendingWheelTicks = 0;
+  bool _localReviewScroll = Prefs.getBool('remote.localReviewScroll');
 
   // Customizable on-screen key bar (shared across sessions via Prefs).
   late List<_KeyButton> _keys = _loadKeyButtons();
@@ -2189,6 +2192,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     widget.client.leaveViewedSession(widget.session.sid);
     if (_laStarted) LiveActivity.end();
     _stopScroll();
+    _wheelFlushTimer?.cancel();
+    _wheelFlushTimer = null;
+    _pendingWheelTicks = 0;
     _stickTimer?.cancel();
     _termScroll.dispose();
     _speaker.stop();
@@ -2343,9 +2349,12 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // reports to the host like a Mac wheel would. Codex keeps its transcript in
   // the main buffer with real scrollback; even when it enables mouse reporting,
   // the phone must keep native scrollback enabled so swipe-up can read history.
-  bool get _usesHostWheelScroll =>
+  bool get _canUseHostWheelScroll =>
       widget.session.agent.trim().toLowerCase() != 'codex' &&
       _term.mouseMode.reportScroll;
+
+  bool get _usesHostWheelScroll =>
+      _canUseHostWheelScroll && !_localReviewScroll;
 
   void _scrollLocal(bool up, {int ticks = 1}) {
     if (!_termScroll.hasClients) return;
@@ -2362,8 +2371,16 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       _scrollLocal(up, ticks: ticks);
       return;
     }
-    final seq = terminalWheel(_term, up: up);
-    if (seq != null) widget.client.sendKeys(widget.session.sid, seq * ticks);
+    _pendingWheelTicks += up ? -ticks : ticks;
+    _wheelFlushTimer ??= Timer(const Duration(milliseconds: 16), () {
+      _wheelFlushTimer = null;
+      final pending = _pendingWheelTicks;
+      _pendingWheelTicks = 0;
+      if (pending == 0 || !mounted) return;
+      final seq = terminalWheel(_term, up: pending < 0);
+      if (seq == null) return;
+      widget.client.sendKeys(widget.session.sid, seq * pending.abs());
+    });
   }
 
   // Hold-to-scroll: pressing 滚↑/滚↓ nudges once, then holding repeats the wheel
@@ -2381,6 +2398,19 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   void _stopScroll() {
     _scrollHold?.cancel();
     _scrollHold = null;
+    _flushPendingWheel();
+  }
+
+  void _flushPendingWheel() {
+    _wheelFlushTimer?.cancel();
+    _wheelFlushTimer = null;
+    final pending = _pendingWheelTicks;
+    _pendingWheelTicks = 0;
+    if (pending == 0 || !mounted) return;
+    final seq = terminalWheel(_term, up: pending < 0);
+    if (seq != null) {
+      widget.client.sendKeys(widget.session.sid, seq * pending.abs());
+    }
   }
 
   // _clearScrollback wipes the phone's LOCAL scrollback (the history the host
@@ -2402,6 +2432,17 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     c.historyMode = c.historyMode == 'ansi' ? 'text' : 'ansi';
     Prefs.setString('remote.historyMode', c.historyMode);
     _reload(); // re-pulls history in the new mode + rebuilds the label (its snack)
+  }
+
+  void _toggleLocalReviewScroll() {
+    setState(() => _localReviewScroll = !_localReviewScroll);
+    Prefs.setBool('remote.localReviewScroll', _localReviewScroll);
+    _flushPendingWheel();
+    snack(
+      context,
+      _localReviewScroll ? '已切到本地查看滚动' : '已切到远程控制滚动',
+      clearPrevious: true,
+    );
   }
 
   Future<void> _setDefaultViewport() async {
@@ -2588,6 +2629,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
               if (v == 'clear_default_size') _clearDefaultViewport();
               if (v == 'clear') _clearScrollback();
               if (v == 'histmode') _toggleHistoryMode();
+              if (v == 'review_scroll') _toggleLocalReviewScroll();
             },
             itemBuilder: (_) => [
               PopupMenuItem(
@@ -2614,6 +2656,13 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                       : '历史:文本 → 切到彩色',
                 ),
               ),
+              if (_canUseHostWheelScroll)
+                PopupMenuItem(
+                  value: 'review_scroll',
+                  child: Text(
+                    _localReviewScroll ? '滚动:本地查看 → 远程控制' : '滚动:远程控制 → 本地查看',
+                  ),
+                ),
             ],
           ),
         ],
@@ -2677,6 +2726,33 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                         child: Text(
                           _usageLabel!,
                           style: const TextStyle(
+                            color: Color(0xFFD7DAE0),
+                            fontSize: 10.5,
+                            fontFamily: 'JetBrainsMono',
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_canUseHostWheelScroll && _localReviewScroll)
+                  Positioned(
+                    left: 8,
+                    bottom: 8,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xCC1E1E1E),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0x33FFFFFF)),
+                        ),
+                        child: const Text(
+                          '本地查看',
+                          style: TextStyle(
                             color: Color(0xFFD7DAE0),
                             fontSize: 10.5,
                             fontFamily: 'JetBrainsMono',

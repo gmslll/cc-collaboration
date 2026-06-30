@@ -271,6 +271,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _clearViewportContentCache();
     _clearOverlayRowPictureCache();
     _clearLinePictureCache();
+    _painter.dispose();
     super.dispose();
   }
 
@@ -759,6 +760,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool trustCleanRows,
   }) {
     _pruneOverlayRowPictureCache(firstLine, lastLine);
+    final rangeSegmentsCache = <BufferRange, List<BufferSegment>>{};
+    final segmentSignatureCache = <BufferRange, Map<int, int>>{};
     final charHeight = _painter.cellSize.height;
     for (var row = firstLine; row <= lastLine; row++) {
       var entry = _overlayRowPictureCache[row];
@@ -769,7 +772,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         continue;
       }
 
-      final signature = _overlayRowSignature(row);
+      final signature = _overlayRowSignature(
+        row,
+        rangeSegmentsCache,
+        segmentSignatureCache,
+      );
       if (entry == null || entry.signature != signature) {
         profile?.overlayRowCacheMisses++;
         entry?.dispose();
@@ -866,7 +873,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
   }
 
-  int _overlayRowSignature(int row) {
+  int _overlayRowSignature(
+    int row,
+    Map<BufferRange, List<BufferSegment>> rangeSegmentsCache,
+    Map<BufferRange, Map<int, int>> segmentSignatureCache,
+  ) {
     var signature = 0;
 
     for (final highlight in _controller.highlights) {
@@ -878,7 +889,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         signature,
         'h',
         highlight.color,
-        _segmentSignatureForRow(range.toSegments(), row),
+        _segmentSignatureForRangeRow(
+          range,
+          row,
+          rangeSegmentsCache,
+          segmentSignatureCache,
+        ),
       );
     }
 
@@ -890,7 +906,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         signature,
         's',
         _painter.theme.selection,
-        _segmentSignatureForRow(selection.toSegments(), row),
+        _segmentSignatureForRangeRow(
+          selection,
+          row,
+          rangeSegmentsCache,
+          segmentSignatureCache,
+        ),
       );
     }
 
@@ -926,6 +947,26 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       return 0;
     }
     return Object.hash(signature, row, size.width, _painter.paintRevision);
+  }
+
+  int _segmentSignatureForRangeRow(
+    BufferRange range,
+    int row,
+    Map<BufferRange, List<BufferSegment>> rangeSegmentsCache,
+    Map<BufferRange, Map<int, int>> cache,
+  ) {
+    final rowCache = cache.putIfAbsent(range, () => <int, int>{});
+    final cached = rowCache[row];
+    if (cached != null) {
+      return cached;
+    }
+    final segments = rangeSegmentsCache.putIfAbsent(
+      range,
+      () => range.toSegments().toList(growable: false),
+    );
+    final signature = _segmentSignatureForRow(segments, row);
+    rowCache[row] = signature;
+    return signature;
   }
 
   int _segmentSignatureForRow(Iterable<BufferSegment> segments, int row) {
@@ -1038,6 +1079,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
               ..glyphPictureCacheHits += painterProfile.glyphPictureCacheHits
               ..glyphPictureCacheMisses +=
                   painterProfile.glyphPictureCacheMisses
+              ..glyphRunPictureCacheHits +=
+                  painterProfile.glyphRunPictureCacheHits
+              ..glyphRunPictureCacheMisses +=
+                  painterProfile.glyphRunPictureCacheMisses
               ..paragraphCacheHits += painterProfile.paragraphCacheHits
               ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
               ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -1114,6 +1159,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         ..renderPlanCacheMisses += painterProfile.renderPlanCacheMisses
         ..glyphPictureCacheHits += painterProfile.glyphPictureCacheHits
         ..glyphPictureCacheMisses += painterProfile.glyphPictureCacheMisses
+        ..glyphRunPictureCacheHits += painterProfile.glyphRunPictureCacheHits
+        ..glyphRunPictureCacheMisses +=
+            painterProfile.glyphRunPictureCacheMisses
         ..paragraphCacheHits += painterProfile.paragraphCacheHits
         ..paragraphCacheMisses += painterProfile.paragraphCacheMisses
         ..runParagraphCacheHits += painterProfile.runParagraphCacheHits
@@ -1354,6 +1402,8 @@ class TerminalRenderProfile {
   var renderPlanCacheMisses = 0;
   var glyphPictureCacheHits = 0;
   var glyphPictureCacheMisses = 0;
+  var glyphRunPictureCacheHits = 0;
+  var glyphRunPictureCacheMisses = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;
@@ -1394,6 +1444,8 @@ class TerminalRenderProfile {
         'renderPlanCacheMisses: $renderPlanCacheMisses, '
         'glyphPictureCacheHits: $glyphPictureCacheHits, '
         'glyphPictureCacheMisses: $glyphPictureCacheMisses, '
+        'glyphRunPictureCacheHits: $glyphRunPictureCacheHits, '
+        'glyphRunPictureCacheMisses: $glyphRunPictureCacheMisses, '
         'paragraphCacheHits: $paragraphCacheHits, '
         'paragraphCacheMisses: $paragraphCacheMisses, '
         'runParagraphCacheHits: $runParagraphCacheHits, '

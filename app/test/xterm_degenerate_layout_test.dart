@@ -229,7 +229,7 @@ void main() {
     expect(profile.asciiRuns + profile.asciiRunFallbacks, 1);
   });
 
-  test('terminal painter geometry glyph picture cache is bounded', () {
+  test('terminal painter geometry glyph run picture cache is bounded', () {
     final painter = TerminalPainter(
       theme: TerminalThemes.defaultTheme,
       textStyle: const TerminalStyle(),
@@ -251,20 +251,22 @@ void main() {
           (colorSeed >> 8) & 0xFF,
           (colorSeed >> 16) & 0xFF,
         );
-      return BufferLine(1)..setCell(0, '┌'.codeUnitAt(0), 1, style);
+      return BufferLine(2)
+        ..setCell(0, '┌'.codeUnitAt(0), 1, style)
+        ..setCell(1, '─'.codeUnitAt(0), 1, style);
     }
 
     final firstLine = glyphLine(1);
-    expect(paint(firstLine).glyphPictureCacheMisses, 1);
-    expect(paint(firstLine).glyphPictureCacheHits, 1);
+    expect(paint(firstLine).glyphRunPictureCacheMisses, 1);
+    expect(paint(firstLine).glyphRunPictureCacheHits, 1);
 
-    for (var i = 0; i < 2050; i++) {
+    for (var i = 0; i < 520; i++) {
       paint(glyphLine(i + 2));
     }
 
     final firstLineAgain = paint(firstLine);
-    expect(firstLineAgain.glyphPictureCacheMisses, 1);
-    expect(firstLineAgain.glyphPictureCacheHits, 0);
+    expect(firstLineAgain.glyphRunPictureCacheMisses, 1);
+    expect(firstLineAgain.glyphRunPictureCacheHits, 0);
   });
 
   testWidgets('terminal render profile is gated by debug flag', (tester) async {

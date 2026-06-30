@@ -12,6 +12,7 @@ import 'package:xterm/xterm.dart';
 class TerminalPainter {
   static const _maxLineRenderPlans = 512;
   static const _maxGlyphPictures = 2048;
+  static const _maxGlyphRunPictures = 512;
   static const _maxTextRunChunkCells = 256;
   static const _textRunFontFeatures = [
     FontFeature.disable('liga'),
@@ -44,6 +45,7 @@ class TerminalPainter {
       LinkedHashMap<BufferLine, _LineRenderPlanCache>();
   // Keep insertion order so the oldest geometry glyph can be evicted.
   final _glyphPictureCache = LinkedHashMap<_GlyphPictureKey, Picture>();
+  final _glyphRunPictureCache = LinkedHashMap<_GlyphRunPictureKey, Picture>();
   final _cursorPaint = Paint();
   final _highlightPaint = Paint();
   final _backgroundPaint = Paint();
@@ -61,6 +63,7 @@ class TerminalPainter {
     _runParagraphCache.clear();
     _lineRenderPlanCache.clear();
     _clearGlyphPictureCache();
+    _clearGlyphRunPictureCache();
     _paintRevision++;
   }
 
@@ -74,6 +77,7 @@ class TerminalPainter {
     _runParagraphCache.clear();
     _lineRenderPlanCache.clear();
     _clearGlyphPictureCache();
+    _clearGlyphRunPictureCache();
     _paintRevision++;
   }
 
@@ -87,6 +91,7 @@ class TerminalPainter {
     _runParagraphCache.clear();
     _lineRenderPlanCache.clear();
     _clearGlyphPictureCache();
+    _clearGlyphRunPictureCache();
     _paintRevision++;
   }
 
@@ -125,6 +130,14 @@ class TerminalPainter {
 
   TerminalPainterProfile? _profile;
 
+  void dispose() {
+    _paragraphCache.clear();
+    _runParagraphCache.clear();
+    _lineRenderPlanCache.clear();
+    _clearGlyphPictureCache();
+    _clearGlyphRunPictureCache();
+  }
+
   /// When the set of font available to the system changes, call this method to
   /// clear cached state related to font rendering.
   void clearFontCache() {
@@ -133,6 +146,7 @@ class TerminalPainter {
     _runParagraphCache.clear();
     _lineRenderPlanCache.clear();
     _clearGlyphPictureCache();
+    _clearGlyphRunPictureCache();
     _paintRevision++;
   }
 
@@ -237,30 +251,14 @@ class TerminalPainter {
             profile?.asciiRunFallbacks++;
           }
         case _GeometryGlyphRunSpan():
-          final color = _foregroundColor(
+          _paintGeometryGlyphRun(
+            canvas,
+            offset.translate(span.start * cellWidth, 0),
+            span.charCodes,
             span.foreground,
             span.background,
             span.flags,
           );
-          for (var i = 0; i < span.charCodes.length; i++) {
-            final charCode = span.charCodes[i];
-            if (!_paintTerminalGlyph(
-              canvas,
-              offset.translate((span.start + i) * cellWidth, 0),
-              charCode,
-              span.flags,
-              color,
-            )) {
-              _paintTextRunCell(
-                canvas,
-                offset.translate((span.start + i) * cellWidth, 0),
-                charCode,
-                span.foreground,
-                span.background,
-                span.flags,
-              );
-            }
-          }
           profile?.singleCells += span.charCodes.length;
         case _CellForegroundSpan():
           paintCellForeground(
@@ -766,6 +764,70 @@ class TerminalPainter {
     return color;
   }
 
+  void _paintGeometryGlyphRun(
+    Canvas canvas,
+    Offset offset,
+    List<int> charCodes,
+    int foreground,
+    int background,
+    int flags,
+  ) {
+    final color = _foregroundColor(foreground, background, flags);
+    final key = _GlyphRunPictureKey(
+      charCodes: charCodes,
+      bold: flags & CellFlags.bold != 0,
+      color: color,
+      cellWidth: _cellSize.width,
+      cellHeight: _cellSize.height,
+      paintRevision: _paintRevision,
+    );
+    var picture = _glyphRunPictureCache.remove(key);
+    if (picture == null) {
+      _profile?.glyphRunPictureCacheMisses++;
+      final recorder = PictureRecorder();
+      final runCanvas = Canvas(
+        recorder,
+        Rect.fromLTWH(
+          0,
+          0,
+          charCodes.length * _cellSize.width,
+          _cellSize.height,
+        ),
+      );
+      for (var i = 0; i < charCodes.length; i++) {
+        final charCode = charCodes[i];
+        final glyphOffset = Offset(i * _cellSize.width, 0);
+        if (!_paintTerminalGlyphImmediate(
+          runCanvas,
+          glyphOffset,
+          charCode,
+          flags,
+          color,
+        )) {
+          _paintTextRunCell(
+            runCanvas,
+            glyphOffset,
+            charCode,
+            foreground,
+            background,
+            flags,
+          );
+        }
+      }
+      picture = recorder.endRecording();
+      _glyphRunPictureCache[key] = picture;
+      _pruneGlyphRunPictureCache();
+    } else {
+      _profile?.glyphRunPictureCacheHits++;
+      _glyphRunPictureCache[key] = picture;
+    }
+
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.drawPicture(picture);
+    canvas.restore();
+  }
+
   bool _paintTerminalGlyph(
     Canvas canvas,
     Offset offset,
@@ -852,11 +914,25 @@ class TerminalPainter {
     }
   }
 
+  void _pruneGlyphRunPictureCache() {
+    while (_glyphRunPictureCache.length > _maxGlyphRunPictures) {
+      final key = _glyphRunPictureCache.keys.first;
+      _glyphRunPictureCache.remove(key)?.dispose();
+    }
+  }
+
   void _clearGlyphPictureCache() {
     for (final picture in _glyphPictureCache.values) {
       picture.dispose();
     }
     _glyphPictureCache.clear();
+  }
+
+  void _clearGlyphRunPictureCache() {
+    for (final picture in _glyphRunPictureCache.values) {
+      picture.dispose();
+    }
+    _glyphRunPictureCache.clear();
   }
 
   bool _paintBlockElement(
@@ -1286,6 +1362,8 @@ class TerminalPainterProfile {
   var renderPlanCacheMisses = 0;
   var glyphPictureCacheHits = 0;
   var glyphPictureCacheMisses = 0;
+  var glyphRunPictureCacheHits = 0;
+  var glyphRunPictureCacheMisses = 0;
   var paragraphCacheHits = 0;
   var paragraphCacheMisses = 0;
   var runParagraphCacheHits = 0;
@@ -1400,6 +1478,56 @@ class _GlyphPictureKey {
   @override
   int get hashCode => Object.hash(
         charCode,
+        bold,
+        color,
+        cellWidth,
+        cellHeight,
+        paintRevision,
+      );
+}
+
+class _GlyphRunPictureKey {
+  _GlyphRunPictureKey({
+    required List<int> charCodes,
+    required this.bold,
+    required this.color,
+    required this.cellWidth,
+    required this.cellHeight,
+    required this.paintRevision,
+  })  : charCodes = List.unmodifiable(charCodes),
+        _charCodesHash = Object.hashAll(charCodes);
+
+  final List<int> charCodes;
+  final int _charCodesHash;
+  final bool bold;
+  final Color color;
+  final double cellWidth;
+  final double cellHeight;
+  final int paintRevision;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! _GlyphRunPictureKey ||
+        other._charCodesHash != _charCodesHash ||
+        other.bold != bold ||
+        other.color != color ||
+        other.cellWidth != cellWidth ||
+        other.cellHeight != cellHeight ||
+        other.paintRevision != paintRevision ||
+        other.charCodes.length != charCodes.length) {
+      return false;
+    }
+    for (var i = 0; i < charCodes.length; i++) {
+      if (other.charCodes[i] != charCodes[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        _charCodesHash,
         bold,
         color,
         cellWidth,

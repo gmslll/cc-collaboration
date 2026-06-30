@@ -154,6 +154,8 @@ String _painterProfileSummary(TerminalPainterProfile? profile) {
       'asciiFallbacks=${profile.asciiRunFallbacks} '
       'glyphHits=${profile.glyphPictureCacheHits} '
       'glyphMisses=${profile.glyphPictureCacheMisses} '
+      'glyphRunHits=${profile.glyphRunPictureCacheHits} '
+      'glyphRunMisses=${profile.glyphRunPictureCacheMisses} '
       'runParagraphHits=${profile.runParagraphCacheHits} '
       'runParagraphMisses=${profile.runParagraphCacheMisses} '
       'paragraphHits=${profile.paragraphCacheHits} '

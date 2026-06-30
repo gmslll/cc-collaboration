@@ -4,7 +4,7 @@ Run manually:
 
 ```sh
 cd app
-/opt/homebrew/bin/flutter test --dart-define=RUN_XTERM_BENCHMARKS=true test/xterm_render_benchmark_test.dart
+/opt/homebrew/bin/flutter test --no-pub --dart-define=RUN_XTERM_BENCHMARKS=true test/xterm_render_benchmark_test.dart
 ```
 
 The benchmark is skipped unless `RUN_XTERM_BENCHMARKS=true` is set, so normal
@@ -45,10 +45,24 @@ misses, 1 viewport content cache miss, 22 text runs, 1 blank line.
 
 ## Current Bottlenecks
 
-- Dense box/block/braille geometry is still the slowest measured path. Picture
-  caching removes repeated shape construction, but drawing 600 cached glyph
-  pictures is still much heavier than batched text runs.
 - Cursor benchmark includes widget rebuild overhead because the public route to
   trigger a cursor-only update is changing `TerminalView.cursorType`.
 - These tests run in Flutter test mode, so they quantify relative cache/render
   behavior rather than production compositor FPS.
+
+## 2026-06-30 Geometry Run Picture Cache
+
+Change: consecutive geometry glyph spans are recorded into a run-level picture
+cache, so dense box/block/braille runs draw one picture per run instead of one
+picture per cell.
+
+Painter microbenchmark, 600 cells:
+
+| Scenario | Before avg us | After run 1 avg us | After run 2 avg us | Notes |
+| --- | ---: | ---: | ---: | --- |
+| Geometry glyphs | ~266 | 14.2 | 14.3 | 1 glyph-run picture cache hit |
+| Mixed text/glyph | ~49-50 | 66.9 | 63.3 | 75 short glyph-run hits; mixed case is now dominated by many tiny runs |
+
+Dense geometry improves by roughly 17x in this microbenchmark. The remaining
+mixed-case cost points to short alternating text/glyph runs; optimizing that
+would require reducing run fragmentation, not faster glyph drawing.
