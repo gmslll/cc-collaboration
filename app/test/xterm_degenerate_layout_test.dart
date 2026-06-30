@@ -387,6 +387,12 @@ void main() {
         RenderTerminal.lastPaintProfile!.overlayRowPictureDraws,
         isPositive,
       );
+      expect(RenderTerminal.lastPaintProfile!.renderCommandBuffers, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.renderCommandPictureDraws,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.contentPicturesDrawn, isZero);
       expect(
         RenderTerminal.lastPaintProfile!.overlayRowSignatureSkips,
         isPositive,

@@ -133,3 +133,15 @@ fallback behavior. The current backend still draws Flutter `Picture`s, so this
 does not claim GPU text-atlas parity yet; it removes a renderer structure gap and
 adds `renderCommandBuffers`, `renderCommands`, and
 `renderCommandPictureDraws` counters for follow-up benchmarks.
+
+## 2026-07-01 Overlay Command Buffer
+
+Change: the render command buffer now reuses parallel picture/offset/kind
+arrays instead of allocating a command object per draw. Overlay row pictures
+also use the same command stream as content line pictures, with command kinds
+keeping `contentPicturesDrawn` and `overlayRowPictureDraws` profile counters
+separate.
+
+This reduces short-lived allocations on scroll/selection frames and moves the
+renderer closer to a single GPU-style submit path while preserving the existing
+overlay row cache, cursor, selection, highlight, and composing text behavior.

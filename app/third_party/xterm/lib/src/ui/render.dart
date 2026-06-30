@@ -168,6 +168,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   final _overlayRowPictureCache = <int, _OverlayRowPictureCache>{};
   final _overlayDirtyRows = _RowDirtyTracker();
   final _contentCommandBuffer = _RenderCommandBuffer();
+  final _overlayCommandBuffer = _RenderCommandBuffer();
   _ViewportContentCache? _viewportContentCache;
   TerminalPaintReason _nextPaintReason = TerminalPaintReason.initial;
   BufferRange? _lastOverlaySelection;
@@ -904,12 +905,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final rangeSegmentsCache = <BufferRange, List<BufferSegment>>{};
     final segmentSignatureCache = <BufferRange, Map<int, int>>{};
     final charHeight = _painter.cellSize.height;
+    final commands = _overlayCommandBuffer..clear();
     for (var row = firstLine; row <= lastLine; row++) {
       var entry = _overlayRowPictureCache[row];
       if (trustCleanRows && !_overlayDirtyRows.isDirty(row) && entry != null) {
         profile?.overlayRowSignatureSkips++;
         profile?.overlayRowCacheHits++;
-        _drawOverlayRowPicture(canvas, offset, row, charHeight, entry, profile);
+        _recordOverlayRowPictureCommand(
+          commands,
+          offset,
+          row,
+          charHeight,
+          entry,
+        );
         continue;
       }
 
@@ -942,31 +950,38 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         profile?.overlayRowCacheHits++;
       }
 
-      _drawOverlayRowPicture(canvas, offset, row, charHeight, entry, profile);
+      _recordOverlayRowPictureCommand(
+        commands,
+        offset,
+        row,
+        charHeight,
+        entry,
+      );
     }
+    commands.draw(canvas, Offset.zero, profile);
+    commands.clear();
     _pruneOverlayRowPictureCache(firstLine, lastLine);
   }
 
-  void _drawOverlayRowPicture(
-    Canvas canvas,
+  void _recordOverlayRowPictureCommand(
+    _RenderCommandBuffer commands,
     Offset offset,
     int row,
     double charHeight,
     _OverlayRowPictureCache entry,
-    TerminalRenderProfile? profile,
   ) {
     final picture = entry.picture;
     if (picture == null) {
       return;
     }
-    canvas.save();
-    canvas.translate(
-      offset.dx,
-      offset.dy + (row * charHeight + _lineOffset).truncateToDouble(),
+    commands.addPicture(
+      picture,
+      Offset(
+        offset.dx,
+        offset.dy + (row * charHeight + _lineOffset).truncateToDouble(),
+      ),
+      kind: _RenderCommandKind.overlay,
     );
-    canvas.drawPicture(picture);
-    profile?.overlayRowPictureDraws++;
-    canvas.restore();
   }
 
   void _paintOverlayRow(
@@ -1511,42 +1526,55 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 }
 
 class _RenderCommandBuffer {
-  final _pictures = <_PictureRenderCommand>[];
+  final _pictures = <Picture>[];
+  final _offsets = <Offset>[];
+  final _kinds = <_RenderCommandKind>[];
 
   void clear() {
     _pictures.clear();
+    _offsets.clear();
+    _kinds.clear();
   }
 
-  void addPicture(Picture picture, Offset offset) {
-    _pictures.add(_PictureRenderCommand(picture, offset));
+  void addPicture(
+    Picture picture,
+    Offset offset, {
+    _RenderCommandKind kind = _RenderCommandKind.content,
+  }) {
+    _pictures.add(picture);
+    _offsets.add(offset);
+    _kinds.add(kind);
   }
 
   void draw(Canvas canvas, Offset offset, TerminalRenderProfile? profile) {
     if (_pictures.isEmpty) return;
     profile?.renderCommandBuffers++;
     profile?.renderCommands += _pictures.length;
-    for (final command in _pictures) {
-      command.draw(canvas, offset);
+    for (var i = 0; i < _pictures.length; i++) {
+      final commandOffset = _offsets[i];
+      canvas.save();
+      canvas.translate(
+        offset.dx + commandOffset.dx,
+        offset.dy + commandOffset.dy,
+      );
+      canvas.drawPicture(_pictures[i]);
+      canvas.restore();
       if (profile != null) {
         profile.renderCommandPictureDraws += 1;
-        profile.contentPicturesDrawn += 1;
+        switch (_kinds[i]) {
+          case _RenderCommandKind.content:
+            profile.contentPicturesDrawn += 1;
+          case _RenderCommandKind.overlay:
+            profile.overlayRowPictureDraws += 1;
+        }
       }
     }
   }
 }
 
-class _PictureRenderCommand {
-  const _PictureRenderCommand(this.picture, this.offset);
-
-  final Picture picture;
-  final Offset offset;
-
-  void draw(Canvas canvas, Offset baseOffset) {
-    canvas.save();
-    canvas.translate(baseOffset.dx + offset.dx, baseOffset.dy + offset.dy);
-    canvas.drawPicture(picture);
-    canvas.restore();
-  }
+enum _RenderCommandKind {
+  content,
+  overlay,
 }
 
 enum TerminalPaintReason {
