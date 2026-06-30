@@ -66,10 +66,12 @@ String errorText(Object e) {
 
 OverlayEntry? _topSnackEntry;
 Timer? _topSnackTimer;
+int _topSnackToken = 0;
 
 void _removeTopSnack() {
   _topSnackTimer?.cancel();
   _topSnackTimer = null;
+  _topSnackToken++;
   final entry = _topSnackEntry;
   _topSnackEntry = null;
   if (entry?.mounted ?? false) entry!.remove();
@@ -84,77 +86,90 @@ void snack(
 }) {
   final overlay = Overlay.maybeOf(context);
   if (overlay == null) return;
-  if (clearPrevious) _removeTopSnack();
   _removeTopSnack();
+  final token = ++_topSnackToken;
   final d = duration ?? const Duration(seconds: 4);
   _topSnackEntry = OverlayEntry(
     builder: (ctx) => Positioned(
       top: MediaQuery.paddingOf(ctx).top + kToolbarHeight + 8,
       left: 12,
       right: 12,
-      child: Material(
-        color: Colors.transparent,
-        child: Dismissible(
-          key: UniqueKey(),
-          direction: DismissDirection.up,
-          onDismissed: (_) => _removeTopSnack(),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: background ?? const Color(0xF0181B20),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0x33FFFFFF)),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66000000),
-                  blurRadius: 18,
-                  offset: Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Text(
-                        message,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: CcColors.text,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: IconButton(
-                      tooltip: '关闭',
-                      padding: EdgeInsets.zero,
-                      iconSize: 18,
-                      color: CcColors.muted,
-                      onPressed: _removeTopSnack,
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+      child: _TopSnack(
+        message: message,
+        background: background,
+        onClose: () {
+          if (_topSnackToken == token) _removeTopSnack();
+        },
       ),
     ),
   );
   overlay.insert(_topSnackEntry!);
   _topSnackTimer = Timer(d, () {
-    _removeTopSnack();
+    if (_topSnackToken == token) _removeTopSnack();
   });
+}
+
+class _TopSnack extends StatelessWidget {
+  final String message;
+  final Color? background;
+  final VoidCallback onClose;
+
+  const _TopSnack({
+    required this.message,
+    required this.background,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: background ?? const Color(0xF0181B20),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0x33FFFFFF)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  message,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: CcColors.text, fontSize: 13),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: IconButton(
+                tooltip: '关闭',
+                padding: EdgeInsets.zero,
+                iconSize: 18,
+                color: CcColors.muted,
+                onPressed: onClose,
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 // confirm shows a yes/no dialog; returns true only if the user confirms.
