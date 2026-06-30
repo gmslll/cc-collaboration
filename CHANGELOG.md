@@ -10,6 +10,16 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ### Added
 
+- **Fix top notification dismissal**
+
+### Fixed
+
+- **Fix top notification dismissal** 
+
+## [0.6.29] - 2026-06-30
+
+### Added
+
 - **会话总览支持更多 hook 派生状态** — 会话总览、手机端同步与 supervisor queue 现在能识别运行工具、工具完成、工具失败、待授权、压缩中、子代理、等待输入等状态，不再只显示待 review / 思考中 / 空闲。
 
 ### Fixed
