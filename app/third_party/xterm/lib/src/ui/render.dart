@@ -1123,8 +1123,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           line,
           profile,
         );
+        final geometryRunsCoverForeground = _recordLineGeometryCommands(
+          commands,
+          offset,
+          line,
+          profile,
+        );
         recordedLineCommands = true;
-        if (textRunsCoverForeground) {
+        if (textRunsCoverForeground || geometryRunsCoverForeground) {
           entry = _LinePictureCache(signature);
         } else {
           final recorder = PictureRecorder();
@@ -1144,6 +1150,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
             collectProfile: profile != null,
             paintBackgrounds: false,
             paintTextRuns: false,
+            paintGeometryRuns: false,
           );
           if (profile != null) {
             final painterProfile = _painter.takeProfile();
@@ -1163,6 +1170,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (!recordedLineCommands) {
       _recordLineBackgroundCommands(commands, offset, line, profile);
       _recordLineTextRunCommands(commands, offset, line, profile);
+      _recordLineGeometryCommands(commands, offset, line, profile);
     }
 
     final picture = entry.picture;
@@ -1170,6 +1178,32 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       return;
     }
     commands.addPicture(picture, offset);
+  }
+
+  bool _recordLineGeometryCommands(
+    _RenderCommandBuffer commands,
+    Offset offset,
+    BufferLine line,
+    TerminalRenderProfile? profile,
+  ) {
+    final coversForeground = _painter.recordGeometryGlyphRunPictures(
+      line,
+      offset,
+      (picture, pictureOffset) {
+        commands.addPictureAt(
+          picture,
+          pictureOffset.dx,
+          pictureOffset.dy,
+          kind: _RenderCommandKind.content,
+        );
+      },
+      collectProfile: profile != null,
+    );
+    final painterProfile = profile == null ? null : _painter.takeProfile();
+    if (profile != null && painterProfile != null) {
+      _mergePainterProfile(profile, painterProfile);
+    }
+    return coversForeground;
   }
 
   bool _recordLineTextRunCommands(

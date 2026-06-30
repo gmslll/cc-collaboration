@@ -453,6 +453,23 @@ void main() {
       );
       expect(RenderTerminal.lastPaintProfile!.backgroundRuns, isPositive);
 
+      term.write('${'─' * 48}\r\n');
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.terminal,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.glyphRunPictureCacheMisses +
+            RenderTerminal.lastPaintProfile!.glyphRunPictureCacheHits,
+        isPositive,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.renderCommandPictureDraws,
+        isPositive,
+      );
+
       term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
       final renderTerminal = tester.renderObject<RenderTerminal>(
         find.byWidgetPredicate(

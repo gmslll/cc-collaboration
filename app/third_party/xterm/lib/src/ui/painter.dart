@@ -215,6 +215,7 @@ class TerminalPainter {
     bool collectProfile = false,
     bool paintBackgrounds = true,
     bool paintTextRuns = true,
+    bool paintGeometryRuns = true,
   }) {
     final profile = collectProfile ? TerminalPainterProfile() : null;
     _profile = profile;
@@ -274,6 +275,7 @@ class TerminalPainter {
           }
         case _GeometryGlyphRunSpan():
           final spanOffset = offset.translate(span.start * cellWidth, 0);
+          var paintedGeometry = false;
           if (span.charCodes.length < _minGeometryGlyphRunLength) {
             _paintGeometryGlyphCells(
               canvas,
@@ -283,7 +285,9 @@ class TerminalPainter {
               span.background,
               span.flags,
             );
-          } else {
+            paintedGeometry = true;
+          } else if (paintGeometryRuns ||
+              span.charCodes.length <= _maxGlyphAtlasRunLength) {
             _paintGeometryGlyphRun(
               canvas,
               spanOffset,
@@ -292,8 +296,11 @@ class TerminalPainter {
               span.background,
               span.flags,
             );
+            paintedGeometry = true;
           }
-          profile?.singleCells += span.charCodes.length;
+          if (paintedGeometry) {
+            profile?.singleCells += span.charCodes.length;
+          }
         case _CellForegroundSpan():
           paintCellForeground(
             canvas,
@@ -338,6 +345,42 @@ class TerminalPainter {
           record(paragraph, offset.translate(span.start * cellWidth, 0));
           profile?.asciiRuns++;
         case _GeometryGlyphRunSpan():
+        case _CellForegroundSpan():
+          coversForeground = false;
+          continue;
+      }
+    }
+    return coversForeground;
+  }
+
+  bool recordGeometryGlyphRunPictures(
+    BufferLine line,
+    Offset offset,
+    void Function(Picture picture, Offset offset) record, {
+    bool collectProfile = false,
+  }) {
+    final profile = collectProfile ? TerminalPainterProfile() : null;
+    _profile = profile;
+    final plan = _lineRenderPlanFor(line, profile);
+    final cellWidth = _cellSize.width;
+    var coversForeground = true;
+
+    for (final span in plan.foregroundSpans) {
+      switch (span) {
+        case _GeometryGlyphRunSpan():
+          if (span.charCodes.length <= _maxGlyphAtlasRunLength) {
+            coversForeground = false;
+            continue;
+          }
+          final picture = _geometryGlyphRunPicture(
+            span.charCodes,
+            span.foreground,
+            span.background,
+            span.flags,
+          );
+          record(picture, offset.translate(span.start * cellWidth, 0));
+          profile?.singleCells += span.charCodes.length;
+        case _TextRunSpan():
         case _CellForegroundSpan():
           coversForeground = false;
           continue;
@@ -868,6 +911,26 @@ class TerminalPainter {
       return;
     }
 
+    final picture = _geometryGlyphRunPicture(
+      charCodes,
+      foreground,
+      background,
+      flags,
+    );
+
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.drawPicture(picture);
+    canvas.restore();
+  }
+
+  Picture _geometryGlyphRunPicture(
+    List<int> charCodes,
+    int foreground,
+    int background,
+    int flags,
+  ) {
+    final color = _foregroundColor(foreground, background, flags);
     final key = _GlyphRunPictureKey(
       charCodes: charCodes,
       bold: flags & CellFlags.bold != 0,
@@ -916,11 +979,7 @@ class TerminalPainter {
       _profile?.glyphRunPictureCacheHits++;
       _glyphRunPictureCache[key] = picture;
     }
-
-    canvas.save();
-    canvas.translate(offset.dx, offset.dy);
-    canvas.drawPicture(picture);
-    canvas.restore();
+    return picture;
   }
 
   bool _paintGeometryGlyphAtlasRun(

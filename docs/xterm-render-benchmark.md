@@ -177,3 +177,13 @@ emoji/wide glyph fallback, and geometry/sprite foreground drawing.
 This moves the common ASCII/Latin foreground path out of line pictures while
 preserving Flutter paragraph shaping validation and the existing fallback path
 for complex text.
+
+## 2026-07-01 Direct Geometry Run Picture Commands
+
+Change: long geometry glyph runs now record cached glyph-run pictures directly
+into the content command buffer. The line picture recorder skips those long
+runs, while short atlas runs and fallback glyph/text paths stay in the
+conservative painter path.
+
+This removes the extra line-picture wrapper for dense box/block/braille-style
+terminal art without changing the existing short-run atlas behavior.
