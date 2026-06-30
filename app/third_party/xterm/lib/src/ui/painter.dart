@@ -1030,10 +1030,87 @@ class TerminalPainter {
   }
 
   bool _isTerminalGlyphCodepoint(int charCode) {
-    return (charCode >= 0x2500 && charCode <= 0x257F) ||
-        (charCode >= 0x2580 && charCode <= 0x259F) ||
+    return _isSupportedBoxDrawingCodepoint(charCode) ||
+        _isSupportedBlockElementCodepoint(charCode) ||
         (charCode >= 0x2800 && charCode <= 0x28FF) ||
         (charCode >= 0xE0B0 && charCode <= 0xE0BF);
+  }
+
+  bool _isSupportedBlockElementCodepoint(int charCode) {
+    return switch (charCode) {
+      0x2580 ||
+      0x2584 ||
+      0x2588 ||
+      0x258C ||
+      0x2590 ||
+      0x2591 ||
+      0x2592 ||
+      0x2593 ||
+      0x2596 ||
+      0x2597 ||
+      0x2598 ||
+      0x2599 ||
+      0x259A ||
+      0x259B ||
+      0x259C ||
+      0x259D ||
+      0x259E ||
+      0x259F =>
+        true,
+      _ => false,
+    };
+  }
+
+  bool _isSupportedBoxDrawingCodepoint(int charCode) {
+    return switch (charCode) {
+      0x2500 ||
+      0x2501 ||
+      0x2502 ||
+      0x2503 ||
+      0x2504 ||
+      0x2505 ||
+      0x2506 ||
+      0x2507 ||
+      0x2508 ||
+      0x2509 ||
+      0x250A ||
+      0x250B ||
+      0x250C ||
+      0x250F ||
+      0x2510 ||
+      0x2513 ||
+      0x2514 ||
+      0x2517 ||
+      0x2518 ||
+      0x251B ||
+      0x251C ||
+      0x2523 ||
+      0x2524 ||
+      0x252B ||
+      0x252C ||
+      0x2533 ||
+      0x2534 ||
+      0x253B ||
+      0x253C ||
+      0x254B ||
+      0x2550 ||
+      0x2551 ||
+      0x2554 ||
+      0x2557 ||
+      0x255A ||
+      0x255D ||
+      0x2560 ||
+      0x2563 ||
+      0x2566 ||
+      0x2569 ||
+      0x256C ||
+      0x256D ||
+      0x256E ||
+      0x256F ||
+      0x2570 =>
+        true,
+      _ => false,
+    };
   }
 
   bool _paintTerminalGlyphImmediate(

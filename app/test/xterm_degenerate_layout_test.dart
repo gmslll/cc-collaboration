@@ -271,6 +271,30 @@ void main() {
     expect(secondPaint.glyphRunPictureCacheHits, 0);
   });
 
+  test('unsupported box glyphs stay on text fallback instead of atlas', () {
+    final painter = TerminalPainter(
+      theme: TerminalThemes.defaultTheme,
+      textStyle: const TerminalStyle(),
+      textScaler: TextScaler.noScaling,
+    );
+    final line = BufferLine(4);
+    final style = CursorStyle();
+    for (var i = 0; i < line.length; i++) {
+      line.setCell(i, 0x2571, 1, style); // diagonal box drawing, not sprited
+    }
+
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    painter.paintLine(canvas, Offset.zero, line, collectProfile: true);
+    recorder.endRecording().dispose();
+    final profile = painter.takeProfile()!;
+
+    expect(profile.glyphAtlasMisses, 0);
+    expect(profile.glyphAtlasDraws, 0);
+    expect(profile.glyphAtlasRunDraws, 0);
+    expect(profile.glyphRunPictureCacheMisses, 0);
+  });
+
   testWidgets('terminal render profile is gated by debug flag', (tester) async {
     final term = Terminal(maxLines: 1000);
     final controller = TerminalController();
