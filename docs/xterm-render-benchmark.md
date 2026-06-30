@@ -118,3 +118,18 @@ picture cache instead of compositing over an old viewport snapshot.
 Paint reasons are merged by priority so a terminal content update cannot be
 overwritten by a later scroll/cursor/controller signal in the same frame; this
 keeps line signature validation enabled whenever content may have changed.
+
+## 2026-07-01 Content Render Command Buffer
+
+Change: content line picture draws now flow through a small render command
+buffer before hitting Flutter Canvas. Both viewport picture recording and the
+terminal/scroll direct-draw path record line-picture commands and flush them as
+one batch.
+
+This is a compatibility step toward a Ghostty/flterm-style renderer pipeline:
+line damage, row scheduling, sprite draws, and future GPU backends can share a
+single command stream without changing xterm input, selection, IME, or text
+fallback behavior. The current backend still draws Flutter `Picture`s, so this
+does not claim GPU text-atlas parity yet; it removes a renderer structure gap and
+adds `renderCommandBuffers`, `renderCommands`, and
+`renderCommandPictureDraws` counters for follow-up benchmarks.

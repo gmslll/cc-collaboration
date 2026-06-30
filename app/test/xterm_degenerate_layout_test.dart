@@ -422,6 +422,12 @@ void main() {
       expect(RenderTerminal.lastPaintProfile!.viewportContentPictureDraws, 0);
       expect(RenderTerminal.lastPaintProfile!.viewportContentCacheMisses, 0);
       expect(RenderTerminal.lastPaintProfile!.lineSignatureChecks, isPositive);
+      expect(RenderTerminal.lastPaintProfile!.renderCommandBuffers, isPositive);
+      expect(RenderTerminal.lastPaintProfile!.renderCommands, isPositive);
+      expect(
+        RenderTerminal.lastPaintProfile!.renderCommandPictureDraws,
+        isPositive,
+      );
 
       term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
       final renderTerminal = tester.renderObject<RenderTerminal>(

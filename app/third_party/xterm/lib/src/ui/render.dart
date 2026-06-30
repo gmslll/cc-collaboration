@@ -167,6 +167,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   final _linePictureCache = <int, _LinePictureCache>{};
   final _overlayRowPictureCache = <int, _OverlayRowPictureCache>{};
   final _overlayDirtyRows = _RowDirtyTracker();
+  final _contentCommandBuffer = _RenderCommandBuffer();
   _ViewportContentCache? _viewportContentCache;
   TerminalPaintReason _nextPaintReason = TerminalPaintReason.initial;
   BufferRange? _lastOverlaySelection;
@@ -787,10 +788,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       final contentCanvas = Canvas(recorder, Offset.zero & size);
       final lines = _terminal.buffer.lines;
       final charHeight = _painter.cellSize.height;
+      final commands = _contentCommandBuffer..clear();
 
       for (var i = firstLine; i <= lastLine; i++) {
-        _paintCachedLine(
+        _recordCachedLineCommand(
           contentCanvas,
+          commands,
           Offset(0, (i * charHeight + _lineOffset).truncateToDouble()),
           i,
           lines[i],
@@ -798,6 +801,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           validateSignature: validateSignature,
         );
       }
+      commands.draw(contentCanvas, Offset.zero, profile);
+      commands.clear();
 
       cache = _ViewportContentCache(
         geometrySignature: geometrySignature,
@@ -848,10 +853,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }) {
     final lines = _terminal.buffer.lines;
     final charHeight = _painter.cellSize.height;
+    final commands = _contentCommandBuffer..clear();
     profile?.viewportContentDirectDraws++;
     for (var i = firstLine; i <= lastLine; i++) {
-      _paintCachedLine(
+      _recordCachedLineCommand(
         canvas,
+        commands,
         offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
         i,
         lines[i],
@@ -859,6 +866,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         validateSignature: validateSignature,
       );
     }
+    commands.draw(canvas, Offset.zero, profile);
+    commands.clear();
   }
 
   int _viewportContentSignature(
@@ -1154,8 +1163,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     paragraph.dispose();
   }
 
-  void _paintCachedLine(
+  void _recordCachedLineCommand(
     Canvas canvas,
+    _RenderCommandBuffer commands,
     Offset offset,
     int lineIndex,
     BufferLine line,
@@ -1180,6 +1190,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         }
         if (!_shouldCacheLine(lineIndex, line)) {
           _linePictureCache.remove(lineIndex);
+          commands.draw(canvas, Offset.zero, profile);
+          commands.clear();
           _paintUncachedLine(canvas, offset, line, profile);
           return;
         }
@@ -1242,11 +1254,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (picture == null) {
       return;
     }
-    canvas.save();
-    canvas.translate(offset.dx, offset.dy);
-    canvas.drawPicture(picture);
-    profile?.contentPicturesDrawn++;
-    canvas.restore();
+    commands.addPicture(picture, offset);
   }
 
   bool _contentMayHaveChanged(TerminalPaintReason reason) {
@@ -1502,6 +1510,45 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 }
 
+class _RenderCommandBuffer {
+  final _pictures = <_PictureRenderCommand>[];
+
+  void clear() {
+    _pictures.clear();
+  }
+
+  void addPicture(Picture picture, Offset offset) {
+    _pictures.add(_PictureRenderCommand(picture, offset));
+  }
+
+  void draw(Canvas canvas, Offset offset, TerminalRenderProfile? profile) {
+    if (_pictures.isEmpty) return;
+    profile?.renderCommandBuffers++;
+    profile?.renderCommands += _pictures.length;
+    for (final command in _pictures) {
+      command.draw(canvas, offset);
+      if (profile != null) {
+        profile.renderCommandPictureDraws += 1;
+        profile.contentPicturesDrawn += 1;
+      }
+    }
+  }
+}
+
+class _PictureRenderCommand {
+  const _PictureRenderCommand(this.picture, this.offset);
+
+  final Picture picture;
+  final Offset offset;
+
+  void draw(Canvas canvas, Offset baseOffset) {
+    canvas.save();
+    canvas.translate(baseOffset.dx + offset.dx, baseOffset.dy + offset.dy);
+    canvas.drawPicture(picture);
+    canvas.restore();
+  }
+}
+
 enum TerminalPaintReason {
   initial,
   unknown,
@@ -1533,6 +1580,9 @@ class TerminalRenderProfile {
   var viewportContentDirectDraws = 0;
   var viewportContentPictureDraws = 0;
   var contentPicturesDrawn = 0;
+  var renderCommandBuffers = 0;
+  var renderCommands = 0;
+  var renderCommandPictureDraws = 0;
   var overlayRowCacheHits = 0;
   var overlayRowCacheMisses = 0;
   var overlayRowSignatureSkips = 0;
@@ -1583,6 +1633,9 @@ class TerminalRenderProfile {
         'viewportContentDirectDraws: $viewportContentDirectDraws, '
         'viewportContentPictureDraws: $viewportContentPictureDraws, '
         'contentPicturesDrawn: $contentPicturesDrawn, '
+        'renderCommandBuffers: $renderCommandBuffers, '
+        'renderCommands: $renderCommands, '
+        'renderCommandPictureDraws: $renderCommandPictureDraws, '
         'overlayRowCacheHits: $overlayRowCacheHits, '
         'overlayRowCacheMisses: $overlayRowCacheMisses, '
         'overlayRowSignatureSkips: $overlayRowSignatureSkips, '
