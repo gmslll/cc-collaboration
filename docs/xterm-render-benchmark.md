@@ -102,3 +102,15 @@ This keeps the Flutter Canvas renderer conservative: deterministic sprite glyphs
 use atlas batching, long dense geometry keeps picture-run caching, and emoji
 rendering stays with the platform text stack until an image atlas has stronger
 cross-platform test coverage.
+
+## 2026-07-01 Dirty Content Direct Draw
+
+Change: terminal content updates and scroll paints now bypass full viewport
+picture recording and draw the visible line picture cache directly. Cursor,
+focus, composing text, and controller/selection paints still use the viewport
+content picture cache so overlay-only frames keep their cheap content-cache hit.
+
+This avoids re-recording a whole viewport picture on high-frequency terminal
+stream frames while preserving the existing line-level damage cache. Blank or
+shortened lines remain safe because direct drawing uses the freshly rebuilt line
+picture cache instead of compositing over an old viewport snapshot.

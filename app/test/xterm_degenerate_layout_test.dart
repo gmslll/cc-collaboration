@@ -408,6 +408,21 @@ void main() {
       );
       expect(RenderTerminal.lastPaintProfile!.selectionRuns, isZero);
 
+      term.write('terminal direct draw\r\n');
+      await tester.pump();
+
+      expect(
+        RenderTerminal.lastPaintProfile!.paintReason,
+        TerminalPaintReason.terminal,
+      );
+      expect(
+        RenderTerminal.lastPaintProfile!.viewportContentDirectDraws,
+        isPositive,
+      );
+      expect(RenderTerminal.lastPaintProfile!.viewportContentPictureDraws, 0);
+      expect(RenderTerminal.lastPaintProfile!.viewportContentCacheMisses, 0);
+      expect(RenderTerminal.lastPaintProfile!.lineSignatureChecks, isPositive);
+
       term.buffer.lines[0].setCell(0, 'X'.codeUnitAt(0), 1, CursorStyle());
       final renderTerminal = tester.renderObject<RenderTerminal>(
         find.byWidgetPredicate(
