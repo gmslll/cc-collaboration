@@ -928,7 +928,8 @@ class TerminalPainter {
   bool _isTerminalGlyphCodepoint(int charCode) {
     return (charCode >= 0x2500 && charCode <= 0x257F) ||
         (charCode >= 0x2580 && charCode <= 0x259F) ||
-        (charCode >= 0x2800 && charCode <= 0x28FF);
+        (charCode >= 0x2800 && charCode <= 0x28FF) ||
+        (charCode >= 0xE0B0 && charCode <= 0xE0BF);
   }
 
   bool _paintTerminalGlyphImmediate(
@@ -946,6 +947,9 @@ class TerminalPainter {
     }
     if (charCode >= 0x2800 && charCode <= 0x28FF) {
       return _paintBraillePattern(canvas, offset, charCode, color);
+    }
+    if (charCode >= 0xE0B0 && charCode <= 0xE0BF) {
+      return _paintPowerlineSymbol(canvas, offset, charCode, color);
     }
     return false;
   }
@@ -1109,6 +1113,148 @@ class TerminalPainter {
     dot(5, 0.68, 0.60);
     dot(7, 0.68, 0.81);
     return true;
+  }
+
+  bool _paintPowerlineSymbol(
+    Canvas canvas,
+    Offset offset,
+    int charCode,
+    Color color,
+  ) {
+    final cell = offset & _cellSize;
+    final paint = _glyphFillPaint
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final stroke = _glyphStrokePaint
+      ..color = color
+      ..strokeWidth = (_cellSize.shortestSide * 0.1).clamp(1.0, 3.0)
+      ..strokeCap = StrokeCap.butt
+      ..style = PaintingStyle.stroke;
+
+    Path polygon(List<Offset> points) {
+      final path = Path()
+        ..moveTo(
+          cell.left + points.first.dx * cell.width,
+          cell.top + points.first.dy * cell.height,
+        );
+      for (final point in points.skip(1)) {
+        path.lineTo(
+          cell.left + point.dx * cell.width,
+          cell.top + point.dy * cell.height,
+        );
+      }
+      return path;
+    }
+
+    bool fill(List<Offset> points) {
+      canvas.drawPath(polygon(points)..close(), paint);
+      return true;
+    }
+
+    bool line(List<Offset> points) {
+      canvas.drawPath(polygon(points), stroke);
+      return true;
+    }
+
+    bool diagonal(bool topLeftToBottomRight) {
+      canvas.drawLine(
+        topLeftToBottomRight ? cell.topLeft : cell.bottomLeft,
+        topLeftToBottomRight ? cell.bottomRight : cell.topRight,
+        stroke,
+      );
+      return true;
+    }
+
+    bool semicircle({required bool right, required bool filled}) {
+      const c = (1.4142135623730951 - 1.0) * 4.0 / 3.0;
+      final w = cell.width;
+      final h = cell.height;
+      final r = w < h / 2 ? w : h / 2;
+      final path = Path();
+
+      if (right) {
+        path.moveTo(cell.left, cell.top);
+        path.cubicTo(
+          cell.left + r * c,
+          cell.top,
+          cell.left + r,
+          cell.top + r - r * c,
+          cell.left + r,
+          cell.top + r,
+        );
+        path.lineTo(cell.left + r, cell.bottom - r);
+        path.cubicTo(
+          cell.left + r,
+          cell.bottom - r + r * c,
+          cell.left + r * c,
+          cell.bottom,
+          cell.left,
+          cell.bottom,
+        );
+      } else {
+        path.moveTo(cell.right, cell.top);
+        path.cubicTo(
+          cell.right - r * c,
+          cell.top,
+          cell.right - r,
+          cell.top + r - r * c,
+          cell.right - r,
+          cell.top + r,
+        );
+        path.lineTo(cell.right - r, cell.bottom - r);
+        path.cubicTo(
+          cell.right - r,
+          cell.bottom - r + r * c,
+          cell.right - r * c,
+          cell.bottom,
+          cell.right,
+          cell.bottom,
+        );
+      }
+
+      if (filled) {
+        canvas.drawPath(path..close(), paint);
+      } else {
+        canvas.drawPath(path, stroke);
+      }
+      return true;
+    }
+
+    switch (charCode) {
+      case 0xE0B0:
+        return fill(const [Offset(0, 0), Offset(1, 0.5), Offset(0, 1)]);
+      case 0xE0B1:
+        return line(const [Offset(0, 0), Offset(1, 0.5), Offset(0, 1)]);
+      case 0xE0B2:
+        return fill(const [Offset(1, 0), Offset(0, 0.5), Offset(1, 1)]);
+      case 0xE0B3:
+        return line(const [Offset(1, 0), Offset(0, 0.5), Offset(1, 1)]);
+      case 0xE0B4:
+        return semicircle(right: true, filled: true);
+      case 0xE0B5:
+        return semicircle(right: true, filled: false);
+      case 0xE0B6:
+        return semicircle(right: false, filled: true);
+      case 0xE0B7:
+        return semicircle(right: false, filled: false);
+      case 0xE0B8:
+        return fill(const [Offset(0, 0), Offset(1, 1), Offset(0, 1)]);
+      case 0xE0B9:
+        return diagonal(true);
+      case 0xE0BA:
+        return fill(const [Offset(1, 0), Offset(1, 1), Offset(0, 1)]);
+      case 0xE0BB:
+        return diagonal(false);
+      case 0xE0BC:
+        return fill(const [Offset(0, 0), Offset(1, 0), Offset(0, 1)]);
+      case 0xE0BD:
+        return diagonal(false);
+      case 0xE0BE:
+        return fill(const [Offset(0, 0), Offset(1, 0), Offset(1, 1)]);
+      case 0xE0BF:
+        return diagonal(true);
+    }
+    return false;
   }
 
   bool _paintBoxDrawing(

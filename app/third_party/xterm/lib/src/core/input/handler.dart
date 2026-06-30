@@ -177,7 +177,14 @@ class CtrlInputHandler implements TerminalInputHandler {
       return String.fromCharCode(input);
     }
 
-    return null;
+    return switch (key) {
+      TerminalKey.bracketLeft => '\x1b',
+      TerminalKey.backslash => '\x1c',
+      TerminalKey.bracketRight => '\x1d',
+      TerminalKey.digit6 => '\x1e',
+      TerminalKey.minus => '\x1f',
+      _ => null,
+    };
   }
 }
 

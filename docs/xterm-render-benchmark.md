@@ -60,9 +60,13 @@ Painter microbenchmark, 600 cells:
 
 | Scenario | Before avg us | After run 1 avg us | After run 2 avg us | Notes |
 | --- | ---: | ---: | ---: | --- |
-| Geometry glyphs | ~266 | 14.2 | 14.7 | 1 glyph-run picture cache hit |
-| Mixed text/glyph | ~49-50 | 66.9 | 55.6 | short glyph runs fall back to the single-glyph cache |
+| Geometry glyphs | ~266 | 14.2 | 14.4 | 1 glyph-run picture cache hit |
+| Mixed text/glyph | ~49-50 | 66.9 | 54.9 | short glyph runs fall back to the single-glyph cache |
 
 Dense geometry improves by roughly 17x in this microbenchmark. Short
 alternating text/glyph runs stay on the older single-glyph cache path to avoid
 the extra key/list overhead of run-level picture caching.
+
+Powerline private-use glyphs (`U+E0B0`-`U+E0BF`) now share the same cached sprite
+glyph path as box/block/braille drawing, so prompt separators avoid text layout
+when they can be represented by deterministic vector shapes.
