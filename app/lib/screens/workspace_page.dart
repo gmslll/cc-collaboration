@@ -90,6 +90,16 @@ class _DiffTreeNode {
   _DiffTreeNode(this.name);
 }
 
+// _LogBranchNode is one folder/leaf in the Git Log branch sidebar.
+class _LogBranchNode {
+  final String name;
+  final String path;
+  final Map<String, _LogBranchNode> children = {};
+  GitBranch? branch;
+
+  _LogBranchNode(this.name, this.path);
+}
+
 class _OpenFile {
   // For a code tab, [path] is the file path. For a read-only diff tab, [diffs]
   // is non-null (the commit/compare files) and [path] is a stable id/label.
@@ -580,6 +590,8 @@ class _WorkspacePageState extends State<WorkspacePage>
   double _terminalHeight = Prefs.getDouble('ws.terminalHeight', def: 360);
   double _logBranchWidth = Prefs.getDouble('ws.logBranchWidth', def: 240);
   double _logCommitWidth = Prefs.getDouble('ws.logCommitWidth', def: 480);
+  final Set<String> _logBranchExpanded = {};
+  final Set<String> _logBranchGroupsCollapsed = {};
   // shared comfortable-but-compact density for the tree's leaf rows.
   static const _tileDensity = VisualDensity(vertical: -1);
   // Fixed height of a Git Log commit row — shared by the ListView itemExtent and
@@ -6171,7 +6183,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _logBranchFilter merges the "all branches" toggle and the ref picker into a
   // single GoLand-style "Branch ▾" dropdown.
-  static const _logAllSentinel = ' ALL';
+  static const _logAllSentinel = '\x00ALL';
   Widget _logBranchFilter(List<String> logRefs, String effectiveRef) {
     final scoped = _gitLogAllBranches || effectiveRef.isNotEmpty;
     return _logFilterShell(
@@ -6408,6 +6420,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   Widget _logBranchPane(ProjectCfg p) {
     final locals = _gitBranches.where((b) => !b.remote).toList();
     final remotes = _gitBranches.where((b) => b.remote).toList();
+    final localRoot = _buildLogBranchTree(locals, 'local');
+    final remoteRoot = _buildLogBranchTree(remotes, 'remote');
+    final current = _gitBranches.where((b) => b.current).firstOrNull;
+    final localCollapsed = _logBranchGroupsCollapsed.contains('local');
+    final remoteCollapsed = _logBranchGroupsCollapsed.contains('remote');
     return SizedBox(
       width: _logBranchWidth,
       child: DecoratedBox(
@@ -6420,49 +6437,254 @@ class _WorkspacePageState extends State<WorkspacePage>
             : ListView(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 children: [
-                  _branchGroupHeader('Local', locals.length),
-                  for (final b in locals) _logBranchTile(p, b),
+                  _logHeadRow(p, current),
+                  _branchGroupHeader('Local', 'local', localCollapsed),
+                  if (!localCollapsed)
+                    ..._logBranchNodeWidgets(p, localRoot, 'local', 0),
                   if (remotes.isNotEmpty) ...[
-                    _branchGroupHeader('Remote', remotes.length),
-                    for (final b in remotes) _logBranchTile(p, b),
+                    _branchGroupHeader('Remote', 'remote', remoteCollapsed),
+                    if (!remoteCollapsed)
+                      ..._logBranchNodeWidgets(p, remoteRoot, 'remote', 0),
                   ],
+                  _logTagsRow(),
                 ],
               ),
       ),
     );
   }
 
-  Widget _branchGroupHeader(String label, int count) => Padding(
-    padding: const EdgeInsets.fromLTRB(10, 8, 8, 4),
-    child: Row(
-      children: [
-        Text(
-          label.toUpperCase(),
-          style: CcType.code(
-            size: 10.5,
-            color: CcColors.subtle,
-            weight: FontWeight.w700,
+  Widget _logHeadRow(ProjectCfg p, GitBranch? current) {
+    final active =
+        current != null &&
+        !_gitLogAllBranches &&
+        (_gitLogRefFilter.isEmpty || _gitLogRefFilter == current.name);
+    return InkWell(
+      onTap: current == null ? null : () => _filterLogByBranch(current),
+      onSecondaryTapDown: current == null
+          ? null
+          : (d) => _showLogBranchMenu(p, current, d.globalPosition),
+      child: Container(
+        height: 30,
+        color: active ? CcColors.accent.withValues(alpha: 0.10) : null,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'HEAD (Current Branch)',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 12.5,
+            color: CcColors.text,
+            fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(width: 6),
-        Text('$count', style: CcType.code(size: 10.5, color: CcColors.subtle)),
-      ],
+      ),
+    );
+  }
+
+  Widget _branchGroupHeader(String label, String key, bool collapsed) =>
+      InkWell(
+        onTap: () => setState(() {
+          if (collapsed) {
+            _logBranchGroupsCollapsed.remove(key);
+          } else {
+            _logBranchGroupsCollapsed.add(key);
+          }
+        }),
+        child: Container(
+          height: 24,
+          padding: const EdgeInsets.only(left: 8, right: 8),
+          child: Row(
+            children: [
+              Icon(
+                collapsed
+                    ? Icons.chevron_right_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                size: 15,
+                color: CcColors.subtle,
+              ),
+              const SizedBox(width: 3),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: CcColors.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _logTagsRow() => InkWell(
+    onTap: () {},
+    child: Container(
+      height: 26,
+      margin: const EdgeInsets.only(left: 8, right: 8, top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: CcColors.panelHigh,
+        borderRadius: BorderRadius.circular(CcRadius.sm),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.chevron_right_rounded,
+            size: 15,
+            color: CcColors.subtle,
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              'Tags',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CcType.code(size: 12, color: CcColors.muted),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 
-  Widget _logBranchTile(ProjectCfg p, GitBranch b) {
-    final active = !_gitLogAllBranches && _gitLogRefFilter == b.name;
+  _LogBranchNode _buildLogBranchTree(List<GitBranch> branches, String scope) {
+    final root = _LogBranchNode(scope, scope);
+    for (final b in branches) {
+      final parts = b.name.split('/').where((s) => s.isNotEmpty).toList();
+      var node = root;
+      var path = scope;
+      for (final part in parts) {
+        path = '$path/$part';
+        node = node.children.putIfAbsent(
+          part,
+          () => _LogBranchNode(part, path),
+        );
+      }
+      node.branch = b;
+    }
+    return root;
+  }
+
+  List<Widget> _logBranchNodeWidgets(
+    ProjectCfg p,
+    _LogBranchNode node,
+    String scope,
+    int depth,
+  ) {
+    final children = node.children.values.toList()
+      ..sort((a, b) {
+        final af = a.children.isNotEmpty && a.branch == null;
+        final bf = b.children.isNotEmpty && b.branch == null;
+        if (af != bf) return af ? -1 : 1;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    return [
+      for (final child in children) ...[
+        if (child.children.isEmpty && child.branch != null)
+          _logBranchTile(p, child.branch!, child.name, depth)
+        else
+          _logBranchFolderTile(child, scope, depth),
+        if (child.children.isNotEmpty &&
+            _logBranchNodeOpen(child, scope, depth))
+          ..._logBranchNodeWidgets(p, child, scope, depth + 1),
+      ],
+    ];
+  }
+
+  bool _logBranchNodeOpen(_LogBranchNode node, String scope, int depth) {
+    if (_logBranchExpanded.contains(node.path)) return true;
+    if (_logBranchExpanded.contains('-${node.path}')) return false;
+    if (_logBranchNodeHasActiveBranch(node)) return true;
+    return scope == 'remote' && depth == 0;
+  }
+
+  bool _logBranchNodeHasActiveBranch(_LogBranchNode node) {
+    final activeName = _activeLogBranchName;
+    final b = node.branch;
+    if (b != null && activeName == b.name) {
+      return true;
+    }
+    return node.children.values.any(_logBranchNodeHasActiveBranch);
+  }
+
+  String? get _activeLogBranchName {
+    if (_gitLogAllBranches) return null;
+    if (_gitLogRefFilter.isNotEmpty) return _gitLogRefFilter;
+    return _gitBranches.where((b) => b.current).firstOrNull?.name;
+  }
+
+  Widget _logBranchFolderTile(_LogBranchNode node, String scope, int depth) {
+    final open = _logBranchNodeOpen(node, scope, depth);
+    final active = _logBranchNodeHasActiveBranch(node);
+    return InkWell(
+      onTap: () => setState(() {
+        if (open) {
+          _logBranchExpanded
+            ..remove(node.path)
+            ..add('-${node.path}');
+        } else {
+          _logBranchExpanded
+            ..remove('-${node.path}')
+            ..add(node.path);
+        }
+      }),
+      child: Container(
+        height: 26,
+        color: active ? CcColors.accent.withValues(alpha: 0.08) : null,
+        padding: EdgeInsets.only(left: 8 + depth * 16, right: 8),
+        child: Row(
+          children: [
+            Icon(
+              open
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.chevron_right_rounded,
+              size: 15,
+              color: active ? CcColors.accentBright : CcColors.subtle,
+            ),
+            const SizedBox(width: 3),
+            Icon(
+              Icons.folder_outlined,
+              size: 15,
+              color: active ? CcColors.text : CcColors.muted,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                node.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CcType.code(
+                  size: 12,
+                  color: active ? CcColors.text : CcColors.muted,
+                  weight: active ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _logBranchTile(
+    ProjectCfg p,
+    GitBranch b,
+    String label, [
+    int depth = 0,
+  ]) {
+    final active = _activeLogBranchName == b.name;
     return InkWell(
       onTap: () => _filterLogByBranch(b),
       onSecondaryTapDown: (d) => _showLogBranchMenu(p, b, d.globalPosition),
       child: Container(
+        height: 26,
         color: active ? CcColors.accent.withValues(alpha: 0.10) : null,
-        padding: EdgeInsets.only(
-          left: b.remote ? 22 : 12,
-          right: 8,
-          top: 4,
-          bottom: 4,
-        ),
+        padding: EdgeInsets.only(left: 12 + depth * 16, right: 8),
         child: Row(
           children: [
             Icon(
@@ -6477,7 +6699,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                b.name,
+                label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: CcType.code(
