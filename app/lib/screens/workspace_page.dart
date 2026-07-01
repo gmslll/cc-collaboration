@@ -1526,16 +1526,18 @@ class _WorkspacePageState extends State<WorkspacePage>
         ? workdir
         : p.path;
     final supervisorAgent = _supervisorAgentForKind(kind);
+    // Agent/supervisor sessions go through _openAgent (launch + reveal the project
+    // node) — the single source of truth for that pair. A plain shell carries no
+    // agent/preLaunch so it can't use _openAgent; open it and reveal directly.
     if (kind.isEmpty || kind == 'shell') {
       addTerm(dir, ''); // '' = plain interactive shell
+      final ctl = _ctlFor(p.path);
+      if (!ctl.isExpanded) ctl.expand();
     } else if (supervisorAgent != null) {
-      _launch(dir, supervisorAgent, ws.preLaunch, supervisor: true);
+      _openAgent(p, dir, supervisorAgent, ws.preLaunch, supervisor: true);
     } else {
-      _launch(dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
+      _openAgent(p, dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
     }
-    // Expand the project node so the new session is visible (same as _openAgent).
-    final ctl = _ctlFor(p.path);
-    if (!ctl.isExpanded) ctl.expand();
     return terms.isNotEmpty ? terms.last.id : '';
   }
 
