@@ -188,7 +188,7 @@ mixin _GitLogCommitMenu on _GitMixin {
       case 'undo':
         await _undoCommit(p, c);
       case 'reword':
-        await _rewordCommit(p, c, isHead: isHead);
+        await _rewordCommit(p, c);
       case 'fixup':
         await _fixupOrSquash(p, c, keepMessage: false);
       case 'squash':
@@ -301,11 +301,7 @@ mixin _GitLogCommitMenu on _GitMixin {
 
   /// Edit Commit Message…(reword):HEAD 走 amend 快路径,更早的 commit 走脚本化
   /// interactive rebase 的 reword。
-  Future<void> _rewordCommit(
-    ProjectCfg p,
-    GitCommit c, {
-    required bool isHead,
-  }) async {
+  Future<void> _rewordCommit(ProjectCfg p, GitCommit c) async {
     final msg = await _promptRewordMessage(
       title: 'Edit Commit Message',
       hint: '${c.shortHash} · reword',
@@ -314,11 +310,9 @@ mixin _GitLogCommitMenu on _GitMixin {
     if (msg == null || msg.isEmpty) return;
     setState(() => _gitLoading = true);
     try {
-      if (isHead) {
-        await gitCommitAmend(p.path, msg);
-      } else {
-        await gitRewordCommit(p.path, c.hash, msg);
-      }
+      // 走脚本化 rebase 的 reword(--autostash 保留暂存/工作区改动),只改信息;
+      // 不用 amend——amend 会把已暂存的改动一并折进该 commit。
+      await gitRewordCommit(p.path, c.hash, msg);
       await _refreshGit();
       _snack('已修改提交信息');
     } catch (e) {
