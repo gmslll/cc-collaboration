@@ -95,6 +95,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/libghostty-wasm32-freestanding.wasm
     - assets/file_icons/
 
   fonts:

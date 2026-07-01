@@ -1322,7 +1322,9 @@ class _HoverLiftState extends State<HoverLift> {
 
 // splitFileNameDir splits a path into (fileName, dirPath); dirPath is '' if none.
 (String, String) splitFileNameDir(String path) {
-  final i = path.lastIndexOf('/');
+  final slash = path.lastIndexOf('/');
+  final backslash = path.lastIndexOf(r'\');
+  final i = slash > backslash ? slash : backslash;
   return (
     i < 0 ? path : path.substring(i + 1),
     i < 0 ? '' : path.substring(0, i),

@@ -61,9 +61,15 @@ class GhosttyShadowTerminal {
     return _format(ghostty.FormatterFormat.vt, trim: trim, unwrap: unwrap);
   }
 
+  String? htmlText({bool trim = true, bool unwrap = false}) {
+    return _format(ghostty.FormatterFormat.html, trim: trim, unwrap: unwrap);
+  }
+
   String? plainTail(int rows) => _tail(plainText(), rows);
 
   String? vtTail(int rows) => _tail(vtText(), rows);
+
+  String? htmlTail(int rows) => _tail(htmlText(), rows);
 
   String? plainSelection({
     required int startRow,
@@ -101,6 +107,40 @@ class GhosttyShadowTerminal {
       trim: trim,
       unwrap: unwrap,
     );
+  }
+
+  String? htmlSelection({
+    required int startRow,
+    required int startCol,
+    required int endRow,
+    required int endCol,
+    bool trim = true,
+    bool unwrap = false,
+  }) {
+    return _formatSelection(
+      ghostty.FormatterFormat.html,
+      startRow: startRow,
+      startCol: startCol,
+      endRow: endRow,
+      endCol: endCol,
+      trim: trim,
+      unwrap: unwrap,
+    );
+  }
+
+  GhosttyShadowDigest? digest({int sampleRows = 80}) {
+    if (_disposed) return null;
+    try {
+      final text = plainTail(sampleRows) ?? '';
+      return GhosttyShadowDigest(
+        cols: _cols,
+        totalRows: _terminal.totalRows,
+        tailHash: _fnv1a32(text),
+        tailLength: text.length,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   String? vtTailSelection(int rows) {
@@ -211,4 +251,27 @@ class GhosttyShadowTerminal {
     _disposed = true;
     _terminal.dispose();
   }
+
+  static int _fnv1a32(String text) {
+    var hash = 0x811c9dc5;
+    for (final unit in text.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash;
+  }
+}
+
+class GhosttyShadowDigest {
+  const GhosttyShadowDigest({
+    required this.cols,
+    required this.totalRows,
+    required this.tailHash,
+    required this.tailLength,
+  });
+
+  final int cols;
+  final int totalRows;
+  final int tailHash;
+  final int tailLength;
 }

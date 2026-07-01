@@ -9,7 +9,7 @@ import '../local/session_overview.dart';
 import '../local/worktrees.dart';
 import '../screen_share/webrtc.dart';
 import '../screens/terminal_pane.dart';
-import '../widgets.dart' show kIgnoredEntries;
+import '../widgets.dart' show kIgnoredEntries, splitFileNameDir;
 import 'file_fs.dart';
 import 'file_transfer.dart';
 import 'remote_channel.dart';
@@ -709,7 +709,7 @@ class RemoteHost extends RemoteChannel {
     final entries = <Map<String, dynamic>>[];
     try {
       await for (final e in Directory(path).list(followLinks: false)) {
-        final name = e.path.split('/').last;
+        final (name, _) = splitFileNameDir(e.path);
         if (kIgnoredEntries.contains(name)) continue;
         final isDir = e is Directory;
         var size = 0;

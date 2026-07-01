@@ -11,6 +11,7 @@ import '../screen_share/models.dart';
 import '../screen_share/webrtc.dart';
 import '../terminal_mouse.dart';
 import '../terminal_theme.dart';
+import '../widgets.dart' show splitFileNameDir;
 import 'file_fs.dart';
 import 'file_transfer.dart';
 import 'remote_channel.dart';
@@ -55,8 +56,10 @@ class RemoteWorktree {
   final String path;
   final String branch;
   RemoteWorktree(this.path, this.branch);
-  String get name =>
-      path.split('/').lastWhere((s) => s.isNotEmpty, orElse: () => path);
+  String get name {
+    final (name, _) = splitFileNameDir(path);
+    return name.isEmpty ? path : name;
+  }
 }
 
 class RemoteEntry {
@@ -661,7 +664,7 @@ class RemoteClient extends RemoteChannel {
         fsEntries = [
           for (final e in (f['entries'] as List? ?? []))
             RemoteEntry(
-              e['name'] as String,
+              splitFileNameDir(e['name'] as String? ?? '').$1,
               (e['dir'] as bool?) ?? false,
               (e['size'] as num?)?.toInt() ?? 0,
             ),

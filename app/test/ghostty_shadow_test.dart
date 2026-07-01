@@ -14,6 +14,7 @@ void main() {
     expect(shadow.plainText(), contains('one'));
     expect(shadow.plainText(), contains('two'));
     expect(shadow.vtText(), contains('\x1b['));
+    expect(shadow.htmlText(), contains('two'));
     expect(shadow.vtTail(1), contains('three'));
     expect(shadow.vtTailSelection(1), contains('three'));
   });
@@ -71,5 +72,26 @@ void main() {
     expect(vt, isNot(contains('red')));
     expect(plain, contains('green'));
     expect(plain, isNot(contains('\x1b[')));
+  });
+
+  test('HTML formatter and digest are available from mirrored output', () {
+    final shadow = GhosttyShadowTerminal.create(cols: 20, rows: 3);
+    expect(shadow, isNotNull);
+    addTearDown(shadow!.dispose);
+
+    shadow.writeString('\x1b[31mred\x1b[0m\r\nplain');
+
+    final html = shadow.htmlSelection(
+      startRow: 0,
+      startCol: 0,
+      endRow: 1,
+      endCol: 19,
+    );
+    final digest = shadow.digest(sampleRows: 2);
+
+    expect(html, contains('red'));
+    expect(digest, isNotNull);
+    expect(digest!.cols, 20);
+    expect(digest.tailLength, greaterThan(0));
   });
 }

@@ -29,6 +29,29 @@ index 0000000..3333333
 ''';
 
 void main() {
+  group('splitFileNameDir', () {
+    test('splits POSIX paths', () {
+      expect(splitFileNameDir('/tmp/project/lib/main.dart'), (
+        'main.dart',
+        '/tmp/project/lib',
+      ));
+    });
+
+    test('splits Windows paths', () {
+      expect(splitFileNameDir(r'E:\demoFile\oppr\package.json'), (
+        'package.json',
+        r'E:\demoFile\oppr',
+      ));
+    });
+
+    test('uses the last separator when paths are mixed', () {
+      expect(splitFileNameDir(r'E:\demoFile\oppr/src/main.dart'), (
+        'main.dart',
+        r'E:\demoFile\oppr/src',
+      ));
+    });
+  });
+
   test('parseUnifiedDiff splits files + counts; parseRows aligns', () {
     final files = parseUnifiedDiff(_sampleDiff);
     expect(files.length, 2);
