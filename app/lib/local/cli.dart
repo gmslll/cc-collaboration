@@ -121,14 +121,11 @@ class Cli {
       run(['workspace', 'add', name, source]);
 
   // workspaceImport scans [dir] for git repos and registers each as a project
-  // (in place — never moved/cloned) in workspace [name] (default: basename of
-  // dir). Returns the CLI's --json summary: {workspace, created, scanned,
-  // added[], skipped[]}.
-  static Future<String> workspaceImport(String dir, {String? name}) => run([
-        'workspace', 'import', dir,
-        if (name != null && name.trim().isNotEmpty) ...['--name', name.trim()],
-        '--json',
-      ]);
+  // (in place — never moved/cloned) in a workspace named after [dir]'s basename.
+  // Returns the CLI's --json summary: {workspace, created, scanned, added[],
+  // skipped[]}.
+  static Future<String> workspaceImport(String dir) =>
+      run(['workspace', 'import', dir, '--json']);
 
   static Future<void> workspaceRemove(String name) =>
       run(['workspace', 'remove', name]);

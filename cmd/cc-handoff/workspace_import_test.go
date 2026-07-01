@@ -29,10 +29,16 @@ func TestScanGitRepos(t *testing.T) {
 	}
 	// A vendored repo inside repoA must be ignored (we stop descending at repoA).
 	mkrepo(t, filepath.Join(root, "repoA", "vendor", "nested"))
-	// Noise dir at the top level must be skipped even though it holds a repo.
+	// Noise dir at the top level must be skipped even though it holds a repo
+	// (we don't descend INTO node_modules — it isn't itself a repo).
 	mkrepo(t, filepath.Join(root, "node_modules", "pkg"))
-	// A dotdir must be skipped.
+	// A dotdir grouping must be skipped for the same reason.
 	mkrepo(t, filepath.Join(root, ".hidden", "repoD"))
+	// BUT a repo whose OWN name looks like a noise dir must still be imported —
+	// the denylist only blocks descent into non-repo dirs, not recognition.
+	mkrepo(t, filepath.Join(root, "build"))
+	// And a dot-named repo directly under root is imported (e.g. ~/.dotfiles).
+	mkrepo(t, filepath.Join(root, ".dotfiles"))
 	// A worktree-style repo: .git is a FILE, not a directory.
 	repoE := filepath.Join(root, "repoE")
 	if err := os.MkdirAll(repoE, 0o755); err != nil {
@@ -45,6 +51,8 @@ func TestScanGitRepos(t *testing.T) {
 	got := scanGitRepos(root, 6)
 	sort.Strings(got)
 	want := []string{
+		filepath.Join(root, ".dotfiles"),
+		filepath.Join(root, "build"),
 		filepath.Join(root, "group", "repoC"),
 		filepath.Join(root, "repoA"),
 		filepath.Join(root, "repoB"),

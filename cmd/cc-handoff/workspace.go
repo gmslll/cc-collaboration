@@ -199,11 +199,7 @@ func runWorkspaceAdd(ctx context.Context, args []string) error {
 	}
 
 	// Find or create the workspace, carving its root dir.
-	ws := findWorkspace(u, name)
-	if ws == nil {
-		u.Workspaces = append(u.Workspaces, config.Workspace{Name: name})
-		ws = &u.Workspaces[len(u.Workspaces)-1]
-	}
+	ws, _ := findOrCreateWorkspace(u, name)
 	root, err := ensureWorkspaceDir(u, *ws)
 	if err != nil {
 		return err
@@ -379,6 +375,18 @@ func findWorkspace(u *config.User, name string) *config.Workspace {
 		}
 	}
 	return nil
+}
+
+// findOrCreateWorkspace returns the workspace named [name], appending a new empty
+// one when absent; the bool is true when it was created. Centralizes the
+// append-then-repoint idiom (&u.Workspaces[len-1]) shared by `workspace add` and
+// `workspace import`.
+func findOrCreateWorkspace(u *config.User, name string) (*config.Workspace, bool) {
+	if ws := findWorkspace(u, name); ws != nil {
+		return ws, false
+	}
+	u.Workspaces = append(u.Workspaces, config.Workspace{Name: name})
+	return &u.Workspaces[len(u.Workspaces)-1], true
 }
 
 // looksLikeGitURL reports whether source should be treated as a clonable git

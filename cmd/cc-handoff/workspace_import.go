@@ -49,13 +49,7 @@ func runWorkspaceImport(_ context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	ws := findWorkspace(u, wsName)
-	created := false
-	if ws == nil {
-		u.Workspaces = append(u.Workspaces, config.Workspace{Name: wsName})
-		ws = &u.Workspaces[len(u.Workspaces)-1]
-		created = true
-	}
+	ws, created := findOrCreateWorkspace(u, wsName)
 
 	// Dedupe by path across the whole config so a repo already tracked anywhere
 	// (this workspace or another) is skipped rather than double-registered.
@@ -106,20 +100,29 @@ func runWorkspaceImport(_ context.Context, args []string) error {
 // scanGitRepos walks root up to maxDepth and returns every directory that IS a
 // git repo (contains a .git entry — a directory for a normal clone, or a file for
 // a worktree/submodule). It does NOT descend into a repo (a repo's own subdirs
-// aren't separate projects) and skips common heavy/noise directories so a stray
-// vendored .git doesn't get imported. If root itself is a repo, it's the only
-// result.
+// aren't separate projects). If root itself is a repo, it's the only result.
+//
+// A directory is recognized as a repo BEFORE any name-based filtering, so a repo
+// that happens to be named like a build/vendor dir — or a dot-named repo such as
+// ~/.dotfiles — is still imported. The noise list and the dotdir rule only gate
+// whether we DESCEND INTO a non-repo grouping dir, so their worst failure is
+// "walk a bit less", never "drop a real project".
 func scanGitRepos(root string, maxDepth int) []string {
 	noise := map[string]bool{
-		"node_modules": true, "vendor": true, ".worktrees": true,
-		"Pods": true, ".dart_tool": true, "build": true, "dist": true,
-		"target": true, ".venv": true, "venv": true,
+		"node_modules": true, "vendor": true, "Pods": true,
+		"build": true, "dist": true, "target": true, "venv": true,
 	}
 	var out []string
-	var walk func(dir string, depth int)
-	walk = func(dir string, depth int) {
+	var walk func(dir, name string, depth int)
+	walk = func(dir, name string, depth int) {
 		if isGitRepoDir(dir) {
-			out = append(out, dir) // a repo → record it and stop descending
+			out = append(out, dir) // a repo → record it (whatever its name) and stop
+			return
+		}
+		// Not a repo: only descend into non-noise, non-dot grouping dirs. Keyed on
+		// the dir's OWN name (root passes ""), so recognizing a repo never depends
+		// on this list.
+		if name != "" && (noise[name] || strings.HasPrefix(name, ".")) {
 			return
 		}
 		if depth >= maxDepth {
@@ -130,19 +133,12 @@ func scanGitRepos(root string, maxDepth int) []string {
 			return
 		}
 		for _, e := range entries {
-			if !e.IsDir() {
-				continue
+			if e.IsDir() {
+				walk(filepath.Join(dir, e.Name()), e.Name(), depth+1)
 			}
-			n := e.Name()
-			// Skip noise dirs and any dotdir (.git, .cache, …) — repos are
-			// almost never dot-named, and this keeps the walk cheap.
-			if noise[n] || strings.HasPrefix(n, ".") {
-				continue
-			}
-			walk(filepath.Join(dir, n), depth+1)
 		}
 	}
-	walk(root, 0)
+	walk(root, "", 0)
 	return out
 }
 
