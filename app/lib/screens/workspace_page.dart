@@ -2441,6 +2441,38 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
+  // _importWorkspace picks a folder and bulk-imports every git repo under it as a
+  // project (in place, not moved) into a new workspace named after the folder —
+  // the one-click alternative to adding N repos one at a time. Done manually (not
+  // _runCli) so the toast can report how many were imported vs skipped.
+  Future<void> _importWorkspace() async {
+    final dir = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: '选择包含多个项目的目录(将扫描其中的 git 仓库)',
+    );
+    if (dir == null || dir.trim().isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final out = await Cli.workspaceImport(dir);
+      await _reloadConfig();
+      var msg = '已导入';
+      try {
+        final j = jsonDecode(out) as Map<String, dynamic>;
+        final ws = (j['workspace'] ?? '').toString();
+        final added = (j['added'] as List?)?.length ?? 0;
+        final skipped = (j['skipped'] as List?)?.length ?? 0;
+        msg = (added == 0 && skipped == 0)
+            ? '「$ws」下没找到可导入的 git 仓库'
+            : '已导入 $added 个项目到「$ws」'
+                '${skipped > 0 ? '(跳过 $skipped 个已有)' : ''}';
+      } catch (_) {}
+      _snack(msg);
+    } catch (e) {
+      _snack(errorText(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _addProject(WorkspaceCfg ws) async {
     final v = await _fieldsDialog('给「${ws.name}」添加项目', '添加', [
       (
@@ -7937,6 +7969,12 @@ class _WorkspacePageState extends State<WorkspacePage>
               tooltip: '新建工作区',
               visualDensity: VisualDensity.compact,
               icon: const Icon(Icons.add_rounded, size: 17),
+            ),
+            IconButton(
+              onPressed: _busy ? null : _importWorkspace,
+              tooltip: '从文件夹导入工作区(扫描其中的 git 仓库)',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.drive_folder_upload_rounded, size: 17),
             ),
             IconButton(
               onPressed: _busy ? null : _refresh,
