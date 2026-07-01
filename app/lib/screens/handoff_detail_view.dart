@@ -10,6 +10,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
+import '../local/repo_config.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -151,6 +152,13 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _snack('本地找不到 repo "${p.repo.name}" —— 在 config.toml 的 [[workspace]] 里把它加上');
       return;
     }
+    // pickup requires a per-repo .cc-handoff.toml directly in the repo dir (the
+    // CLI refuses to walk up to a sibling's config). If it's missing, offer to
+    // initialize it in place — partner defaults to the handoff sender — so the
+    // button doesn't dead-end on an un-init'd repo.
+    if (!File(RepoConfig.pathFor(path)).existsSync()) {
+      if (!await _confirmInit(p, path)) return;
+    }
     setState(() => _picking = true);
     try {
       final r = await Cli.pickup(p.id, path);
@@ -159,6 +167,37 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     } catch (e) {
       if (mounted) setState(() => _picking = false);
       _snack('pickup 失败: ${errorText(e)}');
+    }
+  }
+
+  // _confirmInit prompts to initialize an un-init'd repo, then writes a minimal
+  // .cc-handoff.toml (partner = sender, base = origin/main) — the only per-repo
+  // fields pickup/config.Resolve require. Returns true when the repo is ready to
+  // pick up (config written), false when the user cancels or the write fails.
+  Future<bool> _confirmInit(Package p, String path) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('初始化仓库'),
+        content: Text('仓库 "${p.repo.name}" 还没初始化 cc-handoff（缺少 .cc-handoff.toml）。'
+            '要现在初始化并接收吗？\n\npartner = ${p.sender}'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('初始化并接收')),
+        ],
+      ),
+    );
+    if (ok != true) return false;
+    try {
+      await RepoConfig(raw: {}, partner: p.sender, base: 'origin/main').save(path);
+      return true;
+    } catch (e) {
+      _snack('初始化失败: ${errorText(e)}');
+      return false;
     }
   }
 
