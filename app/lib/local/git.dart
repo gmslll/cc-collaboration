@@ -831,3 +831,233 @@ Future<void> gitRemoveFile(
     await _git(dir, 'clean -f -- ${shQuote(f)}');
   }
 }
+
+// ===========================================================================
+// ts88 · Git Log 三栏右键菜单新增命令(append-only)。破坏性命令由 UI 层的
+// confirm 门控;所有命令都在「运行时用户打开的仓库」dir 上执行。
+// ===========================================================================
+
+// gitCheckoutPathAtRev overwrites [file] in the working tree with its content at
+// [ref] (`git checkout <ref> -- <file>`). Backs the diff-tree "Get from
+// Revision". Destructive to the working copy — gate behind a confirm.
+Future<void> gitCheckoutPathAtRev(String dir, String ref, String file) async {
+  final r = ref.trim();
+  final f = file.trim();
+  if (r.isEmpty) throw GitException('revision 不能为空');
+  if (f.isEmpty) throw GitException('file path 不能为空');
+  await _git(dir, 'checkout ${shQuote(r)} -- ${shQuote(f)}');
+}
+
+// gitApplyPatch applies a whole unified patch to the working tree, forward or
+// (reverse:true) in reverse — `git apply [-R] --recount`. Backs the diff-tree
+// "Cherry-Pick Selected Changes" (forward) / "Revert Selected Changes"
+// (reverse). Distinct from gitApplyReverse, which is the per-hunk discard on the
+// Commit panel; this one takes a full multi-hunk file patch (a FileDiff.raw
+// block). Throws GitException if the patch no longer applies cleanly.
+Future<void> gitApplyPatch(
+  String dir,
+  String patch, {
+  bool reverse = false,
+}) async {
+  final tmpDir = await Directory.systemTemp.createTemp('cc-apply');
+  try {
+    final tmp = File('${tmpDir.path}/p.patch');
+    await tmp.writeAsString(patch.endsWith('\n') ? patch : '$patch\n');
+    await _git(
+      dir,
+      'apply ${reverse ? '-R ' : ''}--recount ${shQuote(tmp.path)}',
+    );
+  } finally {
+    await tmpDir.delete(recursive: true);
+  }
+}
+
+// ---- commit-level history ops (Git Log 中栏右键) ----
+
+// gitReset moves the current branch to [ref]. mode: soft (keep index+worktree),
+// mixed (default, reset index), hard (discard worktree changes — destructive).
+Future<void> gitReset(String dir, String ref, {String mode = 'mixed'}) async {
+  final r = ref.trim();
+  if (r.isEmpty) throw GitException('reset 目标不能为空');
+  const allowed = {'soft', 'mixed', 'hard', 'keep', 'merge'};
+  final m = allowed.contains(mode) ? mode : 'mixed';
+  await _git(dir, 'reset --$m ${shQuote(r)}');
+}
+
+// gitTag creates a tag at [ref] (default HEAD). With a [message] it's an
+// annotated tag (`git tag -a -m`), otherwise a lightweight tag.
+Future<void> gitTag(
+  String dir,
+  String name, {
+  String? ref,
+  String? message,
+}) async {
+  final n = name.trim();
+  if (n.isEmpty) throw GitException('tag 名不能为空');
+  final target = (ref ?? '').trim();
+  final tail = target.isEmpty ? '' : ' ${shQuote(target)}';
+  final msg = (message ?? '').trim();
+  if (msg.isEmpty) {
+    await _git(dir, 'tag ${shQuote(n)}$tail');
+  } else {
+    await _git(dir, 'tag -a ${shQuote(n)} -m ${shQuote(msg)}$tail');
+  }
+}
+
+// gitFormatPatch returns the mail-formatted patch of a single commit
+// (`git format-patch -1 --stdout <hash>`). Commit-oriented — distinct from
+// ts89's gitDiffToPatch (working-tree changes) and gitApplyPatch (apply a diff).
+Future<String> gitFormatPatch(String dir, String hash) {
+  final h = hash.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  return _git(dir, 'format-patch -1 --stdout ${shQuote(h)}');
+}
+
+// gitRevParse resolves [ref] to a full hash (used to tell whether a commit is
+// the current HEAD, gating Undo Commit / amend-reword).
+Future<String> gitRevParse(String dir, String ref) async {
+  final r = ref.trim();
+  if (r.isEmpty) throw GitException('ref 不能为空');
+  return (await _git(dir, 'rev-parse ${shQuote(r)}')).trim();
+}
+
+// gitRemoteWebUrl turns origin's fetch URL into a browsable https URL (drops the
+// trailing .git, rewrites scp/ssh/git schemes). Returns null when there's no
+// origin. Backs "Open on GitHub".
+Future<String?> gitRemoteWebUrl(String dir) async {
+  String raw;
+  try {
+    raw = (await _git(dir, 'remote get-url origin')).trim();
+  } catch (_) {
+    return null;
+  }
+  if (raw.isEmpty) return null;
+  var url = raw;
+  final scp = RegExp(r'^[^@]+@([^:]+):(.+?)(?:\.git)?/?$').firstMatch(url);
+  if (scp != null) {
+    return 'https://${scp.group(1)}/${scp.group(2)}';
+  }
+  url = url.replaceFirst(RegExp(r'^ssh://[^@]+@'), 'https://');
+  url = url.replaceFirst(RegExp(r'^git://'), 'https://');
+  if (url.endsWith('.git')) url = url.substring(0, url.length - 4);
+  return url;
+}
+
+// gitPushUpTo pushes commits up to and including [hash] onto origin's copy of the
+// current branch (`git push origin <hash>:refs/heads/<branch>`). Backs
+// "Push All up to Here".
+Future<void> gitPushUpTo(String dir, String hash) async {
+  final h = hash.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  final branch = (await _git(dir, 'branch --show-current')).trim();
+  if (branch.isEmpty) throw GitException('detached HEAD 无法 push up to here');
+  await _git(dir, 'push origin ${shQuote('$h:refs/heads/$branch')}');
+}
+
+// _gitEnvRun is _git with extra environment (merged onto the parent env). Only
+// the scripted interactive-rebase helpers need this — they pass
+// GIT_SEQUENCE_EDITOR / GIT_EDITOR so the rebase runs unattended. Keeping it
+// separate leaves the shared _git untouched.
+Future<String> _gitEnvRun(
+  String dir,
+  String args,
+  Map<String, String> env,
+) async {
+  final ProcessResult r;
+  if (Platform.isWindows) {
+    r = await Process.run(
+      'git',
+      splitPosixCommand('-C ${shQuote(dir)} $args'),
+      environment: env,
+    );
+  } else {
+    final shell = Platform.environment['SHELL'] ?? '/bin/sh';
+    r = await Process.run(
+      shell,
+      ['-lc', 'git -C ${shQuote(dir)} $args'],
+      environment: env,
+    );
+  }
+  if (r.exitCode != 0) {
+    final e = (r.stderr as String).trim();
+    throw GitException(e.isNotEmpty ? e : 'git 失败 (exit ${r.exitCode})');
+  }
+  return r.stdout.toString();
+}
+
+// _rebaseTodo runs a non-interactive `git rebase -i <base>` whose todo is edited
+// by a generated GIT_SEQUENCE_EDITOR script: it rewrites the command word on
+// line [todoLine] to [action] (reword/drop/fixup/squash). When [newMessage] is
+// non-null a GIT_EDITOR script writes it (reword); otherwise the editor accepts
+// git's default (squash's pre-filled combined message / never invoked for
+// fixup+drop). --autostash preserves the user's uncommitted work. A conflict
+// leaves the repo mid-rebase, surfaced by the existing operation banner.
+//
+// Line targeting instead of hash matching: for reword/drop the target commit is
+// the first (and only interesting) todo entry when basing on `<hash>^`; for
+// fixup/squash-into-parent we base on `<hash>^^` so the parent is line 1 and the
+// commit to meld is line 2.
+Future<void> _rebaseTodo(
+  String dir,
+  String base, {
+  required int todoLine,
+  required String action,
+  String? newMessage,
+}) async {
+  final tmp = await Directory.systemTemp.createTemp('cc-rebase');
+  try {
+    final seq = File('${tmp.path}/seq.sh');
+    await seq.writeAsString(
+      'awk -v n=$todoLine \'NR==n && /^[a-z]+ /'
+      '{sub(/^[a-z]+/,"$action")}1\' "\$1" > "\$1.cc" && mv "\$1.cc" "\$1"\n',
+    );
+    final env = <String, String>{'GIT_SEQUENCE_EDITOR': 'sh ${seq.path}'};
+    if (newMessage != null) {
+      final msg = File('${tmp.path}/msg.txt');
+      await msg.writeAsString(
+        newMessage.endsWith('\n') ? newMessage : '$newMessage\n',
+      );
+      final ed = File('${tmp.path}/ed.sh');
+      await ed.writeAsString('cat "${msg.path}" > "\$1"\n');
+      env['GIT_EDITOR'] = 'sh ${ed.path}';
+    } else {
+      env['GIT_EDITOR'] = 'true';
+    }
+    await _gitEnvRun(dir, 'rebase -i --autostash ${shQuote(base)}', env);
+  } finally {
+    await tmp.delete(recursive: true);
+  }
+}
+
+// gitRewordCommit rewrites [hash]'s message. For HEAD the UI uses gitCommitAmend
+// instead; this handles older commits via a scripted reword rebase.
+Future<void> gitRewordCommit(String dir, String hash, String message) async {
+  final h = hash.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  if (message.trim().isEmpty) throw GitException('commit message 不能为空');
+  await _rebaseTodo(dir, '$h^', todoLine: 1, action: 'reword', newMessage: message);
+}
+
+// gitDropCommit removes [hash] from history, replaying its descendants.
+Future<void> gitDropCommit(String dir, String hash) async {
+  final h = hash.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  await _rebaseTodo(dir, '$h^', todoLine: 1, action: 'drop');
+}
+
+// gitFixupIntoParent melds [hash] into its parent — fixup discards [hash]'s
+// message, keepMessage:true squashes and keeps both messages.
+Future<void> gitFixupIntoParent(
+  String dir,
+  String hash, {
+  bool keepMessage = false,
+}) async {
+  final h = hash.trim();
+  if (h.isEmpty) throw GitException('commit hash 不能为空');
+  await _rebaseTodo(
+    dir,
+    '$h^^',
+    todoLine: 2,
+    action: keepMessage ? 'squash' : 'fixup',
+  );
+}

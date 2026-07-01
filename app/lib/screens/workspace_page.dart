@@ -1763,6 +1763,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _openDiffTab opens a read-only diff tab in the center editor showing a
   // commit's / compare's files, focused on [initialPath]. Deduped by [title].
+  @override
   void _openDiffTab(
     List<FileDiff> diffs,
     String title, {
@@ -5279,6 +5280,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() => _selectedGitPath = _workingTreeDiffSelection);
   }
 
+  @override
   Future<void> _selectCommit(ProjectCfg p, GitCommit c) async {
     setState(() {
       _selectedCommit = c.hash;
@@ -5332,6 +5334,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  @override
   Future<void> _compareCommitWithWorking(ProjectCfg p, GitCommit c) async {
     setState(() {
       _bottomTool = _BottomTool.git;
@@ -5359,11 +5362,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  @override
   void _copyCommitHash(GitCommit c) {
     Clipboard.setData(ClipboardData(text: c.hash));
     _snack('已复制 ${c.shortHash}');
   }
 
+  @override
   Future<void> _createBranchFromCommit(ProjectCfg p, GitCommit c) async {
     final safeSubject = c.subject
         .toLowerCase()
@@ -5425,6 +5430,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  @override
   Future<void> _cherryPickCommit(ProjectCfg p, GitCommit c) async {
     final ok = await _confirm(
       'Cherry-pick commit?',
@@ -5444,6 +5450,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  @override
   Future<void> _revertCommit(ProjectCfg p, GitCommit c) async {
     final ok = await _confirm(
       'Revert commit?',
@@ -6489,6 +6496,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       color: rowBg,
       child: InkWell(
         onTap: () => _selectCommit(p, c),
+        onSecondaryTapDown: (d) => _showCommitMenu(d.globalPosition, p, c),
         child: Stack(
           children: [
             if (sel)
@@ -6968,6 +6976,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         InkWell(
           onTap: () =>
               _openDiffTab(all, title, initialPath: f.path, reload: reload),
+          onSecondaryTapDown: (d) =>
+              _showDiffTreeMenu(d.globalPosition, f, all, title, reload),
           child: Padding(
             padding: EdgeInsets.only(
               left: 12.0 + (depth + 1) * 14,
