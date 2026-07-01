@@ -305,8 +305,10 @@ List<_CodeSymbol> _extractCodeSymbols(String path, String text) {
 }
 
 // 符号解析正则:提为模块级 final,编译一次(原先在逐行循环里每行重建)。
+// Matches both top-level funcs (`func Name(`) and methods with a receiver
+// (`func (r *T) Name(`) — the optional group is the receiver, not a second func.
 final _reGoFunc = RegExp(
-  r'^(?:func\s+\([^)]*\)\s*)?func\s+([A-Za-z_][\w]*)\s*\(',
+  r'^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][\w]*)\s*\(',
 );
 final _reGoType = RegExp(r'^type\s+([A-Za-z_][\w]*)\s+(struct|interface)\b');
 final _reDartType = RegExp(

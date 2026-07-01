@@ -48,6 +48,30 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   // selectedText is the currently selected substring (empty when nothing is
   // selected) — the host reads it to forward a code selection to a session.
   String get selectedText => _ctl?.selectedText ?? '';
+  // identifierAtCursor is the code identifier under the caret (null on
+  // whitespace/punctuation). Go-to-definition reads it right after a
+  // Cmd/Ctrl+click — re_editor has already moved the caret to the click point by
+  // then (its desktop pointer-down handler calls render.setPositionAt) — or when
+  // the caret was placed by keyboard before the go-to-def shortcut.
+  String? get identifierAtCursor {
+    final ctl = _ctl;
+    if (ctl == null) return null;
+    final sel = ctl.selection;
+    final idx = sel.extentIndex;
+    if (idx < 0) return null;
+    final lines = ctl.text.split('\n');
+    if (idx >= lines.length) return null;
+    return identifierAtOffset(lines[idx], sel.extentOffset);
+  }
+
+  // caretLine is the caret's 1-based line (null when no buffer is loaded) — the
+  // host pairs it with identifierAtCursor so go-to-definition can tell "you're
+  // already on the definition" from "jump elsewhere".
+  int? get caretLine {
+    final ctl = _ctl;
+    if (ctl == null) return null;
+    return ctl.selection.extentIndex + 1;
+  }
   int get lineCount => text.isEmpty ? 0 : text.split('\n').length;
   String get eol => _crlf ? 'CRLF' : 'LF';
   String get languageLabel => _languageLabelForExt(fileExtOf(widget.path));
@@ -382,6 +406,40 @@ String _languageLabelForExt(String ext) => switch (ext) {
 // fileExtOf returns the lowercased extension of a path's filename.
 String fileExtOf(String path) =>
     pathBaseName(path).split('.').last.toLowerCase();
+
+// identifierAtOffset returns the maximal [A-Za-z0-9_] run in [line] that covers
+// [offset] (the caret sits between chars offset-1 and offset), or null when the
+// caret doesn't touch an identifier. Shared by the editor's identifierAtCursor
+// getter and the workspace go-to-definition trigger.
+String? identifierAtOffset(String line, int offset) {
+  bool isIdent(int c) =>
+      c == 0x5F || // _
+      (c >= 0x30 && c <= 0x39) || // 0-9
+      (c >= 0x41 && c <= 0x5A) || // A-Z
+      (c >= 0x61 && c <= 0x7A); // a-z
+  final n = line.length;
+  if (n == 0) return null;
+  final o = offset.clamp(0, n);
+  // Prefer the char at the caret; fall back to the char before it (caret resting
+  // on a word's right edge).
+  final int start;
+  if (o < n && isIdent(line.codeUnitAt(o))) {
+    start = o;
+  } else if (o > 0 && isIdent(line.codeUnitAt(o - 1))) {
+    start = o - 1;
+  } else {
+    return null;
+  }
+  var lo = start;
+  while (lo > 0 && isIdent(line.codeUnitAt(lo - 1))) {
+    lo--;
+  }
+  var hi = start;
+  while (hi + 1 < n && isIdent(line.codeUnitAt(hi + 1))) {
+    hi++;
+  }
+  return line.substring(lo, hi + 1);
+}
 
 // formatPluginButton is the editor 「格式化」 action for [path]: shown only when
 // a formatter plugin covers the type, disabled (with a reason) when the host

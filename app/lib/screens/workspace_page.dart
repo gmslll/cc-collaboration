@@ -53,6 +53,7 @@ part 'workspace/commit_changes_menu.dart';
 part 'workspace/git_log_branch_menu.dart';
 part 'workspace/git_log_commit_menu.dart';
 part 'workspace/git_log_difftree_menu.dart';
+part 'workspace/symbol_index.dart';
 
 enum _BottomTool { terminal, git }
 
@@ -212,6 +213,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         _GitLogBranchMenu,
         _GitLogCommitMenu,
         _GitLogDiffTreeMenu,
+        _SymbolIndex,
         FsClipboardActions {
   @override
   late AppConfig _cfg = widget.config; // reloaded after config mutations
@@ -2032,6 +2034,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   void _refreshFileTrees([String? selectedPath]) {
+    // Files created/deleted/renamed/formatted → the go-to-definition symbol index
+    // may be stale; drop it so the next jump rebuilds from disk.
+    _invalidateSymbolIndex();
     setState(() {
       _fileTreeRefreshToken++;
       if (selectedPath != null) _revealedProjectFilePath = selectedPath;
@@ -2701,6 +2706,13 @@ class _WorkspacePageState extends State<WorkspacePage>
             _showFileStructure,
         const SingleActivator(LogicalKeyboardKey.f12, control: true):
             _showFileStructure,
+        // Go to definition: bare F12 (VS Code) + Cmd/Ctrl+B (GoLand). Cmd/Ctrl+F12
+        // stays File Structure above; Cmd/Ctrl+left-click is wired in _editorCanvas.
+        const SingleActivator(LogicalKeyboardKey.f12): _goToDefinition,
+        const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
+            _goToDefinition,
+        const SingleActivator(LogicalKeyboardKey.keyB, control: true):
+            _goToDefinition,
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true, alt: true):
             _showGoToSymbol,
         const SingleActivator(
@@ -4665,7 +4677,19 @@ class _WorkspacePageState extends State<WorkspacePage>
       // editor can clear it.
       return Listener(
         onPointerDown: (e) {
-          if (e.buttons == kSecondaryButton) _showEditorSendMenu(e.position);
+          if (e.buttons == kSecondaryButton) {
+            _showEditorSendMenu(e.position);
+            return;
+          }
+          // Cmd/Ctrl + left-click = go to definition. re_editor's own inner
+          // pointer handler (deeper in the hit-test path) has already moved the
+          // caret to the click point; defer to a microtask so we read the settled
+          // caret regardless of handler order, then resolve the identifier under it.
+          if (e.buttons == kPrimaryButton &&
+              (HardwareKeyboard.instance.isMetaPressed ||
+                  HardwareKeyboard.instance.isControlPressed)) {
+            scheduleMicrotask(_goToDefinition);
+          }
         },
         child: PreviewableEditor(
           path: f.path,
