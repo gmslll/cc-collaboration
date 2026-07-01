@@ -55,6 +55,7 @@ dependencies:
   share_plus: ^10.0.0 # share a received file out to the phone's Files app
   device_info_plus: ^10.1.0 # phone reports its device name to the desktop host
   flutter_webrtc: ^1.2.0 # app-native screen/window sharing over WebRTC
+  libghostty: ^0.0.10
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -94,6 +95,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/libghostty-wasm32-freestanding.wasm
     - assets/file_icons/
 
   fonts:

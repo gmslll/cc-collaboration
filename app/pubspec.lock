@@ -431,6 +431,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.2"
+  libghostty:
+    dependency: "direct main"
+    description:
+      name: libghostty
+      sha256: "184dd9be3e05c0ddf15999faad6031525d0e7dd3f53b65f8511edb7a383d10e6"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.10"
   lints:
     dependency: transitive
     description:

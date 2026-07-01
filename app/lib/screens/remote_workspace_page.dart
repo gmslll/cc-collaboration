@@ -12,6 +12,7 @@ import 'package:xterm/xterm.dart';
 import '../live_activity/live_activity.dart';
 import '../local/diff_parse.dart';
 import '../local/hook_activity.dart';
+import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
@@ -20,6 +21,7 @@ import '../remote/remote_client.dart';
 import '../screen_share/models.dart';
 import '../syntax.dart';
 import '../terminal_mouse.dart' show terminalWheel;
+import '../terminal_snapshot_formatter.dart';
 import '../theme.dart';
 import '../voice/speaker.dart';
 import '../voice/stt.dart';
@@ -428,13 +430,6 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     }
   }
 
-  // _fmtBytes is a compact human size (1.2 MB / 340 KB / 12 B) for transfer rows.
-  String _fmtBytes(int n) {
-    if (n >= 1024 * 1024) return '${(n / (1024 * 1024)).toStringAsFixed(1)} MB';
-    if (n >= 1024) return '${(n / 1024).toStringAsFixed(0)} KB';
-    return '$n B';
-  }
-
   // Shared bits for the transfer hub's "已发送" / "已收文件" sections.
   Widget _fileSectionHeader(String label) => Padding(
     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -483,7 +478,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     final res = await FilePicker.platform.pickFiles();
     final path = res?.files.single.path;
     if (path == null || !mounted) return; // cancelled
-    final name = path.split('/').last;
+    final name = pathBaseName(path);
     snack(context, '正在发送 $name…');
     _c.sendFile(
       path,
@@ -641,7 +636,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   RemoteRootInfo? _rootForSession(RemoteSession s) {
     RemoteRootInfo? best;
     for (final r in _c.roots) {
-      if (s.workdir == r.path || s.workdir.startsWith('${r.path}/')) {
+      if (pathWithin(s.workdir, r.path)) {
         if (best == null || r.path.length > best.path.length) best = r;
       }
     }
@@ -673,9 +668,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Widget _sessionsTab() {
     if (_c.sessions.isEmpty) {
-      return centerMsg(
-        '没有会话。\n点右下角 + 可新建 Shell / Claude / Codex / 总管会话。',
-      );
+      return centerMsg('没有会话。\n点右下角 + 可新建 Shell / Claude / Codex / 总管会话。');
     }
     // Group sessions by workspace → project (matching workdir to a root); any
     // session not under a known root falls into "其他".
@@ -919,7 +912,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     if (root == null) {
       sub = s.workdir; // orphan — show the full path
     } else if (inWorktree) {
-      final rel = s.workdir.substring(root.path.length + 1);
+      final rel = pathRelativeTo(root.path, s.workdir);
       sub = rel.startsWith('.worktrees/')
           ? rel.substring('.worktrees/'.length)
           : rel;
@@ -1071,9 +1064,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                         DropdownMenuItem(
                           value: w.path,
                           child: Text(
-                            w.branch.isEmpty
-                                ? w.path.split('/').last
-                                : w.branch,
+                            w.branch.isEmpty ? pathBaseName(w.path) : w.branch,
                           ),
                         ),
                     ],
@@ -1111,6 +1102,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                       onSelectionChanged: (s) =>
                           setLocal(() => supervisorAgent = s.first),
                     ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => _editSupervisorKnowledge(workdir),
+                        icon: const Icon(Icons.menu_book_outlined, size: 18),
+                        label: const Text('编辑知识库'),
+                      ),
+                    ),
                   ],
                 ],
               );
@@ -1134,6 +1133,17 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           ],
         ),
       ),
+    );
+  }
+
+  // Open the supervisor knowledge-base editor scoped to a workdir. Targets
+  // <workdir>/.cc-handoff/supervisor — the same path `cc-handoff supervisor
+  // context` reads relative to the launched session's CWD.
+  Future<void> _editSupervisorKnowledge(String workdir) async {
+    final dir = pathJoin(pathJoin(workdir, '.cc-handoff'), 'supervisor');
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _SupervisorKnowledgeDialog(client: _c, dir: dir),
     );
   }
 
@@ -1177,7 +1187,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             dense: true,
             leading: const Icon(Icons.arrow_back_rounded, size: 20),
             title: Text(
-              dir.split('/').last,
+              pathBaseName(dir),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -1272,7 +1282,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             dense: true,
             leading: const Icon(Icons.arrow_back_rounded, size: 20),
             title: Text(
-              _gitRepo!.split('/').last,
+              pathBaseName(_gitRepo!),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -1833,8 +1843,8 @@ class _ScreenShareViewerPageState extends State<ScreenShareViewerPage> {
                   child: _c.shareViewer.initialized
                       ? RTCVideoView(
                           _c.shareViewer.renderer,
-                          objectFit:
-                              RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                          objectFit: RTCVideoViewObjectFit
+                              .RTCVideoViewObjectFitContain,
                         )
                       : const Center(child: CircularProgressIndicator()),
                 ),
@@ -1984,7 +1994,11 @@ class _RemoteTerminalScreen extends StatefulWidget {
 
 class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // Owned controller so the copy button can read the long-press selection.
-  final TerminalController _controller = TerminalController();
+  // Match the desktop terminal: keep taps GUI-side so full-screen TUIs don't
+  // consume selection gestures. Wheel/host scrolling is handled separately.
+  final TerminalController _controller = TerminalController(
+    pointerInputs: const PointerInputs.none(),
+  );
 
   // Drives the TerminalView's inner Scrollable so we can force it to the bottom
   // after the host replays history on entry/reload — otherwise the view can land
@@ -1994,6 +2008,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // window to catch the async replay chunks; once at the bottom xterm sticks.
   final ScrollController _termScroll = ScrollController();
   Timer? _stickTimer;
+  Timer? _wheelFlushTimer;
+  int _pendingWheelTicks = 0;
+  bool _localReviewScroll = Prefs.getBool('remote.localReviewScroll');
 
   // Customizable on-screen key bar (shared across sessions via Prefs).
   late List<_KeyButton> _keys = _loadKeyButtons();
@@ -2191,6 +2208,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     widget.client.leaveViewedSession(widget.session.sid);
     if (_laStarted) LiveActivity.end();
     _stopScroll();
+    _wheelFlushTimer?.cancel();
+    _wheelFlushTimer = null;
+    _pendingWheelTicks = 0;
     _stickTimer?.cancel();
     _termScroll.dispose();
     _speaker.stop();
@@ -2295,7 +2315,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       snack(context, '请先长按选择文本');
       return;
     }
-    Clipboard.setData(ClipboardData(text: _term.buffer.getText(sel)));
+    final text = XtermSnapshotFormatter(
+      _term,
+    ).plain(range: sel, trimTrailingBlankLines: false);
+    Clipboard.setData(ClipboardData(text: text));
     _controller.clearSelection();
     snack(context, '已复制');
   }
@@ -2315,7 +2338,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     final res = await FilePicker.platform.pickFiles(type: FileType.image);
     final path = res?.files.single.path;
     if (path == null || !mounted) return; // cancelled
-    final name = path.split('/').last;
+    final name = pathBaseName(path);
     snack(context, '正在发送图片 $name…', clearPrevious: true);
     widget.client.sendFile(
       path,
@@ -2345,9 +2368,12 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   // reports to the host like a Mac wheel would. Codex keeps its transcript in
   // the main buffer with real scrollback; even when it enables mouse reporting,
   // the phone must keep native scrollback enabled so swipe-up can read history.
-  bool get _usesHostWheelScroll =>
+  bool get _canUseHostWheelScroll =>
       widget.session.agent.trim().toLowerCase() != 'codex' &&
       _term.mouseMode.reportScroll;
+
+  bool get _usesHostWheelScroll =>
+      _canUseHostWheelScroll && !_localReviewScroll;
 
   void _scrollLocal(bool up, {int ticks = 1}) {
     if (!_termScroll.hasClients) return;
@@ -2364,8 +2390,16 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       _scrollLocal(up, ticks: ticks);
       return;
     }
-    final seq = terminalWheel(_term, up: up);
-    if (seq != null) widget.client.sendKeys(widget.session.sid, seq * ticks);
+    _pendingWheelTicks += up ? -ticks : ticks;
+    _wheelFlushTimer ??= Timer(const Duration(milliseconds: 16), () {
+      _wheelFlushTimer = null;
+      final pending = _pendingWheelTicks;
+      _pendingWheelTicks = 0;
+      if (pending == 0 || !mounted) return;
+      final seq = terminalWheel(_term, up: pending < 0);
+      if (seq == null) return;
+      widget.client.sendKeys(widget.session.sid, seq * pending.abs());
+    });
   }
 
   // Hold-to-scroll: pressing 滚↑/滚↓ nudges once, then holding repeats the wheel
@@ -2383,6 +2417,19 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   void _stopScroll() {
     _scrollHold?.cancel();
     _scrollHold = null;
+    _flushPendingWheel();
+  }
+
+  void _flushPendingWheel() {
+    _wheelFlushTimer?.cancel();
+    _wheelFlushTimer = null;
+    final pending = _pendingWheelTicks;
+    _pendingWheelTicks = 0;
+    if (pending == 0 || !mounted) return;
+    final seq = terminalWheel(_term, up: pending < 0);
+    if (seq != null) {
+      widget.client.sendKeys(widget.session.sid, seq * pending.abs());
+    }
   }
 
   // _clearScrollback wipes the phone's LOCAL scrollback (the history the host
@@ -2404,6 +2451,17 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     c.historyMode = c.historyMode == 'ansi' ? 'text' : 'ansi';
     Prefs.setString('remote.historyMode', c.historyMode);
     _reload(); // re-pulls history in the new mode + rebuilds the label (its snack)
+  }
+
+  void _toggleLocalReviewScroll() {
+    setState(() => _localReviewScroll = !_localReviewScroll);
+    Prefs.setBool('remote.localReviewScroll', _localReviewScroll);
+    _flushPendingWheel();
+    snack(
+      context,
+      _localReviewScroll ? '已切到本地查看滚动' : '已切到远程控制滚动',
+      clearPrevious: true,
+    );
   }
 
   Future<void> _setDefaultViewport() async {
@@ -2590,6 +2648,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
               if (v == 'clear_default_size') _clearDefaultViewport();
               if (v == 'clear') _clearScrollback();
               if (v == 'histmode') _toggleHistoryMode();
+              if (v == 'review_scroll') _toggleLocalReviewScroll();
             },
             itemBuilder: (_) => [
               PopupMenuItem(
@@ -2616,6 +2675,13 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                       : '历史:文本 → 切到彩色',
                 ),
               ),
+              if (_canUseHostWheelScroll)
+                PopupMenuItem(
+                  value: 'review_scroll',
+                  child: Text(
+                    _localReviewScroll ? '滚动:本地查看 → 远程控制' : '滚动:远程控制 → 本地查看',
+                  ),
+                ),
             ],
           ),
         ],
@@ -2679,6 +2745,33 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                         child: Text(
                           _usageLabel!,
                           style: const TextStyle(
+                            color: Color(0xFFD7DAE0),
+                            fontSize: 10.5,
+                            fontFamily: 'JetBrainsMono',
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_canUseHostWheelScroll && _localReviewScroll)
+                  Positioned(
+                    left: 8,
+                    bottom: 8,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xCC1E1E1E),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0x33FFFFFF)),
+                        ),
+                        child: const Text(
+                          '本地查看',
+                          style: TextStyle(
                             color: Color(0xFFD7DAE0),
                             fontSize: 10.5,
                             fontFamily: 'JetBrainsMono',
@@ -3122,7 +3215,15 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 class _RemoteFileViewer extends StatefulWidget {
   final RemoteClient client;
   final String path;
-  const _RemoteFileViewer({required this.client, required this.path});
+  // When non-null and the file does not yet exist (fs.read errors), seed the
+  // editor with this content so the user can save to create it — the host
+  // auto-mkdirs the parent dir on write.
+  final String? initialContent;
+  const _RemoteFileViewer({
+    required this.client,
+    required this.path,
+    this.initialContent,
+  });
 
   @override
   State<_RemoteFileViewer> createState() => _RemoteFileViewerState();
@@ -3162,6 +3263,18 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
         !c.fileLoading) {
       _ctl.text = c.fileContent!;
       _loaded = true;
+    } else if (!_loaded &&
+        widget.initialContent != null &&
+        c.filePath == widget.path &&
+        c.fileError == '文件不存在' &&
+        !c.fileLoading) {
+      // File is missing: seed from the template so saving creates it. Other
+      // errors (forbidden, permission, too large) fall through to the error
+      // view below instead of being masked as "create new file".
+      _ctl.text = widget.initialContent!;
+      _loaded = true;
+      _editing = true;
+      _dirty = true;
     }
     // Save result feedback (saving true -> false).
     if (_wasSaving && !c.fileSaving) {
@@ -3182,7 +3295,7 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          '${widget.path.split('/').last}${_dirty ? ' •' : ''}',
+          '${pathBaseName(widget.path)}${_dirty ? ' •' : ''}',
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
@@ -3236,6 +3349,261 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
               color: CcColors.bg,
               child: highlightedCode(_ctl.text, langIdForPath(widget.path)),
             ),
+    );
+  }
+}
+
+// Default bodies for the supervisor knowledge files — mirror
+// `cc-handoff supervisor init` (cmd/cc-handoff/supervisor.go) so the UI seeds
+// the same content the CLI would write. Keep in sync with that map.
+const String kSupProfileMd = '''# Supervisor Profile
+
+你是这个工作区的总管理 AI。你的职责是观察其它 AI 会话、读取 PRD/知识库、处理待确认事项、协调分歧，并在需要时向用户请求确认。
+
+默认原则:
+- 先读取上下文，再裁决。
+- 高风险操作必须让用户确认。
+- 有产品/架构决策时写入 decisions.md。
+''';
+
+const String kSupPrdMd = '''# PRD
+
+在这里放需求文档。
+''';
+
+const String kSupPrinciplesMd = '''# Principles
+
+在这里放你的思考方式、产品原则、工程偏好和验收标准。
+''';
+
+const String kSupDecisionsMd = '# Decisions\n\n';
+
+// Compact B/KB/MB formatter shared by the transfer hub and the dialogs below.
+String _fmtBytes(int n) {
+  if (n >= 1024 * 1024) return '${(n / (1024 * 1024)).toStringAsFixed(1)} MB';
+  if (n >= 1024) return '${(n / 1024).toStringAsFixed(0)} KB';
+  return '$n B';
+}
+
+// A seedable knowledge file: the default body to write when it doesn't exist
+// yet, plus a one-line caption for its list row.
+class _Seed {
+  const _Seed(this.template, this.caption);
+  final String template;
+  final String caption;
+}
+
+// Mini file browser scoped to <workdir>/.cc-handoff/supervisor. Pins the four
+// canonical files `cc-handoff supervisor context` reads at the root and seeds
+// them from the templates above when they don't exist yet (saving creates the
+// file; the host mkdir -p's the parent dir on write).
+class _SupervisorKnowledgeDialog extends StatefulWidget {
+  final RemoteClient client;
+  final String dir;
+  const _SupervisorKnowledgeDialog({required this.client, required this.dir});
+
+  @override
+  State<_SupervisorKnowledgeDialog> createState() =>
+      _SupervisorKnowledgeDialogState();
+}
+
+class _SupervisorKnowledgeDialogState
+    extends State<_SupervisorKnowledgeDialog> {
+  late String _cwd = widget.dir;
+
+  // Pinned seedable files shown at the supervisor root even before the
+  // directory exists. Mirrors `cc-handoff supervisor init`.
+  static const _seeds = <String, _Seed>{
+    'profile.md': _Seed(kSupProfileMd, '角色与默认原则'),
+    'prd.md': _Seed(kSupPrdMd, '需求文档'),
+    'principles.md': _Seed(kSupPrinciplesMd, '工程原则与验收标准'),
+    'decisions.md': _Seed(kSupDecisionsMd, '已记录的决策'),
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    widget.client.openDir(_cwd);
+  }
+
+  Future<void> _openFile(String name, {String? initial}) async {
+    final path = pathJoin(_cwd, name);
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _RemoteFileViewer(
+          client: widget.client,
+          path: path,
+          initialContent: initial,
+        ),
+      ),
+    );
+    // Refresh so "已存在" reflects files just created/saved.
+    widget.client.openDir(_cwd);
+  }
+
+  Future<void> _newFile() async {
+    final name = await textPrompt(context, title: '新建文件', hint: '文件名.md');
+    if (name == null || name.trim().isEmpty) return;
+    final n = name.trim();
+    _openFile(n.endsWith('.md') ? n : '$n.md', initial: '');
+  }
+
+  void _descend(String name) {
+    setState(() {
+      _cwd = pathJoin(_cwd, name);
+      widget.client.openDir(_cwd);
+    });
+  }
+
+  void _up() {
+    if (pathEquals(_cwd, widget.dir)) return;
+    final (_, parent) = splitFileNameDir(_cwd);
+    // Never ascend above the supervisor root.
+    final next = !pathWithin(parent, widget.dir) ? widget.dir : parent;
+    if (pathEquals(next, _cwd)) return;
+    setState(() {
+      _cwd = next;
+      widget.client.openDir(_cwd);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: CcColors.panel,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 600),
+        child: ListenableBuilder(
+          listenable: widget.client,
+          builder: (BuildContext context, Widget? _) {
+            final c = widget.client;
+            final atRoot = _cwd == widget.dir;
+            final loading = c.fsLoading;
+            // fs.err doesn't carry the path, so treat any error as "ours" —
+            // it means this dir failed to list (usually missing).
+            final mine = !loading && (c.fsPath == _cwd || c.fsError != null);
+            final entries = (mine && c.fsError == null && c.fsPath == _cwd)
+                ? c.fsEntries
+                : const <RemoteEntry>[];
+            final dirMissing = mine && c.fsError != null;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _header(atRoot),
+                const Divider(height: 1),
+                Flexible(
+                  child: loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _body(entries, atRoot, dirMissing),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _header(bool atRoot) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      child: Row(
+        children: [
+          if (!atRoot)
+            IconButton(
+              tooltip: '返回上级',
+              icon: const Icon(Icons.arrow_upward_rounded, size: 20),
+              onPressed: _up,
+            ),
+          const Icon(Icons.menu_book_outlined, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              atRoot ? '总管知识库' : pathBaseName(_cwd),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          IconButton(
+            tooltip: '新建文件',
+            icon: const Icon(Icons.add_rounded, size: 20),
+            onPressed: _newFile,
+          ),
+          IconButton(
+            tooltip: '关闭',
+            icon: const Icon(Icons.close_rounded, size: 20),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(List<RemoteEntry> entries, bool atRoot, bool dirMissing) {
+    final existing = {for (final e in entries) e.name};
+    final rows = <Widget>[];
+
+    if (atRoot) {
+      for (final s in _seeds.entries) {
+        rows.add(
+          _row(
+            Icons.article_outlined,
+            s.key,
+            s.value.caption,
+            existing.contains(s.key),
+            () => _openFile(s.key, initial: s.value.template),
+          ),
+        );
+      }
+    }
+
+    final listed = atRoot
+        ? entries.where((e) => !_seeds.containsKey(e.name))
+        : entries;
+    if (atRoot && listed.isNotEmpty) rows.add(const Divider(height: 1));
+    for (final e in listed) {
+      rows.add(_entryRow(e));
+    }
+
+    if (rows.isEmpty) {
+      return centerMsg(dirMissing ? '目录尚不存在，保存首个文件后将自动创建。' : '（空）点右上 + 新建文件。');
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: rows.length,
+      separatorBuilder: (BuildContext _, int _) =>
+          const Divider(height: 1, indent: 12),
+      itemBuilder: (BuildContext _, int i) => rows[i],
+    );
+  }
+
+  Widget _entryRow(RemoteEntry e) => _row(
+    e.dir ? Icons.folder_outlined : Icons.article_outlined,
+    e.name,
+    e.dir ? '文件夹' : _fmtBytes(e.size),
+    false,
+    e.dir ? () => _descend(e.name) : () => _openFile(e.name),
+  );
+
+  Widget _row(
+    IconData icon,
+    String name,
+    String desc,
+    bool exists,
+    VoidCallback onTap,
+  ) {
+    return ListTile(
+      leading: Icon(icon, size: 20, color: CcColors.muted),
+      minLeadingWidth: 24,
+      title: Text(name, style: const TextStyle(fontSize: 14)),
+      subtitle: Text(
+        desc,
+        style: TextStyle(fontSize: 12, color: CcColors.muted),
+      ),
+      trailing: exists
+          ? Text('已存在', style: TextStyle(fontSize: 11, color: CcColors.subtle))
+          : null,
+      onTap: onTap,
     );
   }
 }
@@ -3587,7 +3955,7 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
   // A throwaway terminal we paint the host's coloured screen snapshot into — a
   // real xterm view, not stripped text.
-  final Terminal _term = Terminal(maxLines: 200);
+  final Terminal _term = ccTerminal(maxLines: 200);
   String? _lastScreen;
   Timer? _timer;
 

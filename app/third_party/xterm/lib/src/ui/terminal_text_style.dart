@@ -57,6 +57,7 @@ class TerminalStyle {
     bool bold = false,
     bool italic = false,
     bool underline = false,
+    List<FontFeature>? fontFeatures,
   }) {
     return TextStyle(
       fontSize: fontSize,
@@ -68,6 +69,7 @@ class TerminalStyle {
       fontWeight: bold ? FontWeight.bold : FontWeight.normal,
       fontStyle: italic ? FontStyle.italic : FontStyle.normal,
       decoration: underline ? TextDecoration.underline : TextDecoration.none,
+      fontFeatures: fontFeatures,
     );
   }
 

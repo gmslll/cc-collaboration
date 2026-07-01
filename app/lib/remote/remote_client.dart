@@ -5,11 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
 import '../local/hook_activity.dart';
+import '../local/path_utils.dart';
 import '../local/session_overview.dart';
 import '../notifications.dart';
 import '../screen_share/models.dart';
 import '../screen_share/webrtc.dart';
 import '../terminal_mouse.dart';
+import '../terminal_theme.dart';
 import 'file_fs.dart';
 import 'file_transfer.dart';
 import 'remote_channel.dart';
@@ -54,8 +56,10 @@ class RemoteWorktree {
   final String path;
   final String branch;
   RemoteWorktree(this.path, this.branch);
-  String get name =>
-      path.split('/').lastWhere((s) => s.isNotEmpty, orElse: () => path);
+  String get name {
+    final name = pathBaseName(path);
+    return name.isEmpty ? path : name;
+  }
 }
 
 class RemoteEntry {
@@ -308,7 +312,7 @@ class RemoteClient extends RemoteChannel {
     void Function(int sent, int total)? onProgress,
     void Function(bool ok, String msg)? onDone,
   }) {
-    final name = path.split('/').last;
+    final name = pathBaseName(path);
     late final FileSendHandle h;
     h = sendFileOverChannel(
       path: path,
@@ -660,7 +664,7 @@ class RemoteClient extends RemoteChannel {
         fsEntries = [
           for (final e in (f['entries'] as List? ?? []))
             RemoteEntry(
-              e['name'] as String,
+              pathBaseName(e['name'] as String? ?? ''),
               (e['dir'] as bool?) ?? false,
               (e['size'] as num?)?.toInt() ?? 0,
             ),
@@ -866,7 +870,7 @@ class RemoteClient extends RemoteChannel {
   Terminal terminalFor(String sid) {
     final existing = _terminals[sid];
     if (existing != null) return existing;
-    final term = Terminal(maxLines: 5000);
+    final term = ccTerminal(maxLines: 5000);
     _terminals[sid] = term;
     _configureTerminalForSession(sid, term);
     // Same wheel fix as the desktop so touch-scroll reaches full-screen TUIs;

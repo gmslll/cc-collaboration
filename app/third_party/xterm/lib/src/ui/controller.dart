@@ -20,6 +20,8 @@ class TerminalController with ChangeNotifier {
 
   CellAnchor? _selectionBase;
   CellAnchor? _selectionExtent;
+  CellOffset? _selectionBaseOffset;
+  CellOffset? _selectionExtentOffset;
 
   SelectionMode get selectionMode => _selectionMode;
   SelectionMode _selectionMode;
@@ -36,6 +38,12 @@ class TerminalController with ChangeNotifier {
   final _highlights = <TerminalHighlight>[];
 
   BufferRange? get selection {
+    final baseOffset = _selectionBaseOffset;
+    final extentOffset = _selectionExtentOffset;
+    if (baseOffset != null && extentOffset != null) {
+      return _createRange(baseOffset, extentOffset);
+    }
+
     final base = _selectionBase;
     final extent = _selectionExtent;
 
@@ -54,6 +62,9 @@ class TerminalController with ChangeNotifier {
   /// the ownership of [base] and [extent] and will dispose them when the
   /// selection is cleared or changed.
   void setSelection(CellAnchor base, CellAnchor extent, {SelectionMode? mode}) {
+    _selectionBaseOffset = null;
+    _selectionExtentOffset = null;
+
     _selectionBase?.dispose();
     _selectionBase = base;
 
@@ -65,6 +76,43 @@ class TerminalController with ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  /// Set selection from stable buffer offsets. This is preferable for user
+  /// drag selection because rows may be replaced or reflowed while an agent is
+  /// streaming output, which can detach line anchors mid-gesture.
+  void setSelectionOffsets(
+    CellOffset base,
+    CellOffset extent, {
+    SelectionMode? mode,
+  }) {
+    _selectionBase?.dispose();
+    _selectionBase = null;
+
+    _selectionExtent?.dispose();
+    _selectionExtent = null;
+
+    _selectionBaseOffset = base;
+    _selectionExtentOffset = extent;
+
+    if (mode != null) {
+      _selectionMode = mode;
+    }
+
+    notifyListeners();
+  }
+
+  void pruneSelectionOffsets(int rowCount) {
+    final base = _selectionBaseOffset;
+    final extent = _selectionExtentOffset;
+    if (base == null || extent == null) return;
+    if (base.y >= 0 &&
+        base.y < rowCount &&
+        extent.y >= 0 &&
+        extent.y < rowCount) {
+      return;
+    }
+    clearSelection();
   }
 
   BufferRange _createRange(CellOffset begin, CellOffset end) {
@@ -96,6 +144,8 @@ class TerminalController with ChangeNotifier {
     _selectionBase = null;
     _selectionExtent?.dispose();
     _selectionExtent = null;
+    _selectionBaseOffset = null;
+    _selectionExtentOffset = null;
     notifyListeners();
   }
 

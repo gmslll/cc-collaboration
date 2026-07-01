@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'path_utils.dart';
 import 'shell.dart';
 
 class Worktree {
@@ -7,8 +8,10 @@ class Worktree {
   final String branch; // short branch; empty when detached
   const Worktree(this.path, this.branch);
 
-  String get name =>
-      path.split('/').lastWhere((s) => s.isNotEmpty, orElse: () => path);
+  String get name {
+    final name = pathBaseName(path);
+    return name.isEmpty ? path : name;
+  }
 
   // handoff-pickup worktrees use branch h_<shortid>[_<branch>] (config.HandoffWorktreeBranch).
   bool get isHandoff => branch.startsWith('h_');
@@ -22,12 +25,19 @@ Future<List<Worktree>> listWorktrees(String projectPath) async {
     final ProcessResult r;
     if (Platform.isWindows) {
       // No POSIX shell on Windows; run git directly (the GUI inherits PATH).
-      r = await Process.run(
-          'git', ['-C', projectPath, 'worktree', 'list', '--porcelain']);
+      r = await Process.run('git', [
+        '-C',
+        projectPath,
+        'worktree',
+        'list',
+        '--porcelain',
+      ]);
     } else {
       final shell = Platform.environment['SHELL'] ?? '/bin/sh';
-      r = await Process.run(shell,
-          ['-lc', 'git -C ${shQuote(projectPath)} worktree list --porcelain']);
+      r = await Process.run(shell, [
+        '-lc',
+        'git -C ${shQuote(projectPath)} worktree list --porcelain',
+      ]);
     }
     if (r.exitCode != 0) return const [];
 

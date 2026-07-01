@@ -107,7 +107,7 @@ class _GoToSymbolDialogState extends State<_GoToSymbolDialog> {
     entries.sort((a, b) => a.path.compareTo(b.path));
     for (final e in entries) {
       if (out.length >= 2200) return;
-      final name = e.path.split('/').last;
+      final name = pathBaseName(e.path);
       if (_searchSkipDirs.contains(name)) continue;
       if (e is Directory) {
         await _scanDir(e, root, project, out);
@@ -122,9 +122,7 @@ class _GoToSymbolDialogState extends State<_GoToSymbolDialog> {
         } catch (_) {
           continue;
         }
-        final rel = e.path.startsWith('$root/')
-            ? e.path.substring(root.length + 1)
-            : e.path;
+        final rel = pathRelativeTo(root, e.path);
         for (final s in _extractCodeSymbols(e.path, text)) {
           out.add(
             _SymbolHit(project: project, path: e.path, rel: rel, symbol: s),
@@ -545,7 +543,7 @@ class _FindInFilesDialogState extends State<_FindInFilesDialog> {
     entries.sort((a, b) => a.path.compareTo(b.path));
     for (final e in entries) {
       if (out.length >= 300) return;
-      final name = e.path.split('/').last;
+      final name = pathBaseName(e.path);
       if (_searchSkipDirs.contains(name)) continue;
       if (e is Directory) {
         await _searchDir(e, root, project, query, out);
@@ -563,7 +561,7 @@ class _FindInFilesDialogState extends State<_FindInFilesDialog> {
     List<_SearchHit> out,
   ) async {
     if (out.length >= 300) return;
-    final name = file.path.split('/').last;
+    final name = pathBaseName(file.path);
     if (_looksBinaryOrHuge(file, name)) return;
     String content;
     try {
@@ -572,9 +570,7 @@ class _FindInFilesDialogState extends State<_FindInFilesDialog> {
       return;
     }
     final lower = query.toLowerCase();
-    final rel = file.path.startsWith('$root/')
-        ? file.path.substring(root.length + 1)
-        : file.path;
+    final rel = pathRelativeTo(root, file.path);
     final lines = content.split('\n');
     for (var i = 0; i < lines.length && out.length < 300; i++) {
       final line = lines[i];
@@ -780,7 +776,7 @@ class _FindUsagesDialogState extends State<_FindUsagesDialog> {
     entries.sort((a, b) => a.path.compareTo(b.path));
     for (final e in entries) {
       if (out.length >= 300) return;
-      final entryName = e.path.split('/').last;
+      final entryName = pathBaseName(e.path);
       if (_searchSkipDirs.contains(entryName)) continue;
       if (e is Directory) {
         await _searchDir(e, root, project, symbolName, out);
@@ -798,7 +794,7 @@ class _FindUsagesDialogState extends State<_FindUsagesDialog> {
     List<_SearchHit> out,
   ) async {
     if (out.length >= 300) return;
-    final name = file.path.split('/').last;
+    final name = pathBaseName(file.path);
     if (_looksBinaryOrHuge(file, name)) return;
     String content;
     try {
@@ -806,9 +802,7 @@ class _FindUsagesDialogState extends State<_FindUsagesDialog> {
     } catch (_) {
       return;
     }
-    final rel = file.path.startsWith('$root/')
-        ? file.path.substring(root.length + 1)
-        : file.path;
+    final rel = pathRelativeTo(root, file.path);
     final lines = content.split('\n');
     for (var i = 0; i < lines.length && out.length < 300; i++) {
       final line = lines[i];
@@ -1098,7 +1092,7 @@ class _FileStructureDialogState extends State<_FileStructureDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.path.split('/').last;
+    final name = pathBaseName(widget.path);
     final symbols = _filtered;
     return Dialog(
       child: SizedBox(
@@ -1233,7 +1227,7 @@ class _FindInCurrentFileDialogState extends State<_FindInCurrentFileDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.path.split('/').last;
+    final name = pathBaseName(widget.path);
     return Dialog(
       child: SizedBox(
         width: 760,

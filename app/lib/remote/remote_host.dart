@@ -5,6 +5,7 @@ import 'dart:math' show min;
 
 import '../local/git.dart';
 import '../local/hook_activity.dart';
+import '../local/path_utils.dart';
 import '../local/session_overview.dart';
 import '../local/worktrees.dart';
 import '../screen_share/webrtc.dart';
@@ -97,7 +98,7 @@ class RemoteHost extends RemoteChannel {
   // it against the project root / its .worktrees/ before launching (the desktop
   // layer owns the real project list, so the check lives there, not here).
   final void Function(String projectPath, String agent, String? workdir)?
-      onNewSession;
+  onNewSession;
   final void Function(String sid)? onCloseSession;
   final void Function(String sid, String name)? onRenameSession;
   // Config mutations (worktree/workspace/project add/remove) — run the matching
@@ -119,7 +120,8 @@ class RemoteHost extends RemoteChannel {
 
   int _clients = 0;
   final Map<String, Set<int>> _watchers = {}; // session id -> watching clients
-  final Map<String, _OutputBatcher> _batchers = {}; // session id -> output coalescer
+  final Map<String, _OutputBatcher> _batchers =
+      {}; // session id -> output coalescer
   static const int _maxRead = 2 * 1024 * 1024; // 2MB file-read cap
 
   bool get sharing => active;
@@ -194,7 +196,7 @@ class RemoteHost extends RemoteChannel {
   // rows created (empty when no phone is connected); the desktop UI watches
   // `outgoing` for live progress.
   List<FileXfer> sendFileToClients(String path) {
-    final name = sanitizeFileName(path.split('/').last);
+    final name = sanitizeFileName(pathBaseName(path));
     final batch = <FileXfer>[];
     for (final connId in _clientNames.keys.toList()) {
       final peerName = _clientNames[connId] ?? '手机';
@@ -361,7 +363,12 @@ class RemoteHost extends RemoteChannel {
         // A submit (Enter) sent to an agent session means it's now working —
         // flip the phone's Live Activity to "thinking" until onAgentDone.
         if (s != null && s.isAgent && (d.contains('\r') || d.contains('\n'))) {
-          broadcastStatus(s.id, true, '思考中…', usage: s.usage.value?.shortLabel());
+          broadcastStatus(
+            s.id,
+            true,
+            '思考中…',
+            usage: s.usage.value?.shortLabel(),
+          );
         }
       case 'screen':
         // One-shot current-screen snapshot for the phone's quick-reply popup —
@@ -505,9 +512,9 @@ class RemoteHost extends RemoteChannel {
   // _rootsPayload is the `roots` frame body: the project list plus ALL workspace
   // names (so empty workspaces show on the phone). Shared by reply + broadcast.
   Map<String, dynamic> _rootsPayload() => {
-        'items': _rootItems(),
-        'workspaces': workspaces?.call() ?? const <String>[],
-      };
+    'items': _rootItems(),
+    'workspaces': workspaces?.call() ?? const <String>[],
+  };
 
   void _replyList(int to) {
     send({'t': 'sessions', 'to': to, 'items': _sessionItems()});
@@ -545,13 +552,7 @@ class RemoteHost extends RemoteChannel {
   // sessions/roots snapshots, which replay on connect).
   void broadcastNotify(String title, String body, {String? sid}) {
     if (!connected) return;
-    send({
-      't': 'notify',
-      'to': 0,
-      'title': title,
-      'body': body,
-      'sid': ?sid,
-    });
+    send({'t': 'notify', 'to': 0, 'title': title, 'body': body, 'sid': ?sid});
   }
 
   // broadcastReply pushes an agent's clean reply text to the phones watching
@@ -569,7 +570,13 @@ class RemoteHost extends RemoteChannel {
   void broadcastStatus(String sid, bool working, String text, {String? usage}) {
     if (!connected) return;
     for (final c in _watchers[sid] ?? const <int>{}) {
-      final m = {'t': 'status', 'to': c, 'sid': sid, 'working': working, 'text': text};
+      final m = {
+        't': 'status',
+        'to': c,
+        'sid': sid,
+        'working': working,
+        'text': text,
+      };
       if (usage != null && usage.isNotEmpty) m['usage'] = usage;
       send(m);
     }
@@ -625,7 +632,12 @@ class RemoteHost extends RemoteChannel {
     for (var i = 0; i < bl.length;) {
       var end = min(i + _maxFrameChars, bl.length);
       if (end < bl.length && _isHighSurrogate(bl.codeUnitAt(end - 1))) end++;
-      send({'t': 'term.output', 'to': from, 'sid': s.id, 'd': bl.substring(i, end)});
+      send({
+        't': 'term.output',
+        'to': from,
+        'sid': s.id,
+        'd': bl.substring(i, end),
+      });
       i = end;
     }
     (_watchers[s.id] ??= {}).add(from);
@@ -674,26 +686,10 @@ class RemoteHost extends RemoteChannel {
     _watchers.clear();
   }
 
-  // _norm resolves '.'/'..' segments so a client can't traverse out of a root.
-  String _norm(String p) {
-    final parts = <String>[];
-    for (final seg in p.split('/')) {
-      if (seg.isEmpty || seg == '.') continue;
-      if (seg == '..') {
-        if (parts.isNotEmpty) parts.removeLast();
-        continue;
-      }
-      parts.add(seg);
-    }
-    return '/${parts.join('/')}';
-  }
-
   String? _safePath(String? path) {
     if (path == null || path.isEmpty) return null;
-    final norm = _norm(path);
     for (final r in roots()) {
-      final rn = _norm(r.path);
-      if (norm == rn || norm.startsWith('$rn/')) return norm;
+      if (pathWithin(path, r.path)) return path;
     }
     return null;
   }
@@ -709,7 +705,7 @@ class RemoteHost extends RemoteChannel {
     final entries = <Map<String, dynamic>>[];
     try {
       await for (final e in Directory(path).list(followLinks: false)) {
-        final name = e.path.split('/').last;
+        final name = pathBaseName(e.path);
         if (kIgnoredEntries.contains(name)) continue;
         final isDir = e is Directory;
         var size = 0;
@@ -752,6 +748,10 @@ class RemoteHost extends RemoteChannel {
       final bytes = await file.readAsBytes();
       final content = const Utf8Decoder(allowMalformed: true).convert(bytes);
       send({'t': 'fs.read.ok', 'to': to, 'path': path, 'content': content});
+    } on PathNotFoundException {
+      // "Does not exist" — callers match this stable message to seed a
+      // brand-new file. Other errors (permission, etc.) are surfaced as-is.
+      send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '文件不存在'});
     } catch (e) {
       send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '$e'});
     }
@@ -779,6 +779,9 @@ class RemoteHost extends RemoteChannel {
         final existing = await File(path).readAsString();
         if (existing.contains('\r\n')) out = content.replaceAll('\n', '\r\n');
       } catch (_) {}
+      // Create missing parent dirs (e.g. .cc-handoff/supervisor/) so saving a
+      // brand-new file in a not-yet-existing subdir succeeds.
+      await Directory(path).parent.create(recursive: true);
       await File(path).writeAsString(out);
       send({'t': 'fs.write.ok', 'to': to, 'path': path});
     } catch (e) {
@@ -843,8 +846,11 @@ class RemoteHost extends RemoteChannel {
     try {
       // full=true → whole-file context (the diff viewer's 「全部」 toggle).
       final full = f['full'] == true;
-      final diff =
-          await gitDiffFileWorking(path, file, context: full ? 999999 : 3);
+      final diff = await gitDiffFileWorking(
+        path,
+        file,
+        context: full ? 999999 : 3,
+      );
       send({'t': 'git.diff.ok', 'to': to, 'file': file, 'diff': diff});
     } catch (e) {
       send({'t': 'git.err', 'to': to, 'msg': '$e'});

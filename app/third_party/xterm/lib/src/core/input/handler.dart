@@ -165,19 +165,27 @@ class CtrlInputHandler implements TerminalInputHandler {
 
   @override
   String? call(TerminalKeyboardEvent event) {
-    if (!event.ctrl || event.shift || event.alt) {
+    if (!event.ctrl || event.alt) {
       return null;
     }
 
     final key = event.key;
 
-    if (key.index >= TerminalKey.keyA.index &&
+    if (!event.shift &&
+        key.index >= TerminalKey.keyA.index &&
         key.index <= TerminalKey.keyZ.index) {
       final input = key.index - TerminalKey.keyA.index + 1;
       return String.fromCharCode(input);
     }
 
-    return null;
+    return switch (key) {
+      TerminalKey.bracketLeft => '\x1b',
+      TerminalKey.backslash => '\x1c',
+      TerminalKey.bracketRight => '\x1d',
+      TerminalKey.digit6 => '\x1e',
+      TerminalKey.minus => '\x1f',
+      _ => null,
+    };
   }
 }
 

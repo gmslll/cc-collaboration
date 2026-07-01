@@ -18,6 +18,7 @@ import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
+import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../local/worktrees.dart';
@@ -89,6 +90,16 @@ class _DiffTreeNode {
   _DiffTreeNode(this.name);
 }
 
+// _LogBranchNode is one folder/leaf in the Git Log branch sidebar.
+class _LogBranchNode {
+  final String name;
+  final String path;
+  final Map<String, _LogBranchNode> children = {};
+  GitBranch? branch;
+
+  _LogBranchNode(this.name, this.path);
+}
+
 class _OpenFile {
   // For a code tab, [path] is the file path. For a read-only diff tab, [diffs]
   // is non-null (the commit/compare files) and [path] is a stable id/label.
@@ -97,7 +108,8 @@ class _OpenFile {
   bool dirty = false;
   List<FileDiff>? diffs; // non-null = a read-only diff tab
   String? diffInitialPath; // file to select first inside the diff
-  bool diffShowTree; // diff tabs: show DiffView's own file tree (false = single-pane)
+  bool
+  diffShowTree; // diff tabs: show DiffView's own file tree (false = single-pane)
   // diffReload re-fetches this diff tab's files at a given git context (for the
   // 全部/相关 toggle); captures the source (commit/compare/working). Null = no toggle.
   Future<List<FileDiff>> Function(int context)? diffReload;
@@ -114,7 +126,7 @@ class _OpenFile {
   }) : line = null;
 
   bool get isDiff => diffs != null;
-  String get name => isDiff ? path : path.split('/').last;
+  String get name => isDiff ? path : pathBaseName(path);
 }
 
 class _CodeSymbol {
@@ -141,7 +153,7 @@ class _CodeLocation {
 
   bool sameAs(_CodeLocation other) => path == other.path && line == other.line;
   String get key => '$path:${line ?? 0}';
-  String get name => path.split('/').last;
+  String get name => pathBaseName(path);
   String get label => line == null ? path : '$path:$line';
 }
 
@@ -151,8 +163,11 @@ class _CodeLocation {
 class _ParkedMessage {
   final String from, sessionId, body;
   _ParkedMessage(this.from, this.sessionId, this.body);
-  Map<String, dynamic> toJson() =>
-      {'from': from, 'session_id': sessionId, 'body': body};
+  Map<String, dynamic> toJson() => {
+    'from': from,
+    'session_id': sessionId,
+    'body': body,
+  };
   _ParkedMessage.fromJson(Map j)
     : from = (j['from'] ?? '').toString(),
       sessionId = (j['session_id'] ?? '').toString(),
@@ -440,7 +455,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!s.isAgent) continue;
       final items = localBusHookActivities(s.id, limit: 12);
       final fp = items
-          .map((a) => '${a.at.microsecondsSinceEpoch}:${a.event}:${a.toolName}:${a.exitCode ?? ''}')
+          .map(
+            (a) =>
+                '${a.at.microsecondsSinceEpoch}:${a.event}:${a.toolName}:${a.exitCode ?? ''}',
+          )
           .join('|');
       if (_hookActivityFingerprints[s.id] == fp) continue;
       _hookActivityFingerprints[s.id] = fp;
@@ -473,7 +491,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         final path = await s.transcriptPath(); // cached resolution
         preview = path == null
             ? ''
-            : await renderTranscriptTail(path, lines: 6, agentKind: s.agentKind);
+            : await renderTranscriptTail(
+                path,
+                lines: 6,
+                agentKind: s.agentKind,
+              );
         if (preview.trim().isEmpty) preview = s.renderSnapshot(6);
       } else {
         preview = s.renderSnapshot(6);
@@ -568,6 +590,8 @@ class _WorkspacePageState extends State<WorkspacePage>
   double _terminalHeight = Prefs.getDouble('ws.terminalHeight', def: 360);
   double _logBranchWidth = Prefs.getDouble('ws.logBranchWidth', def: 240);
   double _logCommitWidth = Prefs.getDouble('ws.logCommitWidth', def: 480);
+  final Set<String> _logBranchExpanded = {};
+  final Set<String> _logBranchGroupsCollapsed = {};
   // shared comfortable-but-compact density for the tree's leaf rows.
   static const _tileDensity = VisualDensity(vertical: -1);
   // Fixed height of a Git Log commit row — shared by the ListView itemExtent and
@@ -600,10 +624,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     _ => null,
   };
 
-  void _ensureSupervisorDocs(String dir) {
-    unawaited(
-      Cli.run(['supervisor', 'init', '--dir', dir]).catchError((_) => ''),
-    );
+  Future<void> _ensureSupervisorDocs(String dir) {
+    return Cli.run(['supervisor', 'init', '--dir', dir]).catchError((_) => '');
   }
 
   @override
@@ -635,10 +657,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       // Turn finished → refresh this session's reply preview (the just-produced
       // assistant message is what the user reviews) then republish. needsReview
       // was already set in _fireDone and republished via onBusyChanged.
-      unawaited(_refreshPreview(s).then((_) {
-        unawaited(_localBus.syncRegistry());
-        _publishOverview();
-      }));
+      unawaited(
+        _refreshPreview(s).then((_) {
+          unawaited(_localBus.syncRegistry());
+          _publishOverview();
+        }),
+      );
       final speakLocal =
           _ttsOn && terms.isNotEmpty && terms[activeTerm].id == s.id;
       final phoneWants = _remoteHost.watching(s.id);
@@ -698,8 +722,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         s.sendText('\r'); // bare 确认
       }
     };
-    widget.overviewStore.previewHandler = (sid) async =>
-        sessionById(sid)?.snapshotAnsi(60); // coloured live screen (incl. prompt)
+    widget.overviewStore.previewHandler = (sid) async => sessionById(
+      sid,
+    )?.snapshotAnsi(60); // coloured live screen (incl. prompt)
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
@@ -836,8 +861,11 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   void _connectRelayPresence() {
     if (!_relayConfigured || _cfg.identity.isEmpty) return;
-    _relaySse = subscribeEvents(_cfg.relayUrl, _cfg.token, _cfg.identity)
-        .listen(_onRelayEvent, onError: (_) {});
+    _relaySse = subscribeEvents(
+      _cfg.relayUrl,
+      _cfg.token,
+      _cfg.identity,
+    ).listen(_onRelayEvent, onError: (_) {});
     _publishSessions();
     _sessionHeartbeat = Timer.periodic(
       const Duration(seconds: 30),
@@ -887,7 +915,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   // _showIncomingMessage asks the user to confirm (and pick the target session)
   // before injecting a peer's text — cross-user content never lands in a session
   // unprompted. Default target = the session the sender picked, else the active.
-  Future<void> _showIncomingMessage(String from, String sid, String body) async {
+  Future<void> _showIncomingMessage(
+    String from,
+    String sid,
+    String body,
+  ) async {
     if (!mounted) return;
     if (terms.isEmpty) {
       _snack('$from 发来内容,但当前没有会话可注入');
@@ -988,8 +1020,9 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Future<void> _saveParked() async {
     try {
-      await File(await _parkedPath())
-          .writeAsString(jsonEncode([for (final m in _parked) m.toJson()]));
+      await File(
+        await _parkedPath(),
+      ).writeAsString(jsonEncode([for (final m in _parked) m.toJson()]));
     } catch (_) {}
   }
 
@@ -1041,7 +1074,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                                 onPressed: () {
                                   _mutateParked(() => _parked.remove(m));
                                   Navigator.pop(ctx);
-                                  _showIncomingMessage(m.from, m.sessionId, m.body);
+                                  _showIncomingMessage(
+                                    m.from,
+                                    m.sessionId,
+                                    m.body,
+                                  );
                                 },
                                 child: const Text('处理'),
                               ),
@@ -1051,7 +1088,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                                 icon: const Icon(Icons.close_rounded, size: 16),
                                 onPressed: () {
                                   _mutateParked(() => _parked.remove(m));
-                                  setSt(() {}); // also refresh this dialog's list
+                                  setSt(
+                                    () {},
+                                  ); // also refresh this dialog's list
                                 },
                               ),
                             ],
@@ -1169,11 +1208,14 @@ class _WorkspacePageState extends State<WorkspacePage>
                             for (final s in sessions!)
                               ListTile(
                                 dense: true,
-                                leading:
-                                    const Icon(Icons.terminal_rounded, size: 16),
+                                leading: const Icon(
+                                  Icons.terminal_rounded,
+                                  size: 16,
+                                ),
                                 title: Text(s.label),
-                                subtitle:
-                                    s.project.isEmpty ? null : Text(s.project),
+                                subtitle: s.project.isEmpty
+                                    ? null
+                                    : Text(s.project),
                                 onTap: () => send(s),
                               ),
                           ],
@@ -1274,7 +1316,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     String preLaunch, {
     bool supervisor = false,
   }) {
-    if (supervisor) _ensureSupervisorDocs(dir);
+    if (supervisor) unawaited(_ensureSupervisorDocs(dir));
     // Pass agent + preLaunch structured (not pre-joined): addTerm mints a fixed
     // session id for claude and TerminalSession rebuilds the actual command with
     // the right resume binding, so a reopened tab returns to its conversation.
@@ -1334,7 +1376,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       return;
     }
     _sendBatch = batch;
-    _showOutgoingDialog(path.split('/').last);
+    _showOutgoingDialog(pathBaseName(path));
   }
 
   // _showOutgoingDialog renders the just-offered batch with a live per-phone
@@ -1436,8 +1478,9 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Color _hostXferColor(FileXfer x) => switch (x.status) {
     XferStatus.done => CcColors.ok,
-    XferStatus.rejected || XferStatus.failed || XferStatus.cancelled =>
-      CcColors.danger,
+    XferStatus.rejected ||
+    XferStatus.failed ||
+    XferStatus.cancelled => CcColors.danger,
     _ => CcColors.muted,
   };
 
@@ -1464,8 +1507,11 @@ class _WorkspacePageState extends State<WorkspacePage>
           // at an arbitrary directory a client asks for.
           final dir =
               (workdir != null &&
-                  (workdir == p.path ||
-                      workdir.startsWith('${p.path}/.worktrees/')))
+                  (pathEquals(workdir, p.path) ||
+                      pathRelativeTo(
+                        p.path,
+                        workdir,
+                      ).startsWith('.worktrees/')))
               ? workdir
               : p.path;
           if (kind.isEmpty || kind == 'shell') {
@@ -2715,13 +2761,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     ProjectCfg? best;
     for (final ws in _cfg.workspaces) {
       for (final p in ws.projects) {
-        if (path == p.path || path.startsWith('${p.path}/')) {
+        if (pathWithin(path, p.path)) {
           if (best == null || p.path.length > best.path.length) best = p;
         }
       }
     }
     if (best == null) return null;
-    final rel = path == best.path ? '' : path.substring(best.path.length + 1);
+    final rel = pathRelativeTo(best.path, path);
     return (project: best, rel: rel);
   }
 
@@ -2793,7 +2839,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (!v.startsWith('send:')) return;
     final target = sessionById(v.substring('send:'.length));
     if (target == null) return;
-    target.pasteText('[来自文件 ${f.path.split('/').last}] $text', submit: false);
+    target.pasteText('[来自文件 ${pathBaseName(f.path)}] $text', submit: false);
     _snack('已发送到 ${target.label}');
   }
 
@@ -2986,8 +3032,12 @@ class _WorkspacePageState extends State<WorkspacePage>
                     editRoot: project.path,
                     onChanged: _refreshGit,
                     onReloadContext: (ctx) async => parseUnifiedDiff(
-                        await gitDiffFileWorking(project.path, relPath,
-                            context: ctx)),
+                      await gitDiffFileWorking(
+                        project.path,
+                        relPath,
+                        context: ctx,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -3109,11 +3159,7 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
           _runChip('Claude', Icons.play_arrow_rounded, _launchDefaultClaude),
           _runChip('Codex', Icons.smart_toy_outlined, _launchDefaultCodex),
-          _runChip(
-            '总管',
-            Icons.account_tree_outlined,
-            _launchDefaultSupervisor,
-          ),
+          _runChip('总管', Icons.account_tree_outlined, _launchDefaultSupervisor),
         ],
         pinnedTrailing: [
           if (_busy)
@@ -3134,10 +3180,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             '${terms.length} sessions',
             style: CcType.code(size: 11.5, color: CcColors.subtle),
           ),
-          if (_parked.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            _parkedBadge(),
-          ],
+          if (_parked.isNotEmpty) ...[const SizedBox(width: 4), _parkedBadge()],
           const SizedBox(width: 4),
           _transcriptToggle(),
           _ttsToggle(),
@@ -3330,10 +3373,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('没有可启动的项目');
       return;
     }
-    final agent = await showDialog<String>(
+    final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('启动总管'),
+        title: const Text('总管'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -3347,6 +3390,13 @@ class _WorkspacePageState extends State<WorkspacePage>
               title: const Text('Codex 总管'),
               onTap: () => Navigator.of(ctx).pop('codex'),
             ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('编辑知识库'),
+              subtitle: const Text('.cc-handoff/supervisor'),
+              onTap: () => Navigator.of(ctx).pop('edit'),
+            ),
           ],
         ),
         actions: [
@@ -3357,11 +3407,20 @@ class _WorkspacePageState extends State<WorkspacePage>
         ],
       ),
     );
-    if (agent == null || !mounted) return;
+    if (choice == null || !mounted) return;
+    if (choice == 'edit') {
+      // The knowledge files live on this machine, so edit them directly with
+      // the local file browser + editor (no relay). Ensure the dir + template
+      // files exist first (cc-handoff supervisor init).
+      await _ensureSupervisorDocs(d.project.path);
+      if (!mounted) return;
+      _openFileBrowser('${d.project.path}/.cc-handoff/supervisor', '总管知识库');
+      return;
+    }
     _openAgent(
       d.project,
       d.project.path,
-      agent,
+      choice,
       d.ws.preLaunch,
       supervisor: true,
     );
@@ -5077,7 +5136,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       setState(() {
         _compareFiles = parseUnifiedDiff(diff);
         _logDiffReload = (ctx) async => parseUnifiedDiff(
-            await gitDiffRefs(p.path, b.name, right, context: ctx));
+          await gitDiffRefs(p.path, b.name, right, context: ctx),
+        );
         _commitFiles = const [];
         _gitLoading = false;
       });
@@ -5104,7 +5164,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       setState(() {
         _compareFiles = parseUnifiedDiff(diff);
         _logDiffReload = (ctx) async => parseUnifiedDiff(
-            await gitDiffRefToWorking(p.path, c.hash, context: ctx));
+          await gitDiffRefToWorking(p.path, c.hash, context: ctx),
+        );
         _commitFiles = const [];
         _gitLoading = false;
       });
@@ -5231,9 +5292,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       setState(() => _gitLoading = false);
       final files = parseUnifiedDiff(diff);
       if (files.isNotEmpty) {
-        _openDiffTab(files, 'Stash · ${s.ref}',
+        _openDiffTab(
+          files,
+          'Stash · ${s.ref}',
           reload: (ctx) async =>
-                parseUnifiedDiff(await gitStashShow(p.path, s.ref, context: ctx)));
+              parseUnifiedDiff(await gitStashShow(p.path, s.ref, context: ctx)),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -5402,7 +5466,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       ],
     );
   }
-
 
   Widget _localChangesList(ProjectCfg p) {
     final visibleChanges = _filteredGitChanges;
@@ -5772,11 +5835,16 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() => _selectedGitPath = path);
     final p = _currentGitProject;
     if (_gitFiles.any((f) => f.path == path)) {
-      _openDiffTab(_gitFiles, 'Working Tree', initialPath: path, showTree: false,
+      _openDiffTab(
+        _gitFiles,
+        'Working Tree',
+        initialPath: path,
+        showTree: false,
         reload: p == null
             ? null
             : (ctx) async =>
-                  parseUnifiedDiff(await gitDiffWorking(p.path, context: ctx)));
+                  parseUnifiedDiff(await gitDiffWorking(p.path, context: ctx)),
+      );
       return;
     }
     if (p == null) return;
@@ -5792,8 +5860,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         'Working Tree · ${path.split('/').last}',
         initialPath: files.first.path,
         showTree: false,
-        reload: (ctx) async =>
-            parseUnifiedDiff(await gitDiffUntracked(p.path, path, context: ctx)),
+        reload: (ctx) async => parseUnifiedDiff(
+          await gitDiffUntracked(p.path, path, context: ctx),
+        ),
       );
     } catch (e) {
       if (mounted) _snack(errorText(e));
@@ -5921,7 +5990,10 @@ class _WorkspacePageState extends State<WorkspacePage>
                           const SizedBox(width: 8),
                           Text(
                             '${commits.length}/${_gitLog.length}',
-                            style: CcType.code(size: 11, color: CcColors.subtle),
+                            style: CcType.code(
+                              size: 11,
+                              color: CcColors.subtle,
+                            ),
                           ),
                         ],
                       ),
@@ -6004,7 +6076,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                         TextButton.icon(
                           onPressed: _gitLoading
                               ? null
-                              : () => _createBranchFromCommit(p, selectedCommit),
+                              : () =>
+                                    _createBranchFromCommit(p, selectedCommit),
                           icon: const Icon(Icons.call_split_rounded, size: 14),
                           label: const Text('Branch'),
                         ),
@@ -6059,7 +6132,9 @@ class _WorkspacePageState extends State<WorkspacePage>
             ? CcColors.accent.withValues(alpha: 0.12)
             : CcColors.panelHigh,
         border: Border.all(
-          color: active ? CcColors.accent.withValues(alpha: 0.5) : CcColors.border,
+          color: active
+              ? CcColors.accent.withValues(alpha: 0.5)
+              : CcColors.border,
         ),
         borderRadius: BorderRadius.circular(CcRadius.sm),
       ),
@@ -6108,7 +6183,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _logBranchFilter merges the "all branches" toggle and the ref picker into a
   // single GoLand-style "Branch ▾" dropdown.
-  static const _logAllSentinel = ' ALL';
+  static const _logAllSentinel = '\x00ALL';
   Widget _logBranchFilter(List<String> logRefs, String effectiveRef) {
     final scoped = _gitLogAllBranches || effectiveRef.isNotEmpty;
     return _logFilterShell(
@@ -6345,6 +6420,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   Widget _logBranchPane(ProjectCfg p) {
     final locals = _gitBranches.where((b) => !b.remote).toList();
     final remotes = _gitBranches.where((b) => b.remote).toList();
+    final localRoot = _buildLogBranchTree(locals, 'local');
+    final remoteRoot = _buildLogBranchTree(remotes, 'remote');
+    final current = _gitBranches.where((b) => b.current).firstOrNull;
+    final localCollapsed = _logBranchGroupsCollapsed.contains('local');
+    final remoteCollapsed = _logBranchGroupsCollapsed.contains('remote');
     return SizedBox(
       width: _logBranchWidth,
       child: DecoratedBox(
@@ -6357,49 +6437,254 @@ class _WorkspacePageState extends State<WorkspacePage>
             : ListView(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 children: [
-                  _branchGroupHeader('Local', locals.length),
-                  for (final b in locals) _logBranchTile(p, b),
+                  _logHeadRow(p, current),
+                  _branchGroupHeader('Local', 'local', localCollapsed),
+                  if (!localCollapsed)
+                    ..._logBranchNodeWidgets(p, localRoot, 'local', 0),
                   if (remotes.isNotEmpty) ...[
-                    _branchGroupHeader('Remote', remotes.length),
-                    for (final b in remotes) _logBranchTile(p, b),
+                    _branchGroupHeader('Remote', 'remote', remoteCollapsed),
+                    if (!remoteCollapsed)
+                      ..._logBranchNodeWidgets(p, remoteRoot, 'remote', 0),
                   ],
+                  _logTagsRow(),
                 ],
               ),
       ),
     );
   }
 
-  Widget _branchGroupHeader(String label, int count) => Padding(
-    padding: const EdgeInsets.fromLTRB(10, 8, 8, 4),
-    child: Row(
-      children: [
-        Text(
-          label.toUpperCase(),
-          style: CcType.code(
-            size: 10.5,
-            color: CcColors.subtle,
-            weight: FontWeight.w700,
+  Widget _logHeadRow(ProjectCfg p, GitBranch? current) {
+    final active =
+        current != null &&
+        !_gitLogAllBranches &&
+        (_gitLogRefFilter.isEmpty || _gitLogRefFilter == current.name);
+    return InkWell(
+      onTap: current == null ? null : () => _filterLogByBranch(current),
+      onSecondaryTapDown: current == null
+          ? null
+          : (d) => _showLogBranchMenu(p, current, d.globalPosition),
+      child: Container(
+        height: 30,
+        color: active ? CcColors.accent.withValues(alpha: 0.10) : null,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'HEAD (Current Branch)',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 12.5,
+            color: CcColors.text,
+            fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(width: 6),
-        Text('$count', style: CcType.code(size: 10.5, color: CcColors.subtle)),
-      ],
+      ),
+    );
+  }
+
+  Widget _branchGroupHeader(String label, String key, bool collapsed) =>
+      InkWell(
+        onTap: () => setState(() {
+          if (collapsed) {
+            _logBranchGroupsCollapsed.remove(key);
+          } else {
+            _logBranchGroupsCollapsed.add(key);
+          }
+        }),
+        child: Container(
+          height: 24,
+          padding: const EdgeInsets.only(left: 8, right: 8),
+          child: Row(
+            children: [
+              Icon(
+                collapsed
+                    ? Icons.chevron_right_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                size: 15,
+                color: CcColors.subtle,
+              ),
+              const SizedBox(width: 3),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: CcColors.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _logTagsRow() => InkWell(
+    onTap: () {},
+    child: Container(
+      height: 26,
+      margin: const EdgeInsets.only(left: 8, right: 8, top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: CcColors.panelHigh,
+        borderRadius: BorderRadius.circular(CcRadius.sm),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.chevron_right_rounded,
+            size: 15,
+            color: CcColors.subtle,
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              'Tags',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CcType.code(size: 12, color: CcColors.muted),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 
-  Widget _logBranchTile(ProjectCfg p, GitBranch b) {
-    final active = !_gitLogAllBranches && _gitLogRefFilter == b.name;
+  _LogBranchNode _buildLogBranchTree(List<GitBranch> branches, String scope) {
+    final root = _LogBranchNode(scope, scope);
+    for (final b in branches) {
+      final parts = b.name.split('/').where((s) => s.isNotEmpty).toList();
+      var node = root;
+      var path = scope;
+      for (final part in parts) {
+        path = '$path/$part';
+        node = node.children.putIfAbsent(
+          part,
+          () => _LogBranchNode(part, path),
+        );
+      }
+      node.branch = b;
+    }
+    return root;
+  }
+
+  List<Widget> _logBranchNodeWidgets(
+    ProjectCfg p,
+    _LogBranchNode node,
+    String scope,
+    int depth,
+  ) {
+    final children = node.children.values.toList()
+      ..sort((a, b) {
+        final af = a.children.isNotEmpty && a.branch == null;
+        final bf = b.children.isNotEmpty && b.branch == null;
+        if (af != bf) return af ? -1 : 1;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    return [
+      for (final child in children) ...[
+        if (child.children.isEmpty && child.branch != null)
+          _logBranchTile(p, child.branch!, child.name, depth)
+        else
+          _logBranchFolderTile(child, scope, depth),
+        if (child.children.isNotEmpty &&
+            _logBranchNodeOpen(child, scope, depth))
+          ..._logBranchNodeWidgets(p, child, scope, depth + 1),
+      ],
+    ];
+  }
+
+  bool _logBranchNodeOpen(_LogBranchNode node, String scope, int depth) {
+    if (_logBranchExpanded.contains(node.path)) return true;
+    if (_logBranchExpanded.contains('-${node.path}')) return false;
+    if (_logBranchNodeHasActiveBranch(node)) return true;
+    return scope == 'remote' && depth == 0;
+  }
+
+  bool _logBranchNodeHasActiveBranch(_LogBranchNode node) {
+    final activeName = _activeLogBranchName;
+    final b = node.branch;
+    if (b != null && activeName == b.name) {
+      return true;
+    }
+    return node.children.values.any(_logBranchNodeHasActiveBranch);
+  }
+
+  String? get _activeLogBranchName {
+    if (_gitLogAllBranches) return null;
+    if (_gitLogRefFilter.isNotEmpty) return _gitLogRefFilter;
+    return _gitBranches.where((b) => b.current).firstOrNull?.name;
+  }
+
+  Widget _logBranchFolderTile(_LogBranchNode node, String scope, int depth) {
+    final open = _logBranchNodeOpen(node, scope, depth);
+    final active = _logBranchNodeHasActiveBranch(node);
+    return InkWell(
+      onTap: () => setState(() {
+        if (open) {
+          _logBranchExpanded
+            ..remove(node.path)
+            ..add('-${node.path}');
+        } else {
+          _logBranchExpanded
+            ..remove('-${node.path}')
+            ..add(node.path);
+        }
+      }),
+      child: Container(
+        height: 26,
+        color: active ? CcColors.accent.withValues(alpha: 0.08) : null,
+        padding: EdgeInsets.only(left: 8 + depth * 16, right: 8),
+        child: Row(
+          children: [
+            Icon(
+              open
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.chevron_right_rounded,
+              size: 15,
+              color: active ? CcColors.accentBright : CcColors.subtle,
+            ),
+            const SizedBox(width: 3),
+            Icon(
+              Icons.folder_outlined,
+              size: 15,
+              color: active ? CcColors.text : CcColors.muted,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                node.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CcType.code(
+                  size: 12,
+                  color: active ? CcColors.text : CcColors.muted,
+                  weight: active ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _logBranchTile(
+    ProjectCfg p,
+    GitBranch b,
+    String label, [
+    int depth = 0,
+  ]) {
+    final active = _activeLogBranchName == b.name;
     return InkWell(
       onTap: () => _filterLogByBranch(b),
       onSecondaryTapDown: (d) => _showLogBranchMenu(p, b, d.globalPosition),
       child: Container(
+        height: 26,
         color: active ? CcColors.accent.withValues(alpha: 0.10) : null,
-        padding: EdgeInsets.only(
-          left: b.remote ? 22 : 12,
-          right: 8,
-          top: 4,
-          bottom: 4,
-        ),
+        padding: EdgeInsets.only(left: 12 + depth * 16, right: 8),
         child: Row(
           children: [
             Icon(
@@ -6414,7 +6699,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                b.name,
+                label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: CcType.code(
@@ -6533,7 +6818,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       final parts = f.path.split('/');
       var node = root;
       for (var i = 0; i < parts.length - 1; i++) {
-        node = node.children.putIfAbsent(parts[i], () => _DiffTreeNode(parts[i]));
+        node = node.children.putIfAbsent(
+          parts[i],
+          () => _DiffTreeNode(parts[i]),
+        );
       }
       node.files.add(f);
     }
@@ -6883,7 +7171,11 @@ class _WorkspacePageState extends State<WorkspacePage>
           icon: Icons.account_tree_rounded,
           label: 'Branches Popup...',
         ),
-        ccMenuItem(value: 'new', icon: Icons.add_rounded, label: 'New Branch...'),
+        ccMenuItem(
+          value: 'new',
+          icon: Icons.add_rounded,
+          label: 'New Branch...',
+        ),
         const PopupMenuDivider(),
         ccMenuItem(value: 'fetch', icon: Icons.sync_rounded, label: 'Fetch'),
         ccMenuItem(
@@ -8485,62 +8777,52 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  PopupMenuButton<String> _projectMenu(WorkspaceCfg ws, ProjectCfg p) =>
-      PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert_rounded, size: 18),
-        tooltip: '项目操作',
-        onSelected: (v) {
-          switch (v) {
-            case 'claude':
-            case 'codex':
-              _openAgent(p, p.path, v, ws.preLaunch);
-            case 'worktree':
-              _newWorktree(ws, p);
-            case 'diff':
-              _openDiff(p.path, p.name);
-            case 'files':
-              _openFileBrowser(p.path, p.name);
-            case 'pr':
-              _openPrs(p);
-            case 'config':
-              _openRepoConfig(p);
-            case 'remove':
-              _removeProject(ws, p);
-          }
-        },
-        itemBuilder: (_) => [
-          ..._agentItems(ws.agent),
-          const PopupMenuDivider(),
-          ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
-          ccMenuItem(
-            value: 'files',
-            icon: Icons.folder_open_rounded,
-            label: '文件',
-          ),
-          if (p.github.isNotEmpty)
-            ccMenuItem(
-              value: 'pr',
-              icon: Icons.merge_rounded,
-              label: 'GitHub PR',
-            ),
-          ccMenuItem(
-            value: 'worktree',
-            icon: Icons.account_tree_rounded,
-            label: '新建 worktree',
-          ),
-          ccMenuItem(
-            value: 'config',
-            icon: Icons.settings_rounded,
-            label: '项目配置',
-          ),
-          ccMenuItem(
-            value: 'remove',
-            icon: Icons.delete_outline_rounded,
-            label: '移除项目',
-            danger: true,
-          ),
-        ],
-      );
+  PopupMenuButton<String> _projectMenu(
+    WorkspaceCfg ws,
+    ProjectCfg p,
+  ) => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert_rounded, size: 18),
+    tooltip: '项目操作',
+    onSelected: (v) {
+      switch (v) {
+        case 'claude':
+        case 'codex':
+          _openAgent(p, p.path, v, ws.preLaunch);
+        case 'worktree':
+          _newWorktree(ws, p);
+        case 'diff':
+          _openDiff(p.path, p.name);
+        case 'files':
+          _openFileBrowser(p.path, p.name);
+        case 'pr':
+          _openPrs(p);
+        case 'config':
+          _openRepoConfig(p);
+        case 'remove':
+          _removeProject(ws, p);
+      }
+    },
+    itemBuilder: (_) => [
+      ..._agentItems(ws.agent),
+      const PopupMenuDivider(),
+      ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
+      ccMenuItem(value: 'files', icon: Icons.folder_open_rounded, label: '文件'),
+      if (p.github.isNotEmpty)
+        ccMenuItem(value: 'pr', icon: Icons.merge_rounded, label: 'GitHub PR'),
+      ccMenuItem(
+        value: 'worktree',
+        icon: Icons.account_tree_rounded,
+        label: '新建 worktree',
+      ),
+      ccMenuItem(value: 'config', icon: Icons.settings_rounded, label: '项目配置'),
+      ccMenuItem(
+        value: 'remove',
+        icon: Icons.delete_outline_rounded,
+        label: '移除项目',
+        danger: true,
+      ),
+    ],
+  );
 
   void _openRepoConfig(ProjectCfg p) {
     Navigator.of(context).push(

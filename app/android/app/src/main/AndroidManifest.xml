@@ -2,6 +2,10 @@
     <!-- Required for release builds to reach the relay (debug/profile manifests
          add this automatically, the release one does not). -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- flutter_webrtc/WebRTC network monitor calls ConnectivityManager when a
+         peer connection starts; without this Android can throw SecurityException
+         and libwebrtc aborts the process. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- In-app update: hand a downloaded APK to the system package installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>

@@ -30,4 +30,14 @@ class EscapeEmitter {
   String size(int rows, int cols) {
     return '\x1b[8;$rows;${cols}t';
   }
+
+  String defaultColor(int osc, int rgb) {
+    String component(int shift) {
+      final byte = (rgb >> shift) & 0xff;
+      final hex = byte.toRadixString(16).padLeft(2, '0');
+      return '$hex$hex';
+    }
+
+    return '\x1b]$osc;rgb:${component(16)}/${component(8)}/${component(0)}\x1b\\';
+  }
 }

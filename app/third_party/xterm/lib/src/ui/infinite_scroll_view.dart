@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
@@ -21,14 +22,21 @@ class InfiniteScrollView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scrollable(
-      viewportBuilder: (context, position) {
-        return _InfiniteScrollView(
-          position: position,
-          onScroll: onScroll,
-          child: child,
-        );
-      },
+    final scrollBehavior = ScrollConfiguration.of(context);
+    return ScrollConfiguration(
+      behavior: scrollBehavior.copyWith(
+        dragDevices: {...scrollBehavior.dragDevices}
+          ..remove(PointerDeviceKind.mouse),
+      ),
+      child: Scrollable(
+        viewportBuilder: (context, position) {
+          return _InfiniteScrollView(
+            position: position,
+            onScroll: onScroll,
+            child: child,
+          );
+        },
+      ),
     );
   }
 }

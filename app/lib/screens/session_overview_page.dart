@@ -267,7 +267,7 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   // A throwaway terminal we paint the session's coloured screen snapshot into —
   // a real xterm view, not stripped text. Independent of the live session's
   // Terminal so it never fights it for PTY size; small buffer = cheap rewrites.
-  final Terminal _term = Terminal(maxLines: 200);
+  final Terminal _term = ccTerminal(maxLines: 200);
   Timer? _timer;
 
   @override

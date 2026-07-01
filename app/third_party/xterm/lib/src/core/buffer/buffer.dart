@@ -533,23 +533,40 @@ class Buffer {
 
   BufferRangeLine? getWordBoundary(CellOffset position) {
     var separators = wordSeparators ?? defaultWordSeparators;
-    if (position.y >= lines.length) {
+    if (position.y < 0 || position.y >= lines.length) {
       return null;
     }
 
     var line = lines[position.y];
-    var start = position.x;
-    var end = position.x;
+    var column = position.x.clamp(0, viewWidth - 1);
+    if (column > 0 &&
+        line.getCodePoint(column) == 0 &&
+        line.getWidth(column - 1) == 2) {
+      column--;
+    }
+
+    if (separators.contains(line.getCodePoint(column))) {
+      return null;
+    }
+
+    var start = column;
+    var end = column + line.getWidth(column).clamp(1, viewWidth - column);
 
     do {
       if (start == 0) {
         break;
       }
-      final char = line.getCodePoint(start - 1);
+      var previous = start - 1;
+      if (previous > 0 &&
+          line.getCodePoint(previous) == 0 &&
+          line.getWidth(previous - 1) == 2) {
+        previous--;
+      }
+      final char = line.getCodePoint(previous);
       if (separators.contains(char)) {
         break;
       }
-      start--;
+      start = previous;
     } while (true);
 
     do {
@@ -560,7 +577,7 @@ class Buffer {
       if (separators.contains(char)) {
         break;
       }
-      end++;
+      end += line.getWidth(end).clamp(1, viewWidth - end);
     } while (true);
 
     if (start == end) {

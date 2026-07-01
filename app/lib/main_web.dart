@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'ghostty_runtime.dart';
 import 'local/session.dart';
 import 'notifications.dart';
 import 'screens/login_screen.dart';
@@ -14,8 +15,9 @@ import 'theme.dart';
 // never workspace_page / handoffs_page / config — so no dart:io or native plugin
 // reaches the web build. (main.dart is the native entrypoint and is never
 // compiled for web.)
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await GhosttyRuntime.ensureInitialized();
   Notifications.init(); // graceful no-op on web
   runApp(const CcWebApp());
 }
@@ -87,7 +89,8 @@ class _WebShellState extends State<WebShell> {
                         ? Icons.check_circle_rounded
                         : Icons.account_circle_rounded,
                     size: 20,
-                    color: a.identity == current?.identity &&
+                    color:
+                        a.identity == current?.identity &&
                             a.relayUrl == current?.relayUrl
                         ? CcColors.accent
                         : CcColors.muted,

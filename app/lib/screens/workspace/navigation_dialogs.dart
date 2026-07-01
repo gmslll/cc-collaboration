@@ -60,14 +60,12 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
     entries.sort((a, b) => a.path.compareTo(b.path));
     for (final e in entries) {
       if (out.length >= 1600) return;
-      final name = e.path.split('/').last;
+      final name = pathBaseName(e.path);
       if (_searchSkipDirs.contains(name)) continue;
       if (e is Directory) {
         await _scanDir(e, root, project, out);
       } else if (e is File) {
-        final rel = e.path.startsWith('$root/')
-            ? e.path.substring(root.length + 1)
-            : e.path;
+        final rel = pathRelativeTo(root, e.path);
         out.add((label: '$project/$rel', path: e.path));
       }
     }

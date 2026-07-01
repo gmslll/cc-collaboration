@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import 'local/prefs.dart';
+import 'local/path_utils.dart';
 import 'local/session_overview.dart';
 import 'syntax.dart';
 import 'theme.dart';
@@ -66,15 +67,13 @@ String errorText(Object e) {
 
 OverlayEntry? _topSnackEntry;
 Timer? _topSnackTimer;
-int _topSnackToken = 0;
 
 void _removeTopSnack() {
   _topSnackTimer?.cancel();
   _topSnackTimer = null;
-  _topSnackToken++;
   final entry = _topSnackEntry;
   _topSnackEntry = null;
-  if (entry?.mounted ?? false) entry!.remove();
+  entry?.remove();
 }
 
 void snack(
@@ -87,25 +86,26 @@ void snack(
   final overlay = Overlay.maybeOf(context);
   if (overlay == null) return;
   _removeTopSnack();
-  final token = ++_topSnackToken;
   final d = duration ?? const Duration(seconds: 4);
-  _topSnackEntry = OverlayEntry(
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
     builder: (ctx) => Positioned(
-      top: MediaQuery.paddingOf(ctx).top + kToolbarHeight + 8,
+      bottom: MediaQuery.paddingOf(ctx).bottom + 16,
       left: 12,
       right: 12,
       child: _TopSnack(
         message: message,
         background: background,
         onClose: () {
-          if (_topSnackToken == token) _removeTopSnack();
+          if (_topSnackEntry == entry) _removeTopSnack();
         },
       ),
     ),
   );
-  overlay.insert(_topSnackEntry!);
+  _topSnackEntry = entry;
+  overlay.insert(entry);
   _topSnackTimer = Timer(d, () {
-    if (_topSnackToken == token) _removeTopSnack();
+    if (_topSnackEntry == entry) _removeTopSnack();
   });
 }
 
@@ -1323,11 +1323,7 @@ class _HoverLiftState extends State<HoverLift> {
 
 // splitFileNameDir splits a path into (fileName, dirPath); dirPath is '' if none.
 (String, String) splitFileNameDir(String path) {
-  final i = path.lastIndexOf('/');
-  return (
-    i < 0 ? path : path.substring(i + 1),
-    i < 0 ? '' : path.substring(0, i),
-  );
+  return splitPathNameDir(path);
 }
 
 // ccMenuItem is the shared JetBrains/GoLand-style popup-menu row: a leading icon,

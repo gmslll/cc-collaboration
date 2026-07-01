@@ -29,6 +29,29 @@ index 0000000..3333333
 ''';
 
 void main() {
+  group('splitFileNameDir', () {
+    test('splits POSIX paths', () {
+      expect(splitFileNameDir('/tmp/project/lib/main.dart'), (
+        'main.dart',
+        '/tmp/project/lib',
+      ));
+    });
+
+    test('splits Windows paths', () {
+      expect(splitFileNameDir(r'E:\demoFile\oppr\package.json'), (
+        'package.json',
+        r'E:\demoFile\oppr',
+      ));
+    });
+
+    test('uses the last separator when paths are mixed', () {
+      expect(splitFileNameDir(r'E:\demoFile\oppr/src/main.dart'), (
+        'main.dart',
+        r'E:\demoFile\oppr/src',
+      ));
+    });
+  });
+
   test('parseUnifiedDiff splits files + counts; parseRows aligns', () {
     final files = parseUnifiedDiff(_sampleDiff);
     expect(files.length, 2);
@@ -70,12 +93,22 @@ void main() {
   });
 
   test('GitHubClient.parseSlug handles https / git@ / path / non-github', () {
-    expect(GitHubClient.parseSlug('https://github.com/owner/repo.git'),
-        'owner/repo');
-    expect(GitHubClient.parseSlug('https://github.com/owner/repo'), 'owner/repo');
-    expect(GitHubClient.parseSlug('git@github.com:owner/repo.git'), 'owner/repo');
-    expect(GitHubClient.parseSlug('https://github.com/owner/repo/pull/5'),
-        'owner/repo');
+    expect(
+      GitHubClient.parseSlug('https://github.com/owner/repo.git'),
+      'owner/repo',
+    );
+    expect(
+      GitHubClient.parseSlug('https://github.com/owner/repo'),
+      'owner/repo',
+    );
+    expect(
+      GitHubClient.parseSlug('git@github.com:owner/repo.git'),
+      'owner/repo',
+    );
+    expect(
+      GitHubClient.parseSlug('https://github.com/owner/repo/pull/5'),
+      'owner/repo',
+    );
     expect(GitHubClient.parseSlug('/just/a/local/path'), isNull);
     expect(GitHubClient.parseSlug(''), isNull);
   });
@@ -106,18 +139,18 @@ void main() {
       'repo': {'name': 'r', 'branch': 'main'},
       'module_paths': ['a/b'],
       'attachments': [
-        {'name': 'f.txt', 'size': 12, 'sha256': 'x'}
+        {'name': 'f.txt', 'size': 12, 'sha256': 'x'},
       ],
       'git': {
         'commits': [
-          {'sha': 'abc', 'subject': 's'}
+          {'sha': 'abc', 'subject': 's'},
         ],
-        'changed_paths': ['x.go']
+        'changed_paths': ['x.go'],
       },
       'api_delta': {
         'added': [
-          {'method': 'GET', 'path': '/v1/x', 'summary': 'sum'}
-        ]
+          {'method': 'GET', 'path': '/v1/x', 'summary': 'sum'},
+        ],
       },
     });
     expect(p.repo.name, 'r');
@@ -135,8 +168,8 @@ void main() {
       'identity': 'a',
       'is_admin': true,
       'projects': [
-        {'id': 'p1', 'name': 'P', 'role': 'owner'}
-      ]
+        {'id': 'p1', 'name': 'P', 'role': 'owner'},
+      ],
     });
     expect(me.isAdmin, isTrue);
     expect(me.projects.single.role, 'owner');
@@ -155,14 +188,18 @@ void main() {
 
   test('errorText maps DioException to friendly text', () {
     final timeout = DioException(
-        requestOptions: RequestOptions(path: '/'),
-        type: DioExceptionType.connectionTimeout);
+      requestOptions: RequestOptions(path: '/'),
+      type: DioExceptionType.connectionTimeout,
+    );
     expect(errorText(timeout), contains('超时'));
 
     final forbidden = DioException(
       requestOptions: RequestOptions(path: '/'),
       type: DioExceptionType.badResponse,
-      response: Response(requestOptions: RequestOptions(path: '/'), statusCode: 403),
+      response: Response(
+        requestOptions: RequestOptions(path: '/'),
+        statusCode: 403,
+      ),
     );
     expect(errorText(forbidden), contains('权限'));
 
@@ -184,7 +221,10 @@ void main() {
         types: 'mention',
         rules: [
           RuleCfg(
-              whenPathMatches: '^x/', suggestEdit: 'a.ts, b.ts', suggestCreate: true)
+            whenPathMatches: '^x/',
+            suggestEdit: 'a.ts, b.ts',
+            suggestCreate: true,
+          ),
         ],
       );
       await c.save(dir.path);

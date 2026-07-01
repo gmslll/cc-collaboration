@@ -77,9 +77,13 @@ class AgentResolver {
   }
 
   // _probeWindows resolves the agent on Windows: `where` (the PATH lookup the
-  // GUI inherits the full environment for), then the npm-global install spot
-  // (%AppData%\npm\<agent>.cmd) most CLIs land in. Returns '' to fall back to
-  // the bare name. POSIX `command -v` / ~/.cac|.bun paths don't apply here.
+  // GUI inherits the full environment for), then the npm-global install
+  // locations. The npm-global bin is derived from where node lives — critical
+  // for nvm-windows, which installs each node version in its own dir (e.g.
+  // D:\nvm\v20.12.0\) holding node.exe AND the global shims + node_modules.
+  // That dir (or its NVM_SYMLINK) is frequently missing from a GUI app's PATH,
+  // so `where` misses it and we must look it up directly. Returns '' to fall
+  // back to the bare name. POSIX `command -v` / ~/.cac|.bun paths don't apply.
   static Future<String> _probeWindows(String agent) async {
     try {
       final r = await Process.run('where', [agent]);
@@ -95,11 +99,20 @@ class AgentResolver {
         // shim cmd.exe can actually launch via `/c` (.cmd/.bat/.exe), else fall
         // back to the first hit.
         if (lines.isNotEmpty) {
-          final pick = lines.firstWhere(_runnableOnWindows, orElse: () => lines.first);
+          final pick =
+              lines.firstWhere(_runnableOnWindows, orElse: () => lines.first);
           if (File(pick).existsSync()) return pick;
         }
       }
     } catch (_) {}
+    // npm-global bin derived from node's dir (handles nvm-windows, where the
+    // version dir may be off the GUI PATH), then the classic %AppData%\npm spot
+    // for standalone node installs.
+    for (final dir in await _nodeBinDirsWindows()) {
+      for (final p in _npmGlobalCandidates(dir, agent)) {
+        if (File(p).existsSync()) return p;
+      }
+    }
     final appData = Platform.environment['APPDATA'] ?? '';
     if (appData.isNotEmpty) {
       for (final p in <String>[
@@ -110,6 +123,51 @@ class AgentResolver {
       }
     }
     return '';
+  }
+
+  // Candidate absolute paths for a globally-installed agent under a node bin
+  // dir: the npm shim(s) npm drops in the prefix, plus the package's own bin —
+  // newer @anthropic-ai/claude-code ships a claude.exe there, and some
+  // nvm-windows setups end up without the prefix shim, so the in-package exe
+  // is the only hit.
+  static List<String> _npmGlobalCandidates(String dir, String agent) {
+    final out = <String>[
+      '$dir\\$agent.cmd',
+      '$dir\\$agent.exe',
+    ];
+    if (agent == 'claude') {
+      out.add('$dir\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe');
+    }
+    return out;
+  }
+
+  // Dirs holding node.exe — the npm-global prefix on Windows. `where node`
+  // first (it resolves nvm's NVM_SYMLINK to the active version dir), then the
+  // NVM_SYMLINK env var itself: the nvm installer sets it and it's inherited
+  // even when the dir isn't on a GUI app's PATH. Existing dirs only, deduped.
+  static Future<List<String>> _nodeBinDirsWindows() async {
+    final dirs = <String>{};
+    try {
+      final r = await Process.run('where', ['node']);
+      if (r.exitCode == 0) {
+        for (final line
+            in (r.stdout as String).split('\n').map((s) => s.trim())) {
+          if (line.isEmpty) continue;
+          final dir = _dirOf(line);
+          if (dir.isNotEmpty && Directory(dir).existsSync()) dirs.add(dir);
+        }
+      }
+    } catch (_) {}
+    final link = Platform.environment['NVM_SYMLINK'] ?? '';
+    if (link.isNotEmpty && Directory(link).existsSync()) dirs.add(link);
+    return dirs.toList();
+  }
+
+  static String _dirOf(String path) {
+    final i = path.lastIndexOf('\\');
+    final j = path.lastIndexOf('/');
+    final k = i > j ? i : j;
+    return k < 0 ? '' : path.substring(0, k);
   }
 
   // _runnableOnWindows is true for a path cmd.exe can launch via `/c` — one

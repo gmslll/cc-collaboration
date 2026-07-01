@@ -211,5 +211,9 @@ abstract class EscapeHandler {
 
   void setIconName(String name);
 
+  void queryDefaultForegroundColor();
+
+  void queryDefaultBackgroundColor();
+
   void unknownOSC(String code, List<String> args);
 }

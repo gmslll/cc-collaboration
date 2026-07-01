@@ -70,6 +70,16 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// [Buffer.defaultWordSeparators] will be used.
   final Set<int>? wordSeparators;
 
+  /// Default foreground color used to answer `OSC 10;?`.
+  ///
+  /// Stored as 0xRRGGBB. When null, the query is ignored.
+  int? defaultForegroundColor;
+
+  /// Default background color used to answer `OSC 11;?`.
+  ///
+  /// Stored as 0xRRGGBB. When null, the query is ignored.
+  int? defaultBackgroundColor;
+
   Terminal({
     this.maxLines = 1000,
     this.onBell,
@@ -84,6 +94,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     this.reflowEnabled = true,
     this.inlineScrollRegionScrollback = false,
     this.wordSeparators,
+    this.defaultForegroundColor,
+    this.defaultBackgroundColor,
   });
 
   late final _parser = EscapeParser(this);
@@ -901,6 +913,20 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void setIconName(String name) {
     onIconChange?.call(name);
+  }
+
+  @override
+  void queryDefaultForegroundColor() {
+    final color = defaultForegroundColor;
+    if (color == null) return;
+    onOutput?.call(_emitter.defaultColor(10, color));
+  }
+
+  @override
+  void queryDefaultBackgroundColor() {
+    final color = defaultBackgroundColor;
+    if (color == null) return;
+    onOutput?.call(_emitter.defaultColor(11, color));
   }
 
   @override

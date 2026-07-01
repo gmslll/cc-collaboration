@@ -4,8 +4,8 @@ import 'package:xterm/xterm.dart';
 // Terminal palette aligned with the app: indigo cursor, our bg/fg, and semantic
 // red/green/amber ANSI hues (VS Code-derived) so agent TUIs look cohesive.
 //
-// Lives in its own (xterm-only) file so the web client can reuse it via
-// remote_workspace_page without importing terminal_pane.dart, which pulls in
+// Lives in its own terminal-theme file so desktop and remote terminal views can
+// share the same palette without importing terminal_pane.dart, which pulls in
 // flutter_pty + dart:io and would break the Flutter Web build.
 const ccTerminalTheme = TerminalTheme(
   cursor: Color(0xFF818CF8),
@@ -31,4 +31,12 @@ const ccTerminalTheme = TerminalTheme(
   searchHitBackground: Color(0xFFFFFF2B),
   searchHitBackgroundCurrent: Color(0xFF31FF26),
   searchHitForeground: Color(0xFF000000),
+);
+
+int _terminalRgb(Color color) => color.toARGB32() & 0x00ffffff;
+
+Terminal ccTerminal({int maxLines = 1000}) => Terminal(
+  maxLines: maxLines,
+  defaultForegroundColor: _terminalRgb(ccTerminalTheme.foreground),
+  defaultBackgroundColor: _terminalRgb(ccTerminalTheme.background),
 );

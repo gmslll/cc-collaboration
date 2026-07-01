@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
+import 'package:xterm/src/core/mouse/mode.dart';
 
 import 'package:xterm/src/core/input/keys.dart';
 import 'package:xterm/src/terminal.dart';
@@ -173,6 +175,8 @@ class TerminalViewState extends State<TerminalView> {
   RenderTerminal get renderTerminal =>
       _viewportKey.currentContext!.findRenderObject() as RenderTerminal;
 
+  Terminal get terminal => widget.terminal;
+
   @override
   void initState() {
     _focusNode = widget.focusNode ?? FocusNode();
@@ -225,27 +229,35 @@ class TerminalViewState extends State<TerminalView> {
 
   @override
   Widget build(BuildContext context) {
-    Widget child = Scrollable(
-      key: _scrollableKey,
-      controller: _scrollController,
-      viewportBuilder: (context, offset) {
-        return _TerminalView(
-          key: _viewportKey,
-          terminal: widget.terminal,
-          controller: _controller,
-          offset: offset,
-          padding: MediaQuery.of(context).padding,
-          autoResize: widget.autoResize,
-          textStyle: widget.textStyle,
-          textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
-          theme: widget.theme,
-          focusNode: _focusNode,
-          cursorType: widget.cursorType,
-          alwaysShowCursor: widget.alwaysShowCursor,
-          onEditableRect: _onEditableRect,
-          composingText: _composingText,
-        );
-      },
+    final scrollBehavior = ScrollConfiguration.of(context);
+    Widget child = ScrollConfiguration(
+      behavior: scrollBehavior.copyWith(
+        dragDevices: {...scrollBehavior.dragDevices}
+          ..remove(PointerDeviceKind.mouse),
+      ),
+      child: Scrollable(
+        key: _scrollableKey,
+        controller: _scrollController,
+        viewportBuilder: (context, offset) {
+          return _TerminalView(
+            key: _viewportKey,
+            terminal: widget.terminal,
+            controller: _controller,
+            offset: offset,
+            padding: MediaQuery.of(context).padding,
+            autoResize: widget.autoResize,
+            textStyle: widget.textStyle,
+            textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
+            theme: widget.theme,
+            backgroundOpacity: widget.backgroundOpacity,
+            focusNode: _focusNode,
+            cursorType: widget.cursorType,
+            alwaysShowCursor: widget.alwaysShowCursor,
+            onEditableRect: _onEditableRect,
+            composingText: _composingText,
+          );
+        },
+      ),
     );
 
     child = TerminalScrollGestureHandler(
@@ -283,12 +295,12 @@ class TerminalViewState extends State<TerminalView> {
     } else if (!widget.readOnly) {
       // Only listen for key input from a hardware keyboard.
       child = CustomKeyboardListener(
-        child: child,
         focusNode: _focusNode,
         autofocus: widget.autofocus,
         onInsert: _onInsert,
         onComposing: _onComposing,
         onKeyEvent: _handleKeyEvent,
+        child: child,
       );
     }
 
@@ -322,7 +334,9 @@ class TerminalViewState extends State<TerminalView> {
     );
 
     child = Container(
-      color: widget.theme.background.withOpacity(widget.backgroundOpacity),
+      color: widget.theme.background.withValues(
+        alpha: widget.theme.background.a * widget.backgroundOpacity,
+      ),
       padding: widget.padding,
       child: child,
     );
@@ -345,6 +359,37 @@ class TerminalViewState extends State<TerminalView> {
   Rect get globalCursorRect {
     return renderTerminal.localToGlobal(renderTerminal.cursorOffset) &
         renderTerminal.cellSize;
+  }
+
+  bool autoscrollSelection(Offset localPosition) {
+    if (!_scrollController.hasClients) return false;
+    final render = renderTerminal;
+    final height = render.size.height;
+    final lineHeight = render.lineHeight;
+    if (lineHeight <= 0 || height <= 0) return false;
+
+    double delta = 0;
+    if (localPosition.dy < 0) {
+      delta = -lineHeight;
+    } else if (localPosition.dy > height) {
+      delta = lineHeight;
+    } else {
+      return false;
+    }
+
+    final position = _scrollController.position;
+    final next = (position.pixels + delta)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    if (next == position.pixels) return false;
+    _scrollController.jumpTo(next);
+    return true;
+  }
+
+  bool shouldRouteMouseToTerminal() {
+    if (widget.readOnly) return false;
+    if (HardwareKeyboard.instance.isShiftPressed) return false;
+    return widget.terminal.mouseMode != MouseMode.none;
   }
 
   void _onTapUp(TapUpDetails details) {
@@ -403,7 +448,7 @@ class TerminalViewState extends State<TerminalView> {
       widget.terminal.textInput(text);
     }
 
-    _scrollToBottom();
+    _onTerminalInput();
   }
 
   void _onComposing(String? text) {
@@ -444,10 +489,17 @@ class TerminalViewState extends State<TerminalView> {
     );
 
     if (handled) {
-      _scrollToBottom();
+      _onTerminalInput();
     }
 
     return handled ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+
+  void _onTerminalInput() {
+    if (_controller.selection != null) {
+      _controller.clearSelection();
+    }
+    _scrollToBottom();
   }
 
   void _onKeyboardShow() {
@@ -481,6 +533,7 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.textStyle,
     required this.textScaler,
     required this.theme,
+    required this.backgroundOpacity,
     required this.focusNode,
     required this.cursorType,
     required this.alwaysShowCursor,
@@ -504,6 +557,8 @@ class _TerminalView extends LeafRenderObjectWidget {
 
   final TerminalTheme theme;
 
+  final double backgroundOpacity;
+
   final FocusNode focusNode;
 
   final TerminalCursorType cursorType;
@@ -525,6 +580,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       textStyle: textStyle,
       textScaler: textScaler,
       theme: theme,
+      backgroundOpacity: backgroundOpacity,
       focusNode: focusNode,
       cursorType: cursorType,
       alwaysShowCursor: alwaysShowCursor,
@@ -544,6 +600,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       ..textStyle = textStyle
       ..textScaler = textScaler
       ..theme = theme
+      ..backgroundOpacity = backgroundOpacity
       ..focusNode = focusNode
       ..cursorType = cursorType
       ..alwaysShowCursor = alwaysShowCursor
