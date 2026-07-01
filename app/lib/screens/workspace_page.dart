@@ -234,6 +234,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     deliver: deliverLocalMessage,
     readOutput: readOutput,
     readUsage: readUsage,
+    spawn: _busSpawn,
   );
 
   // Relay presence: while the workspace is open we hold an SSE subscription (so
@@ -1496,35 +1497,113 @@ class _WorkspacePageState extends State<WorkspacePage>
     return null;
   }
 
+  // _isSessionWorkdir guards an externally-requested workdir: it may only be the
+  // project root or a path under <project>/.worktrees/ — never an arbitrary dir a
+  // remote/bus client asks for. Shared by the phone-relay path and the bus spawn.
+  bool _isSessionWorkdir(ProjectCfg p, String workdir) =>
+      pathEquals(workdir, p.path) ||
+      pathRelativeTo(p.path, workdir).startsWith('.worktrees/');
+
+  // _spawnManagedSession launches a new app-managed session for project [p] and
+  // returns its bus id (ts<N>). [kind]: ''/'shell' | 'claude' | 'codex' |
+  // 'supervisor[:claude|:codex]'. [workdir] is honored only when it passes
+  // _isSessionWorkdir, else it falls back to p.path. Shared by _remoteNewSession
+  // (phone relay) and _busSpawn (supervisor spawn) so both produce an identical
+  // managed session that lands in the tree + on the bus.
+  String _spawnManagedSession({
+    required WorkspaceCfg ws,
+    required ProjectCfg p,
+    required String kind,
+    String? workdir,
+  }) {
+    final dir = (workdir != null && _isSessionWorkdir(p, workdir))
+        ? workdir
+        : p.path;
+    final supervisorAgent = _supervisorAgentForKind(kind);
+    if (kind.isEmpty || kind == 'shell') {
+      addTerm(dir, ''); // '' = plain interactive shell
+    } else if (supervisorAgent != null) {
+      _launch(dir, supervisorAgent, ws.preLaunch, supervisor: true);
+    } else {
+      _launch(dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
+    }
+    // Expand the project node so the new session is visible (same as _openAgent).
+    final ctl = _ctlFor(p.path);
+    if (!ctl.isExpanded) ctl.expand();
+    return terms.isNotEmpty ? terms.last.id : '';
+  }
+
   void _remoteNewSession(String projectPath, String agent, String? workdir) {
     final kind = agent.trim().toLowerCase();
-    final supervisorAgent = _supervisorAgentForKind(kind);
     for (final ws in _cfg.workspaces) {
       for (final p in ws.projects) {
         if (p.path == projectPath) {
-          // workdir lets the phone target a worktree. Only honor it when it's
-          // the project root or under its .worktrees/ — never launch the agent
-          // at an arbitrary directory a client asks for.
-          final dir =
-              (workdir != null &&
-                  (pathEquals(workdir, p.path) ||
-                      pathRelativeTo(
-                        p.path,
-                        workdir,
-                      ).startsWith('.worktrees/')))
-              ? workdir
-              : p.path;
-          if (kind.isEmpty || kind == 'shell') {
-            addTerm(dir, ''); // '' = plain interactive shell
-          } else if (supervisorAgent != null) {
-            _launch(dir, supervisorAgent, ws.preLaunch, supervisor: true);
-          } else {
-            _launch(dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
-          }
+          _spawnManagedSession(ws: ws, p: p, kind: kind, workdir: workdir);
           return;
         }
       }
     }
+  }
+
+  // _busSpawn serves a kind:"spawn" local-bus request (`cc-handoff supervisor
+  // spawn <project>`). It resolves the project BY NAME (optionally narrowed by
+  // [workspace], mirroring the Go resolveProject semantics), maps/validates the
+  // agent kind, guards an explicit workdir, launches a managed session, and writes
+  // the new session id into [out]. Returns null on success or a human-readable
+  // error → <id>.err. Semantics match the project right-click (起 claude/codex/总管).
+  Future<String?> _busSpawn(
+    String project,
+    String workspace,
+    String agent,
+    bool supervisor,
+    String workdir,
+    StringSink out,
+  ) async {
+    if (project.trim().isEmpty) return '缺少 project';
+    final matches = <({WorkspaceCfg ws, ProjectCfg p})>[];
+    for (final ws in _cfg.workspaces) {
+      if (workspace.isNotEmpty && ws.name != workspace) continue;
+      for (final p in ws.projects) {
+        if (p.name == project) matches.add((ws: ws, p: p));
+      }
+    }
+    if (matches.isEmpty) {
+      return workspace.isEmpty
+          ? '找不到项目 "$project"'
+          : '找不到项目 "$project"(workspace=$workspace)';
+    }
+    if (matches.length > 1) {
+      final wss = matches.map((m) => m.ws.name).join(', ');
+      return '项目名 "$project" 在多个 workspace 中重复($wss);用 --workspace 指定';
+    }
+    final ws = matches.first.ws;
+    final p = matches.first.p;
+    final kind = agent.trim().toLowerCase();
+    if (supervisor) {
+      if (kind.isNotEmpty && kind != 'claude' && kind != 'codex') {
+        return '--supervisor 只支持 --agent claude|codex';
+      }
+    } else if (kind.isNotEmpty &&
+        kind != 'shell' &&
+        kind != 'claude' &&
+        kind != 'codex') {
+      return '未知 agent "$agent"(want claude|codex|shell)';
+    }
+    // An explicit workdir must be the project root or under its .worktrees/.
+    if (workdir.trim().isNotEmpty && !_isSessionWorkdir(p, workdir)) {
+      return 'workdir "$workdir" 非法:必须是 ${p.path} 或其 .worktrees/ 下';
+    }
+    final effectiveKind = supervisor
+        ? (kind == 'codex' ? 'supervisor:codex' : 'supervisor:claude')
+        : kind;
+    final id = _spawnManagedSession(
+      ws: ws,
+      p: p,
+      kind: effectiveKind,
+      workdir: workdir.trim().isEmpty ? null : workdir,
+    );
+    out.write(id);
+    return null;
   }
 
   void _remoteCloseSession(String sid) {

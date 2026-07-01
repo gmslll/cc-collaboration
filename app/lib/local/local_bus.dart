@@ -94,12 +94,28 @@ class LocalBus {
   // Returns null on success or an error → <id>.err. Same shape as readOutput, no
   // lines/transcript flags — usage is always the structured snapshot.
   final Future<String?> Function(String to, StringSink out) readUsage;
+  // spawn serves a kind:"spawn" request (`cc-handoff supervisor spawn`): the HOST
+  // resolves [project] (optionally narrowed by [workspace]) to a managed project,
+  // launches a new app-managed session there — [agent] is claude|codex|shell,
+  // [supervisor] flags a 总管 session, [workdir] optionally targets a worktree —
+  // and writes the new session id into [out] (the <id>.ok body). Returns null on
+  // success or an error → <id>.err. This is how a supervisor agent opens a session
+  // in the tree/on the bus instead of a detached terminal.
+  final Future<String?> Function(
+    String project,
+    String workspace,
+    String agent,
+    bool supervisor,
+    String workdir,
+    StringSink out,
+  ) spawn;
 
   LocalBus({
     required this.registry,
     required this.deliver,
     required this.readOutput,
     required this.readUsage,
+    required this.spawn,
   });
 
   StreamSubscription<FileSystemEvent>? _watch;
@@ -207,6 +223,18 @@ class LocalBus {
           } else if (kind == 'usage') {
             final out = StringBuffer();
             err = await readUsage((m['to'] ?? '').toString(), out);
+            if (err == null) okBody = out.toString();
+          } else if (kind == 'spawn') {
+            // Open a new app-managed session; the .ok body is the new session id.
+            final out = StringBuffer();
+            err = await spawn(
+              (m['project'] ?? '').toString(),
+              (m['workspace'] ?? '').toString(),
+              (m['agent'] ?? '').toString(),
+              m['supervisor'] == true,
+              (m['workdir'] ?? '').toString(),
+              out,
+            );
             if (err == null) okBody = out.toString();
           } else {
             err = deliver(LocalMsg(
