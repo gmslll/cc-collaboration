@@ -14,6 +14,7 @@ import '../local/diff_parse.dart';
 import '../local/hook_activity.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
+import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
 import '../remote/file_transfer.dart';
@@ -525,6 +526,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
               ),
               onPressed: _showNotices,
             ),
+            if (_c.connected && _c.roots.length > 1)
+              IconButton(
+                tooltip: '排序项目',
+                icon: const Icon(Icons.swap_vert_rounded),
+                onPressed: _openProjectOrderSheet,
+              ),
             IconButton(
               tooltip: '刷新',
               icon: const Icon(Icons.refresh_rounded),
@@ -643,10 +650,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     return best;
   }
 
+  // _orderedRoots applies this phone's local project-order overlay (by absolute
+  // path) over the host-config-ordered _c.roots. Independent of the desktop's
+  // order — each device keeps its own in its own Prefs.
+  List<RemoteRootInfo> _orderedRoots() =>
+      applyOrder(_c.roots, loadOrder(kPhoneProjectOrderKey), (r) => r.path);
+
   // _rootsByWorkspace groups the shared projects by their workspace name.
   Map<String, List<RemoteRootInfo>> _rootsByWorkspace() {
     final byWs = <String, List<RemoteRootInfo>>{};
-    for (final r in _c.roots) {
+    for (final r in _orderedRoots()) {
       (byWs[r.workspace] ??= []).add(r);
     }
     return byWs;
@@ -660,10 +673,79 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     for (final name in _c.workspaceNames) {
       byWs.putIfAbsent(name, () => []);
     }
-    for (final r in _c.roots) {
+    for (final r in _orderedRoots()) {
       (byWs[r.workspace] ??= []).add(r);
     }
     return byWs;
+  }
+
+  // 拖拽给项目排序——本机偏好（按 path 存进 Prefs），与桌面互相独立。
+  // 镜像 _openKeyBarEditor。
+  void _openProjectOrderSheet() {
+    final items = List<RemoteRootInfo>.of(_orderedRoots());
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) {
+          void apply(VoidCallback change) {
+            change();
+            saveOrder(kPhoneProjectOrderKey, [for (final r in items) r.path]);
+            setSheet(() {});
+            setState(() {});
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 4),
+                    child: Text(
+                      '排序项目（本机）',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Flexible(
+                    child: ReorderableListView(
+                      shrinkWrap: true,
+                      onReorderItem: (oldI, newI) =>
+                          apply(() => items.insert(newI, items.removeAt(oldI))),
+                      children: [
+                        for (final r in items)
+                          ListTile(
+                            key: ObjectKey(r),
+                            dense: true,
+                            leading: const Icon(Icons.drag_handle, size: 20),
+                            title: Text(r.name),
+                            subtitle: Text(
+                              r.workspace.isEmpty
+                                  ? r.path
+                                  : '${r.workspace} · ${r.path}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: CcType.code(
+                                size: 11,
+                                color: CcColors.subtle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _sessionsTab() {
@@ -1041,7 +1123,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                     isExpanded: true,
                     value: project,
                     items: [
-                      for (final r in _c.roots)
+                      for (final r in _orderedRoots())
                         DropdownMenuItem(value: r, child: Text(r.name)),
                     ],
                     onChanged: (v) => setLocal(() {
@@ -1163,7 +1245,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       if (_c.roots.isEmpty) return centerMsg('电脑端未共享项目');
       return ListView(
         children: [
-          for (final r in _c.roots)
+          for (final r in _orderedRoots())
             ListTile(
               leading: const Icon(Icons.folder_rounded),
               title: Text(r.name),
@@ -1256,7 +1338,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       if (_c.roots.isEmpty) return centerMsg('电脑端未共享项目');
       return ListView(
         children: [
-          for (final r in _c.roots)
+          for (final r in _orderedRoots())
             ListTile(
               leading: const Icon(Icons.source_rounded),
               title: Text(r.name),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../terminal_theme.dart';
 import '../theme.dart';
@@ -138,7 +139,15 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
           child: sectionTitle(wsEntry.key, icon: Icons.workspaces_rounded),
         ),
       );
-      for (final projEntry in wsEntry.value.entries) {
+      // Follow the per-device project order overlay the sidebar writes. '其他'
+      // (empty workspace name) maps back to '' so the default workspace matches.
+      final wsName = wsEntry.key == '其他' ? '' : wsEntry.key;
+      final projEntries = applyOrder(
+        wsEntry.value.entries.toList(),
+        loadOrder(desktopProjectOrderKey(wsName)),
+        (e) => e.key,
+      );
+      for (final projEntry in projEntries) {
         sections.add(
           Padding(
             padding: const EdgeInsets.fromLTRB(22, 6, 20, 4),

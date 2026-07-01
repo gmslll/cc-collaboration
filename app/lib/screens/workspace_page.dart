@@ -21,6 +21,7 @@ import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
+import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
@@ -7980,9 +7981,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                           ),
                           initiallyExpanded: true,
                           shape: const Border(),
-                          children: ws.projects
-                              .map((p) => _projectTile(ws, p))
-                              .toList(),
+                          children: applyOrder(
+                            ws.projects,
+                            loadOrder(desktopProjectOrderKey(ws.name)),
+                            (p) => p.name,
+                          ).map((p) => _projectTile(ws, p)).toList(),
                         ),
                       )
                       .toList(),
@@ -8840,6 +8843,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               _newEmptyProject(ws);
             case 'add':
               _addProject(ws);
+            case 'reorder':
+              _openProjectOrderSheet(ws);
             case 'settings':
               _workspaceSettings(ws);
             case 'remove':
@@ -8857,6 +8862,11 @@ class _WorkspacePageState extends State<WorkspacePage>
             icon: Icons.create_new_folder_outlined,
             label: 'Add Existing / Clone Project',
           ),
+          ccMenuItem(
+            value: ws.projects.length > 1 ? 'reorder' : null,
+            icon: Icons.swap_vert_rounded,
+            label: '排序项目',
+          ),
           const PopupMenuDivider(),
           ccMenuItem(
             value: 'settings',
@@ -8871,6 +8881,77 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         ],
       );
+
+  // 拖拽给某工作区的项目排序。顺序是本设备的表现层偏好，存进 Prefs（不改 config.toml），
+  // 侧栏与会话总览都读同一份覆盖。镜像 remote_workspace_page 的 _openKeyBarEditor。
+  void _openProjectOrderSheet(WorkspaceCfg ws) {
+    final key = desktopProjectOrderKey(ws.name);
+    final items = List<ProjectCfg>.of(
+      applyOrder(ws.projects, loadOrder(key), (p) => p.name),
+    );
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) {
+          void apply(VoidCallback change) {
+            change();
+            saveOrder(key, [for (final p in items) p.name]);
+            setSheet(() {});
+            setState(() {});
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Text(
+                      '排序项目 · ${ws.name.isEmpty ? '默认' : ws.name}',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Flexible(
+                    child: ReorderableListView(
+                      shrinkWrap: true,
+                      // onReorderItem already adjusts newIndex for the removed item.
+                      onReorderItem: (oldI, newI) =>
+                          apply(() => items.insert(newI, items.removeAt(oldI))),
+                      children: [
+                        for (final p in items)
+                          ListTile(
+                            key: ObjectKey(p),
+                            dense: true,
+                            leading: const Icon(Icons.drag_handle, size: 20),
+                            title: Text(p.name),
+                            subtitle: Text(
+                              p.path,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: CcColors.subtle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Future<void> _workspaceSettings(WorkspaceCfg ws) async {
     final pre = TextEditingController(text: ws.preLaunch);
