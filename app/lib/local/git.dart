@@ -790,3 +790,44 @@ Future<void> gitApplyReverse(String dir, String patch) async {
     await tmpDir.delete(recursive: true);
   }
 }
+
+// gitDiffToPatch builds a re-appliable unified patch for the given local changes
+// (working tree vs HEAD), concatenating one per-file diff after another. Tracked
+// files use `git diff HEAD -- <file>`; untracked files are emitted as a full add
+// via `git diff --no-index /dev/null <file>`. Backs the Commit panel's "Create
+// Patch from Local Changes…" / "Copy as Patch to Clipboard". Named apart from
+// ts88's commit-oriented gitFormatPatch (which wraps `git format-patch`).
+Future<String> gitDiffToPatch(
+  String dir,
+  List<GitChange> changes, {
+  int context = 3,
+}) async {
+  final buf = StringBuffer();
+  for (final c in changes) {
+    final part = c.untracked
+        ? await gitDiffUntracked(dir, c.path, context: context)
+        : await gitDiffFileWorking(dir, c.path, context: context);
+    buf.write(part);
+    if (part.isNotEmpty && !part.endsWith('\n')) buf.write('\n');
+  }
+  return buf.toString();
+}
+
+// gitRemoveFile deletes a changed file from the working tree. Tracked files go
+// through `git rm -f` (drops them from the index and disk in one step); untracked
+// files aren't in the index, so `git clean -f` removes them from disk. Backs the
+// Commit panel's per-file "Delete…". Destructive — callers gate it behind a
+// confirm dialog.
+Future<void> gitRemoveFile(
+  String dir,
+  String file, {
+  required bool tracked,
+}) async {
+  final f = file.trim();
+  if (f.isEmpty) throw GitException('file path 不能为空');
+  if (tracked) {
+    await _git(dir, 'rm -f -- ${shQuote(f)}');
+  } else {
+    await _git(dir, 'clean -f -- ${shQuote(f)}');
+  }
+}

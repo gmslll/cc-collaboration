@@ -49,6 +49,7 @@ part 'workspace/search_dialogs.dart';
 part 'workspace/git_history_dialogs.dart';
 part 'workspace/git_mixin.dart';
 part 'workspace/search_mixin.dart';
+part 'workspace/commit_changes_menu.dart';
 
 enum _BottomTool { terminal, git }
 
@@ -200,7 +201,12 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage>
-    with TerminalHost, _GitMixin, _SearchMixin, FsClipboardActions {
+    with
+        TerminalHost,
+        _GitMixin,
+        _SearchMixin,
+        _CommitChangesMenu,
+        FsClipboardActions {
   @override
   late AppConfig _cfg = widget.config; // reloaded after config mutations
 
@@ -2988,6 +2994,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     _showBlameForProjectFile(hit.project, hit.rel);
   }
 
+  @override
   void _showBlameForProjectFile(ProjectCfg project, String relPath) {
     if (relPath.trim().isEmpty) {
       _snack('找不到文件所属项目');
@@ -3013,6 +3020,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     _showFileHistoryForProjectFile(hit.project, hit.rel);
   }
 
+  @override
   void _showFileHistoryForProjectFile(ProjectCfg project, String relPath) {
     if (relPath.trim().isEmpty) {
       _snack('找不到文件所属项目');
@@ -3105,6 +3113,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     await _compareProjectFileWithHead(hit.project, hit.rel);
   }
 
+  @override
   Future<void> _compareProjectFileWithHead(
     ProjectCfg project,
     String relPath,
@@ -5855,20 +5864,24 @@ class _WorkspacePageState extends State<WorkspacePage>
   Widget _changeTile(ProjectCfg p, GitChange c) {
     final sel = c.path == _selectedGitPath;
     final checked = _selectedChangePaths.contains(c.path);
-    return Container(
-      decoration: BoxDecoration(
-        color: sel
-            ? CcColors.accent.withValues(alpha: 0.10)
-            : Colors.transparent,
-        border: Border(
-          left: BorderSide(
-            color: sel ? CcColors.accent : Colors.transparent,
-            width: 2,
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      // Right-click anywhere on the row opens the same JetBrains-style menu as ⋮.
+      onSecondaryTapDown: (d) => _showCommitFileMenu(d.globalPosition, p, c),
+      child: Container(
+        decoration: BoxDecoration(
+          color: sel
+              ? CcColors.accent.withValues(alpha: 0.10)
+              : Colors.transparent,
+          border: Border(
+            left: BorderSide(
+              color: sel ? CcColors.accent : Colors.transparent,
+              width: 2,
+            ),
           ),
         ),
-      ),
-      child: InkWell(
-        onDoubleTap: () => _openCodeFile('${p.path}/${c.path}'),
+        child: InkWell(
+          onDoubleTap: () => _openCodeFile('${p.path}/${c.path}'),
         child: ListTile(
           dense: true,
           visualDensity: const VisualDensity(vertical: -2),
@@ -5907,74 +5920,50 @@ class _WorkspacePageState extends State<WorkspacePage>
                   overflow: TextOverflow.ellipsis,
                   style: CcType.code(size: 10.5, color: CcColors.subtle),
                 ),
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, size: 17),
-            tooltip: '文件操作',
-            onSelected: (v) {
-              if (v == 'stage') _gitStageFileCurrent(p, c.path);
-              if (v == 'unstage') _gitUnstageFileCurrent(p, c.path);
-              if (v == 'open') _openCodeFile('${p.path}/${c.path}');
-              if (v == 'compare') _compareProjectFileWithHead(p, c.path);
-              if (v == 'history') _showFileHistoryForProjectFile(p, c.path);
-              if (v == 'annotate') _showBlameForProjectFile(p, c.path);
-              if (v == 'discard') _gitDiscardFileCurrent(p, c.path);
-            },
-            itemBuilder: (_) => [
-              ccMenuItem(
-                value: 'open',
-                icon: Icons.description_outlined,
-                label: 'Open',
-              ),
-              if (!c.untracked) ...[
-                ccMenuItem(
-                  value: 'compare',
-                  icon: Icons.difference_rounded,
-                  label: 'Compare with HEAD',
-                ),
-                ccMenuItem(
-                  value: 'history',
-                  icon: Icons.history_rounded,
-                  label: 'File History',
-                ),
-                ccMenuItem(
-                  value: 'annotate',
-                  icon: Icons.format_align_left_rounded,
-                  label: 'Annotate / Blame',
-                ),
-              ],
-              const PopupMenuDivider(),
-              if (c.unstaged)
-                ccMenuItem(
-                  value: 'stage',
-                  icon: Icons.add_rounded,
-                  label: 'Stage',
-                ),
-              if (c.staged)
-                ccMenuItem(
-                  value: 'unstage',
-                  icon: Icons.remove_rounded,
-                  label: 'Unstage',
-                ),
-              ccMenuItem(
-                value: 'discard',
-                icon: Icons.undo_rounded,
-                label: 'Rollback',
-                danger: true,
-              ),
-            ],
+          trailing: Builder(
+            builder: (btnCtx) => IconButton(
+              icon: const Icon(Icons.more_vert_rounded, size: 17),
+              tooltip: '文件操作',
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+              onPressed: () {
+                // Drop the menu from the ⋮ button's bottom-left, like a dropdown.
+                final box = btnCtx.findRenderObject() as RenderBox;
+                final pos = box.localToGlobal(
+                  box.size.bottomLeft(Offset.zero),
+                );
+                _showCommitFileMenu(pos, p, c);
+              },
+            ),
           ),
           onTap: () => _openWorkingTreeDiffTab(c.path),
         ),
+      ),
       ),
     );
   }
 
   // Opens a changed file's working-tree diff as a center editor tab (the left
   // panel is too narrow for an inline diff). Untracked files aren't in
-  // `git diff HEAD`, so they're shown as a whole-file addition.
-  Future<void> _openWorkingTreeDiffTab(String path) async {
+  // `git diff HEAD`, so they're shown as a whole-file addition. [newTab] opens a
+  // per-file tab showing only this file's diff (the menu's "Show Diff in a New
+  // Tab"), instead of the shared 'Working Tree' tab reused by single-click.
+  @override
+  Future<void> _openWorkingTreeDiffTab(String path, {bool newTab = false}) async {
     setState(() => _selectedGitPath = path);
     final p = _currentGitProject;
+    if (newTab && p != null && _gitFiles.any((f) => f.path == path)) {
+      _openDiffTab(
+        _gitFiles.where((f) => f.path == path).toList(),
+        'Diff · ${path.split('/').last}',
+        initialPath: path,
+        showTree: false,
+        reload: (ctx) async =>
+            parseUnifiedDiff(await gitDiffFileWorking(p.path, path, context: ctx)),
+      );
+      return;
+    }
     if (_gitFiles.any((f) => f.path == path)) {
       _openDiffTab(
         _gitFiles,
