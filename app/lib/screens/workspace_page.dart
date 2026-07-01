@@ -3373,6 +3373,19 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('没有可启动的项目');
       return;
     }
+    await _supervisorFlow(d.project, d.project.path, d.ws.preLaunch);
+  }
+
+  // _supervisorFlow shows the 总管 picker (Claude / Codex / 编辑知识库) scoped to
+  // [dir], then either launches a supervisor session (supervisor: true) in that
+  // project context or opens its knowledge-base editor. Shared by the toolbar 总管
+  // chip (_launchDefaultSupervisorFlow) and the project right-click menu (起总管)
+  // so both behave identically.
+  Future<void> _supervisorFlow(
+    ProjectCfg p,
+    String dir,
+    String preLaunch,
+  ) async {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -3412,18 +3425,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       // The knowledge files live on this machine, so edit them directly with
       // the local file browser + editor (no relay). Ensure the dir + template
       // files exist first (cc-handoff supervisor init).
-      await _ensureSupervisorDocs(d.project.path);
+      await _ensureSupervisorDocs(dir);
       if (!mounted) return;
-      _openFileBrowser('${d.project.path}/.cc-handoff/supervisor', '总管知识库');
+      _openFileBrowser('$dir/.cc-handoff/supervisor', '总管知识库');
       return;
     }
-    _openAgent(
-      d.project,
-      d.project.path,
-      choice,
-      d.ws.preLaunch,
-      supervisor: true,
-    );
+    _openAgent(p, dir, choice, preLaunch, supervisor: true);
   }
 
   Widget _toolButton({
@@ -7923,7 +7930,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         }
       },
       children: [
-        ..._sessionNodesForDir(p.path),
+        ..._sessionNodesForDir(p.path, project: p, preLaunch: ws.preLaunch),
         _filesNode(
           p.path,
           p.name,
@@ -8256,7 +8263,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     return out;
   }
 
-  List<Widget> _sessionNodesForDir(String dir) {
+  // [project]/[preLaunch] (the owning project + its workspace pre-launch) let the
+  // per-session menu offer 起总管 in that session's context; null project hides it.
+  List<Widget> _sessionNodesForDir(
+    String dir, {
+    ProjectCfg? project,
+    String preLaunch = '',
+  }) {
     final ss = _sessionsForDir(dir);
     if (ss.isEmpty) return const [];
     final header = _sectionHeader(dir, 'sessions', '会话 (${ss.length})');
@@ -8279,7 +8292,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         final sessionMenu = PopupMenuButton<String>(
           tooltip: '会话操作',
           onSelected: (v) {
-            if (v == 'rename') {
+            if (v == 'supervisor') {
+              if (project != null) {
+                unawaited(_supervisorFlow(project, dir, preLaunch));
+              }
+            } else if (v == 'rename') {
               _renameSession(e.s);
             } else if (v == 'close') {
               closeTerm(e.idx);
@@ -8294,6 +8311,14 @@ class _WorkspacePageState extends State<WorkspacePage>
           },
           itemBuilder: (_) {
             return [
+              if (project != null) ...[
+                ccMenuItem(
+                  value: 'supervisor',
+                  icon: Icons.account_tree_outlined,
+                  label: '起总管',
+                ),
+                const PopupMenuDivider(),
+              ],
               ccMenuItem(
                 value: 'rename',
                 icon: Icons.edit_rounded,
@@ -8519,7 +8544,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             _worktreeMenu(ws, p, w),
           ),
           children: [
-            ..._sessionNodesForDir(w.path),
+            ..._sessionNodesForDir(w.path, project: p, preLaunch: ws.preLaunch),
             _filesNode(
               w.path,
               title,
@@ -8788,6 +8813,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         case 'claude':
         case 'codex':
           _openAgent(p, p.path, v, ws.preLaunch);
+        case 'supervisor':
+          unawaited(_supervisorFlow(p, p.path, ws.preLaunch));
         case 'worktree':
           _newWorktree(ws, p);
         case 'diff':
@@ -8804,6 +8831,11 @@ class _WorkspacePageState extends State<WorkspacePage>
     },
     itemBuilder: (_) => [
       ..._agentItems(ws.agent),
+      ccMenuItem(
+        value: 'supervisor',
+        icon: Icons.account_tree_outlined,
+        label: '起总管',
+      ),
       const PopupMenuDivider(),
       ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
       ccMenuItem(value: 'files', icon: Icons.folder_open_rounded, label: '文件'),
@@ -8869,6 +8901,10 @@ class _WorkspacePageState extends State<WorkspacePage>
         case 'claude':
         case 'codex':
           _openAgent(p, w.path, v, ws.preLaunch);
+        case 'supervisor':
+          // dir = the worktree path so 总管 runs inside this worktree workspace;
+          // project [p] is its owning project (for tree expansion).
+          unawaited(_supervisorFlow(p, w.path, ws.preLaunch));
         case 'diff':
           _openDiff(w.path, w.branch.isEmpty ? w.name : w.branch);
         case 'files':
@@ -8879,6 +8915,11 @@ class _WorkspacePageState extends State<WorkspacePage>
     },
     itemBuilder: (_) => [
       ..._agentItems(ws.agent),
+      ccMenuItem(
+        value: 'supervisor',
+        icon: Icons.account_tree_outlined,
+        label: '起总管',
+      ),
       const PopupMenuDivider(),
       ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
       ccMenuItem(value: 'files', icon: Icons.folder_open_rounded, label: '文件'),
