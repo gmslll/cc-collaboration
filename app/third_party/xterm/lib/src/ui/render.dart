@@ -39,6 +39,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required TerminalStyle textStyle,
     required TextScaler textScaler,
     required TerminalTheme theme,
+    required double backgroundOpacity,
     required FocusNode focusNode,
     required TerminalCursorType cursorType,
     required bool alwaysShowCursor,
@@ -49,6 +50,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _offset = offset,
         _padding = padding,
         _autoResize = autoResize,
+        _backgroundOpacity = backgroundOpacity,
         _focusNode = focusNode,
         _cursorType = cursorType,
         _alwaysShowCursor = alwaysShowCursor,
@@ -102,6 +104,16 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _autoResize = value;
     _markNeedsLayoutFor(TerminalPaintReason.layout);
   }
+
+  double _backgroundOpacity;
+  set backgroundOpacity(double value) {
+    if (value == _backgroundOpacity) return;
+    _backgroundOpacity = value;
+    _clearViewportContentCache();
+    _markNeedsPaintFor(TerminalPaintReason.theme);
+  }
+
+  bool get _paintsOpaqueBackground => _backgroundOpacity >= 1.0;
 
   set textStyle(TerminalStyle value) {
     if (value == _painter.textStyle) return;
@@ -788,6 +800,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _lineOffset,
       _painter.cellSize.width,
       _painter.cellSize.height,
+      _backgroundOpacity,
     );
     final contentSignature = validateSignature
         ? _viewportContentSignature(
@@ -809,14 +822,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       final recorder = PictureRecorder();
       final contentCanvas = Canvas(recorder, Offset.zero & size);
       final lines = _terminal.buffer.lines;
-      final charHeight = _painter.cellSize.height;
       final commands = _contentCommandBuffer..clear();
 
       for (var i = firstLine; i <= lastLine; i++) {
         _recordCachedLineCommand(
           contentCanvas,
           commands,
-          Offset(0, (i * charHeight + _lineOffset).truncateToDouble()),
+          Offset(0, _lineBandTop(i)),
           i,
           lines[i],
           profile,
@@ -874,14 +886,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool validateSignature,
   }) {
     final lines = _terminal.buffer.lines;
-    final charHeight = _painter.cellSize.height;
     final commands = _contentCommandBuffer..clear();
     profile?.viewportContentDirectDraws++;
     for (var i = firstLine; i <= lastLine; i++) {
       _recordCachedLineCommand(
         canvas,
         commands,
-        offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
+        offset.translate(0, _lineBandTop(i)),
         i,
         lines[i],
         profile,
@@ -934,7 +945,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           commands,
           offset,
           row,
-          charHeight,
           entry,
         );
         continue;
@@ -969,7 +979,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         commands,
         offset,
         row,
-        charHeight,
         entry,
       );
     }
@@ -996,7 +1005,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _RenderCommandBuffer commands,
     Offset offset,
     int row,
-    double charHeight,
     _OverlayRowPictureCache entry,
   ) {
     final picture = entry.picture;
@@ -1006,7 +1014,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     commands.addPictureAt(
       picture,
       offset.dx,
-      offset.dy + (row * charHeight + _lineOffset).truncateToDouble(),
+      offset.dy + _lineBandTop(row),
       kind: _RenderCommandKind.overlay,
     );
   }
@@ -1131,6 +1139,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         profile?.lineCommandCacheMisses++;
         entry?.dispose();
         if (_isBlankLine(line)) {
+          _recordLineDefaultBackgroundCommand(
+            commands,
+            offset,
+            line,
+            profile,
+            height: _backgroundBandHeight(lineIndex),
+          );
           entry = _LinePictureCache(
             signature,
             commandCache: _LineCommandCache.empty,
@@ -1167,7 +1182,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           offset,
           line,
           profile,
-          height: _lineBandHeight(lineIndex),
+          height: _backgroundBandHeight(lineIndex),
         );
         final textRunsCoverForeground = _recordLineTextRunCommands(
           lineCommands,
@@ -1246,7 +1261,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           offset,
           line,
           profile,
-          height: _lineBandHeight(lineIndex),
+          height: _backgroundBandHeight(lineIndex),
         );
         _recordLineTextRunCommands(commands, offset, line, profile);
         _recordLineGeometryCommands(commands, offset, line, profile);
@@ -1256,7 +1271,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
           offset,
           line,
           profile,
-          height: _lineBandHeight(lineIndex),
+          height: _backgroundBandHeight(lineIndex),
         );
         commandCache.replay(commands, offset);
         if (entry.needsGeometryCommands) {
@@ -1297,7 +1312,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     commands.clear();
 
     final cellWidth = _painter.cellSize.width;
-    final cellHeight = _painter.cellSize.height;
     final start = (line.dirtyStart - 1).clamp(0, line.length).toInt();
     final end = (line.dirtyEnd + 1).clamp(0, line.length).toInt();
     if (end <= start) return false;
@@ -1307,14 +1321,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final dirtyLeft = offset.dx + start * cellWidth;
     final dirtyRight = offset.dx + end * cellWidth;
     final top = offset.dy;
-    final bottom = offset.dy + cellHeight;
+    final bottom = offset.dy + _backgroundBandHeight(lineIndex);
 
     _recordLineBackgroundCommands(
       commands,
       offset,
       line,
       profile,
-      height: _lineBandHeight(lineIndex),
+      height: _backgroundBandHeight(lineIndex),
     );
     commands.draw(canvas, Offset.zero, profile);
     commands.clear();
@@ -1403,6 +1417,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }) {
     final cellWidth = _painter.cellSize.width;
     final cellHeight = height ?? _painter.cellSize.height;
+    _recordLineDefaultBackgroundCommand(
+      commands,
+      offset,
+      line,
+      profile,
+      height: cellHeight,
+    );
     Color? runColor;
     var runStart = 0;
     var runWidth = 0;
@@ -1449,6 +1470,25 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       }
     }
     flush();
+  }
+
+  void _recordLineDefaultBackgroundCommand(
+    _RenderCommandBuffer commands,
+    Offset offset,
+    BufferLine line,
+    TerminalRenderProfile? profile, {
+    required double height,
+  }) {
+    if (!_paintsOpaqueBackground) return;
+    commands.addRectAt(
+      offset.dx,
+      offset.dy,
+      max(size.width, line.length * _painter.cellSize.width) + 1,
+      height,
+      _painter.theme.background,
+      kind: _RenderCommandKind.content,
+    );
+    profile?.backgroundRuns++;
   }
 
   Color? _lineCellBackgroundColor({
@@ -1535,7 +1575,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       offset,
       line,
       collectProfile: profile != null,
-      backgroundHeight: _lineBandHeight(lineIndex),
+      backgroundHeight: _backgroundBandHeight(lineIndex),
     );
     final painterProfile = profile == null ? null : _painter.takeProfile();
     final renderProfile = profile;
@@ -1555,13 +1595,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     return pixels <= _maxCachedLinePicturePixels;
   }
 
-  double _lineBandHeight(int lineIndex) {
+  double _backgroundBandHeight(int lineIndex) {
     final charHeight = _painter.cellSize.height;
-    final top = (lineIndex * charHeight + _lineOffset).truncateToDouble();
-    final bottom =
-        ((lineIndex + 1) * charHeight + _lineOffset).truncateToDouble();
+    final top = _lineBandTop(lineIndex);
+    final bottom = _lineBandBottom(lineIndex);
     final height = bottom - top;
     return height > 0 ? height : charHeight;
+  }
+
+  double _lineBandTop(int lineIndex) {
+    return (lineIndex * _painter.cellSize.height + _lineOffset).floorToDouble();
+  }
+
+  double _lineBandBottom(int lineIndex) {
+    return ((lineIndex + 1) * _painter.cellSize.height + _lineOffset)
+        .ceilToDouble();
   }
 
   bool _isBlankLine(BufferLine line) {
@@ -1740,15 +1788,22 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     Color color,
   ) {
     final dx = offset.dx + start * _painter.cellSize.width;
-    final dy = offset.dy + line * _painter.cellSize.height + _lineOffset;
+    final dy = offset.dy + _lineBandTop(line);
     commands.addRectAt(
       dx,
       dy,
       (end - start) * _painter.cellSize.width,
-      _painter.cellSize.height,
+      _overlayBandHeight(line),
       color,
       kind: _RenderCommandKind.overlay,
     );
+  }
+
+  double _overlayBandHeight(int lineIndex) {
+    final top = _lineBandTop(lineIndex);
+    final bottom = _lineBandTop(lineIndex + 1);
+    final height = bottom - top;
+    return height > 0 ? height : _painter.cellSize.height;
   }
 }
 
@@ -1870,16 +1925,27 @@ class _RenderCommandBuffer {
         case _RenderCommandType.rect:
           _rectPaint
             ..color = _colors[i]
-            ..style = PaintingStyle.fill;
-          canvas.drawRect(
-            Rect.fromLTWH(
-              offset.dx + _dx[i],
-              offset.dy + _dy[i],
-              _width[i],
-              _height[i],
-            ),
-            _rectPaint,
-          );
+            ..style = PaintingStyle.fill
+            ..isAntiAlias = false;
+          final left = offset.dx + _dx[i];
+          final top = offset.dy + _dy[i];
+          final right = left + _width[i];
+          final bottom = top + _height[i];
+          final rect = switch (_kinds[i]) {
+            _RenderCommandKind.content => Rect.fromLTRB(
+                left,
+                top.floorToDouble(),
+                right,
+                bottom.ceilToDouble(),
+              ),
+            _RenderCommandKind.overlay => Rect.fromLTRB(
+                left,
+                top,
+                right,
+                bottom,
+              ),
+          };
+          canvas.drawRect(rect, _rectPaint);
           profile?.renderCommandRectDraws++;
         case _RenderCommandType.paragraph:
           final paragraph = _paragraphs[i];

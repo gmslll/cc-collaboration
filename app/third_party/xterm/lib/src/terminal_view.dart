@@ -249,6 +249,7 @@ class TerminalViewState extends State<TerminalView> {
             textStyle: widget.textStyle,
             textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
             theme: widget.theme,
+            backgroundOpacity: widget.backgroundOpacity,
             focusNode: _focusNode,
             cursorType: widget.cursorType,
             alwaysShowCursor: widget.alwaysShowCursor,
@@ -294,12 +295,12 @@ class TerminalViewState extends State<TerminalView> {
     } else if (!widget.readOnly) {
       // Only listen for key input from a hardware keyboard.
       child = CustomKeyboardListener(
-        child: child,
         focusNode: _focusNode,
         autofocus: widget.autofocus,
         onInsert: _onInsert,
         onComposing: _onComposing,
         onKeyEvent: _handleKeyEvent,
+        child: child,
       );
     }
 
@@ -333,7 +334,9 @@ class TerminalViewState extends State<TerminalView> {
     );
 
     child = Container(
-      color: widget.theme.background.withOpacity(widget.backgroundOpacity),
+      color: widget.theme.background.withValues(
+        alpha: widget.theme.background.a * widget.backgroundOpacity,
+      ),
       padding: widget.padding,
       child: child,
     );
@@ -530,6 +533,7 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.textStyle,
     required this.textScaler,
     required this.theme,
+    required this.backgroundOpacity,
     required this.focusNode,
     required this.cursorType,
     required this.alwaysShowCursor,
@@ -553,6 +557,8 @@ class _TerminalView extends LeafRenderObjectWidget {
 
   final TerminalTheme theme;
 
+  final double backgroundOpacity;
+
   final FocusNode focusNode;
 
   final TerminalCursorType cursorType;
@@ -574,6 +580,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       textStyle: textStyle,
       textScaler: textScaler,
       theme: theme,
+      backgroundOpacity: backgroundOpacity,
       focusNode: focusNode,
       cursorType: cursorType,
       alwaysShowCursor: alwaysShowCursor,
@@ -593,6 +600,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       ..textStyle = textStyle
       ..textScaler = textScaler
       ..theme = theme
+      ..backgroundOpacity = backgroundOpacity
       ..focusNode = focusNode
       ..cursorType = cursorType
       ..alwaysShowCursor = alwaysShowCursor

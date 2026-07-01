@@ -384,6 +384,38 @@ void main() {
     expect(profile.glyphAtlasDraws, 0);
   });
 
+  testWidgets('opaque render rows do not override transparent backgrounds', (
+    tester,
+  ) async {
+    Future<TerminalRenderProfile> paintWithOpacity(double opacity) async {
+      final term = Terminal(maxLines: 1000);
+      RenderTerminal.debugProfilePaint = true;
+      RenderTerminal.lastPaintProfile = null;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 240,
+            height: 120,
+            child: TerminalView(term, backgroundOpacity: opacity),
+          ),
+        ),
+      );
+      await tester.pump();
+      return RenderTerminal.lastPaintProfile!;
+    }
+
+    try {
+      final transparent = await paintWithOpacity(0);
+      expect(transparent.backgroundRuns, isZero);
+
+      final opaque = await paintWithOpacity(1);
+      expect(opaque.backgroundRuns, isPositive);
+    } finally {
+      RenderTerminal.debugProfilePaint = false;
+      RenderTerminal.lastPaintProfile = null;
+    }
+  });
+
   testWidgets('terminal render profile is gated by debug flag', (tester) async {
     final term = Terminal(maxLines: 1000);
     final controller = TerminalController();
