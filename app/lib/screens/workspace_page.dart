@@ -50,6 +50,9 @@ part 'workspace/git_history_dialogs.dart';
 part 'workspace/git_mixin.dart';
 part 'workspace/search_mixin.dart';
 part 'workspace/commit_changes_menu.dart';
+part 'workspace/git_log_branch_menu.dart';
+part 'workspace/git_log_commit_menu.dart';
+part 'workspace/git_log_difftree_menu.dart';
 
 enum _BottomTool { terminal, git }
 
@@ -206,6 +209,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         _GitMixin,
         _SearchMixin,
         _CommitChangesMenu,
+        _GitLogBranchMenu,
+        _GitLogCommitMenu,
+        _GitLogDiffTreeMenu,
         FsClipboardActions {
   @override
   late AppConfig _cfg = widget.config; // reloaded after config mutations
@@ -6856,81 +6862,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     });
     Prefs.setBool('ws.gitLogAllBranches', false);
     _refreshGit();
-  }
-
-  // Right-click a branch in the Log — reuses the existing branch operations;
-  // deeper management (new/rename/delete) lives in the Branches popup.
-  Future<void> _showLogBranchMenu(
-    ProjectCfg p,
-    GitBranch b,
-    Offset position,
-  ) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-    final v = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromRect(
-        position & const Size(1, 1),
-        Offset.zero & overlay.size,
-      ),
-      items: [
-        if (!b.current)
-          ccMenuItem(
-            value: 'checkout',
-            icon: Icons.call_split_rounded,
-            label: 'Checkout',
-          ),
-        ccMenuItem(
-          value: 'compare',
-          icon: Icons.difference_rounded,
-          label: 'Compare with Working Tree',
-        ),
-        if (!b.current) ...[
-          ccMenuItem(
-            value: 'merge',
-            icon: Icons.merge_type_rounded,
-            label: 'Merge into Current',
-          ),
-          ccMenuItem(
-            value: 'rebase',
-            icon: Icons.merge_type_rounded,
-            label: 'Rebase Current onto This',
-          ),
-        ],
-        if (!b.remote) ...[
-          const PopupMenuDivider(),
-          ccMenuItem(value: 'push', icon: Icons.upload_rounded, label: 'Push'),
-          if (b.upstream.isEmpty)
-            ccMenuItem(
-              value: 'publish',
-              icon: Icons.cloud_upload_rounded,
-              label: 'Publish',
-            ),
-        ],
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'dialog',
-          icon: Icons.account_tree_rounded,
-          label: 'Branches Popup…',
-        ),
-      ],
-    );
-    if (v == null || !mounted) return;
-    switch (v) {
-      case 'checkout':
-        _checkoutBranchCurrent(p, b);
-      case 'compare':
-        _compareBranch(p, b);
-      case 'merge':
-        _mergeBranchIntoCurrent(p, b);
-      case 'rebase':
-        _rebaseCurrentOntoBranch(p, b);
-      case 'push':
-        _pushBranchCurrent(p, b);
-      case 'publish':
-        _pushBranchCurrent(p, b, publish: true);
-      case 'dialog':
-        _showBranchDialog();
-    }
   }
 
   // ---- 3-pane Log: right changed-files tree ----
