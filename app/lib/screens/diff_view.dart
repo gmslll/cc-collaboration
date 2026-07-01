@@ -526,9 +526,11 @@ class _EditableCellState extends State<_EditableCell> {
   bool _h = false;
   @override
   Widget build(BuildContext context) {
+    // expand leading tabs for display only; onEdit still uses the original text.
+    final shown = expandLeadingTabs(widget.text);
     final span = widget.langId == null
         ? null
-        : highlightLine(widget.text, widget.langId, base: diffCellStyle);
+        : highlightLine(shown, widget.langId, base: diffCellStyle);
     return MouseRegion(
       onEnter: (_) => setState(() => _h = true),
       onExit: (_) => setState(() => _h = false),
@@ -539,7 +541,7 @@ class _EditableCellState extends State<_EditableCell> {
           children: [
             Expanded(
               child: span == null
-                  ? Text(widget.text, style: diffCellStyle)
+                  ? Text(shown, style: diffCellStyle)
                   : Text.rich(span),
             ),
             if (_h)

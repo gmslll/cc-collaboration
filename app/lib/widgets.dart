@@ -1062,7 +1062,8 @@ Widget _diffLine(String line, {String? langId}) {
   if (isCode && langId != null) {
     // keep the +/- prefix in the line color, syntax-highlight the rest.
     final prefix = line.isEmpty ? ' ' : line.substring(0, 1);
-    final content = line.isEmpty ? '' : line.substring(1);
+    // expand leading tabs (after the +/- prefix) so tab-indented code shows indent
+    final content = expandLeadingTabs(line.isEmpty ? '' : line.substring(1));
     final span = highlightLine(content, langId, base: baseStyle);
     child = Text.rich(
       TextSpan(
@@ -1103,7 +1104,7 @@ Widget highlightedCode(String text, String? langId) {
   return ListView.builder(
     itemCount: lines.length,
     itemBuilder: (_, i) {
-      final line = lines[i];
+      final line = expandLeadingTabs(lines[i]);
       final span = (langId == null || line.isEmpty)
           ? null
           : highlightLine(line, langId, base: baseStyle);

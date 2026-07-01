@@ -33,6 +33,10 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   final _scrollCtl = CodeScrollController();
   String _original = '';
   bool _crlf = false; // file used CRLF endings — re-apply them on save
+  // file was tab-indented — expand tabs→spaces for display (re_editor renders a
+  // raw \t at zero width), and re-tabify leading indent on save so the file's
+  // indentation style survives the round-trip.
+  bool _usedTabs = false;
   bool _dirty = false;
   bool _loading = true;
   bool _saving = false;
@@ -83,8 +87,10 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     try {
       final content = await File(widget.path).readAsString();
       _crlf = content.contains('\r\n');
-      _ctl = CodeLineEditingController.fromText(content)
-        ..addListener(_onChange);
+      _usedTabs = RegExp(r'(^|\n)\t').hasMatch(content);
+      _ctl = CodeLineEditingController.fromText(
+        _usedTabs ? expandLeadingTabs(content) : content,
+      )..addListener(_onChange);
       // re_editor normalises EOLs to LF internally; baseline against that so a
       // CRLF file doesn't open already-dirty.
       _original = _ctl!.text;
@@ -130,7 +136,8 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     if (ctl == null) return;
     setState(() => _saving = true);
     try {
-      final out = _crlf ? ctl.text.replaceAll('\n', '\r\n') : ctl.text;
+      var out = _usedTabs ? collapseLeadingIndent(ctl.text) : ctl.text;
+      if (_crlf) out = out.replaceAll('\n', '\r\n');
       await File(widget.path).writeAsString(out);
       _original = ctl.text;
       if (mounted) {
@@ -158,10 +165,12 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     try {
       final content = await File(widget.path).readAsString();
       _crlf = content.contains('\r\n');
+      _usedTabs = RegExp(r'(^|\n)\t').hasMatch(content);
       _ctl?.removeListener(_onChange);
       _ctl?.dispose();
-      _ctl = CodeLineEditingController.fromText(content)
-        ..addListener(_onChange);
+      _ctl = CodeLineEditingController.fromText(
+        _usedTabs ? expandLeadingTabs(content) : content,
+      )..addListener(_onChange);
       _original = _ctl!.text;
       _dirty = false;
       if (!mounted) return;

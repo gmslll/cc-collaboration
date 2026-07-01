@@ -85,15 +85,16 @@ Widget diffGutter(int? no) => Container(
 // lines soft-wrap within the column; wrap=false (phone, fixed-width cells) keeps
 // each line on one line so the grid reads like the desktop and scrolls instead.
 Widget diffCell(String text, DiffKind kind, {bool wrap = true, String? langId}) {
+  final shown = expandLeadingTabs(text); // tab-indented code → visible indent
   final span = langId == null
       ? null
-      : highlightLine(text, langId, base: diffCellStyle);
+      : highlightLine(shown, langId, base: diffCellStyle);
   return Container(
     color: diffCellBg(kind),
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
     child: span == null
         ? Text(
-            text,
+            shown,
             style: diffCellStyle,
             softWrap: wrap,
             maxLines: wrap ? null : 1,
