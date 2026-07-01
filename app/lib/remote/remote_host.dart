@@ -359,6 +359,11 @@ class RemoteHost extends RemoteChannel {
       case 'term.input':
         final s = _sessionById(f['sid'] as String?);
         final d = (f['d'] as String?) ?? '';
+        // Remote/phone keystrokes are real user input, the third input funnel
+        // (besides the desktop hardware-key and IME paths): mark the row dirty so
+        // a delivered peer message parks in the inbox instead of pasting over what
+        // the phone user is typing. markUserInput clears on a submit (CR).
+        s?.markUserInput(d);
         s?.sendText(d);
         // A submit (Enter) sent to an agent session means it's now working —
         // flip the phone's Live Activity to "thinking" until onAgentDone.

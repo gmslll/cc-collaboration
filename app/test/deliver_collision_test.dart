@@ -77,6 +77,9 @@ void main() {
           reason: 'clean idle target should paste, not enqueue');
 
       // User is mid-typing → park in the bus inbox instead of pasting over it.
+      // markUserInput is the one marker every user-input funnel feeds — the
+      // desktop hardware-key & IME paths and remote_host's term.input (phone) all
+      // call it — so this assertion covers the remote/phone funnel too.
       target.markUserInput('half-typed');
       final r2 = host.deliverLocalMessage(LocalMsg(from, target.id, 'world', true));
       expect(r2, isNull);
