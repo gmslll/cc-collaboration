@@ -28,27 +28,46 @@ class LspManager {
 
   // Resolved gopls path: null = not probed yet, '' = probed and absent.
   String? _goplsPath;
+  // The login-shell PATH, injected into gopls's environment so the server can
+  // find the `go` binary — a double-clicked .app has a minimal PATH that lacks
+  // both gopls and go (same class of problem PluginManager works around).
+  String _pathEnv = '';
   final Map<String, _LspServer> _servers = {};
 
-  // _resolveGopls finds gopls on the user's PATH via the login shell (a
-  // double-clicked .app has a minimal PATH — same trick as PluginManager).
+  // _resolveGopls finds gopls AND captures the full login-shell PATH in one
+  // probe. gopls itself shells out to `go`, so starting it with only the app's
+  // minimal PATH makes it fail with "go: executable file not found"; we hand it
+  // the login PATH via the process environment. Sentinels keep parsing robust
+  // against any banner a login profile prints.
   Future<String?> _resolveGopls() async {
     final cached = _goplsPath;
     if (cached != null) return cached.isEmpty ? null : cached;
+    var gopls = '';
     var path = '';
     try {
-      final res = Platform.isWindows
-          ? await Process.run('where', ['gopls'])
-          : await Process.run(
-              Platform.environment['SHELL'] ?? '/bin/sh',
-              ['-lc', 'command -v gopls'],
-            );
-      if (res.exitCode == 0) {
-        path = (res.stdout as String).trim().split('\n').first.trim();
+      if (Platform.isWindows) {
+        final res = await Process.run('where', ['gopls']);
+        if (res.exitCode == 0) {
+          gopls = (res.stdout as String).trim().split('\n').first.trim();
+        }
+        path = Platform.environment['PATH'] ?? '';
+      } else {
+        final res = await Process.run(
+          Platform.environment['SHELL'] ?? '/bin/sh',
+          ['-lc', r'printf "__GOPLS__%s\n__PATH__%s\n" "$(command -v gopls || true)" "$PATH"'],
+        );
+        for (final line in (res.stdout as String).split('\n')) {
+          if (line.startsWith('__GOPLS__')) {
+            gopls = line.substring('__GOPLS__'.length).trim();
+          } else if (line.startsWith('__PATH__')) {
+            path = line.substring('__PATH__'.length).trim();
+          }
+        }
       }
     } catch (_) {}
-    _goplsPath = path;
-    return path.isEmpty ? null : path;
+    _goplsPath = gopls;
+    _pathEnv = path;
+    return gopls.isEmpty ? null : gopls;
   }
 
   // goDefinition returns the definition site(s) for the identifier at
@@ -66,7 +85,7 @@ class LspManager {
     try {
       final gopls = await _resolveGopls();
       if (gopls == null) return const [];
-      final server = _servers[root] ??= _LspServer(gopls, root);
+      final server = _servers[root] ??= _LspServer(gopls, root, _pathEnv);
       return await server
           .definition(filePath, text, line, character)
           .timeout(const Duration(seconds: 4), onTimeout: () => const []);
@@ -88,9 +107,16 @@ class LspManager {
 
 // _LspServer drives one language-server process for one root: framing,
 // initialize handshake, document sync, request/response correlation, teardown.
+// Set LSP_DEBUG=1 in the environment to trace JSON-RPC traffic on stderr.
+final bool _lspDebug = Platform.environment['LSP_DEBUG'] == '1';
+void _log(String s) {
+  if (_lspDebug) stderr.writeln('[lsp] $s');
+}
+
 class _LspServer {
   final String _exe;
   final String _root;
+  final String _pathEnv; // PATH handed to the server so it can find `go`
 
   Process? _proc;
   Completer<bool>? _ready; // completes true once initialized, false on failure
@@ -101,7 +127,7 @@ class _LspServer {
   final Map<String, int> _opened = {}; // uri -> last version sent
   List<int> _buf = const [];
 
-  _LspServer(this._exe, this._root);
+  _LspServer(this._exe, this._root, this._pathEnv);
 
   Future<List<LspLocation>> definition(
     String path,
@@ -152,10 +178,17 @@ class _LspServer {
         _exe,
         const [],
         workingDirectory: _root,
+        // Override PATH (parent env is still included) so gopls can shell out to
+        // `go`; a bare app process's PATH usually lacks it.
+        environment: _pathEnv.isEmpty ? null : {'PATH': _pathEnv},
       );
       _proc = proc;
+      _log('started $_exe (pid ${proc.pid}) root=$_root');
       proc.stdout.listen(_onData, onError: (_) {}, cancelOnError: false);
-      proc.stderr.listen((_) {}, onError: (_) {}); // drain, ignore
+      proc.stderr.listen(
+        (d) => _log('stderr: ${utf8.decode(d, allowMalformed: true).trim()}'),
+        onError: (_) {},
+      );
       unawaited(proc.exitCode.then((_) => _onExit()));
 
       final rootUri = Uri.directory(_root).toString();
@@ -230,10 +263,14 @@ class _LspServer {
     final proc = _proc;
     if (proc == null || _dead) return;
     try {
-      final body = utf8.encode(jsonEncode(msg));
+      final json = jsonEncode(msg);
+      _log('>> $json');
+      final body = utf8.encode(json);
       proc.stdin.add(utf8.encode('Content-Length: ${body.length}\r\n\r\n'));
       proc.stdin.add(body);
-    } catch (_) {}
+    } catch (e) {
+      _log('send failed: $e');
+    }
   }
 
   void _onData(List<int> data) {
@@ -278,7 +315,9 @@ class _LspServer {
   void _dispatch(List<int> body) {
     dynamic msg;
     try {
-      msg = jsonDecode(utf8.decode(body));
+      final text = utf8.decode(body);
+      _log('<< $text');
+      msg = jsonDecode(text);
     } catch (_) {
       return;
     }
