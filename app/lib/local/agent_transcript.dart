@@ -34,7 +34,18 @@ Future<String?> resolveTranscriptPath({
         }
       }
     }
+    // We know this session's EXACT id but its log isn't on disk yet — a dormant
+    // lazy tab whose agent hasn't started, or a just-launched one before its
+    // first write. Return null (caller retries; the id-glob above is uncached)
+    // rather than falling back to the cwd's newest log: every tab in one project
+    // shares that dir, so the fallback would hand back a SIBLING session's
+    // transcript and bleed its content into this session's preview/usage/read
+    // (串味). The glob already scans every project dir, so a mismatched cwd-encoded
+    // dir name is covered — a miss here means the log genuinely doesn't exist yet.
+    return null;
   }
+  // No minted id (legacy --continue / pre-upgrade restore carries none): the
+  // newest log in this cwd is the only available guess.
   return _newestClaudeInCwd(home, workdir);
 }
 

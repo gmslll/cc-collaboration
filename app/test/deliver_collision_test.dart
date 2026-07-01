@@ -63,6 +63,10 @@ void main() {
       final target = TerminalSession('/repo', 'claude', agent: 'claude');
       addTearDown(target.dispose);
       host.terms.add(target);
+      // Start it so it's a RUNNING idle session (a live PTY). Without this the
+      // target is dormant (_started == false) and delivery routes to the wake
+      // path instead — covered by the separate 'wakes a dormant target' test.
+      target.start();
       const from = 'ts-sender';
       final inbox = Directory('${localBusDir()}/inbox/${target.id}');
 
@@ -85,6 +89,43 @@ void main() {
       expect(r2, isNull);
       expect(inboxHasJson(), isTrue,
           reason: 'dirty input should enqueue to the bus inbox');
+    },
+  );
+
+  // The dispatch fix: a message to a dormant (never-started) session must WAKE
+  // it — spawn the agent and hold the message for its boot — instead of pasting
+  // into a null PTY (silent loss, the 'spawn 出的休眠会话收不到消息' bug). Same
+  // isolated-HOME gate as the routing test.
+  test(
+    'deliverLocalMessage wakes a dormant (not-started) target instead of losing it',
+    () async {
+      final home = Platform.environment['HOME'] ?? '';
+      if (!home.startsWith('/tmp') &&
+          !home.startsWith('/private/') &&
+          !home.startsWith('/var/folders/')) {
+        return; // not an isolated HOME — skip
+      }
+
+      final host = _HostState();
+      final target = TerminalSession('/repo', 'claude', agent: 'claude');
+      addTearDown(target.dispose);
+      host.terms.add(target);
+      expect(target.started, isFalse); // dormant: pane never mounted / hidden tab
+
+      final inbox = Directory('${localBusDir()}/inbox/${target.id}');
+      bool inboxHasJson() =>
+          inbox.existsSync() &&
+          inbox.listSync().any((f) => f.path.endsWith('.json'));
+
+      final r =
+          host.deliverLocalMessage(LocalMsg('ts-sender', target.id, 'task', true));
+      expect(r, isNull);
+      expect(target.started, isTrue,
+          reason: 'delivery must wake (start) a dormant session');
+      expect(target.waking, isTrue,
+          reason: 'message is held until the agent boots + settles');
+      expect(inboxHasJson(), isFalse,
+          reason: 'wake queues the message in-memory, not the bus inbox');
     },
   );
 }

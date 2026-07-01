@@ -189,6 +189,67 @@ class TerminalSession {
   bool _inputDirty = false;
   bool get inputDirty => isAgent && _inputDirty;
 
+  // --- wake-on-delivery: dispatch a bus message to a dormant session ---------
+  //
+  // A restored-but-hidden (deferred) tab, or one whose pane hasn't mounted yet,
+  // has _started == false and NO live PTY — so a straight pasteText writes into a
+  // null PTY and vanishes (the sender still sees "已发送"). That's why a task sent
+  // to a not-yet-loaded session used to silently no-op. wakeAndDeliver instead
+  // STARTS the session (spawns its agent, --resume) and holds the message until
+  // the agent has booted and its startup output settles, then pastes it — so task
+  // dispatch is decoupled from tab visibility. [waking] gates the window: while a
+  // wake is in flight further deliveries queue behind the first (via _pendingWake)
+  // instead of racing the boot; deliverLocalMessage checks it so a second message
+  // during boot doesn't paste into a not-yet-ready PTY.
+  final List<({String text, bool submit})> _pendingWake = [];
+  bool _waking = false;
+  bool get waking => _waking;
+  Timer? _wakeSettleTimer;
+  Timer? _wakeCapTimer;
+  // Quiet-after-launch gap that reads as "agent ready for input", and a hard cap
+  // so a pathologically chatty startup still flushes instead of hanging forever.
+  static const Duration _wakeSettle = Duration(milliseconds: 1500);
+  static const Duration _wakeCap = Duration(seconds: 30);
+
+  void wakeAndDeliver(String text, {required bool submit}) {
+    _pendingWake.add((text: text, submit: submit));
+    if (_waking) return; // a wake is already in flight → queued for its flush
+    _waking = true;
+    deferred = false; // opening for delivery clears lazy-defer, like activation
+    start(); // idempotent; spawns the PTY now if it wasn't running
+    // Don't arm the settle timer until the agent actually emits output (below):
+    // firing on pure silence could paste before a slow --resume is ready. The cap
+    // is the only unconditional backstop.
+    _wakeCapTimer?.cancel();
+    _wakeCapTimer = Timer(_wakeCap, _flushWake);
+  }
+
+  // _noteWakeOutput arms/pushes the settle timer on each PTY chunk while a wake is
+  // pending, so the flush lands ~_wakeSettle after the launch/redraw goes quiet
+  // (agent is up and idle at its prompt) rather than mid-boot.
+  void _noteWakeOutput() {
+    if (!_waking) return;
+    _wakeSettleTimer?.cancel();
+    _wakeSettleTimer = Timer(_wakeSettle, _flushWake);
+  }
+
+  void _flushWake() {
+    if (!_waking) return;
+    _waking = false;
+    _wakeSettleTimer?.cancel();
+    _wakeSettleTimer = null;
+    _wakeCapTimer?.cancel();
+    _wakeCapTimer = null;
+    if (_disposed) return;
+    final pending = List.of(_pendingWake);
+    _pendingWake.clear();
+    // pasteText's own delayed-Enter + _ensureSubmitted backstop handle the submit;
+    // the common case is a single queued task, delivered as one clean turn.
+    for (final d in pending) {
+      pasteText(d.text, submit: d.submit);
+    }
+  }
+
   static final RegExp _terminalProtocolReply = RegExp(
     r'^(?:(?:'
     r'\x1b\](?:10|11);rgb:[0-9a-fA-F]{4}/[0-9a-fA-F]{4}/[0-9a-fA-F]{4}\x1b\\'
@@ -562,6 +623,7 @@ class TerminalSession {
           _appendBacklog(chunk);
           remoteSink?.call(chunk);
           if (isAgent) _markActivity(chunk);
+          _noteWakeOutput(); // settle detector for a pending wake-on-delivery
         });
     pty.exitCode.then((code) {
       // Non-zero exits in red so a process that dies on startup isn't mistaken
@@ -952,6 +1014,8 @@ class TerminalSession {
     _disposed = true; // stops the codex id-capture poll
     _belTimer?.cancel();
     _usageTicker?.cancel();
+    _wakeSettleTimer?.cancel();
+    _wakeCapTimer?.cancel();
     usage.dispose();
     controller.dispose();
     ghostty?.dispose();

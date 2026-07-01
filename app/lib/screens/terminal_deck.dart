@@ -524,6 +524,16 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     final (target, err) = _resolveTarget(m.to);
     if (target == null) return err; // err is non-null when target is null
     if (target.id == m.from) return '不能发给自己';
+    // Dormant target (a deferred/hidden tab, or one whose pane never mounted this
+    // run): it has no live PTY, so a straight paste would vanish. Wake it — spawn
+    // the agent and deliver once it boots — so task dispatch is decoupled from tab
+    // visibility. Also routes here mid-wake (waking) so a burst queues in order
+    // instead of racing the boot. Checked FIRST: a not-started session is never
+    // busy/inputDirty (both require a running PTY), so this can't shadow those.
+    if (!target.started || target.waking) {
+      target.wakeAndDeliver(_composeDelivery(target, m), submit: m.submit);
+      return null;
+    }
     if (m.submit && (target.busy || target.inputDirty)) {
       return _enqueueBusInbox(target, m);
     }
