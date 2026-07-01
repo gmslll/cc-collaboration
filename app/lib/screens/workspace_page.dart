@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/sse.dart';
+import '../fs_clipboard.dart';
 import '../local/cli.dart';
 import '../local/agent_transcript.dart';
 import '../local/config.dart';
@@ -198,7 +199,7 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage>
-    with TerminalHost, _GitMixin, _SearchMixin {
+    with TerminalHost, _GitMixin, _SearchMixin, FsClipboardActions {
   @override
   late AppConfig _cfg = widget.config; // reloaded after config mutations
 
@@ -573,6 +574,8 @@ class _WorkspacePageState extends State<WorkspacePage>
   final _structureQueryCtl = TextEditingController();
   final _workspaceFocus = FocusNode(debugLabel: 'workspace-shell');
   final _commitFocus = FocusNode(debugLabel: 'commit-message');
+  // 每棵项目文件树一个焦点节点：文件树聚焦时才响应 Cmd/Ctrl+C/X/V，避免抢终端/编辑器的复制粘贴。
+  final Map<String, FocusNode> _fileTreeFocus = {};
   final List<String> _recentFiles = [];
   final List<_CodeLocation> _recentLocations = [];
   String _structureQuery = '';
@@ -834,6 +837,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     _structureQueryCtl.dispose();
     _workspaceFocus.dispose();
     _commitFocus.dispose();
+    for (final n in _fileTreeFocus.values) {
+      n.dispose();
+    }
     _remoteHost.removeListener(_onRemoteChange);
     PluginManager.instance.removeListener(_onPluginsChanged);
     _remoteHost.dispose();
@@ -1933,6 +1939,20 @@ class _WorkspacePageState extends State<WorkspacePage>
   void _copyFilePath(String path) {
     Clipboard.setData(ClipboardData(text: path));
     _snack('已复制路径');
+  }
+
+  // FsClipboardActions 的三处注入点：选中项 / 提示 / 写盘后刷新。
+  // 四个操作(fsCopy/fsCut/fsPaste/fsDrop) 和键盘绑定(fsShortcuts) 都来自 mixin。
+  @override
+  String? get fsSelectedPath => _revealedProjectFilePath;
+
+  @override
+  void fsNotify(String msg) => _snack(msg);
+
+  @override
+  Future<void> fsOnWritten(String firstPath) async {
+    _refreshFileTrees(firstPath);
+    await _refreshGit();
   }
 
   String _pathJoin(String dir, String name) =>
@@ -8088,23 +8108,42 @@ class _WorkspacePageState extends State<WorkspacePage>
   }) {
     final header = _sectionHeader(dir, 'files', 'FILES');
     if (_secCollapsed(dir, 'files')) return header;
+    final focus = _fileTreeFocus.putIfAbsent(
+      dir,
+      () => FocusNode(debugLabel: 'fileTree:$dir'),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         header,
         Padding(
           padding: const EdgeInsets.only(left: 4),
-          child: DirTile(
-            dir: dir,
-            label: label,
-            depth: 0,
-            initiallyExpanded: false,
-            onOpenFile: _openCodeFile,
-            selectedPath: selectedPath,
-            fileMenuBuilder: fileMenuBuilder,
-            directoryMenuBuilder: directoryMenuBuilder,
-            pathStatusBuilder: pathStatusBuilder,
-            refreshToken: _fileTreeRefreshToken,
+          // CallbackShortcuts 在外、聚焦节点在内：只有点进这棵树使其聚焦时，
+          // Cmd/Ctrl+C/X/V 才会命中；焦点在终端/编辑器时不触发，互不抢键。
+          child: CallbackShortcuts(
+            bindings: fsShortcuts,
+            child: Focus(
+              focusNode: focus,
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (_) => focus.requestFocus(),
+                child: DirTile(
+                  dir: dir,
+                  label: label,
+                  depth: 0,
+                  initiallyExpanded: false,
+                  onOpenFile: _openCodeFile,
+                  selectedPath: selectedPath,
+                  onSelectPath: (p) =>
+                      setState(() => _revealedProjectFilePath = p),
+                  onDropPaths: fsDrop,
+                  fileMenuBuilder: fileMenuBuilder,
+                  directoryMenuBuilder: directoryMenuBuilder,
+                  pathStatusBuilder: pathStatusBuilder,
+                  refreshToken: _fileTreeRefreshToken,
+                ),
+              ),
+            ),
           ),
         ),
       ],
@@ -8180,6 +8219,12 @@ class _WorkspacePageState extends State<WorkspacePage>
         _deleteFsPath(path, isDir, rootPath);
       case 'copyPath':
         _copyFilePath(path);
+      case 'copy':
+        fsCopy([path]);
+      case 'cut':
+        fsCut([path]);
+      case 'paste':
+        fsPaste(parent);
       case 'revealProject':
         _revealFileInProject(path);
       case 'revealSystem':
@@ -8259,6 +8304,24 @@ class _WorkspacePageState extends State<WorkspacePage>
           value: 'copyPath',
           icon: Icons.content_copy_rounded,
           label: 'Copy Path',
+        ),
+        ccMenuItem(
+          value: 'copy',
+          icon: Icons.copy_rounded,
+          label: 'Copy',
+          shortcut: '⌘C',
+        ),
+        ccMenuItem(
+          value: path == project.path ? null : 'cut',
+          icon: Icons.content_cut_rounded,
+          label: 'Cut',
+          shortcut: '⌘X',
+        ),
+        ccMenuItem(
+          value: 'paste',
+          icon: Icons.content_paste_rounded,
+          label: 'Paste',
+          shortcut: '⌘V',
         ),
         ccMenuItem(
           value: 'revealProject',

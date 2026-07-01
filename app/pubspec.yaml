@@ -47,7 +47,8 @@ dependencies:
   re_highlight: ^0.0.3
   flutter_svg: ^2.0.10
   web_socket_channel: ^3.0.0
-  pasteboard: ^0.4.0 # read clipboard image bytes (Flutter's Clipboard is text-only)
+  pasteboard: ^0.4.0 # clipboard image bytes + file-level copy/paste (files()/writeFiles), interops with Finder
+  desktop_drop: ^0.6.0 # drag files from Finder into the project file tree (native channel, no Rust)
   flutter_tts: ^4.2.0 # read agent replies aloud (macOS AVSpeechSynthesizer)
   speech_to_text: ^7.0.0 # voice input → terminal (macOS on-device SFSpeechRecognizer)
   crypto: ^3.0.0 # streaming sha256 for file-transfer integrity

@@ -1,9 +1,11 @@
 import 'dart:io';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../file_icons.dart';
+import '../fs_clipboard.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'editor_page.dart';
@@ -25,9 +27,18 @@ class FileBrowserPage extends StatefulWidget {
   State<FileBrowserPage> createState() => _FileBrowserPageState();
 }
 
-class _FileBrowserPageState extends State<FileBrowserPage> {
+class _FileBrowserPageState extends State<FileBrowserPage>
+    with FsClipboardActions {
   int _refreshToken = 0;
   String? _selectedPath;
+  // 文件树聚焦时才响应 Cmd/Ctrl+C/X/V。
+  final FocusNode _treeFocus = FocusNode(debugLabel: 'fileBrowserTree');
+
+  @override
+  void dispose() {
+    _treeFocus.dispose();
+    super.dispose();
+  }
 
   String _join(String dir, String name) =>
       dir.endsWith('/') || dir.endsWith(r'\') ? '$dir$name' : '$dir/$name';
@@ -216,6 +227,19 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
     }
   }
 
+  // FsClipboardActions 的三处注入点：选中项 / 提示 / 写盘后刷新。
+  // 四个操作(fsCopy/fsCut/fsPaste/fsDrop) 和键盘绑定(fsShortcuts) 都来自 mixin。
+  @override
+  String? get fsSelectedPath => _selectedPath;
+
+  @override
+  void fsNotify(String msg) {
+    if (mounted) snack(context, msg);
+  }
+
+  @override
+  Future<void> fsOnWritten(String firstPath) async => _markChanged(firstPath);
+
   void _handleMenu(String value, String path, bool isDir) {
     setState(() => _selectedPath = path);
     switch (value) {
@@ -238,6 +262,12 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
       case 'copyPath':
         Clipboard.setData(ClipboardData(text: path));
         snack(context, '已复制路径');
+      case 'copy':
+        fsCopy([path]);
+      case 'cut':
+        fsCut([path]);
+      case 'paste':
+        fsPaste(isDir ? path : _parentDir(path));
       case 'reveal':
         _revealInSystem(path);
       case 'openExternal':
@@ -292,6 +322,24 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
             label: 'Copy Path',
           ),
           ccMenuItem(
+            value: 'copy',
+            icon: Icons.copy_rounded,
+            label: 'Copy',
+            shortcut: '⌘C',
+          ),
+          ccMenuItem(
+            value: path == widget.root ? null : 'cut',
+            icon: Icons.content_cut_rounded,
+            label: 'Cut',
+            shortcut: '⌘X',
+          ),
+          ccMenuItem(
+            value: 'paste',
+            icon: Icons.content_paste_rounded,
+            label: 'Paste',
+            shortcut: '⌘V',
+          ),
+          ccMenuItem(
             value: 'reveal',
             icon: Icons.my_location_rounded,
             label: 'Reveal in System',
@@ -316,21 +364,34 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
       appBar: AppBar(title: Text('文件 · ${widget.name}')),
       body: DecoratedBox(
         decoration: appGradient,
-        child: ListView(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          children: [
-            FileTree(
-              root: widget.root,
-              label: widget.name,
-              onOpenFile: (path) => Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => EditorPage(path: path))),
-              selectedPath: _selectedPath,
-              refreshToken: _refreshToken,
-              fileMenuBuilder: (path) => _pathMenu(path, false),
-              directoryMenuBuilder: (path) => _pathMenu(path, true),
+        // CallbackShortcuts 在外、聚焦节点在内：点进树使其聚焦后才响应 Cmd/Ctrl+C/X/V。
+        child: CallbackShortcuts(
+          bindings: fsShortcuts,
+          child: Focus(
+            focusNode: _treeFocus,
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) => _treeFocus.requestFocus(),
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                children: [
+                  FileTree(
+                    root: widget.root,
+                    label: widget.name,
+                    onOpenFile: (path) => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => EditorPage(path: path)),
+                    ),
+                    selectedPath: _selectedPath,
+                    onSelectPath: (p) => setState(() => _selectedPath = p),
+                    onDropPaths: fsDrop,
+                    refreshToken: _refreshToken,
+                    fileMenuBuilder: (path) => _pathMenu(path, false),
+                    directoryMenuBuilder: (path) => _pathMenu(path, true),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -342,6 +403,8 @@ class FileTree extends StatelessWidget {
   final String label;
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
+  final ValueChanged<String>? onSelectPath;
+  final void Function(String dir, List<String> paths)? onDropPaths;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
@@ -352,6 +415,8 @@ class FileTree extends StatelessWidget {
     required this.label,
     required this.onOpenFile,
     this.selectedPath,
+    this.onSelectPath,
+    this.onDropPaths,
     this.fileMenuBuilder,
     this.directoryMenuBuilder,
     this.pathStatusBuilder,
@@ -366,6 +431,8 @@ class FileTree extends StatelessWidget {
     initiallyExpanded: true,
     onOpenFile: onOpenFile,
     selectedPath: selectedPath,
+    onSelectPath: onSelectPath,
+    onDropPaths: onDropPaths,
     fileMenuBuilder: fileMenuBuilder,
     directoryMenuBuilder: directoryMenuBuilder,
     pathStatusBuilder: pathStatusBuilder,
@@ -380,6 +447,10 @@ class DirTile extends StatefulWidget {
   final bool initiallyExpanded;
   final ValueChanged<String> onOpenFile;
   final String? selectedPath;
+  // 点任意行(文件或目录)时回调,让上层把它设为当前选中项——键盘 C/X/V 据此定位目标。
+  final ValueChanged<String>? onSelectPath;
+  // 从访达把文件拖到某个目录行上时回调 (目录路径, 拖入的源路径列表)。
+  final void Function(String dir, List<String> paths)? onDropPaths;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
@@ -392,6 +463,8 @@ class DirTile extends StatefulWidget {
     required this.onOpenFile,
     this.initiallyExpanded = false,
     this.selectedPath,
+    this.onSelectPath,
+    this.onDropPaths,
     this.fileMenuBuilder,
     this.directoryMenuBuilder,
     this.pathStatusBuilder,
@@ -406,6 +479,7 @@ class _DirTileState extends State<DirTile> {
   List<FileSystemEntity>? _children; // null = not loaded yet
   bool _loading = false;
   late bool _open;
+  bool _dropHover = false; // 访达文件正悬停在本目录行上
 
   @override
   void initState() {
@@ -484,7 +558,10 @@ class _DirTileState extends State<DirTile> {
       depth: widget.depth,
       selected: selected,
       bold: selected || ancestor,
-      onTap: _toggle,
+      onTap: () {
+        widget.onSelectPath?.call(widget.dir);
+        _toggle();
+      },
       iconAsset: folderIconAsset,
       iconSize: 16,
       label: widget.label,
@@ -499,12 +576,30 @@ class _DirTileState extends State<DirTile> {
         ),
       ),
     );
+    var folderRow = menu == null ? row : _menuGesture(row, menu);
+    // 目录行同时是拖入目标：从访达拖文件到这一行 → 复制进该目录（悬停高亮）。
+    // 各目录行是 Column 里的兄弟节点、互不嵌套，因此拖放事件只命中光标下的那一行。
+    if (widget.onDropPaths != null) {
+      folderRow = DropTarget(
+        onDragEntered: (_) => setState(() => _dropHover = true),
+        onDragExited: (_) => setState(() => _dropHover = false),
+        onDragDone: (detail) {
+          setState(() => _dropHover = false);
+          final paths = detail.files
+              .map((f) => f.path)
+              .where((p) => p.isNotEmpty)
+              .toList();
+          if (paths.isNotEmpty) widget.onDropPaths!(widget.dir, paths);
+        },
+        child: DecoratedBox(
+          decoration: _dropHover ? _dropBand : const BoxDecoration(),
+          child: folderRow,
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        menu == null ? row : _menuGesture(row, menu),
-        if (_open) ..._childWidgets(),
-      ],
+      children: [folderRow, if (_open) ..._childWidgets()],
     );
   }
 
@@ -593,6 +688,8 @@ class _DirTileState extends State<DirTile> {
             depth: d,
             onOpenFile: widget.onOpenFile,
             selectedPath: widget.selectedPath,
+            onSelectPath: widget.onSelectPath,
+            onDropPaths: widget.onDropPaths,
             fileMenuBuilder: widget.fileMenuBuilder,
             directoryMenuBuilder: widget.directoryMenuBuilder,
             pathStatusBuilder: widget.pathStatusBuilder,
@@ -609,6 +706,11 @@ class _DirTileState extends State<DirTile> {
   static final _selBand = BoxDecoration(
     color: CcColors.accent.withValues(alpha: 0.16),
   );
+  // 拖入悬停：更明显的填充 + 强调色描边，提示"松手会放进这个文件夹"。
+  static final _dropBand = BoxDecoration(
+    color: CcColors.accent.withValues(alpha: 0.22),
+    border: Border.all(color: CcColors.accent, width: 1),
+  );
   Widget _band(bool selected, Widget child) =>
       DecoratedBox(decoration: selected ? _selBand : _noBand, child: child);
 
@@ -619,7 +721,10 @@ class _DirTileState extends State<DirTile> {
       depth: depth,
       selected: selected,
       bold: selected,
-      onTap: () => widget.onOpenFile(path),
+      onTap: () {
+        widget.onSelectPath?.call(path);
+        widget.onOpenFile(path);
+      },
       iconAsset: fileIconAsset(name),
       iconSize: 15,
       label: name,
