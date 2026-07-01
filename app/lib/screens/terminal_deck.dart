@@ -107,7 +107,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // fans out to the host hook (voice TTS re-arm).
   void _activeChanged() {
     if (activeTerm >= 0 && activeTerm < terms.length) {
-      unawaited(terms[activeTerm].refreshUsage());
+      // The front session spawns its PTY now (idempotent). This is what starts a
+      // deferred/lazy session the moment it's opened — via reopenTermView, a tab
+      // switch, or restore focusing the active tab; already-started sessions no-op.
+      final s = terms[activeTerm];
+      s.deferred = false;
+      s.start();
+      unawaited(s.refreshUsage());
     }
     onActiveTermChanged?.call();
   }
@@ -197,6 +203,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       }
     });
     _activeChanged();
+    unawaited(_save()); // persist hidden state so it stays lazy across restart
   }
 
   // reopenTermView un-hides a session's tab and makes it active — the project
@@ -208,6 +215,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       activeTerm = i;
     });
     _activeChanged();
+    unawaited(_save()); // persist un-hide so it eager-starts next restart
   }
 
   // _nearestVisible returns the index of the closest non-hidden tab to [from]
@@ -243,6 +251,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       final data = jsonDecode(await f.readAsString());
       if (data is! List) return;
       final restored = <TerminalSession>[];
+      final hiddenIds = <String>[]; // restore these as closed-to-tree (lazy) tabs
+      String? activeId; // persisted-active session id (focus it if still visible)
       var upgraded = false; // a legacy entry was recovered → rewrite the file
       for (final e in data) {
         if (e is! Map) continue;
@@ -289,12 +299,20 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
         if (nm.isEmpty && supervisor) ts.name = '总管';
+        // A tab that was closed to the tree comes back hidden AND deferred: it
+        // shows in the tree but its PTY spawns only when the user reopens it.
+        if (e['hidden'] == true) {
+          ts.deferred = true;
+          hiddenIds.add(ts.id);
+        }
+        if (e['active'] == true) activeId = ts.id;
         restored.add(ts);
       }
       if (restored.isEmpty || !mounted) return;
       setState(() {
         terms.addAll(restored);
-        activeTerm = 0;
+        _hiddenTabs.addAll(hiddenIds);
+        activeTerm = _initialActiveIndex(activeId);
       });
       onTermsChanged?.call();
       _activeChanged();
@@ -302,6 +320,19 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       // restarts (all entries already structured) skip the redundant write.
       if (upgraded) unawaited(_save());
     } catch (_) {}
+  }
+
+  // _initialActiveIndex picks the tab to focus on restore: the persisted-active
+  // session if it's present AND visible, else the first non-hidden session (a
+  // hidden tab must never be the active/front tab), else 0. Call after terms +
+  // _hiddenTabs are populated.
+  int _initialActiveIndex(String? activeId) {
+    if (activeId != null) {
+      final i = terms.indexWhere((s) => s.id == activeId);
+      if (i >= 0 && !isTabHidden(terms[i].id)) return i;
+    }
+    final firstVisible = terms.indexWhere((s) => !isTabHidden(s.id));
+    return firstVisible >= 0 ? firstVisible : 0;
   }
 
   Future<String> _persistPath(String key) async =>
@@ -321,22 +352,25 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       final f = File(await _persistPath(key));
       await f.writeAsString(
         jsonEncode(
-          terms
-              .map(
-                (s) => {
-                  'id': s.id, // stable remote-addressing id (survives restart)
-                  'workdir': s.workdir,
-                  'command': s.command,
-                  if (s.name?.isNotEmpty ?? false) 'name': s.name,
-                  // AI-session binding (see TerminalSession) — lets a reopened
-                  // tab --resume its exact conversation next launch.
-                  if (s.agent.isNotEmpty) 'agent': s.agent,
-                  if (s.preLaunch.isNotEmpty) 'preLaunch': s.preLaunch,
-                  if (s.supervisor) 'supervisor': true,
-                  if (s.agentSessionId != null) 'sessionId': s.agentSessionId,
-                },
-              )
-              .toList(),
+          [
+            for (final (i, s) in terms.indexed)
+              {
+                'id': s.id, // stable remote-addressing id (survives restart)
+                'workdir': s.workdir,
+                'command': s.command,
+                if (s.name?.isNotEmpty ?? false) 'name': s.name,
+                // AI-session binding (see TerminalSession) — lets a reopened
+                // tab --resume its exact conversation next launch.
+                if (s.agent.isNotEmpty) 'agent': s.agent,
+                if (s.preLaunch.isNotEmpty) 'preLaunch': s.preLaunch,
+                if (s.supervisor) 'supervisor': true,
+                if (s.agentSessionId != null) 'sessionId': s.agentSessionId,
+                // Tab visibility + focus, so restore eager-starts only the visible
+                // tabs and re-focuses the right one (hidden tabs stay lazy).
+                if (isTabHidden(s.id)) 'hidden': true,
+                if (i == activeTerm) 'active': true,
+              },
+          ],
         ),
       );
     } catch (_) {}

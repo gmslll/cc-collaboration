@@ -112,6 +112,14 @@ class TerminalSession {
   Pty? _pty;
   bool _started = false;
   bool _disposed = false;
+  // deferred = restored but its PTY must NOT auto-start when its pane mounts — it
+  // starts only once the session becomes active (the user opens its tab/tree node).
+  // Set by restoreTerms for hidden (closed-to-tree) sessions and cleared on
+  // activation, so a restart brings sessions back without spawning every agent at
+  // once. New sessions (addTerm) leave this false and start eagerly as before.
+  bool deferred = false;
+  // started exposes _started so the tree can dim a not-yet-loaded (deferred) session.
+  bool get started => _started;
   // Resolved agent launch token (abs path / user override / bare name), set in
   // _startAsync before the PTY spawns. Null until resolved (non-agent sessions
   // leave it null and _resolvedCommand ignores it).
@@ -1011,7 +1019,10 @@ class _TerminalPaneState extends State<TerminalPane> {
   @override
   void initState() {
     super.initState();
-    widget.session.start();
+    // A deferred (restored-but-hidden) session waits for activation to spawn its
+    // PTY — its pane still mounts in the IndexedStack, it just doesn't start the
+    // agent until the user opens it (see TerminalSession.deferred / _activeChanged).
+    if (!widget.session.deferred) widget.session.start();
     // Populate the usage chip immediately for a resumed session (whose transcript
     // already exists on disk); a fresh session fills in on its first turn.
     unawaited(widget.session.refreshUsage());
