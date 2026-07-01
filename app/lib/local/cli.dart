@@ -107,9 +107,14 @@ class Cli {
 
   // --- workspace / project management (config.toml round-trips via SaveUser) ---
 
+  // --path goes BEFORE the name so this works even against an older cc-handoff
+  // whose `workspace create` uses plain flag.Parse (stops at the first
+  // positional) — flags-first parses cleanly there; the fixed CLI (parseFlexible)
+  // accepts either order.
   static Future<void> workspaceCreate(String name, {String? path}) => run([
-        'workspace', 'create', name,
+        'workspace', 'create',
         if (path != null && path.trim().isNotEmpty) ...['--path', path.trim()],
+        name,
       ]);
 
   static Future<void> workspaceAdd(String name, String source) =>

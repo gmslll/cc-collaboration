@@ -143,13 +143,17 @@ func printWorktrees(ctx context.Context, u *config.User, ws config.Workspace, p 
 func runWorkspaceCreate(_ context.Context, args []string) error {
 	fs := flag.NewFlagSet("workspace create", flag.ContinueOnError)
 	pathFlag := fs.String("path", "", "workspace root dir (default: <workspace_root>/<name>)")
-	if err := fs.Parse(args); err != nil {
+	// parseFlexible (not fs.Parse) so `create <name> --path DIR` works: Go's flag
+	// package stops at the first positional, so a trailing --path would otherwise
+	// be misread as extra positionals and fail the NArg check below.
+	pos, err := parseFlexible(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		return fmt.Errorf("usage: cc-handoff workspace create <name> [--path DIR]")
 	}
-	name := fs.Arg(0)
+	name := pos[0]
 
 	u, err := loadUserOrFail()
 	if err != nil {
