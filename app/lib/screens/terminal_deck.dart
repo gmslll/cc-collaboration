@@ -479,16 +479,18 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // success, or a human-readable error (unknown/ambiguous target, self-send,
   // inbox write failure) that LocalBus writes back so `msg send` exits non-zero.
   //
-  // Idle target → paste straight into its PTY (an immediate new turn). Busy
-  // agent target → park in its bus inbox so its PostToolUse/Stop hook injects
-  // the message mid-turn, instead of the paste queuing behind the whole running
-  // turn. --no-submit fills and non-agent targets always paste (no hook to
-  // drain an inbox, and a fill is meant to sit in the input box for review).
+  // Idle target with a clean input row → paste straight into its PTY (an immediate
+  // new turn). Busy agent OR one whose input row is dirty (the user has typed
+  // unsubmitted keystrokes) → park in its bus inbox so its PostToolUse/Stop hook
+  // injects the message as its own clean turn — instead of queuing behind a running
+  // turn, or racing the paste against what the user is typing (which drops one of
+  // them). --no-submit fills and non-agent targets always paste (no hook to drain
+  // an inbox, and a fill is meant to sit in the input box for review).
   String? deliverLocalMessage(LocalMsg m) {
     final (target, err) = _resolveTarget(m.to);
     if (target == null) return err; // err is non-null when target is null
     if (target.id == m.from) return '不能发给自己';
-    if (m.submit && target.busy) {
+    if (m.submit && (target.busy || target.inputDirty)) {
       return _enqueueBusInbox(target, m);
     }
     target.pasteText(_composeDelivery(target, m), submit: m.submit);

@@ -169,6 +169,18 @@ class TerminalSession {
   bool _busy = false;
   bool get busy => isAgent && _busy;
 
+  // _inputDirty = the user has typed into this session's input row since their
+  // last submit (Enter). Read via [inputDirty] (ANDs isAgent, like busy). Drives
+  // local-bus delivery: when an idle agent's input row is dirty, an incoming peer
+  // message is parked in its bus inbox (hook-injected as a clean turn) instead of
+  // pasted — so it can't overwrite what the user is mid-typing (the paste and the
+  // user's keystrokes would otherwise race on the same input line, and the user's
+  // Enter submits whichever text won, dropping the other). Set by markUserInput on
+  // real keyboard/IME input; cleared when that input is a submit (CR). App-driven
+  // pasteText/sendText bypass markUserInput, so a delivery never self-dirties.
+  bool _inputDirty = false;
+  bool get inputDirty => isAgent && _inputDirty;
+
   static final RegExp _terminalProtocolReply = RegExp(
     r'^(?:(?:'
     r'\x1b\](?:10|11);rgb:[0-9a-fA-F]{4}/[0-9a-fA-F]{4}/[0-9a-fA-F]{4}\x1b\\'
@@ -204,6 +216,7 @@ class TerminalSession {
     if (protocolReply && !allowProtocolReply) return;
     if (!protocolReply) {
       _sawInput = true; // local keystrokes count as "the user gave it work"
+      markUserInput(data); // track the unsubmitted input row (CR clears it)
       // A local Enter into an agent starts a turn → mark busy so a peer message
       // arriving now routes to the bus inbox (hook injection) not a paste queue.
       if (isAgent && data.contains('\r')) {
@@ -214,6 +227,17 @@ class TerminalSession {
       }
     }
     _pty?.write(bytes);
+  }
+
+  // markUserInput records that real user keyboard/IME text reached the input row,
+  // so a delivered message enqueues instead of overwriting it. A submit (CR) means
+  // the row was sent → clean again. Called ONLY from the genuine user-input funnels
+  // (the hardware-key path here in _writeInputBytes and the EditableText commit in
+  // _onChanged) — never from pasteText/sendText, so app delivery can't self-dirty
+  // (that would wrongly divert every subsequent paste to the inbox). See [inputDirty].
+  void markUserInput(String data) {
+    if (data.isEmpty) return;
+    _inputDirty = !data.contains('\r');
   }
 
   static const Duration _belSettle = Duration(
@@ -1326,6 +1350,9 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
   void _onChanged() {
     final v = _ctrl.value;
     if (v.composing.isValid || v.text.isEmpty) return;
+    // Committed keyboard/IME text is real user input → mark the input row dirty so
+    // a peer message arriving now parks in the bus inbox instead of pasting over it.
+    widget.session.markUserInput(v.text);
     widget.session.sendText(v.text);
     _ctrl.clear();
   }
