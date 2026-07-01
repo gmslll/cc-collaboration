@@ -8,6 +8,9 @@ bin/
 # Android release signing (key.properties + cc-handoff-release.jks) is committed
 # on purpose so CI signs with a stable key without secrets — see build.gradle.kts.
 /cc-handoff
+# cc-handoff runtime state (materialized inbox, watch cursor, supervisor scaffold).
+# The committed per-repo config is the .cc-handoff.toml file, not this directory.
+.cc-handoff/
 .DS_Store
 .idea/
 .vscode/
