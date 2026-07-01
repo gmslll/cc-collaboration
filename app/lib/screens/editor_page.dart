@@ -72,6 +72,17 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     if (ctl == null) return null;
     return ctl.selection.extentIndex + 1;
   }
+
+  // caretPosition is the caret's 0-based (line, character) — LSP coordinates the
+  // phase-2 go-to-definition backend sends to gopls. Paired with [text] (the
+  // current buffer, which is what gopls should see as the document overlay).
+  ({int line, int character})? get caretPosition {
+    final ctl = _ctl;
+    if (ctl == null) return null;
+    final sel = ctl.selection;
+    if (sel.extentIndex < 0) return null;
+    return (line: sel.extentIndex, character: sel.extentOffset);
+  }
   int get lineCount => text.isEmpty ? 0 : text.split('\n').length;
   String get eol => _crlf ? 'CRLF' : 'LF';
   String get languageLabel => _languageLabelForExt(fileExtOf(widget.path));

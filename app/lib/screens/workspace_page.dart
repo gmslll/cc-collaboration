@@ -19,6 +19,7 @@ import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
+import '../local/lsp/lsp_client.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/project_order.dart';
@@ -869,6 +870,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     widget.overviewStore.previewHandler = null;
     _voice.dispose();
     disposeTerms();
+    LspManager.instance.shutdownAll();
     super.dispose();
   }
 

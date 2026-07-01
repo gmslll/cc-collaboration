@@ -96,20 +96,57 @@ mixin _SymbolIndex on State<WorkspacePage> {
     return count;
   }
 
-  // _goToDefinition is the F12 / Cmd(Ctrl)+B entry: resolve the identifier under
-  // the active editor's caret to its definition(s) and jump / disambiguate.
+  // _goToDefinition is the Cmd/Ctrl+click / F12 / Cmd(Ctrl)+B entry. For Go it
+  // asks gopls first (precise), falling back to the regex index; for everything
+  // else it resolves the identifier under the caret against the regex index.
   Future<void> _goToDefinition() async {
-    final loc = _activeCodeEditor();
-    if (loc == null) {
+    final ed = _activeCodeEditor();
+    if (ed == null) {
       _snack('把光标放到代码标识符上再跳转');
       return;
     }
-    final ident = loc.state.identifierAtCursor;
+    // Phase 2: gopls-first for Go. Any miss (server absent / timeout / no
+    // result) returns false so we degrade to the always-available regex path.
+    if (fileExtOf(ed.path) == 'go' && await _tryLspDefinition(ed)) return;
+    final ident = ed.state.identifierAtCursor;
     if (ident == null) {
       _snack('光标不在标识符上');
       return;
     }
-    await _goToDefinitionOf(ident, fromPath: loc.path, fromLine: loc.caretLine);
+    await _goToDefinitionOf(ident, fromPath: ed.path, fromLine: ed.caretLine);
+  }
+
+  // _tryLspDefinition asks the LSP backend for the definition at the caret and
+  // navigates if it resolved one. Returns false (→ regex fallback) on any miss.
+  Future<bool> _tryLspDefinition(
+    ({CodeEditorPaneState state, String path, int? caretLine}) ed,
+  ) async {
+    final pos = ed.state.caretPosition;
+    if (pos == null) return false;
+    final root = _projectRootFor(ed.path);
+    if (root == null) return false;
+    final locs = await LspManager.instance.goDefinition(
+      root: root,
+      filePath: ed.path,
+      text: ed.state.text,
+      line: pos.line,
+      character: pos.character,
+    );
+    if (!mounted || locs.isEmpty) return false;
+    final first = locs.first;
+    _openCodeFile(first.path, line: first.line);
+    return true;
+  }
+
+  // _projectRootFor returns the registered project directory that contains
+  // [path] (the LSP/module root), or null when the file is outside all projects.
+  String? _projectRootFor(String path) {
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (pathWithin(path, p.path)) return p.path;
+      }
+    }
+    return null;
   }
 
   // _activeCodeEditor returns the mounted editor state of the active code tab
