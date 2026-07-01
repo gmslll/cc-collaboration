@@ -6,6 +6,23 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-01
+
+### Added
+
+- **Ghostty shadow terminal integration helpers** — Added Ghostty-backed shadow parsing/runtime helpers, input encoding coverage, snapshot formatting, and WASM asset plumbing so host sessions can compare and reuse Ghostty terminal semantics without replacing the xterm UI.
+- **Terminal render profiling and benchmarks** — Added focused xterm renderer benchmark coverage and documentation for paragraph/glyph/dirty repaint behavior.
+
+### Changed
+
+- **Terminal renderer borrows flterm-style layer separation** — The xterm render path now separates content background coverage from overlay selection/highlight painting, keeps viewport and line command caches hot for selection/cursor interactions, and improves paragraph/glyph command batching.
+- **Workspace and path handling polish** — Improved workspace tree grouping, Windows path utilities, and related UI handling carried by the Ghostty shadow terminal branch.
+
+### Fixed
+
+- **macOS terminal background seams** — Default terminal backgrounds now cover opaque rows with vertically snapped content rects while keeping selection/highlight overlays non-overlapping, removing the visible 1px prompt/input block gaps without reintroducing selected-row striping.
+- **Terminal selection stability during agent output** — Selection and pointer handling now stay usable across current screen, scrollback, mouse mode, and right-side empty terminal areas.
+
 ## [0.6.29] - 2026-06-30
 
 ### Added
