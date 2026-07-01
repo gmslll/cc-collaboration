@@ -8466,6 +8466,10 @@ class _WorkspacePageState extends State<WorkspacePage>
         // hidden = the session keeps running but its tab was closed ("close
         // view"); tapping the node reopens the tab (reopenTermView).
         final hidden = isTabHidden(e.s.id);
+        // notLoaded = restored lazily (a closed-to-tree tab) and not yet started —
+        // shown dimmed with a 休眠 glyph; tapping it spawns the agent. Distinct from
+        // a still-running session whose tab was merely closed (hidden but started).
+        final notLoaded = e.s.deferred && !e.s.started;
         final agent = e.s.agentKind;
         final display = (e.s.name?.isNotEmpty ?? false)
             ? e.s.name!
@@ -8559,7 +8563,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                 style: TextStyle(
                   fontFamily: CcType.mono,
                   fontSize: 13.5,
-                  color: active ? CcColors.text : CcColors.muted,
+                  color: active
+                      ? CcColors.text
+                      : (notLoaded ? CcColors.subtle : CcColors.muted),
                   fontWeight: active ? FontWeight.w600 : FontWeight.normal,
                 ),
                 maxLines: 1,
@@ -8576,6 +8582,18 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ? Padding(
                       padding: const EdgeInsets.only(right: 2),
                       child: statusDot(CcColors.ok, size: 7, glow: true),
+                    )
+                  : notLoaded
+                  ? Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Tooltip(
+                        message: '未加载 · 点击启动',
+                        child: Icon(
+                          Icons.bedtime_outlined,
+                          size: 13,
+                          color: CcColors.subtle,
+                        ),
+                      ),
                     )
                   : (hidden
                         ? Padding(
