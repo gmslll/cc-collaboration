@@ -26,6 +26,8 @@ func runWorkspace(ctx context.Context, args []string) error {
 		return runWorkspaceCreate(ctx, rest)
 	case "add":
 		return runWorkspaceAdd(ctx, rest)
+	case "import":
+		return runWorkspaceImport(ctx, rest)
 	case "remove", "rm", "delete":
 		return runWorkspaceRemove(ctx, rest)
 	case "set":
@@ -51,6 +53,10 @@ func workspaceUsage() {
   cc-handoff workspace add <name> <github-url|local-path>
         add a project; a git URL is cloned into the workspace dir, a local
         path is just registered
+  cc-handoff workspace import <dir> [--name NAME] [--max-depth N] [--json]
+        scan <dir> for git repos and register each as a project (in place, not
+        moved/cloned) in workspace NAME (default: basename of <dir>); skips
+        repos already tracked
   cc-handoff workspace remove <name> [project]
         drop a workspace (or one project from it) from config; files on disk
         are left untouched
