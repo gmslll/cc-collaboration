@@ -216,6 +216,7 @@ class TerminalPainter {
     bool paintBackgrounds = true,
     bool paintTextRuns = true,
     bool paintGeometryRuns = true,
+    double? backgroundHeight,
   }) {
     final profile = collectProfile ? TerminalPainterProfile() : null;
     _profile = profile;
@@ -230,6 +231,7 @@ class TerminalPainter {
           offset.translate(span.start * cellWidth, 0),
           span.width,
           span.color,
+          height: backgroundHeight,
         );
       }
     }
@@ -1814,12 +1816,14 @@ class TerminalPainter {
     Canvas canvas,
     Offset offset,
     int widthCells,
-    Color color,
-  ) {
+    Color color, {
+    double? height,
+  }) {
     final paint = _backgroundPaint
       ..color = color
       ..style = PaintingStyle.fill;
-    final size = Size(_cellSize.width * widthCells + 1, _cellSize.height);
+    final size =
+        Size(_cellSize.width * widthCells + 1, height ?? _cellSize.height);
     canvas.drawRect(offset & size, paint);
   }
 

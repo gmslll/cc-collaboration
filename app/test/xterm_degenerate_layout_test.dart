@@ -1,4 +1,4 @@
-import 'dart:ui' show PictureRecorder;
+import 'dart:ui' show ImageByteFormat, PictureRecorder;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -173,6 +173,59 @@ void main() {
     expect(firstLineAgain.renderPlanCacheMisses, 1);
     expect(firstLineAgain.renderPlanCacheHits, 0);
   });
+
+  test(
+    'terminal painter background bands avoid seams without bleeding',
+    () async {
+      final painter = TerminalPainter(
+        theme: TerminalThemes.defaultTheme,
+        textStyle: const TerminalStyle(),
+        textScaler: TextScaler.noScaling,
+      );
+      final green = CursorStyle()..setBackgroundColorRgb(0, 255, 0);
+      final normal = CursorStyle();
+
+      BufferLine line(CursorStyle style) {
+        final line = BufferLine(4);
+        for (var i = 0; i < line.length; i++) {
+          line.setCell(i, 0x20, 1, style);
+        }
+        return line;
+      }
+
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      painter
+        ..paintLine(canvas, Offset.zero, line(green), backgroundHeight: 17)
+        ..paintLine(
+          canvas,
+          const Offset(0, 17),
+          line(green),
+          backgroundHeight: 17,
+        )
+        ..paintLine(
+          canvas,
+          const Offset(0, 34),
+          line(normal),
+          backgroundHeight: 17,
+        );
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(40, 60);
+      final data = (await image.toByteData(format: ImageByteFormat.rawRgba))!;
+      final pixels = data.buffer.asUint8List();
+
+      int alphaAt(int x, int y) => pixels[(y * image.width + x) * 4 + 3];
+      int greenAt(int x, int y) => pixels[(y * image.width + x) * 4 + 1];
+
+      expect(greenAt(2, 16), greaterThan(200));
+      expect(greenAt(2, 17), greaterThan(200));
+      expect(greenAt(2, 33), greaterThan(200));
+      expect(alphaAt(2, 34), 0);
+
+      image.dispose();
+      picture.dispose();
+    },
+  );
 
   test('terminal painter chunks long ascii runs', () {
     final painter = TerminalPainter(
