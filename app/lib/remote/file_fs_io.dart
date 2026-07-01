@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../local/path_utils.dart';
 import 'file_transfer.dart';
 
 // True on native (this file is only compiled when dart:library.io exists), so
@@ -36,8 +37,7 @@ Future<Directory> _landingDir({required bool host}) async {
 // checking both the final name and its .part sibling so a re-sent file or a
 // concurrent transfer of the same name never clobbers an in-flight one.
 String _dedupePath(Directory dir, String name) {
-  bool taken(String p) =>
-      File(p).existsSync() || File('$p.part').existsSync();
+  bool taken(String p) => File(p).existsSync() || File('$p.part').existsSync();
   var candidate = '${dir.path}/$name';
   if (!taken(candidate)) return candidate;
   final dot = name.lastIndexOf('.');
@@ -157,7 +157,8 @@ FileSendHandle sendFileOverChannel({
   void Function(int sent, int total)? onProgress,
   void Function(bool ok, String msg)? onDone,
 }) {
-  final xid = 'f${DateTime.now().microsecondsSinceEpoch}-${path.hashCode & 0xffff}';
+  final xid =
+      'f${DateTime.now().microsecondsSinceEpoch}-${path.hashCode & 0xffff}';
   var cancelled = false;
   final completer = Completer<void>();
   final gate = Completer<bool>();
@@ -171,15 +172,17 @@ FileSendHandle sendFileOverChannel({
         onDone?.call(false, '文件过大 (上限 100MB)');
         return;
       }
-      final name = sanitizeFileName(path.split('/').last);
-      send(fileOfferFrame(
-        xid: xid,
-        name: name,
-        size: size,
-        mime: _guessMime(name),
-        sid: sid,
-        to: to,
-      ));
+      final name = sanitizeFileName(pathBaseName(path));
+      send(
+        fileOfferFrame(
+          xid: xid,
+          name: name,
+          size: size,
+          mime: _guessMime(name),
+          sid: sid,
+          to: to,
+        ),
+      );
       // Wait for the receiver to consent before streaming. accept()/reject() on
       // the handle complete this gate; cancel() is checked below.
       if (requireAccept) {
@@ -217,7 +220,14 @@ FileSendHandle sendFileOverChannel({
         if (n <= 0) break;
         final slice = n == buf.length ? buf : Uint8List.sublistView(buf, 0, n);
         digestIn.add(slice);
-        send(fileChunkFrame(xid: xid, seq: seq++, dataB64: base64Encode(slice), to: to));
+        send(
+          fileChunkFrame(
+            xid: xid,
+            seq: seq++,
+            dataB64: base64Encode(slice),
+            to: to,
+          ),
+        );
         sent += n;
         onProgress?.call(sent, size);
         await Future<void>.delayed(Duration.zero); // let the UI breathe

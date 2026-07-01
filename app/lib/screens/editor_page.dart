@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:re_editor/re_editor.dart';
 import 'package:re_highlight/styles/atom-one-dark.dart';
 
+import '../local/path_utils.dart';
 import '../plugins/plugin_manager.dart';
 import '../syntax.dart';
 import '../theme.dart';
@@ -159,7 +160,8 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
       _crlf = content.contains('\r\n');
       _ctl?.removeListener(_onChange);
       _ctl?.dispose();
-      _ctl = CodeLineEditingController.fromText(content)..addListener(_onChange);
+      _ctl = CodeLineEditingController.fromText(content)
+        ..addListener(_onChange);
       _original = _ctl!.text;
       _dirty = false;
       if (!mounted) return;
@@ -278,7 +280,7 @@ class _EditorPageState extends State<EditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.path.split('/').last;
+    final name = pathBaseName(widget.path);
     final saving = _editorKey.currentState?.saving ?? false;
     return PopScope(
       canPop: !_dirty,
@@ -370,7 +372,7 @@ String _languageLabelForExt(String ext) => switch (ext) {
 
 // fileExtOf returns the lowercased extension of a path's filename.
 String fileExtOf(String path) =>
-    path.split('/').last.split('.').last.toLowerCase();
+    pathBaseName(path).split('.').last.toLowerCase();
 
 // formatPluginButton is the editor 「格式化」 action for [path]: shown only when
 // a formatter plugin covers the type, disabled (with a reason) when the host

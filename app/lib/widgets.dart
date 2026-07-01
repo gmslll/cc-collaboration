@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import 'local/prefs.dart';
+import 'local/path_utils.dart';
 import 'local/session_overview.dart';
 import 'syntax.dart';
 import 'theme.dart';
@@ -1322,13 +1323,7 @@ class _HoverLiftState extends State<HoverLift> {
 
 // splitFileNameDir splits a path into (fileName, dirPath); dirPath is '' if none.
 (String, String) splitFileNameDir(String path) {
-  final slash = path.lastIndexOf('/');
-  final backslash = path.lastIndexOf(r'\');
-  final i = slash > backslash ? slash : backslash;
-  return (
-    i < 0 ? path : path.substring(i + 1),
-    i < 0 ? '' : path.substring(0, i),
-  );
+  return splitPathNameDir(path);
 }
 
 // ccMenuItem is the shared JetBrains/GoLand-style popup-menu row: a leading icon,

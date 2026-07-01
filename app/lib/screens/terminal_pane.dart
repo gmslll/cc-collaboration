@@ -15,6 +15,7 @@ import '../local/agent_transcript.dart';
 import '../local/agent_usage.dart';
 import '../local/cli.dart';
 import '../local/local_bus.dart';
+import '../local/path_utils.dart';
 import '../local/platform.dart';
 import '../local/shell.dart';
 import '../ghostty_shadow.dart';
@@ -297,8 +298,8 @@ class TerminalSession {
     this.resume = false,
   }) : id = id ?? 'ts${_seq++}',
        ghostty = GhosttyShadowTerminal.create(cols: 80, rows: 24),
-       title = workdir.split('/').where((s) => s.isNotEmpty).isNotEmpty
-           ? workdir.split('/').lastWhere((s) => s.isNotEmpty)
+       title = pathBaseName(workdir).isNotEmpty
+           ? pathBaseName(workdir)
            : workdir {
     // Codex is launched with --no-alt-screen (inline mode), but it still uses a
     // top scroll region with reserved composer rows. Opt this session into the
@@ -759,7 +760,7 @@ class TerminalSession {
   bool _cwdMatches(String? cwd) {
     if (cwd == null || cwd.isEmpty) return false;
     String trim(String p) =>
-        p.length > 1 && p.endsWith('/') ? p.substring(0, p.length - 1) : p;
+        normalizePathSeparators(p).replaceFirst(RegExp(r'/+$'), '');
     if (trim(cwd) == trim(workdir)) return true;
     try {
       return Directory(cwd).resolveSymbolicLinksSync() ==

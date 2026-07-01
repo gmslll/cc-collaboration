@@ -5,13 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
 import '../local/hook_activity.dart';
+import '../local/path_utils.dart';
 import '../local/session_overview.dart';
 import '../notifications.dart';
 import '../screen_share/models.dart';
 import '../screen_share/webrtc.dart';
 import '../terminal_mouse.dart';
 import '../terminal_theme.dart';
-import '../widgets.dart' show splitFileNameDir;
 import 'file_fs.dart';
 import 'file_transfer.dart';
 import 'remote_channel.dart';
@@ -57,7 +57,7 @@ class RemoteWorktree {
   final String branch;
   RemoteWorktree(this.path, this.branch);
   String get name {
-    final (name, _) = splitFileNameDir(path);
+    final name = pathBaseName(path);
     return name.isEmpty ? path : name;
   }
 }
@@ -312,7 +312,7 @@ class RemoteClient extends RemoteChannel {
     void Function(int sent, int total)? onProgress,
     void Function(bool ok, String msg)? onDone,
   }) {
-    final name = path.split('/').last;
+    final name = pathBaseName(path);
     late final FileSendHandle h;
     h = sendFileOverChannel(
       path: path,
@@ -664,7 +664,7 @@ class RemoteClient extends RemoteChannel {
         fsEntries = [
           for (final e in (f['entries'] as List? ?? []))
             RemoteEntry(
-              splitFileNameDir(e['name'] as String? ?? '').$1,
+              pathBaseName(e['name'] as String? ?? ''),
               (e['dir'] as bool?) ?? false,
               (e['size'] as num?)?.toInt() ?? 0,
             ),

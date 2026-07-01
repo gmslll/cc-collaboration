@@ -12,6 +12,7 @@ import 'package:xterm/xterm.dart';
 import '../live_activity/live_activity.dart';
 import '../local/diff_parse.dart';
 import '../local/hook_activity.dart';
+import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
@@ -477,7 +478,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     final res = await FilePicker.platform.pickFiles();
     final path = res?.files.single.path;
     if (path == null || !mounted) return; // cancelled
-    final name = path.split('/').last;
+    final name = pathBaseName(path);
     snack(context, '正在发送 $name…');
     _c.sendFile(
       path,
@@ -635,7 +636,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   RemoteRootInfo? _rootForSession(RemoteSession s) {
     RemoteRootInfo? best;
     for (final r in _c.roots) {
-      if (s.workdir == r.path || s.workdir.startsWith('${r.path}/')) {
+      if (pathWithin(s.workdir, r.path)) {
         if (best == null || r.path.length > best.path.length) best = r;
       }
     }
@@ -911,7 +912,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     if (root == null) {
       sub = s.workdir; // orphan — show the full path
     } else if (inWorktree) {
-      final rel = s.workdir.substring(root.path.length + 1);
+      final rel = pathRelativeTo(root.path, s.workdir);
       sub = rel.startsWith('.worktrees/')
           ? rel.substring('.worktrees/'.length)
           : rel;
@@ -1063,9 +1064,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                         DropdownMenuItem(
                           value: w.path,
                           child: Text(
-                            w.branch.isEmpty
-                                ? w.path.split('/').last
-                                : w.branch,
+                            w.branch.isEmpty ? pathBaseName(w.path) : w.branch,
                           ),
                         ),
                     ],
@@ -1141,7 +1140,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   // <workdir>/.cc-handoff/supervisor — the same path `cc-handoff supervisor
   // context` reads relative to the launched session's CWD.
   Future<void> _editSupervisorKnowledge(String workdir) async {
-    final dir = '$workdir/.cc-handoff/supervisor';
+    final dir = pathJoin(pathJoin(workdir, '.cc-handoff'), 'supervisor');
     await showDialog<void>(
       context: context,
       builder: (_) => _SupervisorKnowledgeDialog(client: _c, dir: dir),
@@ -1188,7 +1187,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             dense: true,
             leading: const Icon(Icons.arrow_back_rounded, size: 20),
             title: Text(
-              dir.split('/').last,
+              pathBaseName(dir),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -1283,7 +1282,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             dense: true,
             leading: const Icon(Icons.arrow_back_rounded, size: 20),
             title: Text(
-              _gitRepo!.split('/').last,
+              pathBaseName(_gitRepo!),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -2339,7 +2338,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     final res = await FilePicker.platform.pickFiles(type: FileType.image);
     final path = res?.files.single.path;
     if (path == null || !mounted) return; // cancelled
-    final name = path.split('/').last;
+    final name = pathBaseName(path);
     snack(context, '正在发送图片 $name…', clearPrevious: true);
     widget.client.sendFile(
       path,
@@ -3296,7 +3295,7 @@ class _RemoteFileViewerState extends State<_RemoteFileViewer> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          '${widget.path.split('/').last}${_dirty ? ' •' : ''}',
+          '${pathBaseName(widget.path)}${_dirty ? ' •' : ''}',
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
@@ -3428,7 +3427,7 @@ class _SupervisorKnowledgeDialogState
   }
 
   Future<void> _openFile(String name, {String? initial}) async {
-    final path = '$_cwd/$name';
+    final path = pathJoin(_cwd, name);
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _RemoteFileViewer(
@@ -3451,17 +3450,17 @@ class _SupervisorKnowledgeDialogState
 
   void _descend(String name) {
     setState(() {
-      _cwd = '$_cwd/$name';
+      _cwd = pathJoin(_cwd, name);
       widget.client.openDir(_cwd);
     });
   }
 
   void _up() {
-    if (_cwd == widget.dir) return;
+    if (pathEquals(_cwd, widget.dir)) return;
     final (_, parent) = splitFileNameDir(_cwd);
     // Never ascend above the supervisor root.
-    final next = parent.length < widget.dir.length ? widget.dir : parent;
-    if (next == _cwd) return;
+    final next = !pathWithin(parent, widget.dir) ? widget.dir : parent;
+    if (pathEquals(next, _cwd)) return;
     setState(() {
       _cwd = next;
       widget.client.openDir(_cwd);
@@ -3520,7 +3519,7 @@ class _SupervisorKnowledgeDialogState
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              atRoot ? '总管知识库' : _cwd.split('/').last,
+              atRoot ? '总管知识库' : pathBaseName(_cwd),
               style: const TextStyle(fontWeight: FontWeight.w600),
               overflow: TextOverflow.ellipsis,
             ),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../local/diff_parse.dart';
 import '../local/git.dart';
+import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../syntax.dart';
 import '../theme.dart';
@@ -298,7 +299,7 @@ class _DiffViewState extends State<DiffView> {
     }
     final files = [...dir.files]..sort((a, b) => a.path.compareTo(b.path));
     for (final f in files) {
-      out.add(_fileTile(f, f.path.split('/').last, depth));
+      out.add(_fileTile(f, pathBaseName(f.path), depth));
     }
     return out;
   }

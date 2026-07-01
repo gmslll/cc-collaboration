@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/shell.dart';
 import 'format_plugin.dart';
@@ -45,8 +46,7 @@ class PluginManager extends ChangeNotifier {
 
   // A built-in renderer is always available; a formatter is available once its
   // tool has been detected on the host PATH.
-  bool available(FormatPlugin p) =>
-      p.builtIn || (_available[p.id] ?? false);
+  bool available(FormatPlugin p) => p.builtIn || (_available[p.id] ?? false);
 
   @visibleForTesting
   void debugSetAvailable(String id, bool value) {
@@ -114,7 +114,7 @@ class PluginManager extends ChangeNotifier {
   // Run the matching formatter in place on [file]. Returns trimmed stdout;
   // throws with the tool's stderr on failure. Caller reloads the file after.
   Future<String> format(String file) async {
-    final ext = file.split('/').last.split('.').last;
+    final ext = pathBaseName(file).split('.').last;
     final p = formatterFor(ext);
     if (p == null) throw const FormatPluginException('没有可用的格式化插件');
     final argv = <String>[p.tool!, ...?p.args?.call(file)];

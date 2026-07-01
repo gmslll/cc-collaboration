@@ -18,6 +18,7 @@ import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
+import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../local/worktrees.dart';
@@ -97,7 +98,8 @@ class _OpenFile {
   bool dirty = false;
   List<FileDiff>? diffs; // non-null = a read-only diff tab
   String? diffInitialPath; // file to select first inside the diff
-  bool diffShowTree; // diff tabs: show DiffView's own file tree (false = single-pane)
+  bool
+  diffShowTree; // diff tabs: show DiffView's own file tree (false = single-pane)
   // diffReload re-fetches this diff tab's files at a given git context (for the
   // 全部/相关 toggle); captures the source (commit/compare/working). Null = no toggle.
   Future<List<FileDiff>> Function(int context)? diffReload;
@@ -114,7 +116,7 @@ class _OpenFile {
   }) : line = null;
 
   bool get isDiff => diffs != null;
-  String get name => isDiff ? path : path.split('/').last;
+  String get name => isDiff ? path : pathBaseName(path);
 }
 
 class _CodeSymbol {
@@ -141,7 +143,7 @@ class _CodeLocation {
 
   bool sameAs(_CodeLocation other) => path == other.path && line == other.line;
   String get key => '$path:${line ?? 0}';
-  String get name => path.split('/').last;
+  String get name => pathBaseName(path);
   String get label => line == null ? path : '$path:$line';
 }
 
@@ -151,8 +153,11 @@ class _CodeLocation {
 class _ParkedMessage {
   final String from, sessionId, body;
   _ParkedMessage(this.from, this.sessionId, this.body);
-  Map<String, dynamic> toJson() =>
-      {'from': from, 'session_id': sessionId, 'body': body};
+  Map<String, dynamic> toJson() => {
+    'from': from,
+    'session_id': sessionId,
+    'body': body,
+  };
   _ParkedMessage.fromJson(Map j)
     : from = (j['from'] ?? '').toString(),
       sessionId = (j['session_id'] ?? '').toString(),
@@ -440,7 +445,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!s.isAgent) continue;
       final items = localBusHookActivities(s.id, limit: 12);
       final fp = items
-          .map((a) => '${a.at.microsecondsSinceEpoch}:${a.event}:${a.toolName}:${a.exitCode ?? ''}')
+          .map(
+            (a) =>
+                '${a.at.microsecondsSinceEpoch}:${a.event}:${a.toolName}:${a.exitCode ?? ''}',
+          )
           .join('|');
       if (_hookActivityFingerprints[s.id] == fp) continue;
       _hookActivityFingerprints[s.id] = fp;
@@ -473,7 +481,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         final path = await s.transcriptPath(); // cached resolution
         preview = path == null
             ? ''
-            : await renderTranscriptTail(path, lines: 6, agentKind: s.agentKind);
+            : await renderTranscriptTail(
+                path,
+                lines: 6,
+                agentKind: s.agentKind,
+              );
         if (preview.trim().isEmpty) preview = s.renderSnapshot(6);
       } else {
         preview = s.renderSnapshot(6);
@@ -633,10 +645,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       // Turn finished → refresh this session's reply preview (the just-produced
       // assistant message is what the user reviews) then republish. needsReview
       // was already set in _fireDone and republished via onBusyChanged.
-      unawaited(_refreshPreview(s).then((_) {
-        unawaited(_localBus.syncRegistry());
-        _publishOverview();
-      }));
+      unawaited(
+        _refreshPreview(s).then((_) {
+          unawaited(_localBus.syncRegistry());
+          _publishOverview();
+        }),
+      );
       final speakLocal =
           _ttsOn && terms.isNotEmpty && terms[activeTerm].id == s.id;
       final phoneWants = _remoteHost.watching(s.id);
@@ -696,8 +710,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         s.sendText('\r'); // bare 确认
       }
     };
-    widget.overviewStore.previewHandler = (sid) async =>
-        sessionById(sid)?.snapshotAnsi(60); // coloured live screen (incl. prompt)
+    widget.overviewStore.previewHandler = (sid) async => sessionById(
+      sid,
+    )?.snapshotAnsi(60); // coloured live screen (incl. prompt)
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
@@ -834,8 +849,11 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   void _connectRelayPresence() {
     if (!_relayConfigured || _cfg.identity.isEmpty) return;
-    _relaySse = subscribeEvents(_cfg.relayUrl, _cfg.token, _cfg.identity)
-        .listen(_onRelayEvent, onError: (_) {});
+    _relaySse = subscribeEvents(
+      _cfg.relayUrl,
+      _cfg.token,
+      _cfg.identity,
+    ).listen(_onRelayEvent, onError: (_) {});
     _publishSessions();
     _sessionHeartbeat = Timer.periodic(
       const Duration(seconds: 30),
@@ -885,7 +903,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   // _showIncomingMessage asks the user to confirm (and pick the target session)
   // before injecting a peer's text — cross-user content never lands in a session
   // unprompted. Default target = the session the sender picked, else the active.
-  Future<void> _showIncomingMessage(String from, String sid, String body) async {
+  Future<void> _showIncomingMessage(
+    String from,
+    String sid,
+    String body,
+  ) async {
     if (!mounted) return;
     if (terms.isEmpty) {
       _snack('$from 发来内容,但当前没有会话可注入');
@@ -986,8 +1008,9 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Future<void> _saveParked() async {
     try {
-      await File(await _parkedPath())
-          .writeAsString(jsonEncode([for (final m in _parked) m.toJson()]));
+      await File(
+        await _parkedPath(),
+      ).writeAsString(jsonEncode([for (final m in _parked) m.toJson()]));
     } catch (_) {}
   }
 
@@ -1039,7 +1062,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                                 onPressed: () {
                                   _mutateParked(() => _parked.remove(m));
                                   Navigator.pop(ctx);
-                                  _showIncomingMessage(m.from, m.sessionId, m.body);
+                                  _showIncomingMessage(
+                                    m.from,
+                                    m.sessionId,
+                                    m.body,
+                                  );
                                 },
                                 child: const Text('处理'),
                               ),
@@ -1049,7 +1076,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                                 icon: const Icon(Icons.close_rounded, size: 16),
                                 onPressed: () {
                                   _mutateParked(() => _parked.remove(m));
-                                  setSt(() {}); // also refresh this dialog's list
+                                  setSt(
+                                    () {},
+                                  ); // also refresh this dialog's list
                                 },
                               ),
                             ],
@@ -1167,11 +1196,14 @@ class _WorkspacePageState extends State<WorkspacePage>
                             for (final s in sessions!)
                               ListTile(
                                 dense: true,
-                                leading:
-                                    const Icon(Icons.terminal_rounded, size: 16),
+                                leading: const Icon(
+                                  Icons.terminal_rounded,
+                                  size: 16,
+                                ),
                                 title: Text(s.label),
-                                subtitle:
-                                    s.project.isEmpty ? null : Text(s.project),
+                                subtitle: s.project.isEmpty
+                                    ? null
+                                    : Text(s.project),
                                 onTap: () => send(s),
                               ),
                           ],
@@ -1332,7 +1364,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       return;
     }
     _sendBatch = batch;
-    _showOutgoingDialog(path.split('/').last);
+    _showOutgoingDialog(pathBaseName(path));
   }
 
   // _showOutgoingDialog renders the just-offered batch with a live per-phone
@@ -1434,8 +1466,9 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Color _hostXferColor(FileXfer x) => switch (x.status) {
     XferStatus.done => CcColors.ok,
-    XferStatus.rejected || XferStatus.failed || XferStatus.cancelled =>
-      CcColors.danger,
+    XferStatus.rejected ||
+    XferStatus.failed ||
+    XferStatus.cancelled => CcColors.danger,
     _ => CcColors.muted,
   };
 
@@ -1462,8 +1495,11 @@ class _WorkspacePageState extends State<WorkspacePage>
           // at an arbitrary directory a client asks for.
           final dir =
               (workdir != null &&
-                  (workdir == p.path ||
-                      workdir.startsWith('${p.path}/.worktrees/')))
+                  (pathEquals(workdir, p.path) ||
+                      pathRelativeTo(
+                        p.path,
+                        workdir,
+                      ).startsWith('.worktrees/')))
               ? workdir
               : p.path;
           if (kind.isEmpty || kind == 'shell') {
@@ -2713,13 +2749,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     ProjectCfg? best;
     for (final ws in _cfg.workspaces) {
       for (final p in ws.projects) {
-        if (path == p.path || path.startsWith('${p.path}/')) {
+        if (pathWithin(path, p.path)) {
           if (best == null || p.path.length > best.path.length) best = p;
         }
       }
     }
     if (best == null) return null;
-    final rel = path == best.path ? '' : path.substring(best.path.length + 1);
+    final rel = pathRelativeTo(best.path, path);
     return (project: best, rel: rel);
   }
 
@@ -2791,7 +2827,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (!v.startsWith('send:')) return;
     final target = sessionById(v.substring('send:'.length));
     if (target == null) return;
-    target.pasteText('[来自文件 ${f.path.split('/').last}] $text', submit: false);
+    target.pasteText('[来自文件 ${pathBaseName(f.path)}] $text', submit: false);
     _snack('已发送到 ${target.label}');
   }
 
@@ -2984,8 +3020,12 @@ class _WorkspacePageState extends State<WorkspacePage>
                     editRoot: project.path,
                     onChanged: _refreshGit,
                     onReloadContext: (ctx) async => parseUnifiedDiff(
-                        await gitDiffFileWorking(project.path, relPath,
-                            context: ctx)),
+                      await gitDiffFileWorking(
+                        project.path,
+                        relPath,
+                        context: ctx,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -3107,11 +3147,7 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
           _runChip('Claude', Icons.play_arrow_rounded, _launchDefaultClaude),
           _runChip('Codex', Icons.smart_toy_outlined, _launchDefaultCodex),
-          _runChip(
-            '总管',
-            Icons.account_tree_outlined,
-            _launchDefaultSupervisor,
-          ),
+          _runChip('总管', Icons.account_tree_outlined, _launchDefaultSupervisor),
         ],
         pinnedTrailing: [
           if (_busy)
@@ -3132,10 +3168,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             '${terms.length} sessions',
             style: CcType.code(size: 11.5, color: CcColors.subtle),
           ),
-          if (_parked.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            _parkedBadge(),
-          ],
+          if (_parked.isNotEmpty) ...[const SizedBox(width: 4), _parkedBadge()],
           const SizedBox(width: 4),
           _transcriptToggle(),
           _ttsToggle(),
@@ -5091,7 +5124,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       setState(() {
         _compareFiles = parseUnifiedDiff(diff);
         _logDiffReload = (ctx) async => parseUnifiedDiff(
-            await gitDiffRefs(p.path, b.name, right, context: ctx));
+          await gitDiffRefs(p.path, b.name, right, context: ctx),
+        );
         _commitFiles = const [];
         _gitLoading = false;
       });
@@ -5118,7 +5152,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       setState(() {
         _compareFiles = parseUnifiedDiff(diff);
         _logDiffReload = (ctx) async => parseUnifiedDiff(
-            await gitDiffRefToWorking(p.path, c.hash, context: ctx));
+          await gitDiffRefToWorking(p.path, c.hash, context: ctx),
+        );
         _commitFiles = const [];
         _gitLoading = false;
       });
@@ -5245,9 +5280,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       setState(() => _gitLoading = false);
       final files = parseUnifiedDiff(diff);
       if (files.isNotEmpty) {
-        _openDiffTab(files, 'Stash · ${s.ref}',
+        _openDiffTab(
+          files,
+          'Stash · ${s.ref}',
           reload: (ctx) async =>
-                parseUnifiedDiff(await gitStashShow(p.path, s.ref, context: ctx)));
+              parseUnifiedDiff(await gitStashShow(p.path, s.ref, context: ctx)),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -5416,7 +5454,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       ],
     );
   }
-
 
   Widget _localChangesList(ProjectCfg p) {
     final visibleChanges = _filteredGitChanges;
@@ -5786,11 +5823,16 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() => _selectedGitPath = path);
     final p = _currentGitProject;
     if (_gitFiles.any((f) => f.path == path)) {
-      _openDiffTab(_gitFiles, 'Working Tree', initialPath: path, showTree: false,
+      _openDiffTab(
+        _gitFiles,
+        'Working Tree',
+        initialPath: path,
+        showTree: false,
         reload: p == null
             ? null
             : (ctx) async =>
-                  parseUnifiedDiff(await gitDiffWorking(p.path, context: ctx)));
+                  parseUnifiedDiff(await gitDiffWorking(p.path, context: ctx)),
+      );
       return;
     }
     if (p == null) return;
@@ -5806,8 +5848,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         'Working Tree · ${path.split('/').last}',
         initialPath: files.first.path,
         showTree: false,
-        reload: (ctx) async =>
-            parseUnifiedDiff(await gitDiffUntracked(p.path, path, context: ctx)),
+        reload: (ctx) async => parseUnifiedDiff(
+          await gitDiffUntracked(p.path, path, context: ctx),
+        ),
       );
     } catch (e) {
       if (mounted) _snack(errorText(e));
@@ -5935,7 +5978,10 @@ class _WorkspacePageState extends State<WorkspacePage>
                           const SizedBox(width: 8),
                           Text(
                             '${commits.length}/${_gitLog.length}',
-                            style: CcType.code(size: 11, color: CcColors.subtle),
+                            style: CcType.code(
+                              size: 11,
+                              color: CcColors.subtle,
+                            ),
                           ),
                         ],
                       ),
@@ -6018,7 +6064,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                         TextButton.icon(
                           onPressed: _gitLoading
                               ? null
-                              : () => _createBranchFromCommit(p, selectedCommit),
+                              : () =>
+                                    _createBranchFromCommit(p, selectedCommit),
                           icon: const Icon(Icons.call_split_rounded, size: 14),
                           label: const Text('Branch'),
                         ),
@@ -6073,7 +6120,9 @@ class _WorkspacePageState extends State<WorkspacePage>
             ? CcColors.accent.withValues(alpha: 0.12)
             : CcColors.panelHigh,
         border: Border.all(
-          color: active ? CcColors.accent.withValues(alpha: 0.5) : CcColors.border,
+          color: active
+              ? CcColors.accent.withValues(alpha: 0.5)
+              : CcColors.border,
         ),
         borderRadius: BorderRadius.circular(CcRadius.sm),
       ),
@@ -6547,7 +6596,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       final parts = f.path.split('/');
       var node = root;
       for (var i = 0; i < parts.length - 1; i++) {
-        node = node.children.putIfAbsent(parts[i], () => _DiffTreeNode(parts[i]));
+        node = node.children.putIfAbsent(
+          parts[i],
+          () => _DiffTreeNode(parts[i]),
+        );
       }
       node.files.add(f);
     }
@@ -6897,7 +6949,11 @@ class _WorkspacePageState extends State<WorkspacePage>
           icon: Icons.account_tree_rounded,
           label: 'Branches Popup...',
         ),
-        ccMenuItem(value: 'new', icon: Icons.add_rounded, label: 'New Branch...'),
+        ccMenuItem(
+          value: 'new',
+          icon: Icons.add_rounded,
+          label: 'New Branch...',
+        ),
         const PopupMenuDivider(),
         ccMenuItem(value: 'fetch', icon: Icons.sync_rounded, label: 'Fetch'),
         ccMenuItem(
@@ -8499,62 +8555,52 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  PopupMenuButton<String> _projectMenu(WorkspaceCfg ws, ProjectCfg p) =>
-      PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert_rounded, size: 18),
-        tooltip: '项目操作',
-        onSelected: (v) {
-          switch (v) {
-            case 'claude':
-            case 'codex':
-              _openAgent(p, p.path, v, ws.preLaunch);
-            case 'worktree':
-              _newWorktree(ws, p);
-            case 'diff':
-              _openDiff(p.path, p.name);
-            case 'files':
-              _openFileBrowser(p.path, p.name);
-            case 'pr':
-              _openPrs(p);
-            case 'config':
-              _openRepoConfig(p);
-            case 'remove':
-              _removeProject(ws, p);
-          }
-        },
-        itemBuilder: (_) => [
-          ..._agentItems(ws.agent),
-          const PopupMenuDivider(),
-          ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
-          ccMenuItem(
-            value: 'files',
-            icon: Icons.folder_open_rounded,
-            label: '文件',
-          ),
-          if (p.github.isNotEmpty)
-            ccMenuItem(
-              value: 'pr',
-              icon: Icons.merge_rounded,
-              label: 'GitHub PR',
-            ),
-          ccMenuItem(
-            value: 'worktree',
-            icon: Icons.account_tree_rounded,
-            label: '新建 worktree',
-          ),
-          ccMenuItem(
-            value: 'config',
-            icon: Icons.settings_rounded,
-            label: '项目配置',
-          ),
-          ccMenuItem(
-            value: 'remove',
-            icon: Icons.delete_outline_rounded,
-            label: '移除项目',
-            danger: true,
-          ),
-        ],
-      );
+  PopupMenuButton<String> _projectMenu(
+    WorkspaceCfg ws,
+    ProjectCfg p,
+  ) => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert_rounded, size: 18),
+    tooltip: '项目操作',
+    onSelected: (v) {
+      switch (v) {
+        case 'claude':
+        case 'codex':
+          _openAgent(p, p.path, v, ws.preLaunch);
+        case 'worktree':
+          _newWorktree(ws, p);
+        case 'diff':
+          _openDiff(p.path, p.name);
+        case 'files':
+          _openFileBrowser(p.path, p.name);
+        case 'pr':
+          _openPrs(p);
+        case 'config':
+          _openRepoConfig(p);
+        case 'remove':
+          _removeProject(ws, p);
+      }
+    },
+    itemBuilder: (_) => [
+      ..._agentItems(ws.agent),
+      const PopupMenuDivider(),
+      ccMenuItem(value: 'diff', icon: Icons.difference_rounded, label: '看变动'),
+      ccMenuItem(value: 'files', icon: Icons.folder_open_rounded, label: '文件'),
+      if (p.github.isNotEmpty)
+        ccMenuItem(value: 'pr', icon: Icons.merge_rounded, label: 'GitHub PR'),
+      ccMenuItem(
+        value: 'worktree',
+        icon: Icons.account_tree_rounded,
+        label: '新建 worktree',
+      ),
+      ccMenuItem(value: 'config', icon: Icons.settings_rounded, label: '项目配置'),
+      ccMenuItem(
+        value: 'remove',
+        icon: Icons.delete_outline_rounded,
+        label: '移除项目',
+        danger: true,
+      ),
+    ],
+  );
 
   void _openRepoConfig(ProjectCfg p) {
     Navigator.of(context).push(
