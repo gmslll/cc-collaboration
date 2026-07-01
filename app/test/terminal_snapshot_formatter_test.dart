@@ -85,4 +85,20 @@ void main() {
     expect(ansi, contains('et'));
     expect(ansi, isNot(contains('b')));
   });
+
+  test('block selection range formats each selected row slice', () {
+    final terminal = Terminal(maxLines: 100);
+    terminal.resize(12, 3, 10, 20);
+    terminal.write('abcde\r\nABCDE');
+    final range = BufferRangeBlock(
+      const CellOffset(1, 0),
+      const CellOffset(4, 1),
+    );
+
+    final plain = XtermSnapshotFormatter(
+      terminal,
+    ).plain(range: range, trimTrailingBlankLines: false);
+
+    expect(plain, 'bcd\nBCD');
+  });
 }

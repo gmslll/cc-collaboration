@@ -1000,21 +1000,6 @@ class _TerminalPaneState extends State<TerminalPane> {
     snack(context, '已复制');
   }
 
-  // TEMP diagnostic for the codex scroll/select bug — copies this session's
-  // runtime terminal state so we can tell alt-vs-main buffer, mouse mode, and
-  // whether a drag actually set a selection. Remove once the bug is fixed.
-  void _copyDiag() {
-    final t = _terminal;
-    final info =
-        'agent=${widget.session.agentKind} '
-        'alt=${t.isUsingAltBuffer} mouse=${t.mouseMode} '
-        'report=${t.mouseReportMode} lines=${t.lines.length} '
-        'view=${t.viewWidth}x${t.viewHeight} '
-        'sel=${_controller.selection != null}';
-    Clipboard.setData(ClipboardData(text: info));
-    snack(context, info);
-  }
-
   // _paste is the single paste entry (right-click 粘贴 and Cmd/Ctrl+V, both
   // routed here). Text wins; if the clipboard holds no text but an image (e.g. a
   // screenshot), it's written to a temp PNG and the file path is pasted instead
@@ -1146,11 +1131,6 @@ class _TerminalPaneState extends State<TerminalPane> {
             icon: Icons.cloud_upload_rounded,
             label: '发送到在线用户…',
           ),
-        ccMenuItem(
-          value: 'diag',
-          icon: Icons.bug_report_outlined,
-          label: '诊断(复制)',
-        ),
       ],
     );
     if (v == null || !mounted) return;
@@ -1161,8 +1141,6 @@ class _TerminalPaneState extends State<TerminalPane> {
         _paste();
       case 'selectAll':
         _selectAll();
-      case 'diag':
-        _copyDiag();
       case 'online':
         _sendSelectionToOnline();
       case 'interject':

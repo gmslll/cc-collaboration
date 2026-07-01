@@ -600,10 +600,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     _ => null,
   };
 
-  void _ensureSupervisorDocs(String dir) {
-    unawaited(
-      Cli.run(['supervisor', 'init', '--dir', dir]).catchError((_) => ''),
-    );
+  Future<void> _ensureSupervisorDocs(String dir) {
+    return Cli.run(['supervisor', 'init', '--dir', dir]).catchError((_) => '');
   }
 
   @override
@@ -1274,7 +1272,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     String preLaunch, {
     bool supervisor = false,
   }) {
-    if (supervisor) _ensureSupervisorDocs(dir);
+    if (supervisor) unawaited(_ensureSupervisorDocs(dir));
     // Pass agent + preLaunch structured (not pre-joined): addTerm mints a fixed
     // session id for claude and TerminalSession rebuilds the actual command with
     // the right resume binding, so a reopened tab returns to its conversation.
@@ -3330,10 +3328,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('没有可启动的项目');
       return;
     }
-    final agent = await showDialog<String>(
+    final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('启动总管'),
+        title: const Text('总管'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -3347,6 +3345,13 @@ class _WorkspacePageState extends State<WorkspacePage>
               title: const Text('Codex 总管'),
               onTap: () => Navigator.of(ctx).pop('codex'),
             ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('编辑知识库'),
+              subtitle: const Text('.cc-handoff/supervisor'),
+              onTap: () => Navigator.of(ctx).pop('edit'),
+            ),
           ],
         ),
         actions: [
@@ -3357,11 +3362,20 @@ class _WorkspacePageState extends State<WorkspacePage>
         ],
       ),
     );
-    if (agent == null || !mounted) return;
+    if (choice == null || !mounted) return;
+    if (choice == 'edit') {
+      // The knowledge files live on this machine, so edit them directly with
+      // the local file browser + editor (no relay). Ensure the dir + template
+      // files exist first (cc-handoff supervisor init).
+      await _ensureSupervisorDocs(d.project.path);
+      if (!mounted) return;
+      _openFileBrowser('${d.project.path}/.cc-handoff/supervisor', '总管知识库');
+      return;
+    }
     _openAgent(
       d.project,
       d.project.path,
-      agent,
+      choice,
       d.ws.preLaunch,
       supervisor: true,
     );

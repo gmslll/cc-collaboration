@@ -193,6 +193,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _onTerminalChange() {
+    _controller.pruneSelectionOffsets(_terminal.buffer.lines.length);
     _syncActiveBufferScrollState();
     _markNeedsLayoutFor(TerminalPaintReason.terminal);
     _notifyEditableRect();
@@ -432,27 +433,38 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   /// Selects entire words in the terminal that contains [from] and [to].
-  void selectWord(Offset from, [Offset? to]) {
+  bool selectWord(Offset from, [Offset? to]) {
     final fromOffset = _snapToCellHead(getCellOffset(from));
     final fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
-    if (fromBoundary == null) return;
+    if (fromBoundary == null) return false;
     if (to == null) {
-      _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(fromBoundary.begin),
-        _terminal.buffer.createAnchorFromOffset(fromBoundary.end),
+      _controller.setSelectionOffsets(
+        fromBoundary.begin,
+        fromBoundary.end,
         mode: SelectionMode.line,
       );
     } else {
       final toOffset = _snapToCellHead(getCellOffset(to));
       final toBoundary = _terminal.buffer.getWordBoundary(toOffset);
-      if (toBoundary == null) return;
+      if (toBoundary == null) return false;
       final range = fromBoundary.merge(toBoundary);
-      _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(range.begin),
-        _terminal.buffer.createAnchorFromOffset(range.end),
+      _controller.setSelectionOffsets(
+        range.begin,
+        range.end,
         mode: SelectionMode.line,
       );
     }
+    return true;
+  }
+
+  void selectLine(Offset offset) {
+    final cell = getCellOffset(offset);
+    final row = cell.y.clamp(0, _terminal.buffer.lines.length - 1);
+    _controller.setSelectionOffsets(
+      CellOffset(0, row),
+      CellOffset(_terminal.viewWidth, row),
+      mode: SelectionMode.line,
+    );
   }
 
   /// Selects characters in the terminal that starts from [from] to [to]. At
@@ -462,13 +474,20 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     Offset? to,
     SelectionMode mode = SelectionMode.line,
   ]) {
-    final fromCell = _getCellOffset(from, clamp: true);
+    selectCharactersFromCell(_getCellOffset(from, clamp: true), to, mode);
+  }
+
+  void selectCharactersFromCell(
+    CellOffset fromCell, [
+    Offset? to,
+    SelectionMode mode = SelectionMode.line,
+  ]) {
     final fromHead = _snapToCellHead(fromCell);
     final fromEnd = _snapToCellEnd(fromCell);
     if (to == null) {
-      _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(fromHead),
-        _terminal.buffer.createAnchorFromOffset(fromEnd),
+      _controller.setSelectionOffsets(
+        fromHead,
+        fromEnd,
         mode: mode,
       );
     } else {
@@ -482,9 +501,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       final base = extendsForward ? fromHead : fromEnd;
       final extent =
           extendsForward ? _snapToCellEnd(toCell) : _snapToCellHead(toCell);
-      _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(base),
-        _terminal.buffer.createAnchorFromOffset(extent),
+      _controller.setSelectionOffsets(
+        base,
+        extent,
         mode: mode,
       );
     }

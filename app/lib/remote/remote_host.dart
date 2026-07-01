@@ -752,6 +752,10 @@ class RemoteHost extends RemoteChannel {
       final bytes = await file.readAsBytes();
       final content = const Utf8Decoder(allowMalformed: true).convert(bytes);
       send({'t': 'fs.read.ok', 'to': to, 'path': path, 'content': content});
+    } on PathNotFoundException {
+      // "Does not exist" — callers match this stable message to seed a
+      // brand-new file. Other errors (permission, etc.) are surfaced as-is.
+      send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '文件不存在'});
     } catch (e) {
       send({'t': 'fs.err', 'to': to, 'path': path, 'msg': '$e'});
     }
@@ -779,6 +783,9 @@ class RemoteHost extends RemoteChannel {
         final existing = await File(path).readAsString();
         if (existing.contains('\r\n')) out = content.replaceAll('\n', '\r\n');
       } catch (_) {}
+      // Create missing parent dirs (e.g. .cc-handoff/supervisor/) so saving a
+      // brand-new file in a not-yet-existing subdir succeeds.
+      await Directory(path).parent.create(recursive: true);
       await File(path).writeAsString(out);
       send({'t': 'fs.write.ok', 'to': to, 'path': path});
     } catch (e) {
