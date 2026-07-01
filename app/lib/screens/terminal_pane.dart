@@ -204,6 +204,9 @@ class TerminalSession {
   final List<({String text, bool submit})> _pendingWake = [];
   bool _waking = false;
   bool get waking => _waking;
+  // pendingWakeCount exposes how many messages are held for the in-flight wake —
+  // for tests to assert a mid-wake delivery is queued (not dropped, not doubled).
+  int get pendingWakeCount => _pendingWake.length;
   Timer? _wakeSettleTimer;
   Timer? _wakeCapTimer;
   // Quiet-after-launch gap that reads as "agent ready for input", and a hard cap

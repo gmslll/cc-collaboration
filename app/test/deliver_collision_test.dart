@@ -124,8 +124,49 @@ void main() {
           reason: 'delivery must wake (start) a dormant session');
       expect(target.waking, isTrue,
           reason: 'message is held until the agent boots + settles');
+      expect(target.pendingWakeCount, 1);
       expect(inboxHasJson(), isFalse,
           reason: 'wake queues the message in-memory, not the bus inbox');
+    },
+  );
+
+  // The trickiest race: a SECOND message arrives while the session is still
+  // waking (agent mid-boot). It must be queued behind the first — not dropped,
+  // not enqueued to the inbox, and not pasted immediately into a not-yet-ready
+  // PTY (which would race the boot / double up). Same isolated-HOME gate.
+  test(
+    'a delivery during the waking window queues behind the first (no loss, no double)',
+    () async {
+      final home = Platform.environment['HOME'] ?? '';
+      if (!home.startsWith('/tmp') &&
+          !home.startsWith('/private/') &&
+          !home.startsWith('/var/folders/')) {
+        return; // not an isolated HOME — skip
+      }
+
+      final host = _HostState();
+      final target = TerminalSession('/repo', 'claude', agent: 'claude');
+      addTearDown(target.dispose);
+      host.terms.add(target);
+      final inbox = Directory('${localBusDir()}/inbox/${target.id}');
+      bool inboxHasJson() =>
+          inbox.existsSync() &&
+          inbox.listSync().any((f) => f.path.endsWith('.json'));
+
+      // First delivery starts the wake.
+      host.deliverLocalMessage(LocalMsg('ts-a', target.id, 'first', true));
+      expect(target.waking, isTrue);
+      expect(target.pendingWakeCount, 1);
+
+      // Second delivery arrives mid-wake → routed back to the wake queue.
+      final r2 =
+          host.deliverLocalMessage(LocalMsg('ts-b', target.id, 'second', true));
+      expect(r2, isNull);
+      expect(target.waking, isTrue, reason: 'still one wake in flight, not restarted');
+      expect(target.pendingWakeCount, 2,
+          reason: 'both messages held — the second is not dropped');
+      expect(inboxHasJson(), isFalse,
+          reason: 'a waking target queues in-memory, never the inbox');
     },
   );
 }
