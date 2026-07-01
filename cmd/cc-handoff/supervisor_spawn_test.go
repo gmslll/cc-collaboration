@@ -25,7 +25,7 @@ func TestSupervisorSpawnDelivered(t *testing.T) {
 			t.Errorf("bad spawn payload: %+v", m)
 		}
 		base := strings.TrimSuffix(name, ".json")
-		os.Remove(filepath.Join(outbox, name))                              // simulate claim
+		os.Remove(filepath.Join(outbox, name))                                // simulate claim
 		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte("ts7"), 0o600) // new session id receipt
 	})
 
