@@ -105,9 +105,13 @@ mixin _SymbolIndex on State<WorkspacePage> {
       _snack('把光标放到代码标识符上再跳转');
       return;
     }
-    // Phase 2: gopls-first for Go. Any miss (server absent / timeout / no
-    // result) returns false so we degrade to the always-available regex path.
-    if (fileExtOf(ed.path) == 'go' && await _tryLspDefinition(ed)) return;
+    // Phase 2: LSP-first for languages with a server (Go→gopls, Dart→analysis
+    // server). Any miss (server absent / timeout / no result) returns false so we
+    // degrade to the always-available regex path.
+    if (LspManager.supportsExtension(fileExtOf(ed.path)) &&
+        await _tryLspDefinition(ed)) {
+      return;
+    }
     final ident = ed.state.identifierAtCursor;
     if (ident == null) {
       _snack('光标不在标识符上');
