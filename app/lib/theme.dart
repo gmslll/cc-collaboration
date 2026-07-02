@@ -285,7 +285,7 @@ ThemeData ccTheme() {
         side: const BorderSide(color: CcColors.border),
       ),
       menuPadding: const EdgeInsets.symmetric(vertical: 4),
-      textStyle: const TextStyle(color: CcColors.text, fontSize: 12),
+      textStyle: const TextStyle(color: CcColors.text, fontSize: 11),
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: CcColors.panelHigh,

@@ -1453,11 +1453,11 @@ PopupMenuItem<String> ccMenuItem({
   return PopupMenuItem<String>(
     value: value,
     enabled: on,
-    height: 26,
+    height: 24,
     padding: const EdgeInsets.symmetric(horizontal: 10),
     child: Row(
       children: [
-        Icon(icon, size: 14, color: color),
+        Icon(icon, size: 13, color: color),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
