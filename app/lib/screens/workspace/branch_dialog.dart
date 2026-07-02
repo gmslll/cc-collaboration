@@ -171,7 +171,11 @@ class _BranchListPane extends StatefulWidget {
 class _BranchListPaneState extends State<_BranchListPane> {
   final _queryCtl = TextEditingController();
   String _query = '';
-  _BranchFilter _filter = _BranchFilter.all;
+  // Scope chips were dropped (per design); the filter stays fixed to "all" and
+  // the search box does the narrowing. Kept so search still shares one pipeline.
+  final _BranchFilter _filter = _BranchFilter.all;
+  // Collapsed folder paths in the branch path-tree, e.g. 'origin/', 'origin/feature/'.
+  final Set<String> _collapsedFolders = {};
 
   @override
   void dispose() {
@@ -206,19 +210,6 @@ class _BranchListPaneState extends State<_BranchListPane> {
       ];
       return fields.any((f) => f.toLowerCase().contains(q));
     }).toList();
-  }
-
-  int _countBranches(_BranchFilter filter) {
-    return widget.branches.where((b) {
-      return switch (filter) {
-        _BranchFilter.all => true,
-        _BranchFilter.local => !b.remote,
-        _BranchFilter.remote => b.remote,
-        _BranchFilter.current => b.current,
-        _BranchFilter.unpublished => !b.remote && b.upstream.isEmpty,
-        _BranchFilter.diverged => b.ahead > 0 || b.behind > 0,
-      };
-    }).length;
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -646,341 +637,308 @@ class _BranchListPaneState extends State<_BranchListPane> {
     ),
   );
 
-  Widget _branchScopeChip(_BranchFilter filter, String label) {
-    final selected = _filter == filter;
-    final count = _countBranches(filter);
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: FilterChip(
-        selected: selected,
-        showCheckmark: false,
-        visualDensity: VisualDensity.compact,
-        label: Text('$label $count'),
-        onSelected: (_) => setState(() => _filter = filter),
-      ),
-    );
+  // _branchTree groups the visible branches into a path tree (names split on
+  // '/') and renders collapsible folder rows + indented leaf branch rows —
+  // "open it like a file tree", as requested.
+  List<Widget> _branchTree(List<GitBranch> branches) {
+    final root = <String, dynamic>{};
+    for (final b in branches) {
+      final segs = b.name.split('/');
+      var node = root;
+      for (var i = 0; i < segs.length - 1; i++) {
+        node =
+            node.putIfAbsent(segs[i], () => <String, dynamic>{})
+                as Map<String, dynamic>;
+      }
+      node[segs.last] = b; // leaf
+    }
+    return _branchNodes(root, 0, '');
   }
 
-  Widget _branchesSummary() {
-    final current = widget.branches.where((b) => b.current).firstOrNull;
-    final localCount = _countBranches(_BranchFilter.local);
-    final remoteCount = _countBranches(_BranchFilter.remote);
-    final unpublishedCount = _countBranches(_BranchFilter.unpublished);
-    final divergedCount = _countBranches(_BranchFilter.diverged);
-    final currentLabel = current == null
-        ? 'No current branch'
-        : [
-            current.name,
-            if (current.upstream.isNotEmpty) current.upstream,
-            if (current.ahead > 0 || current.behind > 0)
-              '↑${current.ahead} ↓${current.behind}',
-          ].join(' · ');
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 7),
-      decoration: const BoxDecoration(
-        color: CcColors.editor,
-        border: Border(bottom: BorderSide(color: CcColors.border)),
-      ),
-      child: Wrap(
-        spacing: 7,
-        runSpacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
+  List<Widget> _branchNodes(
+    Map<String, dynamic> node,
+    int depth,
+    String prefix,
+  ) {
+    final folders = <MapEntry<String, dynamic>>[];
+    final leaves = <MapEntry<String, dynamic>>[];
+    node.forEach((k, v) {
+      (v is Map<String, dynamic> ? folders : leaves).add(MapEntry(k, v));
+    });
+    folders.sort((a, b) => a.key.compareTo(b.key));
+    leaves.sort((a, b) => a.key.compareTo(b.key));
+    final out = <Widget>[];
+    for (final f in folders) {
+      final path = '$prefix${f.key}/';
+      final collapsed = _collapsedFolders.contains(path);
+      final child = f.value as Map<String, dynamic>;
+      out.add(
+        _branchFolderRow(f.key, path, depth, collapsed, _leafCount(child)),
+      );
+      if (!collapsed) out.addAll(_branchNodes(child, depth + 1, path));
+    }
+    for (final l in leaves) {
+      out.add(_branchLeafRow(l.value as GitBranch, depth, l.key));
+    }
+    return out;
+  }
+
+  int _leafCount(Map<String, dynamic> node) {
+    var n = 0;
+    node.forEach((_, v) {
+      n += v is Map<String, dynamic> ? _leafCount(v) : 1;
+    });
+    return n;
+  }
+
+  Widget _branchFolderRow(
+    String name,
+    String path,
+    int depth,
+    bool collapsed,
+    int count,
+  ) => InkWell(
+    onTap: () => setState(() {
+      if (!_collapsedFolders.remove(path)) _collapsedFolders.add(path);
+    }),
+    child: Container(
+      height: 30,
+      padding: EdgeInsets.only(left: 8 + depth * 14.0, right: 10),
+      color: CcColors.editorTabBar,
+      child: Row(
         children: [
-          tag(currentLabel, current == null ? CcColors.muted : CcColors.ok),
-          tag('$localCount local', CcColors.muted),
-          tag('$remoteCount remote', CcColors.muted),
-          if (unpublishedCount > 0)
-            tag('$unpublishedCount unpublished', CcColors.warning),
-          if (divergedCount > 0)
-            tag('$divergedCount ahead/behind', CcColors.warning),
+          Icon(
+            collapsed ? Icons.chevron_right_rounded : Icons.expand_more_rounded,
+            size: 18,
+            color: CcColors.muted,
+          ),
+          const SizedBox(width: 2),
+          const Icon(Icons.folder_outlined, size: 15, color: CcColors.subtle),
+          const SizedBox(width: 7),
+          Text(
+            name,
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(width: 7),
+          Text('$count', style: CcType.code(size: 11, color: CcColors.subtle)),
         ],
       ),
-    );
-  }
+    ),
+  );
 
-  Widget _branchScopeBar() {
-    return SizedBox(
-      height: 36,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Row(
-          children: [
-            _branchScopeChip(_BranchFilter.all, 'All'),
-            _branchScopeChip(_BranchFilter.local, 'Local'),
-            _branchScopeChip(_BranchFilter.remote, 'Remote'),
-            _branchScopeChip(_BranchFilter.current, 'Current'),
-            _branchScopeChip(_BranchFilter.unpublished, 'Unpublished'),
-            _branchScopeChip(_BranchFilter.diverged, 'Ahead/Behind'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _branchSection(String label, List<GitBranch> branches, IconData icon) {
-    if (branches.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          height: 30,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: const BoxDecoration(
-            color: CcColors.editorTabBar,
-            border: Border(
-              top: BorderSide(color: CcColors.border),
-              bottom: BorderSide(color: CcColors.border),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 15, color: CcColors.muted),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 7),
-              Text(
-                '${branches.length}',
-                style: CcType.code(size: 11, color: CcColors.subtle),
-              ),
-            ],
-          ),
-        ),
-        for (final b in branches) _branchRow(b),
-      ],
-    );
-  }
-
-  Widget _branchRow(GitBranch b) {
-    final kindText = b.current
-        ? 'current branch'
-        : b.remote
-        ? 'remote · checkout creates ${b.localName ?? b.name}'
-        : 'local branch';
+  // A leaf branch row: indented by tree [depth], labelled with the last path
+  // segment. Left-click / double-click checks it out; every action lives on the
+  // ⋮ button and the right-click menu (the inline Checkout/Publish/Merge/Compare
+  // buttons were moved into that menu, per request).
+  Widget _branchLeafRow(GitBranch b, int depth, String leafName) {
     final age = b.lastDate == null ? '' : relativeTime(b.lastDate!);
     final meta = [
-      kindText,
       if (b.upstream.isNotEmpty) 'tracks ${b.upstream}',
       if (b.lastHash.isNotEmpty)
-        [
-          b.lastHash,
-          if (age.isNotEmpty) age,
-          b.lastSubject,
-        ].where((s) => s.isNotEmpty).join(' · '),
+        [b.lastHash, if (age.isNotEmpty) age, b.lastSubject]
+            .where((s) => s.isNotEmpty)
+            .join(' · '),
     ].join(' · ');
-    final compact = widget.embedded;
-    return Material(
-      color: b.current
-          ? CcColors.accent.withValues(alpha: 0.08)
-          : Colors.transparent,
-      child: InkWell(
-        onTap: b.current ? null : () => _checkout(b),
-        onDoubleTap: b.current ? null : () => _checkout(b),
-        child: Container(
-          constraints: BoxConstraints(minHeight: compact ? 44 : 50),
-          padding: const EdgeInsets.only(left: 12, right: 6),
-          decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(
-                color: b.current ? CcColors.accent : Colors.transparent,
-                width: 2,
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapDown: (d) async {
+        final v = await showMenu<String>(
+          context: context,
+          position: menuPosAt(context, d.globalPosition),
+          items: _branchMenuItems(b),
+        );
+        if (v != null && mounted) _onBranchMenu(v, b);
+      },
+      child: Material(
+        color: b.current
+            ? CcColors.accent.withValues(alpha: 0.08)
+            : Colors.transparent,
+        child: InkWell(
+          onTap: b.current ? null : () => _checkout(b),
+          onDoubleTap: b.current ? null : () => _checkout(b),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 42),
+            padding: EdgeInsets.only(left: 8 + depth * 14.0, right: 4),
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: b.current ? CcColors.accent : Colors.transparent,
+                  width: 2,
+                ),
+                bottom: const BorderSide(color: CcColors.border, width: 0.5),
               ),
-              bottom: const BorderSide(color: CcColors.border, width: 0.5),
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                b.remote
-                    ? Icons.cloud_queue_rounded
-                    : Icons.account_tree_rounded,
-                size: 17,
-                color: b.current ? CcColors.accentBright : CcColors.muted,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            b.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: CcType.code(
-                              size: compact ? 12.5 : 13,
-                              color: b.current ? CcColors.text : CcColors.muted,
-                              weight: b.current
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
+            child: Row(
+              children: [
+                Icon(
+                  b.remote
+                      ? Icons.cloud_queue_rounded
+                      : Icons.account_tree_rounded,
+                  size: 16,
+                  color: b.current ? CcColors.accentBright : CcColors.muted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              leafName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: CcType.code(
+                                size: 12.5,
+                                color: b.current
+                                    ? CcColors.text
+                                    : CcColors.muted,
+                                weight: b.current
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
                             ),
                           ),
+                          if (b.current) ...[
+                            const SizedBox(width: 8),
+                            tag('current', CcColors.ok),
+                          ],
+                          if (b.ahead > 0 || b.behind > 0) ...[
+                            const SizedBox(width: 6),
+                            tag('↑${b.ahead} ↓${b.behind}', CcColors.warning),
+                          ],
+                        ],
+                      ),
+                      if (meta.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          meta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: CcColors.subtle,
+                          ),
                         ),
-                        if (b.current) ...[
-                          const SizedBox(width: 8),
-                          tag('current', CcColors.ok),
-                        ],
-                        if (b.ahead > 0 || b.behind > 0) ...[
-                          const SizedBox(width: 6),
-                          tag('↑${b.ahead} ↓${b.behind}', CcColors.warning),
-                        ],
                       ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      meta,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11.5, color: CcColors.subtle),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (compact && !b.current)
-                IconButton(
-                  onPressed: () => _checkout(b),
-                  icon: const Icon(Icons.login_rounded, size: 17),
-                  tooltip: 'Checkout',
-                  visualDensity: VisualDensity.compact,
-                ),
-              if (!compact && !b.current)
-                TextButton(
-                  onPressed: () => _checkout(b),
-                  child: const Text('Checkout'),
-                ),
-              if (!compact && !b.remote && b.upstream.isEmpty)
-                TextButton(
-                  onPressed: () => _pushBranch(b, publish: true),
-                  child: const Text('Publish'),
-                ),
-              if (!compact && !b.remote && b.upstream.isNotEmpty && b.ahead > 0)
-                TextButton(
-                  onPressed: () => _pushBranch(b),
-                  child: const Text('Push'),
-                ),
-              if (!b.current && !compact)
-                TextButton(
-                  onPressed: () => _mergeBranch(b),
-                  child: const Text('Merge'),
-                ),
-              if (!compact)
-                TextButton(
-                  onPressed: () => _run(() => widget.onCompare(b)),
-                  child: const Text('Compare'),
-                ),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert_rounded, size: 18),
-                tooltip: '分支操作',
-                onSelected: (v) {
-                  if (v == 'checkout') _checkout(b);
-                  if (v == 'compare') _run(() => widget.onCompare(b));
-                  if (v == 'merge') _mergeBranch(b);
-                  if (v == 'rebase') _rebaseBranch(b);
-                  if (v == 'rename') _renameBranch(b);
-                  if (v == 'delete') _deleteBranch(b);
-                  if (v == 'forceDelete') _deleteBranch(b, force: true);
-                  if (v == 'deleteRemote') _deleteRemoteBranch(b);
-                  if (v == 'publish') _pushBranch(b, publish: true);
-                  if (v == 'push') _pushBranch(b);
-                },
-                itemBuilder: (_) => [
-                  if (!b.current)
-                    ccMenuItem(
-                      value: 'checkout',
-                      icon: Icons.call_split_rounded,
-                      label: 'Checkout',
-                    ),
-                  ccMenuItem(
-                    value: 'compare',
-                    icon: Icons.difference_rounded,
-                    label: 'Compare with Current',
+                    ],
                   ),
-                  if (!b.current) ...[
-                    ccMenuItem(
-                      value: 'merge',
-                      icon: Icons.merge_type_rounded,
-                      label: 'Merge into Current',
-                    ),
-                    ccMenuItem(
-                      value: 'rebase',
-                      icon: Icons.merge_type_rounded,
-                      label: 'Rebase Current onto Selected',
-                    ),
-                  ],
-                  if (!b.remote) ...[
-                    const PopupMenuDivider(),
-                    if (b.upstream.isEmpty)
-                      ccMenuItem(
-                        value: 'publish',
-                        icon: Icons.cloud_upload_rounded,
-                        label: 'Publish Branch',
-                      ),
-                    if (b.upstream.isNotEmpty)
-                      ccMenuItem(
-                        value: 'push',
-                        icon: Icons.upload_rounded,
-                        label: 'Push Branch',
-                      ),
-                    ccMenuItem(
-                      value: 'rename',
-                      icon: Icons.edit_rounded,
-                      label: 'Rename',
-                    ),
-                    if (!b.current)
-                      ccMenuItem(
-                        value: 'delete',
-                        icon: Icons.delete_outline_rounded,
-                        label: 'Delete',
-                        danger: true,
-                      ),
-                    if (!b.current)
-                      ccMenuItem(
-                        value: 'forceDelete',
-                        icon: Icons.delete_outline_rounded,
-                        label: 'Force Delete',
-                        danger: true,
-                      ),
-                  ],
-                  if (b.remote) ...[
-                    const PopupMenuDivider(),
-                    ccMenuItem(
-                      value: 'deleteRemote',
-                      icon: Icons.delete_outline_rounded,
-                      label: 'Delete Remote Branch',
-                      danger: true,
-                    ),
-                  ],
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(width: 6),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert_rounded, size: 17),
+                  tooltip: '分支操作',
+                  onSelected: (v) => _onBranchMenu(v, b),
+                  itemBuilder: (_) => _branchMenuItems(b),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  void _onBranchMenu(String v, GitBranch b) {
+    switch (v) {
+      case 'checkout':
+        _checkout(b);
+      case 'compare':
+        _run(() => widget.onCompare(b));
+      case 'merge':
+        _mergeBranch(b);
+      case 'rebase':
+        _rebaseBranch(b);
+      case 'rename':
+        _renameBranch(b);
+      case 'delete':
+        _deleteBranch(b);
+      case 'forceDelete':
+        _deleteBranch(b, force: true);
+      case 'deleteRemote':
+        _deleteRemoteBranch(b);
+      case 'publish':
+        _pushBranch(b, publish: true);
+      case 'push':
+        _pushBranch(b);
+    }
+  }
+
+  List<PopupMenuEntry<String>> _branchMenuItems(GitBranch b) => [
+    if (!b.current)
+      ccMenuItem(
+        value: 'checkout',
+        icon: Icons.call_split_rounded,
+        label: 'Checkout',
+      ),
+    ccMenuItem(
+      value: 'compare',
+      icon: Icons.difference_rounded,
+      label: 'Compare with Current',
+    ),
+    if (!b.current) ...[
+      ccMenuItem(
+        value: 'merge',
+        icon: Icons.merge_type_rounded,
+        label: 'Merge into Current',
+      ),
+      ccMenuItem(
+        value: 'rebase',
+        icon: Icons.merge_type_rounded,
+        label: 'Rebase Current onto Selected',
+      ),
+    ],
+    if (!b.remote) ...[
+      const PopupMenuDivider(),
+      if (b.upstream.isEmpty)
+        ccMenuItem(
+          value: 'publish',
+          icon: Icons.cloud_upload_rounded,
+          label: 'Publish Branch',
+        ),
+      if (b.upstream.isNotEmpty)
+        ccMenuItem(
+          value: 'push',
+          icon: Icons.upload_rounded,
+          label: 'Push Branch',
+        ),
+      ccMenuItem(value: 'rename', icon: Icons.edit_rounded, label: 'Rename'),
+      if (!b.current)
+        ccMenuItem(
+          value: 'delete',
+          icon: Icons.delete_outline_rounded,
+          label: 'Delete',
+          danger: true,
+        ),
+      if (!b.current)
+        ccMenuItem(
+          value: 'forceDelete',
+          icon: Icons.delete_outline_rounded,
+          label: 'Force Delete',
+          danger: true,
+        ),
+    ],
+    if (b.remote) ...[
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'deleteRemote',
+        icon: Icons.delete_outline_rounded,
+        label: 'Delete Remote Branch',
+        danger: true,
+      ),
+    ],
+  ];
 
   @override
   Widget build(BuildContext context) {
     final branches = _filteredBranches;
-    final locals = branches.where((b) => !b.remote).toList();
-    final remotes = branches.where((b) => b.remote).toList();
     return Column(
       children: [
         _branchesHeader(branches),
         _currentBranchHero(),
-        _branchesSummary(),
-        _branchScopeBar(),
         Expanded(
           child: widget.loading
               ? const Center(child: CircularProgressIndicator())
@@ -989,18 +947,8 @@ class _BranchListPaneState extends State<_BranchListPane> {
               : branches.isEmpty
               ? centerMsg(widget.branches.isEmpty ? '没有分支' : '没有匹配分支')
               : ListView(
-                  children: [
-                    _branchSection(
-                      'Local Branches',
-                      locals,
-                      Icons.account_tree_rounded,
-                    ),
-                    _branchSection(
-                      'Remote Branches',
-                      remotes,
-                      Icons.cloud_queue_rounded,
-                    ),
-                  ],
+                  padding: const EdgeInsets.only(bottom: 8),
+                  children: _branchTree(branches),
                 ),
         ),
       ],
