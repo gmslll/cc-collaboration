@@ -23,6 +23,21 @@ class _HostState extends State<_Host> with TerminalHost<_Host> {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // The delivery tests route through localBusDir() → HOME, so they only run under
+  // a throwaway HOME and never touch a real/live bus:  HOME=$(mktemp -d) flutter test …
+  // `isolated` gates them (each does `if (!isolated) return;`); inboxHasJson reports
+  // whether a target has a parked bus message. Shared here so the three tests don't
+  // each re-inline them (mirrors transcript_resolve_test.dart's `isolated` bool).
+  final home = Platform.environment['HOME'] ?? '';
+  final isolated = home.startsWith('/tmp') ||
+      home.startsWith('/private/') ||
+      home.startsWith('/var/folders/');
+  bool inboxHasJson(TerminalSession t) {
+    final inbox = Directory('${localBusDir()}/inbox/${t.id}');
+    return inbox.existsSync() &&
+        inbox.listSync().any((f) => f.path.endsWith('.json'));
+  }
+
   group('inputDirty tracking', () {
     test('user keystrokes set it; a submit (CR) clears it; empty is a no-op', () {
       final s = TerminalSession('/repo', 'claude', agent: 'claude');
@@ -46,18 +61,10 @@ void main() {
     });
   });
 
-  // Routing depends on localBusDir() → HOME. Run under a throwaway HOME so it
-  // never touches a real/live bus:  HOME=$(mktemp -d) flutter test ...
-  // Self-skips otherwise.
   test(
     'deliverLocalMessage routes dirty→enqueue, clean-idle→paste',
     () async {
-      final home = Platform.environment['HOME'] ?? '';
-      if (!home.startsWith('/tmp') &&
-          !home.startsWith('/private/') &&
-          !home.startsWith('/var/folders/')) {
-        return; // not an isolated HOME — skip
-      }
+      if (!isolated) return; // not an isolated HOME — skip
 
       final host = _HostState();
       final target = TerminalSession('/repo', 'claude', agent: 'claude');
@@ -68,16 +75,11 @@ void main() {
       // path instead — covered by the separate 'wakes a dormant target' test.
       target.start();
       const from = 'ts-sender';
-      final inbox = Directory('${localBusDir()}/inbox/${target.id}');
-
-      bool inboxHasJson() =>
-          inbox.existsSync() &&
-          inbox.listSync().any((f) => f.path.endsWith('.json'));
 
       // Clean + idle → immediate paste, nothing parked.
       final r1 = host.deliverLocalMessage(LocalMsg(from, target.id, 'hello', true));
       expect(r1, isNull);
-      expect(inboxHasJson(), isFalse,
+      expect(inboxHasJson(target), isFalse,
           reason: 'clean idle target should paste, not enqueue');
 
       // User is mid-typing → park in the bus inbox instead of pasting over it.
@@ -87,7 +89,7 @@ void main() {
       target.markUserInput('half-typed');
       final r2 = host.deliverLocalMessage(LocalMsg(from, target.id, 'world', true));
       expect(r2, isNull);
-      expect(inboxHasJson(), isTrue,
+      expect(inboxHasJson(target), isTrue,
           reason: 'dirty input should enqueue to the bus inbox');
     },
   );
@@ -99,23 +101,13 @@ void main() {
   test(
     'deliverLocalMessage wakes a dormant (not-started) target instead of losing it',
     () async {
-      final home = Platform.environment['HOME'] ?? '';
-      if (!home.startsWith('/tmp') &&
-          !home.startsWith('/private/') &&
-          !home.startsWith('/var/folders/')) {
-        return; // not an isolated HOME — skip
-      }
+      if (!isolated) return; // not an isolated HOME — skip
 
       final host = _HostState();
       final target = TerminalSession('/repo', 'claude', agent: 'claude');
       addTearDown(target.dispose);
       host.terms.add(target);
       expect(target.started, isFalse); // dormant: pane never mounted / hidden tab
-
-      final inbox = Directory('${localBusDir()}/inbox/${target.id}');
-      bool inboxHasJson() =>
-          inbox.existsSync() &&
-          inbox.listSync().any((f) => f.path.endsWith('.json'));
 
       final r =
           host.deliverLocalMessage(LocalMsg('ts-sender', target.id, 'task', true));
@@ -125,7 +117,7 @@ void main() {
       expect(target.waking, isTrue,
           reason: 'message is held until the agent boots + settles');
       expect(target.pendingWakeCount, 1);
-      expect(inboxHasJson(), isFalse,
+      expect(inboxHasJson(target), isFalse,
           reason: 'wake queues the message in-memory, not the bus inbox');
     },
   );
@@ -137,21 +129,12 @@ void main() {
   test(
     'a delivery during the waking window queues behind the first (no loss, no double)',
     () async {
-      final home = Platform.environment['HOME'] ?? '';
-      if (!home.startsWith('/tmp') &&
-          !home.startsWith('/private/') &&
-          !home.startsWith('/var/folders/')) {
-        return; // not an isolated HOME — skip
-      }
+      if (!isolated) return; // not an isolated HOME — skip
 
       final host = _HostState();
       final target = TerminalSession('/repo', 'claude', agent: 'claude');
       addTearDown(target.dispose);
       host.terms.add(target);
-      final inbox = Directory('${localBusDir()}/inbox/${target.id}');
-      bool inboxHasJson() =>
-          inbox.existsSync() &&
-          inbox.listSync().any((f) => f.path.endsWith('.json'));
 
       // First delivery starts the wake.
       host.deliverLocalMessage(LocalMsg('ts-a', target.id, 'first', true));
@@ -165,7 +148,7 @@ void main() {
       expect(target.waking, isTrue, reason: 'still one wake in flight, not restarted');
       expect(target.pendingWakeCount, 2,
           reason: 'both messages held — the second is not dropped');
-      expect(inboxHasJson(), isFalse,
+      expect(inboxHasJson(target), isFalse,
           reason: 'a waking target queues in-memory, never the inbox');
     },
   );
