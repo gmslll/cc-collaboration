@@ -16,6 +16,7 @@ import '../local/session_overview.dart';
 import '../notifications.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../widgets/split_pane.dart';
 import 'terminal_pane.dart';
 
 // agentDoneNotice is the shared "会话完成" copy so the desktop banner and the
@@ -68,6 +69,202 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // isTabHidden reports whether a session's tab is currently closed (the session
   // still runs in the background). The tree uses it to mark such sessions.
   bool isTabHidden(String id) => _hiddenTabs.contains(id);
+
+  // --- split-pane terminal layout (workspace only; see terminalDeck's
+  // enableSplit) -------------------------------------------------------
+  //
+  // A degenerate single-leaf tree is exactly today's behavior: one pane, all
+  // sessions in it, rendered by the plain TerminalTabBar + IndexedStack path
+  // (terminalDeck only switches to SplitPaneView once a real split exists —
+  // see leafIds(_termPaneTree).length > 1 there). Splitting only ever
+  // happens through splitTermRight/splitTermDown; every other mutation path
+  // (addTerm, closeTerm, restoreTerms, bulk close) still works through plain
+  // `terms`/`activeTerm` exactly as before, and this bookkeeping just rides
+  // along, keyed by TerminalSession.id so it can't desync from the shared
+  // list's own index churn. A host that never calls splitTermRight/Down
+  // (the inbox cockpit) never grows a second pane, so none of this is ever
+  // visible to it.
+  static const String _rootPaneId = 'root';
+  PaneNode _termPaneTree = const PaneLeaf(_rootPaneId);
+
+  // _paneSessions[paneId] = ordered session ids shown in that pane's own tab
+  // strip. Every id in `terms` lives in exactly one pane's list.
+  final Map<String, List<String>> _paneSessions = {_rootPaneId: []};
+
+  // _paneActiveSession[paneId] = which session id that pane's own strip shows
+  // as active — independent of the global `activeTerm` (which still tracks
+  // "most recently focused session overall" for TTS/tree/sendToTerminal, see
+  // _activeChanged). Treated as a hint, not ground truth:
+  // _resolveActivePaneSession self-heals it at render time, so call sites
+  // that mutate terms/hiddenTabs without knowing about panes (bulk close,
+  // restore, a bus kill) can't corrupt a pane's display.
+  final Map<String, String?> _paneActiveSession = {_rootPaneId: null};
+
+  // _focusedPaneId is the pane last clicked into — new sessions (new shell,
+  // agent launch, remote dispatch) join it. Null / stale (pane since closed)
+  // falls back to the tree's first leaf, which is always _rootPaneId until
+  // the first split ever happens.
+  String? _focusedPaneId;
+
+  int _paneSplitSeq = 0;
+
+  // focusPane records the pane the user last interacted with (its tab strip
+  // or its content area) — see terminalDeck's per-pane Listener. Only
+  // affects where a *future* new session lands; doesn't itself need a
+  // rebuild.
+  void focusPane(String paneId) => _focusedPaneId = paneId;
+
+  // _currentPaneId is "the pane a new/restored session should join".
+  String _currentPaneId() {
+    final leaves = leafIds(_termPaneTree);
+    return (_focusedPaneId != null && leaves.contains(_focusedPaneId))
+        ? _focusedPaneId!
+        : leaves.first;
+  }
+
+  // _paneOf finds which pane holds [sessionId]. Every session reaching
+  // `terms` should already be tracked (addTerm/restoreTerms assign it) — the
+  // fallback assignment here is a defensive backstop, not a path any known
+  // call site actually takes.
+  String _paneOf(String sessionId) {
+    for (final entry in _paneSessions.entries) {
+      if (entry.value.contains(sessionId)) return entry.key;
+    }
+    final paneId = leafIds(_termPaneTree).first;
+    (_paneSessions[paneId] ??= []).add(sessionId);
+    return paneId;
+  }
+
+  // _assignSessionToPane places a freshly *added* (not restored) session into
+  // the current pane and makes it that pane's active tab — mirrors addTerm's
+  // existing "the new session becomes activeTerm" behavior, just pane-scoped.
+  void _assignSessionToPane(String sessionId) {
+    final paneId = _currentPaneId();
+    (_paneSessions[paneId] ??= []).add(sessionId);
+    _paneActiveSession[paneId] = sessionId;
+  }
+
+  // _removeSessionFromPane drops a REAL close (closeTerm/_closeTermsWhere —
+  // the session leaves `terms` entirely) from its pane's list, then
+  // _collapseIfEmpty's it. A view-only close (closeTermView et al, which
+  // never touches `terms`) doesn't call this: the session stays exactly
+  // where it was, just filtered out of the strip like today.
+  void _removeSessionFromPane(String sessionId) {
+    for (final paneId in _paneSessions.keys.toList()) {
+      final list = _paneSessions[paneId]!;
+      if (!list.remove(sessionId)) continue;
+      if (_paneActiveSession[paneId] == sessionId) {
+        _paneActiveSession[paneId] = list.isEmpty ? null : list.last;
+      }
+      _collapseIfEmpty(paneId);
+      return;
+    }
+  }
+
+  // _collapseIfEmpty removes [paneId] from the split tree (and drops its
+  // bookkeeping) if its session list is now empty AND more than one pane
+  // currently exists — shared by _removeSessionFromPane (a real close
+  // emptied it) and _splitTerm (moving a pane's only session into a new
+  // split emptied the source), mirroring the pane structurally disappearing
+  // (GoLand/VSCode behavior: closing a split's last tab, or splitting a
+  // single-tab group, collapses back down). A lone/last pane hitting zero
+  // sessions is left in place — today's "no tabs open" baseline, refilled by
+  // the next addTerm.
+  void _collapseIfEmpty(String paneId) {
+    final list = _paneSessions[paneId];
+    if (list == null || list.isNotEmpty) return;
+    if (leafIds(_termPaneTree).length <= 1) return;
+    _termPaneTree =
+        closeLeaf(_termPaneTree, paneId) ?? const PaneLeaf(_rootPaneId);
+    _paneSessions.remove(paneId);
+    _paneActiveSession.remove(paneId);
+    if (_focusedPaneId == paneId) _focusedPaneId = null;
+  }
+
+  // _resolveActivePaneSession is what pane [paneId]'s own tab strip renders
+  // as active — self-healing from a stale/invalid _paneActiveSession pointer
+  // (left behind by a hide/bulk-close/restore that doesn't know about panes)
+  // instead of every mutation site having to keep it perfectly in sync.
+  // Preference: the pane's own remembered tab if still valid & visible, else
+  // the globally active session if it lives in this pane & is visible, else
+  // the first visible session in the pane, else its first session at all
+  // (a pane with only hidden tabs has nothing better to show).
+  String? _resolveActivePaneSession(String paneId, Set<String>? hiddenIds) {
+    final ids = _paneSessions[paneId] ?? const [];
+    if (ids.isEmpty) return null;
+    bool visible(String id) => !(hiddenIds?.contains(id) ?? false);
+    final want = _paneActiveSession[paneId];
+    if (want != null && ids.contains(want) && visible(want)) return want;
+    final globalId = (activeTerm >= 0 && activeTerm < terms.length)
+        ? terms[activeTerm].id
+        : null;
+    if (globalId != null && ids.contains(globalId) && visible(globalId)) {
+      return globalId;
+    }
+    return ids.firstWhere(visible, orElse: () => ids.first);
+  }
+
+  // splitTermRight/splitTermDown back the tab menu's "向右分屏"/"向下分屏":
+  // pull terms[i] out of its current pane into a fresh pane split off beside
+  // it (horizontal = side-by-side, vertical = stacked), and focus it — same
+  // "the tab you just acted on becomes the front session" feel as a normal
+  // tab switch.
+  void splitTermRight(int i) => _splitTerm(i, SplitAxis.horizontal);
+  void splitTermDown(int i) => _splitTerm(i, SplitAxis.vertical);
+
+  void _splitTerm(int i, SplitAxis axis) {
+    if (i < 0 || i >= terms.length) return;
+    final sessionId = terms[i].id;
+    final sourcePaneId = _paneOf(sessionId);
+    final newPaneId = 'pane-${_paneSplitSeq++}';
+    setState(() {
+      _termPaneTree = splitLeaf(_termPaneTree, sourcePaneId, axis, newPaneId);
+      _paneSessions[sourcePaneId]!.remove(sessionId);
+      (_paneSessions[newPaneId] ??= []).add(sessionId);
+      _paneActiveSession[newPaneId] = sessionId;
+      if (_paneActiveSession[sourcePaneId] == sessionId) {
+        final remaining = _paneSessions[sourcePaneId]!;
+        _paneActiveSession[sourcePaneId] =
+            remaining.isEmpty ? null : remaining.last;
+      }
+      // Splitting a pane's only tab moves it out and leaves nothing behind —
+      // collapse the now-empty source rather than leave a permanent blank
+      // pane (same rule _removeSessionFromPane applies to a real close).
+      _collapseIfEmpty(sourcePaneId);
+      _focusedPaneId = newPaneId;
+      activeTerm = i;
+    });
+    _activeChanged();
+  }
+
+  // _switchInPane is a pane-scoped tab switch: same effect as terminalDeck's
+  // plain onSwitch (updates the shared activeTerm + fires _activeChanged),
+  // plus it records which tab THIS pane shows as active and focuses the pane.
+  void _switchInPane(String paneId, int i) {
+    focusPane(paneId);
+    _paneActiveSession[paneId] = terms[i].id;
+    setState(() => activeTerm = i);
+    _activeChanged();
+  }
+
+  // debugPaneTree/debugPaneSessions/debugFocusedPaneId/debugAssignSessionToPane
+  // expose the split-pane bookkeeping (otherwise private to this library) for
+  // tests — mirrors debugEscalateBusInboxNow/debugMarkBootSettled below.
+  // debugAssignSessionToPane lets a test exercise _assignSessionToPane's
+  // focused-pane targeting without going through addTerm, which spawns a
+  // real PTY.
+  @visibleForTesting
+  PaneNode get debugPaneTree => _termPaneTree;
+
+  @visibleForTesting
+  Map<String, List<String>> get debugPaneSessions => _paneSessions;
+
+  @visibleForTesting
+  String? get debugFocusedPaneId => _focusedPaneId;
+
+  @visibleForTesting
+  void debugAssignSessionToPane(String sessionId) =>
+      _assignSessionToPane(sessionId);
 
   String? get persistKey => null;
 
@@ -167,6 +364,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     setState(() {
       terms.add(session);
       activeTerm = terms.length - 1;
+      _assignSessionToPane(session.id);
     });
     // Launch the PTY now — NOT lazily when a TerminalPane first builds. A session
     // created remotely (from the phone) while the desktop's terminal deck isn't
@@ -183,6 +381,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
 
   void closeTerm(int i) {
     _hiddenTabs.remove(terms[i].id);
+    _removeSessionFromPane(terms[i].id);
     terms[i].dispose();
     setState(() {
       terms.removeAt(i);
@@ -274,6 +473,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     if (toClose.isEmpty) return;
     for (final s in toClose) {
       _hiddenTabs.remove(s.id);
+      _removeSessionFromPane(s.id);
       s.dispose();
     }
     setState(() {
@@ -414,6 +614,14 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       if (restored.isEmpty || !mounted) return;
       setState(() {
         terms.addAll(restored);
+        // Pane tree shape isn't persisted (resets to the single default pane
+        // on every restart), so this always lands every restored session in
+        // _rootPaneId — same as the pre-split flat list. Deliberately doesn't
+        // touch _paneActiveSession: activeTerm below (from the persisted
+        // 'active' flag) is what _resolveActivePaneSession falls back to.
+        for (final ts in restored) {
+          (_paneSessions[_currentPaneId()] ??= []).add(ts.id);
+        }
         _hiddenTabs.addAll(hiddenIds);
         activeTerm = _initialActiveIndex(activeId);
       });
@@ -867,33 +1075,199 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // keep the session running) and filters hidden tabs out of the strip. Off by
   // default so the inbox cockpit keeps ×=closeTerm (kill) — it has no tree to
   // reopen a hidden session from.
+  //
+  // enableSplit (workspace only, off by default) turns on the "Split Right"/
+  // "Split Down" tab-menu rows and, once a split actually exists, renders the
+  // pane tree via SplitPaneView instead of the plain single strip. Byte-for-
+  // byte identical to today whenever it's off OR nothing has been split yet
+  // (leafIds(_termPaneTree).length <= 1) — that single-pane path below is
+  // exactly the pre-split TerminalDeck(...) call, untouched.
   Widget terminalDeck({
     VoidCallback? onCollapse,
     VoidCallback? onNewShell,
     bool hideClosedTabs = false,
-  }) =>
-      TerminalDeck(
-    terms: terms,
-    active: activeTerm,
-    hiddenIds: hideClosedTabs ? _hiddenTabs : null,
-    onSwitch: (i) {
-      setState(() => activeTerm = i);
-      _activeChanged();
-    },
-    onClose: hideClosedTabs ? closeTermView : closeTerm,
-    // Bulk close mirrors × exactly: hideClosedTabs hosts only ever hide, so
-    // "关闭其他/左侧/右侧" can't surprise-kill a session the single × would
-    // have merely backgrounded.
-    onCloseOthers: hideClosedTabs ? closeOtherTermsView : closeOtherTerms,
-    onCloseLeft: hideClosedTabs ? closeTermsToLeftView : closeTermsToLeft,
-    onCloseRight: hideClosedTabs ? closeTermsToRightView : closeTermsToRight,
-    onCollapse: onCollapse,
-    onNewShell: onNewShell,
-    groupsFor: sendGroupsFor,
-    onSendToPeer: _sendToPeer,
-    onInterjectToPeer: _interjectToPeer,
-    onSendToOnline: onSendToOnline,
-  );
+    bool enableSplit = false,
+  }) {
+    final leaves = leafIds(_termPaneTree);
+    if (!enableSplit || leaves.length <= 1) {
+      return TerminalDeck(
+        terms: terms,
+        active: activeTerm,
+        hiddenIds: hideClosedTabs ? _hiddenTabs : null,
+        onSwitch: (i) {
+          setState(() => activeTerm = i);
+          _activeChanged();
+        },
+        onClose: hideClosedTabs ? closeTermView : closeTerm,
+        // Bulk close mirrors × exactly: hideClosedTabs hosts only ever hide, so
+        // "关闭其他/左侧/右侧" can't surprise-kill a session the single × would
+        // have merely backgrounded.
+        onCloseOthers: hideClosedTabs ? closeOtherTermsView : closeOtherTerms,
+        onCloseLeft: hideClosedTabs ? closeTermsToLeftView : closeTermsToLeft,
+        onCloseRight: hideClosedTabs ? closeTermsToRightView : closeTermsToRight,
+        onSplitRight: enableSplit ? splitTermRight : null,
+        onSplitDown: enableSplit ? splitTermDown : null,
+        onCollapse: onCollapse,
+        onNewShell: onNewShell,
+        groupsFor: sendGroupsFor,
+        onSendToPeer: _sendToPeer,
+        onInterjectToPeer: _interjectToPeer,
+        onSendToOnline: onSendToOnline,
+      );
+    }
+    return _splitTerminalDeck(
+      leaves: leaves,
+      onCollapse: onCollapse,
+      onNewShell: onNewShell,
+      hideClosedTabs: hideClosedTabs,
+    );
+  }
+
+  // _splitTerminalDeck renders the real (>1 pane) split layout: SplitPaneView
+  // over _termPaneTree, each leaf its own tab strip (via TerminalTabBar,
+  // reused as-is — hiddenIds is how it already supports "show only a subset
+  // of `terms`, but keep every callback's index global") + its own content
+  // area (an IndexedStack scoped to that pane's sessions, so switching tabs
+  // WITHIN a pane keeps every session's PTY view alive exactly like the
+  // single-pane path's IndexedStack does today).
+  Widget _splitTerminalDeck({
+    required List<String> leaves,
+    required VoidCallback? onCollapse,
+    required VoidCallback? onNewShell,
+    required bool hideClosedTabs,
+  }) {
+    final globalHidden = hideClosedTabs ? _hiddenTabs : null;
+    // sessionId -> paneId, computed once for this render pass (not per pane)
+    // so building N panes over M sessions stays O(N+M), not O(N*M) with a
+    // _paneOf lookup (which also self-heals/mutates) per session per pane.
+    final paneOfSession = <String, String>{
+      for (final entry in _paneSessions.entries)
+        for (final id in entry.value) id: entry.key,
+    };
+    final firstLeaf = leaves.first;
+
+    Widget buildPane(BuildContext context, String paneId) {
+      final activeSessionId = _resolveActivePaneSession(paneId, globalHidden);
+      final paneHidden = <String>{
+        for (final s in terms)
+          if ((paneOfSession[s.id] ?? firstLeaf) != paneId) s.id,
+        ...?globalHidden,
+      };
+      final activeIndex = activeSessionId == null
+          ? 0
+          : terms.indexWhere((s) => s.id == activeSessionId).clamp(
+              0,
+              terms.isEmpty ? 0 : terms.length - 1,
+            );
+      final paneSessions = [
+        for (final id in _paneSessions[paneId] ?? const <String>[])
+          if (sessionById(id) != null) sessionById(id)!,
+      ];
+      var contentIdx = activeSessionId == null
+          ? 0
+          : paneSessions.indexWhere((s) => s.id == activeSessionId);
+      if (contentIdx < 0) contentIdx = 0;
+
+      return Listener(
+        // Not a GestureDetector — must not steal clicks from the tab strip's
+        // InkWells or the terminal underneath (same technique as
+        // _editorCanvas's send-to-session capture in workspace_page.dart).
+        // Also promotes this pane's own active session to the shared
+        // activeTerm, so sendToTerminal/TTS/tree-highlight follow whichever
+        // pane the user is actually looking at, not just the last tab
+        // switch anywhere. Guarded on gi != activeTerm so merely clicking
+        // around inside an already-focused pane never re-triggers a rebuild.
+        onPointerDown: (_) {
+          focusPane(paneId);
+          if (activeSessionId == null) return;
+          final gi = terms.indexWhere((s) => s.id == activeSessionId);
+          if (gi >= 0 && gi != activeTerm) {
+            setState(() => activeTerm = gi);
+            _activeChanged();
+          }
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TerminalTabBar(
+              terms: terms,
+              active: activeIndex,
+              hiddenIds: paneHidden,
+              onSwitch: (i) => _switchInPane(paneId, i),
+              onClose: hideClosedTabs ? closeTermView : closeTerm,
+              onCloseOthers: hideClosedTabs
+                  ? closeOtherTermsView
+                  : closeOtherTerms,
+              onCloseLeft: hideClosedTabs
+                  ? closeTermsToLeftView
+                  : closeTermsToLeft,
+              onCloseRight: hideClosedTabs
+                  ? closeTermsToRightView
+                  : closeTermsToRight,
+              onSplitRight: splitTermRight,
+              onSplitDown: splitTermDown,
+              trailing: (onNewShell == null && !(paneId == firstLeaf && onCollapse != null))
+                  ? null
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (onNewShell != null)
+                          IconButton(
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            tooltip: '新建终端（普通 shell）',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () {
+                              focusPane(paneId);
+                              onNewShell();
+                            },
+                          ),
+                        if (paneId == firstLeaf && onCollapse != null)
+                          IconButton(
+                            icon: const Icon(
+                              Icons.chevron_right_rounded,
+                              size: 16,
+                            ),
+                            tooltip: '收起终端',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: onCollapse,
+                          ),
+                      ],
+                    ),
+            ),
+            Expanded(
+              child: paneSessions.isEmpty
+                  ? const SizedBox.shrink()
+                  : ColoredBox(
+                      color: CcColors.bg,
+                      child: IndexedStack(
+                        index: contentIdx,
+                        children: paneSessions.map((s) {
+                          final g = sendGroupsFor(s.id);
+                          return TerminalPane(
+                            key: ValueKey(s),
+                            session: s,
+                            same: g.same,
+                            others: g.others,
+                            onSendToPeer: _sendToPeer,
+                            onInterjectToPeer: _interjectToPeer,
+                            onSendToOnline: onSendToOnline,
+                          );
+                        }).toList(),
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SplitPaneView(
+      tree: _termPaneTree,
+      paneBuilder: buildPane,
+      onWeightsChanged: (target, w) =>
+          setState(() => _termPaneTree = updateWeights(_termPaneTree, target, w)),
+    );
+  }
 
   // terminalBody is just the active terminal (no tab bar) — for hosts that put
   // the session list elsewhere (the workspace tree shows sessions under their
@@ -939,6 +1313,9 @@ class TerminalDeck extends StatelessWidget {
   final ValueChanged<int>? onCloseOthers;
   final ValueChanged<int>? onCloseLeft;
   final ValueChanged<int>? onCloseRight;
+  // onSplitRight/onSplitDown: see TerminalTabBar. Null hides the menu rows.
+  final ValueChanged<int>? onSplitRight;
+  final ValueChanged<int>? onSplitDown;
   final VoidCallback? onCollapse;
   // onNewShell: open a plain interactive shell tab; null hides the + button.
   final VoidCallback? onNewShell;
@@ -967,6 +1344,8 @@ class TerminalDeck extends StatelessWidget {
     this.onCloseOthers,
     this.onCloseLeft,
     this.onCloseRight,
+    this.onSplitRight,
+    this.onSplitDown,
     this.onCollapse,
     this.onNewShell,
     this.groupsFor,
@@ -991,6 +1370,8 @@ class TerminalDeck extends StatelessWidget {
           onCloseOthers: onCloseOthers,
           onCloseLeft: onCloseLeft,
           onCloseRight: onCloseRight,
+          onSplitRight: onSplitRight,
+          onSplitDown: onSplitDown,
           trailing: (onNewShell == null && onCollapse == null)
               ? null
               : Row(
@@ -1054,6 +1435,11 @@ class TerminalTabBar extends StatelessWidget {
   final ValueChanged<int>? onCloseOthers;
   final ValueChanged<int>? onCloseLeft;
   final ValueChanged<int>? onCloseRight;
+  // onSplitRight/onSplitDown power the right-click "Split Right"/"Split
+  // Down" rows (split-pane terminals, workspace only); null hides both rows
+  // — the inbox cockpit never sets these, so its menu is unchanged.
+  final ValueChanged<int>? onSplitRight;
+  final ValueChanged<int>? onSplitDown;
   final Widget? leading;
   final Widget? trailing;
   const TerminalTabBar({
@@ -1066,6 +1452,8 @@ class TerminalTabBar extends StatelessWidget {
     this.onCloseOthers,
     this.onCloseLeft,
     this.onCloseRight,
+    this.onSplitRight,
+    this.onSplitDown,
     this.leading,
     this.trailing,
   });
@@ -1098,6 +1486,19 @@ class TerminalTabBar extends StatelessWidget {
         icon: Icons.keyboard_tab_rounded,
         label: 'Close Tabs to the Right',
       ),
+    if (onSplitRight != null || onSplitDown != null) const PopupMenuDivider(),
+    if (onSplitRight != null)
+      ccMenuItem(
+        value: 'splitRight',
+        icon: Icons.vertical_split_rounded,
+        label: 'Split Right',
+      ),
+    if (onSplitDown != null)
+      ccMenuItem(
+        value: 'splitDown',
+        icon: Icons.horizontal_split_rounded,
+        label: 'Split Down',
+      ),
     const PopupMenuDivider(),
     ccMenuItem(
       value: 'copyPath',
@@ -1122,6 +1523,10 @@ class TerminalTabBar extends StatelessWidget {
         onCloseLeft?.call(i);
       case 'closeRight':
         onCloseRight?.call(i);
+      case 'splitRight':
+        onSplitRight?.call(i);
+      case 'splitDown':
+        onSplitDown?.call(i);
       case 'copyPath':
         await Clipboard.setData(ClipboardData(text: terms[i].workdir));
         if (context.mounted) snack(context, '已复制路径');
