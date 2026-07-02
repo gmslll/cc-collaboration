@@ -1,5 +1,14 @@
 part of '../workspace_page.dart';
 
+// A node in the branch path-tree: children keyed by path segment, plus an
+// optional branch that lives at exactly this path. The optional branch lets a
+// branch named like a folder prefix (local "origin" alongside remote
+// "origin/main") coexist with the folder instead of overwriting it.
+class _BranchNode {
+  final Map<String, _BranchNode> children = {};
+  GitBranch? branch;
+}
+
 class _BranchDialog extends StatefulWidget {
   final ProjectCfg project;
   final Future<void> Function(GitBranch branch) onCheckout;
@@ -641,53 +650,54 @@ class _BranchListPaneState extends State<_BranchListPane> {
   // '/') and renders collapsible folder rows + indented leaf branch rows —
   // "open it like a file tree", as requested.
   List<Widget> _branchTree(List<GitBranch> branches) {
-    final root = <String, dynamic>{};
+    final root = _BranchNode();
     for (final b in branches) {
-      final segs = b.name.split('/');
       var node = root;
-      for (var i = 0; i < segs.length - 1; i++) {
-        node =
-            node.putIfAbsent(segs[i], () => <String, dynamic>{})
-                as Map<String, dynamic>;
+      for (final seg in b.name.split('/')) {
+        node = node.children.putIfAbsent(seg, () => _BranchNode());
       }
-      node[segs.last] = b; // leaf
+      node.branch = b; // a branch lives exactly at this path
     }
     return _branchNodes(root, 0, '');
   }
 
-  List<Widget> _branchNodes(
-    Map<String, dynamic> node,
-    int depth,
-    String prefix,
-  ) {
-    final folders = <MapEntry<String, dynamic>>[];
-    final leaves = <MapEntry<String, dynamic>>[];
-    node.forEach((k, v) {
-      (v is Map<String, dynamic> ? folders : leaves).add(MapEntry(k, v));
-    });
-    folders.sort((a, b) => a.key.compareTo(b.key));
-    leaves.sort((a, b) => a.key.compareTo(b.key));
+  List<Widget> _branchNodes(_BranchNode node, int depth, String prefix) {
+    final entries = node.children.entries.toList()
+      ..sort((a, b) {
+        // folders (have children) first, then alphabetical
+        final af = a.value.children.isNotEmpty;
+        final bf = b.value.children.isNotEmpty;
+        if (af != bf) return af ? -1 : 1;
+        return a.key.compareTo(b.key);
+      });
     final out = <Widget>[];
-    for (final f in folders) {
-      final path = '$prefix${f.key}/';
+    for (final e in entries) {
+      final n = e.value;
+      if (n.children.isEmpty) {
+        out.add(_branchLeafRow(n.branch!, depth, e.key)); // pure leaf
+        continue;
+      }
+      // Folder node. A branch may ALSO live here (e.g. a local branch named
+      // "origin" next to remote "origin/main") — render it as the folder's
+      // first leaf child instead of colliding with the folder.
+      final path = '$prefix${e.key}/';
       final collapsed = _collapsedFolders.contains(path);
-      final child = f.value as Map<String, dynamic>;
-      out.add(
-        _branchFolderRow(f.key, path, depth, collapsed, _leafCount(child)),
-      );
-      if (!collapsed) out.addAll(_branchNodes(child, depth + 1, path));
-    }
-    for (final l in leaves) {
-      out.add(_branchLeafRow(l.value as GitBranch, depth, l.key));
+      out.add(_branchFolderRow(e.key, path, depth, collapsed, _leafCount(n)));
+      if (!collapsed) {
+        if (n.branch != null) {
+          out.add(_branchLeafRow(n.branch!, depth + 1, e.key));
+        }
+        out.addAll(_branchNodes(n, depth + 1, path));
+      }
     }
     return out;
   }
 
-  int _leafCount(Map<String, dynamic> node) {
-    var n = 0;
-    node.forEach((_, v) {
-      n += v is Map<String, dynamic> ? _leafCount(v) : 1;
-    });
+  int _leafCount(_BranchNode node) {
+    var n = node.branch != null ? 1 : 0;
+    for (final c in node.children.values) {
+      n += _leafCount(c);
+    }
     return n;
   }
 

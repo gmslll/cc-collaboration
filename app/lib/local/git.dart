@@ -225,7 +225,10 @@ Future<String> gitDiffUntracked(String dir, String file, {int context = 3}) {
 Future<String> gitStatus(String dir) => _git(dir, 'status --porcelain');
 
 Future<List<GitChange>> gitChanges(String dir) async {
-  final out = await _git(dir, 'status --porcelain=v1 -z');
+  // --untracked-files=all lists untracked files individually instead of
+  // collapsing an untracked directory to a single 'dir/' entry — a commit tool
+  // stages files, not directories, and a lone 'dir/' row can't be opened/diffed.
+  final out = await _git(dir, 'status --porcelain=v1 -z --untracked-files=all');
   final parts = out.split('\x00');
   final changes = <GitChange>[];
   var i = 0;
@@ -253,7 +256,12 @@ Future<List<GitChange>> gitChanges(String dir) async {
 }
 
 Future<GitStatusSummary> gitStatusSummary(String dir) async {
-  final out = await _git(dir, 'status --porcelain=v2 --branch');
+  // --untracked-files=all so the untracked count matches gitChanges (which lists
+  // untracked files individually), not the collapsed one-per-directory count.
+  final out = await _git(
+    dir,
+    'status --porcelain=v2 --branch --untracked-files=all',
+  );
   var branch = '';
   var staged = 0;
   var modified = 0;

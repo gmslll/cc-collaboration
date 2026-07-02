@@ -1754,6 +1754,14 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   @override
   void _openCodeFile(String path, {int? line, bool recordHistory = true}) {
+    // Opening a directory as a file throws "Is a directory" (e.g. an untracked
+    // dir or a submodule clicked in the change list) — reveal it in the project
+    // tree instead of adding a broken editor tab.
+    if (FileSystemEntity.isDirectorySync(path)) {
+      setState(() => _revealedProjectFilePath = path);
+      _expandProjectForFile(path);
+      return;
+    }
     final target = _CodeLocation(path, line: line);
     final current = _activeLocation;
     if (recordHistory && current != null && !current.sameAs(target)) {
