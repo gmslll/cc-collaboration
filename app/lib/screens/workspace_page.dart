@@ -5778,8 +5778,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   // contextual Stage/Unstage/Rollback/Stash cluster + the filter funnel.
   Widget _localChangesList(ProjectCfg p) {
     final visible = _filteredGitChanges;
-    final tracked = visible.where((c) => !c.untracked).toList();
-    final untracked = visible.where((c) => c.untracked).toList();
+    final tracked = <GitChange>[];
+    final untracked = <GitChange>[];
+    for (final c in visible) {
+      (c.untracked ? untracked : tracked).add(c);
+    }
     return DecoratedBox(
       decoration: const BoxDecoration(color: CcColors.panel),
       child: ListView(
@@ -5795,34 +5798,51 @@ class _WorkspacePageState extends State<WorkspacePage>
               ),
             )
           else ...[
-            if (tracked.isNotEmpty) ...[
-              _changesGroupHeader(
-                title: 'Changes',
-                items: tracked,
-                collapsed: _changesTreeCollapsed,
-                onToggleCollapse: () => setState(
-                  () => _changesTreeCollapsed = !_changesTreeCollapsed,
-                ),
+            ..._changesGroup(
+              p: p,
+              title: 'Changes',
+              items: tracked,
+              collapsed: _changesTreeCollapsed,
+              onToggleCollapse: () => setState(
+                () => _changesTreeCollapsed = !_changesTreeCollapsed,
               ),
-              if (!_changesTreeCollapsed)
-                for (final c in tracked) _changeTile(p, c),
-            ],
-            if (untracked.isNotEmpty) ...[
-              _changesGroupHeader(
-                title: 'Unversioned Files',
-                items: untracked,
-                collapsed: _untrackedTreeCollapsed,
-                onToggleCollapse: () => setState(
-                  () => _untrackedTreeCollapsed = !_untrackedTreeCollapsed,
-                ),
+            ),
+            ..._changesGroup(
+              p: p,
+              title: 'Unversioned Files',
+              items: untracked,
+              collapsed: _untrackedTreeCollapsed,
+              onToggleCollapse: () => setState(
+                () => _untrackedTreeCollapsed = !_untrackedTreeCollapsed,
               ),
-              if (!_untrackedTreeCollapsed)
-                for (final c in untracked) _changeTile(p, c),
-            ],
+            ),
           ],
         ],
       ),
     );
+  }
+
+  // _changesGroup renders one collapsible tree group (its header + indented
+  // file rows), or nothing when [items] is empty — shared by the "Changes"
+  // and "Unversioned Files" call sites in _localChangesList so the two don't
+  // drift as separate copy-pasted blocks.
+  List<Widget> _changesGroup({
+    required ProjectCfg p,
+    required String title,
+    required List<GitChange> items,
+    required bool collapsed,
+    required VoidCallback onToggleCollapse,
+  }) {
+    if (items.isEmpty) return const [];
+    return [
+      _changesGroupHeader(
+        title: title,
+        items: items,
+        collapsed: collapsed,
+        onToggleCollapse: onToggleCollapse,
+      ),
+      if (!collapsed) for (final c in items) _changeTile(p, c),
+    ];
   }
 
   // _changesToolBtn is one compact icon action (Stage / Unstage / Rollback /
@@ -6163,7 +6183,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                   const SizedBox(width: 6),
                   // Same per-language file-type glyphs as the project file
                   // tree (file_icons.dart), like the JetBrains change tree.
-                  fileSvg(fileIconAsset(c.path.split('/').last), size: 15),
+                  fileSvg(fileIconAsset(pathBaseName(c.path)), size: 15),
                   const SizedBox(width: 7),
                   // Filename coloured by change kind + a small grey directory.
                   Expanded(
