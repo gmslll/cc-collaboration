@@ -1576,7 +1576,9 @@ Future<String?> showPeerPicker(
 
 // fileNameDirLabel renders a path as filename (left) + small gray directory —
 // shared by the desktop commit panel and the phone change / commit-file rows.
-Widget fileNameDirLabel(String path) {
+// [nameColor] tints the filename (e.g. by git change kind); null keeps the
+// default text color.
+Widget fileNameDirLabel(String path, {Color? nameColor}) {
   final (name, dir) = splitFileNameDir(path);
   return Row(
     crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -1587,7 +1589,7 @@ Widget fileNameDirLabel(String path) {
           name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: CcType.code(size: 12.5),
+          style: CcType.code(size: 12.5, color: nameColor ?? CcColors.text),
         ),
       ),
       if (dir.isNotEmpty) ...[

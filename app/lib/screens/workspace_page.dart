@@ -5983,6 +5983,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   Widget _changeTile(ProjectCfg p, GitChange c) {
     final sel = c.path == _selectedGitPath;
     final checked = _selectedChangePaths.contains(c.path);
+    final changeColor = _changeColor(c);
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       // Right-click anywhere on the row opens the same JetBrains-style menu as ⋮.
@@ -6012,27 +6013,32 @@ class _WorkspacePageState extends State<WorkspacePage>
               child: Row(
                 children: [
                   SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: Checkbox(
-                      value: checked,
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onChanged: (v) => setState(() {
-                        if (v == true) {
-                          _selectedChangePaths.add(c.path);
-                        } else {
-                          _selectedChangePaths.remove(c.path);
-                        }
-                      }),
+                    width: 18,
+                    height: 18,
+                    child: Transform.scale(
+                      scale: 0.8,
+                      child: Checkbox(
+                        value: checked,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _selectedChangePaths.add(c.path);
+                          } else {
+                            _selectedChangePaths.remove(c.path);
+                          }
+                        }),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 6),
-                  // File-type glyph, tinted by change kind (green=staged,
-                  // yellow=modified, blue=untracked, red=conflict).
-                  Icon(_fileTypeIcon(c.path), size: 15, color: _changeColor(c)),
+                  // Same icon set as the project file tree, tinted by change
+                  // kind (green=staged, yellow=modified, blue=new, red=conflict).
+                  Icon(_iconForFile(c.path), size: 15, color: changeColor),
                   const SizedBox(width: 7),
-                  Expanded(child: fileNameDirLabel(c.path)),
+                  // Filename coloured by change kind + a small grey directory.
+                  Expanded(child: fileNameDirLabel(c.path, nameColor: changeColor)),
                   const SizedBox(width: 4),
                   Builder(
                     builder: (btnCtx) => IconButton(
@@ -7477,9 +7483,13 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 
   Widget _commitBox(ProjectCfg p, GitStatusSummary? status) {
-    final canCommit = (status?.staged ?? 0) > 0 && !_gitLoading;
     final selected = _selectedChangePaths.length;
-    final canCommitSelected = selected > 0 && !_gitLoading;
+    // One "Commit" flow: commit the checked files if any are checked, otherwise
+    // the already-staged ones — enabled whenever there's something to commit, so
+    // there are no permanently-greyed staged-only buttons.
+    final commitChecked = selected > 0;
+    final canCommitAny =
+        (commitChecked || (status?.staged ?? 0) > 0) && !_gitLoading;
     final hasCommitText = _commitCtl.text.trim().isNotEmpty;
     final canAmend =
         !_gitLoading && ((status?.staged ?? 0) > 0 || hasCommitText);
@@ -7527,46 +7537,24 @@ class _WorkspacePageState extends State<WorkspacePage>
             scrolling: [
               FilledButton.icon(
                 style: compactBtn,
-                onPressed: canCommit ? () => _gitCommitCurrent(p) : null,
+                onPressed: canCommitAny
+                    ? () => commitChecked
+                          ? _gitCommitSelected(p)
+                          : _gitCommitCurrent(p)
+                    : null,
                 icon: const Icon(Icons.check_rounded, size: 13),
-                label: const Text('Commit'),
+                label: Text(commitChecked ? 'Commit $selected' : 'Commit'),
               ),
               const SizedBox(width: 5),
               FilledButton.tonalIcon(
                 style: compactBtn,
-                onPressed: canCommit ? () => _gitCommitAndPushCurrent(p) : null,
+                onPressed: canCommitAny
+                    ? () => commitChecked
+                          ? _gitCommitSelectedAndPush(p)
+                          : _gitCommitAndPushCurrent(p)
+                    : null,
                 icon: const Icon(Icons.upload_rounded, size: 13),
                 label: const Text('Commit & Push'),
-              ),
-              const SizedBox(width: 5),
-              FilledButton.icon(
-                style: compactBtn,
-                onPressed: canCommitSelected
-                    ? () => _gitCommitSelected(p)
-                    : null,
-                icon: const Icon(Icons.checklist_rounded, size: 13),
-                label: Text(
-                  selected == 0 ? 'Commit Selected' : 'Commit $selected',
-                ),
-              ),
-              PopupMenuButton<String>(
-                tooltip: 'Selected commit actions',
-                enabled: canCommitSelected,
-                icon: const Icon(Icons.arrow_drop_down_rounded, size: 16),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-                onSelected: (v) {
-                  if (v == 'commitPushSelected') _gitCommitSelectedAndPush(p);
-                },
-                itemBuilder: (_) => [
-                  ccMenuItem(
-                    value: 'commitPushSelected',
-                    icon: Icons.upload_rounded,
-                    label: selected == 0
-                        ? 'Commit Selected & Push'
-                        : 'Commit $selected & Push',
-                  ),
-                ],
               ),
               const SizedBox(width: 5),
               OutlinedButton.icon(
@@ -7658,9 +7646,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             Icon(viewIcon, size: 16, color: CcColors.muted),
             const SizedBox(width: 8),
             Text(
-              p == null ? viewLabel : '$viewLabel · ${p.name}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              viewLabel,
               style: const TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w800,
@@ -7668,6 +7654,10 @@ class _WorkspacePageState extends State<WorkspacePage>
               ),
             ),
             if (p != null) ...[
+              const SizedBox(width: 4),
+              // The repo name is a dropdown that switches the active project —
+              // reuses ts88's _repoSwitcher (also used in the Git Log header).
+              _repoSwitcher(p),
               _branchButton(status?.branch ?? 'branch'),
               const SizedBox(width: 4),
             ],
