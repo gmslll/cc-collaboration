@@ -1,11 +1,14 @@
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pasteboard/pasteboard.dart';
+import 'package:super_clipboard/super_clipboard.dart';
 
 import '../api/relay_client.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'html_to_markdown.dart';
 import 'todo_attachment_thumb.dart' show isImageAttachmentName;
 
 // MarkdownLiteEditor is a Linear/Notion-flavored "live preview" markdown
@@ -23,6 +26,12 @@ import 'todo_attachment_thumb.dart' show isImageAttachmentName;
 // transformation" contract as everything else here. todo_body_view.dart is
 // the read-only counterpart that turns that reference back into a real
 // inline image.
+//
+// Paste also tries the clipboard's HTML representation (via super_clipboard
+// — the `pasteboard` package above can't read `public.html` on macOS at
+// all) so copying a formatted snippet from Linear/Notion/a browser keeps
+// its headings/bold/links/lists instead of landing as flattened plain text;
+// see html_to_markdown.dart and _pasteHtmlIfAvailable below.
 
 final _headingRe = RegExp(r'^(#{1,3})(\s+)(.*)$');
 final _quoteRe = RegExp(r'^(>\s?)(.*)$');
@@ -309,9 +318,90 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
       await _uploadAndInsertImage(image, _pastedImageName());
       return;
     }
+    if (await _pasteHtmlIfAvailable()) return;
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text != null && text.isNotEmpty) _insertAtCursor(text);
+  }
+
+  // Tries the clipboard's HTML representation and converts it through
+  // htmlToMarkdown; remote (http/https) <img> sources are downloaded and
+  // routed through the same _uploadAndInsertImage pipeline a direct image
+  // paste uses (in source order, appended after the converted text — exact
+  // inline position isn't preserved, which is an acceptable simplification
+  // for the todo/Linear/Notion/browser snippets this targets). Returns
+  // false (having inserted nothing) whenever there's no HTML on the
+  // clipboard, the reader errors, or conversion finds nothing usable, so
+  // the caller can fall back to the pre-existing plain-text paste — this
+  // can only add capability, never regress a paste that used to work.
+  Future<bool> _pasteHtmlIfAvailable() async {
+    final clipboard = SystemClipboard.instance;
+    if (clipboard == null) return false;
+
+    String? html;
+    try {
+      final reader = await clipboard.read();
+      if (!reader.canProvide(Formats.htmlText)) return false;
+      html = await reader.readValue(Formats.htmlText);
+    } catch (_) {
+      return false;
+    }
+    if (html == null || html.trim().isEmpty) return false;
+
+    final HtmlToMarkdownResult result;
+    try {
+      result = htmlToMarkdown(html);
+    } catch (_) {
+      return false;
+    }
+    if (result.isEmpty) return false;
+
+    final text = _stripImagePlaceholders(result.markdown, result.imageSrcs.length);
+    var handled = text.isNotEmpty;
+    if (text.isNotEmpty) _insertAtCursor(text);
+
+    for (final src in result.imageSrcs) {
+      if (!src.startsWith('http://') && !src.startsWith('https://')) continue;
+      final bytes = await _downloadRemoteImage(src);
+      if (bytes == null || bytes.isEmpty) continue;
+      await _uploadAndInsertImage(bytes, _remoteImageName(src));
+      handled = true;
+    }
+    return handled;
+  }
+
+  String _stripImagePlaceholders(String markdown, int imageCount) {
+    var out = markdown;
+    for (var i = 0; i < imageCount; i++) {
+      out = out.replaceFirst(imgPlaceholder(i), '');
+    }
+    return out.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+  }
+
+  Future<Uint8List?> _downloadRemoteImage(String url) async {
+    try {
+      final response = await Dio()
+          .get<List<int>>(url, options: Options(responseType: ResponseType.bytes));
+      final data = response.data;
+      if (data == null || data.isEmpty) return null;
+      return data is Uint8List ? data : Uint8List.fromList(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Downloaded bytes could be any format the source serves (jpg/gif/webp/…)
+  // unlike Pasteboard.image's fixed PNG contract, so the extension is
+  // sniffed from the URL path when it's a recognized image extension and
+  // falls back to .png otherwise.
+  String _remoteImageName(String url) {
+    final path = Uri.tryParse(url)?.path ?? '';
+    final dot = path.lastIndexOf('.');
+    final ext = dot >= 0 && isImageAttachmentName(path.substring(dot))
+        ? path.substring(dot).toLowerCase()
+        : '.png';
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    return 'pasted-$ts-${_pasteSeq++}$ext';
   }
 
   Future<void> _handleDrop(DropDoneDetails detail) async {
