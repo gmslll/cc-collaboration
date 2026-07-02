@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_lite_editor.dart';
 import '../widgets/todo_attachment_thumb.dart';
+import '../widgets/todo_body_view.dart';
 import '../widgets/todo_property_controls.dart';
 
 // TodoDetailView is the reusable 待办详情/编辑面板. Linear-flavored editing
@@ -58,6 +59,11 @@ class TodoDetailViewState extends State<TodoDetailView> {
   bool _textDirty = false;
   bool _saving = false;
   bool _uploading = false;
+  // Body starts in read-only display mode (TodoBodyView, images inlined);
+  // clicking it swaps to the live MarkdownLiteEditor for editing, and losing
+  // focus swaps back — same split as the plan's "编辑态/展示态" design so
+  // body_md itself never has to represent "is this being edited" state.
+  bool _bodyEditing = false;
 
   RelayClient get _client => widget.client;
   String get _id => widget.todo.id;
@@ -90,6 +96,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
         _titleCtl.text = widget.todo.title;
         _bodyCtl.text = widget.todo.bodyMd;
         _textDirty = false;
+        _bodyEditing = false;
         _comments = const [];
         _loadingAttachments = true;
       });
@@ -164,10 +171,12 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   void _onBodyFocusChange() {
-    if (!_bodyFocus.hasFocus && _textDirty) {
+    if (_bodyFocus.hasFocus) return;
+    if (_textDirty) {
       _bodyDebounce?.cancel();
       _saveTextEdits();
     }
+    if (mounted) setState(() => _bodyEditing = false);
   }
 
   void _onBodyChanged(String _) {
@@ -180,8 +189,16 @@ class TodoDetailViewState extends State<TodoDetailView> {
 
   void _applyUpdated(Todo t) {
     if (!mounted) return;
-    setState(() => _current = t);
-    widget.onChanged?.call(t);
+    // PATCH/status-update responses always carry an empty `attachments`
+    // (relay skips that join outside GET-by-id) — if nothing attachment-wise
+    // actually changed server-side (count is unchanged), keep the
+    // already-loaded list instead of blanking out inline images that
+    // TodoBodyView needs sha256 metadata for.
+    final merged = t.attachments.isEmpty && t.attachmentCount == _current.attachmentCount
+        ? t.copyWith(attachments: _current.attachments)
+        : t;
+    setState(() => _current = merged);
+    widget.onChanged?.call(merged);
   }
 
   Future<void> _saveTextEdits() async {
@@ -419,15 +436,48 @@ class TodoDetailViewState extends State<TodoDetailView> {
           ),
           const SizedBox(height: 4),
           const Divider(height: 20),
-          MarkdownLiteEditor(
-            controller: _bodyCtl,
-            focusNode: _bodyFocus,
-            hintText: '添加描述…支持 # 标题 / - 列表 / **加粗**',
-            onChanged: _onBodyChanged,
-            minLines: 4,
-            maxLines: 14,
-          ),
+          _body(),
         ]),
+      );
+
+  // AnimatedSize softens the height jump between the two states — inherent
+  // whenever the body has an inline image, since the editor collapses it
+  // back down to one line of `![](name)` text while focused (documented
+  // editor/display split, not a bug: keeping body_md a literal markdown
+  // string means there's no shared layout between "image" and "image
+  // reference text" to animate between, only the container size).
+  Widget _body() => AnimatedSize(
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+        alignment: Alignment.topLeft,
+        child: _bodyEditing
+            ? MarkdownLiteEditor(
+                controller: _bodyCtl,
+                focusNode: _bodyFocus,
+                client: _client,
+                todoId: _id,
+                hintText: '添加描述…支持 # 标题 / - 列表 / **加粗**',
+                onChanged: _onBodyChanged,
+                autofocus: true,
+                minLines: 4,
+                maxLines: 14,
+              )
+            : GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _bodyEditing = true),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 88),
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: TodoBodyView(
+                      client: _client,
+                      todoId: _id,
+                      bodyMd: _bodyCtl.text,
+                      attachments: _current.attachments,
+                    ),
+                  ),
+                ),
+              ),
       );
 
   Widget _dot() => Container(

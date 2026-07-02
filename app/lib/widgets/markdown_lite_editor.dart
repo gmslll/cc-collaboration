@@ -1,7 +1,12 @@
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pasteboard/pasteboard.dart';
 
+import '../api/relay_client.dart';
 import '../theme.dart';
+import '../widgets.dart';
+import 'todo_attachment_thumb.dart' show isImageAttachmentName;
 
 // MarkdownLiteEditor is a Linear/Notion-flavored "live preview" markdown
 // editor for the todo body: the underlying buffer stays a literal markdown
@@ -12,6 +17,12 @@ import '../theme.dart';
 // TextEditingController.buildTextSpan override, and Enter continues/exits
 // list items the way Notion does. Not a full block editor (no drag handles,
 // no slash menu) — a "lite" WYSIWYG layer over plain markdown text.
+//
+// Pasted/dropped images upload via RelayClient.uploadTodoAttachment and get
+// inserted as a literal `![](name)` reference at the cursor — same "zero
+// transformation" contract as everything else here. todo_body_view.dart is
+// the read-only counterpart that turns that reference back into a real
+// inline image.
 
 final _headingRe = RegExp(r'^(#{1,3})(\s+)(.*)$');
 final _quoteRe = RegExp(r'^(>\s?)(.*)$');
@@ -22,7 +33,11 @@ final _listItemRe = RegExp(r'^(\s*(?:[-*]|\d+\.)\s+)(.*)$');
 // (`foo_bar_baz`) that shows up in a todo body.
 final _inlineRe = RegExp(r'(\*\*.+?\*\*)|(`[^`\n]+?`)|(\*[^*\n]+?\*)');
 
-List<InlineSpan> _inlineSpans(String s, TextStyle base) {
+// inlineMarkdownSpans/decorateMarkdownLine are public because
+// todo_body_view.dart's read-only renderer reuses them verbatim for the
+// non-image lines of a todo body — one regex-driven decorator, two
+// presentations (live-editing TextSpan tree here, static Text.rich there).
+List<InlineSpan> inlineMarkdownSpans(String s, TextStyle base) {
   if (s.isEmpty) return [TextSpan(text: s, style: base)];
   final dim = base.copyWith(color: CcColors.subtle);
   final spans = <InlineSpan>[];
@@ -62,7 +77,7 @@ List<InlineSpan> _inlineSpans(String s, TextStyle base) {
   return spans;
 }
 
-List<InlineSpan> _decorateLine(String line, TextStyle base) {
+List<InlineSpan> decorateMarkdownLine(String line, TextStyle base) {
   final dim = base.copyWith(color: CcColors.subtle);
   final heading = _headingRe.firstMatch(line);
   if (heading != null) {
@@ -72,28 +87,28 @@ List<InlineSpan> _decorateLine(String line, TextStyle base) {
         (level == 1 ? 1.55 : level == 2 ? 1.32 : 1.16);
     final headStyle =
         base.copyWith(fontSize: size, fontWeight: FontWeight.w700, color: CcColors.text);
-    return [TextSpan(text: hashes + space, style: dim), ..._inlineSpans(rest, headStyle)];
+    return [TextSpan(text: hashes + space, style: dim), ...inlineMarkdownSpans(rest, headStyle)];
   }
   final quote = _quoteRe.firstMatch(line);
   if (quote != null) {
     final marker = quote.group(1)!, rest = quote.group(2)!;
     final quoteStyle = base.copyWith(color: CcColors.muted, fontStyle: FontStyle.italic);
-    return [TextSpan(text: marker, style: dim), ..._inlineSpans(rest, quoteStyle)];
+    return [TextSpan(text: marker, style: dim), ...inlineMarkdownSpans(rest, quoteStyle)];
   }
   final item = _listItemRe.firstMatch(line);
   if (item != null) {
     final marker = item.group(1)!, rest = item.group(2)!;
     final markerStyle = base.copyWith(color: CcColors.accentBright, fontWeight: FontWeight.w700);
-    return [TextSpan(text: marker, style: markerStyle), ..._inlineSpans(rest, base)];
+    return [TextSpan(text: marker, style: markerStyle), ...inlineMarkdownSpans(rest, base)];
   }
-  return _inlineSpans(line, base);
+  return inlineMarkdownSpans(line, base);
 }
 
 List<InlineSpan> _decorate(String text, TextStyle base) {
   final spans = <InlineSpan>[];
   final lines = text.split('\n');
   for (var i = 0; i < lines.length; i++) {
-    spans.addAll(_decorateLine(lines[i], base));
+    spans.addAll(decorateMarkdownLine(lines[i], base));
     if (i != lines.length - 1) spans.add(TextSpan(text: '\n', style: base));
   }
   return spans;
@@ -182,6 +197,13 @@ class MarkdownLiteEditor extends StatefulWidget {
   final int? minLines;
   final int? maxLines;
   final TextStyle? style;
+  // When both are set, pasting (Cmd/Ctrl+V) or dropping an image file onto
+  // this editor uploads it via RelayClient.uploadTodoAttachment and inserts
+  // a literal `![](name)` reference at the cursor. Left null wherever there's
+  // no todo yet to attach to (e.g. the "new todo" composer) — paste there
+  // just falls back to plain text, drop is disabled.
+  final RelayClient? client;
+  final String? todoId;
 
   const MarkdownLiteEditor({
     super.key,
@@ -193,6 +215,8 @@ class MarkdownLiteEditor extends StatefulWidget {
     this.minLines,
     this.maxLines,
     this.style,
+    this.client,
+    this.todoId,
   });
 
   @override
@@ -200,6 +224,12 @@ class MarkdownLiteEditor extends StatefulWidget {
 }
 
 class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
+  bool _mediaBusy = false;
+  bool _dropHover = false;
+  int _pasteSeq = 0;
+
+  bool get _canUploadMedia => widget.client != null && widget.todoId != null;
+
   void _wrapSelection(String marker) {
     final sel = widget.controller.selection;
     if (!sel.isValid) return;
@@ -221,17 +251,102 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
     widget.onChanged?.call(newText);
   }
 
+  void _insertAtCursor(String text) {
+    final sel = widget.controller.selection;
+    final base = widget.controller.text;
+    final start = sel.isValid ? sel.start : base.length;
+    final end = sel.isValid ? sel.end : base.length;
+    final newText = base.replaceRange(start, end, text);
+    widget.controller.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: start + text.length),
+    );
+    widget.onChanged?.call(newText);
+  }
+
+  String _pastedImageName() {
+    // Pasteboard.image always hands back PNG bytes (it converts via
+    // NSImage.png on macOS; other platforms follow the same contract) — the
+    // extension is never guessed from content, just fixed.
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    return 'pasted-$ts-${_pasteSeq++}.png';
+  }
+
+  Future<void> _uploadAndInsertImage(Uint8List bytes, String name) async {
+    final client = widget.client;
+    final todoId = widget.todoId;
+    if (client == null || todoId == null) return;
+    if (_mediaBusy) {
+      if (mounted) snack(context, '已有图片正在上传，请稍候');
+      return;
+    }
+    setState(() => _mediaBusy = true);
+    if (mounted) snack(context, '正在上传图片…', duration: const Duration(seconds: 2));
+    try {
+      await client.uploadTodoAttachment(todoId, name, bytes);
+      if (!mounted) return;
+      _insertAtCursor('![]($name)');
+    } catch (e) {
+      if (mounted) snack(context, '图片上传失败: ${errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _mediaBusy = false);
+    }
+  }
+
+  // Binding Cmd/Ctrl+V here fully replaces TextField's own paste handling
+  // (CallbackShortcuts marks the key event handled either way), so the
+  // plain-text fallback below has to be reimplemented rather than left to
+  // fall through to the default — only reached once an image paste has
+  // already been ruled out.
+  Future<void> _handlePaste() async {
+    Uint8List? image;
+    try {
+      image = await Pasteboard.image;
+    } catch (_) {
+      image = null;
+    }
+    if (image != null && image.isNotEmpty) {
+      await _uploadAndInsertImage(image, _pastedImageName());
+      return;
+    }
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) _insertAtCursor(text);
+  }
+
+  Future<void> _handleDrop(DropDoneDetails detail) async {
+    final images = detail.files.where((f) => isImageAttachmentName(f.name)).toList();
+    final skipped = detail.files.length - images.length;
+    for (final f in images) {
+      try {
+        final bytes = await f.readAsBytes();
+        await _uploadAndInsertImage(bytes, f.name);
+      } catch (e) {
+        if (mounted) snack(context, '${f.name} 上传失败: ${errorText(e)}');
+      }
+    }
+    if (skipped > 0 && mounted) {
+      snack(context, '正文只能内嵌图片，已跳过 $skipped 个非图片文件');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: {
-        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyB): () => _wrapSelection('**'),
-        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyB): () =>
-            _wrapSelection('**'),
-        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyI): () => _wrapSelection('*'),
-        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyI): () =>
-            _wrapSelection('*'),
+    final bindings = <ShortcutActivator, VoidCallback>{
+      LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyB): () => _wrapSelection('**'),
+      LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyB): () =>
+          _wrapSelection('**'),
+      LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyI): () => _wrapSelection('*'),
+      LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyI): () =>
+          _wrapSelection('*'),
+      if (_canUploadMedia) ...{
+        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyV): () => _handlePaste(),
+        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyV): () => _handlePaste(),
       },
+    };
+
+    Widget field = CallbackShortcuts(
+      bindings: bindings,
       child: TextField(
         controller: widget.controller,
         focusNode: widget.focusNode,
@@ -253,6 +368,27 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
           contentPadding: EdgeInsets.zero,
         ),
         inputFormatters: [_ListContinuationFormatter()],
+      ),
+    );
+
+    if (!_canUploadMedia) return field;
+
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _dropHover = true),
+      onDragExited: (_) => setState(() => _dropHover = false),
+      onDragDone: (detail) {
+        setState(() => _dropHover = false);
+        _handleDrop(detail);
+      },
+      child: DecoratedBox(
+        decoration: _dropHover
+            ? BoxDecoration(
+                color: CcColors.accent.withValues(alpha: 0.08),
+                border: Border.all(color: CcColors.accent, width: 1),
+                borderRadius: BorderRadius.circular(CcRadius.sm),
+              )
+            : const BoxDecoration(),
+        child: field,
       ),
     );
   }

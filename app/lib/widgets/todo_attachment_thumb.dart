@@ -30,7 +30,10 @@ bool isImageAttachmentName(String name) {
 // content is only ever fetched once per app run, even across different todos
 // or a re-uploaded attachment under a new name. Bounded because this is a
 // personal-productivity-tool scale cache, not a real image pipeline — no need
-// for a proper LRU package.
+// for a proper LRU package. Shared by TodoAttachmentThumb (attachments tab)
+// and TodoBodyView (inline body images) via fetchTodoAttachmentBytes below,
+// so a screenshot pasted into the body and also visible in the attachments
+// tab is only ever downloaded once.
 class _ThumbCache {
   static final Map<String, Uint8List> _bytes = {};
   static const _cap = 80;
@@ -43,6 +46,22 @@ class _ThumbCache {
     }
     _bytes[sha256] = data;
   }
+}
+
+// fetchTodoAttachmentBytes is the shared authenticated-fetch-plus-cache path
+// for a todo attachment's raw bytes (the relay's attachment endpoint needs
+// `Authorization: Bearer`, so a bare Image.network(url) can't work). Callers
+// that only care about a single attachment's bytes (not the
+// loading/failed-state widget lifecycle) should use this directly instead of
+// duplicating RelayClient.todoAttachment + cache bookkeeping.
+Future<Uint8List> fetchTodoAttachmentBytes(
+    RelayClient client, String todoId, TodoAttachment attachment) async {
+  final cached = _ThumbCache.get(attachment.sha256);
+  if (cached != null) return cached;
+  final data = await client.todoAttachment(todoId, attachment.name);
+  final bytes = data is Uint8List ? data : Uint8List.fromList(data);
+  _ThumbCache.put(attachment.sha256, bytes);
+  return bytes;
 }
 
 // TodoAttachmentThumb renders one attachment for a todo's list row / detail
@@ -92,11 +111,8 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
     }
   }
 
-  Future<Uint8List> _fetch() async {
-    final data = await widget.client.todoAttachment(
-        widget.todoId, widget.attachment.name);
-    return data is Uint8List ? data : Uint8List.fromList(data);
-  }
+  Future<Uint8List> _fetch() =>
+      fetchTodoAttachmentBytes(widget.client, widget.todoId, widget.attachment);
 
   Future<void> _load() async {
     final cached = _ThumbCache.get(widget.attachment.sha256);
@@ -110,7 +126,6 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
     });
     try {
       final bytes = await _fetch();
-      _ThumbCache.put(widget.attachment.sha256, bytes);
       if (!mounted) return;
       setState(() {
         _bytes = bytes;

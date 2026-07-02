@@ -86,29 +86,80 @@ class Todo {
   // Only populated by GET-by-id; list responses omit this to avoid N+1 joins.
   final List<TodoAttachment> attachments;
 
-  Todo.fromJson(Map<String, dynamic> j)
-      : id = _s(j['id']),
-        projectId = _sn(j['project_id']),
-        ownerIdentity = _s(j['owner_identity']),
-        title = _s(j['title']),
-        bodyMd = _s(j['body_md']),
-        status = todoStatusFromName(_s(j['status'])),
-        priority = _s(j['priority']).isEmpty ? 'normal' : _s(j['priority']),
-        assigneeIdentity = _sn(j['assignee_identity']),
-        assigneeSessionId = _sn(j['assignee_session_id']),
-        assigneeSessionLabel = _sn(j['assignee_session_label']),
-        recurrence = _s(j['recurrence']),
-        dueAt = _tn(j['due_at']),
-        nextOccurrenceAt = _tn(j['next_occurrence_at']),
-        completedAt = _tn(j['completed_at']),
-        createdAt = _t(j['created_at']),
-        updatedAt = _t(j['updated_at']),
-        commentCount = _i(j['comment_count']),
-        attachmentCount = _i(j['attachment_count']),
-        attachments = (j['attachments'] as List?)
+  Todo({
+    required this.id,
+    required this.projectId,
+    required this.ownerIdentity,
+    required this.title,
+    required this.bodyMd,
+    required this.status,
+    required this.priority,
+    required this.assigneeIdentity,
+    required this.assigneeSessionId,
+    required this.assigneeSessionLabel,
+    required this.recurrence,
+    required this.dueAt,
+    required this.nextOccurrenceAt,
+    required this.completedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.commentCount,
+    required this.attachmentCount,
+    required this.attachments,
+  });
+
+  factory Todo.fromJson(Map<String, dynamic> j) => Todo(
+        id: _s(j['id']),
+        projectId: _sn(j['project_id']),
+        ownerIdentity: _s(j['owner_identity']),
+        title: _s(j['title']),
+        bodyMd: _s(j['body_md']),
+        status: todoStatusFromName(_s(j['status'])),
+        priority: _s(j['priority']).isEmpty ? 'normal' : _s(j['priority']),
+        assigneeIdentity: _sn(j['assignee_identity']),
+        assigneeSessionId: _sn(j['assignee_session_id']),
+        assigneeSessionLabel: _sn(j['assignee_session_label']),
+        recurrence: _s(j['recurrence']),
+        dueAt: _tn(j['due_at']),
+        nextOccurrenceAt: _tn(j['next_occurrence_at']),
+        completedAt: _tn(j['completed_at']),
+        createdAt: _t(j['created_at']),
+        updatedAt: _t(j['updated_at']),
+        commentCount: _i(j['comment_count']),
+        attachmentCount: _i(j['attachment_count']),
+        attachments: (j['attachments'] as List?)
                 ?.map((e) => TodoAttachment.fromJson(e as Map<String, dynamic>))
                 .toList() ??
-            const [];
+            const [],
+      );
+
+  // PATCH /v1/todos/{id} and the status-update endpoint both reuse the bare
+  // row scan (no attachments join, to dodge an N+1) — so their responses
+  // always carry an empty `attachments`, unlike GET-by-id. Callers applying
+  // one of those responses on top of an already-loaded Todo should use
+  // copyWith to keep the previously-fetched attachment list instead of
+  // clobbering it back to empty.
+  Todo copyWith({List<TodoAttachment>? attachments}) => Todo(
+        id: id,
+        projectId: projectId,
+        ownerIdentity: ownerIdentity,
+        title: title,
+        bodyMd: bodyMd,
+        status: status,
+        priority: priority,
+        assigneeIdentity: assigneeIdentity,
+        assigneeSessionId: assigneeSessionId,
+        assigneeSessionLabel: assigneeSessionLabel,
+        recurrence: recurrence,
+        dueAt: dueAt,
+        nextOccurrenceAt: nextOccurrenceAt,
+        completedAt: completedAt,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        commentCount: commentCount,
+        attachmentCount: attachmentCount,
+        attachments: attachments ?? this.attachments,
+      );
 
   // scope is never sent by the relay — it's derived locally so the UI can
   // split "个人待办" vs "团队待办" without a server-side concept of scope.
