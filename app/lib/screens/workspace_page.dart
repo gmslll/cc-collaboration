@@ -363,6 +363,9 @@ class _WorkspacePageState extends State<WorkspacePage>
       statusDetail: detail,
       usageLabel: s.usage.value?.shortLabel(),
       preview: s.overviewPreview ?? '',
+      agentSessionId: s.agentSessionId,
+      workdir: s.workdir,
+      isSupervisor: s.supervisor,
     );
   }
 
@@ -1399,17 +1402,23 @@ class _WorkspacePageState extends State<WorkspacePage>
     String agent,
     String preLaunch, {
     bool supervisor = false,
+    String? resumeAgentSessionId,
   }) {
     if (supervisor) unawaited(_ensureSupervisorDocs(dir));
     // Pass agent + preLaunch structured (not pre-joined): addTerm mints a fixed
     // session id for claude and TerminalSession rebuilds the actual command with
     // the right resume binding, so a reopened tab returns to its conversation.
+    // resumeAgentSessionId (the 待办 "打开/恢复会话" respawn path) instead binds
+    // that already-known transcript UUID up front, same as an app-restart
+    // restore.
     addTerm(
       dir,
       agent,
       agent: agent,
       preLaunch: preLaunch.trim(),
       supervisor: supervisor,
+      agentSessionId: resumeAgentSessionId,
+      resume: resumeAgentSessionId != null && resumeAgentSessionId.isNotEmpty,
     );
   }
 
@@ -1421,10 +1430,17 @@ class _WorkspacePageState extends State<WorkspacePage>
     String agent,
     String preLaunch, {
     bool supervisor = false,
+    String? resumeAgentSessionId,
   }) {
     // _launch → addTerm → onTermAdded already surfaces + expands the terminal
     // panel; just expand the project so its new session node is visible.
-    _launch(dir, agent, preLaunch, supervisor: supervisor);
+    _launch(
+      dir,
+      agent,
+      preLaunch,
+      supervisor: supervisor,
+      resumeAgentSessionId: resumeAgentSessionId,
+    );
     final ctl = _ctlFor(p.path);
     if (!ctl.isExpanded) ctl.expand();
   }
@@ -1584,8 +1600,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   // project root or a path under <project>/.worktrees/ — never an arbitrary dir a
   // remote/bus client asks for. Shared by the phone-relay path and the bus spawn.
   bool _isSessionWorkdir(ProjectCfg p, String workdir) =>
-      pathEquals(workdir, p.path) ||
-      pathRelativeTo(p.path, workdir).startsWith('.worktrees/');
+      pathIsProjectWorkdir(workdir, p.path);
 
   // _spawnManagedSession launches a new app-managed session for project [p] and
   // returns its bus id (ts<N>). [kind]: ''/'shell' | 'claude' | 'codex' |
@@ -1598,6 +1613,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     required ProjectCfg p,
     required String kind,
     String? workdir,
+    String? resumeAgentSessionId,
   }) {
     final dir = (workdir != null && _isSessionWorkdir(p, workdir))
         ? workdir
@@ -1606,14 +1622,29 @@ class _WorkspacePageState extends State<WorkspacePage>
     // Agent/supervisor sessions go through _openAgent (launch + reveal the project
     // node) — the single source of truth for that pair. A plain shell carries no
     // agent/preLaunch so it can't use _openAgent; open it and reveal directly.
+    // resumeAgentSessionId only makes sense for an agent session — a plain
+    // shell has no transcript to resume, so that branch ignores it.
     if (kind.isEmpty || kind == 'shell') {
       addTerm(dir, ''); // '' = plain interactive shell
       final ctl = _ctlFor(p.path);
       if (!ctl.isExpanded) ctl.expand();
     } else if (supervisorAgent != null) {
-      _openAgent(p, dir, supervisorAgent, ws.preLaunch, supervisor: true);
+      _openAgent(
+        p,
+        dir,
+        supervisorAgent,
+        ws.preLaunch,
+        supervisor: true,
+        resumeAgentSessionId: resumeAgentSessionId,
+      );
     } else {
-      _openAgent(p, dir, kind == 'codex' ? 'codex' : 'claude', ws.preLaunch);
+      _openAgent(
+        p,
+        dir,
+        kind == 'codex' ? 'codex' : 'claude',
+        ws.preLaunch,
+        resumeAgentSessionId: resumeAgentSessionId,
+      );
     }
     return terms.isNotEmpty ? terms.last.id : '';
   }
@@ -1644,6 +1675,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     required String kind,
     String? newWorktreeBranch,
     String? worktreeStart,
+    String? resumeAgentSessionId,
+    String? workdir,
   }) async {
     WorkspaceCfg? ws;
     ProjectCfg? p;
@@ -1675,7 +1708,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     };
     if (!validKinds.contains(k)) return (null, '未知 agent "$kind"');
 
-    String? workdir;
+    // dir starts as the caller-supplied existing workdir (e.g. a todo's saved
+    // assigneeWorkdir, resolved by todo_detail_view.dart's "打开/恢复会话"
+    // before it knew which project that path belonged to) — creating a fresh
+    // worktree below overrides it, since those two are mutually exclusive
+    // ("resume in this known dir" vs. "branch off a brand-new one").
+    var dir = workdir;
     final branch = newWorktreeBranch?.trim();
     if (branch != null && branch.isNotEmpty) {
       try {
@@ -1693,9 +1731,15 @@ class _WorkspacePageState extends State<WorkspacePage>
       final wts = await listWorktrees(p.path);
       final wt = wts.where((w) => w.branch == branch).toList();
       if (wt.isEmpty) return (null, 'worktree 创建成功但未能解析路径');
-      workdir = wt.first.path;
+      dir = wt.first.path;
     }
-    final id = _spawnManagedSession(ws: ws, p: p, kind: k, workdir: workdir);
+    final id = _spawnManagedSession(
+      ws: ws,
+      p: p,
+      kind: k,
+      workdir: dir,
+      resumeAgentSessionId: resumeAgentSessionId,
+    );
     return id.isEmpty ? (null, '会话创建失败') : (id, null);
   }
 
@@ -5528,6 +5572,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   Widget _todosSidebarDetail(Todo t) => TodoDetailView(
     client: widget.client,
     todo: t,
+    overviewStore: widget.overviewStore,
+    config: _cfg,
+    // No onOpenSession: this panel lives inside WorkspacePage itself, so
+    // overviewStore.requestOpen (TodoDetailView's fallback) is already
+    // enough — there's no separate top-level tab to switch away from.
     onChanged: (updated) {
       if (mounted) setState(() => _todosSidebarSelected = updated);
     },

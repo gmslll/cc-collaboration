@@ -155,16 +155,27 @@ class RelayClient {
   // local-session-dispatch path additionally calls SessionOverviewStore's
   // dispatchHandler to actually deliver the task text (that's Track G/I, not
   // this client — this call only syncs visibility for other viewers).
+  // assigneeAgentSessionId/assigneeWorkdir/assigneeAgentKind are the
+  // permanent-resume trio (see Todo.assigneeAgentSessionId) — pass them
+  // alongside assigneeSessionId when the target is a live agent session so
+  // "打开/恢复会话" can respawn it with --resume long after the bus session
+  // id itself has gone stale.
   Future<Todo> assignTodo(
     String id, {
     String? assigneeIdentity,
     String? assigneeSessionId,
     String? assigneeSessionLabel,
+    String? assigneeAgentSessionId,
+    String? assigneeWorkdir,
+    String? assigneeAgentKind,
   }) async {
     final r = await _dio.post('/v1/todos/$id/assign', data: {
       'assignee_identity': ?assigneeIdentity,
       'assignee_session_id': ?assigneeSessionId,
       'assignee_session_label': ?assigneeSessionLabel,
+      'assignee_agent_session_id': ?assigneeAgentSessionId,
+      'assignee_workdir': ?assigneeWorkdir,
+      'assignee_agent_kind': ?assigneeAgentKind,
     });
     return Todo.fromJson(r.data as Map<String, dynamic>);
   }

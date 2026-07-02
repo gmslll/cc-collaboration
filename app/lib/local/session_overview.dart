@@ -82,6 +82,22 @@ class SessionCard {
   statusDetail; // richer live state derived from recent hook events
   final String? usageLabel; // SessionUsage.shortLabel(), or null
   final String preview; // latest assistant reply / terminal tail
+  // agentSessionId/workdir back the 待办 "打开/恢复会话" affordance: the real
+  // Claude/Codex transcript UUID + absolute working directory for this live
+  // session, so a caller that only has a todo's permanently-bound resume
+  // trio (assignee_agent_session_id/workdir/kind — see pkg/todoschema.Todo)
+  // can tell "still this exact session" apart from "gone, respawn from the
+  // saved id". Null for a shell session (no agent transcript) or when the
+  // card came from a legacy phone client that predates this field.
+  final String? agentSessionId;
+  final String? workdir;
+  // isSupervisor distinguishes a 总管 session from a plain agent one of the
+  // same agentKind — TerminalSession.agentKind alone doesn't encode this (it
+  // returns bare 'claude'/'codex' either way), but respawning a todo bound to
+  // a supervisor session needs the 'supervisor:claude'/'supervisor:codex' kind
+  // string _spawnManagedSession's _supervisorAgentForKind expects, or the
+  // resumed session silently loses its supervisor identity/behavior.
+  final bool isSupervisor;
 
   const SessionCard({
     required this.sid,
@@ -95,6 +111,9 @@ class SessionCard {
     this.statusDetail = '',
     required this.usageLabel,
     required this.preview,
+    this.agentSessionId,
+    this.workdir,
+    this.isSupervisor = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -109,6 +128,9 @@ class SessionCard {
     'statusDetail': statusDetail,
     'usage': usageLabel,
     'preview': preview,
+    'agentSessionId': agentSessionId,
+    'workdir': workdir,
+    'isSupervisor': isSupervisor,
   };
 
   factory SessionCard.fromJson(Map<dynamic, dynamic> m) => SessionCard(
@@ -123,6 +145,9 @@ class SessionCard {
     statusDetail: (m['statusDetail'] ?? '').toString(),
     usageLabel: m['usage']?.toString(),
     preview: (m['preview'] ?? '').toString(),
+    agentSessionId: m['agentSessionId']?.toString(),
+    workdir: m['workdir']?.toString(),
+    isSupervisor: m['isSupervisor'] == true,
   );
 }
 
@@ -159,13 +184,24 @@ class SessionOverviewStore extends ChangeNotifier {
   // (workspace, project) against WorkspacePage's live config (this store's
   // caller has no config of its own), validates [kind], and returns
   // (sid, null) on success or (null, error) — same result-tuple convention as
-  // WorkspacePage's internal `_resolveTarget`.
+  // WorkspacePage's internal `_resolveTarget`. resumeAgentSessionId, when
+  // set, respawns bound to that real Claude/Codex transcript UUID (the same
+  // `--resume`/`resume <id>` path terminal_deck.dart's restoreTerms() uses
+  // after an app restart) instead of minting a brand-new conversation — the
+  // "打开/恢复会话" 待办 affordance's path when the bus session it was
+  // assigned to is gone. workdir, when set, pins the launch to that exact
+  // already-known directory (e.g. a todo's saved assigneeWorkdir, which may
+  // be a worktree subdir, not the project root) — distinct from
+  // newWorktreeBranch, which instead creates a brand-new one; the two are
+  // mutually exclusive.
   Future<(String? sid, String? error)> Function({
     required String workspace,
     required String project,
     required String kind,
     String? newWorktreeBranch,
     String? worktreeStart,
+    String? resumeAgentSessionId,
+    String? workdir,
   })?
   spawnHandler;
 
@@ -207,6 +243,8 @@ class SessionOverviewStore extends ChangeNotifier {
     required String kind,
     String? newWorktreeBranch,
     String? worktreeStart,
+    String? resumeAgentSessionId,
+    String? workdir,
   }) async {
     if (spawnHandler == null) return (null, '会话总览未就绪');
     return spawnHandler!(
@@ -215,6 +253,8 @@ class SessionOverviewStore extends ChangeNotifier {
       kind: kind,
       newWorktreeBranch: newWorktreeBranch,
       worktreeStart: worktreeStart,
+      resumeAgentSessionId: resumeAgentSessionId,
+      workdir: workdir,
     );
   }
 }

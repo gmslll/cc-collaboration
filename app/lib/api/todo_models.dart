@@ -79,6 +79,13 @@ class Todo {
   final TodoStatus status;
   final String priority; // low | normal | high
   final String? assigneeIdentity, assigneeSessionId, assigneeSessionLabel;
+  // assigneeAgentSessionId/assigneeWorkdir/assigneeAgentKind are the
+  // permanent-resume counterpart to assigneeSessionId: the latter is a bus
+  // session id (e.g. "ts2") that goes stale the moment that tab closes,
+  // while these three survive it — the real Claude/Codex transcript UUID
+  // plus where/what kind of agent it belongs to, so "打开/恢复会话" can
+  // respawn the exact same conversation long after the bus id is gone.
+  final String? assigneeAgentSessionId, assigneeWorkdir, assigneeAgentKind;
   final String recurrence; // '' | daily | weekly | monthly
   final DateTime? dueAt, nextOccurrenceAt, completedAt;
   final DateTime createdAt, updatedAt;
@@ -97,6 +104,9 @@ class Todo {
     required this.assigneeIdentity,
     required this.assigneeSessionId,
     required this.assigneeSessionLabel,
+    required this.assigneeAgentSessionId,
+    required this.assigneeWorkdir,
+    required this.assigneeAgentKind,
     required this.recurrence,
     required this.dueAt,
     required this.nextOccurrenceAt,
@@ -119,6 +129,9 @@ class Todo {
         assigneeIdentity: _sn(j['assignee_identity']),
         assigneeSessionId: _sn(j['assignee_session_id']),
         assigneeSessionLabel: _sn(j['assignee_session_label']),
+        assigneeAgentSessionId: _sn(j['assignee_agent_session_id']),
+        assigneeWorkdir: _sn(j['assignee_workdir']),
+        assigneeAgentKind: _sn(j['assignee_agent_kind']),
         recurrence: _s(j['recurrence']),
         dueAt: _tn(j['due_at']),
         nextOccurrenceAt: _tn(j['next_occurrence_at']),
@@ -150,6 +163,9 @@ class Todo {
         assigneeIdentity: assigneeIdentity,
         assigneeSessionId: assigneeSessionId,
         assigneeSessionLabel: assigneeSessionLabel,
+        assigneeAgentSessionId: assigneeAgentSessionId,
+        assigneeWorkdir: assigneeWorkdir,
+        assigneeAgentKind: assigneeAgentKind,
         recurrence: recurrence,
         dueAt: dueAt,
         nextOccurrenceAt: nextOccurrenceAt,

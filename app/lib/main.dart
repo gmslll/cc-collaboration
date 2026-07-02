@@ -382,6 +382,7 @@ class _HomeShellState extends State<HomeShell> {
         me: _me!,
         store: _todoStore,
         overviewStore: _overviewStore,
+        onOpenSession: _isDesktop ? _openSessionInWorkspace : null,
       ),
       ProjectsPage(client: _client!),
       AccountPage(

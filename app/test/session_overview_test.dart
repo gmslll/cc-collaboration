@@ -89,7 +89,7 @@ void main() {
     'spawn forwards args to spawnHandler and returns its (sid, error) tuple',
     () async {
       final store = SessionOverviewStore();
-      String? gotWs, gotProj, gotKind, gotBranch, gotStart;
+      String? gotWs, gotProj, gotKind, gotBranch, gotStart, gotResume;
       store.spawnHandler =
           ({
             required workspace,
@@ -97,12 +97,15 @@ void main() {
             required kind,
             newWorktreeBranch,
             worktreeStart,
+            resumeAgentSessionId,
+            workdir,
           }) async {
             gotWs = workspace;
             gotProj = project;
             gotKind = kind;
             gotBranch = newWorktreeBranch;
             gotStart = worktreeStart;
+            gotResume = resumeAgentSessionId;
             return ('ts42', null);
           };
       final (sid, err) = await store.spawn(
@@ -119,8 +122,76 @@ void main() {
       expect(gotKind, 'claude');
       expect(gotBranch, 'feat/x');
       expect(gotStart, 'main');
+      expect(gotResume, isNull);
     },
   );
+
+  // Pins the 待办 "打开/恢复会话" contract at the store boundary: passing
+  // resumeAgentSessionId through spawn() must reach spawnHandler verbatim —
+  // the piece workspace_page.dart's _spawnForDispatch/_spawnManagedSession/
+  // _openAgent/_launch chain ultimately hands to addTerm, which forwards it
+  // into a TerminalSession(resume: true, agentSessionId: ...) construction
+  // (see the "accepts a caller-supplied resume id" test below for that final
+  // hop — addTerm itself isn't exercised here since it also calls
+  // session.start(), which spawns a real OS process).
+  test('spawn forwards resumeAgentSessionId to spawnHandler', () async {
+    final store = SessionOverviewStore();
+    String? gotResume;
+    store.spawnHandler =
+        ({
+          required workspace,
+          required project,
+          required kind,
+          newWorktreeBranch,
+          worktreeStart,
+          resumeAgentSessionId,
+          workdir,
+        }) async {
+          gotResume = resumeAgentSessionId;
+          return ('ts43', null);
+        };
+    final (sid, _) = await store.spawn(
+      workspace: 'kunlun',
+      project: 'cc-collaboration',
+      kind: 'claude',
+      resumeAgentSessionId: '11111111-1111-1111-1111-111111111111',
+    );
+    expect(sid, 'ts43');
+    expect(gotResume, '11111111-1111-1111-1111-111111111111');
+  });
+
+  // Regression pin for a review-caught bug: the "打开/恢复会话" resume path
+  // reverse-matches a todo's saved assigneeWorkdir to a (workspace, project)
+  // pair, but if that resolved workdir string itself isn't ALSO forwarded to
+  // spawnHandler, workspace_page.dart's _spawnForDispatch has no way to
+  // launch in the exact saved dir (a worktree subdir) instead of falling
+  // back to the project root — silently breaking resume for any todo bound
+  // to a worktree session.
+  test('spawn forwards workdir to spawnHandler', () async {
+    final store = SessionOverviewStore();
+    String? gotWorkdir;
+    store.spawnHandler =
+        ({
+          required workspace,
+          required project,
+          required kind,
+          newWorktreeBranch,
+          worktreeStart,
+          resumeAgentSessionId,
+          workdir,
+        }) async {
+          gotWorkdir = workdir;
+          return ('ts44', null);
+        };
+    final (sid, _) = await store.spawn(
+      workspace: 'kunlun',
+      project: 'cc-collaboration',
+      kind: 'claude',
+      workdir: '/repo/.worktrees/feat-x',
+    );
+    expect(sid, 'ts44');
+    expect(gotWorkdir, '/repo/.worktrees/feat-x');
+  });
 
   test(
     'spawn is a safe "not ready" error before a handler is registered',
@@ -133,6 +204,30 @@ void main() {
       );
       expect(sid, isNull);
       expect(err, '会话总览未就绪');
+    },
+  );
+
+  // The last hop of the "打开/恢复会话" chain: TerminalHost.addTerm mints a
+  // fresh uuid for a brand-new claude session, but when the caller already
+  // has one (a todo's saved assigneeAgentSessionId) it passes that straight
+  // through as agentSessionId + resume:true instead — same constructor
+  // TerminalSession.restoreTerms uses to reopen a tab after an app restart
+  // (terminal_deck.dart). Asserted directly on TerminalSession (not via
+  // addTerm) so this doesn't spawn a real PTY process.
+  test(
+    'TerminalSession accepts a caller-supplied resume id and marks resume:true',
+    () {
+      const uuid = '11111111-1111-1111-1111-111111111111';
+      final s = TerminalSession(
+        '/repo',
+        'claude',
+        agent: 'claude',
+        agentSessionId: uuid,
+        resume: true,
+      );
+      addTearDown(s.dispose);
+      expect(s.agentSessionId, uuid);
+      expect(s.resume, isTrue);
     },
   );
 }
