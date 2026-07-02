@@ -130,7 +130,7 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, pr
 		}
 	}
 	if assignee := matchAssigneeIdentity(candidates, iss.AssigneeEmail); assignee != "" {
-		if _, err := c.AssignTodo(ctx, out.ID, assignee, "", ""); err != nil {
+		if _, err := c.AssignTodo(ctx, out.ID, assignee, "", "", "", "", ""); err != nil {
 			return true, fmt.Errorf("assign: %w", err)
 		}
 	}
