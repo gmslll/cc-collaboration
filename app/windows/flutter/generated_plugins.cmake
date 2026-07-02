@@ -7,9 +7,11 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_secure_storage_windows
   flutter_tts
   flutter_webrtc
+  irondash_engine_context
   pasteboard
   share_plus
   speech_to_text_windows
+  super_native_extensions
   url_launcher_windows
 )
 

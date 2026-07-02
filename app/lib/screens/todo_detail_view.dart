@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 
 import '../api/relay_client.dart';
 import '../api/todo_models.dart';
+import '../local/config.dart';
+import '../local/path_utils.dart';
+import '../local/session_overview.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_lite_editor.dart';
@@ -31,6 +34,23 @@ class TodoDetailView extends StatefulWidget {
   // uses this to keep its list row / selection in sync without waiting on SSE.
   final void Function(Todo updated)? onChanged;
   final VoidCallback? onDeleted;
+  // overviewStore/config back the "打开/恢复会话" affordance in the assignee
+  // row: overviewStore.cards tells "still a live bus session" apart from
+  // "gone, respawn from the saved resume trio" (Todo.assigneeAgentSessionId/
+  // assigneeWorkdir/assigneeAgentKind), and config.workspaces is what a
+  // saved workdir gets reverse-matched against to resolve which
+  // workspace/project to respawn in. Both optional — a host with no local
+  // session bus (there isn't one today) just doesn't get the button.
+  final SessionOverviewStore? overviewStore;
+  final AppConfig? config;
+  // onOpenSession additionally switches the host's own top-level nav to the
+  // 工作区 tab before focusing the session (mirrors main.dart's
+  // _openSessionInWorkspace, used by SessionOverviewPage) — pass this when
+  // TodoDetailView is hosted OUTSIDE WorkspacePage (e.g. TodosPage, a nav
+  // sibling); omit it when already inside WorkspacePage (the 待办 sidebar),
+  // where overviewStore.requestOpen alone is enough since there's no tab to
+  // switch away from.
+  final void Function(String sid)? onOpenSession;
 
   const TodoDetailView({
     super.key,
@@ -38,6 +58,9 @@ class TodoDetailView extends StatefulWidget {
     required this.todo,
     this.onChanged,
     this.onDeleted,
+    this.overviewStore,
+    this.config,
+    this.onOpenSession,
   });
 
   @override
@@ -64,6 +87,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // focus swaps back — same split as the plan's "编辑态/展示态" design so
   // body_md itself never has to represent "is this being edited" state.
   bool _bodyEditing = false;
+  bool _resumingSession = false;
 
   RelayClient get _client => widget.client;
   String get _id => widget.todo.id;
@@ -280,6 +304,89 @@ class TodoDetailViewState extends State<TodoDetailView> {
     );
   }
 
+  // _assigneeLabel prefers the human-readable session label over the bare
+  // identity — matches TodoCard's tooltip convention of always showing
+  // something a person recognizes, not a raw identity string.
+  String? get _assigneeLabel {
+    final t = _current;
+    if ((t.assigneeSessionLabel ?? '').isNotEmpty) return t.assigneeSessionLabel;
+    return t.assigneeIdentity;
+  }
+
+  bool get _hasSessionBinding =>
+      (_current.assigneeSessionId ?? '').isNotEmpty ||
+      (_current.assigneeAgentSessionId ?? '').isNotEmpty;
+
+  // _openOrResumeSession backs the assignee row's "打开/恢复会话" button:
+  // jump straight to the bus session if it's still alive, else respawn from
+  // the permanent resume trio (reverse-matching assigneeWorkdir against the
+  // live config to find which workspace/project to launch in — the same
+  // project/worktree match _isSessionWorkdir uses in workspace_page.dart).
+  Future<void> _openOrResumeSession() async {
+    final overview = widget.overviewStore;
+    final cfg = widget.config;
+    if (overview == null || cfg == null) return;
+    final t = _current;
+
+    final busSid = t.assigneeSessionId;
+    if ((busSid ?? '').isNotEmpty &&
+        overview.cards.any((c) => c.sid == busSid)) {
+      _openSession(busSid!);
+      return;
+    }
+
+    final resumeId = t.assigneeAgentSessionId;
+    if ((resumeId ?? '').isEmpty) {
+      snack(context, '会话已关闭，且没有可恢复的记录');
+      return;
+    }
+
+    final workdir = t.assigneeWorkdir ?? '';
+    String? wsName, projName;
+    for (final ws in cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (pathIsProjectWorkdir(workdir, p.path)) {
+          wsName = ws.name;
+          projName = p.name;
+        }
+        if (wsName != null) break;
+      }
+      if (wsName != null) break;
+    }
+    if (wsName == null || projName == null) {
+      snack(context, '找不到对应工作区，无法恢复');
+      return;
+    }
+
+    setState(() => _resumingSession = true);
+    final (sid, err) = await overview.spawn(
+      workspace: wsName,
+      project: projName,
+      kind: (t.assigneeAgentKind ?? '').isNotEmpty ? t.assigneeAgentKind! : 'claude',
+      resumeAgentSessionId: resumeId,
+      // Pass the exact saved dir through (not just the project it resolved
+      // to) so a session that ran inside a worktree respawns there instead
+      // of silently falling back to the project root — see
+      // _spawnForDispatch/_spawnManagedSession in workspace_page.dart.
+      workdir: workdir,
+    );
+    if (!mounted) return;
+    setState(() => _resumingSession = false);
+    if (sid == null) {
+      snack(context, '恢复会话失败: ${err ?? "未知错误"}');
+      return;
+    }
+    _openSession(sid);
+  }
+
+  void _openSession(String sid) {
+    if (widget.onOpenSession != null) {
+      widget.onOpenSession!(sid);
+    } else {
+      widget.overviewStore?.requestOpen(sid);
+    }
+  }
+
   Future<void> _delete() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -434,10 +541,51 @@ class TodoDetailViewState extends State<TodoDetailView> {
               ),
             ],
           ),
+          if ((_current.assigneeIdentity ?? '').isNotEmpty ||
+              _hasSessionBinding) ...[
+            const SizedBox(height: 8),
+            _assigneeRow(),
+          ],
           const SizedBox(height: 4),
           const Divider(height: 20),
           _body(),
         ]),
+      );
+
+  // _assigneeRow shows who a todo is assigned to plus, when there's a
+  // session binding to try, the "打开/恢复会话" button — jumps to the live
+  // bus session if it's still around, else respawns from the permanent
+  // resume trio (see _openOrResumeSession).
+  Widget _assigneeRow() => Row(
+        children: [
+          const Icon(Icons.person_outline_rounded, size: 14, color: CcColors.muted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '指派给 ${_assigneeLabel ?? "未知"}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, color: CcColors.muted),
+            ),
+          ),
+          if (_hasSessionBinding &&
+              widget.overviewStore != null &&
+              widget.config != null)
+            TextButton.icon(
+              onPressed: _resumingSession ? null : _openOrResumeSession,
+              icon: _resumingSession
+                  ? const SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.play_circle_outline_rounded, size: 15),
+              label: const Text('打开/恢复会话', style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+              ),
+            ),
+        ],
       );
 
   // AnimatedSize softens the height jump between the two states — inherent

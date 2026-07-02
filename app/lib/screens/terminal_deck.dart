@@ -136,13 +136,19 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     String agent = '',
     String preLaunch = '',
     bool supervisor = false,
+    String? agentSessionId,
+    bool resume = false,
   }) {
     // Mint a fixed session id for claude up front so it launches with
     // --session-id and can be --resume'd on the next app start. The immediate
     // _save() below persists it. codex can't pre-assign an id — it captures the
     // one it mints after launch (TerminalSession._maybeCaptureCodexId) and asks
-    // us to persist it via onPersist.
-    final sid = agent == 'claude' ? _genUuid() : null;
+    // us to persist it via onPersist. [agentSessionId]/[resume] let a caller
+    // (the 待办 "打开/恢复会话" respawn path) instead bind a specific,
+    // already-known transcript UUID up front — same `--resume`/`resume <id>`
+    // mechanism restoreTerms() uses, just triggered by a fresh session instead
+    // of an app restart.
+    final sid = agentSessionId ?? (agent == 'claude' ? _genUuid() : null);
     final session =
         TerminalSession(
           workdir,
@@ -151,6 +157,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           preLaunch: preLaunch,
           supervisor: supervisor,
           agentSessionId: sid,
+          resume: resume,
         )
           ..onDone = _onSessionDone
           ..onBusyChanged = _onSessionBusyChanged

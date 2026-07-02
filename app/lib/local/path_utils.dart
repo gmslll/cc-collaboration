@@ -52,6 +52,16 @@ String pathRelativeTo(String root, String path) {
 
 String normalizePathSeparators(String path) => path.replaceAll('\\', '/');
 
+// pathIsProjectWorkdir reports whether [path] is a project's own root or one
+// of its `.worktrees/<name>` children — the one "does this session's workdir
+// belong to this project" check every caller that resolves a workdir back to
+// a project (workspace_page.dart's session-spawn guards, todo_detail_view.dart's
+// "打开/恢复会话" workspace/project reverse-lookup) needs, kept in one place so
+// they can't quietly drift apart on what counts as a match.
+bool pathIsProjectWorkdir(String path, String projectPath) =>
+    pathEquals(path, projectPath) ||
+    pathRelativeTo(projectPath, path).startsWith('.worktrees/');
+
 String _preferredSeparator(String path) =>
     path.contains('\\') && !path.contains('/') ? '\\' : '/';
 

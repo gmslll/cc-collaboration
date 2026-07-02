@@ -57,6 +57,8 @@ dependencies:
   device_info_plus: ^10.1.0 # phone reports its device name to the desktop host
   flutter_webrtc: ^1.2.0 # app-native screen/window sharing over WebRTC
   libghostty: ^0.0.10
+  super_clipboard: ^0.9.1 # reads the clipboard's HTML (public.html) representation — pasteboard above can't
+  html: ^0.15.6 # DOM parser for converting pasted HTML into markdown (html_to_markdown.dart)
 dev_dependencies:
   flutter_test:
     sdk: flutter

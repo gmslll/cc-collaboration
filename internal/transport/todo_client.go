@@ -167,13 +167,21 @@ func (c *Client) SetTodoStatus(ctx context.Context, id string, status todoschema
 	return &out, nil
 }
 
-// AssignTodo sets the assignee fields on todo id. Passing all three args
-// empty clears the assignment. Returns the updated Todo.
-func (c *Client) AssignTodo(ctx context.Context, id, assigneeIdentity, assigneeSessionID, assigneeSessionLabel string) (*todoschema.Todo, error) {
+// AssignTodo sets the assignee fields on todo id. Passing all six args
+// empty clears the assignment. assigneeAgentSessionID/assigneeWorkdir/
+// assigneeAgentKind are the permanent-resume trio (see
+// pkg/todoschema.Todo) — pass them alongside assigneeSessionID when the
+// target is a live agent session so "open the bound session" can respawn it
+// with --resume long after the bus session id itself has gone stale.
+// Returns the updated Todo.
+func (c *Client) AssignTodo(ctx context.Context, id, assigneeIdentity, assigneeSessionID, assigneeSessionLabel, assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind string) (*todoschema.Todo, error) {
 	payload, _ := json.Marshal(map[string]string{
-		"assignee_identity":      assigneeIdentity,
-		"assignee_session_id":    assigneeSessionID,
-		"assignee_session_label": assigneeSessionLabel,
+		"assignee_identity":         assigneeIdentity,
+		"assignee_session_id":       assigneeSessionID,
+		"assignee_session_label":    assigneeSessionLabel,
+		"assignee_agent_session_id": assigneeAgentSessionID,
+		"assignee_workdir":          assigneeWorkdir,
+		"assignee_agent_kind":       assigneeAgentKind,
 	})
 	var out todoschema.Todo
 	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/assign", bytes.NewReader(payload), &out); err != nil {

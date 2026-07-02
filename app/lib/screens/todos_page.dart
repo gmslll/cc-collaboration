@@ -72,6 +72,12 @@ class TodosPage extends StatefulWidget {
   final Me me;
   final TodoStore store;
   final SessionOverviewStore overviewStore;
+  // onOpenSession backs the detail view's "打开/恢复会话" button: switches
+  // the host's top-level nav to the 工作区 tab before focusing the session
+  // (mirrors main.dart's _openSessionInWorkspace, already used the same way
+  // by SessionOverviewPage) — TodosPage is a nav sibling of 工作区, not
+  // inside it, so opening a session here needs that extra tab switch.
+  final void Function(String sid)? onOpenSession;
 
   const TodosPage({
     super.key,
@@ -80,6 +86,7 @@ class TodosPage extends StatefulWidget {
     required this.me,
     required this.store,
     required this.overviewStore,
+    this.onOpenSession,
   });
 
   @override
@@ -622,6 +629,9 @@ class _TodosPageState extends State<TodosPage> {
             key: _detailKey,
             client: _client,
             todo: sel,
+            overviewStore: _overview,
+            config: _cfg,
+            onOpenSession: widget.onOpenSession,
             onChanged: (updated) {
               if (mounted) setState(() => _selected = updated);
             },
@@ -923,6 +933,9 @@ class _TodosPageState extends State<TodosPage> {
           body: TodoDetailView(
             client: _client,
             todo: t,
+            overviewStore: _overview,
+            config: _cfg,
+            onOpenSession: widget.onOpenSession,
             onDeleted: () {
               if (Navigator.of(context).canPop()) Navigator.of(context).pop();
               _store.refresh();
@@ -1333,18 +1346,55 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     return null;
   }
 
+  // _resumeKindFor encodes a SessionCard's kind the same way
+  // workspace_page.dart's _supervisorAgentForKind expects to read it back
+  // ('supervisor:claude'/'supervisor:codex') — SessionCard.agentKind alone
+  // is always bare ('claude'/'codex'), so without this a todo bound to a 总管
+  // session would resume as a plain agent session, silently losing its
+  // supervisor identity.
+  String? _resumeKindFor(SessionCard? card) {
+    if (card == null || card.agentKind.isEmpty) return null;
+    return card.isSupervisor ? 'supervisor:${card.agentKind}' : card.agentKind;
+  }
+
   // _syncAssignVisibility is best-effort: local dispatch already delivered the
   // task, so a relay failure here only means other project members won't see
   // the assignee yet — never worth blocking or erroring the dialog over. Sets
-  // all three assignee fields (identity + session id + session label) per
-  // RelayClient.assignTodo's "assign to a specific local session" contract.
-  Future<void> _syncAssignVisibility(String sessionId, String label) async {
+  // identity + session id + session label per RelayClient.assignTodo's
+  // "assign to a specific local session" contract, plus — when the target
+  // session's card carries them — the permanent-resume trio
+  // (agentSessionId/workdir/agentKind), read straight off the just-dispatched
+  // TerminalSession's SessionCard, so "打开/恢复会话" can respawn the exact
+  // same conversation long after this bus session id itself goes stale.
+  //
+  // waitForAgentId: codex doesn't mint its transcript id synchronously like
+  // claude does (--session-id up front) — it's captured asynchronously from
+  // its rollout file sometime after launch (TerminalSession._maybeCaptureAgentId).
+  // A brand-new codex session's card usually has no agentSessionId yet the
+  // instant it's dispatched, so _assignToNew asks this to poll briefly rather
+  // than permanently missing the resume trio for that todo.
+  Future<void> _syncAssignVisibility(
+    String sessionId,
+    String label, {
+    bool waitForAgentId = false,
+  }) async {
+    var card = _findCard(sessionId);
+    if (waitForAgentId && (card?.agentSessionId ?? '').isEmpty) {
+      for (var i = 0; i < 15 && (card?.agentSessionId ?? '').isEmpty; i++) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        if (!mounted) return;
+        card = _findCard(sessionId);
+      }
+    }
     try {
       await widget.client.assignTodo(
         widget.todo.id,
         assigneeIdentity: widget.config.identity,
         assigneeSessionId: sessionId,
         assigneeSessionLabel: label,
+        assigneeAgentSessionId: card?.agentSessionId,
+        assigneeWorkdir: card?.workdir,
+        assigneeAgentKind: _resumeKindFor(card),
       );
     } catch (_) {}
   }
@@ -1394,7 +1444,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     if (dispatchErr != null && mounted) {
       snack(context, '会话已创建，但投递失败: $dispatchErr');
     }
-    await _syncAssignVisibility(sid, proj);
+    await _syncAssignVisibility(sid, proj, waitForAgentId: true);
     if (mounted) Navigator.pop(context, true);
   }
 

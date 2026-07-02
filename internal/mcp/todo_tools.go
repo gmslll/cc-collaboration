@@ -383,6 +383,9 @@ func assignTodoTool() Tool {
     "assignee_identity":      {"type": "string", "description": "指派给的身份标识。传空字符串 \"\" 表示取消指派（同时清空 assignee_session_id/assignee_session_label）。"},
     "assignee_session_id":    {"type": "string", "description": "可选，指派到的本机会话 ID（如 ts2）。仅在 assignee_identity 非空时有意义。"},
     "assignee_session_label": {"type": "string", "description": "可选，指派到的本机会话展示名。"},
+    "assignee_agent_session_id": {"type": "string", "description": "可选，指派到的会话对应的真实 Claude/Codex transcript UUID，用于该会话关闭后仍可 --resume 接回完整历史。"},
+    "assignee_workdir":         {"type": "string", "description": "可选，配合 assignee_agent_session_id：该会话所在的工作目录。"},
+    "assignee_agent_kind":      {"type": "string", "description": "可选，配合 assignee_agent_session_id：会话的 agent 种类（如 claude/codex）。"},
     "cwd":                    {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   },
   "required": ["id", "assignee_identity"]
@@ -396,11 +399,14 @@ func assignTodoTool() Tool {
 }
 
 type assignTodoArgs struct {
-	ID                   string `json:"id"`
-	AssigneeIdentity     string `json:"assignee_identity"`
-	AssigneeSessionID    string `json:"assignee_session_id"`
-	AssigneeSessionLabel string `json:"assignee_session_label"`
-	CWD                  string `json:"cwd"`
+	ID                     string `json:"id"`
+	AssigneeIdentity       string `json:"assignee_identity"`
+	AssigneeSessionID      string `json:"assignee_session_id"`
+	AssigneeSessionLabel   string `json:"assignee_session_label"`
+	AssigneeAgentSessionID string `json:"assignee_agent_session_id"`
+	AssigneeWorkdir        string `json:"assignee_workdir"`
+	AssigneeAgentKind      string `json:"assignee_agent_kind"`
+	CWD                    string `json:"cwd"`
 }
 
 func assignTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -420,7 +426,8 @@ func assignTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 		return ToolResult{}, err
 	}
 	client := transport.New(res.RelayURL, res.Token)
-	t, err := client.AssignTodo(ctx, a.ID, a.AssigneeIdentity, a.AssigneeSessionID, a.AssigneeSessionLabel)
+	t, err := client.AssignTodo(ctx, a.ID, a.AssigneeIdentity, a.AssigneeSessionID, a.AssigneeSessionLabel,
+		a.AssigneeAgentSessionID, a.AssigneeWorkdir, a.AssigneeAgentKind)
 	if err != nil {
 		return ToolResult{}, err
 	}

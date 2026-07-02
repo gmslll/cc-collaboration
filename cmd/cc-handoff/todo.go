@@ -371,7 +371,11 @@ func runTodoAssign(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := client.AssignTodo(ctx, id, identity, sessionID, sessionLabel)
+	// The resume trio (assignee_agent_session_id/workdir/kind) is captured
+	// by the desktop app when it assigns a todo to a live agent session — no
+	// CLI flag for it, this subcommand is a human-driven identity/session
+	// pointer only.
+	out, err := client.AssignTodo(ctx, id, identity, sessionID, sessionLabel, "", "", "")
 	if err != nil {
 		return relayCompatError(err, "todo assign")
 	}

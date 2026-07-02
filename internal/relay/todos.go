@@ -262,9 +262,12 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req struct {
-		AssigneeIdentity     string `json:"assignee_identity"`
-		AssigneeSessionID    string `json:"assignee_session_id"`
-		AssigneeSessionLabel string `json:"assignee_session_label"`
+		AssigneeIdentity       string `json:"assignee_identity"`
+		AssigneeSessionID      string `json:"assignee_session_id"`
+		AssigneeSessionLabel   string `json:"assignee_session_label"`
+		AssigneeAgentSessionID string `json:"assignee_agent_session_id"`
+		AssigneeWorkdir        string `json:"assignee_workdir"`
+		AssigneeAgentKind      string `json:"assignee_agent_kind"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
@@ -273,10 +276,8 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resume-trio params (assignee_agent_session_id/workdir/kind) are wired
-	// through the HTTP request body by Track B — Phase 0 only needs the
-	// store signature to exist and compile.
-	updated, err := s.Store.AssignTodo(r.Context(), id, identity, req.AssigneeIdentity, req.AssigneeSessionID, req.AssigneeSessionLabel, "", "", "")
+	updated, err := s.Store.AssignTodo(r.Context(), id, identity, req.AssigneeIdentity, req.AssigneeSessionID, req.AssigneeSessionLabel,
+		req.AssigneeAgentSessionID, req.AssigneeWorkdir, req.AssigneeAgentKind)
 	if err != nil {
 		writeStoreError(w, err)
 		return
