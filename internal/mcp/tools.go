@@ -41,6 +41,13 @@ const (
 	ToolCheckDrift      = "check_drift"
 	ToolLinkLinear      = "link_linear"
 	ToolLinearSync      = "linear_sync"
+
+	ToolCreateTodo       = "create_todo"
+	ToolListTodos        = "list_todos"
+	ToolGetTodo          = "get_todo"
+	ToolUpdateTodoStatus = "update_todo_status"
+	ToolAssignTodo       = "assign_todo"
+	ToolCommentTodo      = "comment_todo"
 )
 
 // CCHandoffMCPPrefix is the wire-name prefix Claude uses when calling tools
@@ -70,6 +77,12 @@ func DefaultTools() []Tool {
 		checkDriftTool(),
 		linkLinearTool(),
 		linearSyncTool(),
+		createTodoTool(),
+		listTodosTool(),
+		getTodoTool(),
+		updateTodoStatusTool(),
+		assignTodoTool(),
+		commentTodoTool(),
 	}
 }
 
