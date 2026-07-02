@@ -372,3 +372,62 @@ func TestTodoRecurAdvanceHTTP(t *testing.T) {
 		t.Fatalf("recur-advance didn't reset cleanly: %+v", got)
 	}
 }
+
+// --- source_ref: import-linear idempotency support (see internal/linear/import.go) ---
+
+func TestCreateTodoSourceRefAndFindBySourceRefHTTP(t *testing.T) {
+	srv, st, _ := todoTestRig(t)
+	mkUser(t, st, "alice@x", "alicepass1")
+	mkUser(t, st, "bob@x", "bobpass123")
+	aliceTok := loginToken(t, srv.URL, "alice@x", "alicepass1")
+	bobTok := loginToken(t, srv.URL, "bob@x", "bobpass123")
+
+	td := createTodoHTTP(t, srv.URL, aliceTok, map[string]any{
+		"title":      "Fix the thing",
+		"source_ref": "linear:ENG-456",
+		"source_url": "https://linear.app/x/issue/ENG-456",
+	})
+	if td.SourceRef != "linear:ENG-456" || td.SourceURL != "https://linear.app/x/issue/ENG-456" {
+		t.Fatalf("createTodo did not persist source_ref/source_url: %+v", td)
+	}
+
+	// Missing ref query param is a 400.
+	if code, _ := getAuthed(t, srv.URL+"/v1/todos/by-source", aliceTok); code != http.StatusBadRequest {
+		t.Errorf("by-source with no ref = %d, want 400", code)
+	}
+
+	code, body := getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", aliceTok)
+	if code != http.StatusOK {
+		t.Fatalf("by-source found = %d %s", code, body)
+	}
+	var found struct {
+		Found bool            `json:"found"`
+		Todo  todoschema.Todo `json:"todo"`
+	}
+	if err := json.Unmarshal(body, &found); err != nil {
+		t.Fatalf("decode by-source response: %v", err)
+	}
+	if !found.Found || found.Todo.ID != td.ID {
+		t.Fatalf("by-source should find the imported todo: %+v", found)
+	}
+
+	// A different, never-imported ref reports found=false, not a 404.
+	code, body = getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-999", aliceTok)
+	if code != http.StatusOK {
+		t.Fatalf("by-source not-found = %d %s", code, body)
+	}
+	var notFound struct {
+		Found bool `json:"found"`
+	}
+	if err := json.Unmarshal(body, &notFound); err != nil {
+		t.Fatalf("decode by-source response: %v", err)
+	}
+	if notFound.Found {
+		t.Fatalf("by-source on unseen ref should report found=false")
+	}
+
+	// A stranger can't discover alice's personal todo through by-source either.
+	if code, _ := getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", bobTok); code != http.StatusForbidden {
+		t.Errorf("stranger by-source = %d, want 403", code)
+	}
+}

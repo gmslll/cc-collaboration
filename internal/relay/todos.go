@@ -46,6 +46,13 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		ProjectID  string     `json:"project_id"`
 		Recurrence string     `json:"recurrence"`
 		DueAt      *time.Time `json:"due_at"`
+		// SourceRef/SourceURL let an import command (e.g. `cc-handoff todo
+		// import-linear`, internal/linear/import.go) stamp which external
+		// issue a todo came from — see pkg/todoschema.Todo.SourceRef and
+		// Store.FindTodoBySourceRef. Set once at creation; there's no PATCH
+		// support for them since they're not meant to change afterward.
+		SourceRef string `json:"source_ref"`
+		SourceURL string `json:"source_url"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
@@ -78,6 +85,8 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		DueAt:         req.DueAt,
 		CreatedAt:     now,
 		UpdatedAt:     now,
+		SourceRef:     req.SourceRef,
+		SourceURL:     req.SourceURL,
 	}
 	if err := s.Store.CreateTodo(r.Context(), t); err != nil {
 		writeStoreError(w, err)
@@ -116,6 +125,32 @@ func (s *Server) getTodo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, t)
+}
+
+// findTodoBySourceRef exposes Store.FindTodoBySourceRef over HTTP for import
+// commands (e.g. `cc-handoff todo import-linear`) to decide "already
+// imported — update it" vs. "not seen before — create it". Unlike getTodo,
+// "no such source_ref" is an expected, common outcome rather than an error,
+// so it's always a 200 with found=false rather than a 404 — that keeps
+// transport.Client.FindTodoBySourceRef from having to special-case 404 the
+// way ErrAttachmentNotFound does.
+func (s *Server) findTodoBySourceRef(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		http.Error(w, "ref query param required", http.StatusBadRequest)
+		return
+	}
+	t, found, err := s.Store.FindTodoBySourceRef(r.Context(), identity, ref)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusOK, map[string]any{"found": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"found": true, "todo": t})
 }
 
 // patchTodo decodes the body as map[string]json.RawMessage rather than a

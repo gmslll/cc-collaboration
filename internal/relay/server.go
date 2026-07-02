@@ -143,6 +143,10 @@ func (s *Server) Handler() http.Handler {
 	// ErrForbidden/ErrNotFound.
 	api.HandleFunc("POST /v1/todos", s.createTodo)
 	api.HandleFunc("GET /v1/todos", s.listTodos)
+	// Registered as a literal segment alongside the {id} wildcard below —
+	// Go 1.22's ServeMux prefers the more specific (non-wildcard) pattern for
+	// the literal path "/v1/todos/by-source" regardless of registration order.
+	api.HandleFunc("GET /v1/todos/by-source", s.findTodoBySourceRef)
 	api.HandleFunc("GET /v1/todos/{id}", s.getTodo)
 	api.HandleFunc("PATCH /v1/todos/{id}", s.patchTodo)
 	api.HandleFunc("DELETE /v1/todos/{id}", s.deleteTodo)

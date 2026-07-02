@@ -7,8 +7,10 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/todo_models.dart';
+import '../local/cli.dart';
 import '../local/config.dart';
 import '../local/local_bus.dart';
+import '../local/repo_config.dart';
 import '../local/session_overview.dart';
 import '../local/todo_store.dart';
 import '../theme.dart';
@@ -55,6 +57,11 @@ const List<_BoardColumnDef> _boardColumnDefs = [
   ),
 ];
 
+// _LinearImportRepo is a local project whose .cc-handoff.toml configures
+// [integrations.linear] team_key — the "从 Linear 导入" header button is only
+// offered when at least one exists (see _TodosPageState._loadLinearRepos).
+typedef _LinearImportRepo = ({String name, String path, String teamKey});
+
 // TodosPage is the top-level 待办 destination: a filterable list (left) + the
 // selected todo's detail/edit panel (right), mirroring HandoffsPage's split
 // layout. All scope/status/project filtering happens in memory over
@@ -87,6 +94,8 @@ class _TodosPageState extends State<TodosPage> {
   bool _boardView = true; // board is the default, Linear-flavored view
   final Set<String> _collapsedMobileGroups = {};
   final _detailKey = GlobalKey<TodoDetailViewState>();
+  List<_LinearImportRepo> _linearRepos = [];
+  bool _importingLinear = false;
 
   RelayClient get _client => widget.client;
   AppConfig get _cfg => widget.config;
@@ -102,6 +111,67 @@ class _TodosPageState extends State<TodosPage> {
     // comment list if that's the todo currently open (TodoStore itself
     // doesn't model comments, it just flags which todo needs a reload).
     _store.onComment = _onComment;
+    _loadLinearRepos();
+  }
+
+  // _loadLinearRepos scans every locally-tracked project (across all
+  // workspaces) for one whose .cc-handoff.toml sets [integrations.linear]
+  // team_key — see repo_config_page.dart for the same RepoConfig.load
+  // read path. Best-effort: a project with no/unreadable .cc-handoff.toml
+  // is silently skipped rather than failing the whole scan.
+  Future<void> _loadLinearRepos() async {
+    final found = <_LinearImportRepo>[];
+    for (final entry in _cfg.repos.entries) {
+      try {
+        final c = await RepoConfig.load(entry.value);
+        final key = c.teamKey.trim();
+        if (key.isNotEmpty) {
+          found.add((name: entry.key, path: entry.value, teamKey: key));
+        }
+      } catch (_) {}
+    }
+    if (mounted) setState(() => _linearRepos = found);
+  }
+
+  // _importFromLinear shells `cc-handoff todo import-linear` (Cli.
+  // todoImportLinear) in whichever local repo's team_key applies, scoped to
+  // the currently-selected team project filter (personal todos when no
+  // project is selected). See internal/linear/import.go for the server-side
+  // upsert-by-source_ref logic this triggers.
+  Future<void> _importFromLinear() async {
+    if (_importingLinear) return;
+    final repo =
+        _linearRepos.length == 1 ? _linearRepos.first : await _pickLinearRepo();
+    if (repo == null) return;
+    setState(() => _importingLinear = true);
+    try {
+      final out = await Cli.todoImportLinear(
+        repoPath: repo.path,
+        teamKey: repo.teamKey,
+        projectId: _projectFilter,
+      );
+      if (mounted) snack(context, out.isNotEmpty ? out : '已从 Linear 导入');
+      await _store.refresh();
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    } finally {
+      if (mounted) setState(() => _importingLinear = false);
+    }
+  }
+
+  Future<_LinearImportRepo?> _pickLinearRepo() {
+    return showDialog<_LinearImportRepo>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('从哪个项目的 Linear team 导入？'),
+        children: _linearRepos
+            .map((r) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(ctx, r),
+                  child: Text('${r.name} (${r.teamKey})'),
+                ))
+            .toList(),
+      ),
+    );
   }
 
   @override
@@ -329,6 +399,23 @@ class _TodosPageState extends State<TodosPage> {
                 onChanged: (v) => setState(() => _projectFilter = v),
               ),
             ],
+          ),
+        ),
+      if (_scope == 'team' && _linearRepos.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _importingLinear ? null : _importFromLinear,
+              icon: _importingLinear
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.sync_alt_rounded, size: 16),
+              label: const Text('从 Linear 导入'),
+            ),
           ),
         ),
       Padding(

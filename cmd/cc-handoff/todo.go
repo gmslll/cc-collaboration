@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cc-collaboration/internal/config"
+	"github.com/cc-collaboration/internal/linear"
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/todoschema"
 )
@@ -31,6 +32,7 @@ const todoUsage = `cc-handoff todo — 待办事项(个人 / 团队),经 relay �
   cc-handoff todo assign <id> <identity> [--session ID] [--label TEXT]
   cc-handoff todo assign <id> --unassign
   cc-handoff todo comment <id> <body...> | --list <id>
+  cc-handoff todo import-linear --team KEY [--project ID]
 
 create 选项:
   --body TEXT                  正文(Markdown)
@@ -49,6 +51,13 @@ list 选项:
   --json
 
 status 取值: pending | assigned | in_progress | blocked | done | cancelled
+
+import-linear 选项:
+  --team KEY     Linear team key(如 ENG)。省略则用 .cc-handoff.toml [integrations.linear] team_key
+  --project ID   导入到的 cc-handoff Project ID(团队待办)。不传 = 个人待办
+
+  按 source_ref(linear:<identifier>) 幂等:已导入过的 issue 会更新标题/正文/优先级/
+  截止时间/状态,而不是建重复待办。需要先在用户配置里设置 linear_personal_token。
 `
 
 func runTodo(ctx context.Context, args []string) error {
@@ -72,8 +81,10 @@ func runTodo(ctx context.Context, args []string) error {
 		return runTodoAssign(ctx, rest)
 	case "comment":
 		return runTodoComment(ctx, rest)
+	case "import-linear":
+		return runTodoImportLinear(ctx, rest)
 	default:
-		return fmt.Errorf("unknown todo subcommand %q (want create|list|get|status|assign|comment)", sub)
+		return fmt.Errorf("unknown todo subcommand %q (want create|list|get|status|assign|comment|import-linear)", sub)
 	}
 }
 
@@ -417,5 +428,30 @@ func runTodoComment(ctx context.Context, args []string) error {
 		return relayCompatError(err, "todo comment")
 	}
 	fmt.Printf("✓ posted comment #%d on todo %s\n", c.ID, c.TodoID)
+	return nil
+}
+
+// runTodoImportLinear is the CLI entry point for the shared import flow in
+// internal/linear/import.go (also used by the import_linear_issues MCP
+// tool) — see cmd/cc-handoff/todo.go's package doc and the feature plan's
+// Track A.
+func runTodoImportLinear(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("todo import-linear", flag.ContinueOnError)
+	team := fs.String("team", "", "Linear team key(如 ENG),省略则用 .cc-handoff.toml [integrations.linear] team_key")
+	project := fs.String("project", "", "导入到的 cc-handoff Project ID(团队待办);不传 = 个人待办")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	result, err := linear.ImportTeamIssuesForRepo(ctx, cwd, *team, *project)
+	if err != nil {
+		return relayCompatError(err, "todo import-linear")
+	}
+	fmt.Printf("✓ imported from Linear team %s: %d issue(s) — %d created, %d updated\n",
+		result.TeamKey, result.Issues, result.Created, result.Updated)
 	return nil
 }

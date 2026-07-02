@@ -50,12 +50,18 @@ class Cli {
   // _exec runs cc-handoff with [args]. On POSIX it goes through the login shell
   // so the binary inherits the user's PATH (a double-clicked .app has a minimal
   // PATH) and can find git / claude / codex; on Windows the GUI already inherits
-  // the full user environment, so the executable is run directly.
-  static Future<ProcessResult> _exec(List<String> args) {
+  // the full user environment, so the executable is run directly. workingDirectory
+  // is forwarded to Process.run — needed for commands like `todo import-linear`
+  // that rely on config.Resolve(cwd) finding a specific repo's .cc-handoff.toml.
+  static Future<ProcessResult> _exec(List<String> args,
+      {String? workingDirectory}) {
     final bin = _bin();
-    if (Platform.isWindows) return Process.run(bin, args);
+    if (Platform.isWindows) {
+      return Process.run(bin, args, workingDirectory: workingDirectory);
+    }
     final cmd = '${shQuote(bin)} ${args.map(shQuote).join(' ')}';
-    return Process.run(_shell(), ['-lc', cmd]);
+    return Process.run(_shell(), ['-lc', cmd],
+        workingDirectory: workingDirectory);
   }
 
   // installBusHooks wires the local-bus PostToolUse + Stop hooks into the user's
@@ -96,14 +102,30 @@ class Cli {
 
   // run executes `cc-handoff <args>` and returns trimmed stdout; throws
   // CliException(stderr) on non-zero exit.
-  static Future<String> run(List<String> args) async {
-    final res = await _exec(args);
+  static Future<String> run(List<String> args,
+      {String? workingDirectory}) async {
+    final res = await _exec(args, workingDirectory: workingDirectory);
     if (res.exitCode != 0) {
       final err = (res.stderr as String).trim();
       throw CliException(err.isNotEmpty ? err : '命令失败 (exit ${res.exitCode})');
     }
     return (res.stdout as String).trim();
   }
+
+  // todoImportLinear runs `cc-handoff todo import-linear` inside repoPath (so
+  // config.Resolve(cwd) picks up that repo's .cc-handoff.toml) — see the
+  // Track A note on internal/linear/import.go. projectId is the cc-handoff
+  // Project ID to import into (team todos); omit for personal todos.
+  static Future<String> todoImportLinear({
+    required String repoPath,
+    required String teamKey,
+    String? projectId,
+  }) =>
+      run([
+        'todo', 'import-linear',
+        '--team', teamKey,
+        if (projectId != null && projectId.isNotEmpty) ...['--project', projectId],
+      ], workingDirectory: repoPath);
 
   // --- workspace / project management (config.toml round-trips via SaveUser) ---
 

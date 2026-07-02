@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -81,6 +82,25 @@ func (c *Client) GetTodo(ctx context.Context, id string) (*todoschema.Todo, erro
 		return nil, err
 	}
 	return &out, nil
+}
+
+// FindTodoBySourceRef looks up the todo previously imported from sourceRef
+// (see pkg/todoschema.Todo.SourceRef / Store.FindTodoBySourceRef), for an
+// import command to decide "already imported — update it" (found=true) vs.
+// "not seen before — create it" (found=false, not an error).
+func (c *Client) FindTodoBySourceRef(ctx context.Context, sourceRef string) (*todoschema.Todo, bool, error) {
+	var out struct {
+		Found bool             `json:"found"`
+		Todo  *todoschema.Todo `json:"todo"`
+	}
+	path := "/v1/todos/by-source?ref=" + url.QueryEscape(sourceRef)
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, false, err
+	}
+	if !out.Found {
+		return nil, false, nil
+	}
+	return out.Todo, true, nil
 }
 
 // OptionalTime distinguishes "leave due_at alone" (Set=false) from
