@@ -6,6 +6,21 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-07-02
+
+### Added
+
+- **待办 (Todo)** — 全新顶级页面:用户或 AI(经 MCP 工具)可创建带文本/图片/文件附件的待办,支持状态(待办/已分配/进行中/阻塞/已完成/已取消)、优先级、截止日期与周期性重复(完成后按 daily/weekly/monthly 自动重排,不打断进行中的任务);个人待办与团队待办(挂靠 Project,跨机器/跨用户通过 relay 实时同步)统一列表按范围/状态筛选;一键指派——可派给本机某个现有会话立即执行,或直接新建会话(可选新建 worktree)起手就带着任务跑;正文用自研 MarkdownLiteEditor 所见即所得编辑(不经 Delta/AST 转换,零内容丢失风险);relay 侧新增 `/v1/todos` 系列接口 + SSE 实时推送,CLI 新增 `cc-handoff todo` 子命令,MCP 新增 6 个待办工具供 AI 自主管理任务。
+- **`cc-handoff msg kill` / `supervisor kill`** — 一键关闭指定本地会话(拒绝自杀和关闭总管会话),补上本地会话总线此前完全缺失的"远程终止"能力。
+
+### Changed
+
+- **Commit 面板变更列表分组** — 已跟踪(Changes)与未跟踪(Unversioned Files)拆成两个独立可折叠分组,各自独立的三态全选框;文件图标换成与项目文件树一致的按语言着色 SVG。
+
+### Fixed
+
+- **本机消息总线"卡死不投递"** — 目标会话彻底空闲(无 bell、无新触发的 hook)时,派给它的消息此前会无限期滞留在 inbox、只能等对方偶然再触发一次 hook 才会被冲出来;现在发送方 park 消息后起一个有界(3s)超时,超时未被目标自身 hook drain 掉就主动强制投递,不再无限期等待。Go/Dart 双端通过跨语言一致的"原子创建即抢占、删除即释放"文件锁协调,避免与目标自身 hook 的正常 drain 发生双重投递。
+
 ## [0.8.1] - 2026-07-02
 
 ### Added
