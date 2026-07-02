@@ -161,12 +161,15 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
   }) async {
     final ref = before ? '$hash^' : hash;
     try {
-      final diff = await gitDiffRefToWorking(p.path, ref);
+      final diff = await gitDiffRefFileToWorking(p.path, ref, f.path);
       final files = parseUnifiedDiff(diff);
-      final one = files.where((x) => x.path == f.path).toList();
       if (!mounted) return;
+      if (files.isEmpty) {
+        _snack('该文件与工作区无差异');
+        return;
+      }
       _openDiffTab(
-        one.isEmpty ? files : one,
+        files,
         '${before ? 'Before ' : ''}${_revShort(hash)}..Local · ${f.path}',
         initialPath: f.path,
       );

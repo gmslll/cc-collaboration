@@ -848,6 +848,22 @@ Future<void> gitCheckoutPathAtRev(String dir, String ref, String file) async {
   await _git(dir, 'checkout ${shQuote(r)} -- ${shQuote(f)}');
 }
 
+// gitDiffRefFileToWorking = one file's version at [ref] vs the working tree
+// (`git diff <ref> -- <file>`). Path-scoped twin of gitDiffRefToWorking so git
+// emits only that file — backs the diff-tree "Compare (Before) with Local".
+Future<String> gitDiffRefFileToWorking(
+  String dir,
+  String ref,
+  String file, {
+  int context = 3,
+}) {
+  final r = ref.trim();
+  final f = file.trim();
+  if (r.isEmpty) throw GitException('compare ref 不能为空');
+  if (f.isEmpty) throw GitException('file path 不能为空');
+  return _git(dir, 'diff ${_ctx(context)} ${shQuote(r)} -- ${shQuote(f)}');
+}
+
 // gitApplyPatch applies a whole unified patch to the working tree, forward or
 // (reverse:true) in reverse — `git apply [-R] --recount`. Backs the diff-tree
 // "Cherry-Pick Selected Changes" (forward) / "Revert Selected Changes"
@@ -911,14 +927,6 @@ Future<String> gitFormatPatch(String dir, String hash) {
   final h = hash.trim();
   if (h.isEmpty) throw GitException('commit hash 不能为空');
   return _git(dir, 'format-patch -1 --stdout ${shQuote(h)}');
-}
-
-// gitRevParse resolves [ref] to a full hash (used to tell whether a commit is
-// the current HEAD, gating Undo Commit / amend-reword).
-Future<String> gitRevParse(String dir, String ref) async {
-  final r = ref.trim();
-  if (r.isEmpty) throw GitException('ref 不能为空');
-  return (await _git(dir, 'rev-parse ${shQuote(r)}')).trim();
 }
 
 // gitRemoteWebUrl turns origin's fetch URL into a browsable https URL (drops the
