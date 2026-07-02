@@ -894,39 +894,38 @@ class _SessionActivityAvatarState extends State<SessionActivityAvatar>
       child: statusDot(st.color, size: badge, glow: st.glow && !active),
     );
     final radius = BorderRadius.circular(widget.size * 0.28);
-    return SizedBox(
-      width: widget.size,
-      height: widget.size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          if (active)
-            Positioned.fill(
-              child: AnimatedBuilder(
-                animation: _c,
-                builder: (_, _) {
-                  // Breathing 0→1→0 while animating; a steady mid-glow otherwise
-                  // (reduce-motion), so a working session still stands out.
-                  final p = animate ? _c.value : 0.55;
-                  return DecoratedBox(
-                    decoration: BoxDecoration(
-                      borderRadius: radius,
-                      boxShadow: [
-                        BoxShadow(
-                          color: st.color.withValues(alpha: 0.16 + 0.42 * p),
-                          blurRadius: 3 + 7 * p,
-                          spreadRadius: 0.4 + 1.4 * p,
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+    // No outer SizedBox: a loose Stack sizes to its only non-positioned child
+    // (glyph, which is already size×size), so the halo (Positioned.fill) and badge
+    // anchor identically.
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (active)
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _c,
+              builder: (_, _) {
+                // Breathing 0→1→0 while animating; a steady mid-glow otherwise
+                // (reduce-motion), so a working session still stands out.
+                final p = animate ? _c.value : 0.55;
+                return DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: radius,
+                    boxShadow: [
+                      BoxShadow(
+                        color: st.color.withValues(alpha: 0.16 + 0.42 * p),
+                        blurRadius: 3 + 7 * p,
+                        spreadRadius: 0.4 + 1.4 * p,
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
-          glyph,
-          Positioned(right: 0, bottom: 0, child: badgeDot),
-        ],
-      ),
+          ),
+        glyph,
+        Positioned(right: 0, bottom: 0, child: badgeDot),
+      ],
     );
   }
 }

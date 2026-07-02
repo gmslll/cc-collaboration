@@ -8,6 +8,27 @@ import 'package:flutter_test/flutter_test.dart';
 // activityRev (bumped on every busy / needs-review transition) and animates while
 // the session is working. These pin the rebuild signal + that the avatar renders
 // for each activity state.
+
+// pumpAvatar mounts one SessionActivityAvatar in a minimal app shell.
+Future<void> pumpAvatar(
+  WidgetTester tester,
+  SessionStatus status, {
+  bool isAgent = true,
+}) => tester.pumpWidget(
+  MaterialApp(
+    home: Scaffold(
+      body: Center(
+        child: SessionActivityAvatar(
+          seed: 'ts9',
+          isAgent: isAgent,
+          status: status,
+          size: 20,
+        ),
+      ),
+    ),
+  ),
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -42,40 +63,14 @@ void main() {
         (SessionStatus.needsReview, true), // steady attention dot, no pulse
         (SessionStatus.shell, false),
       ]) {
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: Center(
-                child: SessionActivityAvatar(
-                  seed: 'ts9',
-                  isAgent: isAgent,
-                  status: status,
-                  size: 20,
-                ),
-              ),
-            ),
-          ),
-        );
+        await pumpAvatar(tester, status, isAgent: isAgent);
         expect(find.byType(SessionActivityAvatar), findsOneWidget);
       }
     });
 
     testWidgets('working state animates (pulsing halo) and cleans up its ticker',
         (tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: Center(
-              child: SessionActivityAvatar(
-                seed: 'ts9',
-                isAgent: true,
-                status: SessionStatus.working,
-                size: 20,
-              ),
-            ),
-          ),
-        ),
-      );
+      await pumpAvatar(tester, SessionStatus.working);
       expect(find.byType(SessionActivityAvatar), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 300)); // advance the pulse
       expect(find.byType(SessionActivityAvatar), findsOneWidget);

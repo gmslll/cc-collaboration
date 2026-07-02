@@ -8527,14 +8527,25 @@ class _WorkspacePageState extends State<WorkspacePage>
               selected: active,
               // Live status avatar: rebuilds on the session's activity transitions
               // (busy / needs-review, via activityRev) so it pulses while working
-              // and shows a status-coloured badge (idle / waiting / done) at rest —
-              // same status the 会话总览 shows (_statusFor), now on the tree node too.
+              // and shows a status-coloured badge (working / done / idle) at rest.
+              // Coarse status is derived from the session's own in-memory flags —
+              // NOT _statusFor(_latestHookActivity(...)): that reads the hook-event
+              // dir off disk on every rebuild, and its fine-grained sub-states only
+              // refresh on the busy/needs-review flips activityRev fires on (so a
+              // 12-colour badge would go stale mid-turn). The coarse set is exactly
+              // what the trigger reliably covers; the 会话总览 keeps the rich status.
               leading: ValueListenableBuilder<int>(
                 valueListenable: e.s.activityRev,
                 builder: (_, _, _) => SessionActivityAvatar(
                   seed: e.s.id,
                   isAgent: e.s.isAgent,
-                  status: _statusFor(e.s, _latestHookActivity(e.s)),
+                  status: !e.s.isAgent
+                      ? SessionStatus.shell
+                      : e.s.needsReview
+                      ? SessionStatus.needsReview
+                      : e.s.busy
+                      ? SessionStatus.working
+                      : SessionStatus.idle,
                   size: 20,
                 ),
               ),
