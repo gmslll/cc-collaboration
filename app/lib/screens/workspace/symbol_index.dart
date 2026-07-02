@@ -105,7 +105,7 @@ mixin _SymbolIndex on State<WorkspacePage> {
     // Phase 2: LSP-first for languages with a server (Go→gopls, Dart→analysis
     // server). Any miss (server absent / timeout / no result) returns false so we
     // degrade to the always-available regex path.
-    if (LspManager.supportsExtension(fileExtOf(ed.path)) &&
+    if (LspManager.instance.supportsExtension(fileExtOf(ed.path)) &&
         await _tryLspDefinition(ed)) {
       return;
     }

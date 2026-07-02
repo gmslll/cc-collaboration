@@ -58,57 +58,59 @@ class LspManager extends ChangeNotifier {
   // supportsExtension is true when [ext] has an ENABLED language server, so the
   // caller routes it here instead of straight to the regex index; a disabled
   // language returns false → regex fallback.
-  static bool supportsExtension(String ext) {
+  bool supportsExtension(String ext) {
     final p = _pluginForExt(ext);
-    return p != null && Prefs.getBool('lsp.${p.id}.enabled', def: true);
+    return p != null && enabled(p.id);
   }
 
   // ---- config (Prefs-backed) + detection, for the settings panel ----
 
-  final Map<String, bool> _available = {}; // id -> command found on PATH
+  bool _detecting = false;
 
-  bool enabled(String id) => Prefs.getBool('lsp.$id.enabled', def: true);
+  String _enabledKey(String id) => 'lsp.$id.enabled';
+  String _cmdKey(String id) => 'lsp.$id.cmd';
+
+  bool enabled(String id) => Prefs.getBool(_enabledKey(id), def: true);
   void setEnabled(String id, bool value) {
-    Prefs.setBool('lsp.$id.enabled', value);
+    if (enabled(id) == value) return;
+    Prefs.setBool(_enabledKey(id), value);
     notifyListeners();
   }
 
   // commandFor is the user's override (lsp.<id>.cmd) or the catalog default.
   String commandFor(LspServerPlugin p) {
-    final override = Prefs.getString('lsp.${p.id}.cmd', def: '').trim();
+    final override = Prefs.getString(_cmdKey(p.id), def: '').trim();
     return override.isEmpty ? p.command : override;
   }
 
-  // setCommand records a custom command/path for [id], dropping the stale probe
-  // + any running server for it so the next jump uses the new command.
+  // setCommand records a custom command/path for [id] and drops any running
+  // server for it so the next jump uses the new command. Re-detection is the
+  // caller's job (the panel calls detectAll after).
   void setCommand(String id, String command) {
-    Prefs.setString('lsp.$id.cmd', command.trim());
-    _cmdPaths.clear();
-    _available.remove(id);
-    final gone = <(String, String)>[];
-    _servers.forEach((k, s) {
-      if (k.$2 == id) {
-        s.dispose();
-        gone.add(k);
-      }
+    Prefs.setString(_cmdKey(id), command.trim());
+    _servers.removeWhere((k, s) {
+      if (k.$2 != id) return false;
+      s.dispose();
+      return true;
     });
-    for (final k in gone) {
-      _servers.remove(k);
-    }
     notifyListeners();
   }
 
-  // detected(id) is true when the configured command was found on PATH by the
-  // last detectAll().
-  bool detected(String id) => _available[id] ?? false;
+  // detected(p) is true when p's configured command was found on PATH — derived
+  // from the shared _cmdPaths probe cache ('' sentinel = probed-and-absent).
+  bool detected(LspServerPlugin p) =>
+      (_cmdPaths[commandFor(p)] ?? '').isNotEmpty;
 
-  // detectAll probes each server's configured command on the login PATH — the
-  // settings panel calls it on open / refresh.
+  // detectAll probes every server's configured command on the login PATH,
+  // concurrently — the settings panel calls it on open / refresh.
   Future<void> detectAll({bool force = false}) async {
-    if (force) _cmdPaths.clear();
-    for (final p in kLspServers) {
-      final exe = await _resolveCmd(commandFor(p));
-      _available[p.id] = exe != null;
+    if (_detecting) return;
+    _detecting = true;
+    try {
+      if (force) _cmdPaths.clear();
+      await Future.wait(kLspServers.map((p) => _resolveCmd(commandFor(p))));
+    } finally {
+      _detecting = false;
     }
     notifyListeners();
   }

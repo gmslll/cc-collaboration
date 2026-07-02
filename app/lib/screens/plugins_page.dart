@@ -212,34 +212,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
         ],
       );
     }
-    final hint = p.installHint ?? '未安装';
-    return Row(
-      children: [
-        statusDot(CcColors.warning, size: 7),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            '未检测到 ${p.tool} · $hint',
-            style: const TextStyle(color: CcColors.warning, fontSize: 12),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        if (p.installCmd != null)
-          IconButton(
-            tooltip: '复制安装命令',
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            icon: const Icon(Icons.copy_rounded, size: 14),
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: p.installCmd!));
-              if (!mounted) return;
-              snack(context, '已复制安装命令');
-            },
-          ),
-      ],
-    );
+    return _notDetectedRow(p.tool!, p.installHint ?? '未安装', p.installCmd);
   }
 
   // ---- LSP 语言服务器行:检测状态 + 开关 + 手动配置命令/路径 ----
@@ -247,7 +220,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
   Widget _lspRow(LspServerPlugin p) {
     final on = _lsp.enabled(p.id);
     final cmd = _lsp.commandFor(p);
-    final ok = _lsp.detected(p.id);
+    final ok = _lsp.detected(p);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       child: Row(
@@ -304,6 +277,38 @@ class _PluginsPaneState extends State<_PluginsPane> {
     );
   }
 
+  // _notDetectedRow: shared 「未检测到 X · 安装提示 + 复制」 line for both the
+  // formatter (_status) and LSP (_lspStatus) sections.
+  Widget _notDetectedRow(String label, String hint, String? installCmd) {
+    return Row(
+      children: [
+        statusDot(CcColors.warning, size: 7),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            '未检测到 $label · $hint',
+            style: const TextStyle(color: CcColors.warning, fontSize: 12),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (installCmd != null)
+          IconButton(
+            tooltip: '复制安装命令',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            icon: const Icon(Icons.copy_rounded, size: 14),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: installCmd));
+              if (!mounted) return;
+              snack(context, '已复制安装命令');
+            },
+          ),
+      ],
+    );
+  }
+
   Widget _lspStatus(LspServerPlugin p, String cmd, bool ok) {
     if (ok) {
       return Row(
@@ -321,34 +326,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
         ],
       );
     }
-    final hint = p.installHint ?? '未安装';
-    return Row(
-      children: [
-        statusDot(CcColors.warning, size: 7),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            '未检测到 $cmd · $hint',
-            style: const TextStyle(color: CcColors.warning, fontSize: 12),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        if (p.installCmd != null)
-          IconButton(
-            tooltip: '复制安装命令',
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            icon: const Icon(Icons.copy_rounded, size: 14),
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: p.installCmd!));
-              if (!mounted) return;
-              snack(context, '已复制安装命令');
-            },
-          ),
-      ],
-    );
+    return _notDetectedRow(cmd, p.installHint ?? '未安装', p.installCmd);
   }
 
   Future<void> _editLspCommand(LspServerPlugin p) async {
@@ -401,7 +379,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
     );
     ctl.dispose();
     if (result == null) return; // 取消
-    _lsp.setCommand(p.id, result.trim());
+    _lsp.setCommand(p.id, result);
     _lsp.detectAll(force: true); // 立刻按新命令重新检测
   }
 }

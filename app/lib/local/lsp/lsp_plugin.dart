@@ -34,11 +34,12 @@ class LspServerPlugin {
 List<String> _noArgs(String _) => const [];
 List<String> _dartArgs(String _) => const ['language-server', '--protocol=lsp'];
 List<String> _stdioArgs(String _) => const ['--stdio']; // pyright / tsserver
-// jdtls needs a writable per-project data dir for its index. Derive a stable one
-// under the system temp dir keyed by the root path so each project gets its own.
+// jdtls needs a writable per-project data dir for its index. Key it by the root
+// path sanitized to a single filename — a stable derivation, unlike
+// String.hashCode which isn't stable across runs (would re-index every launch).
 List<String> _jdtlsArgs(String root) => [
   '-data',
-  '${Directory.systemTemp.path}/cc-lsp-jdtls/${root.hashCode & 0x7fffffff}',
+  '${Directory.systemTemp.path}/cc-lsp-jdtls/${root.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}',
 ];
 
 // The built-in catalog. Extensions must not overlap across entries (the router
