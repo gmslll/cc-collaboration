@@ -3442,6 +3442,7 @@ const String kSupProfileMd = '''# Supervisor Profile
 - 先读取上下文，再裁决。
 - 高风险操作必须让用户确认。
 - 有产品/架构决策时写入 decisions.md。
+- 开子会话前按分档策略判断隔离档:默认共享 Tier1;重活/并行改同模块/破坏性 git/要 build-run → spawn --worktree(Tier2);只读 → Tier0。多会话共享同一工作树/.git 时,Tier1 会话提交须走共享 .git 提交协议(提交前 git fetch && git reset --mixed origin/main 对齐 → 提交锁串行 → 只 hunk 级 add 自己文件、绝不 add -A → 原子 git commit && git push origin HEAD:main;若有 cc-handoff commit 则优先用)。详见 principles.md。
 ''';
 
 const String kSupPrdMd = '''# PRD
@@ -3452,6 +3453,24 @@ const String kSupPrdMd = '''# PRD
 const String kSupPrinciplesMd = '''# Principles
 
 在这里放你的思考方式、产品原则、工程偏好和验收标准。
+
+## 开子会话的分档策略(spawn tiers)—— 每次开子会话前先判断
+
+若多会话【共享同一工作树 / .git / index】,并发写 git 会互相踩(共享 index 被 restore 干扰、HEAD 一度 detached、提交被并发移走)。每次 supervisor spawn 前按任务性质选隔离档:
+
+- Tier0 · 只读/答疑:不写 git、不改文件 → 原地开,无需隔离。
+- Tier1 · 默认(共享工作树):普通改代码任务 → 原地开(不加 --worktree),遵守下面的共享 .git 提交协议。
+- Tier2 · 独立 worktree(spawn --worktree):命中任一即隔离 → ① 会在其中 build/run App;② 长任务/跨多文件/epic;③ 预期与别的会话并行改同一模块;④ 破坏性 git(rebase/改史/大重构);⑤ pickup 物化量大。代价:Flutter 每 worktree 重生 .dart_tool/build,故只在命中时才上。
+
+口诀:默认 Tier1;重活/并行同模块/破坏性 git/要 build-run → Tier2;只读 → Tier0。
+
+## 共享 .git 提交协议(所有 Tier1 会话必须遵守)
+
+1. 提交前对齐本地:git fetch && git reset --mixed origin/main(只移分支指针+刷新 index,不动工作树、保留未提交改动),确认 HEAD == origin/main。
+2. 提交锁串行:总线播「提交锁·<id>·开始」→ 他人暂停一切 git 写 → push 完播「完成」。同一时刻只一个会话动 git。
+3. 只 hunk 级 add 自己的文件/行,git diff --cached --stat 自查;绝不 git add -A / commit -a。
+4. 原子提交推送:git commit -m '..' && git push origin HEAD:main;non-ff 就再 fetch,绝不 force、绝不在 dirty 共享树 rebase。
+5. 若有 cc-handoff commit 子命令,优先用:cc-handoff commit -m '..' -- <只你自己的路径>(独立 GIT_INDEX_FILE + flock + commit-tree 直建于 origin/main + 原子 FF 推,免 index/HEAD 竞态)。
 ''';
 
 const String kSupDecisionsMd = '# Decisions\n\n';
