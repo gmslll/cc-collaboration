@@ -47,6 +47,12 @@ mixin _GitMixin on State<WorkspacePage> {
   bool _gitLoading = false;
   String? _gitError;
   final _commitCtl = TextEditingController();
+  // Inline stash-name field (the commit-box-style Stash composer). Empty → gitStashPush
+  // falls back to "WIP".
+  final _stashCtl = TextEditingController();
+  // Whether "Stash All" also stashes untracked files (git stash -u). On by default —
+  // "all" should sweep new files too — toggled from the stash composer.
+  bool _stashIncludeUntracked = true;
 
   // ---- commit 图形轨道:在「显示中的列表」上算一次 lane 布局并缓存 ----
   List<GraphRow> _graphRows = const [];
@@ -645,6 +651,30 @@ mixin _GitMixin on State<WorkspacePage> {
         opts.message,
         includeUntracked: opts.includeUntracked,
       );
+      await _refreshGit();
+      _snack('Stash 完成');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gitLoading = false);
+        _snack(errorText(e));
+      }
+    }
+  }
+
+  // _stashAllCurrent is the one-click "Stash All" behind the inline composer: no
+  // dialog — it stashes every change using the typed name (_stashCtl, or "WIP" when
+  // blank) and the untracked toggle, then clears the field. The dialog-based
+  // _stashPushCurrent stays for the tree/menu entry points.
+  Future<void> _stashAllCurrent(ProjectCfg p) async {
+    if (_gitLoading) return;
+    setState(() => _gitLoading = true);
+    try {
+      await gitStashPush(
+        p.path,
+        _stashCtl.text,
+        includeUntracked: _stashIncludeUntracked,
+      );
+      _stashCtl.clear();
       await _refreshGit();
       _snack('Stash 完成');
     } catch (e) {

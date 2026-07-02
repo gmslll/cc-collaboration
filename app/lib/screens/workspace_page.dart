@@ -606,6 +606,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   final _structureQueryCtl = TextEditingController();
   final _workspaceFocus = FocusNode(debugLabel: 'workspace-shell');
   final _commitFocus = FocusNode(debugLabel: 'commit-message');
+  final _stashFocus = FocusNode(debugLabel: 'stash-name');
   // 每棵项目文件树一个焦点节点：文件树聚焦时才响应 Cmd/Ctrl+C/X/V，避免抢终端/编辑器的复制粘贴。
   final Map<String, FocusNode> _fileTreeFocus = {};
   final List<String> _recentFiles = [];
@@ -873,9 +874,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   @override
   void dispose() {
     _commitCtl.dispose();
+    _stashCtl.dispose();
     _structureQueryCtl.dispose();
     _workspaceFocus.dispose();
     _commitFocus.dispose();
+    _stashFocus.dispose();
     for (final n in _fileTreeFocus.values) {
       n.dispose();
     }
@@ -7184,12 +7187,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                   style: CcType.code(size: 11.5, color: CcColors.subtle),
                 ),
               ),
-              IconButton(
-                onPressed: _gitLoading ? null : () => _stashPushCurrent(p),
-                icon: const Icon(Icons.archive_outlined, size: 16),
-                tooltip: 'Stash Changes',
-                visualDensity: VisualDensity.compact,
-              ),
+              // Stash creation now lives in the bottom composer (_stashBox); the
+              // header just counts + refreshes.
               IconButton(
                 onPressed: _refreshGit,
                 icon: const Icon(Icons.refresh_rounded, size: 16),
@@ -7570,6 +7569,75 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
+  // _stashBox is the inline Stash composer — the Stash view's counterpart to
+  // _commitBox: name the stash (optional) and one-click "Stash All" (stashes every
+  // change, untracked included per the toggle). Mirrors _commitBox's chrome (compact
+  // 24px buttons, panel footer, scrollableBar) so the two git surfaces read the same.
+  Widget _stashBox(ProjectCfg p) {
+    final dirty = _gitChanges.isNotEmpty || _gitFiles.isNotEmpty;
+    final canStash = dirty && !_gitLoading;
+    const compactBtn = ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      minimumSize: WidgetStatePropertyAll(Size(0, 24)),
+      padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8)),
+      textStyle: WidgetStatePropertyAll(
+        TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+      ),
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: const BoxDecoration(
+        color: CcColors.panel,
+        border: Border(top: BorderSide(color: CcColors.border)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _stashCtl,
+            focusNode: _stashFocus,
+            decoration: const InputDecoration(
+              isDense: true,
+              hintText: 'Stash 名称(可选)',
+              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            ),
+            onSubmitted: canStash ? (_) => _stashAllCurrent(p) : null,
+          ),
+          const SizedBox(height: 8),
+          scrollableBar(
+            alignScrollEnd: true,
+            scrolling: [
+              FilledButton.icon(
+                style: compactBtn,
+                onPressed: canStash ? () => _stashAllCurrent(p) : null,
+                icon: const Icon(Icons.archive_rounded, size: 13),
+                label: const Text('Stash All'),
+              ),
+              const SizedBox(width: 5),
+              // Toggle whether untracked files are swept in too (git stash -u).
+              OutlinedButton.icon(
+                style: compactBtn,
+                onPressed: _gitLoading
+                    ? null
+                    : () => setState(
+                        () => _stashIncludeUntracked = !_stashIncludeUntracked,
+                      ),
+                icon: Icon(
+                  _stashIncludeUntracked
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank_rounded,
+                  size: 13,
+                ),
+                label: const Text('含未跟踪'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _termArea() {
     if (terms.isEmpty) {
       final ws =
@@ -7696,6 +7764,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                             : _localChangesList(p)),
                 ),
                 if (!stash) _commitBox(p, status),
+                if (stash) _stashBox(p),
               ],
             ),
           ),
