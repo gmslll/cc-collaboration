@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/sse.dart';
+import '../api/todo_models.dart';
 import '../file_icons.dart';
 import '../fs_clipboard.dart';
 import '../local/cli.dart';
@@ -25,6 +26,7 @@ import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
+import '../local/todo_store.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
 import '../remote/file_transfer.dart';
@@ -32,6 +34,7 @@ import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../voice/voice.dart';
 import '../widgets.dart';
+import '../widgets/todo_card.dart';
 import 'diff_page.dart';
 import 'diff_split.dart';
 import 'diff_view.dart';
@@ -43,6 +46,7 @@ import 'plugins_page.dart';
 import 'repo_config_page.dart';
 import 'terminal_deck.dart';
 import 'terminal_pane.dart';
+import 'todo_detail_view.dart';
 import 'workspace/git_graph.dart';
 
 part 'workspace/branch_dialog.dart';
@@ -195,11 +199,18 @@ class WorkspacePage extends StatefulWidget {
   // it, the top-level SessionOverviewPage renders from it (created + injected by
   // HomeShell so both pages share one instance).
   final SessionOverviewStore overviewStore;
+  // me + store back the 待办 sidebar (_todosSidebarPanel) — same TodoStore
+  // instance HomeShell hands the top-level TodosPage, so both stay in sync
+  // off one SSE subscription.
+  final Me me;
+  final TodoStore store;
   const WorkspacePage({
     super.key,
     required this.client,
     required this.config,
     required this.overviewStore,
+    required this.me,
+    required this.store,
   });
 
   @override
@@ -625,9 +636,19 @@ class _WorkspacePageState extends State<WorkspacePage>
     Prefs.getString('ws.leftTool', def: 'project'),
   );
   bool _detailCollapsed = Prefs.getBool('ws.detailCollapsed');
+  // Starts collapsed (unlike _detailCollapsed) — 待办 is a new panel and
+  // shouldn't eat canvas width until the user opts in via the toolbar icon.
+  bool _todosSidebarCollapsed = Prefs.getBool(
+    'ws.todosSidebarCollapsed',
+    def: true,
+  );
+  // The todo currently drilled into inside the sidebar (list ↔ detail swap in
+  // place, no Navigator) — null shows the list.
+  Todo? _todosSidebarSelected;
   bool _terminalCollapsed = Prefs.getBool('ws.terminalCollapsed');
   double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 340);
   double _detailWidth = Prefs.getDouble('ws.detailWidth', def: 520);
+  double _todosSidebarWidth = Prefs.getDouble('ws.todosSidebarWidth', def: 420);
   double _terminalHeight = Prefs.getDouble('ws.terminalHeight', def: 360);
   double _logBranchWidth = Prefs.getDouble('ws.logBranchWidth', def: 240);
   double _logDiffWidth = Prefs.getDouble('ws.logDiffWidth', def: 340);
@@ -2799,8 +2820,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() {
       _detailItem = it;
       _detailCollapsed = false;
+      // The two right-side info panels are mutually exclusive — see
+      // _setDetailCollapsed/_setTodosSidebarCollapsed.
+      _todosSidebarCollapsed = true;
     });
     Prefs.setBool('ws.detailCollapsed', false);
+    Prefs.setBool('ws.todosSidebarCollapsed', true);
   }
 
   // ---------------------------------------------------------------- view ----
@@ -3607,9 +3632,25 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (_gitViewForLeftTool(view) != null) _refreshGit();
   }
 
+  // The Handoff detail panel and the 待办 sidebar share the same right-hand
+  // slot — opening one collapses the other rather than the two competing for
+  // width side by side.
   void _setDetailCollapsed(bool v) {
-    setState(() => _detailCollapsed = v);
+    setState(() {
+      _detailCollapsed = v;
+      if (!v) _todosSidebarCollapsed = true;
+    });
     Prefs.setBool('ws.detailCollapsed', v);
+    if (!v) Prefs.setBool('ws.todosSidebarCollapsed', true);
+  }
+
+  void _setTodosSidebarCollapsed(bool v) {
+    setState(() {
+      _todosSidebarCollapsed = v;
+      if (!v) _detailCollapsed = true;
+    });
+    Prefs.setBool('ws.todosSidebarCollapsed', v);
+    if (!v) Prefs.setBool('ws.detailCollapsed', true);
   }
 
   void _setTerminalCollapsed(bool v) {
@@ -4014,6 +4055,20 @@ class _WorkspacePageState extends State<WorkspacePage>
                     ),
                   ],
                   Expanded(child: _editorArea()),
+                  if (!_todosSidebarCollapsed) ...[
+                    resizeHandle(
+                      prefKey: 'ws.todosSidebarWidth',
+                      get: () => _todosSidebarWidth,
+                      set: (v) => setState(() => _todosSidebarWidth = v),
+                      min: 360,
+                      max: 820,
+                      invert: true,
+                    ),
+                    SizedBox(
+                      width: _todosSidebarWidth,
+                      child: _todosSidebarPanel(),
+                    ),
+                  ],
                   if (_detailItem != null) ...[
                     if (!_detailCollapsed) ...[
                       resizeHandle(
@@ -4160,6 +4215,13 @@ class _WorkspacePageState extends State<WorkspacePage>
                     selected: _detailItem != null && !_detailCollapsed,
                     enabled: _detailItem != null,
                     onTap: () => _setDetailCollapsed(!_detailCollapsed),
+                  ),
+                  _leftToolButton(
+                    icon: Icons.checklist_rounded,
+                    tooltip: '待办',
+                    selected: !_todosSidebarCollapsed,
+                    onTap: () =>
+                        _setTodosSidebarCollapsed(!_todosSidebarCollapsed),
                   ),
                 ],
               ),
@@ -5348,6 +5410,132 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
       ),
     ],
+  );
+
+  // _todosSidebarPanel hosts a 待办 list (list ↔ detail swap in place via
+  // _todosSidebarSelected, no Navigator) inside the right tool window — lets
+  // the user triage todos without leaving the workspace. Mutually exclusive
+  // with _detailPanel (see _setTodosSidebarCollapsed/_setDetailCollapsed).
+  Widget _todosSidebarPanel() {
+    final sel = _todosSidebarSelected;
+    return Column(
+      children: [
+        _panelHeader(
+          padding: const EdgeInsets.only(left: 10, right: 4),
+          leading: [
+            if (sel != null)
+              IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, size: 17),
+                tooltip: '返回列表',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _todosSidebarSelected = null),
+              )
+            else
+              const Icon(
+                Icons.checklist_rounded,
+                size: 16,
+                color: CcColors.muted,
+              ),
+            const SizedBox(width: 8),
+            Text(
+              sel == null ? '待办' : '待办详情',
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          trailing: [
+            IconButton(
+              icon: const Icon(Icons.more_horiz_rounded, size: 17),
+              tooltip: '收起',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _setTodosSidebarCollapsed(true),
+            ),
+          ],
+        ),
+        Expanded(
+          child: sel == null ? _todosSidebarList() : _todosSidebarDetail(sel),
+        ),
+      ],
+    );
+  }
+
+  // _todosSidebarItems: personal todos always show; team todos only for the
+  // workspace's currently active project (_currentGitProject, resolved to a
+  // relay project id via Me.projects) — the sidebar has no room for the
+  // top-level 待办 page's scope/project filter UI.
+  List<Todo> get _todosSidebarItems {
+    final projectId = _currentTodosSidebarProjectId;
+    final items = widget.store.all.where((t) {
+      if (t.isPersonal) return true;
+      return projectId != null && t.projectId == projectId;
+    }).toList();
+    items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return items;
+  }
+
+  String? get _currentTodosSidebarProjectId {
+    final name = _currentGitProject?.name;
+    if (name == null) return null;
+    for (final p in widget.me.projects) {
+      if (p.name == name) return p.id;
+    }
+    return null;
+  }
+
+  String? _todoProjectName(Todo t) {
+    if (t.projectId == null) return null;
+    for (final p in widget.me.projects) {
+      if (p.id == t.projectId) return p.name;
+    }
+    return null;
+  }
+
+  Widget _todosSidebarList() => ListenableBuilder(
+    listenable: widget.store,
+    builder: (context, _) {
+      final store = widget.store;
+      return asyncBody(
+        loading: store.loading && store.all.isEmpty,
+        error: store.error,
+        onRetry: store.refresh,
+        child: () {
+          final items = _todosSidebarItems;
+          if (items.isEmpty) return centerMsg('暂无待办');
+          return RefreshIndicator(
+            onRefresh: store.refresh,
+            child: ListView.separated(
+              padding: const EdgeInsets.all(10),
+              itemCount: items.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (_, i) {
+                final t = items[i];
+                return TodoCard(
+                  todo: t,
+                  projectName: _todoProjectName(t),
+                  onTap: () => setState(() => _todosSidebarSelected = t),
+                );
+              },
+            ),
+          );
+        },
+      );
+    },
+  );
+
+  Widget _todosSidebarDetail(Todo t) => TodoDetailView(
+    client: widget.client,
+    todo: t,
+    onChanged: (updated) {
+      if (mounted) setState(() => _todosSidebarSelected = updated);
+    },
+    onDeleted: () {
+      if (!mounted) return;
+      setState(() => _todosSidebarSelected = null);
+      widget.store.refresh();
+    },
   );
 
   void _setBottomTool(_BottomTool tool) {

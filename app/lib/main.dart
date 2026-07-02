@@ -362,6 +362,8 @@ class _HomeShellState extends State<HomeShell> {
           client: _client!,
           config: _cfg!,
           overviewStore: _overviewStore,
+          me: _me!,
+          store: _todoStore,
         ),
       // 会话总览 sits right after 工作区 on desktop (index 1) — keep in sync with
       // _openSessionInWorkspace, which switches back to index 0 to focus a tab.
