@@ -1,6 +1,11 @@
-// Web persistence backend for Prefs: no-op. UI layout prefs (panel sizes/folds)
-// fall back to defaults each page load — acceptable for the browser client,
-// which is a transient remote view. Could be backed by window.localStorage later.
-Future<String?> prefsLoadRaw() async => null;
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 
-Future<void> prefsSaveRaw(String json) async {}
+import 'dart:html' as html;
+
+const String _key = 'cc-handoff.ui_prefs.v1';
+
+Future<String?> prefsLoadRaw() async => html.window.localStorage[_key];
+
+Future<void> prefsSaveRaw(String json) async {
+  html.window.localStorage[_key] = json;
+}

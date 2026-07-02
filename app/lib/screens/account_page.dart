@@ -10,6 +10,7 @@ import '../build_info.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
 import '../local/prefs.dart';
+import '../local/remote_prefs.dart';
 import '../local/update_service.dart';
 import '../theme.dart';
 import '../ui_scale.dart';
@@ -54,6 +55,10 @@ class _AccountPageState extends State<AccountPage> {
   // Phone: tap a session card → open the full terminal (default) or first show
   // the quick-reply preview popup. Persisted; read live by the remote workspace.
   bool _tapPreview = Prefs.getBool('remote.tapPreview');
+  bool _showRemoteSessionContent = Prefs.getBool(
+    kRemoteShowSessionContentPref,
+    def: true,
+  );
 
   // Local-bus / session-id hooks self-check (desktop only). The app auto-installs
   // the PostToolUse+Stop hook into ~/.claude/settings.json + ~/.codex/hooks.json
@@ -119,14 +124,16 @@ class _AccountPageState extends State<AccountPage> {
       final out = await Cli.run(['bus-hook', 'status']);
       final list = (jsonDecode(out) as List).cast<Map<String, dynamic>>();
       if (!mounted) return;
-      setState(() => _hooks = [
-            for (final h in list)
-              (
-                name: (h['agent'] ?? '').toString(),
-                path: (h['path'] ?? '').toString(),
-                ok: h['installed'] == true,
-              ),
-          ]);
+      setState(
+        () => _hooks = [
+          for (final h in list)
+            (
+              name: (h['agent'] ?? '').toString(),
+              path: (h['path'] ?? '').toString(),
+              ok: h['installed'] == true,
+            ),
+        ],
+      );
     } catch (_) {
       if (mounted) setState(() => _hooks = const []);
     }
@@ -418,24 +425,38 @@ class _AccountPageState extends State<AccountPage> {
         if (!_isDesktop) ...[
           const SizedBox(height: 16),
           Card(
-            child: SwitchListTile(
-              value: _tapPreview,
-              onChanged: (v) {
-                Prefs.setBool('remote.tapPreview', v);
-                setState(() => _tapPreview = v);
-              },
-              title: const Text('点击会话先弹快捷预览'),
-              subtitle: const Text(
-                '默认点击会话直接进终端；开启后先弹快捷预览/回复，弹窗里再「打开终端」',
-                style: TextStyle(color: CcColors.muted, fontSize: 12),
-              ),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  value: _showRemoteSessionContent,
+                  onChanged: (v) {
+                    Prefs.setBool(kRemoteShowSessionContentPref, v);
+                    setState(() => _showRemoteSessionContent = v);
+                  },
+                  title: const Text('显示会话内容'),
+                  subtitle: const Text(
+                    '关闭后远程会话页只显示概况，不展示最近输出内容。',
+                    style: TextStyle(color: CcColors.muted, fontSize: 12),
+                  ),
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  value: _tapPreview,
+                  onChanged: (v) {
+                    Prefs.setBool('remote.tapPreview', v);
+                    setState(() => _tapPreview = v);
+                  },
+                  title: const Text('点击会话先弹快捷预览'),
+                  subtitle: const Text(
+                    '默认点击会话直接进终端；开启后先弹快捷预览/回复，弹窗里再「打开终端」',
+                    style: TextStyle(color: CcColors.muted, fontSize: 12),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
-        if (_isDesktop) ...[
-          const SizedBox(height: 16),
-          _hookStatusCard(),
-        ],
+        if (_isDesktop) ...[const SizedBox(height: 16), _hookStatusCard()],
         if (_isDesktop && _cfg != null) ...[
           const SizedBox(height: 16),
           _localConfigCard(),

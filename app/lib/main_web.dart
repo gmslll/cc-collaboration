@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'ghostty_runtime.dart';
+import 'local/prefs.dart';
 import 'local/session.dart';
 import 'notifications.dart';
 import 'screens/login_screen.dart';
@@ -18,6 +19,7 @@ import 'theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await GhosttyRuntime.ensureInitialized();
+  await Prefs.load();
   Notifications.init(); // graceful no-op on web
   runApp(const CcWebApp());
 }

@@ -224,7 +224,12 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
             children: [
               Row(
                 children: [
-                  sessionAvatar(seed: c.sid, isAgent: c.isAgent),
+                  SessionActivityAvatar(
+                    seed: c.sid,
+                    isAgent: c.isAgent,
+                    status: c.status,
+                    size: 26,
+                  ),
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(
@@ -352,7 +357,12 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
             children: [
               Row(
                 children: [
-                  sessionAvatar(seed: c.sid, isAgent: c.isAgent, size: 24),
+                  SessionActivityAvatar(
+                    seed: c.sid,
+                    isAgent: c.isAgent,
+                    status: c.status,
+                    size: 24,
+                  ),
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(

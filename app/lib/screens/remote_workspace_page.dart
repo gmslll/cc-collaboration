@@ -15,6 +15,7 @@ import '../local/hook_activity.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/project_order.dart';
+import '../local/remote_prefs.dart';
 import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
 import '../remote/file_transfer.dart';
@@ -179,6 +180,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   String? _toastIfNew(String? current, String? last) {
     if (current != null && current != last) snack(context, '操作失败：$current');
     return current;
+  }
+
+  void _setShowSessionContent(bool v) {
+    Prefs.setBool(kRemoteShowSessionContentPref, v);
+    setState(() {});
   }
 
   // _pumpOffers shows the accept/reject dialog for the next waiting incoming
@@ -498,106 +504,128 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: _c,
-      builder: (context, _) => Scaffold(
-        appBar: AppBar(
-          title: const Text('远程工作区'),
-          actions: [
-            if (kFileTransferSupported)
-              IconButton(
-                tooltip: '文件传输',
-                icon: Badge(
-                  isLabelVisible: _c.receivedFiles.isNotEmpty,
-                  label: Text('${_c.receivedFiles.length}'),
-                  child: const Icon(Icons.swap_vert_rounded),
+      builder: (context, _) {
+        final showSessionContent = Prefs.getBool(
+          kRemoteShowSessionContentPref,
+          def: true,
+        );
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('远程工作区'),
+            actions: [
+              if (kFileTransferSupported)
+                IconButton(
+                  tooltip: '文件传输',
+                  icon: Badge(
+                    isLabelVisible: _c.receivedFiles.isNotEmpty,
+                    label: Text('${_c.receivedFiles.length}'),
+                    child: const Icon(Icons.swap_vert_rounded),
+                  ),
+                  onPressed: _c.connected ? _showFileTransfer : null,
                 ),
-                onPressed: _c.connected ? _showFileTransfer : null,
-              ),
-            IconButton(
-              tooltip: '屏幕共享',
-              icon: const Icon(Icons.desktop_windows_rounded),
-              onPressed: _c.connected ? _showScreenShare : null,
-            ),
-            IconButton(
-              tooltip: '通知',
-              icon: Badge(
-                isLabelVisible: _c.unreadNotices > 0,
-                label: Text('${_c.unreadNotices}'),
-                child: const Icon(Icons.notifications_none_rounded),
-              ),
-              onPressed: _showNotices,
-            ),
-            if (_c.connected && _c.roots.length > 1)
               IconButton(
-                tooltip: '排序项目',
-                icon: const Icon(Icons.swap_vert_rounded),
-                onPressed: _openProjectOrderSheet,
+                tooltip: '屏幕共享',
+                icon: const Icon(Icons.desktop_windows_rounded),
+                onPressed: _c.connected ? _showScreenShare : null,
               ),
-            IconButton(
-              tooltip: '刷新',
-              icon: const Icon(Icons.refresh_rounded),
-              onPressed: _c.connected ? _c.refresh : null,
-            ),
-            if (widget.onLogout != null || widget.onSwitchAccount != null)
+              IconButton(
+                tooltip: '通知',
+                icon: Badge(
+                  isLabelVisible: _c.unreadNotices > 0,
+                  label: Text('${_c.unreadNotices}'),
+                  child: const Icon(Icons.notifications_none_rounded),
+                ),
+                onPressed: _showNotices,
+              ),
+              if (_c.connected && _c.roots.length > 1)
+                IconButton(
+                  tooltip: '排序项目',
+                  icon: const Icon(Icons.swap_vert_rounded),
+                  onPressed: _openProjectOrderSheet,
+                ),
+              IconButton(
+                tooltip: '刷新',
+                icon: const Icon(Icons.refresh_rounded),
+                onPressed: _c.connected ? _c.refresh : null,
+              ),
               PopupMenuButton<String>(
-                tooltip: '账号',
-                icon: const Icon(Icons.account_circle_rounded),
+                tooltip: '显示设置',
+                icon: const Icon(Icons.tune_rounded),
                 onSelected: (v) {
-                  if (v == 'switch') widget.onSwitchAccount?.call();
-                  if (v == 'logout') widget.onLogout?.call();
+                  if (v == 'content') {
+                    _setShowSessionContent(!showSessionContent);
+                  }
                 },
                 itemBuilder: (_) => [
-                  if (widget.onSwitchAccount != null)
-                    ccMenuItem(
-                      value: 'switch',
-                      icon: Icons.switch_account_rounded,
-                      label: '切换账号',
-                    ),
-                  if (widget.onLogout != null)
-                    ccMenuItem(
-                      value: 'logout',
-                      icon: Icons.logout_rounded,
-                      label: '登出',
-                    ),
+                  CheckedPopupMenuItem<String>(
+                    value: 'content',
+                    checked: showSessionContent,
+                    child: const Text('显示会话内容'),
+                  ),
                 ],
               ),
-          ],
-        ),
-        floatingActionButton: (_tab == 0 && _c.connected)
-            ? FloatingActionButton.small(
-                onPressed: _newSessionDialog,
-                tooltip: '新建会话',
-                child: const Icon(Icons.add),
-              )
-            : null,
-        body: Column(
-          children: [
-            _statusBanner(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 0, label: Text('会话')),
-                  ButtonSegment(value: 1, label: Text('代码')),
-                  ButtonSegment(value: 2, label: Text('Git')),
-                  ButtonSegment(value: 3, label: Text('管理')),
-                ],
-                selected: {_tab},
-                showSelectedIcon: false,
-                onSelectionChanged: (s) => setState(() => _tab = s.first),
+              if (widget.onLogout != null || widget.onSwitchAccount != null)
+                PopupMenuButton<String>(
+                  tooltip: '账号',
+                  icon: const Icon(Icons.account_circle_rounded),
+                  onSelected: (v) {
+                    if (v == 'switch') widget.onSwitchAccount?.call();
+                    if (v == 'logout') widget.onLogout?.call();
+                  },
+                  itemBuilder: (_) => [
+                    if (widget.onSwitchAccount != null)
+                      ccMenuItem(
+                        value: 'switch',
+                        icon: Icons.switch_account_rounded,
+                        label: '切换账号',
+                      ),
+                    if (widget.onLogout != null)
+                      ccMenuItem(
+                        value: 'logout',
+                        icon: Icons.logout_rounded,
+                        label: '登出',
+                      ),
+                  ],
+                ),
+            ],
+          ),
+          floatingActionButton: (_tab == 0 && _c.connected)
+              ? FloatingActionButton.small(
+                  onPressed: _newSessionDialog,
+                  tooltip: '新建会话',
+                  child: const Icon(Icons.add),
+                )
+              : null,
+          body: Column(
+            children: [
+              _statusBanner(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('会话')),
+                    ButtonSegment(value: 1, label: Text('代码')),
+                    ButtonSegment(value: 2, label: Text('Git')),
+                    ButtonSegment(value: 3, label: Text('管理')),
+                  ],
+                  selected: {_tab},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (s) => setState(() => _tab = s.first),
+                ),
               ),
-            ),
-            Expanded(
-              child: _tab == 0
-                  ? _sessionsTab()
-                  : _tab == 1
-                  ? _codeTab()
-                  : _tab == 2
-                  ? _gitTab()
-                  : _manageTab(),
-            ),
-          ],
-        ),
-      ),
+              Expanded(
+                child: _tab == 0
+                    ? _sessionsTab(showSessionContent: showSessionContent)
+                    : _tab == 1
+                    ? _codeTab()
+                    : _tab == 2
+                    ? _gitTab()
+                    : _manageTab(),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -738,7 +766,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     );
   }
 
-  Widget _sessionsTab() {
+  Widget _sessionsTab({required bool showSessionContent}) {
     if (_c.sessions.isEmpty) {
       return centerMsg('没有会话。\n点右下角 + 可新建 Shell / Claude / Codex / 总管会话。');
     }
@@ -778,7 +806,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 ),
               )
             else
-              _sessionCardWrap(ss, root: fp),
+              _sessionCardWrap(
+                ss,
+                root: fp,
+                showSessionContent: showSessionContent,
+              ),
           ],
         );
       }
@@ -810,13 +842,25 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           ),
         );
         if (!collapsed) {
-          children.add(_sessionCardWrap(ss, root: p));
+          children.add(
+            _sessionCardWrap(
+              ss,
+              root: p,
+              showSessionContent: showSessionContent,
+            ),
+          );
         }
       }
     }
     if (orphans.isNotEmpty) {
       children.add(_gitSection('其他'));
-      children.add(_sessionCardWrap(orphans, root: null));
+      children.add(
+        _sessionCardWrap(
+          orphans,
+          root: null,
+          showSessionContent: showSessionContent,
+        ),
+      );
     }
     return ListView(children: children);
   }
@@ -959,7 +1003,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   // _sessionCardWrap lays a project/worktree group's sessions out as a flowing
   // grid of glanceable cards (1 col on a phone, 2 on a wider tablet/landscape).
-  Widget _sessionCardWrap(List<RemoteSession> ss, {RemoteRootInfo? root}) {
+  Widget _sessionCardWrap(
+    List<RemoteSession> ss, {
+    RemoteRootInfo? root,
+    required bool showSessionContent,
+  }) {
     final w = MediaQuery.of(context).size.width;
     final cols = w >= 720 ? 2 : 1;
     final cardW = (w - 12 * 2 - (cols - 1) * 10) / cols;
@@ -968,7 +1016,15 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       child: Wrap(
         spacing: 10,
         runSpacing: 10,
-        children: [for (final s in ss) _sessionCard(s, cardW, root: root)],
+        children: [
+          for (final s in ss)
+            _sessionCard(
+              s,
+              cardW,
+              root: root,
+              showSessionContent: showSessionContent,
+            ),
+        ],
       ),
     );
   }
@@ -977,7 +1033,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   // pushed an overview snapshot) status dot + token usage + a preview of the
   // agent's latest reply. Tapping opens the full-screen mirrored terminal, same
   // as before. Degrades gracefully (title + path only) until overview arrives.
-  Widget _sessionCard(RemoteSession s, double width, {RemoteRootInfo? root}) {
+  Widget _sessionCard(
+    RemoteSession s,
+    double width, {
+    RemoteRootInfo? root,
+    required bool showSessionContent,
+  }) {
     final ov = _c.overview[s.sid];
     final inWorktree = root != null && s.workdir != root.path;
     String? sub;
@@ -989,6 +1050,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           ? rel.substring('.worktrees/'.length)
           : rel;
     }
+    final status =
+        ov?.status ??
+        (s.agent.isNotEmpty ? SessionStatus.idle : SessionStatus.shell);
     return SizedBox(
       width: width,
       child: BreathingGlow(
@@ -1001,7 +1065,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             children: [
               Row(
                 children: [
-                  sessionAvatar(seed: s.sid, isAgent: s.agent.isNotEmpty),
+                  SessionActivityAvatar(
+                    seed: s.sid,
+                    isAgent: s.agent.isNotEmpty,
+                    status: status,
+                    size: 26,
+                  ),
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(
@@ -1065,11 +1134,13 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 sessionStatusRow(
                   ov.status,
                   ov.usageLabel,
-                  statusDetail: ov.statusDetail,
+                  statusDetail: showSessionContent ? ov.statusDetail : '',
                 ),
               ],
-              const SizedBox(height: 8),
-              sessionPreviewBox(ov?.preview ?? ''),
+              if (showSessionContent) ...[
+                const SizedBox(height: 8),
+                sessionPreviewBox(ov?.preview ?? ''),
+              ],
             ],
           ),
         ),
@@ -2655,14 +2726,21 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ov = widget.client.overview[widget.session.sid];
+    final status =
+        ov?.status ??
+        (widget.session.agent.isNotEmpty
+            ? SessionStatus.idle
+            : SessionStatus.shell);
     _updateDefaultViewport(context);
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            sessionAvatar(
+            SessionActivityAvatar(
               seed: widget.session.sid,
               isAgent: widget.session.agent.isNotEmpty,
+              status: status,
               size: 24,
             ),
             const SizedBox(width: 8),
@@ -4123,6 +4201,11 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   @override
   Widget build(BuildContext context) {
     final ov = widget.client.overview[_sid];
+    final status =
+        ov?.status ??
+        (widget.session.agent.isNotEmpty
+            ? SessionStatus.idle
+            : SessionStatus.shell);
     return Dialog(
       insetPadding: const EdgeInsets.all(16),
       child: Padding(
@@ -4133,9 +4216,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
           children: [
             Row(
               children: [
-                sessionAvatar(
+                SessionActivityAvatar(
                   seed: _sid,
                   isAgent: widget.session.agent.isNotEmpty,
+                  status: status,
                   size: 24,
                 ),
                 const SizedBox(width: 9),

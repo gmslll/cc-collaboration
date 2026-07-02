@@ -1,4 +1,5 @@
 import 'package:app/local/session_overview.dart';
+import 'package:app/screens/session_overview_page.dart';
 import 'package:app/screens/terminal_pane.dart';
 import 'package:app/widgets.dart';
 import 'package:flutter/material.dart';
@@ -56,25 +57,64 @@ void main() {
   });
 
   group('SessionActivityAvatar', () {
-    testWidgets('renders calm states without error (idle / needs-review / shell)',
-        (tester) async {
-      for (final (status, isAgent) in [
-        (SessionStatus.idle, true),
-        (SessionStatus.needsReview, true), // steady attention dot, no pulse
-        (SessionStatus.shell, false),
-      ]) {
-        await pumpAvatar(tester, status, isAgent: isAgent);
-        expect(find.byType(SessionActivityAvatar), findsOneWidget);
-      }
-    });
+    testWidgets(
+      'renders calm states without error (idle / needs-review / shell)',
+      (tester) async {
+        for (final (status, isAgent) in [
+          (SessionStatus.idle, true),
+          (SessionStatus.needsReview, true), // steady attention dot, no pulse
+          (SessionStatus.shell, false),
+        ]) {
+          await pumpAvatar(tester, status, isAgent: isAgent);
+          expect(find.byType(SessionActivityAvatar), findsOneWidget);
+        }
+      },
+    );
 
-    testWidgets('working state animates (pulsing halo) and cleans up its ticker',
-        (tester) async {
-      await pumpAvatar(tester, SessionStatus.working);
-      expect(find.byType(SessionActivityAvatar), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 300)); // advance the pulse
-      expect(find.byType(SessionActivityAvatar), findsOneWidget);
-      // Dispose so the repeating animation ticker doesn't outlive the test.
+    testWidgets(
+      'working state animates (pulsing halo) and cleans up its ticker',
+      (tester) async {
+        await pumpAvatar(tester, SessionStatus.working);
+        expect(find.byType(SessionActivityAvatar), findsOneWidget);
+        await tester.pump(
+          const Duration(milliseconds: 300),
+        ); // advance the pulse
+        expect(find.byType(SessionActivityAvatar), findsOneWidget);
+        // Dispose so the repeating animation ticker doesn't outlive the test.
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets('session overview cards use the dynamic activity avatar', (
+      tester,
+    ) async {
+      final store = SessionOverviewStore()
+        ..publish(const [
+          SessionCard(
+            sid: 'ts9',
+            label: 'claude',
+            agentKind: 'claude',
+            isAgent: true,
+            workspace: 'ws',
+            project: 'repo',
+            worktree: null,
+            status: SessionStatus.working,
+            usageLabel: null,
+            preview: 'working',
+          ),
+        ]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SessionOverviewPage(store: store, onOpenSession: (_) {}),
+          ),
+        ),
+      );
+      final avatar = tester.widget<SessionActivityAvatar>(
+        find.byType(SessionActivityAvatar),
+      );
+      expect(avatar.size, 26);
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.pumpWidget(const SizedBox());
     });
   });
