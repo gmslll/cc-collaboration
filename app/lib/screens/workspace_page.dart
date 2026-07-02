@@ -8525,10 +8525,18 @@ class _WorkspacePageState extends State<WorkspacePage>
               contentPadding: const EdgeInsets.only(left: 12, right: 2),
               horizontalTitleGap: 8,
               selected: active,
-              leading: sessionAvatar(
-                seed: e.s.id,
-                isAgent: e.s.isAgent,
-                size: 20,
+              // Live status avatar: rebuilds on the session's activity transitions
+              // (busy / needs-review, via activityRev) so it pulses while working
+              // and shows a status-coloured badge (idle / waiting / done) at rest —
+              // same status the 会话总览 shows (_statusFor), now on the tree node too.
+              leading: ValueListenableBuilder<int>(
+                valueListenable: e.s.activityRev,
+                builder: (_, _, _) => SessionActivityAvatar(
+                  seed: e.s.id,
+                  isAgent: e.s.isAgent,
+                  status: _statusFor(e.s, _latestHookActivity(e.s)),
+                  size: 20,
+                ),
               ),
               title: Text(
                 display,

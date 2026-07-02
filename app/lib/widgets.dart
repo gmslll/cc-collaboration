@@ -825,6 +825,112 @@ Widget sessionAvatar({
         ),
       );
 
+// SessionActivityAvatar wraps sessionAvatar with a LIVE activity indicator for the
+// workspace session tree, so you can tell at a glance whether an AI session is
+// working, idle, or done. It adds a small status-coloured badge dot in the lower-
+// right (idle / waiting / needs-review / working, via sessionStatusStyle) and —
+// while the session is actively working — a soft breathing glow behind the whole
+// avatar so a busy session visibly pulses; calm states stay static. Honours reduce-
+// motion (a steady glow, no pulse). Rebuild it by wrapping in a ValueListenableBuilder
+// on the session's activityRev (which bumps on every busy / needs-review transition).
+class SessionActivityAvatar extends StatefulWidget {
+  final String seed;
+  final bool isAgent;
+  final SessionStatus status;
+  final double size;
+  const SessionActivityAvatar({
+    super.key,
+    required this.seed,
+    required this.isAgent,
+    required this.status,
+    this.size = 20,
+  });
+
+  @override
+  State<SessionActivityAvatar> createState() => _SessionActivityAvatarState();
+}
+
+class _SessionActivityAvatarState extends State<SessionActivityAvatar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = sessionStatusStyle(widget.status);
+    final active = sessionStatusIsActive(widget.status); // working / running / …
+    final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final animate = active && !reduce;
+    // Start/stop the repeat in build (same pattern as BreathingGlow) so the pulse
+    // only runs while the session is working — zero animation cost when idle.
+    if (animate) {
+      if (!_c.isAnimating) _c.repeat(reverse: true);
+    } else if (_c.isAnimating) {
+      _c.stop();
+    }
+    final glyph = sessionAvatar(
+      seed: widget.seed,
+      isAgent: widget.isAgent,
+      size: widget.size,
+    );
+    final badge = widget.size * 0.4;
+    // The badge sits on a panel-coloured ring so it reads against the avatar tile.
+    // It glows only for a static attention state (needs-review) — while working the
+    // surrounding halo already pulses, so the dot itself stays solid.
+    final badgeDot = Container(
+      padding: const EdgeInsets.all(1.4),
+      decoration: const BoxDecoration(
+        color: CcColors.panel,
+        shape: BoxShape.circle,
+      ),
+      child: statusDot(st.color, size: badge, glow: st.glow && !active),
+    );
+    final radius = BorderRadius.circular(widget.size * 0.28);
+    return SizedBox(
+      width: widget.size,
+      height: widget.size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          if (active)
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _c,
+                builder: (_, _) {
+                  // Breathing 0→1→0 while animating; a steady mid-glow otherwise
+                  // (reduce-motion), so a working session still stands out.
+                  final p = animate ? _c.value : 0.55;
+                  return DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: radius,
+                      boxShadow: [
+                        BoxShadow(
+                          color: st.color.withValues(alpha: 0.16 + 0.42 * p),
+                          blurRadius: 3 + 7 * p,
+                          spreadRadius: 0.4 + 1.4 * p,
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          glyph,
+          Positioned(right: 0, bottom: 0, child: badgeDot),
+        ],
+      ),
+    );
+  }
+}
+
 class RobotAvatar extends StatelessWidget {
   final String seed;
   final double size;

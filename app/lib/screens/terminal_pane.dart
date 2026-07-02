@@ -150,10 +150,28 @@ class TerminalSession {
   // _setBusy so every busy transition (local input, remote input, finishing
   // bell) emits exactly once.
   void Function(TerminalSession session)? onBusyChanged;
+  // activityRev bumps on every activity-state transition (busy start/finish,
+  // needsReview set/clear) so a lightweight ValueListenableBuilder — the workspace
+  // session-tree avatar — can rebuild its live status glyph without the whole
+  // workspace calling setState per turn. It's a revision counter, not the state
+  // itself: the listener re-reads busy/needsReview/status on each bump.
+  final ValueNotifier<int> activityRev = ValueNotifier(0);
+  void _bumpActivity() {
+    if (!_disposed) activityRev.value++;
+  }
+
   // needsReview = this agent finished a user-kicked turn and hasn't been opened
   // since (set in _fireDone, cleared by the workspace when the session is made
-  // active). Drives the overview's "待 review" highlight.
-  bool needsReview = false;
+  // active / watched remotely / previewed in the overview). Drives the overview's
+  // and the tree avatar's "待 review" highlight — a notifying setter so those
+  // views update the instant it flips.
+  bool _needsReview = false;
+  bool get needsReview => _needsReview;
+  set needsReview(bool v) {
+    if (_needsReview == v) return;
+    _needsReview = v;
+    _bumpActivity();
+  }
   // overviewPreview caches the last computed glance preview (agent transcript
   // tail / terminal tail) so each overview broadcast reuses it instead of
   // re-reading the log. Refreshed by the workspace on turn boundaries.
@@ -307,6 +325,7 @@ class TerminalSession {
       _usageTicker?.cancel();
       _usageTicker = null;
     }
+    _bumpActivity(); // working↔idle transition → refresh the tree avatar's glyph
     onBusyChanged?.call(this);
   }
 
@@ -1048,6 +1067,7 @@ class TerminalSession {
     _usageTicker?.cancel();
     _bootSettleTimer?.cancel();
     _bootCapTimer?.cancel();
+    activityRev.dispose();
     usage.dispose();
     controller.dispose();
     ghostty?.dispose();
