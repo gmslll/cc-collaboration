@@ -6,6 +6,32 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-02
+
+### Added
+
+- **Git Log 三栏 JetBrains 式右键菜单** — 底部 Git Log 的左(分支树)、中(commit 列表)、右(diff 文件树)三栏全部补齐右键菜单,并接真 git:分支的 New Branch / Rename / Update / Push / Compare;commit 的 Copy Revision / Cherry-Pick / Checkout / Reset(soft·mixed·hard)/ Revert / Reword / Fixup·Squash / Drop / Push up to Here / New Branch·Tag / Open on GitHub;diff 文件的 Show Diff / Compare with Local / Revert·Cherry-Pick Selected / Create Patch / History 等。
+- **跳转到定义 (go-to-definition)** — 编辑器里 Cmd/Ctrl+点击标识符(或 F12 / Cmd+B)跳到定义:Go(gopls)、Dart(dart language-server)走 LSP 精确跳转,其余语言用内建正则符号索引兜底;可在「代码跳转(LSP)」插件面板按语言配置服务器命令/路径(自动探测 + 手填)。
+- **Commit 面板 JetBrains 式改造** — 改动文件单棵「Changes」树 + per-file 右键菜单(Commit File / Rollback / Show Diff / Jump to Source / Delete / Add to VCS / Create·Copy Patch / Shelve / Git▸);顶部仓库切换器;文件按变更类型上色 + 类型图标;Commit / Commit&Push 合并为一个智能按钮;提交消息框加大为多行编辑器。
+- **Branches 弹窗** — 分支按路径折叠成文件树,所有分支操作收进右键 / ⋮ 菜单。
+- **会话树动态状态头像** — 头像随会话状态变化(工作中呼吸光晕、待查看琥珀点、休眠 dim)。
+- **Stash 内联 composer** — 一键 Stash All + 命名 + 含未跟踪 toggle,风格对齐提交框。
+- **`cc-handoff commit` 安全原子提交子命令** — 多会话共享同一工作树时,用独立 GIT_INDEX_FILE + flock + 在 origin/main 上 commit-tree + 原子 FF 推,避免共享 index/HEAD 竞态。
+
+### Changed
+
+- **弹出菜单全局调密** — 行高、图标、字号整体缩小(约 24px / 11pt),所有菜单统一走 `ccMenuItem`;Commit 面板工具栏也改为 JetBrains 密度。
+
+### Fixed
+
+- **休眠会话收不到总线消息** — 向未启动 / 正在启动的会话投递时会静默丢失(消息写进空 PTY);现在自动唤醒该会话、等启动静默后再投递并提交,任务下发不再依赖标签页是否可见。
+- **会话 preview / transcript 串味** — 休眠会话(有 id 但日志未落盘)不再借用同目录兄弟会话的日志,消除 preview / usage / read 串到邻座。
+- **「待 review」状态清除** — 通过手机 / web 远程查看、或会话总栏弹窗预览,也会清除「已完成,等待查看」,不再只有本地切到前台才清。
+- **Branches 弹窗白屏 + 点未跟踪目录崩溃** — 修复分支名与文件夹前缀同名(如本地 origin 与远程 origin/main)时的树构建崩溃,以及点开未跟踪目录时的 "Is a directory" 崩溃。
+- **Create / Copy Patch 对二进制与重命名文件可用** — 导出的 patch 现在带 `--binary` 且正确包含重命名的增删两侧,可被 `git apply` 回放。
+- **gopls / dart 语言服务器探测** — 通过交互式登录 shell(-ilc)读取 PATH,修复"装了 gopls 却检测不到"。
+- **工作区折叠状态持久化** — 切到 git / 其它页面再回来不再丢失折叠状态。
+
 ## [0.8.0] - 2026-07-02
 
 ### Added
