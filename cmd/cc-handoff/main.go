@@ -55,6 +55,8 @@ func main() {
 		err = runOnline(ctx, args)
 	case "msg":
 		err = runMsg(ctx, args)
+	case "todo":
+		err = runTodo(ctx, args)
 	case "supervisor":
 		err = runSupervisor(ctx, args)
 	case "commit":
@@ -122,6 +124,8 @@ Both sides:
   cc-handoff msg          list | send <target> <text...> [--no-submit] | read <target> [--lines N] [--json] | whoami
                                                         local point-to-point messaging between sibling app sessions (no relay; run inside an app-spawned terminal)
                                                         read = pull a plain-text snapshot of another session's screen
+  cc-handoff todo         create <title> [...] | list [...] | get <id> | status <id> <status> | assign <id> <identity> [...] | comment <id> <body...>
+                                                        personal/team todos synced via the relay (scripted fallback; AI sessions normally use the MCP todo tools)
   cc-handoff supervisor   init | context | overview | queue | read <target> | send <target> <text...> | decide [--dir DIR] <title> <body...>
                                                         supervisor-agent helpers over the same local session bus + repo knowledge files
   cc-handoff ui           [--open] [--show-token]       print/open the relay management UI
