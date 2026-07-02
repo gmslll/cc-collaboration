@@ -2,14 +2,20 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../path_utils.dart';
+import '../prefs.dart';
+import '../shell.dart';
+import 'lsp_plugin.dart';
 
 // Phase-2 go-to-definition backend: a minimal JSON-RPC-over-stdio LSP client.
-// Speaks to per-language servers (gopls for Go, the Dart analysis server for
-// Dart). Everything is best-effort — any failure (server missing, timeout, bad
-// response) surfaces as an empty result so the caller falls back to the regex
-// symbol index. Process lifecycle is owned here so we never leak a language
-// server (shutdown + exit + kill on dispose).
+// Speaks to the per-language servers configured in the LSP plugin catalog
+// (lsp_plugin.dart); which command each language uses is user-configurable and
+// probed on the login PATH. Everything is best-effort — any failure (server
+// missing/disabled, timeout, bad response) surfaces as an empty result so the
+// caller falls back to the regex symbol index. Process lifecycle is owned here
+// so we never leak a language server (shutdown + exit + kill on dispose).
 
 // LspLocation is a resolved definition site: [path] on disk + [line] (1-based,
 // ready for _openCodeFile).
@@ -19,25 +25,6 @@ class LspLocation {
   const LspLocation(this.path, this.line);
 }
 
-// _LangServer is how to launch and speak to the language server for one file
-// type: the [command] to run (resolved on the login-shell PATH), its [args], and
-// the LSP [languageId] to tag opened documents with.
-class _LangServer {
-  final String command;
-  final List<String> args;
-  final String languageId;
-  const _LangServer(this.command, this.args, this.languageId);
-}
-
-// Supported languages. Each server is probed on demand; when its command isn't
-// installed the caller falls back to the regex index. gopls shells out to `go`,
-// the Dart analysis server ships with the Dart/Flutter SDK — both are found via
-// the injected login PATH.
-const _langServers = <String, _LangServer>{
-  'go': _LangServer('gopls', [], 'go'),
-  'dart': _LangServer('dart', ['language-server', '--protocol=lsp'], 'dart'),
-};
-
 String _extOf(String path) {
   final base = pathBaseName(path);
   final dot = base.lastIndexOf('.');
@@ -46,7 +33,7 @@ String _extOf(String path) {
 
 // LspManager is the app-wide singleton: it probes each language server on demand,
 // keeps one server process per (root, language), and answers definition queries.
-class LspManager {
+class LspManager extends ChangeNotifier {
   LspManager._();
   static final LspManager instance = LspManager._();
 
@@ -60,9 +47,71 @@ class LspManager {
   // One server per (root, command).
   final Map<(String, String), _LspServer> _servers = {};
 
-  // supportsExtension is true when [ext] has a configured language server, so the
-  // caller can route it here instead of straight to the regex index.
-  static bool supportsExtension(String ext) => _langServers.containsKey(ext);
+  // _pluginForExt returns the catalog entry that handles [ext], or null.
+  static LspServerPlugin? _pluginForExt(String ext) {
+    for (final p in kLspServers) {
+      if (p.exts.contains(ext)) return p;
+    }
+    return null;
+  }
+
+  // supportsExtension is true when [ext] has an ENABLED language server, so the
+  // caller routes it here instead of straight to the regex index; a disabled
+  // language returns false → regex fallback.
+  static bool supportsExtension(String ext) {
+    final p = _pluginForExt(ext);
+    return p != null && Prefs.getBool('lsp.${p.id}.enabled', def: true);
+  }
+
+  // ---- config (Prefs-backed) + detection, for the settings panel ----
+
+  final Map<String, bool> _available = {}; // id -> command found on PATH
+
+  bool enabled(String id) => Prefs.getBool('lsp.$id.enabled', def: true);
+  void setEnabled(String id, bool value) {
+    Prefs.setBool('lsp.$id.enabled', value);
+    notifyListeners();
+  }
+
+  // commandFor is the user's override (lsp.<id>.cmd) or the catalog default.
+  String commandFor(LspServerPlugin p) {
+    final override = Prefs.getString('lsp.${p.id}.cmd', def: '').trim();
+    return override.isEmpty ? p.command : override;
+  }
+
+  // setCommand records a custom command/path for [id], dropping the stale probe
+  // + any running server for it so the next jump uses the new command.
+  void setCommand(String id, String command) {
+    Prefs.setString('lsp.$id.cmd', command.trim());
+    _cmdPaths.clear();
+    _available.remove(id);
+    final gone = <(String, String)>[];
+    _servers.forEach((k, s) {
+      if (k.$2 == id) {
+        s.dispose();
+        gone.add(k);
+      }
+    });
+    for (final k in gone) {
+      _servers.remove(k);
+    }
+    notifyListeners();
+  }
+
+  // detected(id) is true when the configured command was found on PATH by the
+  // last detectAll().
+  bool detected(String id) => _available[id] ?? false;
+
+  // detectAll probes each server's configured command on the login PATH — the
+  // settings panel calls it on open / refresh.
+  Future<void> detectAll({bool force = false}) async {
+    if (force) _cmdPaths.clear();
+    for (final p in kLspServers) {
+      final exe = await _resolveCmd(commandFor(p));
+      _available[p.id] = exe != null;
+    }
+    notifyListeners();
+  }
 
   // _resolveCmd finds [command] on the login-shell PATH AND captures that PATH
   // (so a spawned server can find its toolchain). Cached per command. Sentinels
@@ -84,7 +133,7 @@ class LspManager {
           Platform.environment['SHELL'] ?? '/bin/sh',
           [
             '-lc',
-            'printf "__CMD__%s\\n__PATH__%s\\n" "\$(command -v $command || true)" "\$PATH"',
+            'printf "__CMD__%s\\n__PATH__%s\\n" "\$(command -v ${shQuote(command)} || true)" "\$PATH"',
           ],
         );
         for (final line in (res.stdout as String).split('\n')) {
@@ -114,12 +163,12 @@ class LspManager {
     required int character,
   }) async {
     try {
-      final spec = _langServers[_extOf(filePath)];
-      if (spec == null) return const [];
-      final exe = await _resolveCmd(spec.command);
+      final p = _pluginForExt(_extOf(filePath));
+      if (p == null || !enabled(p.id)) return const [];
+      final exe = await _resolveCmd(commandFor(p));
       if (exe == null) return const [];
-      final server = _servers[(root, spec.command)] ??=
-          _LspServer(exe, spec.args, spec.languageId, root, _pathEnv);
+      final server = _servers[(root, p.id)] ??=
+          _LspServer(exe, p.argsFor(root), p.languageId, root, _pathEnv);
       return await server
           .definition(filePath, text, line, character)
           .timeout(const Duration(seconds: 5), onTimeout: () => const []);
