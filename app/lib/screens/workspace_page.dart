@@ -625,7 +625,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   double _detailWidth = Prefs.getDouble('ws.detailWidth', def: 520);
   double _terminalHeight = Prefs.getDouble('ws.terminalHeight', def: 360);
   double _logBranchWidth = Prefs.getDouble('ws.logBranchWidth', def: 240);
-  double _logCommitWidth = Prefs.getDouble('ws.logCommitWidth', def: 480);
+  double _logDiffWidth = Prefs.getDouble('ws.logDiffWidth', def: 340);
   final Set<String> _logBranchExpanded = {};
   final Set<String> _logBranchGroupsCollapsed = {};
   // shared comfortable-but-compact density for the tree's leaf rows.
@@ -5639,10 +5639,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    p.name,
-                    style: CcType.code(size: 11.5, color: CcColors.muted),
-                  ),
+                  _repoSwitcher(p),
                   const SizedBox(width: 8),
                   _branchButton(status?.branch ?? 'branch'),
                   if (status != null &&
@@ -6170,6 +6167,48 @@ class _WorkspacePageState extends State<WorkspacePage>
     }).toList();
   }
 
+  // _repoSwitcher turns the git-panel repo name into a dropdown that switches the
+  // active git project/repo (every project across all workspaces).
+  Widget _repoSwitcher(ProjectCfg current) {
+    final projects = [
+      for (final ws in _cfg.workspaces)
+        for (final proj in ws.projects) proj,
+    ];
+    return PopupMenuButton<String>(
+      tooltip: '切换仓库',
+      position: PopupMenuPosition.under,
+      onSelected: (path) {
+        if (path == current.path) return;
+        final proj = projects.where((p) => p.path == path).firstOrNull;
+        if (proj != null) _selectGitProject(proj);
+      },
+      itemBuilder: (_) => [
+        for (final proj in projects)
+          ccMenuItem(
+            value: proj.path,
+            icon: proj.path == current.path
+                ? Icons.check_rounded
+                : Icons.folder_outlined,
+            label: proj.name,
+          ),
+      ],
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            current.name,
+            style: CcType.code(size: 11.5, color: CcColors.muted),
+          ),
+          const Icon(
+            Icons.arrow_drop_down_rounded,
+            size: 16,
+            color: CcColors.subtle,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _gitLogView(ProjectCfg p) {
     if (_gitLog.isEmpty) return centerMsg('没有 commit');
     final authors = _gitLog.map((c) => c.author).toSet().toList()
@@ -6202,8 +6241,7 @@ class _WorkspacePageState extends State<WorkspacePage>
           min: 180,
           max: 360,
         ),
-        SizedBox(
-          width: _logCommitWidth,
+        Expanded(
           child: DecoratedBox(
             decoration: const BoxDecoration(color: CcColors.panel),
             child: Column(
@@ -6270,13 +6308,15 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         ),
         resizeHandle(
-          prefKey: 'ws.logCommitWidth',
-          get: () => _logCommitWidth,
-          set: (v) => setState(() => _logCommitWidth = v),
-          min: 340,
-          max: 720,
+          prefKey: 'ws.logDiffWidth',
+          get: () => _logDiffWidth,
+          set: (v) => setState(() => _logDiffWidth = v),
+          min: 240,
+          max: 640,
+          invert: true,
         ),
-        Expanded(
+        SizedBox(
+          width: _logDiffWidth,
           child: Column(
             children: [
               Container(
@@ -6313,40 +6353,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                           }),
                           child: const Text('Commit Log'),
                         ),
-                      if (selectedCommit != null) ...[
-                        TextButton.icon(
-                          onPressed: _gitLoading
-                              ? null
-                              : () => _copyCommitHash(selectedCommit),
-                          icon: const Icon(
-                            Icons.content_copy_rounded,
-                            size: 14,
-                          ),
-                          label: const Text('Copy'),
-                        ),
-                        TextButton.icon(
-                          onPressed: _gitLoading
-                              ? null
-                              : () =>
-                                    _createBranchFromCommit(p, selectedCommit),
-                          icon: const Icon(Icons.call_split_rounded, size: 14),
-                          label: const Text('Branch'),
-                        ),
-                        TextButton.icon(
-                          onPressed: _gitLoading
-                              ? null
-                              : () => _compareCommitWithWorking(
-                                  p,
-                                  selectedCommit,
-                                ),
-                          icon: const Icon(
-                            Icons.compare_arrows_rounded,
-                            size: 14,
-                          ),
-                          label: const Text('Working Tree'),
-                        ),
+                      if (selectedCommit != null)
                         _commitActionsMenu(p, selectedCommit),
-                      ],
                     ]),
                   ],
                 ),
@@ -6650,11 +6658,6 @@ class _WorkspacePageState extends State<WorkspacePage>
                       ),
                     ),
                   ],
-                  SizedBox(
-                    width: 26,
-                    height: 26,
-                    child: _commitActionsMenu(p, c, compact: true),
-                  ),
                 ],
               ),
             ),
@@ -7070,7 +7073,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             child: Row(
               children: [
                 Icon(
-                  Icons.description_outlined,
+                  _fileTypeIcon(f.path),
                   size: 15,
                   color: _diffStatusColor(f.status),
                 ),
@@ -7097,8 +7100,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   Color _diffStatusColor(String status) => switch (status) {
     'added' => CcColors.ok,
     'deleted' => CcColors.danger,
-    'renamed' => CcColors.warning,
-    _ => CcColors.muted,
+    'renamed' => CcColors.accent,
+    'modified' => CcColors.warning,
+    _ => CcColors.warning,
   };
 
   Widget _commitActionsMenu(
