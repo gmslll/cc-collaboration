@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/sse.dart';
+import '../file_icons.dart';
 import '../fs_clipboard.dart';
 import '../local/cli.dart';
 import '../local/agent_transcript.dart';
@@ -602,8 +603,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       Prefs.getString('ws.bottomTool', def: 'terminal') == 'git'
       ? _BottomTool.git
       : _BottomTool.terminal;
-  // Collapse state for the single "Changes N files" tree root in the Commit panel.
+  // Collapse state for the Commit panel's two JetBrains-style tree roots:
+  // tracked "Changes N files" and untracked "Unversioned Files N files".
   bool _changesTreeCollapsed = false;
+  bool _untrackedTreeCollapsed = false;
   final _structureQueryCtl = TextEditingController();
   final _workspaceFocus = FocusNode(debugLabel: 'workspace-shell');
   final _commitFocus = FocusNode(debugLabel: 'commit-message');
@@ -5766,37 +5769,64 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  // The Commit tool window's change list — a single JetBrains-style "Changes N
-  // files" tree (one collapsible root + indented file rows). Repo-level actions
-  // (Stage All / Push / Pull / Fetch / Branches) live in _leftGitActionBar above;
-  // per-file actions are on the row's ⋮ / right-click menu; filtering is the tree
-  // header's funnel — so this stays chrome-light to match the reference.
+  // The Commit tool window's change list — two JetBrains-style collapsible
+  // groups ("Changes N files" for tracked edits, "Unversioned Files N files"
+  // for untracked paths), each with its own tristate group checkbox + indented
+  // file rows. Repo-level actions (Stage All / Push / Pull / Fetch / Branches)
+  // live in _leftGitActionBar above; per-file actions are on the row's ⋮ /
+  // right-click menu; a shared toolbar row above both groups carries the
+  // contextual Stage/Unstage/Rollback/Stash cluster + the filter funnel.
   Widget _localChangesList(ProjectCfg p) {
     final visible = _filteredGitChanges;
+    final tracked = visible.where((c) => !c.untracked).toList();
+    final untracked = visible.where((c) => c.untracked).toList();
     return DecoratedBox(
       decoration: const BoxDecoration(color: CcColors.panel),
       child: ListView(
         padding: const EdgeInsets.only(bottom: 8),
         children: [
-          _changesTreeRoot(p, visible),
-          if (!_changesTreeCollapsed)
-            if (visible.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(30, 12, 8, 12),
-                child: Text(
-                  _changesFilter == _ChangeFilter.all ? '没有变更' : '没有匹配的变更',
-                  style: CcType.code(size: 11.5, color: CcColors.subtle),
+          _changesToolbarRow(p, visible),
+          if (tracked.isEmpty && untracked.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(30, 12, 8, 12),
+              child: Text(
+                _changesFilter == _ChangeFilter.all ? '没有变更' : '没有匹配的变更',
+                style: CcType.code(size: 11.5, color: CcColors.subtle),
+              ),
+            )
+          else ...[
+            if (tracked.isNotEmpty) ...[
+              _changesGroupHeader(
+                title: 'Changes',
+                items: tracked,
+                collapsed: _changesTreeCollapsed,
+                onToggleCollapse: () => setState(
+                  () => _changesTreeCollapsed = !_changesTreeCollapsed,
                 ),
-              )
-            else
-              for (final c in visible) _changeTile(p, c),
+              ),
+              if (!_changesTreeCollapsed)
+                for (final c in tracked) _changeTile(p, c),
+            ],
+            if (untracked.isNotEmpty) ...[
+              _changesGroupHeader(
+                title: 'Unversioned Files',
+                items: untracked,
+                collapsed: _untrackedTreeCollapsed,
+                onToggleCollapse: () => setState(
+                  () => _untrackedTreeCollapsed = !_untrackedTreeCollapsed,
+                ),
+              ),
+              if (!_untrackedTreeCollapsed)
+                for (final c in untracked) _changeTile(p, c),
+            ],
+          ],
         ],
       ),
     );
   }
 
   // _changesToolBtn is one compact icon action (Stage / Unstage / Rollback /
-  // Stash the checked rows) shown in the tree header when a selection exists.
+  // Stash the checked rows) shown in the toolbar row when a selection exists.
   // Icon-only + tooltip; greys out when [onTap] is null.
   Widget _changesToolBtn({
     required IconData icon,
@@ -5813,14 +5843,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     color: onTap == null ? null : (danger ? CcColors.danger : CcColors.muted),
   );
 
-  // _changesTreeRoot is the single "▾ ☐ Changes  N files" header: the chevron
-  // collapses the list, the tristate checkbox selects/clears every visible row
-  // (which drives "Commit Selected"), a contextual Stage/Unstage/Rollback/Stash
-  // cluster appears while a selection exists, and the funnel filters by kind.
-  Widget _changesTreeRoot(ProjectCfg p, List<GitChange> visible) {
-    final allSel =
-        visible.isNotEmpty &&
-        visible.every((c) => _selectedChangePaths.contains(c.path));
+  // _changesToolbarRow sits above both tree groups: a contextual
+  // Stage/Unstage/Rollback/Stash cluster appears while a selection exists
+  // (counts span the full change set, like before the split), and the funnel
+  // filters by kind. Chevron/checkbox/title moved down into each group's own
+  // _changesGroupHeader.
+  Widget _changesToolbarRow(ProjectCfg p, List<GitChange> visible) {
     final someSel = visible.any((c) => _selectedChangePaths.contains(c.path));
     final stageable = _gitChanges
         .where((c) => _selectedChangePaths.contains(c.path) && c.unstaged)
@@ -5837,49 +5865,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       padding: const EdgeInsets.only(left: 4, right: 4),
       child: Row(
         children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(CcRadius.sm),
-            onTap: () =>
-                setState(() => _changesTreeCollapsed = !_changesTreeCollapsed),
-            child: Icon(
-              _changesTreeCollapsed
-                  ? Icons.chevron_right_rounded
-                  : Icons.expand_more_rounded,
-              size: 18,
-              color: CcColors.muted,
-            ),
-          ),
-          SizedBox(
-            width: 22,
-            height: 22,
-            child: Checkbox(
-              tristate: true,
-              value: allSel ? true : (someSel ? null : false),
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onChanged: visible.isEmpty
-                  ? null
-                  : (_) => setState(() {
-                      if (allSel) {
-                        _selectedChangePaths.removeAll(
-                          visible.map((c) => c.path),
-                        );
-                      } else {
-                        _selectedChangePaths.addAll(visible.map((c) => c.path));
-                      }
-                    }),
-            ),
-          ),
-          const SizedBox(width: 4),
-          const Text(
-            'Changes',
-            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '${_gitChanges.length} files',
-            style: CcType.code(size: 11, color: CcColors.subtle),
-          ),
           const Spacer(),
           if (someSel) ...[
             _changesToolBtn(
@@ -5919,6 +5904,71 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
           ],
           _changesFilterButton(),
+        ],
+      ),
+    );
+  }
+
+  // _changesGroupHeader is one "▾ ☐ <title>  N files" tree-root row: the
+  // chevron collapses that group's rows, the tristate checkbox selects/clears
+  // every row in [items] (which drives "Commit Selected") — mirrors the
+  // JetBrains "Changes" / "Unversioned Files" section headers.
+  Widget _changesGroupHeader({
+    required String title,
+    required List<GitChange> items,
+    required bool collapsed,
+    required VoidCallback onToggleCollapse,
+  }) {
+    final allSel =
+        items.isNotEmpty &&
+        items.every((c) => _selectedChangePaths.contains(c.path));
+    final someSel = items.any((c) => _selectedChangePaths.contains(c.path));
+    return Container(
+      height: 28,
+      color: CcColors.editorTabBar,
+      padding: const EdgeInsets.only(left: 4, right: 4),
+      child: Row(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(CcRadius.sm),
+            onTap: onToggleCollapse,
+            child: Icon(
+              collapsed
+                  ? Icons.chevron_right_rounded
+                  : Icons.expand_more_rounded,
+              size: 18,
+              color: CcColors.muted,
+            ),
+          ),
+          SizedBox(
+            width: 22,
+            height: 22,
+            child: Checkbox(
+              tristate: true,
+              value: allSel ? true : (someSel ? null : false),
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              onChanged: items.isEmpty
+                  ? null
+                  : (_) => setState(() {
+                      if (allSel) {
+                        _selectedChangePaths.removeAll(items.map((c) => c.path));
+                      } else {
+                        _selectedChangePaths.addAll(items.map((c) => c.path));
+                      }
+                    }),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '${items.length} files',
+            style: CcType.code(size: 11, color: CcColors.subtle),
+          ),
         ],
       ),
     );
@@ -6085,7 +6135,7 @@ class _WorkspacePageState extends State<WorkspacePage>
           onTap: () => _openWorkingTreeDiffTab(c.path),
           onDoubleTap: () => _openCodeFile('${p.path}/${c.path}'),
           child: Padding(
-            // Indent as a child of the "Changes" tree root.
+            // Indent as a child of its "Changes" / "Unversioned Files" group.
             padding: const EdgeInsets.only(left: 24, right: 2),
             child: SizedBox(
               height: 26,
@@ -6111,9 +6161,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                     ),
                   ),
                   const SizedBox(width: 6),
-                  // Same icon set as the project file tree, tinted by change
-                  // kind (green=staged, yellow=modified, blue=new, red=conflict).
-                  Icon(_iconForFile(c.path), size: 15, color: changeColor),
+                  // Same per-language file-type glyphs as the project file
+                  // tree (file_icons.dart), like the JetBrains change tree.
+                  fileSvg(fileIconAsset(c.path.split('/').last), size: 15),
                   const SizedBox(width: 7),
                   // Filename coloured by change kind + a small grey directory.
                   Expanded(
