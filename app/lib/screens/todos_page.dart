@@ -15,8 +15,45 @@ import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_lite_editor.dart';
 import '../widgets/todo_attachment_thumb.dart';
+import '../widgets/todo_card.dart';
 import '../widgets/todo_property_controls.dart';
 import 'todo_detail_view.dart';
+
+// The desktop/wide breakpoint (matches RemoteWorkspacePage's dual-pane vs
+// single-column threshold) — below this, TodosPage drops the board/list
+// split entirely and switches to a full-screen mobile card stream.
+const double _wideBreakpoint = 720;
+
+// _BoardColumnDef drives both the kanban board's columns and the mobile
+// card stream's collapsible groups, so they always agree on what "Backlog /
+// In Progress / Done / Cancelled" means — In Progress folds assigned +
+// in_progress + blocked together (TodoCard flags blocked with its own badge
+// so it never fully disappears into the crowd), and dropStatus is what a
+// card's status becomes when dropped into that column on the board.
+typedef _BoardColumnDef = ({
+  String title,
+  Set<TodoStatus> statuses,
+  TodoStatus dropStatus,
+});
+
+const List<_BoardColumnDef> _boardColumnDefs = [
+  (
+    title: 'Backlog',
+    statuses: {TodoStatus.pending},
+    dropStatus: TodoStatus.pending,
+  ),
+  (
+    title: 'In Progress',
+    statuses: {TodoStatus.assigned, TodoStatus.inProgress, TodoStatus.blocked},
+    dropStatus: TodoStatus.inProgress,
+  ),
+  (title: 'Done', statuses: {TodoStatus.done}, dropStatus: TodoStatus.done),
+  (
+    title: 'Cancelled',
+    statuses: {TodoStatus.cancelled},
+    dropStatus: TodoStatus.cancelled,
+  ),
+];
 
 // TodosPage is the top-level 待办 destination: a filterable list (left) + the
 // selected todo's detail/edit panel (right), mirroring HandoffsPage's split
@@ -47,6 +84,8 @@ class _TodosPageState extends State<TodosPage> {
   final Set<TodoStatus> _statusFilter = {};
   String? _projectFilter; // project id, only meaningful when _scope == 'team'
   Todo? _selected;
+  bool _boardView = true; // board is the default, Linear-flavored view
+  final Set<String> _collapsedMobileGroups = {};
   final _detailKey = GlobalKey<TodoDetailViewState>();
 
   RelayClient get _client => widget.client;
@@ -105,14 +144,26 @@ class _TodosPageState extends State<TodosPage> {
     return items;
   }
 
+  // _projectName resolves a team todo's project id to its display name for
+  // TodoCard's tag row — TodoCard itself stays decoupled from Me so it's
+  // reusable from contexts (e.g. a future workspace sidebar) that don't
+  // necessarily have the full Me/projects list in scope.
+  String? _projectName(Todo t) {
+    if (t.projectId == null) return null;
+    for (final p in _me.projects) {
+      if (p.id == t.projectId) return p.name;
+    }
+    return null;
+  }
+
   Color _statusColor(TodoStatus s) => switch (s) {
-        TodoStatus.done => CcColors.ok,
-        TodoStatus.cancelled => CcColors.subtle,
-        TodoStatus.blocked => CcColors.danger,
-        TodoStatus.inProgress => CcColors.accent,
-        TodoStatus.assigned => CcColors.warning,
-        TodoStatus.pending => CcColors.muted,
-      };
+    TodoStatus.done => CcColors.ok,
+    TodoStatus.cancelled => CcColors.subtle,
+    TodoStatus.blocked => CcColors.danger,
+    TodoStatus.inProgress => CcColors.accent,
+    TodoStatus.assigned => CcColors.warning,
+    TodoStatus.pending => CcColors.muted,
+  };
 
   Future<void> _createDialog() async {
     final created = await showDialog<bool>(
@@ -125,6 +176,19 @@ class _TodosPageState extends State<TodosPage> {
       ),
     );
     if (created == true) await _store.refresh();
+  }
+
+  // _dropStatus is the board's drag-to-change-status action. The relay
+  // broadcasts the update over SSE, which TodoStore already listens to, so
+  // there's no local optimistic-update bookkeeping to do here beyond
+  // surfacing a failure.
+  Future<void> _dropStatus(Todo t, TodoStatus status) async {
+    if (t.status == status) return;
+    try {
+      await _client.setTodoStatus(t.id, status);
+    } catch (e) {
+      if (mounted) snack(context, '更新状态失败: ${errorText(e)}');
+    }
   }
 
   Future<void> _assignDialog(Todo t) async {
@@ -142,22 +206,67 @@ class _TodosPageState extends State<TodosPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Row(children: [
-      SizedBox(width: 360, child: _leftPane()),
-      const VerticalDivider(width: 1),
-      Expanded(child: _rightPane()),
-    ]);
+    final wide = MediaQuery.of(context).size.width >= _wideBreakpoint;
+    if (!wide) return _mobileBody();
+
+    final contentPane = Column(
+      children: [
+        _filterHeader(wide: true),
+        Expanded(child: _boardView ? _boardPane() : _buildList()),
+      ],
+    );
+
+    if (_boardView) {
+      return Row(
+        children: [
+          Expanded(child: contentPane),
+          if (_selected != null) ...[
+            const VerticalDivider(width: 1),
+            SizedBox(width: 380, child: _rightPane()),
+          ],
+        ],
+      );
+    }
+    return Row(
+      children: [
+        SizedBox(width: 360, child: contentPane),
+        const VerticalDivider(width: 1),
+        Expanded(child: _rightPane()),
+      ],
+    );
   }
 
-  Widget _leftPane() => Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 8, 4),
-          child: Row(children: [
-            const Icon(Icons.checklist_rounded, size: 20, color: CcColors.accent),
+  // _filterHeader is the title/scope/project/status filter chrome shared by
+  // the board view, the list view, and the mobile card stream — only the
+  // board/list toggle button is conditional (there's no board on a phone).
+  Widget _filterHeader({required bool wide}) => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 4),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.checklist_rounded,
+              size: 20,
+              color: CcColors.accent,
+            ),
             const SizedBox(width: 8),
-            const Text('待办',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            const Text(
+              '待办',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
             const Spacer(),
+            if (wide)
+              IconButton(
+                icon: Icon(
+                  _boardView
+                      ? Icons.view_list_rounded
+                      : Icons.view_kanban_rounded,
+                  size: 18,
+                ),
+                tooltip: _boardView ? '切换到列表视图' : '切换到看板视图',
+                onPressed: () => setState(() => _boardView = !_boardView),
+              ),
             IconButton(
               icon: const Icon(Icons.refresh_rounded, size: 18),
               tooltip: '刷新',
@@ -168,33 +277,38 @@ class _TodosPageState extends State<TodosPage> {
               tooltip: '新建待办',
               onPressed: _createDialog,
             ),
-          ]),
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'personal', label: Text('个人')),
-              ButtonSegment(value: 'team', label: Text('团队')),
-              ButtonSegment(value: 'all', label: Text('全部')),
-            ],
-            selected: {_scope},
-            showSelectedIcon: false,
-            style: const ButtonStyle(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-            onSelectionChanged: (s) => setState(() {
-              _scope = s.first;
-              if (_scope != 'team') _projectFilter = null;
-            }),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'personal', label: Text('个人')),
+            ButtonSegment(value: 'team', label: Text('团队')),
+            ButtonSegment(value: 'all', label: Text('全部')),
+          ],
+          selected: {_scope},
+          showSelectedIcon: false,
+          style: const ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
+          onSelectionChanged: (s) => setState(() {
+            _scope = s.first;
+            if (_scope != 'team') _projectFilter = null;
+          }),
         ),
-        if (_scope == 'team' && _me.projects.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-            child: Row(children: [
-              const Text('项目',
-                  style: TextStyle(color: CcColors.muted, fontSize: 12.5)),
+      ),
+      if (_scope == 'team' && _me.projects.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Row(
+            children: [
+              const Text(
+                '项目',
+                style: TextStyle(color: CcColors.muted, fontSize: 12.5),
+              ),
               const Spacer(),
               DropdownButton<String?>(
                 value: _projectFilter,
@@ -202,29 +316,36 @@ class _TodosPageState extends State<TodosPage> {
                 underline: const SizedBox(),
                 items: [
                   const DropdownMenuItem<String?>(
-                      value: null, child: Text('全部项目')),
-                  ..._me.projects.map((p) => DropdownMenuItem<String?>(
-                      value: p.id, child: Text(p.name))),
+                    value: null,
+                    child: Text('全部项目'),
+                  ),
+                  ..._me.projects.map(
+                    (p) => DropdownMenuItem<String?>(
+                      value: p.id,
+                      child: Text(p.name),
+                    ),
+                  ),
                 ],
                 onChanged: (v) => setState(() => _projectFilter = v),
               ),
-            ]),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-          child: scrollableBar(
-            scrolling: [
-              for (final s in TodoStatus.values)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: _statusChip(s),
-                ),
             ],
           ),
         ),
-        const Divider(height: 12),
-        Expanded(child: _buildList()),
-      ]);
+      Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+        child: scrollableBar(
+          scrolling: [
+            for (final s in TodoStatus.values)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: _statusChip(s),
+              ),
+          ],
+        ),
+      ),
+      const Divider(height: 12),
+    ],
+  );
 
   Widget _statusChip(TodoStatus s) {
     final selected = _statusFilter.contains(s);
@@ -243,46 +364,54 @@ class _TodosPageState extends State<TodosPage> {
         decoration: BoxDecoration(
           color: selected ? color.withValues(alpha: 0.14) : Colors.transparent,
           border: Border.all(
-              color: selected ? color.withValues(alpha: 0.5) : CcColors.border),
+            color: selected ? color.withValues(alpha: 0.5) : CcColors.border,
+          ),
           borderRadius: BorderRadius.circular(CcRadius.pill),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          statusDot(color, size: 6),
-          const SizedBox(width: 5),
-          Text(todoStatusLabel(s),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            statusDot(color, size: 6),
+            const SizedBox(width: 5),
+            Text(
+              todoStatusLabel(s),
               style: TextStyle(
-                  fontSize: 11.5,
-                  color: selected ? CcColors.text : CcColors.muted,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
-        ]),
+                fontSize: 11.5,
+                color: selected ? CcColors.text : CcColors.muted,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildList() => asyncBody(
-        loading: _store.loading && _store.all.isEmpty,
-        error: _store.error,
-        onRetry: _store.refresh,
-        child: () {
-          final items = _filtered;
-          if (items.isEmpty) {
-            return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
-          }
-          return RefreshIndicator(
-            onRefresh: _store.refresh,
-            child: ListView.separated(
-              itemCount: items.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (_, i) => _row(items[i]),
-            ),
-          );
-        },
+    loading: _store.loading && _store.all.isEmpty,
+    error: _store.error,
+    onRetry: _store.refresh,
+    child: () {
+      final items = _filtered;
+      if (items.isEmpty) {
+        return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
+      }
+      return RefreshIndicator(
+        onRefresh: _store.refresh,
+        child: ListView.separated(
+          itemCount: items.length,
+          separatorBuilder: (_, _) => const Divider(height: 1),
+          itemBuilder: (_, i) => _row(items[i]),
+        ),
       );
+    },
+  );
 
   Widget _row(Todo t) {
     final sel = _selected?.id == t.id;
     final color = _statusColor(t.status);
-    final overdue = t.dueAt != null &&
+    final overdue =
+        t.dueAt != null &&
         t.dueAt!.isBefore(DateTime.now()) &&
         t.status != TodoStatus.done &&
         t.status != TodoStatus.cancelled;
@@ -293,56 +422,78 @@ class _TodosPageState extends State<TodosPage> {
         child: Container(
           decoration: BoxDecoration(
             border: Border(
-                left: BorderSide(
-                    color: sel ? CcColors.accent : Colors.transparent, width: 2.5)),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(children: [
-            Tooltip(
-              message: todoStatusLabel(t.status),
-              child: statusDot(color, size: 8, glow: t.status == TodoStatus.inProgress),
-            ),
-            const SizedBox(width: 10),
-            if (t.attachmentCount > 0) ...[
-              _RowThumb(client: _client, todo: t),
-              const SizedBox(width: 8),
-            ],
-            Expanded(
-              child: Text(t.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
-            ),
-            const SizedBox(width: 10),
-            priorityBars(t.priority, maxHeight: 10),
-            if (t.dueAt != null) ...[
-              const SizedBox(width: 10),
-              Text(commitDate(t.dueAt!),
-                  style: TextStyle(
-                      fontFamily: CcType.mono,
-                      fontSize: 10.5,
-                      color: overdue ? CcColors.danger : CcColors.subtle)),
-            ],
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 30,
-              child: Text(relativeTime(t.updatedAt),
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                      fontFamily: CcType.mono, color: CcColors.subtle, fontSize: 10.5)),
-            ),
-            SizedBox(
-              width: 28,
-              height: 28,
-              child: IconButton(
-                icon: const Icon(Icons.send_rounded, size: 15),
-                tooltip: '一键指派',
-                padding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
-                onPressed: () => _assignDialog(t),
+              left: BorderSide(
+                color: sel ? CcColors.accent : Colors.transparent,
+                width: 2.5,
               ),
             ),
-          ]),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            children: [
+              Tooltip(
+                message: todoStatusLabel(t.status),
+                child: statusDot(
+                  color,
+                  size: 8,
+                  glow: t.status == TodoStatus.inProgress,
+                ),
+              ),
+              const SizedBox(width: 10),
+              if (t.attachmentCount > 0) ...[
+                _RowThumb(client: _client, todo: t),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  t.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              priorityBars(t.priority, maxHeight: 10),
+              if (t.dueAt != null) ...[
+                const SizedBox(width: 10),
+                Text(
+                  commitDate(t.dueAt!),
+                  style: TextStyle(
+                    fontFamily: CcType.mono,
+                    fontSize: 10.5,
+                    color: overdue ? CcColors.danger : CcColors.subtle,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 30,
+                child: Text(
+                  relativeTime(t.updatedAt),
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontFamily: CcType.mono,
+                    color: CcColors.subtle,
+                    fontSize: 10.5,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: IconButton(
+                  icon: const Icon(Icons.send_rounded, size: 15),
+                  tooltip: '一键指派',
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _assignDialog(t),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -351,36 +502,348 @@ class _TodosPageState extends State<TodosPage> {
   Widget _rightPane() {
     final sel = _selected;
     if (sel == null) return centerMsg('从左侧选择一个待办，或点右上角 + 新建');
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-        child: Row(children: [
-          Text(sel.isPersonal ? '个人待办' : '团队待办',
-              style: const TextStyle(color: CcColors.muted, fontSize: 12)),
-          const Spacer(),
-          OutlinedButton.icon(
-            onPressed: () => _assignDialog(sel),
-            icon: const Icon(Icons.send_rounded, size: 16),
-            label: const Text('指派'),
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: Row(
+            children: [
+              Text(
+                sel.isPersonal ? '个人待办' : '团队待办',
+                style: const TextStyle(color: CcColors.muted, fontSize: 12),
+              ),
+              const Spacer(),
+              OutlinedButton.icon(
+                onPressed: () => _assignDialog(sel),
+                icon: const Icon(Icons.send_rounded, size: 16),
+                label: const Text('指派'),
+              ),
+              // The board view only shows this panel when something's selected
+              // (columns reflow to use the freed width otherwise), so it needs
+              // its own way to deselect — list view just shows the placeholder
+              // message again, which is harmless.
+              IconButton(
+                icon: const Icon(Icons.close_rounded, size: 18),
+                tooltip: '关闭',
+                onPressed: () => setState(() => _selected = null),
+              ),
+            ],
           ),
-        ]),
-      ),
-      Expanded(
-        child: TodoDetailView(
-          key: _detailKey,
-          client: _client,
-          todo: sel,
-          onChanged: (updated) {
-            if (mounted) setState(() => _selected = updated);
-          },
-          onDeleted: () {
-            if (!mounted) return;
-            setState(() => _selected = null);
-            _store.refresh();
-          },
+        ),
+        Expanded(
+          child: TodoDetailView(
+            key: _detailKey,
+            client: _client,
+            todo: sel,
+            onChanged: (updated) {
+              if (mounted) setState(() => _selected = updated);
+            },
+            onDeleted: () {
+              if (!mounted) return;
+              setState(() => _selected = null);
+              _store.refresh();
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // --- board view --------------------------------------------------------
+
+  // _boardPane is the Linear-style kanban board: fixed-width columns laid
+  // out in a horizontally-scrolling row (the reference layout doesn't flex
+  // column width to the viewport), each a DragTarget<Todo> that maps a drop
+  // to its dropStatus via _dropStatus.
+  Widget _boardPane() {
+    final items = _filtered;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final def in _boardColumnDefs)
+              _boardColumn(
+                def,
+                items.where((t) => def.statuses.contains(t.status)).toList(),
+              ),
+          ],
         ),
       ),
-    ]);
+    );
+  }
+
+  Widget _boardColumn(_BoardColumnDef def, List<Todo> items) => Container(
+    width: 272,
+    margin: const EdgeInsets.only(right: 10),
+    decoration: BoxDecoration(
+      color: CcColors.panel.withValues(alpha: 0.4),
+      borderRadius: BorderRadius.circular(CcRadius.md),
+      border: Border.all(color: CcColors.border),
+    ),
+    child: Column(
+      children: [
+        _columnHeader(def.title, items.length, _createDialog),
+        Expanded(
+          child: DragTarget<Todo>(
+            onWillAcceptWithDetails: (details) =>
+                details.data.status != def.dropStatus,
+            onAcceptWithDetails: (details) =>
+                _dropStatus(details.data, def.dropStatus),
+            builder: (context, candidate, rejected) {
+              final highlight = candidate.isNotEmpty;
+              return Container(
+                decoration: BoxDecoration(
+                  color: highlight
+                      ? CcColors.accent.withValues(alpha: 0.07)
+                      : null,
+                  borderRadius: BorderRadius.circular(CcRadius.md),
+                ),
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: items.isEmpty
+                    ? Center(
+                        child: Text(
+                          '无',
+                          style: TextStyle(
+                            color: CcColors.subtle.withValues(alpha: 0.7),
+                            fontSize: 12,
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: items.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 8),
+                        itemBuilder: (_, i) => _draggableCard(items[i]),
+                      ),
+              );
+            },
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _columnHeader(String title, int count, VoidCallback onAdd) => Padding(
+    padding: const EdgeInsets.fromLTRB(10, 10, 4, 8),
+    child: Row(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+            color: CcColors.muted,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          decoration: BoxDecoration(
+            color: CcColors.panelHigh,
+            borderRadius: BorderRadius.circular(CcRadius.pill),
+          ),
+          child: Text(
+            '$count',
+            style: const TextStyle(
+              fontSize: 11,
+              color: CcColors.subtle,
+              fontFamily: CcType.mono,
+            ),
+          ),
+        ),
+        const Spacer(),
+        SizedBox(
+          width: 28,
+          height: 28,
+          child: IconButton(
+            icon: const Icon(Icons.add_rounded, size: 16),
+            tooltip: '新建待办',
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            onPressed: onAdd,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _draggableCard(Todo t) {
+    final card = TodoCard(
+      todo: t,
+      projectName: _projectName(t),
+      onTap: () => setState(() => _selected = t),
+    );
+    return Draggable<Todo>(
+      data: t,
+      feedback: Opacity(
+        opacity: 0.85,
+        child: SizedBox(
+          width: 252,
+          child: Material(color: Colors.transparent, child: card),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.35, child: card),
+      child: card,
+    );
+  }
+
+  // --- mobile view ---------------------------------------------------------
+
+  // _mobileBody drops the board/split-pane layout entirely for a single
+  // scrolling column of cards, grouped under the same status buckets as the
+  // board's columns (so the group headings read the same either way), with
+  // tapping a card pushing a full-screen detail route instead of opening a
+  // side panel there's no room for.
+  Widget _mobileBody() => Column(
+    children: [
+      _filterHeader(wide: false),
+      Expanded(child: _mobileList()),
+    ],
+  );
+
+  Widget _mobileList() => asyncBody(
+    loading: _store.loading && _store.all.isEmpty,
+    error: _store.error,
+    onRetry: _store.refresh,
+    child: () {
+      final items = _filtered;
+      if (items.isEmpty) {
+        return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
+      }
+      final width = MediaQuery.of(context).size.width;
+      final cols = width >= 480 ? 2 : 1;
+      final groups = [
+        for (final def in _boardColumnDefs)
+          (
+            def.title,
+            items.where((t) => def.statuses.contains(t.status)).toList(),
+          ),
+      ].where((g) => g.$2.isNotEmpty).toList();
+      return RefreshIndicator(
+        onRefresh: _store.refresh,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+          children: [
+            for (final g in groups) _mobileGroup(g.$1, g.$2, cols, width),
+          ],
+        ),
+      );
+    },
+  );
+
+  Widget _mobileGroup(
+    String title,
+    List<Todo> items,
+    int cols,
+    double totalWidth,
+  ) {
+    final collapsed = _collapsedMobileGroups.contains(title);
+    final cardW = (totalWidth - 12 * 2 - (cols - 1) * 10) / cols;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() {
+            if (collapsed) {
+              _collapsedMobileGroups.remove(title);
+            } else {
+              _collapsedMobileGroups.add(title);
+            }
+          }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                AnimatedRotation(
+                  turns: collapsed ? -0.25 : 0,
+                  duration: const Duration(milliseconds: 150),
+                  child: const Icon(
+                    Icons.expand_more_rounded,
+                    size: 18,
+                    color: CcColors.muted,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: CcColors.muted,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: CcColors.panelHigh,
+                    borderRadius: BorderRadius.circular(CcRadius.pill),
+                  ),
+                  child: Text(
+                    '${items.length}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: CcColors.subtle,
+                      fontFamily: CcType.mono,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (!collapsed)
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final t in items)
+                SizedBox(
+                  width: cardW,
+                  child: TodoCard(
+                    todo: t,
+                    projectName: _projectName(t),
+                    onTap: () => _openMobileDetail(t),
+                  ),
+                ),
+            ],
+          ),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  void _openMobileDetail(Todo t) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(
+            title: const Text('待办详情'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.send_rounded),
+                tooltip: '指派',
+                onPressed: () => _assignDialog(t),
+              ),
+            ],
+          ),
+          body: TodoDetailView(
+            client: _client,
+            todo: t,
+            onDeleted: () {
+              if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+              _store.refresh();
+            },
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -421,8 +884,9 @@ class _RowThumbState extends State<_RowThumb> {
   Future<void> _load() async {
     try {
       final full = await widget.client.todo(widget.todo.id);
-      final images =
-          full.attachments.where((a) => isImageAttachmentName(a.name));
+      final images = full.attachments.where(
+        (a) => isImageAttachmentName(a.name),
+      );
       final found = images.isEmpty ? null : images.first;
       _cache[_cacheKey] = found;
       if (mounted) {
@@ -441,7 +905,11 @@ class _RowThumbState extends State<_RowThumb> {
     final att = _att;
     if (!_ready || att == null) return const SizedBox(width: 22, height: 22);
     return TodoAttachmentThumb(
-        client: widget.client, todoId: widget.todo.id, attachment: att, size: 22);
+      client: widget.client,
+      todoId: widget.todo.id,
+      attachment: att,
+      size: 22,
+    );
   }
 }
 
@@ -483,7 +951,9 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   void initState() {
     super.initState();
     _projectId = widget.initialProjectId;
-    if (_scope == 'team' && _projectId == null && widget.me.projects.isNotEmpty) {
+    if (_scope == 'team' &&
+        _projectId == null &&
+        widget.me.projects.isNotEmpty) {
       _projectId = widget.me.projects.first.id;
     }
   }
@@ -496,8 +966,10 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   }
 
   Future<void> _pickFiles() async {
-    final res =
-        await FilePicker.platform.pickFiles(allowMultiple: true, withData: true);
+    final res = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true,
+    );
     if (res == null || !mounted) return;
     setState(() => _files.addAll(res.files));
   }
@@ -516,8 +988,15 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
       initialTime: TimeOfDay.fromDateTime(_dueAt ?? now),
     );
     if (time == null || !mounted) return;
-    setState(() => _dueAt =
-        DateTime(date.year, date.month, date.day, time.hour, time.minute));
+    setState(
+      () => _dueAt = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      ),
+    );
   }
 
   Future<void> _submit() async {
@@ -569,45 +1048,55 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(children: [
-                if (widget.me.projects.isNotEmpty)
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'personal', label: Text('个人')),
-                      ButtonSegment(value: 'team', label: Text('团队')),
-                    ],
-                    selected: {_scope},
-                    showSelectedIcon: false,
-                    style: const ButtonStyle(
+              Row(
+                children: [
+                  if (widget.me.projects.isNotEmpty)
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'personal', label: Text('个人')),
+                        ButtonSegment(value: 'team', label: Text('团队')),
+                      ],
+                      selected: {_scope},
+                      showSelectedIcon: false,
+                      style: const ButtonStyle(
                         visualDensity: VisualDensity.compact,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                    onSelectionChanged: (s) => setState(() {
-                      _scope = s.first;
-                      if (_scope == 'team' &&
-                          _projectId == null &&
-                          widget.me.projects.isNotEmpty) {
-                        _projectId = widget.me.projects.first.id;
-                      }
-                    }),
-                  ),
-                const Spacer(),
-                if (_scope == 'team' && widget.me.projects.isNotEmpty)
-                  DropdownButton<String>(
-                    isDense: true,
-                    underline: const SizedBox(),
-                    value: _projectId,
-                    items: widget.me.projects
-                        .map((p) =>
-                            DropdownMenuItem(value: p.id, child: Text(p.name)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _projectId = v),
-                  ),
-              ]),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onSelectionChanged: (s) => setState(() {
+                        _scope = s.first;
+                        if (_scope == 'team' &&
+                            _projectId == null &&
+                            widget.me.projects.isNotEmpty) {
+                          _projectId = widget.me.projects.first.id;
+                        }
+                      }),
+                    ),
+                  const Spacer(),
+                  if (_scope == 'team' && widget.me.projects.isNotEmpty)
+                    DropdownButton<String>(
+                      isDense: true,
+                      underline: const SizedBox(),
+                      value: _projectId,
+                      items: widget.me.projects
+                          .map(
+                            (p) => DropdownMenuItem(
+                              value: p.id,
+                              child: Text(p.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => _projectId = v),
+                    ),
+                ],
+              ),
               const SizedBox(height: 12),
               TextField(
                 controller: _titleCtl,
                 autofocus: true,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
                 decoration: const InputDecoration(
                   isDense: true,
                   filled: false,
@@ -627,48 +1116,57 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
               const SizedBox(height: 12),
               const Divider(height: 1),
               const SizedBox(height: 10),
-              Row(children: [
-                PriorityControl(
-                  priority: _priority,
-                  onChanged: (v) => setState(() => _priority = v),
-                ),
-                const SizedBox(width: 6),
-                RecurrenceControl(
-                  recurrence: _recurrence,
-                  onChanged: (v) => setState(() => _recurrence = v),
-                ),
-                const SizedBox(width: 6),
-                DueDatePill(
-                  dueAt: _dueAt,
-                  onTap: _pickDueDate,
-                  onClear: () => setState(() => _dueAt = null),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.attach_file_rounded, size: 18),
-                  tooltip: _files.isEmpty ? '添加附件' : '已选 ${_files.length} 个文件',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _pickFiles,
-                ),
-              ]),
+              Row(
+                children: [
+                  PriorityControl(
+                    priority: _priority,
+                    onChanged: (v) => setState(() => _priority = v),
+                  ),
+                  const SizedBox(width: 6),
+                  RecurrenceControl(
+                    recurrence: _recurrence,
+                    onChanged: (v) => setState(() => _recurrence = v),
+                  ),
+                  const SizedBox(width: 6),
+                  DueDatePill(
+                    dueAt: _dueAt,
+                    onTap: _pickDueDate,
+                    onClear: () => setState(() => _dueAt = null),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.attach_file_rounded, size: 18),
+                    tooltip: _files.isEmpty
+                        ? '添加附件'
+                        : '已选 ${_files.length} 个文件',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _pickFiles,
+                  ),
+                ],
+              ),
               const SizedBox(height: 14),
-              Row(children: [
-                const Spacer(),
-                TextButton(
-                  onPressed: _submitting ? null : () => Navigator.pop(context, false),
-                  child: const Text('取消'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: _submitting ? null : _submit,
-                  child: _submitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('创建'),
-                ),
-              ]),
+              Row(
+                children: [
+                  const Spacer(),
+                  TextButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.pop(context, false),
+                    child: const Text('取消'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: _submitting ? null : _submit,
+                    child: _submitting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('创建'),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -755,10 +1253,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // RelayClient.assignTodo's "assign to a specific local session" contract.
   Future<void> _syncAssignVisibility(String sessionId, String label) async {
     try {
-      await widget.client.assignTodo(widget.todo.id,
-          assigneeIdentity: widget.config.identity,
-          assigneeSessionId: sessionId,
-          assigneeSessionLabel: label);
+      await widget.client.assignTodo(
+        widget.todo.id,
+        assigneeIdentity: widget.config.identity,
+        assigneeSessionId: sessionId,
+        assigneeSessionLabel: label,
+      );
     } catch (_) {}
   }
 
@@ -766,8 +1266,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final sid = _targetSid;
     if (sid == null) return;
     setState(() => _submitting = true);
-    final err =
-        widget.overviewStore.dispatch(LocalMsg('', sid, _taskText, true));
+    final err = widget.overviewStore.dispatch(
+      LocalMsg('', sid, _taskText, true),
+    );
     if (err != null) {
       if (mounted) {
         setState(() => _submitting = false);
@@ -800,8 +1301,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
-    final dispatchErr =
-        widget.overviewStore.dispatch(LocalMsg('', sid, _taskText, true));
+    final dispatchErr = widget.overviewStore.dispatch(
+      LocalMsg('', sid, _taskText, true),
+    );
     if (dispatchErr != null && mounted) {
       snack(context, '会话已创建，但投递失败: $dispatchErr');
     }
@@ -817,7 +1319,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         content: const Text('仅桌面版可指派到本机会话。'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('关闭')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
         ],
       );
     }
@@ -858,7 +1362,8 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('指派并开始'),
         ),
       ],
@@ -866,60 +1371,67 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   }
 
   Widget _existingForm() => DropdownButton<String>(
-        isExpanded: true,
-        value: _targetSid,
-        items: _cards
-            .map((c) => DropdownMenuItem(
-                value: c.sid,
-                child: Text('${c.label} (${c.workspace}/${c.project})',
-                    overflow: TextOverflow.ellipsis)))
-            .toList(),
-        onChanged: (v) => setState(() => _targetSid = v),
-      );
+    isExpanded: true,
+    value: _targetSid,
+    items: _cards
+        .map(
+          (c) => DropdownMenuItem(
+            value: c.sid,
+            child: Text(
+              '${c.label} (${c.workspace}/${c.project})',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        )
+        .toList(),
+    onChanged: (v) => setState(() => _targetSid = v),
+  );
 
   Widget _newForm() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          DropdownButton<String>(
-            isExpanded: true,
-            hint: const Text('workspace'),
-            value: _workspace,
-            items: widget.config.workspaces
-                .map((w) => DropdownMenuItem(value: w.name, child: Text(w.name)))
-                .toList(),
-            onChanged: (v) => setState(() {
-              _workspace = v;
-              final projs = _projectsForWorkspace;
-              _project = projs.isEmpty ? null : projs.first.name;
-            }),
-          ),
-          const SizedBox(height: 8),
-          DropdownButton<String>(
-            isExpanded: true,
-            hint: const Text('project'),
-            value: _project,
-            items: _projectsForWorkspace
-                .map((p) => DropdownMenuItem(value: p.name, child: Text(p.name)))
-                .toList(),
-            onChanged: (v) => setState(() => _project = v),
-          ),
-          const SizedBox(height: 8),
-          DropdownButton<String>(
-            isExpanded: true,
-            value: _kind,
-            items: const [
-              DropdownMenuItem(value: 'claude', child: Text('Claude')),
-              DropdownMenuItem(value: 'codex', child: Text('Codex')),
-              DropdownMenuItem(value: 'shell', child: Text('Shell')),
-            ],
-            onChanged: (v) => setState(() => _kind = v ?? 'claude'),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _branchCtl,
-            decoration: const InputDecoration(
-                labelText: '新建 worktree 分支名（可选）', isDense: true),
-          ),
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      DropdownButton<String>(
+        isExpanded: true,
+        hint: const Text('workspace'),
+        value: _workspace,
+        items: widget.config.workspaces
+            .map((w) => DropdownMenuItem(value: w.name, child: Text(w.name)))
+            .toList(),
+        onChanged: (v) => setState(() {
+          _workspace = v;
+          final projs = _projectsForWorkspace;
+          _project = projs.isEmpty ? null : projs.first.name;
+        }),
+      ),
+      const SizedBox(height: 8),
+      DropdownButton<String>(
+        isExpanded: true,
+        hint: const Text('project'),
+        value: _project,
+        items: _projectsForWorkspace
+            .map((p) => DropdownMenuItem(value: p.name, child: Text(p.name)))
+            .toList(),
+        onChanged: (v) => setState(() => _project = v),
+      ),
+      const SizedBox(height: 8),
+      DropdownButton<String>(
+        isExpanded: true,
+        value: _kind,
+        items: const [
+          DropdownMenuItem(value: 'claude', child: Text('Claude')),
+          DropdownMenuItem(value: 'codex', child: Text('Codex')),
+          DropdownMenuItem(value: 'shell', child: Text('Shell')),
         ],
-      );
+        onChanged: (v) => setState(() => _kind = v ?? 'claude'),
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        controller: _branchCtl,
+        decoration: const InputDecoration(
+          labelText: '新建 worktree 分支名（可选）',
+          isDense: true,
+        ),
+      ),
+    ],
+  );
 }
