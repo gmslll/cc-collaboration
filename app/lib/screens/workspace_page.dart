@@ -7367,26 +7367,13 @@ class _WorkspacePageState extends State<WorkspacePage>
         ccMenuItem(value: 'push', icon: Icons.upload_rounded, label: 'Push'),
         if (locals.isNotEmpty) const PopupMenuDivider(),
         for (final b in locals.take(8))
-          PopupMenuItem(
+          ccMenuItem(
             value: 'checkout:${b.name}',
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Checkout ${b.name}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (b.ahead > 0 || b.behind > 0) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    '↑${b.ahead} ↓${b.behind}',
-                    style: CcType.code(size: 11, color: CcColors.warning),
-                  ),
-                ],
-              ],
-            ),
+            icon: Icons.call_split_rounded,
+            label: 'Checkout ${b.name}',
+            shortcut: (b.ahead > 0 || b.behind > 0)
+                ? '↑${b.ahead} ↓${b.behind}'
+                : null,
           ),
       ],
       child: Container(
