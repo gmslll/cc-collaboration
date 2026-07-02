@@ -543,11 +543,33 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     return null;
   }
 
+  // killLocalSession serves a kind:"kill" request (`cc-handoff msg kill`): it
+  // resolves [to] and closes that session's tab exactly like clicking its ×
+  // (closeTerm) — kills the PTY and drops it from [terms]. Refused for
+  // self-kill (the caller's own PTY is what's running the command that would
+  // be killed) and for a supervisor target (the session coordinating the
+  // others over the bus must stay a deliberate, in-App close, not something
+  // any peer can trigger remotely). Returns null on success or a Chinese
+  // error → <id>.err.
+  String? killLocalSession(String from, String to) {
+    final (target, err) = _resolveTarget(to);
+    if (target == null) return err;
+    if (target.id == from) return '不能关闭自己';
+    if (target.supervisor) return '不能通过总线关闭总管会话「${target.label}」';
+    final i = terms.indexOf(target);
+    if (i < 0) return '找不到目标会话「$to」';
+    closeTerm(i);
+    return null;
+  }
+
   // _enqueueBusInbox drops a message into <busDir>/inbox/<targetId>/ for the
   // target's `cc-handoff bus-hook` to drain as additionalContext. Filename is a
   // microsecond timestamp + counter so the hook reads FIFO; atomic tmp+rename so
   // the hook never sees a half-written file (mirrors local_bus.dart's writes and
-  // the Go-side internal/localbus reader). Returns null on success, else an
+  // the Go-side internal/localbus reader). Also arms the bounded escalate
+  // fallback (_scheduleEscalate) so a target that goes fully idle and never
+  // fires another hook doesn't strand the message forever (the "parked
+  // messages" bug — see _scheduleEscalate). Returns null on success, else an
   // error string relayed back as the `msg send` .err receipt.
   String? _enqueueBusInbox(TerminalSession target, LocalMsg m) {
     try {
@@ -562,11 +584,73 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         'body': m.body,
       }));
       tmp.renameSync(path);
+      _scheduleEscalate(target, path, m);
       return null;
     } catch (e) {
       return '投递到会话 inbox 失败: $e';
     }
   }
+
+  // _escalateTimeout bounds how long a parked message waits for the target's
+  // own hook to drain it before this session force-delivers it instead.
+  // Chosen well under `msg send`'s default 5s --timeout (so the CLI caller
+  // gets its "ok" receipt long before this fires — parking already counts as
+  // delivered from the caller's perspective, same as before this existed) but
+  // generous enough that a normal PostToolUse/Stop firing shortly after park
+  // always wins the race — escalation is the bounded fallback, not the common
+  // path.
+  static const Duration _escalateTimeout = Duration(seconds: 3);
+
+  // _scheduleEscalate arms a bounded wait-then-force-deliver for one parked
+  // bus message (fixes the "parked forever" bug: a target that finishes its
+  // current turn and then sits fully idle never fires another hook, so
+  // nothing was ever draining the message — see the local-bus-optimization
+  // writeup). A Timer, not a blocking wait, so it never stalls the sender's
+  // own turn. If the target's own hook drains [path] first, the file is
+  // simply gone when the timer fires — file existence IS the ack, no separate
+  // protocol needed.
+  void _scheduleEscalate(TerminalSession target, String path, LocalMsg m) {
+    Timer(_escalateTimeout, () => unawaited(_escalateBusInbox(target, path, m)));
+  }
+
+  // _escalateBusInbox force-delivers one parked message if the target's own
+  // hook hasn't drained it within _escalateTimeout. Races the hook under the
+  // shared inbox lock (acquireInboxDrainLock, same lock file the Go hook's
+  // AcquireDrainLock claims) so the two paths can never both deliver the same
+  // message. Ignores target.busy/inputDirty on purpose — by now the sender has
+  // already waited several seconds for the target's own hook with no result,
+  // so a forced paste beats leaving the message parked indefinitely.
+  Future<void> _escalateBusInbox(
+    TerminalSession target,
+    String path,
+    LocalMsg m,
+  ) async {
+    if (!File(path).existsSync()) return; // hook already drained it
+    final locked = await acquireInboxDrainLock(target.id);
+    if (!locked) return; // hook is actively draining this inbox right now
+    try {
+      if (!File(path).existsSync()) return; // drained between the two checks
+      target.pasteText(_composeDelivery(target, m), submit: true);
+      try {
+        File(path).deleteSync();
+      } catch (_) {}
+    } finally {
+      await releaseInboxDrainLock(target.id);
+    }
+  }
+
+  // debugEscalateBusInboxNow runs the check-lock-paste-delete sequence a
+  // scheduled escalate Timer would normally run only after _escalateTimeout,
+  // immediately — so tests can exercise the drained-in-window vs
+  // nobody-drained paths without a real multi-second wait. Test-only, mirrors
+  // TerminalSession.debugMarkBootSettled.
+  @visibleForTesting
+  Future<void> debugEscalateBusInboxNow(
+    TerminalSession target,
+    String path,
+    LocalMsg m,
+  ) =>
+      _escalateBusInbox(target, path, m);
 
   // _fromLabel resolves a sender session id to its human label, falling back to
   // the raw id ('?' when empty). Shared by bus-inbox delivery and PTY paste.

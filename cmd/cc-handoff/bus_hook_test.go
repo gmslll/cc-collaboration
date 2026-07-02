@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cc-collaboration/internal/localbus"
 )
@@ -135,6 +136,72 @@ func TestBusHookDrain_TopLevelDrainsInbox(t *testing.T) {
 	}
 	if len(left) != 0 {
 		t.Fatalf("top-level hook must drain the inbox, %d message(s) left", len(left))
+	}
+}
+
+// TestBusHookDrain_ContendedLockBailsWithoutDraining: when the app's
+// escalate-timeout path (or another concurrent hook invocation) already holds
+// the inbox drain lock, the hook must not block waiting for it indefinitely —
+// it bails immediately-ish and leaves the message parked for the next hook,
+// never double-delivering. Shrinks busHookDrainLockTimeout so the test doesn't
+// eat the real (production) 2s wait.
+func TestBusHookDrain_ContendedLockBailsWithoutDraining(t *testing.T) {
+	old := busHookDrainLockTimeout
+	busHookDrainLockTimeout = 50 * time.Millisecond
+	defer func() { busHookDrainLockTimeout = old }()
+
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	// Simulate the app's escalate path (or a racing hook) holding the lock.
+	release, err := localbus.AcquireDrainLock(bus, sid, time.Second)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer release()
+
+	runDrainWith(t, `{"hook_event_name":"PostToolUse"}`)
+
+	// Message must still be parked — the hook bailed instead of draining.
+	left, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 {
+		t.Fatalf("contended lock should leave the message parked, got %d left", len(left))
+	}
+}
+
+// TestBusHookDrain_DrainsAfterLockReleased: the complement — once the
+// contending holder releases, the very next hook invocation drains normally.
+func TestBusHookDrain_DrainsAfterLockReleased(t *testing.T) {
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	release, err := localbus.AcquireDrainLock(bus, sid, time.Second)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	release() // released before the hook runs
+
+	runDrainWith(t, `{"hook_event_name":"PostToolUse"}`)
+
+	left, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("hook should drain normally once the lock is free, %d left", len(left))
 	}
 }
 

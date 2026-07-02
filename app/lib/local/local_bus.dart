@@ -54,6 +54,77 @@ List<HookActivity> localBusHookActivities(String sessionId, {int limit = 20}) {
   }
 }
 
+// ---------------------------------------------------------------- inbox lock --
+//
+// One session's inbox (<bus>/inbox/<id>/) has two independent drainers that
+// must never act on the same parked message at once: the receiving agent's
+// own `cc-handoff bus-hook` (PostToolUse/Stop, Go side — ListMsgs+ClearMsgs in
+// runBusHookDrain) and this app's escalate-timeout fallback in
+// terminal_deck.dart (a message the target's hook hasn't drained within a few
+// seconds gets force-pasted instead of waiting forever — the "parked
+// forever" bug this exists to fix). Without coordination the failure mode is
+// a double delivery: the hook injects the message as additionalContext at the
+// same moment the app is independently pasting the same text into the PTY.
+//
+// Both sides coordinate through the SAME claim file, <inbox>/.lock, using the
+// one mutual-exclusion primitive guaranteed to behave identically in Go and
+// Dart: atomic exclusive create to acquire, delete to release. (flock/fcntl
+// were considered and rejected: Dart's RandomAccessFile.lock and Go's
+// syscall.Flock are not guaranteed to observe the same lock table across the
+// two runtimes, so an exclusive-create claim file — mirroring the
+// claim-by-rename pattern LocalBus._process already uses for outbox delivery
+// — is the only primitive both sides can trust. See
+// internal/localbus/lock.go (AcquireDrainLock) for the Go side of this exact
+// protocol.)
+
+const Duration _inboxLockStaleAfter = Duration(seconds: 10);
+const Duration _inboxLockRetryInterval = Duration(milliseconds: 20);
+
+String _inboxLockPath(String sessionId) =>
+    '${localBusDir()}/inbox/$sessionId/.lock';
+
+// acquireInboxDrainLock claims [sessionId]'s inbox lock, retrying with
+// backoff until [timeout]. A lock file older than _inboxLockStaleAfter is
+// treated as abandoned (the holder crashed mid critical section — both
+// sides' critical sections, list+clear / check+paste+delete, run in
+// low-single-digit milliseconds, never seconds) and is stolen. Returns false
+// on timeout, which the caller treats as "someone else is actively draining
+// this inbox right now" and simply gives up escalating for this round rather
+// than blocking indefinitely.
+Future<bool> acquireInboxDrainLock(
+  String sessionId, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final lockFile = File(_inboxLockPath(sessionId));
+  final deadline = DateTime.now().add(timeout);
+  while (true) {
+    try {
+      await lockFile.create(recursive: true, exclusive: true);
+      return true;
+    } catch (_) {
+      try {
+        final stat = await lockFile.stat();
+        if (stat.type != FileSystemEntityType.notFound &&
+            DateTime.now().difference(stat.modified) > _inboxLockStaleAfter) {
+          await lockFile.delete();
+          continue; // retry immediately; don't count the steal against the deadline
+        }
+      } catch (_) {}
+      if (DateTime.now().isAfter(deadline)) return false;
+      await Future<void>.delayed(_inboxLockRetryInterval);
+    }
+  }
+}
+
+// releaseInboxDrainLock releases a lock acquireInboxDrainLock returned true
+// for. Best-effort: a failed delete just means the NEXT acquire finds a
+// stale-after-10s lock and steals it, per acquireInboxDrainLock.
+Future<void> releaseInboxDrainLock(String sessionId) async {
+  try {
+    await File(_inboxLockPath(sessionId)).delete();
+  } catch (_) {}
+}
+
 // LocalMsg is one point-to-point note from one local session to another. [to]
 // may be a session id (ts0) or a label; [submit] appends a newline so the
 // receiving agent runs it immediately instead of just filling its input box.
@@ -109,6 +180,14 @@ class LocalBus {
     String workdir,
     StringSink out,
   ) spawn;
+  // kill serves a kind:"kill" request (`cc-handoff msg kill`): the HOST
+  // resolves [to] and terminates that session's tab — kills its PTY and drops
+  // it from the session list, the same effect as the tab's × button. [from] is
+  // the caller's own session id, so the HOST can refuse a self-kill; it also
+  // refuses a supervisor target regardless of caller (see killLocalSession).
+  // Returns null on success or an error (unknown/ambiguous target, self-kill,
+  // supervisor target) → <id>.err.
+  final String? Function(String from, String to) kill;
 
   LocalBus({
     required this.registry,
@@ -116,6 +195,7 @@ class LocalBus {
     required this.readOutput,
     required this.readUsage,
     required this.spawn,
+    required this.kill,
   });
 
   StreamSubscription<FileSystemEvent>? _watch;
@@ -236,6 +316,10 @@ class LocalBus {
               out,
             );
             if (err == null) okBody = out.toString();
+          } else if (kind == 'kill') {
+            // No .ok body beyond the default "ok" — `msg kill` just needs the
+            // receipt, not a payload.
+            err = kill((m['from'] ?? '').toString(), (m['to'] ?? '').toString());
           } else {
             err = deliver(LocalMsg(
               (m['from'] ?? '').toString(),

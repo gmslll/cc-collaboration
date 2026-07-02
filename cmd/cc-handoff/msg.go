@@ -39,13 +39,14 @@ type busSession struct {
 // `msg -h`, `msg --help`, and `msg help`. It deliberately needs no CC_BUS_DIR so
 // an agent that just received a "[来自 X · tsN] …" message can read it (even from
 // a terminal the app didn't spawn) to learn how to reply.
-const msgUsage = `cc-handoff msg — 桌面 App 本地会话之间的点对点消息(收发 / 读屏)
+const msgUsage = `cc-handoff msg — 桌面 App 本地会话之间的点对点消息(收发 / 读屏 / 关闭)
 
 用法:
   cc-handoff msg list                列出同机其它会话(ID / 名称 / 目录)
   cc-handoff msg send <目标> <内容…>   把消息发到目标会话;<目标> 用 ID 或名称
   cc-handoff msg read <目标> [选项]    读取目标会话最近输出(默认屏幕快照;--transcript 读结构化 transcript)
   cc-handoff msg usage <目标> [选项]   读取目标会话对应 claude/codex 的 token 用量 / 估算费用
+  cc-handoff msg kill <目标> [选项]    关闭目标会话(杀掉其 PTY,从会话列表移除;不能关闭自己或总管会话)
   cc-handoff msg whoami              打印自己的会话 ID 和名称
 
 send 选项:
@@ -61,6 +62,9 @@ read 选项:
 usage 选项:
   --pretty          打印一行人类可读摘要(模型 / 上下文占用 / tokens / 费用)而非原始 JSON
   --timeout 5s      等待返回的超时
+
+kill 选项:
+  --timeout 5s      等待处理结果的超时
 
 收到 “[来自 调研 · ts2] …” 这样的消息后,回复发件人(用方括号里的 ID):
   cc-handoff msg send ts2 "你的回复"
@@ -85,10 +89,12 @@ func runMsg(ctx context.Context, args []string) error {
 		return runMsgRead(ctx, rest)
 	case "usage":
 		return runMsgUsage(ctx, rest)
+	case "kill":
+		return runMsgKill(ctx, rest)
 	case "whoami":
 		return runMsgWhoami()
 	default:
-		return fmt.Errorf("unknown msg subcommand %q (want list|send|read|usage|whoami)", sub)
+		return fmt.Errorf("unknown msg subcommand %q (want list|send|read|usage|kill|whoami)", sub)
 	}
 }
 
@@ -296,6 +302,39 @@ func runMsgUsage(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("%s · %s · ctx %.0f%% (%d/%d) · %d tok · ~%s\n",
 		model, state, u.ContextPercent, u.ContextTokens, u.ContextLimit, u.TotalTokens, cost)
+	return nil
+}
+
+// runMsgKill asks the desktop app to close a target local session: kill its
+// PTY and drop it from the session list — the remote equivalent of clicking
+// that tab's × in the App. It drops a kind:"kill" request into the same
+// outbox `msg send`/`msg read`/`msg usage` already use; the App resolves the
+// target, closes it, and writes back the "ok" receipt. The App refuses to
+// kill the caller itself or a supervisor session (see killLocalSession in
+// terminal_deck.dart) — those refusals surface here as the usual <id>.err.
+func runMsgKill(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("msg kill", flag.ContinueOnError)
+	timeout := fs.Duration("timeout", 5*time.Second, "等待处理结果的超时")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) < 1 {
+		return errors.New("usage: cc-handoff msg kill <session-id>")
+	}
+	target := rest[0]
+	payload, err := json.Marshal(map[string]any{
+		"from": os.Getenv("CC_SESSION_ID"),
+		"to":   target,
+		"kind": "kill",
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := publishAndAwait(ctx, payload, *timeout); err != nil {
+		return err
+	}
+	fmt.Printf("已关闭会话 %s\n", target)
 	return nil
 }
 

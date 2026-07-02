@@ -252,6 +252,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     readOutput: readOutput,
     readUsage: readUsage,
     spawn: _busSpawn,
+    kill: killLocalSession,
   );
 
   // Relay presence: while the workspace is open we hold an SSE subscription (so

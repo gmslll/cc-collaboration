@@ -109,6 +109,134 @@ func TestMsgSendOutsideBus(t *testing.T) {
 	}
 }
 
+// TestMsgKillDelivered: a simulated app consumes the kill request → the
+// on-disk payload is a well-formed kind:"kill", and a bare "ok" receipt is
+// enough for `msg kill` to report success.
+func TestMsgKillDelivered(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	outbox := filepath.Join(dir, "outbox")
+
+	go consumeOutbox(t, outbox, func(name string, m map[string]any) {
+		if m["kind"] != "kill" || m["to"] != "ts1" || m["from"] != "ts0" {
+			t.Errorf("bad kill payload: %+v", m)
+		}
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))
+		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte("ok"), 0o600)
+	})
+
+	var killErr error
+	out := captureStdout(t, func() {
+		killErr = runMsgKill(context.Background(), []string{"ts1"})
+	})
+	if killErr != nil {
+		t.Fatalf("kill: %v", killErr)
+	}
+	if !strings.Contains(out, "ts1") {
+		t.Fatalf("expected confirmation to mention target, got %q", out)
+	}
+}
+
+// TestMsgKillRefused: the app refuses (e.g. supervisor/self target) via a
+// sibling .err → kill surfaces it non-nil, same contract as send/read.
+func TestMsgKillRefused(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	outbox := filepath.Join(dir, "outbox")
+
+	go consumeOutbox(t, outbox, func(name string, _ map[string]any) {
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))
+		os.WriteFile(filepath.Join(outbox, base+".err"), []byte("不能通过总线关闭总管会话「总管」"), 0o600)
+	})
+
+	err := runMsgKill(context.Background(), []string{"ts1"})
+	if err == nil || !strings.Contains(err.Error(), "总管") {
+		t.Fatalf("want refusal error, got %v", err)
+	}
+}
+
+// TestMsgKillNoReceiver: nobody consumes → times out with the shared
+// no-receiver message.
+func TestMsgKillNoReceiver(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	err := runMsgKill(context.Background(), []string{"--timeout", "150ms", "ts1"})
+	if err == nil || !strings.Contains(err.Error(), "无人接收") {
+		t.Fatalf("want no-receiver error, got %v", err)
+	}
+}
+
+func TestMsgKillOutsideBus(t *testing.T) {
+	t.Setenv("CC_BUS_DIR", "")
+	if err := runMsgKill(context.Background(), []string{"ts1"}); err == nil ||
+		!strings.Contains(err.Error(), "CC_BUS_DIR") {
+		t.Fatalf("want CC_BUS_DIR error, got %v", err)
+	}
+}
+
+func TestMsgKillMissingTarget(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	if err := runMsgKill(context.Background(), []string{}); err == nil {
+		t.Fatal("expected usage error for missing target")
+	}
+}
+
+// TestRunMsgDispatchesKill: the `msg` subcommand switch routes "kill" to
+// runMsgKill (kind dispatch), not send/read/usage.
+func TestRunMsgDispatchesKill(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	outbox := filepath.Join(dir, "outbox")
+
+	var gotKind string
+	go consumeOutbox(t, outbox, func(name string, m map[string]any) {
+		gotKind, _ = m["kind"].(string)
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))
+		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte("ok"), 0o600)
+	})
+
+	if err := runMsg(context.Background(), []string{"kill", "ts1"}); err != nil {
+		t.Fatalf("runMsg kill: %v", err)
+	}
+	if gotKind != "kill" {
+		t.Fatalf("runMsg %q did not dispatch to kind:kill, got kind=%q", "kill", gotKind)
+	}
+}
+
+// TestRunSupervisorDispatchesKill: `supervisor kill` delegates to the same
+// runMsgKill path as `msg kill` (mirrors send/usage delegation).
+func TestRunSupervisorDispatchesKill(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CC_BUS_DIR", dir)
+	t.Setenv("CC_SESSION_ID", "ts0")
+	outbox := filepath.Join(dir, "outbox")
+
+	var gotKind, gotTo string
+	go consumeOutbox(t, outbox, func(name string, m map[string]any) {
+		gotKind, _ = m["kind"].(string)
+		gotTo, _ = m["to"].(string)
+		base := strings.TrimSuffix(name, ".json")
+		os.Remove(filepath.Join(outbox, name))
+		os.WriteFile(filepath.Join(outbox, base+".ok"), []byte("ok"), 0o600)
+	})
+
+	if err := runSupervisor(context.Background(), []string{"kill", "ts1"}); err != nil {
+		t.Fatalf("supervisor kill: %v", err)
+	}
+	if gotKind != "kill" || gotTo != "ts1" {
+		t.Fatalf("supervisor kill did not dispatch correctly: kind=%q to=%q", gotKind, gotTo)
+	}
+}
+
 // TestMsgReadDelivered: a simulated app consumes the read request → the on-disk
 // payload is a well-formed kind:"read", and the snapshot the app writes back as
 // the .ok receipt is printed to stdout.
@@ -223,7 +351,7 @@ func TestMsgHelp(t *testing.T) {
 		if err != nil {
 			t.Fatalf("runMsg(%v): %v", args, err)
 		}
-		for _, want := range []string{"send", "read", "list", "whoami", "回复"} {
+		for _, want := range []string{"send", "read", "list", "kill", "whoami", "回复"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("help for %v missing %q:\n%s", args, want, out)
 			}

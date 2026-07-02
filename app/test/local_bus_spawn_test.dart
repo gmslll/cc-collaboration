@@ -39,6 +39,7 @@ void main() {
         out.write('ts42'); // the new session id the app would mint
         return null; // success
       },
+      kill: (_, _) => 'unexpected kill',
     );
     await bus.start();
     addTearDown(bus.dispose);

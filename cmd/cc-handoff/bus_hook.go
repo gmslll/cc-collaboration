@@ -86,6 +86,12 @@ type busHookEvent struct {
 	Cwd       string `json:"cwd"`
 }
 
+// busHookDrainLockTimeout bounds how long the hook waits for the inbox drain
+// lock (localbus.AcquireDrainLock) before giving up and leaving messages
+// parked for the next hook. A var, not a const, so tests can shrink it rather
+// than eating the full wait when exercising the contended path.
+var busHookDrainLockTimeout = 2 * time.Second
+
 func runBusHookDrain() error {
 	// Drain stdin unconditionally and first: the agent pipes a hook payload and
 	// returning without consuming it can block the writer or surface an EPIPE in
@@ -125,6 +131,19 @@ func runBusHookDrain() error {
 	if ev.HookEventName == "Stop" && ev.StopHookActive {
 		return nil
 	}
+
+	// Hold the inbox drain lock for the whole list-render-clear sequence below,
+	// so the desktop app's escalate-timeout path (which force-delivers a parked
+	// message this hook hasn't drained in time — see terminal_deck.dart) can
+	// never act on the same marker file at the same time (double delivery). A
+	// busy lock means the app is actively escalating this inbox right now;
+	// bail quietly rather than blocking the agent's tool call/turn — the
+	// messages the app didn't escalate stay parked for the next hook.
+	release, lockErr := localbus.AcquireDrainLock(busDir, sid, busHookDrainLockTimeout)
+	if lockErr != nil {
+		return nil
+	}
+	defer release()
 
 	entries, err := localbus.ListMsgs(busDir, sid)
 	if err != nil || len(entries) == 0 {
