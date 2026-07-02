@@ -539,26 +539,16 @@ class _HomeShellState extends State<HomeShell> {
           if (v == 'switch') _switchAccount();
           if (v == 'logout') _logout();
         },
-        itemBuilder: (_) => const [
-          PopupMenuItem(
+        itemBuilder: (_) => [
+          ccMenuItem(
             value: 'switch',
-            child: Row(
-              children: [
-                Icon(Icons.switch_account_rounded, size: 16),
-                SizedBox(width: 8),
-                Text('切换账号'),
-              ],
-            ),
+            icon: Icons.switch_account_rounded,
+            label: '切换账号',
           ),
-          PopupMenuItem(
+          ccMenuItem(
             value: 'logout',
-            child: Row(
-              children: [
-                Icon(Icons.logout_rounded, size: 16),
-                SizedBox(width: 8),
-                Text('登出'),
-              ],
-            ),
+            icon: Icons.logout_rounded,
+            label: '登出',
           ),
         ],
       ),

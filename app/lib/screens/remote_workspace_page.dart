@@ -547,26 +547,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 },
                 itemBuilder: (_) => [
                   if (widget.onSwitchAccount != null)
-                    const PopupMenuItem(
+                    ccMenuItem(
                       value: 'switch',
-                      child: Row(
-                        children: [
-                          Icon(Icons.switch_account_rounded, size: 16),
-                          SizedBox(width: 8),
-                          Text('切换账号'),
-                        ],
-                      ),
+                      icon: Icons.switch_account_rounded,
+                      label: '切换账号',
                     ),
                   if (widget.onLogout != null)
-                    const PopupMenuItem(
+                    ccMenuItem(
                       value: 'logout',
-                      child: Row(
-                        children: [
-                          Icon(Icons.logout_rounded, size: 16),
-                          SizedBox(width: 8),
-                          Text('登出'),
-                        ],
-                      ),
+                      icon: Icons.logout_rounded,
+                      label: '登出',
                     ),
                 ],
               ),
@@ -2733,36 +2723,42 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
               if (v == 'review_scroll') _toggleLocalReviewScroll();
             },
             itemBuilder: (_) => [
-              PopupMenuItem(
+              ccMenuItem(
                 value: 'activity',
-                child: Text(
-                  '活动${(widget.client.activities[widget.session.sid] ?? const <HookActivity>[]).isEmpty ? "" : " (${(widget.client.activities[widget.session.sid] ?? const <HookActivity>[]).length})"}',
-                ),
+                icon: Icons.bolt_rounded,
+                label:
+                    '活动${(widget.client.activities[widget.session.sid] ?? const <HookActivity>[]).isEmpty ? "" : " (${(widget.client.activities[widget.session.sid] ?? const <HookActivity>[]).length})"}',
               ),
-              const PopupMenuItem(value: 'default_size', child: Text('设置默认尺寸')),
-              const PopupMenuItem(
+              ccMenuItem(
+                value: 'default_size',
+                icon: Icons.aspect_ratio_rounded,
+                label: '设置默认尺寸',
+              ),
+              ccMenuItem(
                 value: 'clear_default_size',
-                child: Text('默认尺寸改回自动'),
+                icon: Icons.settings_backup_restore_rounded,
+                label: '默认尺寸改回自动',
               ),
               const PopupMenuDivider(),
-              const PopupMenuItem(
+              ccMenuItem(
                 value: 'clear',
-                child: Text('清空本地历史(消除上滑乱码)'),
+                icon: Icons.cleaning_services_outlined,
+                label: '清空本地历史(消除上滑乱码)',
               ),
-              PopupMenuItem(
+              ccMenuItem(
                 value: 'histmode',
-                child: Text(
-                  widget.client.historyMode == 'ansi'
-                      ? '历史:彩色 → 切到文本'
-                      : '历史:文本 → 切到彩色',
-                ),
+                icon: Icons.palette_outlined,
+                label: widget.client.historyMode == 'ansi'
+                    ? '历史:彩色 → 切到文本'
+                    : '历史:文本 → 切到彩色',
               ),
               if (_canUseHostWheelScroll)
-                PopupMenuItem(
+                ccMenuItem(
                   value: 'review_scroll',
-                  child: Text(
-                    _localReviewScroll ? '滚动:本地查看 → 远程控制' : '滚动:远程控制 → 本地查看',
-                  ),
+                  icon: Icons.swap_vert_rounded,
+                  label: _localReviewScroll
+                      ? '滚动:本地查看 → 远程控制'
+                      : '滚动:远程控制 → 本地查看',
                 ),
             ],
           ),
