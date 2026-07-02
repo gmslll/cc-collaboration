@@ -69,6 +69,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	go relay.RunTodoRecurrenceSweep(ctx, st, hub, time.Minute)
+
 	go func() {
 		log.Printf("relay listening on %s", *addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
