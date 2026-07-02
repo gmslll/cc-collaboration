@@ -792,11 +792,15 @@ Future<void> gitApplyReverse(String dir, String patch) async {
 }
 
 // gitDiffToPatch builds a re-appliable unified patch for the given local changes
-// (working tree vs HEAD), concatenating one per-file diff after another. Tracked
-// files use `git diff HEAD -- <file>`; untracked files are emitted as a full add
-// via `git diff --no-index /dev/null <file>`. Backs the Commit panel's "Create
-// Patch from Local Changes…" / "Copy as Patch to Clipboard". Named apart from
-// ts88's commit-oriented gitFormatPatch (which wraps `git format-patch`).
+// (working tree vs HEAD), concatenating one per-file diff after another. Backs the
+// Commit panel's "Create Patch from Local Changes…" / "Copy as Patch to Clipboard".
+// Named apart from ts88's commit-oriented gitFormatPatch (`git format-patch`).
+//
+// Emits its own `git diff` (not the viewer's gitDiffFileWorking/gitDiffUntracked)
+// so it can pass `--binary` — without it a binary change is only a non-appliable
+// "Binary files differ" stub. A rename passes both the old (deletion) and new
+// (addition) pathspecs so `git apply` reproduces the move; untracked files are a
+// whole-file add via `--no-index` (exit 1 = "differ", the normal case here).
 Future<String> gitDiffToPatch(
   String dir,
   List<GitChange> changes, {
@@ -804,9 +808,25 @@ Future<String> gitDiffToPatch(
 }) async {
   final buf = StringBuffer();
   for (final c in changes) {
-    final part = c.untracked
-        ? await gitDiffUntracked(dir, c.path, context: context)
-        : await gitDiffFileWorking(dir, c.path, context: context);
+    final String part;
+    if (c.untracked) {
+      part = await _git(
+        dir,
+        'diff ${_ctx(context)} --binary --no-index -- /dev/null ${shQuote(c.path)}',
+        okExit: {0, 1},
+      );
+    } else if (c.oldPath != null) {
+      part = await _git(
+        dir,
+        'diff ${_ctx(context)} --binary HEAD -- '
+            '${shQuote(c.oldPath!)} ${shQuote(c.path)}',
+      );
+    } else {
+      part = await _git(
+        dir,
+        'diff ${_ctx(context)} --binary HEAD -- ${shQuote(c.path)}',
+      );
+    }
     buf.write(part);
     if (part.isNotEmpty && !part.endsWith('\n')) buf.write('\n');
   }

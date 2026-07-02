@@ -247,17 +247,27 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     }
   }
 
+  /// 取本地改动的 patch;为空则提示并返回 null(Create Patch / Copy as Patch 共用)。
+  Future<String?> _localChangesPatch(
+    ProjectCfg p,
+    List<GitChange> changes,
+  ) async {
+    final patch = await gitDiffToPatch(p.path, changes);
+    if (patch.trim().isEmpty) {
+      _snack('没有改动可导出为 patch');
+      return null;
+    }
+    return patch;
+  }
+
   /// Create Patch from Local Changes…:把本地改动导出成 .patch 文件(原生保存框)。
   Future<void> _createPatchFromChanges(
     ProjectCfg p,
     List<GitChange> changes,
   ) async {
     try {
-      final patch = await gitDiffToPatch(p.path, changes);
-      if (patch.trim().isEmpty) {
-        _snack('没有可导出的改动');
-        return;
-      }
+      final patch = await _localChangesPatch(p, changes);
+      if (patch == null) return;
       final suggested = changes.length == 1
           ? '${changes.first.path.split('/').last}.patch'
           : 'local-changes.patch';
@@ -280,11 +290,8 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     List<GitChange> changes,
   ) async {
     try {
-      final patch = await gitDiffToPatch(p.path, changes);
-      if (patch.trim().isEmpty) {
-        _snack('没有可复制的改动');
-        return;
-      }
+      final patch = await _localChangesPatch(p, changes);
+      if (patch == null) return;
       await Clipboard.setData(ClipboardData(text: patch));
       if (mounted) _snack('Patch 已复制到剪贴板');
     } catch (e) {
