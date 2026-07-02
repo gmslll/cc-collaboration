@@ -415,6 +415,72 @@ func TestCreateTodoWithSourceRef(t *testing.T) {
 	}
 }
 
+// --- optional workspace/repo binding ---
+
+func TestCreateTodoWithWorkspaceRepo(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	td := &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "bound", WorkspaceName: "kunlun", RepoName: "cc-collaboration"}
+	mustCreateTodo(t, st, td)
+
+	got, err := st.GetTodo(ctx, "td1", "alice@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkspaceName != "kunlun" || got.RepoName != "cc-collaboration" {
+		t.Fatalf("CreateTodo did not persist workspace/repo binding: %+v", got)
+	}
+
+	// A todo created without a binding round-trips as empty, not some other
+	// zero value.
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td2", OwnerIdentity: "alice@x", Title: "unbound"})
+	got2, err := st.GetTodo(ctx, "td2", "alice@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.WorkspaceName != "" || got2.RepoName != "" {
+		t.Fatalf("unbound todo should have empty workspace/repo: %+v", got2)
+	}
+}
+
+func TestUpdateTodoFieldsWorkspaceRepo(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "rebindable"})
+
+	ws, repo := "kunlun", "cc-collaboration"
+	got, err := st.UpdateTodoFields(ctx, "td1", "alice@x", TodoPatch{WorkspaceName: &ws, RepoName: &repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkspaceName != "kunlun" || got.RepoName != "cc-collaboration" {
+		t.Fatalf("PATCH did not set workspace/repo binding: %+v", got)
+	}
+
+	// A patch that doesn't mention workspace_name/repo_name at all (nil
+	// pointers) leaves the existing binding untouched.
+	otherTitle := "rebindable, retitled"
+	got, err = st.UpdateTodoFields(ctx, "td1", "alice@x", TodoPatch{Title: &otherTitle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkspaceName != "kunlun" || got.RepoName != "cc-collaboration" {
+		t.Fatalf("field-absent patch should leave binding untouched: %+v", got)
+	}
+
+	// Sending empty strings for both explicitly clears the binding.
+	empty := ""
+	got, err = st.UpdateTodoFields(ctx, "td1", "alice@x", TodoPatch{WorkspaceName: &empty, RepoName: &empty})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkspaceName != "" || got.RepoName != "" {
+		t.Fatalf("empty-string patch should clear binding: %+v", got)
+	}
+}
+
 // --- comments/attachments round trip + counts surfaced on the todo ---
 
 func TestTodoCommentsAndAttachments(t *testing.T) {

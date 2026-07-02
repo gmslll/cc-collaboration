@@ -31,6 +31,8 @@ func createTodoTool() Tool {
     "due_at":            {"type": "string", "description": "截止时间，RFC3339 格式（如 2026-07-10T18:00:00Z）。省略 = 无截止时间。"},
     "recurrence":        {"type": "string", "enum": ["", "daily", "weekly", "monthly"], "description": "真实时间周期重复间隔，空字符串 = 一次性待办。标记 done 后会在此间隔后自动重新变回 pending（见 update_todo_status 的说明）。"},
     "assignee_identity": {"type": "string", "description": "创建时直接指派给的身份标识。省略 = 不指派。"},
+    "workspace_name":    {"type": "string", "description": "可选，绑定到的 workspace 名字（本地 config.toml [[workspace]] name）。要绑定库，须与 repo_name 一起传。"},
+    "repo_name":         {"type": "string", "description": "可选，绑定到的库/repo 名字（workspace_name 下的某个 [[project]] name）。"},
     "attachment_paths":  {"type": "array", "items": {"type": "string"}, "description": "本地文件路径数组（绝对路径或相对 cwd）。创建成功拿到 id 后依次上传为附件。"},
     "cwd":               {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   },
@@ -52,6 +54,8 @@ type createTodoArgs struct {
 	DueAt            string   `json:"due_at"`
 	Recurrence       string   `json:"recurrence"`
 	AssigneeIdentity string   `json:"assignee_identity"`
+	WorkspaceName    string   `json:"workspace_name"`
+	RepoName         string   `json:"repo_name"`
 	AttachmentPaths  []string `json:"attachment_paths"`
 	CWD              string   `json:"cwd"`
 }
@@ -112,6 +116,8 @@ func createTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 		Recurrence:       recurrence,
 		DueAt:            dueAt,
 		AssigneeIdentity: a.AssigneeIdentity,
+		WorkspaceName:    a.WorkspaceName,
+		RepoName:         a.RepoName,
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -155,6 +161,9 @@ func formatTodoSummary(t *todoschema.Todo) string {
 			fmt.Fprintf(&sb, " (session %s)", t.AssigneeSessionLabel)
 		}
 		sb.WriteString("\n")
+	}
+	if t.WorkspaceName != "" || t.RepoName != "" {
+		fmt.Fprintf(&sb, "- repo: %s/%s\n", t.WorkspaceName, t.RepoName)
 	}
 	if t.Recurrence != "" {
 		fmt.Fprintf(&sb, "- recurrence: %s\n", t.Recurrence)

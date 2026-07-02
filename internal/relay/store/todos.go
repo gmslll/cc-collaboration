@@ -17,7 +17,8 @@ import (
 // using it must alias the todos table "t".
 const todoColumns = `t.id, t.project_id, t.owner_identity, t.title, t.body_md, t.status, t.priority,
        t.assignee_identity, t.assignee_session_id, t.assignee_session_label,
-       t.assignee_agent_session_id, t.assignee_workdir, t.assignee_agent_kind, t.recurrence,
+       t.assignee_agent_session_id, t.assignee_workdir, t.assignee_agent_kind,
+       t.workspace_name, t.repo_name, t.recurrence,
        t.due_at, t.next_occurrence_at, t.created_at, t.updated_at, t.completed_at,
        t.source_ref, t.source_url,
        (SELECT COUNT(*) FROM todo_comments c WHERE c.todo_id = t.id) AS comment_count,
@@ -33,7 +34,8 @@ func scanTodoRow(row scanner) (todoschema.Todo, error) {
 	if err := row.Scan(
 		&t.ID, &projectID, &t.OwnerIdentity, &t.Title, &t.BodyMD, &t.Status, &t.Priority,
 		&t.AssigneeIdentity, &t.AssigneeSessionID, &t.AssigneeSessionLabel,
-		&t.AssigneeAgentSessionID, &t.AssigneeWorkdir, &t.AssigneeAgentKind, &t.Recurrence,
+		&t.AssigneeAgentSessionID, &t.AssigneeWorkdir, &t.AssigneeAgentKind,
+		&t.WorkspaceName, &t.RepoName, &t.Recurrence,
 		&dueMS, &nextMS, &createdMS, &updatedMS, &completedMS,
 		&t.SourceRef, &t.SourceURL,
 		&t.CommentCount, &t.AttachmentCount,
@@ -208,12 +210,12 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
-			assignee_identity, assignee_session_id, assignee_session_label, recurrence,
+			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence,
 			due_at, next_occurrence_at, created_at, updated_at, completed_at,
 			source_ref, source_url)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, nullableString(t.ProjectID), t.OwnerIdentity, t.Title, t.BodyMD, string(t.Status), string(t.Priority),
-		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, string(t.Recurrence),
+		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, t.WorkspaceName, t.RepoName, string(t.Recurrence),
 		timeToNullMS(t.DueAt), timeToNullMS(t.NextOccurrenceAt), t.CreatedAt.UnixMilli(), t.UpdatedAt.UnixMilli(), timeToNullMS(t.CompletedAt),
 		t.SourceRef, t.SourceURL,
 	)
@@ -374,6 +376,12 @@ type TodoPatch struct {
 	Priority   *todoschema.Priority
 	Recurrence *todoschema.Recurrence
 	DueAt      OptionalTime
+	// WorkspaceName/RepoName use the same simple *string "nil = leave alone"
+	// semantics as Title/BodyMD — unlike DueAt there's no meaningful
+	// null-vs-absent distinction here, since an empty string already means
+	// "clear the binding" (see pkg/todoschema.Todo field docs).
+	WorkspaceName *string
+	RepoName      *string
 }
 
 type OptionalTime struct {
@@ -422,6 +430,14 @@ func (s *Store) UpdateTodoFields(ctx context.Context, id, callerIdentity string,
 	if patch.DueAt.Set {
 		sets = append(sets, "due_at = ?")
 		args = append(args, timeToNullMS(patch.DueAt.Value))
+	}
+	if patch.WorkspaceName != nil {
+		sets = append(sets, "workspace_name = ?")
+		args = append(args, *patch.WorkspaceName)
+	}
+	if patch.RepoName != nil {
+		sets = append(sets, "repo_name = ?")
+		args = append(args, *patch.RepoName)
 	}
 	args = append(args, id)
 	if _, err := s.db.ExecContext(ctx,

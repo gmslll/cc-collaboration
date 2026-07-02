@@ -236,6 +236,11 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 		{"assignee_agent_session_id", `ALTER TABLE todos ADD COLUMN assignee_agent_session_id TEXT NOT NULL DEFAULT ''`},
 		{"assignee_workdir", `ALTER TABLE todos ADD COLUMN assignee_workdir TEXT NOT NULL DEFAULT ''`},
 		{"assignee_agent_kind", `ALTER TABLE todos ADD COLUMN assignee_agent_kind TEXT NOT NULL DEFAULT ''`},
+		// workspace_name/repo_name: optional workspace/repo binding (see
+		// pkg/todoschema.Todo field docs). Added in its own pass since it
+		// postdates the Phase 0 five-column migration above.
+		{"workspace_name", `ALTER TABLE todos ADD COLUMN workspace_name TEXT NOT NULL DEFAULT ''`},
+		{"repo_name", `ALTER TABLE todos ADD COLUMN repo_name TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := s.db.Exec(ddl.sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {

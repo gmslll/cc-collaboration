@@ -19,7 +19,7 @@ import (
 
 // CreateTodo posts a new todo. Caller sets Title (required) plus whichever
 // of ProjectID/BodyMD/Priority/Recurrence/DueAt/AssigneeIdentity/
-// AssigneeSessionID/AssigneeSessionLabel apply; the relay stamps
+// AssigneeSessionID/AssigneeSessionLabel/WorkspaceName/RepoName apply; the relay stamps
 // OwnerIdentity from the bearer token and assigns ID/CreatedAt/UpdatedAt/
 // Status itself (mirrors Submit's "server overrides sender+id+created_at"
 // handling for handoffs — see server.go's submit handler), so those fields
@@ -123,6 +123,11 @@ type TodoPatch struct {
 	Priority   *todoschema.Priority
 	Recurrence *todoschema.Recurrence
 	DueAt      OptionalTime
+	// WorkspaceName/RepoName: nil means "leave alone"; a non-nil empty string
+	// means "clear the binding" — same *string semantics as Title/BodyMD (see
+	// pkg/todoschema.Todo field docs).
+	WorkspaceName *string
+	RepoName      *string
 }
 
 // PatchTodo applies a partial update to todo id. Only fields set on patch
@@ -144,6 +149,12 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 	}
 	if patch.DueAt.Set {
 		fields["due_at"] = patch.DueAt.Value // nil marshals to JSON null; non-nil to a timestamp
+	}
+	if patch.WorkspaceName != nil {
+		fields["workspace_name"] = *patch.WorkspaceName
+	}
+	if patch.RepoName != nil {
+		fields["repo_name"] = *patch.RepoName
 	}
 	body, err := json.Marshal(fields)
 	if err != nil {

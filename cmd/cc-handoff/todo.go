@@ -41,6 +41,9 @@ create 选项:
   --due RFC3339                截止时间,如 2026-07-10T18:00:00Z
   --recurrence daily|weekly|monthly   周期重复(不传 = 一次性)
   --assignee IDENTITY          指派对象身份
+  --workspace NAME              可选,绑定到的 workspace 名字(config.toml [[workspace]] name)
+  --repo NAME                    可选,绑定到的库/repo 名字;只传 --workspace 时自动取当前目录的
+                                  .cc-handoff.toml [paths] repo(或目录名)作为 --repo
   --attach PATH                附件文件路径(可重复传多次)
 
 list 选项:
@@ -103,6 +106,25 @@ func todoClient() (*transport.Client, error) {
 	return transport.New(res.RelayURL, res.Token), nil
 }
 
+// autoRepoNameFromCWD best-effort resolves the current directory's repo name
+// the same way config.Resolve does (.cc-handoff.toml [paths] repo, falling
+// back to the directory basename) — used to default --repo when the caller
+// passed --workspace but not --repo. Swallows errors: unlike todoClient()
+// (where an unresolvable config is fatal, since auth comes from it), a todo
+// create call should still succeed with no repo name attached rather than
+// fail outright just because cwd isn't a configured repo.
+func autoRepoNameFromCWD() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	res, err := config.Resolve(cwd)
+	if err != nil {
+		return ""
+	}
+	return res.RepoName
+}
+
 // attachFlag collects repeated `--attach PATH` occurrences into a slice.
 type attachFlag []string
 
@@ -120,6 +142,8 @@ func runTodoCreate(ctx context.Context, args []string) error {
 	due := fs.String("due", "", "截止时间,RFC3339,如 2026-07-10T18:00:00Z")
 	recurrence := fs.String("recurrence", "", "daily|weekly|monthly(不传 = 一次性)")
 	assignee := fs.String("assignee", "", "指派对象身份")
+	workspace := fs.String("workspace", "", "可选,绑定到的 workspace 名字")
+	repo := fs.String("repo", "", "可选,绑定到的库/repo 名字(只传 --workspace 时自动取当前目录解析出的 repo 名)")
 	var attach attachFlag
 	fs.Var(&attach, "attach", "附件文件路径(可重复传多次)")
 	pos, err := parseFlexible(fs, args)
@@ -127,7 +151,7 @@ func runTodoCreate(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: cc-handoff todo create <title> [--body TEXT] [--project ID] [--priority low|normal|high] [--due RFC3339] [--recurrence daily|weekly|monthly] [--assignee IDENTITY] [--attach PATH ...]")
+		return fmt.Errorf("usage: cc-handoff todo create <title> [--body TEXT] [--project ID] [--priority low|normal|high] [--due RFC3339] [--recurrence daily|weekly|monthly] [--assignee IDENTITY] [--workspace NAME] [--repo NAME] [--attach PATH ...]")
 	}
 	title := strings.Join(pos, " ")
 
@@ -146,6 +170,10 @@ func runTodoCreate(ctx context.Context, args []string) error {
 			return fmt.Errorf("invalid --due %q (want RFC3339, e.g. 2026-07-10T18:00:00Z): %w", *due, err)
 		}
 		dueAt = &t
+	}
+	repoName := *repo
+	if repoName == "" && *workspace != "" {
+		repoName = autoRepoNameFromCWD()
 	}
 
 	// Read attachment files up front so a bad path fails before we've created
@@ -175,6 +203,8 @@ func runTodoCreate(ctx context.Context, args []string) error {
 		Recurrence:       r,
 		DueAt:            dueAt,
 		AssigneeIdentity: *assignee,
+		WorkspaceName:    *workspace,
+		RepoName:         repoName,
 	})
 	if err != nil {
 		return relayCompatError(err, "todo create")
@@ -189,6 +219,9 @@ func runTodoCreate(ctx context.Context, args []string) error {
 	fmt.Printf("✓ created todo %s: %s\n", out.ID, out.Title)
 	if out.ProjectID != "" {
 		fmt.Printf("  project=%s\n", out.ProjectID)
+	}
+	if out.WorkspaceName != "" || out.RepoName != "" {
+		fmt.Printf("  repo=%s/%s\n", out.WorkspaceName, out.RepoName)
 	}
 	if len(pending) > 0 {
 		fmt.Printf("  attachments=%d\n", len(pending))
@@ -278,6 +311,9 @@ func printTodoDetail(t *todoschema.Todo) {
 	fmt.Printf("  priority  : %s\n", t.Priority)
 	if t.Recurrence != "" {
 		fmt.Printf("  recurrence: %s\n", t.Recurrence)
+	}
+	if t.WorkspaceName != "" || t.RepoName != "" {
+		fmt.Printf("  repo      : %s/%s\n", t.WorkspaceName, t.RepoName)
 	}
 	if t.AssigneeIdentity != "" {
 		if t.AssigneeSessionID != "" {

@@ -53,6 +53,11 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		// support for them since they're not meant to change afterward.
 		SourceRef string `json:"source_ref"`
 		SourceURL string `json:"source_url"`
+		// WorkspaceName/RepoName are the optional workspace/repo binding (see
+		// pkg/todoschema.Todo field docs) — both empty (the default) means
+		// "not bound".
+		WorkspaceName string `json:"workspace_name"`
+		RepoName      string `json:"repo_name"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
@@ -87,6 +92,8 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:     now,
 		SourceRef:     req.SourceRef,
 		SourceURL:     req.SourceURL,
+		WorkspaceName: req.WorkspaceName,
+		RepoName:      req.RepoName,
 	}
 	if err := s.Store.CreateTodo(r.Context(), t); err != nil {
 		writeStoreError(w, err)
@@ -220,6 +227,22 @@ func (s *Server) patchTodo(w http.ResponseWriter, r *http.Request) {
 			}
 			patch.DueAt.Value = &val
 		}
+	}
+	if v, ok := raw["workspace_name"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid workspace_name", http.StatusBadRequest)
+			return
+		}
+		patch.WorkspaceName = &val
+	}
+	if v, ok := raw["repo_name"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid repo_name", http.StatusBadRequest)
+			return
+		}
+		patch.RepoName = &val
 	}
 
 	updated, err := s.Store.UpdateTodoFields(r.Context(), id, identity, patch)

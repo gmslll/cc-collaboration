@@ -110,10 +110,24 @@ type Todo struct {
 	// plus the workdir/agent kind needed to respawn it, so "open the bound
 	// session" still works after the original tab/App session is gone. See
 	// the session-resume design note in the feature plan.
-	AssigneeAgentSessionID string     `json:"assignee_agent_session_id,omitempty"`
-	AssigneeWorkdir        string     `json:"assignee_workdir,omitempty"`
-	AssigneeAgentKind      string     `json:"assignee_agent_kind,omitempty"`
-	Recurrence             Recurrence `json:"recurrence,omitempty"`
+	AssigneeAgentSessionID string `json:"assignee_agent_session_id,omitempty"`
+	AssigneeWorkdir        string `json:"assignee_workdir,omitempty"`
+	AssigneeAgentKind      string `json:"assignee_agent_kind,omitempty"`
+	// WorkspaceName/RepoName are an optional binding to a workspace/repo from
+	// the local config tree (app/lib/local/config.dart WorkspaceCfg/ProjectCfg,
+	// mirrored on the Go side by internal/config.Config's two-level
+	// workspace->project structure) — never required, so a todo can stay
+	// unbound forever. Unlike AssigneeWorkdir (an absolute path, meaningful
+	// only to the machine that set it), these are plain names, portable across
+	// machines and stable even if a workspace's local path changes. Both empty
+	// means "not bound to any repo"; both are always set/cleared together (see
+	// Store.UpdateTodoFields) to avoid a workspace naming a repo it doesn't
+	// have. When a todo is assigned to a live agent session, the desktop app
+	// syncs these to that session's own workspace/repo (see the Flutter
+	// _AssignTodoDialog note), overwriting any prior manual binding.
+	WorkspaceName string     `json:"workspace_name,omitempty"`
+	RepoName      string     `json:"repo_name,omitempty"`
+	Recurrence    Recurrence `json:"recurrence,omitempty"`
 	DueAt                  *time.Time `json:"due_at,omitempty"`
 	NextOccurrenceAt       *time.Time `json:"next_occurrence_at,omitempty"`
 	CreatedAt              time.Time  `json:"created_at"`
