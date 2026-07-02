@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
+import '../local/local_bus.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../terminal_theme.dart';
@@ -115,9 +117,54 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
         const Spacer(),
         if (reviewCount > 0)
           tag('待 review $reviewCount', CcColors.warning, bold: true),
+        if (kDebugMode) ..._debugDispatchActions(),
       ],
     ),
   );
+
+  // TEMP debug entry (Track G manual verification of
+  // SessionOverviewStore.dispatchHandler/spawnHandler) — kDebugMode-only, so it
+  // never ships in a release build. Exercises both handlers against a real
+  // session without waiting for the 待办 page's (Track I) assign dialog. Safe to
+  // delete once that dialog lands and supersedes it.
+  List<Widget> _debugDispatchActions() => [
+    const SizedBox(width: 8),
+    IconButton(
+      tooltip: '调试: 投递测试消息到第一个会话 (dispatchHandler)',
+      icon: const Icon(Icons.bug_report_outlined, size: 18),
+      onPressed: _store.cards.isEmpty ? null : _debugDispatch,
+    ),
+    IconButton(
+      tooltip: '调试: 在第一个会话所在项目新建一个 shell 会话 (spawnHandler)',
+      icon: const Icon(Icons.add_box_outlined, size: 18),
+      onPressed: _store.cards.isEmpty ? null : _debugSpawn,
+    ),
+  ];
+
+  void _debugDispatch() {
+    final target = _store.cards.first;
+    final err = _store.dispatch(
+      LocalMsg('', target.sid, '[调试] Track G dispatchHandler 测试消息', true),
+    );
+    _debugToast(err == null ? '已投递到 ${target.label}' : '投递失败: $err');
+  }
+
+  Future<void> _debugSpawn() async {
+    final ref = _store.cards.first;
+    final (sid, err) = await _store.spawn(
+      workspace: ref.workspace,
+      project: ref.project,
+      kind: 'shell',
+    );
+    _debugToast(err == null ? '已新建会话 $sid' : '新建失败: $err');
+  }
+
+  void _debugToast(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(text)));
+  }
 
   // _grouped lays out cards under 工作区 → 项目 → worktree headers, preserving the
   // snapshot's order (newest sessions last). Orphan (unmapped) sessions fall

@@ -1,6 +1,10 @@
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
 import 'models.dart';
+import 'todo_models.dart';
 
 // RelayClient is a thin HTTP client over the relay's /v1 API (Bearer auth).
 // Shared data only — local ops (pickup/worktree/terminal) go through the
@@ -66,6 +70,139 @@ class RelayClient {
 
   Future<void> reassign(String id, String to, String reason) =>
       _dio.post('/v1/handoffs/$id/reassign', data: {'to': to, 'reason': reason});
+
+  // --- todos ---
+
+  // todos lists either personal or team todos (never both — TodoStore.refresh
+  // issues one call per scope and merges locally). scope=project with no
+  // [project] filter returns the union of every project the caller belongs to.
+  Future<List<Todo>> todos({
+    required String scope, // personal | project | assigned | all
+    String? project,
+    String? status,
+    int? limit,
+  }) async {
+    final r = await _dio.get('/v1/todos', queryParameters: {
+      'scope': scope,
+      'project': ?project,
+      'status': ?status,
+      'limit': ?limit,
+    });
+    return _asList(r.data, 'items')
+        .map((e) => Todo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Todo> todo(String id) async {
+    final r = await _dio.get('/v1/todos/$id');
+    return Todo.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  Future<Todo> createTodo({
+    required String title,
+    String bodyMd = '',
+    String priority = 'normal',
+    String? projectId,
+    String recurrence = '',
+    DateTime? dueAt,
+  }) async {
+    final r = await _dio.post('/v1/todos', data: {
+      'title': title,
+      'body_md': bodyMd,
+      'priority': priority,
+      'project_id': ?projectId,
+      'recurrence': recurrence,
+      if (dueAt != null) 'due_at': dueAt.toUtc().toIso8601String(),
+    });
+    return Todo.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  // updateTodo only sends fields the caller actually passed — except due_at,
+  // which needs [clearDueAt] to distinguish "leave it alone" (key omitted)
+  // from "clear it" (key present with a JSON null value).
+  Future<Todo> updateTodo(
+    String id, {
+    String? title,
+    String? bodyMd,
+    String? priority,
+    String? recurrence,
+    DateTime? dueAt,
+    bool clearDueAt = false,
+  }) async {
+    final r = await _dio.patch('/v1/todos/$id', data: {
+      'title': ?title,
+      'body_md': ?bodyMd,
+      'priority': ?priority,
+      'recurrence': ?recurrence,
+      if (clearDueAt)
+        'due_at': null
+      else if (dueAt != null)
+        'due_at': dueAt.toUtc().toIso8601String(),
+    });
+    return Todo.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  Future<Todo> setTodoStatus(String id, TodoStatus status) async {
+    final r = await _dio
+        .post('/v1/todos/$id/status', data: {'status': todoStatusName(status)});
+    return Todo.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteTodo(String id) => _dio.delete('/v1/todos/$id');
+
+  // assignTodo also doubles as "assign to a team member" (assigneeIdentity
+  // only) and "assign to a specific local session" (all three set) — the
+  // local-session-dispatch path additionally calls SessionOverviewStore's
+  // dispatchHandler to actually deliver the task text (that's Track G/I, not
+  // this client — this call only syncs visibility for other viewers).
+  Future<Todo> assignTodo(
+    String id, {
+    String? assigneeIdentity,
+    String? assigneeSessionId,
+    String? assigneeSessionLabel,
+  }) async {
+    final r = await _dio.post('/v1/todos/$id/assign', data: {
+      'assignee_identity': ?assigneeIdentity,
+      'assignee_session_id': ?assigneeSessionId,
+      'assignee_session_label': ?assigneeSessionLabel,
+    });
+    return Todo.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  Future<List<TodoComment>> todoComments(String id) async {
+    final r = await _dio.get('/v1/todos/$id/comments');
+    return _asList(r.data, 'comments')
+        .map((e) => TodoComment.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<TodoComment> postTodoComment(String id, String body) async {
+    final r = await _dio.post('/v1/todos/$id/comment', data: {'body': body});
+    return TodoComment.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  // uploadTodoAttachment sends the raw bytes as the request body (not
+  // multipart) with a X-Content-Sha256 header — identical wire protocol to
+  // handoff attachments. Must pass a Uint8List (not a plain List<int>) so
+  // dio skips its JSON transformer and writes the bytes verbatim.
+  Future<void> uploadTodoAttachment(String id, String name, List<int> bytes) {
+    final body = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+    return _dio.post(
+      '/v1/todos/$id/attachments/${Uri.encodeComponent(name)}',
+      data: body,
+      options: Options(
+        contentType: 'application/octet-stream',
+        headers: {'X-Content-Sha256': sha256.convert(body).toString()},
+      ),
+    );
+  }
+
+  Future<List<int>> todoAttachment(String id, String name) async {
+    final r = await _dio.get(
+        '/v1/todos/$id/attachments/${Uri.encodeComponent(name)}',
+        options: Options(responseType: ResponseType.bytes));
+    return (r.data as List).cast<int>();
+  }
 
   // --- multi-tenant (F3) ---
 

@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'local_bus.dart';
+
 // Shared, UI-free projection of a terminal session for the "会话总览" surface.
 //
 // A glanceable snapshot — label, workspace→project→worktree hierarchy, status,
@@ -76,7 +78,8 @@ class SessionCard {
   final String project; // project name ('' if unmapped/orphan)
   final String? worktree; // worktree name (null at project root)
   final SessionStatus status;
-  final String statusDetail; // richer live state derived from recent hook events
+  final String
+  statusDetail; // richer live state derived from recent hook events
   final String? usageLabel; // SessionUsage.shortLabel(), or null
   final String preview; // latest assistant reply / terminal tail
 
@@ -144,6 +147,27 @@ class SessionOverviewStore extends ChangeNotifier {
   // WorkspacePage clear that session's 待 review flag (the same "the user is
   // looking at it" semantics as local foregrounding / a phone watching it).
   void Function(String sid)? reviewedHandler;
+  // dispatchHandler delivers one message to an existing local session — the
+  // "指派待办给一个已有会话" path for the (future) 待办 top-level page, which like
+  // this store's other consumers can't reach `terms` directly. Points straight at
+  // WorkspacePage's deliverLocalMessage: same signature, same "not ready → wake +
+  // queue; busy/dirty → bus inbox; else paste+submit" routing, so a dispatched
+  // todo starts the target session's next turn with no extra wiring here.
+  String? Function(LocalMsg m)? dispatchHandler;
+  // spawnHandler starts a brand-new local session for the "指派待办→新建会话"
+  // path — optionally in a fresh git worktree branch first. Resolves
+  // (workspace, project) against WorkspacePage's live config (this store's
+  // caller has no config of its own), validates [kind], and returns
+  // (sid, null) on success or (null, error) — same result-tuple convention as
+  // WorkspacePage's internal `_resolveTarget`.
+  Future<(String? sid, String? error)> Function({
+    required String workspace,
+    required String project,
+    required String kind,
+    String? newWorktreeBranch,
+    String? worktreeStart,
+  })?
+  spawnHandler;
 
   void publish(List<SessionCard> c) {
     cards = c;
@@ -165,4 +189,32 @@ class SessionOverviewStore extends ChangeNotifier {
   // quick-reply preview in the overview) so WorkspacePage drops its 待 review
   // highlight. Safe no-op until WorkspacePage registers the handler.
   void markReviewed(String sid) => reviewedHandler?.call(sid);
+
+  // dispatch delivers [m] to a local session, e.g. a "指派待办" click:
+  // `overviewStore.dispatch(LocalMsg('', targetSid, todoText, true))`. Returns a
+  // human-readable error (unknown/ambiguous target, self-send, …) or null on
+  // success; '会话总览未就绪' when WorkspacePage hasn't registered the handler yet
+  // (e.g. mobile, where there's no local WorkspacePage at all).
+  String? dispatch(LocalMsg m) =>
+      dispatchHandler == null ? '会话总览未就绪' : dispatchHandler!(m);
+
+  // spawn starts a new local session for [project] in [workspace] (optionally
+  // narrowing to a fresh worktree branch first) and returns (sid, null) on
+  // success or (null, error). See [spawnHandler] for the field contract.
+  Future<(String? sid, String? error)> spawn({
+    required String workspace,
+    required String project,
+    required String kind,
+    String? newWorktreeBranch,
+    String? worktreeStart,
+  }) async {
+    if (spawnHandler == null) return (null, '会话总览未就绪');
+    return spawnHandler!(
+      workspace: workspace,
+      project: project,
+      kind: kind,
+      newWorktreeBranch: newWorktreeBranch,
+      worktreeStart: worktreeStart,
+    );
+  }
 }

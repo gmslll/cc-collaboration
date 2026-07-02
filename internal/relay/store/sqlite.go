@@ -172,6 +172,60 @@ SELECT h.id, h.recipient, h.state, h.picked_at
 			return fmt.Errorf("backfill handoff_recipients: %w", err)
 		}
 	}
+
+	// Todo feature tables (new sibling entity, kept in its own Exec block so
+	// it never touches the handoffs migration above). project_id is a
+	// nullable FK (NULL = personal todo) rather than NOT NULL DEFAULT '' —
+	// unlike project_repos, a todo can legitimately have no project, and a
+	// real (non-null) FK gets us "deleting a project cascades its team
+	// todos" for free via the store's foreign_keys=on pragma, without
+	// touching personal todos (their project_id is NULL, never matched by
+	// the cascade).
+	if _, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS todos (
+  id                     TEXT PRIMARY KEY,
+  project_id             TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  owner_identity         TEXT NOT NULL,
+  title                  TEXT NOT NULL,
+  body_md                TEXT NOT NULL DEFAULT '',
+  status                 TEXT NOT NULL DEFAULT 'pending',
+  priority               TEXT NOT NULL DEFAULT 'normal',
+  assignee_identity      TEXT NOT NULL DEFAULT '',
+  assignee_session_id    TEXT NOT NULL DEFAULT '',
+  assignee_session_label TEXT NOT NULL DEFAULT '',
+  recurrence             TEXT NOT NULL DEFAULT '',
+  due_at                 INTEGER,
+  next_occurrence_at     INTEGER,
+  created_at             INTEGER NOT NULL,
+  updated_at             INTEGER NOT NULL,
+  completed_at           INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_todos_owner ON todos(owner_identity);
+CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project_id);
+CREATE INDEX IF NOT EXISTS idx_todos_assignee ON todos(assignee_identity);
+CREATE INDEX IF NOT EXISTS idx_todos_status_next ON todos(status, next_occurrence_at);
+
+CREATE TABLE IF NOT EXISTS todo_comments (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  todo_id         TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+  author_identity TEXT NOT NULL,
+  body            TEXT NOT NULL,
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_todo_comments_todo_created ON todo_comments(todo_id, created_at);
+
+CREATE TABLE IF NOT EXISTS todo_attachments (
+  todo_id     TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  sha256      TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  content     BLOB NOT NULL,
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (todo_id, name)
+);
+`); err != nil {
+		return fmt.Errorf("create todo tables: %w", err)
+	}
 	return nil
 }
 

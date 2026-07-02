@@ -768,6 +768,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     // Opening a session's quick-reply preview in the overview = viewing it → clear
     // its 待 review (the overview can't reach `terms`, so it routes through here).
     widget.overviewStore.reviewedHandler = markSessionReviewed;
+    // 待办 top-level page dispatch support (also can't reach `terms`/`_cfg`
+    // directly): deliverLocalMessage already matches dispatchHandler's shape
+    // verbatim; spawnHandler needs project resolution + optional worktree
+    // creation first, so it routes through _spawnForDispatch below.
+    widget.overviewStore.dispatchHandler = deliverLocalMessage;
+    widget.overviewStore.spawnHandler = _spawnForDispatch;
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
@@ -895,6 +901,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     widget.overviewStore.inputHandler = null;
     widget.overviewStore.previewHandler = null;
     widget.overviewStore.reviewedHandler = null;
+    widget.overviewStore.dispatchHandler = null;
+    widget.overviewStore.spawnHandler = null;
     _voice.dispose();
     disposeTerms();
     LspManager.instance.shutdownAll();
@@ -1595,6 +1603,75 @@ class _WorkspacePageState extends State<WorkspacePage>
         }
       }
     }
+  }
+
+  // _spawnForDispatch backs SessionOverviewStore.spawnHandler — the "指派待办→
+  // 新建会话" path from the (future) top-level 待办 page, which has no `_cfg` of
+  // its own. Resolves (workspace, project) by name against the live config
+  // (same lookup as _busSpawn), optionally creates a fresh worktree branch
+  // first (Cli.worktreeAdd, then listWorktrees to resolve its real path — `git
+  // worktree add` doesn't hand the path back directly), then launches via
+  // _spawnManagedSession. Returns (sid, null) on success or (null, error) —
+  // the same result-tuple convention as _resolveTarget.
+  Future<(String? sid, String? error)> _spawnForDispatch({
+    required String workspace,
+    required String project,
+    required String kind,
+    String? newWorktreeBranch,
+    String? worktreeStart,
+  }) async {
+    WorkspaceCfg? ws;
+    ProjectCfg? p;
+    for (final w in _cfg.workspaces) {
+      if (workspace.isNotEmpty && w.name != workspace) continue;
+      for (final proj in w.projects) {
+        if (proj.name == project) {
+          ws = w;
+          p = proj;
+        }
+      }
+    }
+    if (ws == null || p == null) {
+      return (
+        null,
+        workspace.isEmpty
+            ? '找不到项目 "$project"'
+            : '找不到项目 "$project"(workspace=$workspace)',
+      );
+    }
+    final k = kind.trim().toLowerCase();
+    const validKinds = {
+      '',
+      'shell',
+      'claude',
+      'codex',
+      'supervisor:claude',
+      'supervisor:codex',
+    };
+    if (!validKinds.contains(k)) return (null, '未知 agent "$kind"');
+
+    String? workdir;
+    final branch = newWorktreeBranch?.trim();
+    if (branch != null && branch.isNotEmpty) {
+      try {
+        await Cli.worktreeAdd(
+          p.name,
+          branch,
+          workspace: ws.name,
+          start: (worktreeStart?.trim().isEmpty ?? true)
+              ? null
+              : worktreeStart!.trim(),
+        );
+      } catch (e) {
+        return (null, '创建 worktree 失败: $e');
+      }
+      final wts = await listWorktrees(p.path);
+      final wt = wts.where((w) => w.branch == branch).toList();
+      if (wt.isEmpty) return (null, 'worktree 创建成功但未能解析路径');
+      workdir = wt.first.path;
+    }
+    final id = _spawnManagedSession(ws: ws, p: p, kind: k, workdir: workdir);
+    return id.isEmpty ? (null, '会话创建失败') : (id, null);
   }
 
   // _busSpawn serves a kind:"spawn" local-bus request (`cc-handoff supervisor
@@ -2518,7 +2595,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         msg = (added == 0 && skipped == 0)
             ? '「$ws」下没找到可导入的 git 仓库'
             : '已导入 $added 个项目到「$ws」'
-                '${skipped > 0 ? '(跳过 $skipped 个已有)' : ''}';
+                  '${skipped > 0 ? '(跳过 $skipped 个已有)' : ''}';
       } catch (_) {}
       _snack(msg);
     } catch (e) {
@@ -5706,9 +5783,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               Padding(
                 padding: const EdgeInsets.fromLTRB(30, 12, 8, 12),
                 child: Text(
-                  _changesFilter == _ChangeFilter.all
-                      ? '没有变更'
-                      : '没有匹配的变更',
+                  _changesFilter == _ChangeFilter.all ? '没有变更' : '没有匹配的变更',
                   style: CcType.code(size: 11.5, color: CcColors.subtle),
                 ),
               )
@@ -6023,8 +6098,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                       child: Checkbox(
                         value: checked,
                         visualDensity: VisualDensity.compact,
-                        materialTapTargetSize:
-                            MaterialTapTargetSize.shrinkWrap,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         onChanged: (v) => setState(() {
                           if (v == true) {
                             _selectedChangePaths.add(c.path);
@@ -6041,7 +6115,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                   Icon(_iconForFile(c.path), size: 15, color: changeColor),
                   const SizedBox(width: 7),
                   // Filename coloured by change kind + a small grey directory.
-                  Expanded(child: fileNameDirLabel(c.path, nameColor: changeColor)),
+                  Expanded(
+                    child: fileNameDirLabel(c.path, nameColor: changeColor),
+                  ),
                   const SizedBox(width: 4),
                   Builder(
                     builder: (btnCtx) => IconButton(
@@ -6077,7 +6153,10 @@ class _WorkspacePageState extends State<WorkspacePage>
   // per-file tab showing only this file's diff (the menu's "Show Diff in a New
   // Tab"), instead of the shared 'Working Tree' tab reused by single-click.
   @override
-  Future<void> _openWorkingTreeDiffTab(String path, {bool newTab = false}) async {
+  Future<void> _openWorkingTreeDiffTab(
+    String path, {
+    bool newTab = false,
+  }) async {
     setState(() => _selectedGitPath = path);
     final p = _currentGitProject;
     if (newTab && p != null && _gitFiles.any((f) => f.path == path)) {
@@ -6086,8 +6165,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         'Diff · ${path.split('/').last}',
         initialPath: path,
         showTree: false,
-        reload: (ctx) async =>
-            parseUnifiedDiff(await gitDiffFileWorking(p.path, path, context: ctx)),
+        reload: (ctx) async => parseUnifiedDiff(
+          await gitDiffFileWorking(p.path, path, context: ctx),
+        ),
       );
       return;
     }
@@ -8086,8 +8166,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                           // used to come back all-expanded (initiallyExpanded:true).
                           // Mirror the section-collapse pattern (_secCollapsed) so a
                           // collapsed workspace stays collapsed. Default expanded.
-                          initiallyExpanded:
-                              !Prefs.getBool('ws.wsCollapsed.${ws.name}'),
+                          initiallyExpanded: !Prefs.getBool(
+                            'ws.wsCollapsed.${ws.name}',
+                          ),
                           onExpansionChanged: (open) =>
                               Prefs.setBool('ws.wsCollapsed.${ws.name}', !open),
                           shape: const Border(),
