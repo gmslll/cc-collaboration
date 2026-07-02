@@ -308,7 +308,7 @@ List<_CodeSymbol> _extractCodeSymbols(String path, String text) {
 // Matches both top-level funcs (`func Name(`) and methods with a receiver
 // (`func (r *T) Name(`) — the optional group is the receiver, not a second func.
 final _reGoFunc = RegExp(
-  r'^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][\w]*)\s*\(',
+  r'^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(',
 );
 final _reGoType = RegExp(r'^type\s+([A-Za-z_][\w]*)\s+(struct|interface)\b');
 final _reDartType = RegExp(

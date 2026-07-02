@@ -58,10 +58,10 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     if (ctl == null) return null;
     final sel = ctl.selection;
     final idx = sel.extentIndex;
-    if (idx < 0) return null;
-    final lines = ctl.text.split('\n');
-    if (idx >= lines.length) return null;
-    return identifierAtOffset(lines[idx], sel.extentOffset);
+    // Read the caret's line straight from re_editor's line model (what it uses
+    // internally) instead of splitting the whole buffer on every click.
+    if (idx < 0 || idx >= ctl.codeLines.length) return null;
+    return identifierAtOffset(ctl.codeLines[idx].text, sel.extentOffset);
   }
 
   // caretLine is the caret's 1-based line (null when no buffer is loaded) — the

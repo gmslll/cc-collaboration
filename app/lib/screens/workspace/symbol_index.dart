@@ -73,10 +73,7 @@ mixin _SymbolIndex on State<WorkspacePage> {
       if (e is Directory) {
         count = await _indexDir(e, root, project, map, count);
       } else if (e is File) {
-        final ext = name.contains('.')
-            ? name.split('.').last.toLowerCase()
-            : '';
-        if (!_symbolIndexExts.contains(ext)) continue;
+        if (!_symbolIndexExts.contains(fileExtOf(e.path))) continue;
         String text;
         try {
           if (await e.length() > 700 * 1024) continue;
@@ -117,13 +114,17 @@ mixin _SymbolIndex on State<WorkspacePage> {
       _snack('光标不在标识符上');
       return;
     }
-    await _goToDefinitionOf(ident, fromPath: ed.path, fromLine: ed.caretLine);
+    await _goToDefinitionOf(
+      ident,
+      fromPath: ed.path,
+      fromLine: ed.state.caretLine,
+    );
   }
 
   // _tryLspDefinition asks the LSP backend for the definition at the caret and
   // navigates if it resolved one. Returns false (→ regex fallback) on any miss.
   Future<bool> _tryLspDefinition(
-    ({CodeEditorPaneState state, String path, int? caretLine}) ed,
+    ({CodeEditorPaneState state, String path}) ed,
   ) async {
     final pos = ed.state.caretPosition;
     if (pos == null) return false;
@@ -155,14 +156,13 @@ mixin _SymbolIndex on State<WorkspacePage> {
 
   // _activeCodeEditor returns the mounted editor state of the active code tab
   // (null when the active tab is a diff / nothing is open / editor not ready).
-  ({CodeEditorPaneState state, String path, int? caretLine})?
-  _activeCodeEditor() {
+  ({CodeEditorPaneState state, String path})? _activeCodeEditor() {
     if (_activeFile < 0 || _activeFile >= _codeFiles.length) return null;
     final f = _codeFiles[_activeFile];
     if (f.isDiff) return null;
     final state = f.key.currentState;
     if (state == null) return null;
-    return (state: state, path: f.path, caretLine: state.caretLine);
+    return (state: state, path: f.path);
   }
 
   // _goToDefinitionOf looks [name] up in the symbol index and navigates. When
@@ -180,17 +180,13 @@ mixin _SymbolIndex on State<WorkspacePage> {
       _snack('未找到定义: $name');
       return;
     }
-    final onSelf = (fromPath != null && fromLine != null)
-        ? hits.where((h) => h.path == fromPath && h.symbol.line == fromLine)
-        : const Iterable<_SymbolHit>.empty();
     final candidates = hits
         .where((h) => !(h.path == fromPath && h.symbol.line == fromLine))
         .toList();
     if (candidates.isEmpty) {
-      // Caret is on the sole definition — nowhere else to jump.
-      if (onSelf.isNotEmpty) {
-        _snack('已在 $name 的定义处 · Cmd/Ctrl+Alt+F7 查看引用');
-      }
+      // Empty only when every hit is the caret's own line, i.e. it's already on
+      // the sole definition — nowhere else to jump.
+      _snack('已在 $name 的定义处 · Cmd/Ctrl+Alt+F7 查看引用');
       return;
     }
     if (candidates.length == 1) {
@@ -208,6 +204,8 @@ mixin _SymbolIndex on State<WorkspacePage> {
 
 // Extensions the go-to-definition regex index scans. Code definitions only —
 // markdown headings (indexed elsewhere for Go to Symbol) aren't jump targets.
+// Keep in sync with _extractCodeSymbols's per-ext switch (search_dialogs.dart):
+// only exts with a real parser there belong here.
 const _symbolIndexExts = {
   'go',
   'dart',
