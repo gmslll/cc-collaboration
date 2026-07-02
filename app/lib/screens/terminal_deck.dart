@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../local/agent_transcript.dart';
@@ -235,6 +236,101 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       if (l >= 0 && !_hiddenTabs.contains(terms[l].id)) return l;
     }
     return null;
+  }
+
+  // closeOtherTerms/closeTermsToLeft/closeTermsToRight back the terminal tab's
+  // right-click "关闭其他/左侧/右侧" — a real close (kills the PTY) for every
+  // matched session. Only wired up for hosts whose × is itself a real close
+  // (hideClosedTabs: false, e.g. the inbox cockpit) — see the View-suffixed
+  // siblings below for the hide-only counterpart used wherever × is
+  // closeTermView. Routed through _closeTermsWhere so a bulk close re-anchors
+  // activeTerm on the previously active session's *new* index rather than
+  // reusing closeTerm's simple length-clamp, which only accounts for removals
+  // at-or-after the active tab (a bulk close can also drop tabs strictly
+  // before it).
+  void closeOtherTerms(int keep) {
+    if (keep < 0 || keep >= terms.length) return;
+    _closeTermsWhere((i) => i != keep);
+  }
+
+  void closeTermsToLeft(int index) {
+    if (index <= 0 || index >= terms.length) return;
+    _closeTermsWhere((i) => i < index);
+  }
+
+  void closeTermsToRight(int index) {
+    if (index < 0 || index >= terms.length - 1) return;
+    _closeTermsWhere((i) => i > index);
+  }
+
+  void _closeTermsWhere(bool Function(int index) shouldClose) {
+    final activeSession = activeTerm >= 0 && activeTerm < terms.length
+        ? terms[activeTerm]
+        : null;
+    final toClose = [
+      for (var i = 0; i < terms.length; i++)
+        if (shouldClose(i)) terms[i],
+    ];
+    if (toClose.isEmpty) return;
+    for (final s in toClose) {
+      _hiddenTabs.remove(s.id);
+      s.dispose();
+    }
+    setState(() {
+      terms.removeWhere(toClose.contains);
+      if (terms.isEmpty) {
+        activeTerm = 0;
+      } else if (activeSession != null && !toClose.contains(activeSession)) {
+        activeTerm = terms.indexOf(activeSession);
+      } else {
+        activeTerm = activeTerm.clamp(0, terms.length - 1);
+      }
+    });
+    onTermsChanged?.call();
+    _activeChanged();
+    unawaited(_save());
+  }
+
+  // closeOtherTermsView/closeTermsToLeftView/closeTermsToRightView are the
+  // hide-only counterparts of closeOtherTerms/closeTermsToLeft/
+  // closeTermsToRight — the bulk-close equivalent of closeTermView (PTY keeps
+  // running, tab just drops out of the strip, reopenTermView brings it back).
+  // Wired up for hosts whose × is closeTermView (hideClosedTabs: true, e.g.
+  // the workspace) so a right-click "关闭其他/左侧/右侧" can never surprise-kill
+  // a background session the single × would have merely hidden.
+  void closeOtherTermsView(int keep) {
+    if (keep < 0 || keep >= terms.length) return;
+    _hideTermsWhere((i) => i != keep);
+  }
+
+  void closeTermsToLeftView(int index) {
+    if (index <= 0 || index >= terms.length) return;
+    _hideTermsWhere((i) => i < index);
+  }
+
+  void closeTermsToRightView(int index) {
+    if (index < 0 || index >= terms.length - 1) return;
+    _hideTermsWhere((i) => i > index);
+  }
+
+  void _hideTermsWhere(bool Function(int index) shouldHide) {
+    final toHide = [
+      for (var i = 0; i < terms.length; i++)
+        if (shouldHide(i)) i,
+    ];
+    if (toHide.isEmpty) return;
+    final activeWasHidden = toHide.contains(activeTerm);
+    setState(() {
+      for (final i in toHide) {
+        _hiddenTabs.add(terms[i].id);
+      }
+      if (activeWasHidden) {
+        final next = _nearestVisible(activeTerm);
+        if (next != null) activeTerm = next;
+      }
+    });
+    _activeChanged();
+    unawaited(_save());
   }
 
   void disposeTerms() {
@@ -785,6 +881,12 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       _activeChanged();
     },
     onClose: hideClosedTabs ? closeTermView : closeTerm,
+    // Bulk close mirrors × exactly: hideClosedTabs hosts only ever hide, so
+    // "关闭其他/左侧/右侧" can't surprise-kill a session the single × would
+    // have merely backgrounded.
+    onCloseOthers: hideClosedTabs ? closeOtherTermsView : closeOtherTerms,
+    onCloseLeft: hideClosedTabs ? closeTermsToLeftView : closeTermsToLeft,
+    onCloseRight: hideClosedTabs ? closeTermsToRightView : closeTermsToRight,
     onCollapse: onCollapse,
     onNewShell: onNewShell,
     groupsFor: sendGroupsFor,
@@ -832,6 +934,11 @@ class TerminalDeck extends StatelessWidget {
   final Set<String>? hiddenIds;
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
+  // onCloseOthers/onCloseLeft/onCloseRight power the tab's right-click menu
+  // bulk actions; null hides the corresponding row (falls back to disabled).
+  final ValueChanged<int>? onCloseOthers;
+  final ValueChanged<int>? onCloseLeft;
+  final ValueChanged<int>? onCloseRight;
   final VoidCallback? onCollapse;
   // onNewShell: open a plain interactive shell tab; null hides the + button.
   final VoidCallback? onNewShell;
@@ -857,6 +964,9 @@ class TerminalDeck extends StatelessWidget {
     this.hiddenIds,
     required this.onSwitch,
     required this.onClose,
+    this.onCloseOthers,
+    this.onCloseLeft,
+    this.onCloseRight,
     this.onCollapse,
     this.onNewShell,
     this.groupsFor,
@@ -878,6 +988,9 @@ class TerminalDeck extends StatelessWidget {
           hiddenIds: hiddenIds,
           onSwitch: onSwitch,
           onClose: onClose,
+          onCloseOthers: onCloseOthers,
+          onCloseLeft: onCloseLeft,
+          onCloseRight: onCloseRight,
           trailing: (onNewShell == null && onCollapse == null)
               ? null
               : Row(
@@ -936,6 +1049,11 @@ class TerminalTabBar extends StatelessWidget {
   final Set<String>? hiddenIds;
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
+  // onCloseOthers/onCloseLeft/onCloseRight power the right-click tab menu's
+  // bulk-close rows; null hides (disables) the corresponding row.
+  final ValueChanged<int>? onCloseOthers;
+  final ValueChanged<int>? onCloseLeft;
+  final ValueChanged<int>? onCloseRight;
   final Widget? leading;
   final Widget? trailing;
   const TerminalTabBar({
@@ -945,9 +1063,70 @@ class TerminalTabBar extends StatelessWidget {
     this.hiddenIds,
     required this.onSwitch,
     required this.onClose,
+    this.onCloseOthers,
+    this.onCloseLeft,
+    this.onCloseRight,
     this.leading,
     this.trailing,
   });
+
+  // 右键菜单项：跟 workspace_page.dart 里文件标签页的 _editorFileTabMenuItems 同一
+  // 视觉风格(ccMenuItem/showMenu/menuPosAt)。"关闭"直接调 onClose(i) ——跟标签上
+  // 那颗 × 按钮完全同一个回调，语义天然一致(workspace 里是 closeTermView 只隐藏
+  // 视图，PTY 仍在跑；inbox 收件箱里是 closeTerm 真正结束会话)，不用在这里猜一次
+  // 该调哪个。"关闭其他/左侧/右侧"同理：onCloseOthers/onCloseLeft/onCloseRight 由
+  // terminalDeck() 按 hideClosedTabs 挑一套(真杀 closeOtherTerms 系列 vs 隐藏
+  // closeOtherTermsView 系列)传进来，跟单个 × 保持同一语义——不会出现"点了关闭
+  // 其他，结果背景在跑的会话被杀掉"这种意外。
+  List<PopupMenuEntry<String>> _tabMenuItems(int i) => [
+    ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
+    ccMenuItem(
+      value: 'closeOthers',
+      icon: Icons.clear_rounded,
+      label: 'Close Others',
+      enabled: onCloseOthers != null && terms.length > 1,
+    ),
+    if (onCloseLeft != null && i > 0)
+      ccMenuItem(
+        value: 'closeLeft',
+        icon: Icons.first_page_rounded,
+        label: 'Close Tabs to the Left',
+      ),
+    if (onCloseRight != null && i < terms.length - 1)
+      ccMenuItem(
+        value: 'closeRight',
+        icon: Icons.keyboard_tab_rounded,
+        label: 'Close Tabs to the Right',
+      ),
+    const PopupMenuDivider(),
+    ccMenuItem(
+      value: 'copyPath',
+      icon: Icons.content_copy_rounded,
+      label: 'Copy Path',
+    ),
+  ];
+
+  Future<void> _showTabMenu(BuildContext context, Offset pos, int i) async {
+    final v = await showMenu<String>(
+      context: context,
+      position: menuPosAt(context, pos),
+      items: _tabMenuItems(i),
+    );
+    if (v == null) return;
+    switch (v) {
+      case 'close':
+        onClose(i);
+      case 'closeOthers':
+        onCloseOthers?.call(i);
+      case 'closeLeft':
+        onCloseLeft?.call(i);
+      case 'closeRight':
+        onCloseRight?.call(i);
+      case 'copyPath':
+        await Clipboard.setData(ClipboardData(text: terms[i].workdir));
+        if (context.mounted) snack(context, '已复制路径');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -976,6 +1155,8 @@ class TerminalTabBar extends StatelessWidget {
                 final isActive = i == idx;
                 return InkWell(
                   onTap: () => onSwitch(i),
+                  onSecondaryTapDown: (d) =>
+                      _showTabMenu(context, d.globalPosition, i),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     decoration: BoxDecoration(
