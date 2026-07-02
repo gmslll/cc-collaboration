@@ -134,9 +134,17 @@ class LspManager extends ChangeNotifier {
         final res = await Process.run(
           Platform.environment['SHELL'] ?? '/bin/sh',
           [
-            '-lc',
+            // Interactive (-i) so the shell sources ~/.zshrc etc. — that's where
+            // users commonly export PATH (a GUI app's login-only `-lc` shell
+            // misses it, so bare `gopls` isn't found even though it's installed).
+            // -l for profile files too. Timed out so a slow/interactive rc can't
+            // hang detection.
+            '-ilc',
             'printf "__CMD__%s\\n__PATH__%s\\n" "\$(command -v ${shQuote(command)} || true)" "\$PATH"',
           ],
+        ).timeout(
+          const Duration(seconds: 6),
+          onTimeout: () => ProcessResult(0, 1, '', ''),
         );
         for (final line in (res.stdout as String).split('\n')) {
           if (line.startsWith('__CMD__')) {
@@ -268,6 +276,10 @@ class _LspServer {
         // Override PATH (parent env is still included) so the server can shell out
         // to its toolchain (gopls→go); a bare app process's PATH usually lacks it.
         environment: _pathEnv.isEmpty ? null : {'PATH': _pathEnv},
+        // On Windows many servers ship as .cmd/.bat wrappers (typescript-language-
+        // server, pyright, jdtls) that Process.start can't exec directly — route
+        // through the shell. No effect on macOS/Linux (stays false).
+        runInShell: Platform.isWindows,
       );
       _proc = proc;
       _log('started $_exe (pid ${proc.pid}) root=$_root');
