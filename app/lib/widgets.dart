@@ -1348,12 +1348,12 @@ PopupMenuItem<String> ccMenuItem({
   return PopupMenuItem<String>(
     value: value,
     enabled: on,
-    height: 34,
-    padding: const EdgeInsets.symmetric(horizontal: 12),
+    height: 26,
+    padding: const EdgeInsets.symmetric(horizontal: 10),
     child: Row(
       children: [
-        Icon(icon, size: 16, color: color),
-        const SizedBox(width: 10),
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
             label,
@@ -1363,8 +1363,8 @@ PopupMenuItem<String> ccMenuItem({
           ),
         ),
         if (shortcut != null) ...[
-          const SizedBox(width: 18),
-          Text(shortcut, style: CcType.code(size: 11, color: CcColors.subtle)),
+          const SizedBox(width: 12),
+          Text(shortcut, style: CcType.code(size: 10, color: CcColors.subtle)),
         ],
       ],
     ),
