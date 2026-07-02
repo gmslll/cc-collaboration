@@ -69,7 +69,9 @@ class TodoCard extends StatelessWidget {
               height: 1.3,
             ),
           ),
-          if (recurrenceLabel != null || projectName != null) ...[
+          if (recurrenceLabel != null ||
+              projectName != null ||
+              (todo.repoName ?? '').isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
@@ -83,6 +85,8 @@ class TodoCard extends StatelessWidget {
                   ),
                 if (projectName != null)
                   _miniTag(Icons.folder_rounded, projectName!, CcColors.muted),
+                if ((todo.repoName ?? '').isNotEmpty)
+                  _miniTag(Icons.source_rounded, todo.repoName!, CcColors.muted),
               ],
             ),
           ],

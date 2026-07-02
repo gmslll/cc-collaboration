@@ -86,6 +86,12 @@ class Todo {
   // plus where/what kind of agent it belongs to, so "打开/恢复会话" can
   // respawn the exact same conversation long after the bus id is gone.
   final String? assigneeAgentSessionId, assigneeWorkdir, assigneeAgentKind;
+  // workspaceName/repoName are an optional binding to a workspace/repo from
+  // the local config tree (see local/config.dart WorkspaceCfg/ProjectCfg) —
+  // never required. Both null means "not bound to any repo". Unlike
+  // assigneeWorkdir (an absolute path, meaningful only on the machine that
+  // set it), these are plain names that stay valid across machines.
+  final String? workspaceName, repoName;
   final String recurrence; // '' | daily | weekly | monthly
   final DateTime? dueAt, nextOccurrenceAt, completedAt;
   final DateTime createdAt, updatedAt;
@@ -107,6 +113,8 @@ class Todo {
     required this.assigneeAgentSessionId,
     required this.assigneeWorkdir,
     required this.assigneeAgentKind,
+    required this.workspaceName,
+    required this.repoName,
     required this.recurrence,
     required this.dueAt,
     required this.nextOccurrenceAt,
@@ -132,6 +140,8 @@ class Todo {
         assigneeAgentSessionId: _sn(j['assignee_agent_session_id']),
         assigneeWorkdir: _sn(j['assignee_workdir']),
         assigneeAgentKind: _sn(j['assignee_agent_kind']),
+        workspaceName: _sn(j['workspace_name']),
+        repoName: _sn(j['repo_name']),
         recurrence: _s(j['recurrence']),
         dueAt: _tn(j['due_at']),
         nextOccurrenceAt: _tn(j['next_occurrence_at']),
@@ -166,6 +176,8 @@ class Todo {
         assigneeAgentSessionId: assigneeAgentSessionId,
         assigneeWorkdir: assigneeWorkdir,
         assigneeAgentKind: assigneeAgentKind,
+        workspaceName: workspaceName,
+        repoName: repoName,
         recurrence: recurrence,
         dueAt: dueAt,
         nextOccurrenceAt: nextOccurrenceAt,

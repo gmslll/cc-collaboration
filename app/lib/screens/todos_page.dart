@@ -1373,9 +1373,20 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // A brand-new codex session's card usually has no agentSessionId yet the
   // instant it's dispatched, so _assignToNew asks this to poll briefly rather
   // than permanently missing the resume trio for that todo.
+  //
+  // workspaceName/repoName sync the todo's optional workspace/repo binding
+  // (see WorkspaceRepoControl / pkg/todoschema.Todo field docs) to match the
+  // session it's being dispatched to — always overwriting, even if the todo
+  // was previously bound (manually) to a different repo: once a todo has a
+  // live session, "which repo is it in" should follow the session, not stay
+  // pinned to whatever was picked before. This lands as a second, separate
+  // PATCH rather than growing RelayClient.assignTodo's already-wide parameter
+  // list further.
   Future<void> _syncAssignVisibility(
     String sessionId,
     String label, {
+    required String workspaceName,
+    required String repoName,
     bool waitForAgentId = false,
   }) async {
     var card = _findCard(sessionId);
@@ -1397,6 +1408,15 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         assigneeAgentKind: _resumeKindFor(card),
       );
     } catch (_) {}
+    try {
+      await widget.client.updateTodo(
+        widget.todo.id,
+        workspaceName: workspaceName,
+        repoName: repoName,
+      );
+    } catch (e) {
+      if (mounted) snack(context, '同步工作区/库绑定失败: ${errorText(e)}');
+    }
   }
 
   Future<void> _assignToExisting() async {
@@ -1413,7 +1433,13 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
-    await _syncAssignVisibility(sid, _findCard(sid)?.label ?? '');
+    final card = _findCard(sid);
+    await _syncAssignVisibility(
+      sid,
+      card?.label ?? '',
+      workspaceName: card?.workspace ?? '',
+      repoName: card?.project ?? '',
+    );
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -1444,7 +1470,13 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     if (dispatchErr != null && mounted) {
       snack(context, '会话已创建，但投递失败: $dispatchErr');
     }
-    await _syncAssignVisibility(sid, proj, waitForAgentId: true);
+    await _syncAssignVisibility(
+      sid,
+      proj,
+      workspaceName: ws,
+      repoName: proj,
+      waitForAgentId: true,
+    );
     if (mounted) Navigator.pop(context, true);
   }
 

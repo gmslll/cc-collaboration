@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/todo_models.dart';
+import '../local/config.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -263,6 +264,92 @@ class DueDatePill extends StatelessWidget {
           ]),
         ),
       ),
+    );
+  }
+}
+
+// WorkspaceRepoControl is the optional "绑定库" pill: click opens a
+// workspace picker, then (immediately, anchored at the same spot) a repo
+// picker scoped to that workspace — a two-step menu rather than a nested
+// submenu widget, same trick RecurrenceControl's siblings use for a single
+// flat list. Both workspaceName/repoName null (or empty) means "unbound".
+class WorkspaceRepoControl extends StatefulWidget {
+  final String? workspaceName;
+  final String? repoName;
+  final List<WorkspaceCfg> workspaces;
+  final void Function(String workspaceName, String repoName) onBind;
+  final VoidCallback onClear;
+  const WorkspaceRepoControl({
+    super.key,
+    required this.workspaceName,
+    required this.repoName,
+    required this.workspaces,
+    required this.onBind,
+    required this.onClear,
+  });
+
+  @override
+  State<WorkspaceRepoControl> createState() => _WorkspaceRepoControlState();
+}
+
+class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
+  final _key = GlobalKey();
+
+  Future<void> _open() async {
+    if (widget.workspaces.isEmpty) return;
+    final ws = await _openBelow<WorkspaceCfg>(context, _key, [
+      for (final w in widget.workspaces)
+        _checkableRow<WorkspaceCfg>(
+          value: w,
+          selected: w.name == widget.workspaceName,
+          leading: const Icon(Icons.dns_rounded, size: 14, color: CcColors.muted),
+          label: w.name,
+        ),
+    ]);
+    if (ws == null || !mounted) return;
+    if (ws.projects.isEmpty) {
+      snack(context, '${ws.name} 下没有已配置的库');
+      return;
+    }
+    final repo = await _openBelow<ProjectCfg>(context, _key, [
+      for (final p in ws.projects)
+        _checkableRow<ProjectCfg>(
+          value: p,
+          selected: ws.name == widget.workspaceName && p.name == widget.repoName,
+          leading: const Icon(Icons.source_rounded, size: 14, color: CcColors.muted),
+          label: p.name,
+        ),
+    ]);
+    if (repo == null) return;
+    widget.onBind(ws.name, repo.name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bound =
+        (widget.workspaceName ?? '').isNotEmpty && (widget.repoName ?? '').isNotEmpty;
+    return _pillTap(
+      key: _key,
+      onTap: _open,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.dns_rounded, size: 14, color: bound ? CcColors.accentBright : CcColors.subtle),
+        const SizedBox(width: 6),
+        Text(
+          bound ? '${widget.workspaceName} / ${widget.repoName}' : '未绑定库',
+          style: TextStyle(fontSize: 12.5, color: bound ? CcColors.text : CcColors.subtle),
+        ),
+        if (bound) ...[
+          const SizedBox(width: 2),
+          InkWell(
+            onTap: widget.onClear,
+            borderRadius: BorderRadius.circular(10),
+            child: const Padding(
+              padding: EdgeInsets.all(2),
+              child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+            ),
+          ),
+        ],
+      ]),
     );
   }
 }

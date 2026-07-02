@@ -105,6 +105,8 @@ class RelayClient {
     String? projectId,
     String recurrence = '',
     DateTime? dueAt,
+    String? workspaceName,
+    String? repoName,
   }) async {
     final r = await _dio.post('/v1/todos', data: {
       'title': title,
@@ -113,13 +115,17 @@ class RelayClient {
       'project_id': ?projectId,
       'recurrence': recurrence,
       if (dueAt != null) 'due_at': dueAt.toUtc().toIso8601String(),
+      'workspace_name': ?workspaceName,
+      'repo_name': ?repoName,
     });
     return Todo.fromJson(r.data as Map<String, dynamic>);
   }
 
   // updateTodo only sends fields the caller actually passed — except due_at,
   // which needs [clearDueAt] to distinguish "leave it alone" (key omitted)
-  // from "clear it" (key present with a JSON null value).
+  // from "clear it" (key present with a JSON null value). workspaceName/
+  // repoName follow the plain-optional pattern (null = leave alone): pass an
+  // empty string, not null, to clear an existing binding.
   Future<Todo> updateTodo(
     String id, {
     String? title,
@@ -128,6 +134,8 @@ class RelayClient {
     String? recurrence,
     DateTime? dueAt,
     bool clearDueAt = false,
+    String? workspaceName,
+    String? repoName,
   }) async {
     final r = await _dio.patch('/v1/todos/$id', data: {
       'title': ?title,
@@ -138,6 +146,8 @@ class RelayClient {
         'due_at': null
       else if (dueAt != null)
         'due_at': dueAt.toUtc().toIso8601String(),
+      'workspace_name': ?workspaceName,
+      'repo_name': ?repoName,
     });
     return Todo.fromJson(r.data as Map<String, dynamic>);
   }

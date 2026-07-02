@@ -269,6 +269,8 @@ class TodoDetailViewState extends State<TodoDetailView> {
     String? recurrence,
     DateTime? dueAt,
     bool clearDueAt = false,
+    String? workspaceName,
+    String? repoName,
   }) async {
     try {
       final updated = await _client.updateTodo(
@@ -277,12 +279,23 @@ class TodoDetailViewState extends State<TodoDetailView> {
         recurrence: recurrence,
         dueAt: dueAt,
         clearDueAt: clearDueAt,
+        workspaceName: workspaceName,
+        repoName: repoName,
       );
       _applyUpdated(updated);
     } catch (e) {
       if (mounted) snack(context, '更新失败: ${errorText(e)}');
     }
   }
+
+  // _bindRepo/_clearRepo back the WorkspaceRepoControl pill — workspaceName/
+  // repoName are always set (or cleared) together so the binding never ends
+  // up half-pointing at a workspace with no repo (see the field docs on
+  // pkg/todoschema.Todo).
+  Future<void> _bindRepo(String workspaceName, String repoName) =>
+      _patch(workspaceName: workspaceName, repoName: repoName);
+
+  Future<void> _clearRepo() => _patch(workspaceName: '', repoName: '');
 
   Future<void> _pickDueDate() async {
     final now = DateTime.now();
@@ -538,6 +551,14 @@ class TodoDetailViewState extends State<TodoDetailView> {
                 dueAt: _current.dueAt,
                 onTap: _pickDueDate,
                 onClear: () => _patch(clearDueAt: true),
+              ),
+              _dot(),
+              WorkspaceRepoControl(
+                workspaceName: _current.workspaceName,
+                repoName: _current.repoName,
+                workspaces: widget.config?.workspaces ?? const [],
+                onBind: _bindRepo,
+                onClear: _clearRepo,
               ),
             ],
           ),
