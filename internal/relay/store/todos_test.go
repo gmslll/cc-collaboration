@@ -292,7 +292,7 @@ func TestTodoAssignAutoStatus(t *testing.T) {
 	td := &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "delegate this"}
 	mustCreateTodo(t, st, td)
 
-	got, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "", "")
+	got, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestTodoAssignAutoStatus(t *testing.T) {
 		t.Fatalf("assign should flip pending->assigned: %+v", got)
 	}
 
-	got, err = st.AssignTodo(ctx, "td1", "alice@x", "", "", "")
+	got, err = st.AssignTodo(ctx, "td1", "alice@x", "", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,12 +312,106 @@ func TestTodoAssignAutoStatus(t *testing.T) {
 	if _, err := st.SetTodoStatus(ctx, "td1", "alice@x", todoschema.StatusInProgress); err != nil {
 		t.Fatal(err)
 	}
-	got, err = st.AssignTodo(ctx, "td1", "alice@x", "carol@x", "", "")
+	got, err = st.AssignTodo(ctx, "td1", "alice@x", "carol@x", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Status != todoschema.StatusInProgress {
 		t.Fatalf("assigning an in-progress todo must not change status: %+v", got)
+	}
+}
+
+// --- Phase 0: Linear-import source_ref + session-resume assignee fields ---
+
+func TestFindTodoBySourceRef(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	// Not found: no todo has this source_ref yet, and that's not an error —
+	// the caller (an import command) should go on to create one.
+	_, found, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456")
+	if err != nil {
+		t.Fatalf("FindTodoBySourceRef on empty store: %v", err)
+	}
+	if found {
+		t.Fatal("FindTodoBySourceRef should report not-found before any import")
+	}
+
+	td := &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "ENG-456: fix the thing", SourceRef: "linear:ENG-456", SourceURL: "https://linear.app/x/issue/ENG-456"}
+	mustCreateTodo(t, st, td)
+
+	got, found, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456")
+	if err != nil || !found {
+		t.Fatalf("FindTodoBySourceRef should find imported todo: found=%v err=%v", found, err)
+	}
+	if got.ID != "td1" || got.SourceRef != "linear:ENG-456" || got.SourceURL != "https://linear.app/x/issue/ENG-456" {
+		t.Fatalf("got %+v", got)
+	}
+
+	// A stranger with no view access gets ErrForbidden, not a silent "not found".
+	if _, _, err := st.FindTodoBySourceRef(ctx, "bob@x", "linear:ENG-456"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stranger FindTodoBySourceRef: want ErrForbidden, got %v", err)
+	}
+
+	// A different source_ref that nothing matches is still "not found".
+	_, found, err = st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatal("unrelated source_ref should not be found")
+	}
+}
+
+func TestAssignTodoResumeFields(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "delegate this"})
+
+	got, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "sess-1", "bob's laptop",
+		"11111111-1111-1111-1111-111111111111", "/Users/bob/repo", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AssigneeAgentSessionID != "11111111-1111-1111-1111-111111111111" ||
+		got.AssigneeWorkdir != "/Users/bob/repo" || got.AssigneeAgentKind != "claude" {
+		t.Fatalf("AssignTodo did not return resume fields: %+v", got)
+	}
+	if got.Status != todoschema.StatusAssigned {
+		t.Fatalf("assigning via resume fields alone should still flip pending->assigned: %+v", got)
+	}
+
+	// Fetched independently, GetTodo must see the same values (i.e. they
+	// really landed in the todos table, not just the in-memory return value).
+	reloaded, err := st.GetTodo(ctx, "td1", "alice@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.AssigneeAgentSessionID != "11111111-1111-1111-1111-111111111111" ||
+		reloaded.AssigneeWorkdir != "/Users/bob/repo" || reloaded.AssigneeAgentKind != "claude" {
+		t.Fatalf("GetTodo did not persist resume fields: %+v", reloaded)
+	}
+}
+
+func TestCreateTodoWithSourceRef(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	td := &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "ENG-456: fix the thing", SourceRef: "linear:ENG-456", SourceURL: "https://linear.app/x/issue/ENG-456"}
+	mustCreateTodo(t, st, td)
+
+	got, err := st.GetTodo(ctx, "td1", "alice@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SourceRef != "linear:ENG-456" || got.SourceURL != "https://linear.app/x/issue/ENG-456" {
+		t.Fatalf("CreateTodo did not persist source fields: %+v", got)
+	}
+
+	found, ok, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456")
+	if err != nil || !ok || found.ID != "td1" {
+		t.Fatalf("newly created todo should be findable by source_ref: found=%+v ok=%v err=%v", found, ok, err)
 	}
 }
 
@@ -416,7 +510,7 @@ func TestTodoMutatorsReturnAttachments(t *testing.T) {
 		t.Fatalf("SetTodoStatus should return Attachments: %+v", statused.Attachments)
 	}
 
-	assigned, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "", "")
+	assigned, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

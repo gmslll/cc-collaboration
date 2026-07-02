@@ -238,7 +238,10 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := s.Store.AssignTodo(r.Context(), id, identity, req.AssigneeIdentity, req.AssigneeSessionID, req.AssigneeSessionLabel)
+	// Resume-trio params (assignee_agent_session_id/workdir/kind) are wired
+	// through the HTTP request body by Track B — Phase 0 only needs the
+	// store signature to exist and compile.
+	updated, err := s.Store.AssignTodo(r.Context(), id, identity, req.AssigneeIdentity, req.AssigneeSessionID, req.AssigneeSessionLabel, "", "", "")
 	if err != nil {
 		writeStoreError(w, err)
 		return

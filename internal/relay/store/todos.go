@@ -16,8 +16,10 @@ import (
 // contract calls for (avoids an N+1 join from list views). Every query
 // using it must alias the todos table "t".
 const todoColumns = `t.id, t.project_id, t.owner_identity, t.title, t.body_md, t.status, t.priority,
-       t.assignee_identity, t.assignee_session_id, t.assignee_session_label, t.recurrence,
+       t.assignee_identity, t.assignee_session_id, t.assignee_session_label,
+       t.assignee_agent_session_id, t.assignee_workdir, t.assignee_agent_kind, t.recurrence,
        t.due_at, t.next_occurrence_at, t.created_at, t.updated_at, t.completed_at,
+       t.source_ref, t.source_url,
        (SELECT COUNT(*) FROM todo_comments c WHERE c.todo_id = t.id) AS comment_count,
        (SELECT COUNT(*) FROM todo_attachments a WHERE a.todo_id = t.id) AS attachment_count`
 
@@ -30,8 +32,10 @@ func scanTodoRow(row scanner) (todoschema.Todo, error) {
 	)
 	if err := row.Scan(
 		&t.ID, &projectID, &t.OwnerIdentity, &t.Title, &t.BodyMD, &t.Status, &t.Priority,
-		&t.AssigneeIdentity, &t.AssigneeSessionID, &t.AssigneeSessionLabel, &t.Recurrence,
+		&t.AssigneeIdentity, &t.AssigneeSessionID, &t.AssigneeSessionLabel,
+		&t.AssigneeAgentSessionID, &t.AssigneeWorkdir, &t.AssigneeAgentKind, &t.Recurrence,
 		&dueMS, &nextMS, &createdMS, &updatedMS, &completedMS,
+		&t.SourceRef, &t.SourceURL,
 		&t.CommentCount, &t.AttachmentCount,
 	); err != nil {
 		return todoschema.Todo{}, err
@@ -205,11 +209,13 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
 			assignee_identity, assignee_session_id, assignee_session_label, recurrence,
-			due_at, next_occurrence_at, created_at, updated_at, completed_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			due_at, next_occurrence_at, created_at, updated_at, completed_at,
+			source_ref, source_url)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, nullableString(t.ProjectID), t.OwnerIdentity, t.Title, t.BodyMD, string(t.Status), string(t.Priority),
 		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, string(t.Recurrence),
 		timeToNullMS(t.DueAt), timeToNullMS(t.NextOccurrenceAt), t.CreatedAt.UnixMilli(), t.UpdatedAt.UnixMilli(), timeToNullMS(t.CompletedAt),
+		t.SourceRef, t.SourceURL,
 	)
 	return err
 }
@@ -231,6 +237,39 @@ func (s *Store) GetTodo(ctx context.Context, id, callerIdentity string) (todosch
 		return todoschema.Todo{}, forbidTodo("view", callerIdentity, id)
 	}
 	return s.withAttachments(ctx, t)
+}
+
+// FindTodoBySourceRef looks up the todo previously imported from sourceRef
+// (see pkg/todoschema.Todo.SourceRef), for an import command to decide
+// "already imported — update it" (found=true) vs. "not seen before — create
+// it" (found=false, not an error). Authorization mirrors GetTodo exactly
+// (same todoPermission check + withAttachments join): a match that
+// callerIdentity can't view still surfaces as ErrForbidden rather than
+// being reported as not-found.
+func (s *Store) FindTodoBySourceRef(ctx context.Context, callerIdentity, sourceRef string) (todoschema.Todo, bool, error) {
+	if sourceRef == "" {
+		return todoschema.Todo{}, false, nil
+	}
+	t, err := scanTodoRow(s.db.QueryRowContext(ctx,
+		`SELECT `+todoColumns+` FROM todos t WHERE t.source_ref = ? LIMIT 1`, sourceRef))
+	if errors.Is(err, sql.ErrNoRows) {
+		return todoschema.Todo{}, false, nil
+	}
+	if err != nil {
+		return todoschema.Todo{}, false, err
+	}
+	perm, err := s.todoPermission(ctx, t, callerIdentity)
+	if err != nil {
+		return todoschema.Todo{}, false, err
+	}
+	if !perm.view {
+		return todoschema.Todo{}, false, forbidTodo("view", callerIdentity, t.ID)
+	}
+	t, err = s.withAttachments(ctx, t)
+	if err != nil {
+		return todoschema.Todo{}, false, err
+	}
+	return t, true, nil
 }
 
 // withAttachments joins t.Attachments in from listTodoAttachmentsRaw. Every
@@ -440,13 +479,19 @@ func (s *Store) SetTodoStatus(ctx context.Context, id, callerIdentity string, st
 	return s.withAttachments(ctx, updated)
 }
 
-// AssignTodo sets (or clears, when all three args are empty) the assignee
-// fields, requiring edit access. As a convenience it also nudges Status:
-// assigning a still-pending todo flips it to "assigned", and clearing the
-// assignment on an "assigned" (not yet started) todo reverts it to
-// "pending" — any further-along status (in_progress/blocked/done/cancelled)
-// is left alone so unassigning doesn't clobber work already underway.
-func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIdentity, assigneeSessionID, assigneeSessionLabel string) (todoschema.Todo, error) {
+// AssignTodo sets (or clears, when all args are empty) the assignee fields,
+// requiring edit access. assigneeAgentSessionID/assigneeWorkdir/
+// assigneeAgentKind are the permanent-resume trio (see the field docs on
+// pkg/todoschema.Todo) — pass them alongside assigneeSessionID when the
+// target is a live agent session so "open the bound session" can respawn it
+// with --resume long after the bus session id itself has gone stale; pass
+// all three empty to leave the todo with no resumable session recorded.
+// As a convenience this also nudges Status: assigning a still-pending todo
+// flips it to "assigned", and fully clearing the assignment on an
+// "assigned" (not yet started) todo reverts it to "pending" — any
+// further-along status (in_progress/blocked/done/cancelled) is left alone
+// so unassigning doesn't clobber work already underway.
+func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIdentity, assigneeSessionID, assigneeSessionLabel, assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind string) (todoschema.Todo, error) {
 	t, err := s.getTodoRow(ctx, id)
 	if err != nil {
 		return todoschema.Todo{}, err
@@ -459,7 +504,7 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 		return todoschema.Todo{}, forbidTodo("assign", callerIdentity, id)
 	}
 	status := t.Status
-	assigning := assigneeIdentity != "" || assigneeSessionID != ""
+	assigning := assigneeIdentity != "" || assigneeSessionID != "" || assigneeAgentSessionID != ""
 	switch {
 	case assigning && t.Status == todoschema.StatusPending:
 		status = todoschema.StatusAssigned
@@ -468,8 +513,12 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 	}
 	now := time.Now().UTC()
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE todos SET assignee_identity = ?, assignee_session_id = ?, assignee_session_label = ?, status = ?, updated_at = ? WHERE id = ?`,
-		assigneeIdentity, assigneeSessionID, assigneeSessionLabel, string(status), now.UnixMilli(), id,
+		`UPDATE todos SET assignee_identity = ?, assignee_session_id = ?, assignee_session_label = ?,
+			assignee_agent_session_id = ?, assignee_workdir = ?, assignee_agent_kind = ?,
+			status = ?, updated_at = ? WHERE id = ?`,
+		assigneeIdentity, assigneeSessionID, assigneeSessionLabel,
+		assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind,
+		string(status), now.UnixMilli(), id,
 	); err != nil {
 		return todoschema.Todo{}, err
 	}

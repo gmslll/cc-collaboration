@@ -226,6 +226,26 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 `); err != nil {
 		return fmt.Errorf("create todo tables: %w", err)
 	}
+	// Todo feature, Phase 0: Linear-import + session-resume columns, added
+	// together in one pass (see pkg/todoschema/todo.go for field docs) so
+	// Track A (Linear import) and Track B (session resume) share a single
+	// migration instead of each racing to append their own.
+	for _, ddl := range []struct{ what, sql string }{
+		{"source_ref", `ALTER TABLE todos ADD COLUMN source_ref TEXT NOT NULL DEFAULT ''`},
+		{"source_url", `ALTER TABLE todos ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`},
+		{"assignee_agent_session_id", `ALTER TABLE todos ADD COLUMN assignee_agent_session_id TEXT NOT NULL DEFAULT ''`},
+		{"assignee_workdir", `ALTER TABLE todos ADD COLUMN assignee_workdir TEXT NOT NULL DEFAULT ''`},
+		{"assignee_agent_kind", `ALTER TABLE todos ADD COLUMN assignee_agent_kind TEXT NOT NULL DEFAULT ''`},
+	} {
+		if _, err := s.db.Exec(ddl.sql); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("add %s column: %w", ddl.what, err)
+			}
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_source_ref ON todos(source_ref) WHERE source_ref != ''`); err != nil {
+		return fmt.Errorf("create source_ref index: %w", err)
+	}
 	return nil
 }
 

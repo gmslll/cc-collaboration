@@ -93,24 +93,41 @@ func (r Recurrence) AddInterval(t time.Time) time.Time {
 // client) build against — see the "统一 API 契约" section of the feature
 // plan; do not rename.
 type Todo struct {
-	ID                   string     `json:"id"`
-	ProjectID            string     `json:"project_id,omitempty"` // empty = personal todo
-	OwnerIdentity        string     `json:"owner_identity"`
-	Title                string     `json:"title"`
-	BodyMD               string     `json:"body_md,omitempty"`
-	Status               Status     `json:"status"`
-	Priority             Priority   `json:"priority"`
-	AssigneeIdentity     string     `json:"assignee_identity,omitempty"`
-	AssigneeSessionID    string     `json:"assignee_session_id,omitempty"`
-	AssigneeSessionLabel string     `json:"assignee_session_label,omitempty"`
-	Recurrence           Recurrence `json:"recurrence,omitempty"`
-	DueAt                *time.Time `json:"due_at,omitempty"`
-	NextOccurrenceAt     *time.Time `json:"next_occurrence_at,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
-	CompletedAt          *time.Time `json:"completed_at,omitempty"`
-	CommentCount         int        `json:"comment_count"`
-	AttachmentCount      int        `json:"attachment_count"`
+	ID                   string   `json:"id"`
+	ProjectID            string   `json:"project_id,omitempty"` // empty = personal todo
+	OwnerIdentity        string   `json:"owner_identity"`
+	Title                string   `json:"title"`
+	BodyMD               string   `json:"body_md,omitempty"`
+	Status               Status   `json:"status"`
+	Priority             Priority `json:"priority"`
+	AssigneeIdentity     string   `json:"assignee_identity,omitempty"`
+	AssigneeSessionID    string   `json:"assignee_session_id,omitempty"`
+	AssigneeSessionLabel string   `json:"assignee_session_label,omitempty"`
+	// AssigneeAgentSessionID/AssigneeWorkdir/AssigneeAgentKind are the
+	// permanent-resume counterpart to AssigneeSessionID: the latter is a bus
+	// session id that goes stale the moment a tab closes, while these three
+	// capture the agent CLI's own transcript UUID (Claude/Codex `--resume`)
+	// plus the workdir/agent kind needed to respawn it, so "open the bound
+	// session" still works after the original tab/App session is gone. See
+	// the session-resume design note in the feature plan.
+	AssigneeAgentSessionID string     `json:"assignee_agent_session_id,omitempty"`
+	AssigneeWorkdir        string     `json:"assignee_workdir,omitempty"`
+	AssigneeAgentKind      string     `json:"assignee_agent_kind,omitempty"`
+	Recurrence             Recurrence `json:"recurrence,omitempty"`
+	DueAt                  *time.Time `json:"due_at,omitempty"`
+	NextOccurrenceAt       *time.Time `json:"next_occurrence_at,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+	CompletedAt            *time.Time `json:"completed_at,omitempty"`
+	CommentCount           int        `json:"comment_count"`
+	AttachmentCount        int        `json:"attachment_count"`
+	// SourceRef identifies the external system a todo was imported from
+	// (e.g. "linear:ENG-456"); empty means the todo was created natively.
+	// Import commands use it for idempotency — see
+	// internal/relay/store/todos.go FindTodoBySourceRef. SourceURL is the
+	// corresponding external issue link, purely informational.
+	SourceRef string `json:"source_ref,omitempty"`
+	SourceURL string `json:"source_url,omitempty"`
 	// Attachments is populated only by GET-by-id (Store.GetTodo); list
 	// endpoints/queries (Store.ListTodos) leave it nil and rely on
 	// AttachmentCount so a list row can show a thumbnail/badge without an
