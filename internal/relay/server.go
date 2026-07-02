@@ -137,6 +137,22 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/tokens", s.listTokens)
 	api.HandleFunc("POST /v1/tokens", s.createToken)
 	api.HandleFunc("DELETE /v1/tokens/{id}", s.deleteToken)
+	// Todos: personal + project-scoped, freely-mutable-status items (see
+	// internal/relay/todos.go). Authorization lives entirely in
+	// internal/relay/store/todos.go; these handlers just translate
+	// ErrForbidden/ErrNotFound.
+	api.HandleFunc("POST /v1/todos", s.createTodo)
+	api.HandleFunc("GET /v1/todos", s.listTodos)
+	api.HandleFunc("GET /v1/todos/{id}", s.getTodo)
+	api.HandleFunc("PATCH /v1/todos/{id}", s.patchTodo)
+	api.HandleFunc("DELETE /v1/todos/{id}", s.deleteTodo)
+	api.HandleFunc("POST /v1/todos/{id}/status", s.setTodoStatus)
+	api.HandleFunc("POST /v1/todos/{id}/assign", s.assignTodo)
+	api.HandleFunc("POST /v1/todos/{id}/recur-advance", s.recurAdvanceTodo)
+	api.HandleFunc("POST /v1/todos/{id}/comment", s.postTodoComment)
+	api.HandleFunc("GET /v1/todos/{id}/comments", s.listTodoComments)
+	api.HandleFunc("POST /v1/todos/{id}/attachments/{name}", s.putTodoAttachment)
+	api.HandleFunc("GET /v1/todos/{id}/attachments/{name}", s.getTodoAttachment)
 
 	// Login and register are the /v1 routes that must NOT require a bearer (you
 	// don't have one yet); registering them on the outer mux makes the

@@ -43,6 +43,21 @@ const EventTypeLogAlert = "log.alert"
 // like alerts — not persisted, no replay.
 const EventTypeMessageDeliver = "message.deliver"
 
+// EventTypeTodoCreated / EventTypeTodoUpdated / EventTypeTodoStatusChanged /
+// EventTypeTodoAssigned / EventTypeTodoDeleted / EventTypeTodoCommentCreated
+// are published by the Todo feature (internal/relay/todos.go). Unlike the
+// handoff events above, every one of these carries the *complete* Todo JSON
+// as its payload (not just an id) — see Server.publishTodoEvent — so a
+// subscriber can upsert its local copy in place without a follow-up GET.
+const (
+	EventTypeTodoCreated        = "todo.created"
+	EventTypeTodoUpdated        = "todo.updated"
+	EventTypeTodoStatusChanged  = "todo.status_changed"
+	EventTypeTodoAssigned       = "todo.assigned"
+	EventTypeTodoDeleted        = "todo.deleted"
+	EventTypeTodoCommentCreated = "todo.comment_created"
+)
+
 // subscriberBuffer caps per-subscriber backlog. A slow client can fall behind
 // and drop events; recovery happens via Last-Event-Id reconnect, so the buffer
 // only needs to absorb short bursts during a write to the wire.

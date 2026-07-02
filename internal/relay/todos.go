@@ -1,0 +1,439 @@
+package relay
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/cc-collaboration/internal/handoff"
+	"github.com/cc-collaboration/internal/relay/auth"
+	"github.com/cc-collaboration/internal/relay/sse"
+	"github.com/cc-collaboration/internal/relay/store"
+	"github.com/cc-collaboration/pkg/todoschema"
+)
+
+// writeStoreError maps a Store error to the matching HTTP status, mirroring
+// the switch Server.reassign already uses for handoffs: ErrForbidden -> 403,
+// ErrNotFound -> 404, anything else -> 500. All Todo authorization
+// (view/edit/delete/comment, by owner or by project role) is enforced inside
+// internal/relay/store/todos.go — handlers below never re-derive it, just
+// translate the sentinel error.
+func writeStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrForbidden):
+		http.Error(w, "forbidden", http.StatusForbidden)
+	case errors.Is(err, store.ErrNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	var req struct {
+		Title      string     `json:"title"`
+		BodyMD     string     `json:"body_md"`
+		Priority   string     `json:"priority"`
+		ProjectID  string     `json:"project_id"`
+		Recurrence string     `json:"recurrence"`
+		DueAt      *time.Time `json:"due_at"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Title) == "" {
+		http.Error(w, "title required", http.StatusBadRequest)
+		return
+	}
+	priority := todoschema.Priority(req.Priority)
+	if priority != "" && !todoschema.ValidPriority(priority) {
+		http.Error(w, "invalid priority", http.StatusBadRequest)
+		return
+	}
+	recurrence := todoschema.Recurrence(req.Recurrence)
+	if !todoschema.ValidRecurrence(recurrence) {
+		http.Error(w, "invalid recurrence", http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now().UTC()
+	t := &todoschema.Todo{
+		ID:            handoff.NewID(now),
+		ProjectID:     req.ProjectID,
+		OwnerIdentity: identity,
+		Title:         req.Title,
+		BodyMD:        req.BodyMD,
+		Priority:      priority,
+		Recurrence:    recurrence,
+		DueAt:         req.DueAt,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := s.Store.CreateTodo(r.Context(), t); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.publishTodoEvent(r.Context(), sse.EventTypeTodoCreated, *t)
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func (s *Server) listTodos(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	q := r.URL.Query()
+	filter := store.TodoListFilter{
+		Scope:     q.Get("scope"),
+		ProjectID: q.Get("project"),
+		Status:    q.Get("status"),
+	}
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			filter.Limit = n
+		}
+	}
+	items, err := s.Store.ListTodos(r.Context(), identity, filter)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) getTodo(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	t, err := s.Store.GetTodo(r.Context(), r.PathValue("id"), identity)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// patchTodo decodes the body as map[string]json.RawMessage rather than a
+// plain struct so it can tell "due_at key absent" (leave alone) apart from
+// "due_at key present with JSON null" (clear) — a plain *time.Time field
+// collapses both to nil. See store.TodoPatch.DueAt / store.OptionalTime.
+func (s *Server) patchTodo(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	raw := map[string]json.RawMessage{}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&raw); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var patch store.TodoPatch
+	if v, ok := raw["title"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid title", http.StatusBadRequest)
+			return
+		}
+		patch.Title = &val
+	}
+	if v, ok := raw["body_md"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid body_md", http.StatusBadRequest)
+			return
+		}
+		patch.BodyMD = &val
+	}
+	if v, ok := raw["priority"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid priority", http.StatusBadRequest)
+			return
+		}
+		p := todoschema.Priority(val)
+		if !todoschema.ValidPriority(p) {
+			http.Error(w, "invalid priority", http.StatusBadRequest)
+			return
+		}
+		patch.Priority = &p
+	}
+	if v, ok := raw["recurrence"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid recurrence", http.StatusBadRequest)
+			return
+		}
+		rec := todoschema.Recurrence(val)
+		if !todoschema.ValidRecurrence(rec) {
+			http.Error(w, "invalid recurrence", http.StatusBadRequest)
+			return
+		}
+		patch.Recurrence = &rec
+	}
+	if v, ok := raw["due_at"]; ok {
+		patch.DueAt.Set = true
+		if string(v) != "null" {
+			var val time.Time
+			if err := json.Unmarshal(v, &val); err != nil {
+				http.Error(w, "invalid due_at", http.StatusBadRequest)
+				return
+			}
+			patch.DueAt.Value = &val
+		}
+	}
+
+	updated, err := s.Store.UpdateTodoFields(r.Context(), id, identity, patch)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.publishTodoEvent(r.Context(), sse.EventTypeTodoUpdated, updated)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) setTodoStatus(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	status := todoschema.Status(req.Status)
+	if !todoschema.ValidStatus(status) {
+		http.Error(w, "invalid status", http.StatusBadRequest)
+		return
+	}
+
+	updated, err := s.Store.SetTodoStatus(r.Context(), id, identity, status)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.publishTodoEvent(r.Context(), sse.EventTypeTodoStatusChanged, updated)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	var req struct {
+		AssigneeIdentity     string `json:"assignee_identity"`
+		AssigneeSessionID    string `json:"assignee_session_id"`
+		AssigneeSessionLabel string `json:"assignee_session_label"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	updated, err := s.Store.AssignTodo(r.Context(), id, identity, req.AssigneeIdentity, req.AssigneeSessionID, req.AssigneeSessionLabel)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.publishTodoEvent(r.Context(), sse.EventTypeTodoAssigned, updated)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// recurAdvanceTodo manually forces a due, recurring, done todo back to
+// pending right now — a test/UX fallback for the once-a-minute sweep ticker
+// (internal/relay/todo_recurrence.go). Store.ResetRecurringTodo is
+// system-level and does no permission check by design (it's the sweep
+// ticker's primitive), so this handler gates access itself by first calling
+// UpdateTodoFields with an empty patch: that reuses the store's real
+// edit-permission check (a read-only project viewer gets ErrForbidden here,
+// same as any other edit) and returns the current row in one round trip,
+// which also gives us Status/Recurrence to validate against before advancing.
+func (s *Server) recurAdvanceTodo(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	t, err := s.Store.UpdateTodoFields(r.Context(), id, identity, store.TodoPatch{})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if t.Status != todoschema.StatusDone || t.Recurrence == "" {
+		http.Error(w, "todo is not a done, recurring todo", http.StatusConflict)
+		return
+	}
+
+	updated, err := s.Store.ResetRecurringTodo(r.Context(), id, time.Now().UTC())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.publishTodoEvent(r.Context(), sse.EventTypeTodoStatusChanged, updated)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) deleteTodo(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	// Fetch first so the SSE fan-out (and its target list, derived from
+	// project_id/owner_identity) still has something to publish once the row
+	// is gone.
+	t, err := s.Store.GetTodo(r.Context(), id, identity)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := s.Store.DeleteTodo(r.Context(), id, identity); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.publishTodoEvent(r.Context(), sse.EventTypeTodoDeleted, t)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) postTodoComment(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+
+	var req struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Body) == "" {
+		http.Error(w, "body required", http.StatusBadRequest)
+		return
+	}
+
+	c, err := s.Store.InsertTodoComment(r.Context(), id, identity, req.Body)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// The SSE contract is "payload is the full parent Todo" for every todo
+	// event, comment_created included (so a list row's comment_count badge
+	// updates in place) — InsertTodoComment only returns the Comment, so
+	// re-fetch. Best-effort: a refetch failure shouldn't fail the request,
+	// the comment is already persisted.
+	if t, err := s.Store.GetTodo(r.Context(), id, identity); err == nil {
+		s.publishTodoEvent(r.Context(), sse.EventTypeTodoCommentCreated, t)
+	}
+	writeJSON(w, http.StatusCreated, c)
+}
+
+func (s *Server) listTodoComments(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	comments, err := s.Store.ListTodoComments(r.Context(), r.PathValue("id"), identity)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"comments": comments})
+}
+
+// putTodoAttachment mirrors Server.putAttachment's raw-body +
+// X-Content-Sha256 protocol exactly (same name validation, same
+// handoff.AttachmentMaxBytes cap), scoped to a todo instead of a handoff.
+func (s *Server) putTodoAttachment(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if name == "" || name == "." || name == ".." ||
+		name != filepath.Base(name) ||
+		strings.ContainsAny(name, `/\`) {
+		http.Error(w, "invalid attachment name", http.StatusBadRequest)
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, handoff.AttachmentMaxBytes))
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	sum := sha256.Sum256(body)
+	hexSum := hex.EncodeToString(sum[:])
+
+	if want := r.Header.Get("X-Content-Sha256"); want != "" && want != hexSum {
+		http.Error(w, "sha256 mismatch", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.Store.PutTodoAttachment(r.Context(), id, identity, name, hexSum, body); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if t, err := s.Store.GetTodo(r.Context(), id, identity); err == nil {
+		s.publishTodoEvent(r.Context(), sse.EventTypeTodoUpdated, t)
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"name":   name,
+		"sha256": hexSum,
+		"size":   len(body),
+	})
+}
+
+func (s *Server) getTodoAttachment(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	content, sum, _, err := s.Store.GetTodoAttachment(r.Context(), r.PathValue("id"), identity, r.PathValue("name"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Sha256", sum)
+	_, _ = w.Write(content)
+}
+
+// todoTargets returns who a Todo event should fan out to: just the owner for
+// a personal todo, or every member of its project for a team todo (sourced
+// live from Store.ListMembers, since project membership can change
+// independently of any one todo — unlike handoff fan-out, which targets a
+// fixed recipient list captured at send time).
+func (s *Server) todoTargets(ctx context.Context, t todoschema.Todo) []string {
+	if t.IsPersonal() {
+		if t.OwnerIdentity == "" {
+			return nil
+		}
+		return []string{t.OwnerIdentity}
+	}
+	members, err := s.Store.ListMembers(ctx, t.ProjectID)
+	if err != nil {
+		return nil
+	}
+	targets := make([]string, 0, len(members))
+	for _, m := range members {
+		targets = append(targets, m.Identity)
+	}
+	return targets
+}
+
+// publishTodoEvent fans a todo SSE event out to every target from
+// todoTargets. The payload is always the complete Todo JSON (not just its
+// id) — per the feature's SSE contract — so a subscriber can upsert its
+// local copy in place instead of re-fetching the whole list.
+func (s *Server) publishTodoEvent(ctx context.Context, eventType string, t todoschema.Todo) {
+	if s.Hub == nil {
+		return
+	}
+	targets := s.todoTargets(ctx, t)
+	if len(targets) == 0 {
+		return
+	}
+	data, err := json.Marshal(t)
+	if err != nil {
+		return
+	}
+	for _, rec := range targets {
+		s.Hub.Publish(sse.Event{Type: eventType, Recipient: rec, Data: data})
+	}
+}
