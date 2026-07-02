@@ -60,16 +60,17 @@ func main() {
 	}
 
 	hub := sse.NewHub()
+	relaySrv := &relay.Server{Store: st, Tokens: tokens, Hub: hub, SeedAdmins: seedAdmins}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           (&relay.Server{Store: st, Tokens: tokens, Hub: hub, SeedAdmins: seedAdmins}).Handler(),
+		Handler:           relaySrv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go relay.RunTodoRecurrenceSweep(ctx, st, hub, time.Minute)
+	go relay.RunTodoRecurrenceSweep(ctx, relaySrv, time.Minute)
 
 	go func() {
 		log.Printf("relay listening on %s", *addr)

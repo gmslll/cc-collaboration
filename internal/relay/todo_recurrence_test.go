@@ -58,6 +58,8 @@ func TestSweepDueTodosResetsPersonalTodoAndNotifiesOwner(t *testing.T) {
 	sub, cancel := hub.Subscribe("alice@x")
 	defer cancel()
 
+	srv := &Server{Store: st, Hub: hub}
+
 	completedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	next := completedAt.AddDate(0, 0, 1)
 	td := &todoschema.Todo{
@@ -74,7 +76,7 @@ func TestSweepDueTodosResetsPersonalTodoAndNotifiesOwner(t *testing.T) {
 	}
 
 	// Not yet due: sweeping before next_occurrence_at is a no-op.
-	sweepDueTodos(ctx, st, hub, completedAt.Add(time.Hour))
+	sweepDueTodos(ctx, srv, completedAt.Add(time.Hour))
 	assertNoEvent(t, sub)
 	got, err := st.GetTodo(ctx, "td1", "alice@x")
 	if err != nil {
@@ -85,7 +87,7 @@ func TestSweepDueTodosResetsPersonalTodoAndNotifiesOwner(t *testing.T) {
 	}
 
 	// Due: sweeping at/after next_occurrence_at resets it and notifies the owner.
-	sweepDueTodos(ctx, st, hub, next.Add(time.Minute))
+	sweepDueTodos(ctx, srv, next.Add(time.Minute))
 
 	got, err = st.GetTodo(ctx, "td1", "alice@x")
 	if err != nil {
@@ -99,8 +101,8 @@ func TestSweepDueTodosResetsPersonalTodoAndNotifiesOwner(t *testing.T) {
 	}
 
 	e := recvEvent(t, sub)
-	if e.Type != EventTypeTodoStatusChanged {
-		t.Fatalf("event type = %q, want %q", e.Type, EventTypeTodoStatusChanged)
+	if e.Type != sse.EventTypeTodoStatusChanged {
+		t.Fatalf("event type = %q, want %q", e.Type, sse.EventTypeTodoStatusChanged)
 	}
 	var payload todoschema.Todo
 	if err := json.Unmarshal(e.Data, &payload); err != nil {
@@ -111,7 +113,7 @@ func TestSweepDueTodosResetsPersonalTodoAndNotifiesOwner(t *testing.T) {
 	}
 
 	// Second sweep at the same or later `now` is a harmless no-op (already pending).
-	sweepDueTodos(ctx, st, hub, next.Add(time.Hour))
+	sweepDueTodos(ctx, srv, next.Add(time.Hour))
 	assertNoEvent(t, sub)
 }
 
@@ -119,6 +121,7 @@ func TestSweepDueTodosNotifiesEveryProjectMemberForTeamTodo(t *testing.T) {
 	st := newTodoTestStore(t)
 	ctx := context.Background()
 	hub := sse.NewHub()
+	srv := &Server{Store: st, Hub: hub}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
@@ -156,12 +159,12 @@ func TestSweepDueTodosNotifiesEveryProjectMemberForTeamTodo(t *testing.T) {
 		t.Fatalf("create team todo: %v", err)
 	}
 
-	sweepDueTodos(ctx, st, hub, now)
+	sweepDueTodos(ctx, srv, now)
 
 	for _, sub := range []*sse.Subscriber{subOwner, subDev, subQA} {
 		e := recvEvent(t, sub)
-		if e.Type != EventTypeTodoStatusChanged {
-			t.Fatalf("event type = %q, want %q", e.Type, EventTypeTodoStatusChanged)
+		if e.Type != sse.EventTypeTodoStatusChanged {
+			t.Fatalf("event type = %q, want %q", e.Type, sse.EventTypeTodoStatusChanged)
 		}
 	}
 	assertNoEvent(t, subStranger)
@@ -196,7 +199,7 @@ func TestSweepDueTodosNilHubIsNoop(t *testing.T) {
 	}
 
 	// Must not panic with a nil hub (e.g. a deployment that never wires SSE).
-	sweepDueTodos(ctx, st, nil, now)
+	sweepDueTodos(ctx, &Server{Store: st}, now)
 
 	got, err := st.GetTodo(ctx, "td3", "alice@x")
 	if err != nil {
@@ -212,11 +215,12 @@ func TestSweepDueTodosNilHubIsNoop(t *testing.T) {
 func TestRunTodoRecurrenceSweepExitsOnContextCancel(t *testing.T) {
 	st := newTodoTestStore(t)
 	hub := sse.NewHub()
+	srv := &Server{Store: st, Hub: hub}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		RunTodoRecurrenceSweep(ctx, st, hub, time.Hour)
+		RunTodoRecurrenceSweep(ctx, srv, time.Hour)
 		close(done)
 	}()
 
