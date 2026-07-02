@@ -8,6 +8,10 @@
 
 > Cross-machine handoff for AI coding agents — turn "backend ships an API, frontend has to integrate it" from "paste a blurb in chat + read the swagger yourself" into one agent workflow to push and one workflow to receive. First-class support for Claude Code and OpenAI Codex CLI; other agents work via manual mode (pure CLI flow).
 
+> ⚙️ **This repo is developed collaboratively by multiple AI agent sessions** (coordinating through the "local session bus" + "supervisor" described below). Before editing, check whether another session is touching the same file; announce changes to shared files like this README on the bus first.
+
+Beyond the cross-machine handoff workflow, this project also ships a **desktop / mobile workspace "cockpit" app** (`app/`): manage projects, spawn claude / codex agent terminals, view git, and edit code in an in-app editor (**go-to-definition** + configurable LSP plugins) — all in one window — and mirror the desktop workspace to your phone. See "Feature overview" and "Desktop / mobile app" below.
+
 ## What problem does it solve
 
 When backend and frontend live in separate repos with separate developers, the real flow for API integration is usually:
@@ -42,6 +46,32 @@ Design principles:
 - **Manual control over magic.** MVP has no Stop-hook auto-trigger, no automatic retries, no "we'll just go ahead and edit your files for you." Every action prints what it's about to do and waits for a key press.
 - **Receiving Claude writes; humans review.** The sender doesn't know the receiver's directory layout, so any cross-repo guidance is heuristic at best. The actual integration decisions belong to the Claude on the receiving side (which can see the real code) — and that Claude is told, by default, to stop after writing the doc.
 - **Boundaries beat reuse.** The three binaries (CLI / MCP / relay) each own a single thing. They talk over HTTP+SSE; they do not share a database.
+
+## Feature overview
+
+cc-handoff is now two parts:
+
+**A. Cross-machine handoff (CLI / MCP / relay)** — the backend runs one `/handoff` to push integration notes to your own VPS; the frontend runs one `/pickup` to receive them against its real local code. Real-time over SSE, persisted in SQLite, with an inbox + system notifications + auto-opening a terminal for urgent tasks. This is the project's original form; see "Architecture / Quick deploy / Using inside Claude Code" below.
+
+**B. Desktop / mobile workspace cockpit app (`app/`)** — a Flutter app (macOS / Windows desktop + iOS / Android) that folds "manage projects + spawn AI agent sessions + git + edit code + mirror to phone" into one UI. Recent releases have mostly iterated here.
+
+## Desktop / mobile app (cockpit)
+
+`app/` is a Flutter cockpit: open multiple projects, spawn claude / codex agent terminals in any of them, and along the way review git, read/edit code, coordinate across sessions, and mirror to your phone.
+
+**Core features**
+
+- **Workspace / project / worktree tree** — one click to spawn a claude / codex agent terminal in any project or branch worktree (terminal deck, xterm-based). Terminals restore lazily: visible tabs start immediately, hidden ones defer until you switch to them. Batch-import git repos from a folder; reorder projects per-device.
+- **Git panel** — changes / staging / commit / branches / log / stash / diff, with a JetBrains-style per-file right-click menu.
+- **Built-in code editor (re_editor)** — syntax highlighting + **go-to-definition**: a regex symbol index for all languages, upgraded to precise LSP for languages that have a server. Triggers: Cmd/Ctrl+click, F12, Cmd/Ctrl+B. Language servers are **configured in the "editor plugins" panel** (gopls / dart / jdtls / pyright / typescript-language-server / rust-analyzer / clangd — auto-detected, or point them at your own path). Plus formatter plugins (gofmt / prettier / clang-format / …).
+- **Local session bus** — multiple agent sessions on the same machine message each other point-to-point and read each other's screen (CLI entry `cc-handoff msg`, see "Command reference"). This is also what this repo's multi-agent development relies on.
+- **Supervisor** — spawn and host agent sessions from the bus; there's a "spawn supervisor" entry in the project / session / worktree right-click menus.
+- **Mirror to phone** — cast the desktop workspace to a phone via relay; the phone can view / operate terminals, transfer files both ways, and (on iOS) show session status via Dynamic Island / Live Activity.
+- Also: file-level copy / cut / paste in the file tree (interops with Finder's clipboard), session overview, token usage, hook activity, voice input, etc.
+
+**Platforms**: desktop (macOS / Windows) primarily; mobile (iOS / Android) focuses on mirroring / viewing. Local capabilities (terminals, git, formatting, LSP) are **desktop-only**.
+
+**Build / run**: `app/` is a standard Flutter project; packaging / signing scripts are in `scripts/`. Desktop features need the corresponding CLI tools installed on the host (git / language servers / formatters); missing ones show "not detected" in the plugin panel with an install hint.
 
 ## Architecture
 
@@ -295,6 +325,42 @@ cc-handoff pickup h_xxx --repo ~/work/frontend-project2
 ```
 
 `--no-materialize` makes watch notify-only instead of auto-landing files on the receiver side; `pickup --repo` materializes a package into any repo without `cd`-ing. Together they mean "notifications are just notifications, routing is decided by a human." With a single receiver repo you configure nothing — the default behavior is already correct.
+
+## Command reference
+
+Once installed, use `cc-handoff <subcommand>`; each has `--help`.
+
+**Handoff collaboration**
+
+| Command | What it does |
+|---|---|
+| `init` | Initialize a work repo (writes user / repo-level toml; optionally installs MCP, workflow commands, an instructions section) |
+| `submit` | (sender) Package git diff + swagger delta + commit log, push to the relay |
+| `list` / `inbox` | Pending handoffs on the relay / already-materialized ones locally |
+| `pickup <id>` | Fetch + materialize + ack (`--worktree` receives on an isolated branch worktree; `--direct` lands in the current repo) |
+| `status` / `sent` / `history` / `open` / `retract` | State / your sent handoffs / receive history / re-launch agent / cancel |
+| `comment <id> …` / `check-drift` | Comment / has swagger drifted since the last handoff |
+| `watch` | Receiver daemon: SSE → inbox + notifications + auto-open a terminal for urgent tasks (`watch print-unit` emits a launchd / systemd / Windows-task unit) |
+| `online` | Registered identities + who is currently watching |
+
+**Local session bus / orchestration** (multi-agent collaboration inside the desktop app)
+
+| Command | What it does |
+|---|---|
+| `msg send <target> <text>` | Point-to-point message to a sibling agent session on the same machine (no relay; runs in an app-spawned terminal) |
+| `msg read <target>` | Pull a plain-text snapshot of another session's screen |
+| `msg list` / `msg whoami` | List sessions / who am I |
+| `supervisor …` | Supervisor-agent helpers: `overview` / `queue` / `read` / `send` / `decide` |
+
+**Workspace / project / worktree / logs**
+
+| Command | What it does |
+|---|---|
+| `workspace (ws) list\|create\|add\|open` | Manage and one-click-launch project targets |
+| `worktree (wt) add\|list\|open\|remove` | Branch worktrees (`remove --prune-merged` sweeps merged ones) |
+| `logs <project>` | Pull the project's logs, extract + grade the latest error (deduped); `--open` to launch an agent to triage |
+
+**Others**: `ui` / `desktop` (relay management UI / Chromium window), `alert` (forward a server log alert to a teammate's watch), `link-linear` / `linear-sync` (Linear integration), `config`, `stop-hook` / `bus-hook` (agent hook entry points), `version`.
 
 ## Day-to-day ops
 

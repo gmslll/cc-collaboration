@@ -8,6 +8,10 @@
 
 > 跨机器 AI 编码 agent 协作工具 —— 让"后端写完接口、前端去对接"这件事从「手抄群里贴 + 自己读 swagger」变成「agent 一条 handoff 工作流推过去,前端一条 pickup 工作流接住」。原生支持 Claude Code 与 OpenAI Codex CLI;其他 agent 走 manual 模式可用纯 CLI 流程。
 
+> ⚙️ **本仓库由多个 AI agent 会话协作开发**(通过下文的「本地会话总线」+「supervisor 总管」协同)。改动前请先确认其他会话是否正在动同一文件;README 等公共文件的改动请在总线上先打招呼。
+
+除了跨机 handoff 工作流,本项目还包含一个**桌面 / 手机端的 workspace「驾驶舱」App**(`app/`):在一个界面里管理项目、一键起 claude / codex 会话终端、看 git、用内置编辑器(带**跳转到定义** + 可配置 LSP 插件),并能把桌面工作区**投屏到手机**。详见下文「功能全景」与「桌面 / 手机 App」两节。
+
 ## 它解决什么问题
 
 前后端分仓远程协作时,API 对接的真实流程通常是:
@@ -42,6 +46,32 @@ cc-handoff 把这一段变成结构化的 handoff:
 - **手动可控,反对自动魔法**。MVP 没有 Stop hook 自动触发,没有自动重试,没有"悄悄帮你改文件"。每个动作都打印将做什么、用户回车确认。
 - **接收端 Claude 写,人工 review**。发送端不知道前端真实目录结构,只能给启发式建议;真正的对接决策由前端那边的 Claude(看到真代码)做,且默认停下等人。
 - **边界清晰胜于代码复用**。三个二进制(CLI / MCP / relay)各管各的,中间走 HTTP+SSE,不共享数据库。
+
+## 功能全景
+
+cc-handoff 现在是两大块:
+
+**A. 跨机 handoff 协作(CLI / MCP / relay)** —— 后端一条 `/handoff` 把对接说明推到自有 VPS,前端一条 `/pickup` 在本地真实代码上接住;SSE 实时、SQLite 持久化、收件箱 + 系统通知 + 紧急任务自动开终端。这是本项目最早的形态,见下文「架构 / 快速部署 / 在 Claude Code 内使用」。
+
+**B. 桌面 / 手机 workspace 驾驶舱 App(`app/`)** —— 一个 Flutter 应用(macOS / Windows 桌面 + iOS / Android),把「管项目 + 起 AI agent 会话 + git + 编辑代码 + 投屏到手机」收进一个界面。近几个版本的迭代主要在这里。
+
+## 桌面 / 手机 App(cockpit)
+
+`app/` 是一个 Flutter 驾驶舱:你在里面开多个项目、在任意项目里起 claude / codex 的会话终端,并顺手完成看 git、读改代码、跨会话协作、投屏到手机这些事。
+
+**核心功能**
+
+- **工作区 / 项目 / worktree 树** —— 一键在任意项目或分支 worktree 起 claude / codex 会话终端(terminal deck,基于 xterm)。终端**懒恢复**:恢复工作区时可见标签即时启动、隐藏标签延后到切过去时再启。支持从文件夹一键批量导入 git 仓库、项目按设备拖拽排序。
+- **git 面板** —— 改动 / 暂存 / 提交 / 分支 / log / stash / diff,JetBrains 风格逐文件右键菜单。
+- **内置代码编辑器(re_editor)** —— 语法高亮 + **跳转到定义**:全语言先用正则符号索引兜底,装了语言服务器的语言再走精确 LSP。触发:Cmd/Ctrl+点击、F12、Cmd/Ctrl+B。语言服务器**在「编辑器插件」面板里配置**(gopls / dart / jdtls / pyright / typescript-language-server / rust-analyzer / clangd —— 自动探测,找不到可手填路径),另有格式化插件(gofmt / prettier / clang-format / …)。
+- **本地会话总线** —— 同一台机器上多个 agent 会话点对点发消息、读对方屏幕(命令行入口 `cc-handoff msg`,见「命令行速查」)。这也是本仓库多 agent 协作开发依赖的机制。
+- **supervisor(总管)** —— 从总线生成并托管 agent 会话,项目 / 会话 / worktree 右键有「起总管」入口。
+- **投屏到手机** —— 把桌面 workspace 通过 relay 投到手机端;手机可查看 / 操作终端、双向文件传输,iOS 端用**灵动岛 / Live Activity** 显示会话状态。
+- 其它:文件树文件级复制 / 剪切 / 粘贴 + 与访达剪贴板互通、会话总览、token 用量、hook 活动、语音输入等。
+
+**平台**:桌面(macOS / Windows)为主,移动端(iOS / Android)侧重投屏 / 查看。终端、git、格式化、LSP 等本地能力**仅桌面端生效**。
+
+**构建 / 运行**:`app/` 是标准 Flutter 工程,打包 / 签名脚本见 `scripts/`。桌面端功能需要宿主机装好对应命令行工具(git / 各语言服务器 / 格式化器),没装的会在插件面板显示「未检测到」并给安装提示。
 
 ## 架构
 
@@ -305,6 +335,42 @@ cc-handoff pickup h_xxx --repo ~/work/frontend-project2
 `--no-materialize` 让 watch 只发通知,不在 receiver 端自动落地文件;`pickup --repo` 让你不用 cd 就能把包物化到任意 repo。这两个 flag 组合等同于"通知归通知、路由由人决定"。
 
 如果你只有一个 receiver repo,什么都不用配,默认行为就是对的。
+
+## 命令行速查
+
+装好后用 `cc-handoff <子命令>`;每个子命令都有 `--help`。
+
+**handoff 协作**
+
+| 命令 | 作用 |
+|---|---|
+| `init` | 在工作仓初始化(写 user / 仓库级 toml,可选装 MCP、工作流命令、说明段) |
+| `submit` | (发送侧)打包 git diff + swagger 增量 + commit log,推到 relay |
+| `list` / `inbox` | relay 上待接收 / 本地已物化的 handoff |
+| `pickup <id>` | 拉取 + 物化 + ack(`--worktree` 在独立分支 worktree 上接,`--direct` 直接落当前仓) |
+| `status` / `sent` / `history` / `open` / `retract` | 状态 / 我发过的 / 接收历史 / 重开 agent / 撤回 |
+| `comment <id> …` / `check-drift` | 评论 / 上次 handoff 后 swagger 是否漂移 |
+| `watch` | 接收侧常驻:SSE 入收件箱 + 通知 + 紧急自动开终端(`watch print-unit` 生成 launchd / systemd / Windows 任务单元) |
+| `online` | 已注册身份 + 谁在 watching |
+
+**本地会话总线 / 会话编排**(桌面 App 内的多 agent 协作)
+
+| 命令 | 作用 |
+|---|---|
+| `msg send <target> <text>` | 同机 agent 会话点对点发消息(不走 relay,在 App 生成的终端里跑) |
+| `msg read <target>` | 拉取对方会话屏幕的纯文本快照 |
+| `msg list` / `msg whoami` | 列会话 / 我是谁 |
+| `supervisor …` | 总管 agent 辅助:`overview` / `queue` / `read` / `send` / `decide` |
+
+**工作区 / 项目 / worktree / 日志**
+
+| 命令 | 作用 |
+|---|---|
+| `workspace (ws) list\|create\|add\|open` | 管理并一键启动项目目标 |
+| `worktree (wt) add\|list\|open\|remove` | 分支 worktree(`remove --prune-merged` 清理已合并的) |
+| `logs <project>` | 拉项目日志、抽取 + 评分最新错误(去重),可 `--open` 起 agent 定位 |
+
+**其它**:`ui` / `desktop`(relay 管理界面 / Chromium 窗口)、`alert`(把服务器日志告警转发到队友 watch)、`link-linear` / `linear-sync`(Linear 集成)、`config`、`stop-hook` / `bus-hook`(agent 钩子入口)、`version`。
 
 ## 日常运维
 
