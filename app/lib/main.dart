@@ -9,6 +9,7 @@ import 'local/config.dart';
 import 'local/prefs.dart';
 import 'local/session.dart';
 import 'local/session_overview.dart';
+import 'local/todo_store.dart';
 import 'local/update_service.dart';
 import 'notifications.dart';
 import 'screens/account_page.dart';
@@ -18,6 +19,7 @@ import 'screens/login_screen.dart';
 import 'screens/projects_page.dart';
 import 'screens/remote_workspace_page.dart';
 import 'screens/session_overview_page.dart';
+import 'screens/todos_page.dart';
 import 'screens/workspace_page.dart';
 import 'theme.dart';
 import 'ui_scale.dart';
@@ -120,6 +122,10 @@ class _HomeShellState extends State<HomeShell> {
   // Shared 会话总览 projection: WorkspacePage produces into it, SessionOverviewPage
   // renders from it. Owned here so the two sibling pages share one instance.
   final SessionOverviewStore _overviewStore = SessionOverviewStore();
+  // Backs the 待办 top-level page. Owned here (not by TodosPage) so it can
+  // start loading via _bootstrap before the page ever builds — see start()'s
+  // doc comment in local/todo_store.dart.
+  final TodoStore _todoStore = TodoStore();
   bool _checkedUpdate = false; // one-shot on-launch update check guard
 
   bool get _isDesktop =>
@@ -185,6 +191,13 @@ class _HomeShellState extends State<HomeShell> {
       _relayHint = session.relayUrl;
       _loading = false;
     });
+    // Started here (not just from _onLoggedIn) so a relaunch that restores a
+    // stored session also loads todos, not only a fresh interactive login.
+    // Skipped when `me` came back null (older relay / transient /me failure
+    // above) since TodoStore.start requires a non-null Me.
+    if (me != null) {
+      await _todoStore.start(client: client, me: me, config: _cfg!);
+    }
   }
 
   Future<void> _onLoggedIn(Session s) async {
@@ -335,6 +348,7 @@ class _HomeShellState extends State<HomeShell> {
       if (!_isDesktop)
         const _Dest('远程', Icons.cast_rounded, Icons.cast_connected_rounded),
       const _Dest('收件箱', Icons.inbox_rounded, Icons.inbox_rounded),
+      const _Dest('待办', Icons.checklist_rounded, Icons.checklist_rounded),
       const _Dest('项目', Icons.folder_rounded, Icons.folder_rounded),
       const _Dest('账号', Icons.person_rounded, Icons.person_rounded),
       if (isAdmin)
@@ -360,6 +374,13 @@ class _HomeShellState extends State<HomeShell> {
       if (!_isDesktop)
         RemoteWorkspacePage(relayUrl: _cfg!.relayUrl, token: _cfg!.token),
       HandoffsPage(client: _client!, config: _cfg!, showTerminal: _isDesktop),
+      TodosPage(
+        client: _client!,
+        config: _cfg!,
+        me: _me!,
+        store: _todoStore,
+        overviewStore: _overviewStore,
+      ),
       ProjectsPage(client: _client!),
       AccountPage(
         client: _client!,
