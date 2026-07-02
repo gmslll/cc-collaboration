@@ -34,7 +34,9 @@ import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../voice/voice.dart';
 import '../widgets.dart';
+import '../widgets/split_pane.dart';
 import '../widgets/todo_card.dart';
+import 'workspace/file_pane_state.dart';
 import 'diff_page.dart';
 import 'diff_split.dart';
 import 'diff_view.dart';
@@ -613,6 +615,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   final List<_CodeLocation> _codeForwardStack = [];
   @override
   int _activeFile = -1;
+  // Split-pane file editor: which pane each open file lives in + each pane's
+  // own active file. Both maps stay empty while _filePaneTree is a lone
+  // PaneLeaf (the common unsplit case) — every helper below that writes to
+  // them is guarded on "already split", so the unsplit render path never
+  // touches this state and behaves exactly as before. A path absent from
+  // _fileToPane defaults to living in the original 'root' pane/leaf.
+  PaneNode _filePaneTree = const PaneLeaf('root');
+  String _focusedPaneId = 'root';
+  int _panePaneSeq = 0;
+  final Map<String, String> _fileToPane = {};
+  final Map<String, String?> _paneActivePath = {};
   _BottomTool _bottomTool =
       Prefs.getString('ws.bottomTool', def: 'terminal') == 'git'
       ? _BottomTool.git
@@ -1921,9 +1934,14 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (existing >= 0) {
         _codeFiles[existing].line = line;
         _activeFile = existing;
+        _syncPaneFocusToActiveFile(); // jump to wherever it's already open
       } else {
         _codeFiles.add(_OpenFile(path, line: line));
         _activeFile = _codeFiles.length - 1;
+        if (_filePaneTree is PaneSplit) {
+          _fileToPane[path] = _focusedPaneId;
+          _paneActivePath[_focusedPaneId] = path;
+        }
       }
       _recentFiles.remove(path);
       _recentFiles.insert(0, path);
@@ -1964,6 +1982,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         f.diffShowTree = showTree;
         f.diffReload = reload;
         _activeFile = existing;
+        _syncPaneFocusToActiveFile();
       } else {
         _codeFiles.add(
           _OpenFile.diff(
@@ -1975,7 +1994,128 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         );
         _activeFile = _codeFiles.length - 1;
+        if (_filePaneTree is PaneSplit) {
+          _fileToPane[title] = _focusedPaneId;
+          _paneActivePath[_focusedPaneId] = title;
+        }
       }
+    });
+  }
+
+  // --- Split-pane editor bookkeeping ------------------------------------
+  // See the field comment on _filePaneTree: all of this is inert until the
+  // user actually splits, so it can't regress the unsplit single-pane path.
+
+  // Thin, State-owning wrappers around the pure functions in
+  // workspace/file_pane_state.dart — that file has no Flutter/State
+  // dependency, so it's what actually gets unit-tested; these just glue its
+  // results back into this State's mutable fields.
+
+  String _paneOfPath(String path) => paneOfPath(_fileToPane, path);
+
+  List<int> _paneFileIndices(String paneId) => paneFileIndices(
+    [for (final f in _codeFiles) f.path],
+    _fileToPane,
+    paneId,
+  );
+
+  // Re-syncs pane bookkeeping after _codeFiles shrinks. Only call while
+  // _filePaneTree is a PaneSplit — callers guard on that.
+  void _reconcilePaneTree() {
+    final r = reconcilePaneTree(
+      tree: _filePaneTree,
+      openPaths: [for (final f in _codeFiles) f.path],
+      fileToPane: _fileToPane,
+      paneActivePath: _paneActivePath,
+      focusedPaneId: _focusedPaneId,
+    );
+    _filePaneTree = r.tree;
+    _fileToPane
+      ..clear()
+      ..addAll(r.fileToPane);
+    _paneActivePath
+      ..clear()
+      ..addAll(r.paneActivePath);
+    _focusedPaneId = r.focusedPaneId;
+
+    final focusedPath = _paneActivePath[_focusedPaneId];
+    if (focusedPath != null) {
+      final idx = _codeFiles.indexWhere((f) => f.path == focusedPath);
+      if (idx >= 0) _activeFile = idx;
+    } else if (_codeFiles.isEmpty) {
+      _activeFile = -1;
+    }
+  }
+
+  // Points _focusedPaneId + _paneActivePath at wherever the current
+  // _activeFile actually lives. No-op while unsplit (by design — the
+  // unsplit render path never reads these maps, so there's nothing to
+  // keep in sync until a split exists).
+  void _syncPaneFocusToActiveFile() {
+    if (_filePaneTree is! PaneSplit) return;
+    if (_activeFile < 0 || _activeFile >= _codeFiles.length) return;
+    final path = _codeFiles[_activeFile].path;
+    final pane = _paneOfPath(path);
+    _focusedPaneId = pane;
+    _paneActivePath[pane] = path;
+  }
+
+  // Shared by the tab right-click menu and the ⋮ tab menu: both just want
+  // "this tab is now the operation target" before dispatching a menu item.
+  void _activateMenuTarget(int index) {
+    _activeFile = index;
+    _syncPaneFocusToActiveFile();
+  }
+
+  // Focuses [paneId] and syncs _activeFile to its active file, so the
+  // existing (pane-unaware) toolbar actions — save, structure, find,
+  // go-to-definition, etc. — operate on the right file when triggered from
+  // inside a specific pane's chrome.
+  void _focusPane(String paneId) {
+    _focusedPaneId = paneId;
+    final path = _paneActivePath[paneId];
+    if (path == null) return;
+    final idx = _codeFiles.indexWhere((f) => f.path == path);
+    if (idx >= 0) _activeFile = idx;
+  }
+
+  // Tab click inside a specific pane's tab strip (split mode only).
+  void _activatePaneTab(String paneId, String path) {
+    final idx = _codeFiles.indexWhere((f) => f.path == path);
+    if (idx < 0) return;
+    setState(() {
+      _focusedPaneId = paneId;
+      _paneActivePath[paneId] = path;
+      _activeFile = idx;
+      if (_projectAutoscrollFromSource) _revealedProjectFilePath = path;
+    });
+    if (_projectAutoscrollFromSource) _expandProjectForFile(path);
+  }
+
+  // "向右分屏" / "向下分屏": pulls the tab at [index] out of its current pane
+  // into a freshly-split sibling pane, and focuses that new pane.
+  void _splitEditorPane(int index, SplitAxis axis) {
+    if (index < 0 || index >= _codeFiles.length) return;
+    final path = _codeFiles[index].path;
+    setState(() {
+      final r = splitPaneForFile(
+        tree: _filePaneTree,
+        openPaths: [for (final f in _codeFiles) f.path],
+        fileToPane: _fileToPane,
+        paneActivePath: _paneActivePath,
+        path: path,
+        axis: axis,
+        newPaneId: 'pane-${_panePaneSeq++}',
+      );
+      _filePaneTree = r.tree;
+      _fileToPane
+        ..clear()
+        ..addAll(r.fileToPane);
+      _paneActivePath
+        ..clear()
+        ..addAll(r.paneActivePath);
+      _focusedPaneId = r.focusedPaneId;
+      _activeFile = index;
     });
   }
 
@@ -2018,6 +2158,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       } else if (_activeFile > i) {
         _activeFile--;
       }
+      if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
 
@@ -2030,6 +2171,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (index < 0 || index >= _codeFiles.length) return;
     setState(() {
       _activeFile = index;
+      _syncPaneFocusToActiveFile();
       if (_projectAutoscrollFromSource) {
         _revealedProjectFilePath = _codeFiles[index].path;
       }
@@ -2043,6 +2185,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (_codeFiles.isEmpty) return;
     setState(() {
       _activeFile = _activeFile < 0 ? 0 : (_activeFile + 1) % _codeFiles.length;
+      _syncPaneFocusToActiveFile();
       if (_projectAutoscrollFromSource && _activeFile >= 0) {
         _revealedProjectFilePath = _codeFiles[_activeFile].path;
       }
@@ -2056,6 +2199,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (_codeFiles.isEmpty) return;
     setState(() {
       _activeFile = _activeFile <= 0 ? _codeFiles.length - 1 : _activeFile - 1;
+      _syncPaneFocusToActiveFile();
       if (_projectAutoscrollFromSource && _activeFile >= 0) {
         _revealedProjectFilePath = _codeFiles[_activeFile].path;
       }
@@ -2083,6 +2227,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         ..clear()
         ..add(kept);
       _activeFile = 0;
+      if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
 
@@ -2101,6 +2246,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() {
       _codeFiles.removeRange(keep + 1, _codeFiles.length);
       if (_activeFile > keep) _activeFile = keep;
+      if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
 
@@ -2119,6 +2265,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() {
       _codeFiles.removeRange(0, keep);
       _activeFile = _activeFile >= keep ? _activeFile - keep : 0;
+      if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
 
@@ -2140,6 +2287,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             : _codeFiles.indexWhere((f) => f.path == activePath);
         _activeFile = next >= 0 ? next : 0;
       }
+      if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
 
@@ -2152,6 +2300,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() {
       _codeFiles.clear();
       _activeFile = -1;
+      _filePaneTree = const PaneLeaf('root');
+      _focusedPaneId = 'root';
+      _fileToPane.clear();
+      _paneActivePath.clear();
     });
   }
 
@@ -2267,6 +2419,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       } else if (_activeFile >= _codeFiles.length) {
         _activeFile = _codeFiles.length - 1;
       }
+      if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
     return true;
   }
@@ -4335,18 +4488,109 @@ class _WorkspacePageState extends State<WorkspacePage>
     ),
   );
 
-  Widget _editorArea() => Column(
-    children: [
-      _editorTabs(),
-      _editorHeader(),
-      Expanded(child: _editorCanvas()),
-    ],
-  );
+  Widget _editorArea() {
+    // Not split (the overwhelmingly common case, and the only case before
+    // this feature existed): render exactly as before, byte-for-byte — the
+    // split-pane machinery below is never even consulted.
+    if (_filePaneTree is! PaneSplit) {
+      return Column(
+        children: [
+          _editorTabs(),
+          _editorHeader(),
+          Expanded(child: _editorCanvas()),
+        ],
+      );
+    }
+    return SplitPaneView(
+      tree: _filePaneTree,
+      paneBuilder: (context, paneId) => _buildFilePane(paneId),
+      onWeightsChanged: (target, weights) => setState(() {
+        _filePaneTree = updateWeights(_filePaneTree, target, weights);
+      }),
+    );
+  }
+
+  // One pane of a split file editor: its own filtered tab strip, header and
+  // canvas, all driven by that pane's own active file rather than the
+  // global _activeFile. Tapping anywhere in the pane focuses it (so the
+  // existing pane-unaware toolbar actions — save, go-to-def, structure —
+  // apply to the right file); Listener (not GestureDetector) so it never
+  // competes with the tab/button taps inside for the gesture arena.
+  Widget _buildFilePane(String paneId) {
+    final indices = _paneFileIndices(paneId);
+    final activePath = _paneActivePath[paneId];
+    final activeIndex = activePath == null
+        ? -1
+        : _codeFiles.indexWhere((f) => f.path == activePath);
+    final file = activeIndex >= 0 ? _codeFiles[activeIndex] : null;
+    final focused = paneId == _focusedPaneId;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) {
+        if (!focused) setState(() => _focusPane(paneId));
+      },
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+              color: focused ? CcColors.accent : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Column(
+          children: [
+            _paneTabStrip(paneId, indices, activeIndex),
+            _editorHeaderFor(file),
+            Expanded(child: _editorCanvasFor(file)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Filtered tab strip for one pane in split mode — reuses the same
+  // single-tab widget (_editorTab) and menus as the unsplit tab bar, just
+  // scoped to indices belonging to this pane.
+  Widget _paneTabStrip(String paneId, List<int> indices, int activeIndex) {
+    return Container(
+      height: 36,
+      decoration: const BoxDecoration(
+        color: CcColors.editorTabBar,
+        border: Border(bottom: BorderSide(color: CcColors.border)),
+      ),
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: indices.length,
+        itemBuilder: (_, j) {
+          final i = indices[j];
+          final file = _codeFiles[i];
+          return _editorTab(
+            icon: file.isDiff
+                ? Icons.difference_rounded
+                : _iconForFile(file.path),
+            label: '${file.dirty ? '● ' : ''}${file.name}',
+            active: i == activeIndex,
+            change: _fileGitChange(file.path),
+            onTap: () => _activatePaneTab(paneId, file.path),
+            onClose: () => _closeCodeFile(i),
+            tabMenu: _editorFileTabMenu(i),
+            onSecondaryTapDown: (d) => _showEditorTabMenu(d.globalPosition, i),
+          );
+        },
+      ),
+    );
+  }
 
   Widget _editorHeader() {
     final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
-    if (!hasActiveFile) return const SizedBox.shrink();
-    final file = _codeFiles[_activeFile];
+    return _editorHeaderFor(hasActiveFile ? _codeFiles[_activeFile] : null);
+  }
+
+  // Parameterized so a split pane's own header can drive off that pane's
+  // active file instead of the global _activeFile.
+  Widget _editorHeaderFor(_OpenFile? file) {
+    if (file == null) return const SizedBox.shrink();
     final state = file.key.currentState;
     final hit = _projectForFile(file.path);
     final rel = hit?.rel.isNotEmpty == true ? hit!.rel : file.path;
@@ -4836,6 +5080,17 @@ class _WorkspacePageState extends State<WorkspacePage>
       label: 'Annotate / Blame',
     ),
     const PopupMenuDivider(),
+    ccMenuItem(
+      value: 'splitRight',
+      icon: Icons.vertical_split_rounded,
+      label: '向右分屏',
+    ),
+    ccMenuItem(
+      value: 'splitDown',
+      icon: Icons.horizontal_split_rounded,
+      label: '向下分屏',
+    ),
+    const PopupMenuDivider(),
     ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
     ccMenuItem(
       value: 'closeOthers',
@@ -4890,6 +5145,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         _showBlameForProjectFile(hit.project, hit.rel);
       }
     }
+    if (v == 'splitRight') _splitEditorPane(index, SplitAxis.horizontal);
+    if (v == 'splitDown') _splitEditorPane(index, SplitAxis.vertical);
     if (v == 'close') _closeCodeFile(index);
     if (v == 'closeOthers') _closeOtherCodeFiles(index);
     if (v == 'closeLeft') _closeCodeFilesToLeft(index);
@@ -4900,7 +5157,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // 右键在光标处弹出，跟 commit_changes_menu.dart 的 showMenu+menuPosAt 同一套路。
   Future<void> _showEditorTabMenu(Offset pos, int index) async {
-    setState(() => _activeFile = index);
+    setState(() => _activateMenuTarget(index));
     final v = await showMenu<String>(
       context: context,
       position: menuPosAt(context, pos),
@@ -4916,7 +5173,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       tooltip: 'Tab actions',
       icon: const Icon(Icons.more_vert_rounded, size: 15),
       padding: EdgeInsets.zero,
-      onOpened: () => setState(() => _activeFile = index),
+      onOpened: () => setState(() => _activateMenuTarget(index)),
       onSelected: (v) => _handleEditorFileTabMenuSelect(v, index),
       itemBuilder: (_) => _editorFileTabMenuItems(index),
     );
@@ -4929,8 +5186,20 @@ class _WorkspacePageState extends State<WorkspacePage>
       _bottomTool == _BottomTool.terminal;
 
   Widget _editorCanvas() {
-    if (_activeFile >= 0 && _activeFile < _codeFiles.length) {
-      final f = _codeFiles[_activeFile];
+    final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
+    if (hasActiveFile) return _editorCanvasFor(_codeFiles[_activeFile]);
+    if (_aiChatFocused) {
+      return terminalDeck(hideClosedTabs: true, onNewShell: _newShellTerminal);
+    }
+    return _workspaceWelcome();
+  }
+
+  // Parameterized so a split pane's own canvas can render that pane's active
+  // file. [f] == null (an emptied-out pane, transient before it collapses)
+  // falls back to the welcome screen — never the AI-chat terminal fallback,
+  // which stays exclusive to the unsplit _editorCanvas() path above.
+  Widget _editorCanvasFor(_OpenFile? f) {
+    if (f != null) {
       if (f.isDiff) {
         return ColoredBox(
           color: CcColors.bg,
@@ -4978,9 +5247,6 @@ class _WorkspacePageState extends State<WorkspacePage>
           },
         ),
       );
-    }
-    if (_aiChatFocused) {
-      return terminalDeck(hideClosedTabs: true, onNewShell: _newShellTerminal);
     }
     return _workspaceWelcome();
   }
