@@ -2104,6 +2104,24 @@ class _WorkspacePageState extends State<WorkspacePage>
     });
   }
 
+  Future<void> _closeCodeFilesToLeft(int keep) async {
+    if (keep <= 0 || keep >= _codeFiles.length) return;
+    final dirty = _codeFiles
+        .asMap()
+        .entries
+        .where((e) => e.key < keep && e.value.dirty)
+        .map((e) => e.value.path)
+        .toList();
+    if (dirty.isNotEmpty) {
+      final ok = await _confirm('关闭左侧未保存文件?', _previewList(dirty));
+      if (!ok) return;
+    }
+    setState(() {
+      _codeFiles.removeRange(0, keep);
+      _activeFile = _activeFile >= keep ? _activeFile - keep : 0;
+    });
+  }
+
   Future<void> _closeUnmodifiedCodeFiles() async {
     if (_codeFiles.every((f) => f.dirty)) {
       _snack('没有可关闭的未修改文件');
@@ -4510,6 +4528,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                   onTap: () => _activateCodeTab(i),
                   onClose: () => _closeCodeFile(i),
                   tabMenu: _editorFileTabMenu(i),
+                  onSecondaryTapDown: (d) =>
+                      _showEditorTabMenu(d.globalPosition, i),
                 );
               },
             ),
@@ -4582,12 +4602,11 @@ class _WorkspacePageState extends State<WorkspacePage>
     required VoidCallback onTap,
     VoidCallback? onClose,
     PopupMenuButton<String>? tabMenu,
+    GestureTapDownCallback? onSecondaryTapDown,
     GitChange? change,
   }) => InkWell(
     onTap: onTap,
-    onSecondaryTap: () {
-      if (tabMenu != null) onTap();
-    },
+    onSecondaryTapDown: onSecondaryTapDown,
     child: Container(
       constraints: const BoxConstraints(maxWidth: 260),
       height: 36,
@@ -4782,96 +4801,124 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  PopupMenuButton<String> _editorFileTabMenu(int index) {
+  // 文件标签页右键/⋮菜单共用的 item 列表 + 派发逻辑，两个触发方式(showMenu 右键、
+  // PopupMenuButton 左键小图标)都喂同一份，不在两处各写一份。
+  List<PopupMenuEntry<String>> _editorFileTabMenuItems(int index) => [
+    ccMenuItem(
+      value: 'copyPath',
+      icon: Icons.content_copy_rounded,
+      label: 'Copy Path',
+    ),
+    ccMenuItem(
+      value: 'reveal',
+      icon: Icons.my_location_rounded,
+      label: 'Reveal in Project',
+    ),
+    const PopupMenuDivider(),
+    ccMenuItem(
+      value: 'workingDiff',
+      icon: Icons.difference_rounded,
+      label: 'Open File Working Tree Diff',
+    ),
+    ccMenuItem(
+      value: 'fileLog',
+      icon: Icons.list_alt_rounded,
+      label: 'Open File Git Log',
+    ),
+    ccMenuItem(
+      value: 'history',
+      icon: Icons.history_rounded,
+      label: 'File History',
+    ),
+    ccMenuItem(
+      value: 'annotate',
+      icon: Icons.format_align_left_rounded,
+      label: 'Annotate / Blame',
+    ),
+    const PopupMenuDivider(),
+    ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
+    ccMenuItem(
+      value: 'closeOthers',
+      icon: Icons.clear_rounded,
+      label: 'Close Others',
+      enabled: _codeFiles.length > 1,
+    ),
+    if (index > 0)
+      ccMenuItem(
+        value: 'closeLeft',
+        icon: Icons.first_page_rounded,
+        label: 'Close Tabs to the Left',
+      ),
+    if (index < _codeFiles.length - 1)
+      ccMenuItem(
+        value: 'closeRight',
+        icon: Icons.keyboard_tab_rounded,
+        label: 'Close Tabs to the Right',
+      ),
+    ccMenuItem(
+      value: 'closeUnmodified',
+      icon: Icons.cleaning_services_rounded,
+      label: 'Close Unmodified',
+    ),
+    ccMenuItem(
+      value: 'closeAll',
+      icon: Icons.clear_all_rounded,
+      label: 'Close All',
+    ),
+  ];
+
+  void _handleEditorFileTabMenuSelect(String v, int index) {
+    if (index < 0 || index >= _codeFiles.length) return;
     final file = _codeFiles[index];
+    if (v == 'copyPath') _copyFilePath(file.path);
+    if (v == 'reveal') _revealFileInProject(file.path);
+    if (v == 'workingDiff') _openFileWorkingTreeDiff(file.path);
+    if (v == 'fileLog') _openFileGitLog(file.path);
+    if (v == 'history') {
+      final hit = _projectForFile(file.path);
+      if (hit == null || hit.rel.isEmpty) {
+        _snack('找不到文件所属项目');
+      } else {
+        _showFileHistoryForProjectFile(hit.project, hit.rel);
+      }
+    }
+    if (v == 'annotate') {
+      final hit = _projectForFile(file.path);
+      if (hit == null || hit.rel.isEmpty) {
+        _snack('找不到文件所属项目');
+      } else {
+        _showBlameForProjectFile(hit.project, hit.rel);
+      }
+    }
+    if (v == 'close') _closeCodeFile(index);
+    if (v == 'closeOthers') _closeOtherCodeFiles(index);
+    if (v == 'closeLeft') _closeCodeFilesToLeft(index);
+    if (v == 'closeRight') _closeCodeFilesToRight(index);
+    if (v == 'closeUnmodified') _closeUnmodifiedCodeFiles();
+    if (v == 'closeAll') _closeAllCodeFiles();
+  }
+
+  // 右键在光标处弹出，跟 commit_changes_menu.dart 的 showMenu+menuPosAt 同一套路。
+  Future<void> _showEditorTabMenu(Offset pos, int index) async {
+    setState(() => _activeFile = index);
+    final v = await showMenu<String>(
+      context: context,
+      position: menuPosAt(context, pos),
+      items: _editorFileTabMenuItems(index),
+    );
+    if (v == null || !mounted) return;
+    _handleEditorFileTabMenuSelect(v, index);
+  }
+
+  // ⋮ 图标左键触发，跟右键共用同一份 item 列表 + 派发逻辑。
+  PopupMenuButton<String> _editorFileTabMenu(int index) {
     return PopupMenuButton<String>(
       tooltip: 'Tab actions',
       icon: const Icon(Icons.more_vert_rounded, size: 15),
       padding: EdgeInsets.zero,
       onOpened: () => setState(() => _activeFile = index),
-      onSelected: (v) {
-        if (v == 'copyPath') _copyFilePath(file.path);
-        if (v == 'reveal') _revealFileInProject(file.path);
-        if (v == 'workingDiff') _openFileWorkingTreeDiff(file.path);
-        if (v == 'fileLog') _openFileGitLog(file.path);
-        if (v == 'history') {
-          final hit = _projectForFile(file.path);
-          if (hit == null || hit.rel.isEmpty) {
-            _snack('找不到文件所属项目');
-          } else {
-            _showFileHistoryForProjectFile(hit.project, hit.rel);
-          }
-        }
-        if (v == 'annotate') {
-          final hit = _projectForFile(file.path);
-          if (hit == null || hit.rel.isEmpty) {
-            _snack('找不到文件所属项目');
-          } else {
-            _showBlameForProjectFile(hit.project, hit.rel);
-          }
-        }
-        if (v == 'close') _closeCodeFile(index);
-        if (v == 'closeOthers') _closeOtherCodeFiles(index);
-        if (v == 'closeRight') _closeCodeFilesToRight(index);
-        if (v == 'closeUnmodified') _closeUnmodifiedCodeFiles();
-        if (v == 'closeAll') _closeAllCodeFiles();
-      },
-      itemBuilder: (_) => [
-        ccMenuItem(
-          value: 'copyPath',
-          icon: Icons.content_copy_rounded,
-          label: 'Copy Path',
-        ),
-        ccMenuItem(
-          value: 'reveal',
-          icon: Icons.my_location_rounded,
-          label: 'Reveal in Project',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'workingDiff',
-          icon: Icons.difference_rounded,
-          label: 'Open File Working Tree Diff',
-        ),
-        ccMenuItem(
-          value: 'fileLog',
-          icon: Icons.list_alt_rounded,
-          label: 'Open File Git Log',
-        ),
-        ccMenuItem(
-          value: 'history',
-          icon: Icons.history_rounded,
-          label: 'File History',
-        ),
-        ccMenuItem(
-          value: 'annotate',
-          icon: Icons.format_align_left_rounded,
-          label: 'Annotate / Blame',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
-        ccMenuItem(
-          value: 'closeOthers',
-          icon: Icons.clear_rounded,
-          label: 'Close Others',
-        ),
-        if (index < _codeFiles.length - 1)
-          ccMenuItem(
-            value: 'closeRight',
-            icon: Icons.keyboard_tab_rounded,
-            label: 'Close Tabs to the Right',
-          ),
-        ccMenuItem(
-          value: 'closeUnmodified',
-          icon: Icons.cleaning_services_rounded,
-          label: 'Close Unmodified',
-        ),
-        ccMenuItem(
-          value: 'closeAll',
-          icon: Icons.clear_all_rounded,
-          label: 'Close All',
-        ),
-      ],
+      onSelected: (v) => _handleEditorFileTabMenuSelect(v, index),
+      itemBuilder: (_) => _editorFileTabMenuItems(index),
     );
   }
 
