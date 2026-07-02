@@ -524,13 +524,15 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     final (target, err) = _resolveTarget(m.to);
     if (target == null) return err; // err is non-null when target is null
     if (target.id == m.from) return '不能发给自己';
-    // Dormant target (a deferred/hidden tab, or one whose pane never mounted this
-    // run): it has no live PTY, so a straight paste would vanish. Wake it — spawn
-    // the agent and deliver once it boots — so task dispatch is decoupled from tab
-    // visibility. Also routes here mid-wake (waking) so a burst queues in order
-    // instead of racing the boot. Checked FIRST: a not-started session is never
-    // busy/inputDirty (both require a running PTY), so this can't shadow those.
-    if (!target.started || target.waking) {
+    // Not-ready target — no live, input-accepting PTY: a dormant/deferred/never-
+    // mounted tab (no PTY at all → a straight paste vanishes), OR one still booting
+    // in its ~1s launch window (paste+Enter races the boot → lost/mangled). Wake it
+    // (start if needed) and QUEUE the message; the target's boot-ready watch flushes
+    // it with paste+submit the moment the agent settles — so dispatch auto-runs a
+    // turn regardless of tab visibility/focus/boot state, no manual Enter. Checked
+    // FIRST: a not-ready session is never meaningfully busy/inputDirty, so this
+    // can't shadow those. A ready target falls through to the paste/inbox routing.
+    if (!target.ready) {
       target.wakeAndDeliver(_composeDelivery(target, m), submit: m.submit);
       return null;
     }
