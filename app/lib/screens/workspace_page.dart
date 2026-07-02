@@ -5932,16 +5932,16 @@ class _WorkspacePageState extends State<WorkspacePage>
   // _changesGroupHeader is one "▾ ☐ <title>  N files" tree-root row: the
   // chevron collapses that group's rows, the tristate checkbox selects/clears
   // every row in [items] (which drives "Commit Selected") — mirrors the
-  // JetBrains "Changes" / "Unversioned Files" section headers.
+  // JetBrains "Changes" / "Unversioned Files" section headers. [items] is
+  // always non-empty — the only caller, _changesGroup, filters empty groups
+  // out before reaching here.
   Widget _changesGroupHeader({
     required String title,
     required List<GitChange> items,
     required bool collapsed,
     required VoidCallback onToggleCollapse,
   }) {
-    final allSel =
-        items.isNotEmpty &&
-        items.every((c) => _selectedChangePaths.contains(c.path));
+    final allSel = items.every((c) => _selectedChangePaths.contains(c.path));
     final someSel = items.any((c) => _selectedChangePaths.contains(c.path));
     return Container(
       height: 28,
@@ -5968,15 +5968,13 @@ class _WorkspacePageState extends State<WorkspacePage>
               value: allSel ? true : (someSel ? null : false),
               visualDensity: VisualDensity.compact,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onChanged: items.isEmpty
-                  ? null
-                  : (_) => setState(() {
-                      if (allSel) {
-                        _selectedChangePaths.removeAll(items.map((c) => c.path));
-                      } else {
-                        _selectedChangePaths.addAll(items.map((c) => c.path));
-                      }
-                    }),
+              onChanged: (_) => setState(() {
+                if (allSel) {
+                  _selectedChangePaths.removeAll(items.map((c) => c.path));
+                } else {
+                  _selectedChangePaths.addAll(items.map((c) => c.path));
+                }
+              }),
             ),
           ),
           const SizedBox(width: 4),
