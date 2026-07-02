@@ -7479,6 +7479,18 @@ class _WorkspacePageState extends State<WorkspacePage>
     final hasCommitText = _commitCtl.text.trim().isNotEmpty;
     final canAmend =
         !_gitLoading && ((status?.staged ?? 0) > 0 || hasCommitText);
+    // Small, dense commit-action buttons (24px tall, 11.5 label, 13px icon) —
+    // sizing only, so each button keeps its native colours (filled / tonal /
+    // outlined).
+    const compactBtn = ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      minimumSize: WidgetStatePropertyAll(Size(0, 24)),
+      padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8)),
+      textStyle: WidgetStatePropertyAll(
+        TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+      ),
+    );
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: const BoxDecoration(
@@ -7488,19 +7500,19 @@ class _WorkspacePageState extends State<WorkspacePage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // A roomy multi-line message editor (4–10 rows) instead of the old
+          // single-line field.
           TextField(
             controller: _commitCtl,
             focusNode: _commitFocus,
-            minLines: 1,
-            maxLines: 2,
+            minLines: 4,
+            maxLines: 10,
+            textAlignVertical: TextAlignVertical.top,
             decoration: const InputDecoration(
               isDense: true,
               hintText: 'Commit message',
-              prefixIcon: Icon(Icons.commit_rounded, size: 18),
+              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             ),
-            onSubmitted: (_) {
-              if (canCommit) _gitCommitCurrent(p);
-            },
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 8),
@@ -7510,22 +7522,25 @@ class _WorkspacePageState extends State<WorkspacePage>
             alignScrollEnd: true,
             scrolling: [
               FilledButton.icon(
+                style: compactBtn,
                 onPressed: canCommit ? () => _gitCommitCurrent(p) : null,
-                icon: const Icon(Icons.check_rounded, size: 16),
+                icon: const Icon(Icons.check_rounded, size: 13),
                 label: const Text('Commit'),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               FilledButton.tonalIcon(
+                style: compactBtn,
                 onPressed: canCommit ? () => _gitCommitAndPushCurrent(p) : null,
-                icon: const Icon(Icons.upload_rounded, size: 16),
+                icon: const Icon(Icons.upload_rounded, size: 13),
                 label: const Text('Commit & Push'),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               FilledButton.icon(
+                style: compactBtn,
                 onPressed: canCommitSelected
                     ? () => _gitCommitSelected(p)
                     : null,
-                icon: const Icon(Icons.checklist_rounded, size: 16),
+                icon: const Icon(Icons.checklist_rounded, size: 13),
                 label: Text(
                   selected == 0 ? 'Commit Selected' : 'Commit $selected',
                 ),
@@ -7533,7 +7548,9 @@ class _WorkspacePageState extends State<WorkspacePage>
               PopupMenuButton<String>(
                 tooltip: 'Selected commit actions',
                 enabled: canCommitSelected,
-                icon: const Icon(Icons.arrow_drop_down_rounded, size: 18),
+                icon: const Icon(Icons.arrow_drop_down_rounded, size: 16),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
                 onSelected: (v) {
                   if (v == 'commitPushSelected') _gitCommitSelectedAndPush(p);
                 },
@@ -7547,10 +7564,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                 ],
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               OutlinedButton.icon(
+                style: compactBtn,
                 onPressed: canAmend ? () => _gitCommitAmendCurrent(p) : null,
-                icon: const Icon(Icons.edit_note_rounded, size: 16),
+                icon: const Icon(Icons.edit_note_rounded, size: 13),
                 label: const Text('Amend'),
               ),
             ],
