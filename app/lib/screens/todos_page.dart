@@ -13,16 +13,10 @@ import '../local/session_overview.dart';
 import '../local/todo_store.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../widgets/markdown_lite_editor.dart';
 import '../widgets/todo_attachment_thumb.dart';
+import '../widgets/todo_property_controls.dart';
 import 'todo_detail_view.dart';
-
-const _priorityLabels = {'low': '低', 'normal': '普通', 'high': '高'};
-const _recurrenceLabels = {
-  '': '不重复',
-  'daily': '每天',
-  'weekly': '每周',
-  'monthly': '每月',
-};
 
 // TodosPage is the top-level 待办 destination: a filterable list (left) + the
 // selected todo's detail/edit panel (right), mirroring HandoffsPage's split
@@ -123,7 +117,7 @@ class _TodosPageState extends State<TodosPage> {
   Future<void> _createDialog() async {
     final created = await showDialog<bool>(
       context: context,
-      builder: (_) => _CreateTodoDialog(
+      builder: (_) => _QuickCreateDialog(
         client: _client,
         me: _me,
         initialScope: _scope == 'team' ? 'team' : 'personal',
@@ -205,6 +199,7 @@ class _TodosPageState extends State<TodosPage> {
               DropdownButton<String?>(
                 value: _projectFilter,
                 hint: const Text('全部项目'),
+                underline: const SizedBox(),
                 items: [
                   const DropdownMenuItem<String?>(
                       value: null, child: Text('全部项目')),
@@ -216,29 +211,53 @@ class _TodosPageState extends State<TodosPage> {
             ]),
           ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: TodoStatus.values
-                .map((s) => FilterChip(
-                      label: Text(todoStatusLabel(s)),
-                      selected: _statusFilter.contains(s),
-                      visualDensity: VisualDensity.compact,
-                      onSelected: (sel) => setState(() {
-                        if (sel) {
-                          _statusFilter.add(s);
-                        } else {
-                          _statusFilter.remove(s);
-                        }
-                      }),
-                    ))
-                .toList(),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+          child: scrollableBar(
+            scrolling: [
+              for (final s in TodoStatus.values)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: _statusChip(s),
+                ),
+            ],
           ),
         ),
         const Divider(height: 12),
         Expanded(child: _buildList()),
       ]);
+
+  Widget _statusChip(TodoStatus s) {
+    final selected = _statusFilter.contains(s);
+    final color = _statusColor(s);
+    return InkWell(
+      borderRadius: BorderRadius.circular(CcRadius.pill),
+      onTap: () => setState(() {
+        if (selected) {
+          _statusFilter.remove(s);
+        } else {
+          _statusFilter.add(s);
+        }
+      }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? color.withValues(alpha: 0.14) : Colors.transparent,
+          border: Border.all(
+              color: selected ? color.withValues(alpha: 0.5) : CcColors.border),
+          borderRadius: BorderRadius.circular(CcRadius.pill),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          statusDot(color, size: 6),
+          const SizedBox(width: 5),
+          Text(todoStatusLabel(s),
+              style: TextStyle(
+                  fontSize: 11.5,
+                  color: selected ? CcColors.text : CcColors.muted,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
+        ]),
+      ),
+    );
+  }
 
   Widget _buildList() => asyncBody(
         loading: _store.loading && _store.all.isEmpty,
@@ -262,56 +281,69 @@ class _TodosPageState extends State<TodosPage> {
 
   Widget _row(Todo t) {
     final sel = _selected?.id == t.id;
-    return Container(
-      decoration: BoxDecoration(
-        color: sel ? CcColors.accent.withValues(alpha: 0.07) : null,
-        border: Border(
-            left: BorderSide(
-                color: sel ? CcColors.accent : Colors.transparent, width: 2.5)),
-      ),
-      child: ListTile(
-        selected: sel,
-        leading: SizedBox(
-          width: t.attachmentCount > 0 ? 60 : 12,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            statusDot(_statusColor(t.status),
-                size: 9, glow: t.status == TodoStatus.inProgress),
+    final color = _statusColor(t.status);
+    final overdue = t.dueAt != null &&
+        t.dueAt!.isBefore(DateTime.now()) &&
+        t.status != TodoStatus.done &&
+        t.status != TodoStatus.cancelled;
+    return Material(
+      color: sel ? CcColors.accent.withValues(alpha: 0.07) : Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _selected = t),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border(
+                left: BorderSide(
+                    color: sel ? CcColors.accent : Colors.transparent, width: 2.5)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(children: [
+            Tooltip(
+              message: todoStatusLabel(t.status),
+              child: statusDot(color, size: 8, glow: t.status == TodoStatus.inProgress),
+            ),
+            const SizedBox(width: 10),
             if (t.attachmentCount > 0) ...[
-              const SizedBox(width: 6),
               _RowThumb(client: _client, todo: t),
+              const SizedBox(width: 8),
             ],
+            Expanded(
+              child: Text(t.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
+            ),
+            const SizedBox(width: 10),
+            priorityBars(t.priority, maxHeight: 10),
+            if (t.dueAt != null) ...[
+              const SizedBox(width: 10),
+              Text(commitDate(t.dueAt!),
+                  style: TextStyle(
+                      fontFamily: CcType.mono,
+                      fontSize: 10.5,
+                      color: overdue ? CcColors.danger : CcColors.subtle)),
+            ],
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 30,
+              child: Text(relativeTime(t.updatedAt),
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                      fontFamily: CcType.mono, color: CcColors.subtle, fontSize: 10.5)),
+            ),
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: IconButton(
+                icon: const Icon(Icons.send_rounded, size: 15),
+                tooltip: '一键指派',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _assignDialog(t),
+              ),
+            ),
           ]),
         ),
-        title: Text(t.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Wrap(spacing: 6, runSpacing: 2, children: [
-          tag(todoStatusLabel(t.status), _statusColor(t.status)),
-          if (t.priority == 'high') tag('高优先级', CcColors.danger, bold: true),
-          if (t.dueAt != null)
-            Text('截止 ${commitDate(t.dueAt!)}',
-                style: const TextStyle(color: CcColors.muted, fontSize: 11)),
-        ]),
-        trailing: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(relativeTime(t.updatedAt),
-                style: const TextStyle(
-                    fontFamily: CcType.mono,
-                    color: CcColors.subtle,
-                    fontSize: 11)),
-            const SizedBox(height: 2),
-            IconButton(
-              icon: const Icon(Icons.send_rounded, size: 18),
-              tooltip: '一键指派',
-              visualDensity: VisualDensity.compact,
-              onPressed: () => _assignDialog(t),
-            ),
-          ],
-        ),
-        onTap: () => setState(() => _selected = t),
       ),
     );
   }
@@ -413,17 +445,19 @@ class _RowThumbState extends State<_RowThumb> {
   }
 }
 
-// _CreateTodoDialog collects title/body/scope/priority/recurrence/due-date +
-// optional attachments, creates the todo, then uploads each attachment in
-// turn (attachments need the todo's id, so they can only go up after
-// creation succeeds).
-class _CreateTodoDialog extends StatefulWidget {
+// _QuickCreateDialog is Linear's Cmd+I "quick add" panel, not a stack of
+// labeled dropdowns: a focused title input, an optional description (the
+// same live markdown editor as the detail view), and a compact icon row for
+// priority/recurrence/due-date/attachments. Creates the todo, then uploads
+// each attachment in turn (attachments need the todo's id, so they can only
+// go up after creation succeeds).
+class _QuickCreateDialog extends StatefulWidget {
   final RelayClient client;
   final Me me;
   final String initialScope;
   final String? initialProjectId;
 
-  const _CreateTodoDialog({
+  const _QuickCreateDialog({
     required this.client,
     required this.me,
     this.initialScope = 'personal',
@@ -431,12 +465,12 @@ class _CreateTodoDialog extends StatefulWidget {
   });
 
   @override
-  State<_CreateTodoDialog> createState() => _CreateTodoDialogState();
+  State<_QuickCreateDialog> createState() => _QuickCreateDialogState();
 }
 
-class _CreateTodoDialogState extends State<_CreateTodoDialog> {
+class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   final _titleCtl = TextEditingController();
-  final _bodyCtl = TextEditingController();
+  final _bodyCtl = MarkdownLiteController();
   late String _scope = widget.initialScope;
   String? _projectId;
   String _priority = 'normal';
@@ -526,129 +560,119 @@ class _CreateTodoDialogState extends State<_CreateTodoDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('新建待办'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Row(children: [
+                if (widget.me.projects.isNotEmpty)
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'personal', label: Text('个人')),
+                      ButtonSegment(value: 'team', label: Text('团队')),
+                    ],
+                    selected: {_scope},
+                    showSelectedIcon: false,
+                    style: const ButtonStyle(
+                        visualDensity: VisualDensity.compact,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    onSelectionChanged: (s) => setState(() {
+                      _scope = s.first;
+                      if (_scope == 'team' &&
+                          _projectId == null &&
+                          widget.me.projects.isNotEmpty) {
+                        _projectId = widget.me.projects.first.id;
+                      }
+                    }),
+                  ),
+                const Spacer(),
+                if (_scope == 'team' && widget.me.projects.isNotEmpty)
+                  DropdownButton<String>(
+                    isDense: true,
+                    underline: const SizedBox(),
+                    value: _projectId,
+                    items: widget.me.projects
+                        .map((p) =>
+                            DropdownMenuItem(value: p.id, child: Text(p.name)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _projectId = v),
+                  ),
+              ]),
+              const SizedBox(height: 12),
               TextField(
                 controller: _titleCtl,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: '标题'),
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  filled: false,
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                  hintText: '待办标题',
+                ),
+                onSubmitted: (_) => _submit(),
               ),
-              const SizedBox(height: 10),
-              TextField(
+              const SizedBox(height: 6),
+              MarkdownLiteEditor(
                 controller: _bodyCtl,
+                hintText: '添加描述…（可选，支持 Markdown）',
                 minLines: 2,
                 maxLines: 6,
-                decoration:
-                    const InputDecoration(labelText: '正文（可选，支持 Markdown）'),
               ),
               const SizedBox(height: 12),
-              SegmentedButton<String>(
-                segments: [
-                  const ButtonSegment(value: 'personal', label: Text('个人')),
-                  if (widget.me.projects.isNotEmpty)
-                    const ButtonSegment(value: 'team', label: Text('团队')),
-                ],
-                selected: {_scope},
-                showSelectedIcon: false,
-                onSelectionChanged: (s) => setState(() {
-                  _scope = s.first;
-                  if (_scope == 'team' &&
-                      _projectId == null &&
-                      widget.me.projects.isNotEmpty) {
-                    _projectId = widget.me.projects.first.id;
-                  }
-                }),
-              ),
-              if (_scope == 'team') ...[
-                const SizedBox(height: 10),
-                DropdownButton<String>(
-                  isExpanded: true,
-                  hint: const Text('选择项目'),
-                  value: _projectId,
-                  items: widget.me.projects
-                      .map((p) =>
-                          DropdownMenuItem(value: p.id, child: Text(p.name)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _projectId = v),
-                ),
-              ],
-              const SizedBox(height: 6),
+              const Divider(height: 1),
+              const SizedBox(height: 10),
               Row(children: [
-                const Text('优先级',
-                    style: TextStyle(color: CcColors.muted, fontSize: 13)),
+                PriorityControl(
+                  priority: _priority,
+                  onChanged: (v) => setState(() => _priority = v),
+                ),
+                const SizedBox(width: 6),
+                RecurrenceControl(
+                  recurrence: _recurrence,
+                  onChanged: (v) => setState(() => _recurrence = v),
+                ),
+                const SizedBox(width: 6),
+                DueDatePill(
+                  dueAt: _dueAt,
+                  onTap: _pickDueDate,
+                  onClear: () => setState(() => _dueAt = null),
+                ),
                 const Spacer(),
-                DropdownButton<String>(
-                  value: _priority,
-                  items: _priorityLabels.entries
-                      .map((e) =>
-                          DropdownMenuItem(value: e.key, child: Text(e.value)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _priority = v ?? 'normal'),
+                IconButton(
+                  icon: const Icon(Icons.attach_file_rounded, size: 18),
+                  tooltip: _files.isEmpty ? '添加附件' : '已选 ${_files.length} 个文件',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _pickFiles,
                 ),
               ]),
+              const SizedBox(height: 14),
               Row(children: [
-                const Text('周期',
-                    style: TextStyle(color: CcColors.muted, fontSize: 13)),
-                const Spacer(),
-                DropdownButton<String>(
-                  value: _recurrence,
-                  items: _recurrenceLabels.entries
-                      .map((e) =>
-                          DropdownMenuItem(value: e.key, child: Text(e.value)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _recurrence = v ?? ''),
-                ),
-              ]),
-              Row(children: [
-                const Text('截止日期',
-                    style: TextStyle(color: CcColors.muted, fontSize: 13)),
                 const Spacer(),
                 TextButton(
-                  onPressed: _pickDueDate,
-                  child: Text(_dueAt == null ? '设置' : commitDate(_dueAt!)),
+                  onPressed: _submitting ? null : () => Navigator.pop(context, false),
+                  child: const Text('取消'),
                 ),
-                if (_dueAt != null)
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 16),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => setState(() => _dueAt = null),
-                  ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _submitting ? null : _submit,
+                  child: _submitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('创建'),
+                ),
               ]),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _pickFiles,
-                  icon: const Icon(Icons.attach_file_rounded, size: 16),
-                  label: Text(_files.isEmpty ? '添加附件' : '已选 ${_files.length} 个文件'),
-                ),
-              ),
             ],
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _submitting ? null : () => Navigator.pop(context, false),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _submitting ? null : _submit,
-          child: _submitting
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('创建'),
-        ),
-      ],
     );
   }
 }
