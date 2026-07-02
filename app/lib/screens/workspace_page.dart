@@ -5719,47 +5719,57 @@ class _WorkspacePageState extends State<WorkspacePage>
               ],
               alignScrollEnd: true,
               scrolling: [
-                TextButton(
-                  onPressed: _gitLoading || stageableSelected == 0
+                _changesToolBtn(
+                  icon: Icons.add_rounded,
+                  tooltip: 'Stage 选中',
+                  onTap: _gitLoading || stageableSelected == 0
                       ? null
                       : () => _gitStageSelectedCurrent(p),
-                  child: const Text('Stage'),
                 ),
-                TextButton(
-                  onPressed: _gitLoading || unstageableSelected == 0
+                _changesToolBtn(
+                  icon: Icons.remove_rounded,
+                  tooltip: 'Unstage 选中',
+                  onTap: _gitLoading || unstageableSelected == 0
                       ? null
                       : () => _gitUnstageSelectedCurrent(p),
-                  child: const Text('Unstage'),
                 ),
-                TextButton(
-                  onPressed: _gitLoading || stashableSelected == 0
+                _changesToolBtn(
+                  icon: Icons.inventory_2_outlined,
+                  tooltip: 'Stash 选中',
+                  onTap: _gitLoading || stashableSelected == 0
                       ? null
                       : () => _stashSelectedCurrent(p),
-                  child: const Text('Stash'),
                 ),
-                TextButton(
-                  onPressed: _gitLoading || rollbackableSelected == 0
+                _changesToolBtn(
+                  icon: Icons.undo_rounded,
+                  tooltip: 'Rollback 选中',
+                  danger: true,
+                  onTap: _gitLoading || rollbackableSelected == 0
                       ? null
                       : () => _gitDiscardSelectedCurrent(p),
-                  style: TextButton.styleFrom(foregroundColor: CcColors.danger),
-                  child: const Text('Rollback'),
                 ),
-                TextButton(
-                  onPressed: visibleChanges.isEmpty
+                const SizedBox(width: 3),
+                Container(width: 1, height: 15, color: CcColors.border),
+                const SizedBox(width: 3),
+                _changesToolBtn(
+                  icon: Icons.select_all_rounded,
+                  tooltip: '全选',
+                  onTap: visibleChanges.isEmpty
                       ? null
                       : () => setState(() {
                           _selectedChangePaths
                             ..clear()
                             ..addAll(visibleChanges.map((c) => c.path));
                         }),
-                  child: const Text('All'),
                 ),
-                TextButton(
-                  onPressed: _selectedChangePaths.isEmpty
+                _changesToolBtn(
+                  icon: Icons.remove_done_rounded,
+                  tooltip: '全不选',
+                  onTap: _selectedChangePaths.isEmpty
                       ? null
                       : () => setState(() => _selectedChangePaths.clear()),
-                  child: const Text('None'),
                 ),
+                const SizedBox(width: 6),
                 Text(
                   visibleChanges.length == _gitChanges.length
                       ? '${_gitChanges.length}'
@@ -5792,7 +5802,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
           ),
           SizedBox(
-            height: 34,
+            height: 30,
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -5841,16 +5851,63 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
+  // _changesToolBtn is one compact icon action in the Local Changes toolbar
+  // (Stage / Unstage / Stash / Rollback / select-all / clear). Icon-only + tooltip
+  // to match the JetBrains commit-tool density; greys out when [onTap] is null.
+  Widget _changesToolBtn({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onTap,
+    bool danger = false,
+  }) => IconButton(
+    icon: Icon(icon, size: 17),
+    tooltip: tooltip,
+    onPressed: onTap,
+    padding: EdgeInsets.zero,
+    visualDensity: VisualDensity.compact,
+    constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+    color: onTap == null ? null : (danger ? CcColors.danger : CcColors.muted),
+  );
+
+  // _changeFilterChip is a tight JetBrains-style filter pill (label + count) —
+  // replaces the bulky Material FilterChip so the filter row reads as one dense
+  // segmented control.
   Widget _changeFilterChip(_ChangeFilter filter, String label, int count) {
     final selected = _changesFilter == filter;
     return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: FilterChip(
-        selected: selected,
-        showCheckmark: false,
-        visualDensity: VisualDensity.compact,
-        label: Text('$label $count'),
-        onSelected: (_) => setState(() => _changesFilter = filter),
+      padding: const EdgeInsets.only(right: 5),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(CcRadius.sm),
+        onTap: () => setState(() => _changesFilter = filter),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: selected
+                ? CcColors.accent.withValues(alpha: 0.16)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(CcRadius.sm),
+            border: Border.all(
+              color: selected
+                  ? CcColors.accent.withValues(alpha: 0.55)
+                  : CcColors.borderSoft,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: selected ? CcColors.accentBright : CcColors.muted,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                ),
+              ),
+              const SizedBox(width: 5),
+              Text('$count', style: CcType.code(size: 10.5, color: CcColors.subtle)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -5955,6 +6012,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               Checkbox(
                 value: checked,
                 visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 onChanged: (v) => setState(() {
                   if (v == true) {
                     _selectedChangePaths.add(c.path);
@@ -5963,6 +6021,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                   }
                 }),
               ),
+              const SizedBox(width: 6),
               Text(
                 c.status,
                 style: CcType.code(
@@ -5973,7 +6032,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               ),
             ],
           ),
-          minLeadingWidth: 58,
+          minLeadingWidth: 44,
           title: fileNameDirLabel(c.path),
           subtitle: c.oldPath == null
               ? null
