@@ -57,6 +57,8 @@ func main() {
 		err = runMsg(ctx, args)
 	case "supervisor":
 		err = runSupervisor(ctx, args)
+	case "commit":
+		err = runCommit(ctx, args)
 	case "ui":
 		err = runUI(ctx, args)
 	case "desktop":
