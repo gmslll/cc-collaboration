@@ -382,6 +382,49 @@ func TestTodoCommentsAndAttachments(t *testing.T) {
 	}
 }
 
+// TestTodoMutatorsReturnAttachments locks in a regression: UpdateTodoFields,
+// SetTodoStatus and AssignTodo all used to return getTodoRow's result
+// directly, which never populates Attachments (only GetTodo joined it in) —
+// so every PATCH/status/assign response silently reported an empty
+// attachment list even though attachment_count was correct. Track 1's
+// inline-image body view hit this: saving a title/body edit after pasting an
+// image wiped the client's loaded attachment metadata and the image showed
+// as "failed to load". Fixed via the shared withAttachments helper.
+func TestTodoMutatorsReturnAttachments(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "t"})
+	if err := st.PutTodoAttachment(ctx, "td1", "alice@x", "photo.png", "deadbeef", []byte("bytes")); err != nil {
+		t.Fatal(err)
+	}
+
+	title := "renamed"
+	patched, err := st.UpdateTodoFields(ctx, "td1", "alice@x", TodoPatch{Title: &title})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patched.Attachments) != 1 || patched.Attachments[0].Name != "photo.png" {
+		t.Fatalf("UpdateTodoFields should return Attachments: %+v", patched.Attachments)
+	}
+
+	statused, err := st.SetTodoStatus(ctx, "td1", "alice@x", todoschema.StatusInProgress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statused.Attachments) != 1 || statused.Attachments[0].Name != "photo.png" {
+		t.Fatalf("SetTodoStatus should return Attachments: %+v", statused.Attachments)
+	}
+
+	assigned, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assigned.Attachments) != 1 || assigned.Attachments[0].Name != "photo.png" {
+		t.Fatalf("AssignTodo should return Attachments: %+v", assigned.Attachments)
+	}
+}
+
 // --- project deletion cascades its team todos, personal todos untouched ---
 
 func TestTodoProjectDeleteCascade(t *testing.T) {

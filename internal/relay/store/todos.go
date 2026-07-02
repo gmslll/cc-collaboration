@@ -230,7 +230,20 @@ func (s *Store) GetTodo(ctx context.Context, id, callerIdentity string) (todosch
 	if !perm.view {
 		return todoschema.Todo{}, forbidTodo("view", callerIdentity, id)
 	}
-	atts, err := s.listTodoAttachmentsRaw(ctx, id)
+	return s.withAttachments(ctx, t)
+}
+
+// withAttachments joins t.Attachments in from listTodoAttachmentsRaw. Every
+// mutator that hands a Todo back to the caller (GetTodo, UpdateTodoFields,
+// SetTodoStatus, AssignTodo) must route its final getTodoRow through this —
+// getTodoRow alone always returns a nil Attachments slice (it only reads the
+// todos table), so skipping this silently drops attachment metadata from the
+// response despite the row's attachment_count being correct. That's exactly
+// the bug Track 1's inline-image work hit: after any PATCH/status/assign
+// save, the client's already-loaded attachment list got clobbered by an
+// empty one from the response.
+func (s *Store) withAttachments(ctx context.Context, t todoschema.Todo) (todoschema.Todo, error) {
+	atts, err := s.listTodoAttachmentsRaw(ctx, t.ID)
 	if err != nil {
 		return todoschema.Todo{}, err
 	}
@@ -377,7 +390,11 @@ func (s *Store) UpdateTodoFields(ctx context.Context, id, callerIdentity string,
 	); err != nil {
 		return todoschema.Todo{}, err
 	}
-	return s.getTodoRow(ctx, id)
+	updated, err := s.getTodoRow(ctx, id)
+	if err != nil {
+		return todoschema.Todo{}, err
+	}
+	return s.withAttachments(ctx, updated)
 }
 
 // SetTodoStatus transitions todo id to status, requiring edit access. When
@@ -416,7 +433,11 @@ func (s *Store) SetTodoStatus(ctx context.Context, id, callerIdentity string, st
 	); err != nil {
 		return todoschema.Todo{}, err
 	}
-	return s.getTodoRow(ctx, id)
+	updated, err := s.getTodoRow(ctx, id)
+	if err != nil {
+		return todoschema.Todo{}, err
+	}
+	return s.withAttachments(ctx, updated)
 }
 
 // AssignTodo sets (or clears, when all three args are empty) the assignee
@@ -452,7 +473,11 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 	); err != nil {
 		return todoschema.Todo{}, err
 	}
-	return s.getTodoRow(ctx, id)
+	updated, err := s.getTodoRow(ctx, id)
+	if err != nil {
+		return todoschema.Todo{}, err
+	}
+	return s.withAttachments(ctx, updated)
 }
 
 // DeleteTodo removes todo id, requiring delete access (stricter than edit
