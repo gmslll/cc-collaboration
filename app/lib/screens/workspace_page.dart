@@ -601,7 +601,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       Prefs.getString('ws.bottomTool', def: 'terminal') == 'git'
       ? _BottomTool.git
       : _BottomTool.terminal;
-  final _changesQueryCtl = TextEditingController();
+  // Collapse state for the single "Changes N files" tree root in the Commit panel.
+  bool _changesTreeCollapsed = false;
   final _structureQueryCtl = TextEditingController();
   final _workspaceFocus = FocusNode(debugLabel: 'workspace-shell');
   final _commitFocus = FocusNode(debugLabel: 'commit-message');
@@ -872,7 +873,6 @@ class _WorkspacePageState extends State<WorkspacePage>
   @override
   void dispose() {
     _commitCtl.dispose();
-    _changesQueryCtl.dispose();
     _structureQueryCtl.dispose();
     _workspaceFocus.dispose();
     _commitFocus.dispose();
@@ -5680,236 +5680,277 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
+  // The Commit tool window's change list — a single JetBrains-style "Changes N
+  // files" tree (one collapsible root + indented file rows). Repo-level actions
+  // (Stage All / Push / Pull / Fetch / Branches) live in _leftGitActionBar above;
+  // per-file actions are on the row's ⋮ / right-click menu; filtering is the tree
+  // header's funnel — so this stays chrome-light to match the reference.
   Widget _localChangesList(ProjectCfg p) {
-    final visibleChanges = _filteredGitChanges;
-    final stageableSelected = _gitChanges
-        .where((c) => _selectedChangePaths.contains(c.path) && c.unstaged)
-        .length;
-    final unstageableSelected = _gitChanges
-        .where((c) => _selectedChangePaths.contains(c.path) && c.staged)
-        .length;
-    final rollbackableSelected = _gitChanges
-        .where((c) => _selectedChangePaths.contains(c.path) && !c.conflicted)
-        .length;
-    final stashableSelected = rollbackableSelected;
+    final visible = _filteredGitChanges;
     return DecoratedBox(
       decoration: const BoxDecoration(color: CcColors.panel),
-      child: Column(
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 8),
         children: [
-          Container(
-            height: 32,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: const BoxDecoration(
-              color: CcColors.editorTabBar,
-              border: Border(bottom: BorderSide(color: CcColors.border)),
-            ),
-            child: scrollableBar(
-              pinnedLeading: [
-                const Text(
-                  'Local Changes',
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+          _changesTreeRoot(p, visible),
+          if (!_changesTreeCollapsed)
+            if (visible.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(30, 12, 8, 12),
+                child: Text(
+                  _changesFilter == _ChangeFilter.all
+                      ? '没有变更'
+                      : '没有匹配的变更',
+                  style: CcType.code(size: 11.5, color: CcColors.subtle),
                 ),
-                if (_selectedChangePaths.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  tag(
-                    '${_selectedChangePaths.length} selected',
-                    CcColors.accentBright,
-                  ),
-                ],
-              ],
-              alignScrollEnd: true,
-              scrolling: [
-                _changesToolBtn(
-                  icon: Icons.add_rounded,
-                  tooltip: 'Stage 选中',
-                  onTap: _gitLoading || stageableSelected == 0
-                      ? null
-                      : () => _gitStageSelectedCurrent(p),
-                ),
-                _changesToolBtn(
-                  icon: Icons.remove_rounded,
-                  tooltip: 'Unstage 选中',
-                  onTap: _gitLoading || unstageableSelected == 0
-                      ? null
-                      : () => _gitUnstageSelectedCurrent(p),
-                ),
-                _changesToolBtn(
-                  icon: Icons.inventory_2_outlined,
-                  tooltip: 'Stash 选中',
-                  onTap: _gitLoading || stashableSelected == 0
-                      ? null
-                      : () => _stashSelectedCurrent(p),
-                ),
-                _changesToolBtn(
-                  icon: Icons.undo_rounded,
-                  tooltip: 'Rollback 选中',
-                  danger: true,
-                  onTap: _gitLoading || rollbackableSelected == 0
-                      ? null
-                      : () => _gitDiscardSelectedCurrent(p),
-                ),
-                const SizedBox(width: 3),
-                Container(width: 1, height: 15, color: CcColors.border),
-                const SizedBox(width: 3),
-                _changesToolBtn(
-                  icon: Icons.select_all_rounded,
-                  tooltip: '全选',
-                  onTap: visibleChanges.isEmpty
-                      ? null
-                      : () => setState(() {
-                          _selectedChangePaths
-                            ..clear()
-                            ..addAll(visibleChanges.map((c) => c.path));
-                        }),
-                ),
-                _changesToolBtn(
-                  icon: Icons.remove_done_rounded,
-                  tooltip: '全不选',
-                  onTap: _selectedChangePaths.isEmpty
-                      ? null
-                      : () => setState(() => _selectedChangePaths.clear()),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  visibleChanges.length == _gitChanges.length
-                      ? '${_gitChanges.length}'
-                      : '${visibleChanges.length}/${_gitChanges.length}',
-                  style: CcType.code(size: 11, color: CcColors.subtle),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
-            child: TextField(
-              controller: _changesQueryCtl,
-              decoration: InputDecoration(
-                hintText: 'Filter changes',
-                isDense: true,
-                prefixIcon: const Icon(Icons.search_rounded, size: 17),
-                suffixIcon: _changesQuery.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 16),
-                        tooltip: '清空过滤',
-                        onPressed: () => setState(() {
-                          _changesQueryCtl.clear();
-                          _changesQuery = '';
-                        }),
-                      ),
-              ),
-              onChanged: (v) => setState(() => _changesQuery = v),
-            ),
-          ),
-          SizedBox(
-            height: 30,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  _changeFilterChip(
-                    _ChangeFilter.all,
-                    'All',
-                    _gitChanges.length,
-                  ),
-                  _changeFilterChip(
-                    _ChangeFilter.staged,
-                    'Staged',
-                    _gitChanges.where((c) => c.staged && !c.conflicted).length,
-                  ),
-                  _changeFilterChip(
-                    _ChangeFilter.unstaged,
-                    'Unstaged',
-                    _gitChanges
-                        .where(
-                          (c) => c.unstaged && !c.untracked && !c.conflicted,
-                        )
-                        .length,
-                  ),
-                  _changeFilterChip(
-                    _ChangeFilter.untracked,
-                    'Untracked',
-                    _gitChanges.where((c) => c.untracked).length,
-                  ),
-                  _changeFilterChip(
-                    _ChangeFilter.conflicts,
-                    'Conflicts',
-                    _gitChanges.where((c) => c.conflicted).length,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Expanded(
-            child: visibleChanges.isEmpty
-                ? centerMsg(_gitChanges.isEmpty ? '没有变更' : '没有匹配变更')
-                : ListView(children: _changeGroups(p, visibleChanges)),
-          ),
+              )
+            else
+              for (final c in visible) _changeTile(p, c),
         ],
       ),
     );
   }
 
-  // _changesToolBtn is one compact icon action in the Local Changes toolbar
-  // (Stage / Unstage / Stash / Rollback / select-all / clear). Icon-only + tooltip
-  // to match the JetBrains commit-tool density; greys out when [onTap] is null.
+  // _changesToolBtn is one compact icon action (Stage / Unstage / Rollback /
+  // Stash the checked rows) shown in the tree header when a selection exists.
+  // Icon-only + tooltip; greys out when [onTap] is null.
   Widget _changesToolBtn({
     required IconData icon,
     required String tooltip,
     required VoidCallback? onTap,
     bool danger = false,
   }) => IconButton(
-    icon: Icon(icon, size: 17),
+    icon: Icon(icon, size: 16),
     tooltip: tooltip,
     onPressed: onTap,
     padding: EdgeInsets.zero,
     visualDensity: VisualDensity.compact,
-    constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
     color: onTap == null ? null : (danger ? CcColors.danger : CcColors.muted),
   );
 
-  // _changeFilterChip is a tight JetBrains-style filter pill (label + count) —
-  // replaces the bulky Material FilterChip so the filter row reads as one dense
-  // segmented control.
-  Widget _changeFilterChip(_ChangeFilter filter, String label, int count) {
-    final selected = _changesFilter == filter;
-    return Padding(
-      padding: const EdgeInsets.only(right: 5),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(CcRadius.sm),
-        onTap: () => setState(() => _changesFilter = filter),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: selected
-                ? CcColors.accent.withValues(alpha: 0.16)
-                : Colors.transparent,
+  // _changesTreeRoot is the single "▾ ☐ Changes  N files" header: the chevron
+  // collapses the list, the tristate checkbox selects/clears every visible row
+  // (which drives "Commit Selected"), a contextual Stage/Unstage/Rollback/Stash
+  // cluster appears while a selection exists, and the funnel filters by kind.
+  Widget _changesTreeRoot(ProjectCfg p, List<GitChange> visible) {
+    final allSel =
+        visible.isNotEmpty &&
+        visible.every((c) => _selectedChangePaths.contains(c.path));
+    final someSel = visible.any((c) => _selectedChangePaths.contains(c.path));
+    final stageable = _gitChanges
+        .where((c) => _selectedChangePaths.contains(c.path) && c.unstaged)
+        .length;
+    final unstageable = _gitChanges
+        .where((c) => _selectedChangePaths.contains(c.path) && c.staged)
+        .length;
+    final rollbackable = _gitChanges
+        .where((c) => _selectedChangePaths.contains(c.path) && !c.conflicted)
+        .length;
+    return Container(
+      height: 28,
+      color: CcColors.editorTabBar,
+      padding: const EdgeInsets.only(left: 4, right: 4),
+      child: Row(
+        children: [
+          InkWell(
             borderRadius: BorderRadius.circular(CcRadius.sm),
-            border: Border.all(
-              color: selected
-                  ? CcColors.accent.withValues(alpha: 0.55)
-                  : CcColors.borderSoft,
+            onTap: () =>
+                setState(() => _changesTreeCollapsed = !_changesTreeCollapsed),
+            child: Icon(
+              _changesTreeCollapsed
+                  ? Icons.chevron_right_rounded
+                  : Icons.expand_more_rounded,
+              size: 18,
+              color: CcColors.muted,
             ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: selected ? CcColors.accentBright : CcColors.muted,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                ),
-              ),
-              const SizedBox(width: 5),
-              Text('$count', style: CcType.code(size: 10.5, color: CcColors.subtle)),
-            ],
+          SizedBox(
+            width: 22,
+            height: 22,
+            child: Checkbox(
+              tristate: true,
+              value: allSel ? true : (someSel ? null : false),
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              onChanged: visible.isEmpty
+                  ? null
+                  : (_) => setState(() {
+                      if (allSel) {
+                        _selectedChangePaths.removeAll(
+                          visible.map((c) => c.path),
+                        );
+                      } else {
+                        _selectedChangePaths.addAll(visible.map((c) => c.path));
+                      }
+                    }),
+            ),
           ),
-        ),
+          const SizedBox(width: 4),
+          const Text(
+            'Changes',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '${_gitChanges.length} files',
+            style: CcType.code(size: 11, color: CcColors.subtle),
+          ),
+          const Spacer(),
+          if (someSel) ...[
+            _changesToolBtn(
+              icon: Icons.add_rounded,
+              tooltip: 'Stage 选中',
+              onTap: _gitLoading || stageable == 0
+                  ? null
+                  : () => _gitStageSelectedCurrent(p),
+            ),
+            _changesToolBtn(
+              icon: Icons.remove_rounded,
+              tooltip: 'Unstage 选中',
+              onTap: _gitLoading || unstageable == 0
+                  ? null
+                  : () => _gitUnstageSelectedCurrent(p),
+            ),
+            _changesToolBtn(
+              icon: Icons.inventory_2_outlined,
+              tooltip: 'Stash 选中',
+              onTap: _gitLoading || rollbackable == 0
+                  ? null
+                  : () => _stashSelectedCurrent(p),
+            ),
+            _changesToolBtn(
+              icon: Icons.undo_rounded,
+              tooltip: 'Rollback 选中',
+              danger: true,
+              onTap: _gitLoading || rollbackable == 0
+                  ? null
+                  : () => _gitDiscardSelectedCurrent(p),
+            ),
+            Container(
+              width: 1,
+              height: 15,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              color: CcColors.border,
+            ),
+          ],
+          _changesFilterButton(),
+        ],
       ),
     );
+  }
+
+  // _changesFilterButton is the tree header's funnel: a popup that filters the
+  // change list by kind (All / Staged / Unstaged / Untracked / Conflicts, each
+  // with a live count). Tinted when a non-"All" filter is active.
+  Widget _changesFilterButton() {
+    int countOf(_ChangeFilter f) => _gitChanges
+        .where(
+          (c) => switch (f) {
+            _ChangeFilter.all => true,
+            _ChangeFilter.staged => c.staged && !c.conflicted,
+            _ChangeFilter.unstaged =>
+              c.unstaged && !c.untracked && !c.conflicted,
+            _ChangeFilter.untracked => c.untracked,
+            _ChangeFilter.conflicts => c.conflicted,
+          },
+        )
+        .length;
+    const labels = {
+      _ChangeFilter.all: 'All',
+      _ChangeFilter.staged: 'Staged',
+      _ChangeFilter.unstaged: 'Unstaged',
+      _ChangeFilter.untracked: 'Untracked',
+      _ChangeFilter.conflicts: 'Conflicts',
+    };
+    return Builder(
+      builder: (ctx) => IconButton(
+        icon: Icon(
+          Icons.filter_list_rounded,
+          size: 16,
+          color: _changesFilter != _ChangeFilter.all
+              ? CcColors.accentBright
+              : CcColors.muted,
+        ),
+        tooltip: '过滤变更',
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        onPressed: () async {
+          final box = ctx.findRenderObject() as RenderBox;
+          final pos = box.localToGlobal(box.size.bottomLeft(Offset.zero));
+          final v = await showMenu<_ChangeFilter>(
+            context: context,
+            position: menuPosAt(context, pos),
+            items: [
+              for (final e in labels.entries)
+                PopupMenuItem<_ChangeFilter>(
+                  value: e.key,
+                  height: 34,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.check_rounded,
+                        size: 15,
+                        color: _changesFilter == e.key
+                            ? CcColors.accentBright
+                            : Colors.transparent,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(e.value)),
+                      const SizedBox(width: 12),
+                      Text(
+                        '${countOf(e.key)}',
+                        style: CcType.code(size: 11, color: CcColors.subtle),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+          if (v != null && mounted) setState(() => _changesFilter = v);
+        },
+      ),
+    );
+  }
+
+  // _fileTypeIcon picks a small glyph for a path by extension, matching the
+  // JetBrains change-tree rows (data braces for json/yaml, code for source, …).
+  IconData _fileTypeIcon(String path) {
+    final name = path.split('/').last.toLowerCase();
+    final ext = name.contains('.') ? name.split('.').last : '';
+    return switch (ext) {
+      'json' || 'yaml' || 'yml' => Icons.data_object_rounded,
+      'dart' ||
+      'go' ||
+      'js' ||
+      'ts' ||
+      'tsx' ||
+      'jsx' ||
+      'py' ||
+      'java' ||
+      'kt' ||
+      'swift' ||
+      'c' ||
+      'cc' ||
+      'cpp' ||
+      'h' ||
+      'rs' => Icons.code_rounded,
+      'md' || 'txt' || 'plist' || 'xml' || 'html' => Icons.description_outlined,
+      'png' ||
+      'jpg' ||
+      'jpeg' ||
+      'gif' ||
+      'svg' ||
+      'webp' => Icons.image_outlined,
+      'gradle' ||
+      'lock' ||
+      'toml' ||
+      'ini' ||
+      'cfg' ||
+      'properties' => Icons.settings_outlined,
+      _ => Icons.insert_drive_file_outlined,
+    };
   }
 
   List<GitChange> get _filteredGitChanges {
@@ -5934,53 +5975,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     }).toList();
   }
 
-  List<Widget> _changeGroups(ProjectCfg p, List<GitChange> changes) {
-    final conflicts = changes.where((c) => c.conflicted).toList();
-    final staged = changes.where((c) => c.staged && !c.conflicted).toList();
-    final untracked = changes.where((c) => c.untracked).toList();
-    final unstaged = changes
-        .where((c) => c.unstaged && !c.untracked && !c.conflicted)
-        .toList();
-    return [
-      ..._changeGroup(p, 'Conflicts', conflicts, CcColors.danger),
-      ..._changeGroup(p, 'Staged', staged, CcColors.ok),
-      ..._changeGroup(p, 'Unstaged', unstaged, CcColors.warning),
-      ..._changeGroup(p, 'Untracked', untracked, CcColors.accentBright),
-    ];
-  }
-
-  List<Widget> _changeGroup(
-    ProjectCfg p,
-    String label,
-    List<GitChange> changes,
-    Color color,
-  ) {
-    if (changes.isEmpty) return const [];
-    return [
-      Container(
-        height: 28,
-        padding: const EdgeInsets.only(left: 10, right: 8),
-        color: CcColors.editorTabBar,
-        child: Row(
-          children: [
-            statusDot(color, size: 6),
-            const SizedBox(width: 7),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              '${changes.length}',
-              style: CcType.code(size: 11, color: CcColors.subtle),
-            ),
-          ],
-        ),
-      ),
-      for (final c in changes) _changeTile(p, c),
-    ];
-  }
-
   Widget _changeTile(ProjectCfg p, GitChange c) {
     final sel = c.path == _selectedGitPath;
     final checked = _selectedChangePaths.contains(c.path);
@@ -5989,9 +5983,11 @@ class _WorkspacePageState extends State<WorkspacePage>
       // Right-click anywhere on the row opens the same JetBrains-style menu as ⋮.
       onSecondaryTapDown: (d) => _showCommitFileMenu(d.globalPosition, p, c),
       child: Container(
+        // Full-width selection highlight for the focused row + a left accent
+        // rail, like the JetBrains change tree.
         decoration: BoxDecoration(
           color: sel
-              ? CcColors.accent.withValues(alpha: 0.10)
+              ? CcColors.accent.withValues(alpha: 0.22)
               : Colors.transparent,
           border: Border(
             left: BorderSide(
@@ -6001,67 +5997,62 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         ),
         child: InkWell(
+          onTap: () => _openWorkingTreeDiffTab(c.path),
           onDoubleTap: () => _openCodeFile('${p.path}/${c.path}'),
-        child: ListTile(
-          dense: true,
-          visualDensity: const VisualDensity(vertical: -2),
-          contentPadding: const EdgeInsets.only(left: 8, right: 2),
-          leading: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Checkbox(
-                value: checked,
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                onChanged: (v) => setState(() {
-                  if (v == true) {
-                    _selectedChangePaths.add(c.path);
-                  } else {
-                    _selectedChangePaths.remove(c.path);
-                  }
-                }),
+          child: Padding(
+            // Indent as a child of the "Changes" tree root.
+            padding: const EdgeInsets.only(left: 24, right: 2),
+            child: SizedBox(
+              height: 26,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: Checkbox(
+                      value: checked,
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: (v) => setState(() {
+                        if (v == true) {
+                          _selectedChangePaths.add(c.path);
+                        } else {
+                          _selectedChangePaths.remove(c.path);
+                        }
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  // File-type glyph, tinted by change kind (green=staged,
+                  // yellow=modified, blue=untracked, red=conflict).
+                  Icon(_fileTypeIcon(c.path), size: 15, color: _changeColor(c)),
+                  const SizedBox(width: 7),
+                  Expanded(child: fileNameDirLabel(c.path)),
+                  const SizedBox(width: 4),
+                  Builder(
+                    builder: (btnCtx) => IconButton(
+                      icon: const Icon(Icons.more_vert_rounded, size: 16),
+                      tooltip: '文件操作',
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(
+                        minWidth: 26,
+                        minHeight: 26,
+                      ),
+                      onPressed: () {
+                        final box = btnCtx.findRenderObject() as RenderBox;
+                        final pos = box.localToGlobal(
+                          box.size.bottomLeft(Offset.zero),
+                        );
+                        _showCommitFileMenu(pos, p, c);
+                      },
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 6),
-              Text(
-                c.status,
-                style: CcType.code(
-                  size: 11.5,
-                  color: _changeColor(c),
-                  weight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          minLeadingWidth: 44,
-          title: fileNameDirLabel(c.path),
-          subtitle: c.oldPath == null
-              ? null
-              : Text(
-                  'from ${c.oldPath}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: CcType.code(size: 10.5, color: CcColors.subtle),
-                ),
-          trailing: Builder(
-            builder: (btnCtx) => IconButton(
-              icon: const Icon(Icons.more_vert_rounded, size: 17),
-              tooltip: '文件操作',
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-              onPressed: () {
-                // Drop the menu from the ⋮ button's bottom-left, like a dropdown.
-                final box = btnCtx.findRenderObject() as RenderBox;
-                final pos = box.localToGlobal(
-                  box.size.bottomLeft(Offset.zero),
-                );
-                _showCommitFileMenu(pos, p, c);
-              },
             ),
           ),
-          onTap: () => _openWorkingTreeDiffTab(c.path),
         ),
-      ),
       ),
     );
   }
@@ -7427,35 +7418,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  Widget _gitSummaryBar(GitStatusSummary? status) {
-    if (status == null) return const SizedBox.shrink();
-    return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: const BoxDecoration(
-        color: CcColors.editorTabBar,
-        border: Border(bottom: BorderSide(color: CcColors.border)),
-      ),
-      child: scrollableBar(
-        scrolling: [
-          _metricTiny('staged', status.staged, CcColors.ok),
-          _metricTiny('modified', status.modified, CcColors.warning),
-          _metricTiny('untracked', status.untracked, CcColors.accentBright),
-          _metricTiny('conflicts', status.conflicted, CcColors.danger),
-        ],
-        pinnedTrailing: [
-          Text(
-            status.clean ? 'clean' : 'uncommitted changes',
-            style: CcType.code(
-              size: 11.5,
-              color: status.clean ? CcColors.ok : CcColors.warning,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _gitOperationBar(ProjectCfg p, GitOperationState op) => Container(
     height: 40,
     padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -7581,13 +7543,12 @@ class _WorkspacePageState extends State<WorkspacePage>
                   if (v == 'commitPushSelected') _gitCommitSelectedAndPush(p);
                 },
                 itemBuilder: (_) => [
-                  PopupMenuItem(
+                  ccMenuItem(
                     value: 'commitPushSelected',
-                    child: Text(
-                      selected == 0
-                          ? 'Commit Selected & Push'
-                          : 'Commit $selected & Push',
-                    ),
+                    icon: Icons.upload_rounded,
+                    label: selected == 0
+                        ? 'Commit Selected & Push'
+                        : 'Commit $selected & Push',
                   ),
                 ],
               ),
@@ -7603,20 +7564,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
     );
   }
-
-  Widget _metricTiny(String label, int value, Color color) => Padding(
-    padding: const EdgeInsets.only(right: 10),
-    child: Row(
-      children: [
-        statusDot(value == 0 ? CcColors.subtle : color, size: 6),
-        const SizedBox(width: 5),
-        Text(
-          '$label $value',
-          style: CcType.code(size: 11, color: CcColors.muted),
-        ),
-      ],
-    ),
-  );
 
   Widget _termArea() {
     if (terms.isEmpty) {
@@ -7733,7 +7680,6 @@ class _WorkspacePageState extends State<WorkspacePage>
           Expanded(
             child: Column(
               children: [
-                _gitSummaryBar(status),
                 if (_gitOperation != null) _gitOperationBar(p, _gitOperation!),
                 Expanded(
                   child: stash
