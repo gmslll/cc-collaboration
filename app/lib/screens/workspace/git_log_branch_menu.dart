@@ -109,13 +109,13 @@ mixin _GitLogBranchMenu on _GitMixin {
 
   /// New Branch from '<b>'…:以 [b] 为起点创建并切换到新分支。
   Future<void> _newBranchFrom(ProjectCfg p, GitBranch b) async {
-    final name = await promptLineDialog(
+    final name = await textPrompt(
       context,
       title: "New Branch from '${b.name}'",
-      label: 'Branch name',
-      confirmLabel: 'Create and Checkout',
+      hint: 'Branch name',
+      okLabel: 'Create and Checkout',
     );
-    if (name == null || name.isEmpty) return;
+    if (name == null) return;
     await _createBranchCurrent(p, name, start: b.name);
   }
 
@@ -131,14 +131,14 @@ mixin _GitLogBranchMenu on _GitMixin {
 
   /// Rename…:重命名本地分支(`git branch -m`),完成后刷新。
   Future<void> _renameBranchPrompt(ProjectCfg p, GitBranch b) async {
-    final name = await promptLineDialog(
+    final name = await textPrompt(
       context,
       title: 'Rename Branch',
-      label: 'New name',
+      hint: 'New name',
       initial: b.name,
-      confirmLabel: 'Rename',
+      okLabel: 'Rename',
     );
-    if (name == null || name.isEmpty || name == b.name) return;
+    if (name == null || name == b.name) return;
     if (_gitLoading) return;
     setState(() => _gitLoading = true);
     try {
@@ -152,43 +152,4 @@ mixin _GitLogBranchMenu on _GitMixin {
       }
     }
   }
-}
-
-/// 通用单行文本输入弹窗(JetBrains 风格的小确认框)。取消或空 → null。
-/// 三个 Log 栏菜单共用(同一 library 的 part,顶层函数彼此可见)。
-Future<String?> promptLineDialog(
-  BuildContext context, {
-  required String title,
-  String? label,
-  String? initial,
-  String? hint,
-  String confirmLabel = 'OK',
-}) async {
-  final ctl = TextEditingController(text: initial ?? '');
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
-      content: TextField(
-        controller: ctl,
-        autofocus: true,
-        decoration: InputDecoration(labelText: label, hintText: hint),
-        onSubmitted: (_) => Navigator.pop(ctx, true),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: Text(confirmLabel),
-        ),
-      ],
-    ),
-  );
-  final text = ctl.text.trim();
-  ctl.dispose();
-  if (ok != true) return null;
-  return text;
 }

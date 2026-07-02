@@ -25,15 +25,12 @@ mixin _GitLogCommitMenu on _GitMixin {
   /// commit 行的右键菜单(也复用给 ⋮ 按钮)。在 [pos] 弹出。
   Future<void> _showCommitMenu(Offset pos, ProjectCfg p, GitCommit c) async {
     if (_gitLoading) return;
-    // HEAD 判定(门控 Undo Commit + reword 走 amend 快路径)。一次 rev-parse。
-    String? head;
-    try {
-      head = await gitRevParse(p.path, 'HEAD');
-    } catch (_) {
-      head = null;
-    }
-    if (!mounted) return;
-    final isHead = head != null && head == c.hash;
+    // HEAD 判定(门控 Undo Commit)。用内存里当前分支的 tip(short hash)前缀比对,
+    // 避免每次右键都起一个 login-shell 跑 rev-parse 阻塞菜单弹出。
+    final current = _gitBranches.where((b) => b.current).firstOrNull;
+    final isHead = current != null &&
+        current.lastHash.isNotEmpty &&
+        c.hash.startsWith(current.lastHash);
     final hasParent = c.parents.isNotEmpty;
     final child = _gitLog.where((x) => x.parents.contains(c.hash)).firstOrNull;
     final v = await showMenu<String>(
@@ -220,14 +217,8 @@ mixin _GitLogCommitMenu on _GitMixin {
         _snack('没有可导出的内容');
         return;
       }
-      final dest = await FilePicker.platform.saveFile(
-        dialogTitle: 'Create Patch',
-        fileName: '${c.shortHash}.patch',
-      );
-      if (dest == null) return;
-      final out = dest.endsWith('.patch') ? dest : '$dest.patch';
-      await File(out).writeAsString(patch);
-      if (mounted) _snack('已保存 patch: ${out.split('/').last}');
+      final saved = await writePatchToPickedFile(patch, '${c.shortHash}.patch');
+      if (saved != null && mounted) _snack('已保存 patch: $saved');
     } catch (e) {
       if (mounted) _snack(errorText(e));
     }
@@ -393,16 +384,15 @@ mixin _GitLogCommitMenu on _GitMixin {
     }
   }
 
-  /// New Tag…:在该 commit 打标签(填 message → 附注标签)。
+  /// New Tag…:在该 commit 打一个轻量标签。
   Future<void> _newTagAtCommit(ProjectCfg p, GitCommit c) async {
-    final name = await promptLineDialog(
+    final name = await textPrompt(
       context,
       title: 'New Tag',
-      label: 'Tag name',
       hint: '${c.shortHash} · ${c.subject}',
-      confirmLabel: 'Create Tag',
+      okLabel: 'Create Tag',
     );
-    if (name == null || name.isEmpty) return;
+    if (name == null) return;
     setState(() => _gitLoading = true);
     try {
       await gitTag(p.path, name, ref: c.hash);

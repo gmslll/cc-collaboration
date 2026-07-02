@@ -240,14 +240,11 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
       return;
     }
     try {
-      final dest = await FilePicker.platform.saveFile(
-        dialogTitle: 'Create Patch',
-        fileName: '${f.path.split('/').last}.patch',
+      final saved = await writePatchToPickedFile(
+        f.raw,
+        '${f.path.split('/').last}.patch',
       );
-      if (dest == null) return;
-      final out = dest.endsWith('.patch') ? dest : '$dest.patch';
-      await File(out).writeAsString(f.raw.endsWith('\n') ? f.raw : '${f.raw}\n');
-      if (mounted) _snack('已保存 patch: ${out.split('/').last}');
+      if (saved != null && mounted) _snack('已保存 patch: $saved');
     } catch (e) {
       if (mounted) _snack(errorText(e));
     }
@@ -281,4 +278,18 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
   }
 
   String _revShort(String h) => h.length <= 10 ? h : h.substring(0, 10);
+}
+
+/// 把 patch 内容存到用户选的 .patch 文件,返回保存的文件名(取消 → null)。补 `.patch`
+/// 后缀、规整末尾换行。中栏(commit format-patch)与右栏(单文件 diff)的 Create Patch
+/// 共用(同一 library 的 part,顶层函数彼此可见)。
+Future<String?> writePatchToPickedFile(String patch, String suggestedName) async {
+  final dest = await FilePicker.platform.saveFile(
+    dialogTitle: 'Create Patch',
+    fileName: suggestedName,
+  );
+  if (dest == null) return null;
+  final out = dest.endsWith('.patch') ? dest : '$dest.patch';
+  await File(out).writeAsString(patch.endsWith('\n') ? patch : '$patch\n');
+  return out.split('/').last;
 }
