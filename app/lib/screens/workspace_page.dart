@@ -7992,6 +7992,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                   children: wss
                       .map(
                         (ws) => ExpansionTile(
+                          // Stable identity so the tile's expansion State isn't
+                          // reassigned if workspaces reorder.
+                          key: ValueKey('ws:${ws.name}'),
                           title: _ctxMenu(
                             Align(
                               alignment: Alignment.centerLeft,
@@ -8009,7 +8012,15 @@ class _WorkspacePageState extends State<WorkspacePage>
                             Icons.workspaces_rounded,
                             size: 20,
                           ),
-                          initiallyExpanded: true,
+                          // Persist collapse across rebuilds: switching the left
+                          // panel to git/another view disposes this tree, and it
+                          // used to come back all-expanded (initiallyExpanded:true).
+                          // Mirror the section-collapse pattern (_secCollapsed) so a
+                          // collapsed workspace stays collapsed. Default expanded.
+                          initiallyExpanded:
+                              !Prefs.getBool('ws.wsCollapsed.${ws.name}'),
+                          onExpansionChanged: (open) =>
+                              Prefs.setBool('ws.wsCollapsed.${ws.name}', !open),
                           shape: const Border(),
                           children: applyOrder(
                             ws.projects,
