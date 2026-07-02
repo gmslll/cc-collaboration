@@ -240,12 +240,14 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
 
   // closeOtherTerms/closeTermsToLeft/closeTermsToRight back the terminal tab's
   // right-click "关闭其他/左侧/右侧" — a real close (kills the PTY) for every
-  // matched session, unlike the single-tab × which may only hide the view
-  // (closeTermView) in hosts wired with hideClosedTabs. Routed through
-  // _closeTermsWhere so a bulk close re-anchors activeTerm on the previously
-  // active session's *new* index rather than reusing closeTerm's simple
-  // length-clamp, which only accounts for removals at-or-after the active tab
-  // (a bulk close can also drop tabs strictly before it).
+  // matched session. Only wired up for hosts whose × is itself a real close
+  // (hideClosedTabs: false, e.g. the inbox cockpit) — see the View-suffixed
+  // siblings below for the hide-only counterpart used wherever × is
+  // closeTermView. Routed through _closeTermsWhere so a bulk close re-anchors
+  // activeTerm on the previously active session's *new* index rather than
+  // reusing closeTerm's simple length-clamp, which only accounts for removals
+  // at-or-after the active tab (a bulk close can also drop tabs strictly
+  // before it).
   void closeOtherTerms(int keep) {
     if (keep < 0 || keep >= terms.length) return;
     _closeTermsWhere((i) => i != keep);
@@ -285,6 +287,48 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       }
     });
     onTermsChanged?.call();
+    _activeChanged();
+    unawaited(_save());
+  }
+
+  // closeOtherTermsView/closeTermsToLeftView/closeTermsToRightView are the
+  // hide-only counterparts of closeOtherTerms/closeTermsToLeft/
+  // closeTermsToRight — the bulk-close equivalent of closeTermView (PTY keeps
+  // running, tab just drops out of the strip, reopenTermView brings it back).
+  // Wired up for hosts whose × is closeTermView (hideClosedTabs: true, e.g.
+  // the workspace) so a right-click "关闭其他/左侧/右侧" can never surprise-kill
+  // a background session the single × would have merely hidden.
+  void closeOtherTermsView(int keep) {
+    if (keep < 0 || keep >= terms.length) return;
+    _hideTermsWhere((i) => i != keep);
+  }
+
+  void closeTermsToLeftView(int index) {
+    if (index <= 0 || index >= terms.length) return;
+    _hideTermsWhere((i) => i < index);
+  }
+
+  void closeTermsToRightView(int index) {
+    if (index < 0 || index >= terms.length - 1) return;
+    _hideTermsWhere((i) => i > index);
+  }
+
+  void _hideTermsWhere(bool Function(int index) shouldHide) {
+    final toHide = [
+      for (var i = 0; i < terms.length; i++)
+        if (shouldHide(i)) i,
+    ];
+    if (toHide.isEmpty) return;
+    final activeWasHidden = toHide.contains(activeTerm);
+    setState(() {
+      for (final i in toHide) {
+        _hiddenTabs.add(terms[i].id);
+      }
+      if (activeWasHidden) {
+        final next = _nearestVisible(activeTerm);
+        if (next != null) activeTerm = next;
+      }
+    });
     _activeChanged();
     unawaited(_save());
   }
@@ -837,9 +881,12 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       _activeChanged();
     },
     onClose: hideClosedTabs ? closeTermView : closeTerm,
-    onCloseOthers: closeOtherTerms,
-    onCloseLeft: closeTermsToLeft,
-    onCloseRight: closeTermsToRight,
+    // Bulk close mirrors × exactly: hideClosedTabs hosts only ever hide, so
+    // "关闭其他/左侧/右侧" can't surprise-kill a session the single × would
+    // have merely backgrounded.
+    onCloseOthers: hideClosedTabs ? closeOtherTermsView : closeOtherTerms,
+    onCloseLeft: hideClosedTabs ? closeTermsToLeftView : closeTermsToLeft,
+    onCloseRight: hideClosedTabs ? closeTermsToRightView : closeTermsToRight,
     onCollapse: onCollapse,
     onNewShell: onNewShell,
     groupsFor: sendGroupsFor,
@@ -1027,9 +1074,10 @@ class TerminalTabBar extends StatelessWidget {
   // 视觉风格(ccMenuItem/showMenu/menuPosAt)。"关闭"直接调 onClose(i) ——跟标签上
   // 那颗 × 按钮完全同一个回调，语义天然一致(workspace 里是 closeTermView 只隐藏
   // 视图，PTY 仍在跑；inbox 收件箱里是 closeTerm 真正结束会话)，不用在这里猜一次
-  // 该调哪个。"关闭其他/左侧/右侧"则总是真正结束会话(TerminalHost.closeOtherTerms
-  // 等)，跟单个 × 的隐藏语义不同——批量清理标签页时，用户预期是真的了结那些会话，
-  // 不是把它们悄悄留在后台占资源。
+  // 该调哪个。"关闭其他/左侧/右侧"同理：onCloseOthers/onCloseLeft/onCloseRight 由
+  // terminalDeck() 按 hideClosedTabs 挑一套(真杀 closeOtherTerms 系列 vs 隐藏
+  // closeOtherTermsView 系列)传进来，跟单个 × 保持同一语义——不会出现"点了关闭
+  // 其他，结果背景在跑的会话被杀掉"这种意外。
   List<PopupMenuEntry<String>> _tabMenuItems(int i) => [
     ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
     ccMenuItem(
