@@ -139,6 +139,11 @@ class SessionOverviewStore extends ChangeNotifier {
   // reply popup can preview + reply without switching to the workspace.
   void Function(String sid, String text, {bool submit})? inputHandler;
   Future<String?> Function(String sid)? previewHandler;
+  // reviewedHandler marks a session as "已查看" — the overview page can't reach
+  // `terms`, so opening the quick-reply preview routes through here to let
+  // WorkspacePage clear that session's 待 review flag (the same "the user is
+  // looking at it" semantics as local foregrounding / a phone watching it).
+  void Function(String sid)? reviewedHandler;
 
   void publish(List<SessionCard> c) {
     cards = c;
@@ -155,4 +160,9 @@ class SessionOverviewStore extends ChangeNotifier {
 
   Future<String?> loadPreview(String sid) async =>
       previewHandler == null ? null : await previewHandler!(sid);
+
+  // markReviewed reports that the user is now looking at [sid] (opened its
+  // quick-reply preview in the overview) so WorkspacePage drops its 待 review
+  // highlight. Safe no-op until WorkspacePage registers the handler.
+  void markReviewed(String sid) => reviewedHandler?.call(sid);
 }

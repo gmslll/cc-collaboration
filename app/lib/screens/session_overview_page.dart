@@ -282,6 +282,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   @override
   void initState() {
     super.initState();
+    // Opening the preview = the user is looking at this session → clear its
+    // 待 review flag (mirrors local foregrounding / a phone watching it), so a
+    // reviewed-from-here session stops showing as "完成待查看".
+    widget.store.markReviewed(widget.card.sid);
     _refresh();
     _timer = Timer.periodic(
       const Duration(milliseconds: 1500),

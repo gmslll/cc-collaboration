@@ -463,6 +463,21 @@ class _WorkspacePageState extends State<WorkspacePage>
     _remoteHost.broadcastOverview();
   }
 
+  // markSessionReviewed clears a session's "待 review" flag (完成且未查看) from ANY
+  // "the user is now looking at it" path, then republishes so the bus registry +
+  // overview drop the highlight. The three viewers funnel through here: local
+  // foregrounding (onActiveTermChanged), a phone/web watching it (onSessionWatched),
+  // and the overview quick-reply popup previewing its live screen (via
+  // overviewStore.reviewedHandler) — so review-clear isn't coupled to the local tab.
+  // Guarded so a no-op view (already reviewed / unknown sid) costs nothing.
+  void markSessionReviewed(String sid) {
+    final s = sessionById(sid);
+    if (s == null || !s.needsReview) return;
+    s.needsReview = false;
+    unawaited(_localBus.syncRegistry());
+    _publishOverview();
+  }
+
   void _publishHookActivities() {
     if (!mounted) return;
     var changed = false;
@@ -709,11 +724,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     // backlog or another tab's.
     onActiveTermChanged = () {
       if (_ttsOn && terms.isNotEmpty) _voice.armBaseline(terms[activeTerm]);
-      // Bringing a session to the front = the user is looking at it → clear its
-      // "待 review" flag (the "完成且未查看" semantics), then republish.
+      // Bringing a session to the front = the user is looking at it → mark it
+      // reviewed (shared entry, clears 待 review + republishes).
       if (activeTerm >= 0 && activeTerm < terms.length) {
-        terms[activeTerm].needsReview = false;
+        markSessionReviewed(terms[activeTerm].id);
       }
+      // Every active change also republishes so the now-front session's freshly
+      // refreshed usage lands in the registry/overview (markSessionReviewed above
+      // only republishes when it actually clears a review).
       unawaited(_localBus.syncRegistry());
       _publishOverview();
     };
@@ -745,6 +763,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     widget.overviewStore.previewHandler = (sid) async => sessionById(
       sid,
     )?.snapshotAnsi(60); // coloured live screen (incl. prompt)
+    // Opening a session's quick-reply preview in the overview = viewing it → clear
+    // its 待 review (the overview can't reach `terms`, so it routes through here).
+    widget.overviewStore.reviewedHandler = markSessionReviewed;
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
@@ -754,6 +775,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     _remoteHost.onSessionWatched = (sid) {
       final s = sessionById(sid);
       if (s != null) _voice.armBaseline(s);
+      // A phone/web opening (watching) the session = viewing it → clear 待 review.
+      markSessionReviewed(sid);
     };
     // A phone-sent file landed in ~/Downloads/cc-recv — toast it with a
     // shortcut to reveal it in Finder.
@@ -868,6 +891,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     widget.overviewStore.openHandler = null;
     widget.overviewStore.inputHandler = null;
     widget.overviewStore.previewHandler = null;
+    widget.overviewStore.reviewedHandler = null;
     _voice.dispose();
     disposeTerms();
     LspManager.instance.shutdownAll();
