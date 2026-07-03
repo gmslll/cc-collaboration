@@ -9,6 +9,7 @@ import '../api/relay_client.dart';
 import '../api/todo_models.dart';
 import '../local/config.dart';
 import '../local/path_utils.dart';
+import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -94,6 +95,12 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // body_md itself never has to represent "is this being edited" state.
   bool _bodyEditing = false;
   bool _resumingSession = false;
+  // Height (px) of the top pane (title/properties/body, scrollable) above the
+  // 评论/附件 TabBarView — user-draggable via the vertical DragHandle in
+  // build(), persisted so it survives switching between todos. Was a fixed
+  // flex:2/flex:3 split; long bodies with few/no comments made that cramp the
+  // body into a sliver users couldn't resize.
+  double _topPaneHeight = Prefs.getDouble('todo.topPaneHeightPx', def: 320);
 
   RelayClient get _client => widget.client;
   String get _id => widget.todo.id;
@@ -476,24 +483,45 @@ class TodoDetailViewState extends State<TodoDetailView> {
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 2,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Expanded(
-          flex: 2,
-          child: SingleChildScrollView(child: _header()),
-        ),
-        TabBar(tabs: [
-          Tab(text: '评论 (${_comments.length})'),
-          Tab(text: '附件 (${_current.attachmentCount})'),
-        ]),
-        Expanded(
-          flex: 3,
-          child: TabBarView(children: [
-            _commentsTab(),
-            SingleChildScrollView(
-                padding: const EdgeInsets.all(16), child: _attachmentsTab()),
-          ]),
-        ),
-      ]),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Clamp the top pane to what's actually available so a large
+          // persisted height (e.g. from a taller window) can't push the
+          // 评论/附件 tabs fully off-screen — same guard as workspace_page's
+          // terminal-height handle.
+          const minTop = 120.0;
+          const minBottom = 120.0;
+          const handle = 8.0;
+          final maxTop = (constraints.maxHeight - handle - minBottom)
+              .clamp(minTop, double.infinity);
+          final topHeight = _topPaneHeight.clamp(minTop, maxTop);
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            SizedBox(
+              height: topHeight,
+              child: SingleChildScrollView(child: _header()),
+            ),
+            resizeHandle(
+              prefKey: 'todo.topPaneHeightPx',
+              get: () => _topPaneHeight,
+              set: (v) => setState(() => _topPaneHeight = v),
+              min: minTop,
+              max: maxTop,
+              vertical: true,
+            ),
+            TabBar(tabs: [
+              Tab(text: '评论 (${_comments.length})'),
+              Tab(text: '附件 (${_current.attachmentCount})'),
+            ]),
+            Expanded(
+              child: TabBarView(children: [
+                _commentsTab(),
+                SingleChildScrollView(
+                    padding: const EdgeInsets.all(16), child: _attachmentsTab()),
+              ]),
+            ),
+          ]);
+        },
+      ),
     );
   }
 

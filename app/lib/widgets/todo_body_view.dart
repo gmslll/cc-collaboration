@@ -54,7 +54,7 @@ class TodoBodyView extends StatelessWidget {
   List<InlineSpan> _decorateBlock(List<String> lines, TextStyle base) {
     final spans = <InlineSpan>[];
     for (var i = 0; i < lines.length; i++) {
-      spans.addAll(decorateMarkdownLine(lines[i], base));
+      spans.addAll(decorateMarkdownLine(lines[i], base, hideMarkers: true));
       if (i != lines.length - 1) spans.add(TextSpan(text: '\n', style: base));
     }
     return spans;

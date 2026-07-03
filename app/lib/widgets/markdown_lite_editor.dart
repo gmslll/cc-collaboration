@@ -46,7 +46,19 @@ final _inlineRe = RegExp(r'(\*\*.+?\*\*)|(`[^`\n]+?`)|(\*[^*\n]+?\*)');
 // todo_body_view.dart's read-only renderer reuses them verbatim for the
 // non-image lines of a todo body — one regex-driven decorator, two
 // presentations (live-editing TextSpan tree here, static Text.rich there).
-List<InlineSpan> inlineMarkdownSpans(String s, TextStyle base) {
+//
+// [hideMarkers] drops the literal syntax characters (`#`, `**`, `*`, `` ` ``,
+// `>`) from the output instead of just dimming them — MarkdownLiteEditor
+// leaves it false (editing raw text, the syntax needs to stay visible to
+// edit it); TodoBodyView's read-only presentation passes true for a
+// Notion/Linear-style rendered look with no literal markdown characters.
+// List item markers (`-`/`1.`) are exempt — those carry visual meaning (the
+// bullet/number itself), not just syntax, so they stay in both modes.
+List<InlineSpan> inlineMarkdownSpans(
+  String s,
+  TextStyle base, {
+  bool hideMarkers = false,
+}) {
   if (s.isEmpty) return [TextSpan(text: s, style: base)];
   final dim = base.copyWith(color: CcColors.subtle);
   final spans = <InlineSpan>[];
@@ -56,29 +68,29 @@ List<InlineSpan> inlineMarkdownSpans(String s, TextStyle base) {
     final token = m.group(0)!;
     if (m.group(1) != null) {
       // **bold**
-      spans.add(TextSpan(text: '**', style: dim));
+      if (!hideMarkers) spans.add(TextSpan(text: '**', style: dim));
       spans.add(TextSpan(
           text: token.substring(2, token.length - 2),
           style: base.copyWith(fontWeight: FontWeight.w700, color: CcColors.text)));
-      spans.add(TextSpan(text: '**', style: dim));
+      if (!hideMarkers) spans.add(TextSpan(text: '**', style: dim));
     } else if (m.group(2) != null) {
       // `code`
-      spans.add(TextSpan(text: '`', style: dim));
+      if (!hideMarkers) spans.add(TextSpan(text: '`', style: dim));
       spans.add(TextSpan(
           text: token.substring(1, token.length - 1),
           style: base.copyWith(
               fontFamily: CcType.mono,
               fontSize: (base.fontSize ?? 14.5) * 0.92,
               color: CcColors.accentBright)));
-      spans.add(TextSpan(text: '`', style: dim));
+      if (!hideMarkers) spans.add(TextSpan(text: '`', style: dim));
     } else {
       // *italic*
       final marker = token[0];
-      spans.add(TextSpan(text: marker, style: dim));
+      if (!hideMarkers) spans.add(TextSpan(text: marker, style: dim));
       spans.add(TextSpan(
           text: token.substring(1, token.length - 1),
           style: base.copyWith(fontStyle: FontStyle.italic, color: CcColors.text)));
-      spans.add(TextSpan(text: marker, style: dim));
+      if (!hideMarkers) spans.add(TextSpan(text: marker, style: dim));
     }
     last = m.end;
   }
@@ -86,7 +98,11 @@ List<InlineSpan> inlineMarkdownSpans(String s, TextStyle base) {
   return spans;
 }
 
-List<InlineSpan> decorateMarkdownLine(String line, TextStyle base) {
+List<InlineSpan> decorateMarkdownLine(
+  String line,
+  TextStyle base, {
+  bool hideMarkers = false,
+}) {
   final dim = base.copyWith(color: CcColors.subtle);
   final heading = _headingRe.firstMatch(line);
   if (heading != null) {
@@ -96,21 +112,31 @@ List<InlineSpan> decorateMarkdownLine(String line, TextStyle base) {
         (level == 1 ? 1.55 : level == 2 ? 1.32 : 1.16);
     final headStyle =
         base.copyWith(fontSize: size, fontWeight: FontWeight.w700, color: CcColors.text);
-    return [TextSpan(text: hashes + space, style: dim), ...inlineMarkdownSpans(rest, headStyle)];
+    return [
+      if (!hideMarkers) TextSpan(text: hashes + space, style: dim),
+      ...inlineMarkdownSpans(rest, headStyle, hideMarkers: hideMarkers),
+    ];
   }
   final quote = _quoteRe.firstMatch(line);
   if (quote != null) {
     final marker = quote.group(1)!, rest = quote.group(2)!;
     final quoteStyle = base.copyWith(color: CcColors.muted, fontStyle: FontStyle.italic);
-    return [TextSpan(text: marker, style: dim), ...inlineMarkdownSpans(rest, quoteStyle)];
+    return [
+      if (!hideMarkers) TextSpan(text: marker, style: dim),
+      ...inlineMarkdownSpans(rest, quoteStyle, hideMarkers: hideMarkers),
+    ];
   }
   final item = _listItemRe.firstMatch(line);
   if (item != null) {
     final marker = item.group(1)!, rest = item.group(2)!;
     final markerStyle = base.copyWith(color: CcColors.accentBright, fontWeight: FontWeight.w700);
-    return [TextSpan(text: marker, style: markerStyle), ...inlineMarkdownSpans(rest, base)];
+    // List markers stay visible even with hideMarkers: true — see doc above.
+    return [
+      TextSpan(text: marker, style: markerStyle),
+      ...inlineMarkdownSpans(rest, base, hideMarkers: hideMarkers),
+    ];
   }
-  return inlineMarkdownSpans(line, base);
+  return inlineMarkdownSpans(line, base, hideMarkers: hideMarkers);
 }
 
 List<InlineSpan> _decorate(String text, TextStyle base) {

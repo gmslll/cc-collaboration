@@ -56,4 +56,55 @@ void main() {
     expect(texts, contains('bold'));
     expect(texts, isNot(contains('**bold** ')));
   });
+
+  group('hideMarkers: true (TodoBodyView read-only rendering)', () {
+    const style = TextStyle(fontSize: 14);
+
+    test('heading markers are dropped, not just dimmed', () {
+      final texts = _leafTexts(
+          TextSpan(children: decorateMarkdownLine('## Title', style, hideMarkers: true)));
+      expect(texts.join(), 'Title');
+      expect(texts.any((t) => t.contains('#')), isFalse);
+    });
+
+    test('blockquote marker is dropped', () {
+      final texts = _leafTexts(
+          TextSpan(children: decorateMarkdownLine('> quoted', style, hideMarkers: true)));
+      expect(texts.join(), 'quoted');
+      expect(texts.any((t) => t.contains('>')), isFalse);
+    });
+
+    test('list item marker is kept (it has visual meaning, not just syntax)', () {
+      final texts = _leafTexts(
+          TextSpan(children: decorateMarkdownLine('- item', style, hideMarkers: true)));
+      expect(texts.join(), '- item');
+    });
+
+    test('bold ** markers are dropped', () {
+      final texts = _leafTexts(
+          TextSpan(children: inlineMarkdownSpans('**bold**', style, hideMarkers: true)));
+      expect(texts.join(), 'bold');
+      expect(texts.any((t) => t.contains('*')), isFalse);
+    });
+
+    test('italic * marker is dropped', () {
+      final texts = _leafTexts(
+          TextSpan(children: inlineMarkdownSpans('*italic*', style, hideMarkers: true)));
+      expect(texts.join(), 'italic');
+      expect(texts.any((t) => t.contains('*')), isFalse);
+    });
+
+    test('inline code ` markers are dropped', () {
+      final texts = _leafTexts(
+          TextSpan(children: inlineMarkdownSpans('`code`', style, hideMarkers: true)));
+      expect(texts.join(), 'code');
+      expect(texts.any((t) => t.contains('`')), isFalse);
+    });
+
+    test('default (hideMarkers omitted) still shows the markers, just dimmed', () {
+      final texts =
+          _leafTexts(TextSpan(children: decorateMarkdownLine('# Title', style)));
+      expect(texts.join(), '# Title');
+    });
+  });
 }

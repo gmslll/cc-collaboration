@@ -1256,14 +1256,22 @@ const panelGradient = BoxDecoration(
   ),
 );
 
-// DragHandle is a thin vertical divider the user drags to resize an adjacent
-// pane. It reports the horizontal drag delta; the parent clamps + persists the
-// new width. Shows a resize cursor and an accent line on hover/drag. (8px hit
-// area for an easy grab; the visible line stays 1–2px.)
+// DragHandle is a thin divider the user drags to resize an adjacent pane. By
+// default it's a vertical line reporting horizontal drag delta (for
+// left/right panes); pass [vertical]: true for a horizontal line reporting
+// vertical drag delta (for stacked top/bottom panes) instead. The parent
+// clamps + persists the new size. Shows a resize cursor and an accent line on
+// hover/drag. (8px hit area for an easy grab; the visible line stays 1–2px.)
 class DragHandle extends StatefulWidget {
   final ValueChanged<double> onDelta;
   final VoidCallback? onEnd; // e.g. persist the new width once, on release
-  const DragHandle({super.key, required this.onDelta, this.onEnd});
+  final bool vertical;
+  const DragHandle({
+    super.key,
+    required this.onDelta,
+    this.onEnd,
+    this.vertical = false,
+  });
 
   @override
   State<DragHandle> createState() => _DragHandleState();
@@ -1275,36 +1283,44 @@ class _DragHandleState extends State<DragHandle> {
   @override
   Widget build(BuildContext context) {
     final noMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final line = AnimatedContainer(
+      duration:
+          noMotion ? Duration.zero : const Duration(milliseconds: 120),
+      width: widget.vertical ? null : (_active ? 2 : 1),
+      height: widget.vertical ? (_active ? 2 : 1) : null,
+      color: _active ? CcColors.accent : CcColors.border,
+    );
     return MouseRegion(
-      cursor: SystemMouseCursors.resizeColumn,
+      cursor: widget.vertical
+          ? SystemMouseCursors.resizeRow
+          : SystemMouseCursors.resizeColumn,
       onEnter: (_) => setState(() => _active = true),
       onExit: (_) => setState(() => _active = false),
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onHorizontalDragUpdate: (d) => widget.onDelta(d.delta.dx),
-        onHorizontalDragEnd: (_) => widget.onEnd?.call(),
-        child: SizedBox(
-          width: 8,
-          child: Center(
-            child: AnimatedContainer(
-              duration: noMotion
-                  ? Duration.zero
-                  : const Duration(milliseconds: 120),
-              width: _active ? 2 : 1,
-              color: _active ? CcColors.accent : CcColors.border,
-            ),
-          ),
-        ),
+        onHorizontalDragUpdate:
+            widget.vertical ? null : (d) => widget.onDelta(d.delta.dx),
+        onHorizontalDragEnd:
+            widget.vertical ? null : (_) => widget.onEnd?.call(),
+        onVerticalDragUpdate:
+            widget.vertical ? (d) => widget.onDelta(d.delta.dy) : null,
+        onVerticalDragEnd:
+            widget.vertical ? (_) => widget.onEnd?.call() : null,
+        child: widget.vertical
+            ? SizedBox(height: 8, child: Center(child: line))
+            : SizedBox(width: 8, child: Center(child: line)),
       ),
     );
   }
 }
 
-// resizeHandle is a DragHandle pre-wired to clamp + persist a pane width: it
-// reads/writes the width via [get]/[set] (set should setState), clamps to
+// resizeHandle is a DragHandle pre-wired to clamp + persist a pane size: it
+// reads/writes the size via [get]/[set] (set should setState), clamps to
 // [min]/[max], and persists to Prefs[prefKey] on release. [invert] flips the
-// drag direction for a pane sitting to the LEFT of the handle (drag toward it =
-// wider). Collapses the per-cockpit resize boilerplate to one call per handle.
+// drag direction for a pane sitting to the LEFT (or, when [vertical], ABOVE)
+// the handle (drag toward it = bigger). [vertical] passes through to
+// DragHandle for a stacked top/bottom layout instead of side-by-side.
+// Collapses the per-cockpit resize boilerplate to one call per handle.
 Widget resizeHandle({
   required String prefKey,
   required double Function() get,
@@ -1312,8 +1328,10 @@ Widget resizeHandle({
   required double min,
   required double max,
   bool invert = false,
+  bool vertical = false,
 }) => DragHandle(
-  onDelta: (dx) => set((get() + (invert ? -dx : dx)).clamp(min, max)),
+  vertical: vertical,
+  onDelta: (delta) => set((get() + (invert ? -delta : delta)).clamp(min, max)),
   onEnd: () => Prefs.setDouble(prefKey, get()),
 );
 
