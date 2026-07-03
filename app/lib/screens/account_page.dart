@@ -190,7 +190,9 @@ class _AccountPageState extends State<AccountPage> {
             if (h.name != agent) return false;
             if (events == null) return h.ok;
             final installed = h.installedEvents.toSet();
-            return events.every(installed.contains);
+            final selected = events.toSet();
+            return installed.length == selected.length &&
+                selected.every(installed.contains);
           }) ??
           false);
     snack(
@@ -651,8 +653,10 @@ class _AccountPageState extends State<AccountPage> {
   Future<void> _reinstallAllHooks() async {
     final ok = await _reinstallHooks();
     if (!ok) return;
-    Prefs.remove('busHook.events.claude');
-    Prefs.remove('busHook.events.codex');
+    Prefs.removeAll(const [
+      'busHook.events.claude',
+      'busHook.events.codex',
+    ]);
   }
 
   Widget _hookRow(HookInstallStatus h) {

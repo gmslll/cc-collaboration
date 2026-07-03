@@ -51,6 +51,13 @@ class Prefs {
     _save();
   }
 
+  static void removeAll(Iterable<String> keys) {
+    for (final key in keys) {
+      _data.remove(key);
+    }
+    _save();
+  }
+
   static Future<void> _save() async {
     try {
       await prefsSaveRaw(jsonEncode(_data));
