@@ -116,6 +116,8 @@ void main() {
 
   // No captured id (capture hasn't landed yet): the newest cwd-matching
   // rollout is the only available guess, so the fallback must still apply.
+  // Only one candidate exists here, so it's unambiguous regardless of the
+  // recent/historical tiering added below (see codex-round2 tests).
   test('codex: no captured id falls back to the cwd newest rollout',
       () async {
     if (!isolated) return;
@@ -126,5 +128,26 @@ void main() {
     final p = await resolveTranscriptPath(
         agentKind: 'codex', agentSessionId: null, workdir: wd);
     expect(p, f.path);
+  });
+
+  // The round-2 fix: without a captured id, several sibling codex sessions
+  // sharing one cwd (no worktree isolation) all fall back to this same path.
+  // Before the fix, "newest cwd match wins" meant every id-less sibling read
+  // the SAME file — the bug this round closes. Both rollouts are written
+  // "just now" (well within the recency window), so this reproduces the
+  // concurrent-siblings case: the fallback must refuse to pick either one,
+  // not just whichever happens to have the later mtime.
+  test('codex: no captured id + concurrent sibling rollouts in the same cwd '
+      'returns null, not either sibling (串味 round 2)', () async {
+    if (!isolated) return;
+    const wd = '/w/codex-d';
+    final dir = codexBucketDir();
+    writeRollout(dir, 'sibling-1', cwd: wd, id: 'sibling-1-id');
+    writeRollout(dir, 'sibling-2', cwd: wd, id: 'sibling-2-id');
+    final p = await resolveTranscriptPath(
+        agentKind: 'codex', agentSessionId: null, workdir: wd);
+    expect(p, isNull,
+        reason: 'concurrent sibling sessions in the same cwd must not '
+            'resolve to either one\'s transcript');
   });
 }

@@ -78,9 +78,10 @@ Future<String?> _newestClaudeInCwd(String home, String workdir) async {
 }
 
 // _newestCodexRollout: no id to pin to (see resolveTranscriptPath), so this is
-// a best-effort guess by cwd. Sort newest-first and read only each file's
-// first line until one matches — the common case (active session = newest
-// rollout) costs one JSON parse. Only used when agentSessionId is empty.
+// a best-effort guess by cwd — but the same "ambiguity beats guessing" rule
+// that pickUniqueRolloutId enforces at capture time applies here too: see
+// pickNewestCodexRollout for how it's enforced when there's no session-launch
+// floor to bound candidates by. Only used when agentSessionId is empty.
 Future<String?> _newestCodexRollout(String home, String workdir) async {
   final root = Directory('$home/.codex/sessions');
   if (!await root.exists()) return null;
@@ -90,10 +91,60 @@ Future<String?> _newestCodexRollout(String home, String workdir) async {
       files.add(((await e.stat()).modified, e));
     }
   }
-  files.sort((a, b) => b.$1.compareTo(a.$1));
-  for (final (_, f) in files) {
+  return pickNewestCodexRollout(files, workdir, now: DateTime.now());
+}
+
+// _recentRolloutWindow: how far back "just modified" reaches when deciding
+// whether cwd-matching rollouts look like concurrently-active sibling
+// sessions (see pickNewestCodexRollout). Codex flushes each turn, so a truly
+// live session's file is touched roughly every reply; 5 minutes comfortably
+// covers normal think/type gaps between turns without stretching so wide that
+// unrelated same-cwd sessions from earlier the same day get miscounted as
+// concurrent.
+const Duration _recentRolloutWindow = Duration(minutes: 5);
+
+// pickNewestCodexRollout is _newestCodexRollout's decision, pulled out as a
+// pure(-ish) function — mirroring pickUniqueRolloutId's precedent — so the
+// tiering is unit-testable without a real $HOME/.codex/sessions tree.
+//
+// [files] pairs each candidate with its mtime; only entries whose payload cwd
+// matches [workdir] count. pickUniqueRolloutId (capture time) has a floor —
+// "written since this session launched" — to know which candidates could
+// possibly be a concurrent sibling. This call site has no such floor (there is
+// no session to ask "when did you start" — that's the whole reason we're
+// guessing), so it substitutes mtime recency for that same purpose: split
+// matches into a "recent" tier (mtime within [recentWindow] of [now]) and
+// everything older, then:
+//   - exactly one recent match -> that's the live session, return it.
+//   - 2+ recent matches -> concurrent sibling sessions sharing this cwd; mtime
+//     can't tell them apart, and picking "the newest of them" is EXACTLY the
+//     guess that caused 串味 last time -> null, don't guess.
+//   - zero recent matches -> nothing concurrent is active in this cwd right
+//     now, so the newest HISTORICAL match is a safe guess — the legacy
+//     `--continue`-restore case this fallback exists for in the first place.
+Future<String?> pickNewestCodexRollout(
+  List<(DateTime, File)> files,
+  String workdir, {
+  required DateTime now,
+  Duration recentWindow = _recentRolloutWindow,
+}) async {
+  final dated = [...files]..sort((a, b) => b.$1.compareTo(a.$1));
+  final recentMatches = <File>[];
+  var i = 0;
+  for (; i < dated.length; i++) {
+    final (mtime, f) = dated[i];
+    if (now.difference(mtime) > recentWindow) break; // dated is newest-first
     final meta = await readRolloutMeta(f);
-    if (cwdMatches(meta?['cwd']?.toString(), workdir)) return f.path;
+    if (!cwdMatches(meta?['cwd']?.toString(), workdir)) continue;
+    recentMatches.add(f);
+    if (recentMatches.length > 1) return null;
+  }
+  if (recentMatches.length == 1) return recentMatches.first.path;
+  // No concurrent activity in this cwd right now: fall back to the newest
+  // historical match, same early-exit-on-first-hit shape as the old logic.
+  for (; i < dated.length; i++) {
+    final meta = await readRolloutMeta(dated[i].$2);
+    if (cwdMatches(meta?['cwd']?.toString(), workdir)) return dated[i].$2.path;
   }
   return null;
 }
