@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'path_utils.dart';
+
 // Shared on-disk agent transcript access: locate a claude/codex session's JSONL
 // log and render its recent assistant output as plain text. Both the voice
 // reader (reads new replies to speak) and the local-bus `msg read --transcript`
@@ -12,9 +14,12 @@ import 'dart:io';
 // — so `app/lib/local` stays free of `screens/` imports.
 
 // resolveTranscriptPath returns the agent's current session-log file, or null.
-// claude: prefer the exact minted id (glob in case the cwd-encoded dir name
-// differs from our guess), else the cwd's newest log (covers `--continue` /
-// legacy sessions with no minted id). codex: newest rollout whose cwd matches.
+// Both kinds share the same shape: prefer the exact minted/captured id (a
+// precise match, never a guess), else the cwd's newest log — a fallback used
+// only when there's no id to pin to (claude: legacy `--continue` restore;
+// codex: an id capture that hasn't landed yet). Never degrade an id lookup
+// into a cwd/mtime guess: see the 串味 note below on why that bled sibling
+// sessions' transcripts into each other.
 Future<String?> resolveTranscriptPath({
   required String agentKind,
   required String? agentSessionId,
@@ -22,7 +27,11 @@ Future<String?> resolveTranscriptPath({
 }) async {
   final home = Platform.environment['HOME'] ?? '';
   if (home.isEmpty) return null;
-  if (agentKind == 'codex') return _newestCodexRollout(home, workdir);
+  if (agentKind == 'codex') {
+    final id = agentSessionId;
+    if (id != null && id.isNotEmpty) return _codexRolloutById(home, id);
+    return _newestCodexRollout(home, workdir);
+  }
   final id = agentSessionId;
   if (id != null && id.isNotEmpty) {
     final projects = Directory('$home/.claude/projects');
@@ -68,32 +77,99 @@ Future<String?> _newestClaudeInCwd(String home, String workdir) async {
   return best;
 }
 
-// _newestCodexRollout: codex has no pre-assignable id, so match by cwd. Sort
-// newest-first and read only each file's first line until one matches — the
-// common case (active session = newest rollout) costs one JSON parse.
+// _newestCodexRollout: no id to pin to (see resolveTranscriptPath), so this is
+// a best-effort guess by cwd. Sort newest-first and read only each file's
+// first line until one matches — the common case (active session = newest
+// rollout) costs one JSON parse. Only used when agentSessionId is empty.
 Future<String?> _newestCodexRollout(String home, String workdir) async {
   final root = Directory('$home/.codex/sessions');
   if (!await root.exists()) return null;
-  final files = <(DateTime, String)>[];
+  final files = <(DateTime, File)>[];
   await for (final e in root.list(recursive: true, followLinks: false)) {
     if (e is File && e.path.endsWith('.jsonl') && e.path.contains('rollout-')) {
-      files.add(((await e.stat()).modified, e.path));
+      files.add(((await e.stat()).modified, e));
     }
   }
   files.sort((a, b) => b.$1.compareTo(a.$1));
-  for (final (_, path) in files) {
-    try {
-      final first = await File(path)
-          .openRead()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .first;
-      if ((jsonDecode(first) as Map)['payload']?['cwd'] == workdir) return path;
-    } catch (_) {
-      continue;
+  for (final (_, f) in files) {
+    final meta = await readRolloutMeta(f);
+    if (cwdMatches(meta?['cwd']?.toString(), workdir)) return f.path;
+  }
+  return null;
+}
+
+// _codexRolloutById scans every rollout under [home]/.codex/sessions for the
+// one whose payload carries the EXACT [id] — the codex analogue of the claude
+// branch's filename match above. No cwd/mtime guessing: an id we already
+// captured pins to one specific file, or none if that log isn't on disk yet.
+Future<String?> _codexRolloutById(String home, String id) async {
+  final root = Directory('$home/.codex/sessions');
+  if (!await root.exists()) return null;
+  await for (final e in root.list(recursive: true, followLinks: false)) {
+    if (e is File && e.path.endsWith('.jsonl') && e.path.contains('rollout-')) {
+      final meta = await readRolloutMeta(e);
+      if (meta?['id']?.toString() == id) return e.path;
     }
   }
   return null;
+}
+
+// readRolloutMeta reads a codex rollout's session_meta payload (its first
+// JSONL line), or null if the file is missing/unparsable/empty. Shared by
+// every codex rollout lookup here and by TerminalSession's id-capture (lsof
+// hit / directory scan) in terminal_pane.dart, so there is exactly one parser
+// for this format.
+Future<Map?> readRolloutMeta(File f) async {
+  try {
+    final firstLine = await f
+        .openRead()
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .transform(const LineSplitter())
+        .first;
+    final m = jsonDecode(firstLine);
+    if (m is! Map) return null;
+    final payload = m['payload'];
+    return payload is Map ? payload : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// cwdMatches compares a rollout's recorded cwd to a session's workdir,
+// tolerating path-separator/`.`/`..` differences and symlinked paths (so
+// /tmp vs /private/tmp, common on macOS, still matches).
+bool cwdMatches(String? cwd, String workdir) {
+  if (cwd == null || cwd.isEmpty) return false;
+  if (pathEquals(cwd, workdir)) return true;
+  try {
+    return Directory(cwd).resolveSymbolicLinksSync() ==
+        Directory(workdir).resolveSymbolicLinksSync();
+  } catch (_) {
+    return false;
+  }
+}
+
+// pickUniqueRolloutId scans [files] for rollouts whose payload cwd matches
+// [workdir] and carries a non-empty id, returning that id ONLY if exactly one
+// file matches. Zero matches -> null (nothing found yet); more than one ->
+// also null, deliberately: when several candidate files match within the same
+// narrow window (e.g. sibling codex sessions launched in the same cwd within
+// seconds of each other), there is no principled way to pick the "right" one,
+// and guessing (e.g. newest-wins) is exactly what let one session capture and
+// persist ANOTHER session's id — 串味. Callers that poll (see
+// TerminalSession._captureAgentId) just retry; ambiguity within one window is
+// usually gone by the next.
+Future<String?> pickUniqueRolloutId(List<File> files, String workdir) async {
+  final matches = <String>[];
+  for (final f in files) {
+    final meta = await readRolloutMeta(f);
+    if (meta == null) continue;
+    if (!cwdMatches(meta['cwd']?.toString(), workdir)) continue;
+    final id = meta['id']?.toString();
+    if (id == null || id.isEmpty) continue;
+    matches.add(id);
+  }
+  return matches.length == 1 ? matches.first : null;
 }
 
 // _tailCap bounds how many bytes we read off the END of the log so a multi-MB
