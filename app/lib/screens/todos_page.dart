@@ -214,6 +214,7 @@ class _TodosPageState extends State<TodosPage> {
           _teamSource = 'linear';
           _projectFilter = null;
           _groupFilter = null;
+          _statusFilter.clear();
         });
         Prefs.setString('todo.team.source', 'linear');
         _loadGroups();
@@ -667,7 +668,7 @@ class _TodosPageState extends State<TodosPage> {
         ConstrainedBox(
           constraints: BoxConstraints(maxWidth: wide ? 420 : 220),
           child: Text(
-            _linearTeamKey.trim().isEmpty
+          _linearTeamKey.trim().isEmpty
                 ? '未配置团队'
                 : _linearProjectId.trim().isEmpty
                     ? '${_linearTeamKey.trim()} / 全部项目'
@@ -682,6 +683,20 @@ class _TodosPageState extends State<TodosPage> {
           icon: const Icon(Icons.tune_rounded, size: 16),
           label: const Text('切换团队/项目'),
         ),
+        if (_linearProjectId.trim().isNotEmpty) ...[
+          const SizedBox(width: 4),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _linearProjectId = '';
+                _groupFilter = null;
+              });
+              Prefs.setString('todo.linear.projectId', '');
+              _loadGroups();
+            },
+            child: const Text('全部 Linear'),
+          ),
+        ],
       ],
     ];
     if (!wide) {
