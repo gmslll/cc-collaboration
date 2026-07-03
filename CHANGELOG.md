@@ -6,6 +6,13 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-07-03
+
+### Fixed
+
+- **Stop hook 空输出被判 invalid JSON** — `Stop`/`StopFailure`/`SubagentStop` 的 bus hook 现在无消息、非 app 环境或异常空输出时会稳定返回 `{}`；有同机会话消息时仍保留 `decision:block` + `additionalContext` 投递，不会吞掉消息。
+- **旧 Stop bus hook 命令自动迁移** — 重新安装 hook 会清理旧的 `cc-handoff bus-hook` Stop 命令并替换为 JSON-safe 命令，同时保留用户自定义 hook。
+
 ## [0.9.2] - 2026-07-03
 
 ### Added
