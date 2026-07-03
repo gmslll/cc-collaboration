@@ -16,6 +16,15 @@ import '../theme.dart';
 import '../ui_scale.dart';
 import '../widgets.dart';
 
+typedef HookInstallStatus = ({
+  String name,
+  String path,
+  bool ok,
+  List<String> availableEvents,
+  List<String> installedEvents,
+  List<String> missingEvents,
+});
+
 class AccountPage extends StatefulWidget {
   final RelayClient client;
   final String identity;
@@ -64,7 +73,7 @@ class _AccountPageState extends State<AccountPage> {
   // the lifecycle bus hook into ~/.claude/settings.json + ~/.codex/hooks.json
   // on start; this shows whether they're actually present (e.g. on a fresh
   // machine) and offers a manual reinstall.
-  List<({String name, String path, bool ok})>? _hooks;
+  List<HookInstallStatus>? _hooks;
   bool _reinstalling = false;
   final Set<String> _reinstallingAgents = {};
 
@@ -132,6 +141,9 @@ class _AccountPageState extends State<AccountPage> {
               name: (h['agent'] ?? '').toString(),
               path: (h['path'] ?? '').toString(),
               ok: h['installed'] == true,
+              availableEvents: _stringList(h['available_events']),
+              installedEvents: _stringList(h['installed_events']),
+              missingEvents: _stringList(h['missing_events']),
             ),
         ],
       );
@@ -140,7 +152,12 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  Future<void> _reinstallHooks({String? agent}) async {
+  static List<String> _stringList(Object? v) {
+    if (v is! List) return const [];
+    return [for (final x in v) x.toString()];
+  }
+
+  Future<void> _reinstallHooks({String? agent, List<String>? events}) async {
     setState(() {
       if (agent == null) {
         _reinstalling = true;
@@ -152,6 +169,7 @@ class _AccountPageState extends State<AccountPage> {
     try {
       await Cli.installBusHooks(
         agents: agent == null ? const [] : [agent],
+        events: events,
         throwOnError: true,
       );
     } catch (e) {
@@ -168,7 +186,13 @@ class _AccountPageState extends State<AccountPage> {
     });
     final ok = agent == null
         ? (_hooks?.every((h) => h.ok) ?? false)
-        : (_hooks?.any((h) => h.name == agent && h.ok) ?? false);
+        : (_hooks?.any((h) {
+            if (h.name != agent) return false;
+            if (events == null) return h.ok;
+            final installed = h.installedEvents.toSet();
+            return events.every(installed.contains);
+          }) ??
+          false);
     snack(
       context,
       ok
@@ -177,6 +201,82 @@ class _AccountPageState extends State<AccountPage> {
               ? 'hook 安装未成功,请检查 agent 是否已安装'
               : errorText(installError),
     );
+  }
+
+  Future<void> _chooseHookEvents(HookInstallStatus h) async {
+    final available = h.availableEvents;
+    if (available.isEmpty) {
+      snack(context, '${h.name} 没有可选择的 hook 列表');
+      return;
+    }
+    final selected = <String>{
+      ...(h.installedEvents.isEmpty ? available : h.installedEvents),
+    };
+    final picked = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: Text('选择 ${h.name} hook'),
+            content: SizedBox(
+              width: 420,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 460),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    const Text(
+                      '只会安装勾选的 cc-handoff hook；未勾选项里的 cc-handoff hook 会移除，用户自己的其它 hook 不会动。',
+                      style: TextStyle(color: CcColors.muted, fontSize: 12),
+                    ),
+                    const SizedBox(height: 10),
+                    for (final ev in available)
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: selected.contains(ev),
+                        title: Text(ev, style: CcType.code(size: 12.5)),
+                        onChanged: (v) => setDialogState(() {
+                          if (v == true) {
+                            selected.add(ev);
+                          } else {
+                            selected.remove(ev);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () {
+                  final stopOnly = available.contains('Stop')
+                      ? const ['Stop']
+                      : [available.first];
+                  Navigator.pop(ctx, stopOnly);
+                },
+                child: const Text('只装 Stop'),
+              ),
+              FilledButton(
+                onPressed: selected.isEmpty
+                    ? null
+                    : () => Navigator.pop(ctx, selected.toList()),
+                child: const Text('安装所选'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (picked == null || picked.isEmpty) return;
+    Prefs.setString('busHook.events.${h.name}', jsonEncode(picked));
+    await _reinstallHooks(agent: h.name, events: picked);
   }
 
   Future<void> _saveLocalConfig() async {
@@ -521,14 +621,14 @@ class _AccountPageState extends State<AccountPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.refresh_rounded, size: 16),
-                  label: const Text('重新安装'),
+                  label: const Text('全量重装'),
                 ),
               ],
             ),
             const SizedBox(height: 2),
             const Text(
               '装进 claude/codex 配置,会话一开始就记录其 agent 会话 id,重启或换机后能精准恢复。'
-              'macOS/Linux 另有 lsof 兜底;Windows 上的 codex 全靠它。开 app 会自动装,这里可手动补装。',
+              'macOS/Linux 另有 lsof 兜底;Windows 上的 codex 全靠它。开 app 会自动装,这里可手动补装;每行可选择只安装部分 hook。',
               style: TextStyle(color: CcColors.muted, fontSize: 12),
             ),
             const SizedBox(height: 10),
@@ -545,15 +645,26 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
-  Widget _hookRow(({String name, String path, bool ok}) h) {
-    final color = h.ok ? CcColors.ok : CcColors.danger;
+  Widget _hookRow(HookInstallStatus h) {
+    final installedCount = h.installedEvents.length;
+    final totalCount = h.availableEvents.length;
+    final partial = installedCount > 0 && !h.ok;
+    final color = h.ok
+        ? CcColors.ok
+        : partial
+            ? CcColors.warning
+            : CcColors.danger;
     final installing = _reinstallingAgents.contains(h.name);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
           Icon(
-            h.ok ? Icons.check_circle_rounded : Icons.cancel_rounded,
+            h.ok
+                ? Icons.check_circle_rounded
+                : partial
+                    ? Icons.adjust_rounded
+                    : Icons.cancel_rounded,
             size: 16,
             color: color,
           ),
@@ -579,21 +690,27 @@ class _AccountPageState extends State<AccountPage> {
           ),
           const SizedBox(width: 8),
           Text(
-            h.ok ? '已安装' : '未安装',
+            totalCount == 0
+                ? (h.ok ? '已安装' : '未安装')
+                : h.ok
+                    ? '已安装 $installedCount/$totalCount'
+                    : installedCount == 0
+                        ? '未安装'
+                        : '部分 $installedCount/$totalCount',
             style: TextStyle(fontSize: 11, color: color),
           ),
           const SizedBox(width: 6),
           TextButton(
             onPressed: _reinstalling || installing
                 ? null
-                : () => _reinstallHooks(agent: h.name),
+                : () => _chooseHookEvents(h),
             child: installing
                 ? const SizedBox(
                     width: 12,
                     height: 12,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('只装这个'),
+                : const Text('选择安装'),
           ),
         ],
       ),

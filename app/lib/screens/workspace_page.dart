@@ -892,7 +892,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     // Wire the bus lifecycle hooks so busy agent sessions can record activity
     // and receive sibling messages at Stop. Idempotent + env-guarded;
     // fire-and-forget so a missing/old cc-handoff binary never blocks startup.
-    Cli.installBusHooks();
+    Cli.installConfiguredBusHooks();
     _connectRelayPresence();
     _loadParked();
     // Any newly spawned session surfaces the bottom terminal panel (even if it

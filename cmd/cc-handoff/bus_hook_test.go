@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cc-collaboration/internal/localbus"
+	"github.com/cc-collaboration/internal/setup"
 )
 
 func TestBusHookResponse_PostToolUse_NonBlockingFallback(t *testing.T) {
@@ -397,6 +398,35 @@ func TestBusHookInstall_TargetsOnlyNamedAgent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("claude settings should not be written for codex-only install, err=%v", err)
+	}
+}
+
+func TestBusHookInstall_SelectedEventsOnly(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "codex-home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if err := runBusHookInstall([]string{"--events", "Stop", "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(codexHome, "hooks.json")
+	installed := setup.BusHooksInstalledEvents(path, setup.CodexBusHookEvents())
+	if len(installed) != 1 || installed[0] != "Stop" {
+		t.Fatalf("installed events=%v, want [Stop]", installed)
+	}
+	if setup.CodexBusHooksPresent(path) {
+		t.Fatal("full codex status should be false for a selected-only install")
+	}
+}
+
+func TestBusHookInstall_SelectedEventsRejectsUnsupported(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := runBusHookInstall([]string{"--events", "SessionEnd", "codex"}); err == nil {
+		t.Fatal("expected unsupported event error for codex")
 	}
 }
 

@@ -158,6 +158,48 @@ func TestEnsureClaudeBusHooks_PreservesExistingHooks(t *testing.T) {
 	}
 }
 
+func TestEnsureClaudeBusHooksFor_RemovesUnselectedBusHooksOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if _, err := EnsureClaudeBusHooks(path); err != nil {
+		t.Fatalf("EnsureClaudeBusHooks: %v", err)
+	}
+	hooks, _ := loadJSON(t, path)["hooks"].(map[string]any)
+	pre, _ := hooks["PreToolUse"].([]any)
+	pre = append(pre, map[string]any{
+		"hooks": []any{
+			map[string]any{"type": "command", "command": "custom-pre-tool"},
+		},
+	})
+	hooks["PreToolUse"] = pre
+	raw, err := json.Marshal(map[string]any{"hooks": hooks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := EnsureClaudeBusHooksFor(path, []string{"Stop"}); err != nil {
+		t.Fatalf("EnsureClaudeBusHooksFor: %v", err)
+	}
+	hooks, _ = loadJSON(t, path)["hooks"].(map[string]any)
+	stops, _ := hooks["Stop"].([]any)
+	if !hookGroupsContain(stops, BusHookInvocation) {
+		t.Fatal("selected Stop bus hook should remain installed")
+	}
+	pres, _ := hooks["PreToolUse"].([]any)
+	if hookGroupsContain(pres, BusHookInvocation) {
+		t.Fatal("unselected PreToolUse bus hook should be removed")
+	}
+	if !hookGroupsContain(pres, "custom-pre-tool") {
+		t.Fatal("unselected event must preserve unrelated custom hooks")
+	}
+	installed := BusHooksInstalledEvents(path, claudeBusHookEvents)
+	if len(installed) != 1 || installed[0] != "Stop" {
+		t.Fatalf("installed events=%v, want [Stop]", installed)
+	}
+}
+
 func TestEnsureClaudeBusHooks_RemovesUnsafeBusHooksOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	seed := map[string]any{

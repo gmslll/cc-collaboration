@@ -143,8 +143,8 @@ Both sides:
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
   cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications
-  cc-handoff bus-hook     status | install [claude|codex...]
-                                                        inspect or manually repair local session hooks; install args limit which agent configs are touched
+  cc-handoff bus-hook     status | install [--events A,B] [claude|codex...]
+                                                        inspect or manually repair local session hooks; optionally limit agents and hook events
 
 Run cc-handoff <subcommand> --help for details.
 `)

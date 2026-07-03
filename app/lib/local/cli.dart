@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'prefs.dart';
 import 'shell.dart';
 
 class PickupResult {
@@ -71,10 +72,16 @@ class Cli {
   // sessions; fire-and-forget on app start with errors swallowed.
   static Future<void> installBusHooks({
     List<String> agents = const [],
+    List<String>? events,
     bool throwOnError = false,
   }) async {
     try {
-      final res = await _exec(['bus-hook', 'install', ...agents]);
+      final res = await _exec([
+        'bus-hook',
+        'install',
+        if (events != null) ...['--events', events.join(',')],
+        ...agents,
+      ]);
       if (throwOnError && res.exitCode != 0) {
         final err = (res.stderr as String).trim();
         throw CliException(
@@ -84,6 +91,36 @@ class Cli {
     } catch (_) {
       if (throwOnError) rethrow;
     }
+  }
+
+  static Future<void> installConfiguredBusHooks() async {
+    const unset = '__cc_handoff_unset__';
+    final claudeRaw = Prefs.getString('busHook.events.claude', def: unset);
+    final codexRaw = Prefs.getString('busHook.events.codex', def: unset);
+    if (claudeRaw == unset && codexRaw == unset) {
+      await installBusHooks();
+      return;
+    }
+    await installBusHooks(
+      agents: const ['claude'],
+      events: _decodeHookEvents(claudeRaw),
+    );
+    await installBusHooks(
+      agents: const ['codex'],
+      events: _decodeHookEvents(codexRaw),
+    );
+  }
+
+  static List<String>? _decodeHookEvents(String raw) {
+    if (raw == '__cc_handoff_unset__') return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        final events = [for (final v in decoded) v.toString()];
+        return events.isEmpty ? null : events;
+      }
+    } catch (_) {}
+    return null;
   }
 
   // pickup carves a worktree for the handoff in repoPath and returns the

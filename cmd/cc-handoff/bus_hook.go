@@ -45,9 +45,12 @@ func runBusHook(ctx context.Context, args []string) error {
 // setup's agent-specific checks) instead of being reimplemented in the app.
 func runBusHookStatus() error {
 	type entry struct {
-		Agent     string `json:"agent"`
-		Path      string `json:"path"`
-		Installed bool   `json:"installed"`
+		Agent           string   `json:"agent"`
+		Path            string   `json:"path"`
+		Installed       bool     `json:"installed"`
+		AvailableEvents []string `json:"available_events"`
+		InstalledEvents []string `json:"installed_events"`
+		MissingEvents   []string `json:"missing_events"`
 	}
 	out := []entry{}
 	for _, ag := range agent.All() {
@@ -62,13 +65,79 @@ func runBusHookStatus() error {
 		case "codex":
 			installed = setup.CodexBusHooksPresent(path)
 		}
+		available := busHookEventsForAgent(ag.Name())
+		installedEvents := setup.BusHooksInstalledEvents(path, available)
 		out = append(out, entry{
-			Agent:     ag.Name(),
-			Path:      path,
-			Installed: installed,
+			Agent:           ag.Name(),
+			Path:            path,
+			Installed:       installed,
+			AvailableEvents: available,
+			InstalledEvents: installedEvents,
+			MissingEvents:   missingStrings(available, installedEvents),
 		})
 	}
 	return json.NewEncoder(os.Stdout).Encode(out)
+}
+
+func busHookEventsForAgent(name string) []string {
+	switch name {
+	case "claude":
+		return setup.ClaudeBusHookEvents()
+	case "codex":
+		return setup.CodexBusHookEvents()
+	default:
+		return nil
+	}
+}
+
+func missingStrings(all, have []string) []string {
+	seen := map[string]bool{}
+	for _, s := range have {
+		seen[s] = true
+	}
+	out := []string{}
+	for _, s := range all {
+		if !seen[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func installBusHooksForAgentEvents(ag agent.Agent, events []string) error {
+	path, err := ag.BusHookConfigPath()
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("agent %q has no bus hook config", ag.Name())
+	}
+	switch ag.Name() {
+	case "claude":
+		res, err := setup.EnsureClaudeBusHooksFor(path, events)
+		if err != nil {
+			return err
+		}
+		reportInstallResult("claude", path, res)
+	case "codex":
+		res, err := setup.EnsureCodexBusHooksFor(path, events)
+		if err != nil {
+			return err
+		}
+		reportInstallResult("codex", path, res)
+	default:
+		return fmt.Errorf("agent %q has no bus hook event list", ag.Name())
+	}
+	return nil
+}
+
+func reportInstallResult(name, path string, res setup.EnsureResult) {
+	switch res {
+	case setup.EnsureWritten:
+		fmt.Printf("  ✓ installed selected cc-handoff bus hooks for %s → %s\n", name, path)
+	case setup.EnsureAlreadyPresent:
+		fmt.Printf("  · selected %s bus hooks already present (%s)\n", name, path)
+	}
 }
 
 // busHookEvent is the slice of the agent's hook payload we care about. Both
@@ -513,12 +582,24 @@ func recordAgentSession(busDir, ccID, agentSessionID, cwd string) {
 }
 
 func runBusHookInstall(args []string) error {
+	selectedEvents, args, err := parseBusHookInstallArgs(args)
+	if err != nil {
+		return err
+	}
 	// With no args, install for every known agent: each writes its own
 	// user-global config (Claude ~/.claude/settings.json, Codex
 	// ~/.codex/hooks.json), idempotent and env-guarded, so this is safe to run
 	// on every app start. With args, install only the named agents so the manual
 	// UI/CLI flow can repair exactly what the user chooses.
 	targets := agent.All()
+	if selectedEvents != nil && len(args) == 0 {
+		targets = targets[:0]
+		for _, ag := range agent.All() {
+			if len(busHookEventsForAgent(ag.Name())) > 0 {
+				targets = append(targets, ag)
+			}
+		}
+	}
 	if len(args) > 0 {
 		targets = targets[:0]
 		seen := map[string]bool{}
@@ -547,15 +628,97 @@ func runBusHookInstall(args []string) error {
 	}
 	var firstErr error
 	for _, ag := range targets {
-		if err := ag.InstallBusHooks(os.Stdout); err != nil {
+		var err error
+		if selectedEvents == nil {
+			err = ag.InstallBusHooks(os.Stdout)
+		} else {
+			events, evErr := validateBusHookEvents(ag.Name(), selectedEvents)
+			if evErr != nil {
+				err = evErr
+			} else {
+				err = installBusHooksForAgentEvents(ag, events)
+			}
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "bus-hook install (%s): %v\n", ag.Name(), err)
 			if firstErr == nil {
 				firstErr = err
 			}
 		}
 	}
-	if len(args) > 0 {
+	if len(args) > 0 || selectedEvents != nil {
 		return firstErr
 	}
 	return nil
+}
+
+func parseBusHookInstallArgs(args []string) ([]string, []string, error) {
+	var events []string
+	sawEvents := false
+	out := []string{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--events" || arg == "--event":
+			sawEvents = true
+			i++
+			if i >= len(args) {
+				return nil, nil, fmt.Errorf("%s requires a comma-separated hook list", arg)
+			}
+			events = append(events, splitHookEvents(args[i])...)
+		case strings.HasPrefix(arg, "--events="):
+			sawEvents = true
+			events = append(events, splitHookEvents(strings.TrimPrefix(arg, "--events="))...)
+		case strings.HasPrefix(arg, "--event="):
+			sawEvents = true
+			events = append(events, splitHookEvents(strings.TrimPrefix(arg, "--event="))...)
+		default:
+			out = append(out, arg)
+		}
+	}
+	if sawEvents && len(events) == 0 {
+		return nil, nil, fmt.Errorf("--events requires at least one hook")
+	}
+	if !sawEvents {
+		return nil, out, nil
+	}
+	return events, out, nil
+}
+
+func splitHookEvents(raw string) []string {
+	out := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		ev := strings.TrimSpace(part)
+		if ev != "" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func validateBusHookEvents(agentName string, events []string) ([]string, error) {
+	allowed := busHookEventsForAgent(agentName)
+	if len(allowed) == 0 {
+		return nil, fmt.Errorf("agent %q has no selectable bus hooks", agentName)
+	}
+	allowedSet := map[string]bool{}
+	for _, ev := range allowed {
+		allowedSet[ev] = true
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, ev := range events {
+		if !allowedSet[ev] {
+			return nil, fmt.Errorf("hook %q is not supported by %s", ev, agentName)
+		}
+		if seen[ev] {
+			continue
+		}
+		seen[ev] = true
+		out = append(out, ev)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("at least one hook must be selected")
+	}
+	return out, nil
 }

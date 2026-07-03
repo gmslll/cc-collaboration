@@ -153,6 +153,33 @@ var claudeBusHookExcludedEvents = []string{
 	"WorktreeCreate",
 }
 
+func CodexBusHookEvents() []string {
+	return append([]string(nil), codexBusHookEvents...)
+}
+
+func ClaudeBusHookEvents() []string {
+	return append([]string(nil), claudeBusHookEvents...)
+}
+
+func BusHooksInstalledEvents(path string, supported []string) []string {
+	root, err := loadSettings(path)
+	if err != nil {
+		return nil
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		return nil
+	}
+	out := []string{}
+	for _, ev := range supported {
+		arr, _ := hooks[ev].([]any)
+		if hookGroupsContain(arr, BusHookInvocation) {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
 // BusHooksPresent reports whether the bus hook is installed in the agent config
 // at [path] — i.e. the file exists and carries our hook. The canonical check for
 // `bus-hook status`. It matches BusHookInvocation, NOT the full BusHookCommand:
@@ -202,6 +229,10 @@ func busHooksPresentFor(path string, required, excluded []string) bool {
 // BusHookCommand is left untouched. Returns EnsureWritten only when it actually
 // changed the file.
 func EnsureClaudeBusHooks(settingsPath string) (EnsureResult, error) {
+	return EnsureClaudeBusHooksFor(settingsPath, claudeBusHookEvents)
+}
+
+func EnsureClaudeBusHooksFor(settingsPath string, selectedEvents []string) (EnsureResult, error) {
 	root, err := loadSettings(settingsPath)
 	if err != nil {
 		return EnsureAlreadyPresent, err
@@ -216,7 +247,14 @@ func EnsureClaudeBusHooks(settingsPath string) (EnsureResult, error) {
 			changed = true
 		}
 	}
+	selected := stringSet(selectedEvents)
 	for _, ev := range claudeBusHookEvents {
+		if !selected[ev] {
+			if removeHookEntry(hooks, ev, BusHookInvocation) {
+				changed = true
+			}
+			continue
+		}
 		if ensureHookEntry(hooks, ev, BusHookCommand) {
 			changed = true
 		}
@@ -235,6 +273,10 @@ func EnsureClaudeBusHooks(settingsPath string) (EnsureResult, error) {
 // codex rejects ("unknown field `PostToolUse`, expected `hooks`") and then
 // ignores the whole file; we migrate that layout here.
 func EnsureCodexBusHooks(hooksPath string) (EnsureResult, error) {
+	return EnsureCodexBusHooksFor(hooksPath, codexBusHookEvents)
+}
+
+func EnsureCodexBusHooksFor(hooksPath string, selectedEvents []string) (EnsureResult, error) {
 	root, err := loadSettings(hooksPath)
 	if err != nil {
 		return EnsureAlreadyPresent, err
@@ -255,7 +297,14 @@ func EnsureCodexBusHooks(hooksPath string) (EnsureResult, error) {
 			changed = true
 		}
 	}
+	selected := stringSet(selectedEvents)
 	for _, ev := range codexBusHookEvents {
+		if !selected[ev] {
+			if removeHookEntry(hooks, ev, BusHookInvocation) {
+				changed = true
+			}
+			continue
+		}
 		if ensureHookEntry(hooks, ev, BusHookCommand) {
 			changed = true
 		}
@@ -265,6 +314,14 @@ func EnsureCodexBusHooks(hooksPath string) (EnsureResult, error) {
 	}
 	root["hooks"] = hooks
 	return EnsureWritten, marshalWrite(hooksPath, root)
+}
+
+func stringSet(items []string) map[string]bool {
+	out := make(map[string]bool, len(items))
+	for _, item := range items {
+		out[item] = true
+	}
+	return out
 }
 
 // ensureHookEntry appends a matcher-less command hook for `event` into
