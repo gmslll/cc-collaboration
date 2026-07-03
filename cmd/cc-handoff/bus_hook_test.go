@@ -11,13 +11,13 @@ import (
 	"github.com/cc-collaboration/internal/localbus"
 )
 
-func TestBusHookResponse_PostToolUse_NonBlocking(t *testing.T) {
+func TestBusHookResponse_PostToolUse_NonBlockingFallback(t *testing.T) {
 	out := busHookResponse(busHookEvent{HookEventName: "PostToolUse"}, "msg", 1)
 	if out == nil {
 		t.Fatal("expected a response for PostToolUse")
 	}
 	if _, blocked := out["decision"]; blocked {
-		t.Error("PostToolUse must not block the turn")
+		t.Error("PostToolUse fallback must not use decision:block because Codex replaces the original tool result")
 	}
 	hso, _ := out["hookSpecificOutput"].(map[string]any)
 	if hso == nil || hso["additionalContext"] != "msg" {
@@ -31,7 +31,7 @@ func TestBusHookResponse_PostToolUse_NonBlocking(t *testing.T) {
 func TestBusHookResponse_EmptyEventDefaultsToPostToolUse(t *testing.T) {
 	out := busHookResponse(busHookEvent{}, "msg", 1)
 	if _, blocked := out["decision"]; blocked {
-		t.Error("empty event must default to the non-blocking shape")
+		t.Error("empty event fallback must not use decision:block")
 	}
 	hso, _ := out["hookSpecificOutput"].(map[string]any)
 	if hso == nil || hso["hookEventName"] != "PostToolUse" {
@@ -47,9 +47,73 @@ func TestBusHookResponse_StopBlocks(t *testing.T) {
 	if out["decision"] != "block" {
 		t.Errorf("Stop should block to pull a new turn, got decision=%v", out["decision"])
 	}
+	if out["reason"] != "msg" {
+		t.Errorf("Stop reason must carry the message body for Codex continuation, got %v", out["reason"])
+	}
 	hso, _ := out["hookSpecificOutput"].(map[string]any)
 	if hso == nil || hso["additionalContext"] != "msg" {
 		t.Errorf("missing additionalContext: %+v", out)
+	}
+}
+
+// The hook is installed on many lifecycle events for activity tracking, but bus
+// delivery must only drain on Stop. Events such as PermissionRequest do not
+// support the additionalContext shape this delivery path needs; clearing markers
+// there would lose the peer message.
+func TestBusHookDrain_UnsupportedEventLeavesInboxParked(t *testing.T) {
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	runDrainWith(t, `{"hook_event_name":"PermissionRequest","session_id":"codex-abc-123","cwd":"/repo"}`)
+
+	left, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 {
+		t.Fatalf("unsupported event should leave message parked, got %d left", len(left))
+	}
+	m, ok := readSessionMap(t, bus, sid)
+	if !ok {
+		t.Fatal("unsupported event should still record the agent session mapping")
+	}
+	if m["id"] != "codex-abc-123" {
+		t.Errorf("id=%v, want codex-abc-123", m["id"])
+	}
+}
+
+// PostToolUse has a documented feedback shape, but Codex uses it by replacing
+// the just-completed tool result. Peer-message delivery must not hide tool
+// output, so the hook records activity/session id and leaves the inbox for Stop.
+func TestBusHookDrain_PostToolUseLeavesInboxParked(t *testing.T) {
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	runDrainWith(t, `{"hook_event_name":"PostToolUse","session_id":"codex-abc-123","cwd":"/repo"}`)
+
+	left, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 {
+		t.Fatalf("PostToolUse should leave message parked, got %d left", len(left))
+	}
+	m, ok := readSessionMap(t, bus, sid)
+	if !ok {
+		t.Fatal("PostToolUse should still record the agent session mapping")
+	}
+	if m["id"] != "codex-abc-123" {
+		t.Errorf("id=%v, want codex-abc-123", m["id"])
 	}
 }
 
@@ -116,9 +180,9 @@ func TestBusHookDrain_SubagentDoesNotStealParentInbox(t *testing.T) {
 	}
 }
 
-// The complement: a top-level tool call (no agent_id) must drain normally, or
-// the gate would strand every message.
-func TestBusHookDrain_TopLevelDrainsInbox(t *testing.T) {
+// A top-level Stop (no agent_id) must drain normally, or messages would stay
+// parked forever once the target agent reaches the end of its turn.
+func TestBusHookDrain_TopLevelStopDrainsInbox(t *testing.T) {
 	bus := t.TempDir()
 	const sid = "ts-parent"
 	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi"}); err != nil {
@@ -128,7 +192,7 @@ func TestBusHookDrain_TopLevelDrainsInbox(t *testing.T) {
 	t.Setenv("CC_SESSION_ID", sid)
 
 	// no agent_id → top-level session.
-	runDrainWith(t, `{"hook_event_name":"PostToolUse"}`)
+	runDrainWith(t, `{"hook_event_name":"Stop"}`)
 
 	left, err := localbus.ListMsgs(bus, sid)
 	if err != nil {
@@ -165,7 +229,7 @@ func TestBusHookDrain_ContendedLockBailsWithoutDraining(t *testing.T) {
 	}
 	defer release()
 
-	runDrainWith(t, `{"hook_event_name":"PostToolUse"}`)
+	runDrainWith(t, `{"hook_event_name":"Stop"}`)
 
 	// Message must still be parked — the hook bailed instead of draining.
 	left, err := localbus.ListMsgs(bus, sid)
@@ -178,7 +242,7 @@ func TestBusHookDrain_ContendedLockBailsWithoutDraining(t *testing.T) {
 }
 
 // TestBusHookDrain_DrainsAfterLockReleased: the complement — once the
-// contending holder releases, the very next hook invocation drains normally.
+// contending holder releases, the very next Stop hook invocation drains normally.
 func TestBusHookDrain_DrainsAfterLockReleased(t *testing.T) {
 	bus := t.TempDir()
 	const sid = "ts-parent"
@@ -194,7 +258,7 @@ func TestBusHookDrain_DrainsAfterLockReleased(t *testing.T) {
 	}
 	release() // released before the hook runs
 
-	runDrainWith(t, `{"hook_event_name":"PostToolUse"}`)
+	runDrainWith(t, `{"hook_event_name":"Stop"}`)
 
 	left, err := localbus.ListMsgs(bus, sid)
 	if err != nil {
@@ -272,5 +336,84 @@ func TestBusHookDrain_NoSessionIdNoRecord(t *testing.T) {
 
 	if _, ok := readSessionMap(t, bus, ccID); ok {
 		t.Error("no session_id in payload should write no mapping")
+	}
+}
+
+func TestBusHookDrain_RecordsClaudeSpecificActivityFields(t *testing.T) {
+	bus := t.TempDir()
+	const ccID = "ts7"
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", ccID)
+
+	runDrainWith(t, `{
+		"hook_event_name":"TaskCreated",
+		"session_id":"claude-abc-123",
+		"cwd":"/repo",
+		"task_id":"task-001",
+		"task_subject":"Implement auth",
+		"task_description":"Add login and signup endpoints",
+		"teammate_name":"implementer",
+		"duration_ms":42
+	}`)
+
+	entries, err := os.ReadDir(filepath.Join(bus, "events", ccID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 activity record, got %d", len(entries))
+	}
+	raw, err := os.ReadFile(filepath.Join(bus, "events", ccID, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["task_id"] != "task-001" {
+		t.Errorf("task_id=%v, want task-001", m["task_id"])
+	}
+	if m["summary"] != "Implement auth" {
+		t.Errorf("summary=%v, want Implement auth", m["summary"])
+	}
+	if m["duration_ms"] != float64(42) {
+		t.Errorf("duration_ms=%v, want 42", m["duration_ms"])
+	}
+}
+
+func TestBusHookInstall_TargetsOnlyNamedAgent(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "codex-home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if err := runBusHookInstall([]string{"codex"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "hooks.json")); err != nil {
+		t.Fatalf("codex hooks should be written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings should not be written for codex-only install, err=%v", err)
+	}
+}
+
+func TestBusHookInstall_UnknownAgentErrors(t *testing.T) {
+	if err := runBusHookInstall([]string{"nope"}); err == nil {
+		t.Fatal("expected unknown agent error")
+	}
+}
+
+func TestBusHookInstall_EmptyAgentErrors(t *testing.T) {
+	if err := runBusHookInstall([]string{""}); err == nil {
+		t.Fatal("expected empty agent error")
+	}
+}
+
+func TestBusHookInstall_ManualAgentErrors(t *testing.T) {
+	if err := runBusHookInstall([]string{"manual"}); err == nil {
+		t.Fatal("expected manual agent error")
 	}
 }

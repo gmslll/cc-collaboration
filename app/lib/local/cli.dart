@@ -64,15 +64,26 @@ class Cli {
         workingDirectory: workingDirectory);
   }
 
-  // installBusHooks wires the local-bus PostToolUse + Stop hooks into the user's
-  // agent config (claude ~/.claude/settings.json, codex ~/.codex/hooks.json) so
-  // a sibling's message can interrupt a busy agent session mid-turn. Idempotent
-  // and env-guarded ($CC_BUS_DIR) so it stays scoped to app-spawned sessions;
-  // fire-and-forget on app start with errors swallowed.
-  static Future<void> installBusHooks() async {
+  // installBusHooks wires the local-bus lifecycle hooks into the user's agent
+  // config (claude ~/.claude/settings.json, codex ~/.codex/hooks.json) so app
+  // sessions record activity and receive parked peer messages at Stop.
+  // Idempotent and env-guarded ($CC_BUS_DIR) so it stays scoped to app-spawned
+  // sessions; fire-and-forget on app start with errors swallowed.
+  static Future<void> installBusHooks({
+    List<String> agents = const [],
+    bool throwOnError = false,
+  }) async {
     try {
-      await _exec(['bus-hook', 'install']);
-    } catch (_) {}
+      final res = await _exec(['bus-hook', 'install', ...agents]);
+      if (throwOnError && res.exitCode != 0) {
+        final err = (res.stderr as String).trim();
+        throw CliException(
+          err.isNotEmpty ? err : 'hook 安装失败 (exit ${res.exitCode})',
+        );
+      }
+    } catch (_) {
+      if (throwOnError) rethrow;
+    }
   }
 
   // pickup carves a worktree for the handoff in repoPath and returns the

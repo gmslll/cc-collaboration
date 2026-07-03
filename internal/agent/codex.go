@@ -72,10 +72,10 @@ func (codexAgent) RegisterMCP(ctx context.Context, opts setup.MCPRegisterOptions
 	return setup.RegisterCodex(ctx, opts, out)
 }
 
-// InstallBusHooks merges the bus PostToolUse + Stop hooks into
-// $CODEX_HOME/hooks.json (default ~/.codex/hooks.json). Codex's features.hooks
-// defaults on, so this fires in every Codex session — the $CC_BUS_DIR env guard
-// in the command keeps it a no-op outside app-spawned sessions. (Note: an
+// InstallBusHooks merges the bus lifecycle hooks into $CODEX_HOME/hooks.json
+// (default ~/.codex/hooks.json). Codex's features.hooks defaults on, so this
+// fires in every Codex session — the $CC_BUS_DIR env guard in the command keeps
+// it a no-op outside app-spawned sessions. (Note: an
 // automated/non-interactive Codex launch may also need
 // --dangerously-bypass-hook-trust; the desktop app passes it.)
 func (a codexAgent) InstallBusHooks(out io.Writer) error {

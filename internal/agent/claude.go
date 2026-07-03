@@ -66,7 +66,7 @@ func (claudeAgent) BusHookConfigPath() (string, error) {
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
 
-// InstallBusHooks merges the bus PostToolUse + Stop hooks into the config at
+// InstallBusHooks merges the bus lifecycle hooks into the config at
 // BusHookConfigPath (the env guard keeps them no-ops outside app sessions).
 func (a claudeAgent) InstallBusHooks(out io.Writer) error {
 	path, err := a.BusHookConfigPath()

@@ -175,6 +175,7 @@ class TerminalSession {
     _needsReview = v;
     _bumpActivity();
   }
+
   // overviewPreview caches the last computed glance preview (agent transcript
   // tail / terminal tail) so each overview broadcast reuses it instead of
   // re-reading the log. Refreshed by the workspace on turn boundaries.
@@ -191,7 +192,7 @@ class TerminalSession {
   // _busy = this agent is mid-turn (we submitted input; no finishing bell yet).
   // Read via [busy], which ANDs isAgent so it's only ever meaningful for agent
   // sessions. Drives local-bus delivery: a busy agent's incoming peer message is
-  // parked in its bus inbox for its PostToolUse/Stop hook to inject mid-turn,
+  // parked in its bus inbox for its Stop hook to inject as a continuation turn,
   // instead of pasting (which would just queue behind the running turn). Set
   // when a turn starts (a submit \r reaches an agent), cleared on the finishing
   // bell (_fireDone).
@@ -1301,7 +1302,7 @@ class _TerminalPaneState extends State<TerminalPane> {
         _sendSelectionToOnline();
       case 'interject':
         // Flutter showMenu has no submenu: reopen a target picker, then route
-        // the selection submit:true so a busy peer gets it mid-turn via its hook.
+        // the selection submit:true so a busy peer receives it via its Stop hook.
         final pick = await showPeerPicker(
           context,
           globalPos,

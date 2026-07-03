@@ -68,12 +68,12 @@ type Agent interface {
 	// installs a Stop hook only when this returns true.
 	SupportsHooks() bool
 
-	// InstallBusHooks wires the local session bus's PostToolUse + Stop hooks
-	// into the agent's user-global config (Claude: ~/.claude/settings.json,
-	// Codex: $CODEX_HOME/hooks.json) so a sibling session's message can
-	// interrupt a busy turn mid-flight. Idempotent and env-guarded — the hook
-	// is a no-op outside a desktop-app-spawned session — so it's safe to call
-	// on every app start. No-op for agents without a hook system (manual).
+	// InstallBusHooks wires the local session bus's lifecycle hooks into the
+	// agent's user-global config (Claude: ~/.claude/settings.json, Codex:
+	// $CODEX_HOME/hooks.json) so app sessions can record activity and receive
+	// parked sibling messages at Stop. Idempotent and env-guarded — the hook is
+	// a no-op outside a desktop-app-spawned session — so it's safe to call on
+	// every app start. No-op for agents without a hook system (manual).
 	//
 	// Distinct from SupportsHooks(), which gates the cross-machine
 	// wake-on-comment Stop hook (Claude-only): the bus hook contract is shared,

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'hook_activity.dart';
 import 'local_bus.dart';
 
 // Shared, UI-free projection of a terminal session for the "会话总览" surface.
@@ -91,6 +92,10 @@ class SessionCard {
   // card came from a legacy phone client that predates this field.
   final String? agentSessionId;
   final String? workdir;
+  // Small, recent execution trace for overview cards. This is intentionally
+  // short; full per-session activity still streams through the dedicated
+  // activity channel when a session is opened/watched.
+  final List<HookActivity> recentActivity;
   // isSupervisor distinguishes a 总管 session from a plain agent one of the
   // same agentKind — TerminalSession.agentKind alone doesn't encode this (it
   // returns bare 'claude'/'codex' either way), but respawning a todo bound to
@@ -113,6 +118,7 @@ class SessionCard {
     required this.preview,
     this.agentSessionId,
     this.workdir,
+    this.recentActivity = const [],
     this.isSupervisor = false,
   });
 
@@ -130,25 +136,36 @@ class SessionCard {
     'preview': preview,
     'agentSessionId': agentSessionId,
     'workdir': workdir,
+    if (recentActivity.isNotEmpty)
+      'recentActivity': [for (final a in recentActivity) a.toJson()],
     'isSupervisor': isSupervisor,
   };
 
-  factory SessionCard.fromJson(Map<dynamic, dynamic> m) => SessionCard(
-    sid: (m['sid'] ?? '').toString(),
-    label: (m['label'] ?? '').toString(),
-    agentKind: (m['agent'] ?? '').toString(),
-    isAgent: m['isAgent'] == true,
-    workspace: (m['ws'] ?? '').toString(),
-    project: (m['proj'] ?? '').toString(),
-    worktree: m['wt']?.toString(),
-    status: sessionStatusFromName(m['status'] as String?),
-    statusDetail: (m['statusDetail'] ?? '').toString(),
-    usageLabel: m['usage']?.toString(),
-    preview: (m['preview'] ?? '').toString(),
-    agentSessionId: m['agentSessionId']?.toString(),
-    workdir: m['workdir']?.toString(),
-    isSupervisor: m['isSupervisor'] == true,
-  );
+  factory SessionCard.fromJson(Map<dynamic, dynamic> m) {
+    final rawActivity = m['recentActivity'];
+    return SessionCard(
+      sid: (m['sid'] ?? '').toString(),
+      label: (m['label'] ?? '').toString(),
+      agentKind: (m['agent'] ?? '').toString(),
+      isAgent: m['isAgent'] == true,
+      workspace: (m['ws'] ?? '').toString(),
+      project: (m['proj'] ?? '').toString(),
+      worktree: m['wt']?.toString(),
+      status: sessionStatusFromName(m['status'] as String?),
+      statusDetail: (m['statusDetail'] ?? '').toString(),
+      usageLabel: m['usage']?.toString(),
+      preview: (m['preview'] ?? '').toString(),
+      agentSessionId: m['agentSessionId']?.toString(),
+      workdir: m['workdir']?.toString(),
+      recentActivity: rawActivity is List
+          ? [
+              for (final a in rawActivity)
+                if (a is Map) HookActivity.fromWire(a),
+            ]
+          : const [],
+      isSupervisor: m['isSupervisor'] == true,
+    );
+  }
 }
 
 // SessionOverviewStore is the in-process source of the overview snapshot on the

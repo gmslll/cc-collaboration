@@ -75,13 +75,13 @@ func EnsureStopHook(repoRoot string) (EnsureResult, error) {
 	return EnsureWritten, nil
 }
 
-// BusHookCommand is the command installed under PostToolUse + Stop for the
-// local session bus. It self-gates on $CC_BUS_DIR — the env var the desktop
-// app injects into every session it spawns — so it's a sub-millisecond shell
-// no-op in any other Claude/Codex session (other repos, plain terminals) and
-// only does real work (`cc-handoff bus-hook` drains the session's bus inbox)
-// inside an app-spawned session. That env guard is how one user-global hook
-// stays scoped to "only the app's sessions".
+// BusHookCommand is installed on agent lifecycle hooks for the local session
+// bus. It self-gates on $CC_BUS_DIR — the env var the desktop app injects into
+// every session it spawns — so it's a sub-millisecond shell no-op in any other
+// Claude/Codex session (other repos, plain terminals) and only does real work
+// (`cc-handoff bus-hook` records activity and drains the session's bus inbox at
+// Stop) inside an app-spawned session. That env guard is how one user-global
+// hook stays scoped to "only the app's sessions".
 // BusHookInvocation is the bare command the hook runs — the part that survives
 // JSON-escaping verbatim (no quotes, &, < or > to escape), so it's the reliable
 // signature to detect in a written config (see BusHooksPresent).
@@ -89,10 +89,9 @@ const BusHookInvocation = "cc-handoff bus-hook"
 
 const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && ` + BusHookInvocation + ` || true`
 
-// busHookEvents are the lifecycle events the bus hook rides. PostToolUse + Stop
-// power local-bus interjection delivery; the broader set is also recorded as a
-// lightweight activity stream for the desktop/phone UI.
-var busHookEvents = []string{
+// codexBusHookEvents are the lifecycle events currently documented by Codex.
+// The bus hook records all of them; only Stop drains the local-bus inbox.
+var codexBusHookEvents = []string{
 	"SessionStart",
 	"UserPromptSubmit",
 	"PreToolUse",
@@ -103,6 +102,55 @@ var busHookEvents = []string{
 	"SubagentStart",
 	"SubagentStop",
 	"Stop",
+}
+
+// claudeBusHookEvents are the lifecycle events currently documented by Claude
+// Code that are useful to record by default. Claude supports a broader surface
+// than Codex, so keep the install lists separate; adding Claude-only event names
+// to Codex hooks.json can break Codex.
+//
+// Do not install MessageDisplay by default: it fires for streamed display
+// deltas and would spawn this command many times during one assistant response,
+// turning lightweight activity logging into visible output latency.
+//
+// Do not install WorktreeCreate by default either: it is not a passive
+// notification hook. Claude expects this event's hook output to provide the
+// worktree path, so a logging-only handler with empty stdout can interfere with
+// Claude's own worktree creation.
+var claudeBusHookEvents = []string{
+	"SessionStart",
+	"Setup",
+	"UserPromptSubmit",
+	"UserPromptExpansion",
+	"PreToolUse",
+	"PermissionRequest",
+	"PermissionDenied",
+	"PostToolUse",
+	"PostToolUseFailure",
+	"PostToolBatch",
+	"PreCompact",
+	"PostCompact",
+	"SubagentStart",
+	"SubagentStop",
+	"TaskCreated",
+	"TaskCompleted",
+	"TeammateIdle",
+	"Stop",
+	"StopFailure",
+	"Notification",
+	"ConfigChange",
+	"WorktreeRemove",
+	"CwdChanged",
+	"FileChanged",
+	"InstructionsLoaded",
+	"SessionEnd",
+	"Elicitation",
+	"ElicitationResult",
+}
+
+var claudeBusHookExcludedEvents = []string{
+	"MessageDisplay",
+	"WorktreeCreate",
 }
 
 // BusHooksPresent reports whether the bus hook is installed in the agent config
@@ -116,8 +164,40 @@ func BusHooksPresent(path string) bool {
 	return err == nil && strings.Contains(string(b), BusHookInvocation)
 }
 
-// EnsureClaudeBusHooks merges the bus PostToolUse + Stop hooks into a Claude
-// Code settings.json (typically the user-global ~/.claude/settings.json so it
+func ClaudeBusHooksPresent(path string) bool {
+	return busHooksPresentFor(path, claudeBusHookEvents, claudeBusHookExcludedEvents)
+}
+
+func CodexBusHooksPresent(path string) bool {
+	return busHooksPresentFor(path, codexBusHookEvents, nil)
+}
+
+func busHooksPresentFor(path string, required, excluded []string) bool {
+	root, err := loadSettings(path)
+	if err != nil {
+		return false
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		return false
+	}
+	for _, ev := range required {
+		arr, _ := hooks[ev].([]any)
+		if !hookGroupsContain(arr, BusHookInvocation) {
+			return false
+		}
+	}
+	for _, ev := range excluded {
+		arr, _ := hooks[ev].([]any)
+		if hookGroupsContain(arr, BusHookInvocation) {
+			return false
+		}
+	}
+	return true
+}
+
+// EnsureClaudeBusHooks merges the bus lifecycle hooks into a Claude Code
+// settings.json (typically the user-global ~/.claude/settings.json so it
 // applies to app sessions in any repo). Idempotent: an event already carrying
 // BusHookCommand is left untouched. Returns EnsureWritten only when it actually
 // changed the file.
@@ -131,7 +211,12 @@ func EnsureClaudeBusHooks(settingsPath string) (EnsureResult, error) {
 		hooks = map[string]any{}
 	}
 	changed := false
-	for _, ev := range busHookEvents {
+	for _, ev := range claudeBusHookExcludedEvents {
+		if removeHookEntry(hooks, ev, BusHookInvocation) {
+			changed = true
+		}
+	}
+	for _, ev := range claudeBusHookEvents {
 		if ensureHookEntry(hooks, ev, BusHookCommand) {
 			changed = true
 		}
@@ -161,7 +246,7 @@ func EnsureCodexBusHooks(hooksPath string) (EnsureResult, error) {
 	changed := false
 	// Migrate the old rejected layout: lift any event arrays written at the file
 	// root under "hooks" and drop them from the root.
-	for _, ev := range busHookEvents {
+	for _, ev := range codexBusHookEvents {
 		if old, ok := root[ev]; ok {
 			if _, exists := hooks[ev]; !exists {
 				hooks[ev] = old
@@ -170,7 +255,7 @@ func EnsureCodexBusHooks(hooksPath string) (EnsureResult, error) {
 			changed = true
 		}
 	}
-	for _, ev := range busHookEvents {
+	for _, ev := range codexBusHookEvents {
 		if ensureHookEntry(hooks, ev, BusHookCommand) {
 			changed = true
 		}
@@ -202,6 +287,64 @@ func ensureHookEntry(container map[string]any, event, command string) bool {
 		},
 	})
 	container[event] = arr
+	return true
+}
+
+func removeHookEntry(container map[string]any, event, commandSig string) bool {
+	existing, ok := container[event].([]any)
+	if !ok || len(existing) == 0 {
+		return false
+	}
+	changed := false
+	next := make([]any, 0, len(existing))
+	for _, e := range existing {
+		entry, _ := e.(map[string]any)
+		if entry == nil {
+			next = append(next, e)
+			continue
+		}
+		if cmd, _ := entry["command"].(string); strings.Contains(cmd, commandSig) {
+			changed = true
+			continue
+		}
+		hooks, _ := entry["hooks"].([]any)
+		if len(hooks) == 0 {
+			next = append(next, e)
+			continue
+		}
+		filtered := make([]any, 0, len(hooks))
+		for _, h := range hooks {
+			hook, _ := h.(map[string]any)
+			cmd, _ := hook["command"].(string)
+			if hook != nil && strings.Contains(cmd, commandSig) {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, h)
+		}
+		if len(filtered) == 0 {
+			changed = true
+			continue
+		}
+		if len(filtered) != len(hooks) {
+			clone := map[string]any{}
+			for k, v := range entry {
+				clone[k] = v
+			}
+			clone["hooks"] = filtered
+			next = append(next, clone)
+			continue
+		}
+		next = append(next, e)
+	}
+	if !changed {
+		return false
+	}
+	if len(next) == 0 {
+		delete(container, event)
+	} else {
+		container[event] = next
+	}
 	return true
 }
 

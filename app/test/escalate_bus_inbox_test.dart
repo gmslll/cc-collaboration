@@ -65,7 +65,7 @@ void main() {
       final m = LocalMsg(from, target.id, 'hello', true);
       final path = parkOneMessage(host, target, m);
 
-      // Simulate the target's own hook (PostToolUse/Stop) draining it before
+      // Simulate the target's own Stop hook draining it before
       // the escalate window elapses — ack = file gone, no separate protocol.
       File(path).deleteSync();
 

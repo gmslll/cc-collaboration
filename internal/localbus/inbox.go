@@ -3,10 +3,10 @@
 // one of two ways depending on whether that session's agent is mid-turn:
 //
 //   - idle  → paste the text straight into the target's PTY (immediate turn);
-//   - busy  → drop the message into this inbox, where the target session's
-//     PostToolUse / Stop hook (`cc-handoff bus-hook`) drains it as
-//     additionalContext, so a running turn sees the message at its next tool
-//     boundary instead of having it queue behind the whole turn.
+//   - busy  → drop the message into this inbox, where the target session's Stop
+//     hook (`cc-handoff bus-hook`) drains it as additionalContext at turn end.
+//     The same hook binary is installed on other lifecycle events for activity
+//     logging/session-id capture, but those events do not clear this inbox.
 //
 // The inbox is keyed by the receiver's session id, the same CC_SESSION_ID the
 // app injects into the session env. This file is the on-disk contract between

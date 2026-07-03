@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
+import 'local/hook_activity.dart';
 import 'local/prefs.dart';
 import 'local/path_utils.dart';
 import 'local/session_overview.dart';
@@ -768,6 +769,94 @@ Widget sessionPreviewBox(String preview, {double height = 100}) {
       ),
     ),
   );
+}
+
+Widget sessionActivityList(List<HookActivity> items, {int take = 3}) {
+  final shown = items.take(take).toList();
+  if (shown.isEmpty) {
+    return const SizedBox.shrink();
+  }
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
+    decoration: BoxDecoration(
+      color: CcColors.bg.withValues(alpha: 0.28),
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+      border: Border.all(color: CcColors.borderSoft),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.bolt_rounded,
+              size: 12,
+              color: CcColors.subtle,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              '执行记录',
+              style: CcType.code(size: 10.5, color: CcColors.subtle),
+            ),
+          ],
+        ),
+        const SizedBox(height: 5),
+        for (final a in shown) _sessionActivityLine(a),
+      ],
+    ),
+  );
+}
+
+Widget _sessionActivityLine(HookActivity a) {
+  final detail = a.detail.trim();
+  return Padding(
+    padding: const EdgeInsets.only(top: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 36,
+          child: Text(
+            _activityClock(a.at),
+            style: CcType.code(size: 9.5, color: CcColors.subtle),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                a.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: CcColors.muted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (detail.isNotEmpty)
+                Text(
+                  detail,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 9.5, color: CcColors.subtle),
+                ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+String _activityClock(DateTime t) {
+  final h = t.hour.toString().padLeft(2, '0');
+  final m = t.minute.toString().padLeft(2, '0');
+  final s = t.second.toString().padLeft(2, '0');
+  return '$h:$m:$s';
 }
 
 // --- robot avatar (per-session generated icon) -----------------------------

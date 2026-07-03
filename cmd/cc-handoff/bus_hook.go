@@ -19,14 +19,14 @@ import (
 
 // runBusHook is the local-bus counterpart of runStopHook. Two modes:
 //
-//   - `cc-handoff bus-hook install` wires the PostToolUse + Stop hooks into
+//   - `cc-handoff bus-hook install` wires lifecycle hooks into
 //     each agent's user-global config (idempotent; the desktop app runs this
 //     on start).
 //   - `cc-handoff bus-hook` (no args) is the hook handler itself. The agent
 //     pipes the hook event on stdin; we drain this session's bus inbox
 //     ($CC_BUS_DIR/inbox/$CC_SESSION_ID) and hand the messages back as
-//     additionalContext so a peer's message surfaces mid-turn (PostToolUse, at
-//     the next tool boundary) or, failing that, at turn end (Stop).
+//     additionalContext at turn end (Stop), without replacing a just-completed
+//     tool result.
 //
 // Same hook contract on Claude Code and Codex, so this one binary serves both.
 func runBusHook(ctx context.Context, args []string) error {
@@ -42,7 +42,7 @@ func runBusHook(ctx context.Context, args []string) error {
 // runBusHookStatus prints, as JSON, whether the bus hook is installed in each
 // agent's config. Backs the desktop app's hook self-check so the config paths
 // and the "installed" criterion have ONE source of truth (the agent package +
-// setup.BusHooksPresent) instead of being reimplemented in the app.
+// setup's agent-specific checks) instead of being reimplemented in the app.
 func runBusHookStatus() error {
 	type entry struct {
 		Agent     string `json:"agent"`
@@ -55,10 +55,17 @@ func runBusHookStatus() error {
 		if err != nil || path == "" {
 			continue // no hook config for this agent (manual)
 		}
+		installed := setup.BusHooksPresent(path)
+		switch ag.Name() {
+		case "claude":
+			installed = setup.ClaudeBusHooksPresent(path)
+		case "codex":
+			installed = setup.CodexBusHooksPresent(path)
+		}
 		out = append(out, entry{
 			Agent:     ag.Name(),
 			Path:      path,
-			Installed: setup.BusHooksPresent(path),
+			Installed: installed,
 		})
 	}
 	return json.NewEncoder(os.Stdout).Encode(out)
@@ -75,7 +82,7 @@ type busHookEvent struct {
 	// drain the PARENT session's inbox into the subagent's context and delete
 	// it — the parent agent and user would never see those peer messages. We
 	// skip draining whenever AgentID is set so messages stay parked for the
-	// parent's own next tool boundary / Stop / the app's idle sweep.
+	// parent's own Stop hook or the app's idle sweep.
 	AgentID string `json:"agent_id"`
 	// SessionID + Cwd are the agent's OWN session identity, carried in every
 	// Claude Code and Codex hook event. We record CC_SESSION_ID -> SessionID so
@@ -95,8 +102,8 @@ var busHookDrainLockTimeout = 2 * time.Second
 func runBusHookDrain() error {
 	// Drain stdin unconditionally and first: the agent pipes a hook payload and
 	// returning without consuming it can block the writer or surface an EPIPE in
-	// the transcript. Parse is best-effort — an empty/garbage payload still
-	// drains the inbox, just via the safe (non-blocking) PostToolUse shape.
+	// the transcript. Parse is best-effort; an empty/garbage payload simply
+	// records no event-specific details and will not drain the inbox.
 	raw, _ := io.ReadAll(os.Stdin)
 	var ev busHookEvent
 	_ = json.Unmarshal(raw, &ev)
@@ -124,10 +131,25 @@ func runBusHookDrain() error {
 	// it lands within the session's first turn regardless of bus traffic.
 	recordAgentSession(busDir, sid, ev.SessionID, ev.Cwd)
 
+	// The hook is installed on every lifecycle event so the app can record a
+	// useful activity stream, but bus message delivery itself is only safe on
+	// Stop. Its delivery contract does not risk hiding a tool result. Codex's
+	// PostToolUse "block" feedback replaces the just-completed tool result,
+	// which is wrong for peer-message delivery; keep messages parked until Stop
+	// can pull a clean continuation turn.
+	//
+	// Other events either do not support additionalContext for this purpose
+	// (PermissionRequest, PreCompact, PostCompact), would be surprising delivery
+	// points, or would replace useful tool output (PostToolUse). Leave messages
+	// parked for Stop instead of
+	// clearing them into an ignored hook response.
+	if !supportsBusDeliveryEvent(ev.HookEventName) {
+		return nil
+	}
+
 	// A Stop already inside a hook-driven continuation must not re-block (a
-	// wake-loop). Bail BEFORE draining so the messages stay parked for the next
-	// tool boundary (PostToolUse) or a later top-level Stop — clearing them here
-	// would silently drop them.
+	// wake-loop). Bail BEFORE draining so the messages stay parked for a later
+	// top-level Stop — clearing them here would silently drop them.
 	if ev.HookEventName == "Stop" && ev.StopHookActive {
 		return nil
 	}
@@ -174,6 +196,10 @@ func runBusHookDrain() error {
 	return nil
 }
 
+func supportsBusDeliveryEvent(name string) bool {
+	return name == "Stop"
+}
+
 func recordHookActivity(busDir, sid string, raw []byte, ev busHookEvent) {
 	if busDir == "" || sid == "" || len(raw) == 0 {
 		return
@@ -191,25 +217,62 @@ func recordHookActivity(busDir, sid string, raw []byte, ev busHookEvent) {
 	}
 	at := time.Now().UTC()
 	out := map[string]any{
-		"at":              at.Format(time.RFC3339Nano),
-		"event":           event,
-		"session_id":      str(m["session_id"]),
-		"turn_id":         str(m["turn_id"]),
-		"agent_id":        str(m["agent_id"]),
-		"cwd":             str(m["cwd"]),
-		"model":           str(m["model"]),
-		"permission_mode": str(m["permission_mode"]),
-		"transcript_path": str(m["transcript_path"]),
-		"tool_name":       str(m["tool_name"]),
-		"tool_use_id":     str(m["tool_use_id"]),
-		"exit_code":       m["exit_code"],
-		"source":          str(m["source"]),
-		"stop_active":     m["stop_hook_active"],
+		"at":                    at.Format(time.RFC3339Nano),
+		"event":                 event,
+		"session_id":            str(m["session_id"]),
+		"turn_id":               str(m["turn_id"]),
+		"agent_id":              str(m["agent_id"]),
+		"agent_type":            str(m["agent_type"]),
+		"agent_transcript_path": str(m["agent_transcript_path"]),
+		"cwd":                   str(m["cwd"]),
+		"model":                 str(m["model"]),
+		"permission_mode":       str(m["permission_mode"]),
+		"transcript_path":       str(m["transcript_path"]),
+		"tool_name":             str(m["tool_name"]),
+		"tool_use_id":           str(m["tool_use_id"]),
+		"exit_code":             m["exit_code"],
+		"source":                str(m["source"]),
+		"trigger":               str(m["trigger"]),
+		"stop_active":           m["stop_hook_active"],
+	}
+	for _, key := range []string{
+		"duration_ms",
+		"task_id",
+		"task_subject",
+		"task_description",
+		"teammate_name",
+		"team_name",
+		"notification_type",
+		"message_id",
+		"index",
+		"final",
+		"error",
+		"error_details",
+		"file_path",
+		"old_cwd",
+		"new_cwd",
+		"mcp_server_name",
+		"mode",
+		"action",
+		"elicitation_id",
+		"worktree_path",
+		"permission_suggestions",
+		"background_tasks",
+		"session_crons",
+	} {
+		if v, ok := m[key]; ok {
+			out[key] = v
+		}
 	}
 	addSnippet(out, "prompt", m["prompt"], 1200)
+	addSnippet(out, "message", m["message"], 1200)
+	addSnippet(out, "delta", m["delta"], 1200)
 	addSnippet(out, "tool_input", m["tool_input"], 2000)
 	addSnippet(out, "tool_response", firstPresent(m, "tool_response", "tool_output"), 2000)
 	addSnippet(out, "last_assistant_message", m["last_assistant_message"], 2000)
+	addSnippet(out, "content", m["content"], 1200)
+	addSnippet(out, "requested_schema", m["requested_schema"], 1200)
+	addSnippet(out, "summary", activitySummary(m), 2000)
 
 	dir := filepath.Join(busDir, "events", sid)
 	name := fmt.Sprintf("%020d-%s.json", at.UnixNano(), sanitizeEventName(event))
@@ -247,6 +310,34 @@ func addSnippet(out map[string]any, key string, v any, limit int) {
 	if s != "" {
 		out[key] = s
 	}
+}
+
+func activitySummary(m map[string]any) string {
+	for _, key := range []string{
+		"prompt",
+		"message",
+		"delta",
+		"task_subject",
+		"task_description",
+		"error_details",
+		"error",
+		"last_assistant_message",
+		"file_path",
+		"source",
+		"trigger",
+		"mcp_server_name",
+		"action",
+		"notification_type",
+	} {
+		if s := snippet(m[key], 2000); s != "" {
+			return s
+		}
+	}
+	oldCwd, newCwd := str(m["old_cwd"]), str(m["new_cwd"])
+	if oldCwd != "" || newCwd != "" {
+		return strings.TrimSpace(oldCwd + " -> " + newCwd)
+	}
+	return ""
 }
 
 func str(v any) string {
@@ -370,18 +461,16 @@ func pruneHookActivities(dir string, keep int) {
 	}
 }
 
-// busHookResponse shapes the hook output for the event. Stop blocks to pull the
-// agent into a fresh turn with the messages (the cross-machine wake-on-comment
-// pattern); every other event (PostToolUse, and the empty default) injects
-// additionalContext without blocking so the running turn keeps going. The "Stop
-// already inside a continuation" case is handled upstream in runBusHookDrain (it
-// bails before draining so messages stay parked), so this is only reached when a
-// response is actually wanted.
+// busHookResponse shapes the Stop-hook output. Stop blocks to pull the agent
+// into a fresh turn with the messages (the cross-machine wake-on-comment
+// pattern). The "Stop already inside a continuation" case is handled upstream in
+// runBusHookDrain (it bails before draining so messages stay parked), so this is
+// only reached when a response is wanted.
 func busHookResponse(ev busHookEvent, ctxText string, n int) map[string]any {
 	if ev.HookEventName == "Stop" {
 		return map[string]any{
 			"decision": "block",
-			"reason":   fmt.Sprintf("cc-handoff: 收到 %d 条同机会话消息,见 hookSpecificOutput.additionalContext。", n),
+			"reason":   ctxText,
 			"hookSpecificOutput": map[string]any{
 				"hookEventName":     ev.HookEventName,
 				"additionalContext": ctxText,
@@ -424,13 +513,49 @@ func recordAgentSession(busDir, ccID, agentSessionID, cwd string) {
 }
 
 func runBusHookInstall(args []string) error {
-	// Install for every known agent: each writes its own user-global config
-	// (Claude ~/.claude/settings.json, Codex ~/.codex/hooks.json), idempotent
-	// and env-guarded, so this is safe to run on every app start. manual no-ops.
-	for _, ag := range agent.All() {
+	// With no args, install for every known agent: each writes its own
+	// user-global config (Claude ~/.claude/settings.json, Codex
+	// ~/.codex/hooks.json), idempotent and env-guarded, so this is safe to run
+	// on every app start. With args, install only the named agents so the manual
+	// UI/CLI flow can repair exactly what the user chooses.
+	targets := agent.All()
+	if len(args) > 0 {
+		targets = targets[:0]
+		seen := map[string]bool{}
+		for _, name := range args {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return fmt.Errorf("agent name is required")
+			}
+			ag, err := agent.Resolve(name)
+			if err != nil {
+				return err
+			}
+			if seen[ag.Name()] {
+				continue
+			}
+			path, err := ag.BusHookConfigPath()
+			if err != nil {
+				return err
+			}
+			if path == "" {
+				return fmt.Errorf("agent %q has no bus hook config", ag.Name())
+			}
+			seen[ag.Name()] = true
+			targets = append(targets, ag)
+		}
+	}
+	var firstErr error
+	for _, ag := range targets {
 		if err := ag.InstallBusHooks(os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "bus-hook install (%s): %v\n", ag.Name(), err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
+	}
+	if len(args) > 0 {
+		return firstErr
 	}
 	return nil
 }

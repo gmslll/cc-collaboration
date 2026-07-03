@@ -1136,6 +1136,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                   ov.usageLabel,
                   statusDetail: showSessionContent ? ov.statusDetail : '',
                 ),
+                if (showSessionContent && ov.recentActivity.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  sessionActivityList(ov.recentActivity),
+                ],
               ],
               if (showSessionContent) ...[
                 const SizedBox(height: 8),

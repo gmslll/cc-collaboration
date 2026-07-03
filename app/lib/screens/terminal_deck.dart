@@ -901,13 +901,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // success, or a human-readable error (unknown/ambiguous target, self-send,
   // inbox write failure) that LocalBus writes back so `msg send` exits non-zero.
   //
-  // Idle target with a clean input row → paste straight into its PTY (an immediate
-  // new turn). Busy agent OR one whose input row is dirty (the user has typed
-  // unsubmitted keystrokes) → park in its bus inbox so its PostToolUse/Stop hook
-  // injects the message as its own clean turn — instead of queuing behind a running
-  // turn, or racing the paste against what the user is typing (which drops one of
-  // them). --no-submit fills and non-agent targets always paste (no hook to drain
-  // an inbox, and a fill is meant to sit in the input box for review).
+  // Idle target with a clean input row → paste straight into its PTY (an
+  // immediate new turn). Busy agent OR one whose input row is dirty (the user has
+  // typed unsubmitted keystrokes) → park in its bus inbox so its Stop hook injects
+  // the message as a clean continuation turn — instead of racing the paste against
+  // a running agent or what the user is typing (which drops one of them).
+  // --no-submit fills and non-agent targets always paste (no hook to drain an
+  // inbox, and a fill is meant to sit in the input box for review).
   String? deliverLocalMessage(LocalMsg m) {
     final (target, err) = _resolveTarget(m.to);
     if (target == null) return err; // err is non-null when target is null
@@ -984,9 +984,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // Chosen well under `msg send`'s default 5s --timeout (so the CLI caller
   // gets its "ok" receipt long before this fires — parking already counts as
   // delivered from the caller's perspective, same as before this existed) but
-  // generous enough that a normal PostToolUse/Stop firing shortly after park
-  // always wins the race — escalation is the bounded fallback, not the common
-  // path.
+  // generous enough that a normal Stop firing shortly after park wins the race —
+  // escalation is the bounded fallback, not the common path.
   static const Duration _escalateTimeout = Duration(seconds: 3);
 
   // _scheduleEscalate arms a bounded wait-then-force-deliver for one parked
@@ -1142,9 +1141,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   void _sendToPeer(String fromId, String targetId, String text) =>
       deliverLocalMessage(LocalMsg(fromId, targetId, text, false));
 
-  // _interjectToPeer is the submit:true variant: deliverLocalMessage routes it to
-  // a busy agent's bus inbox (hook injects it mid-turn) or runs it immediately
-  // when the target is idle — same routing as `cc-handoff msg send`.
+  // _interjectToPeer is the submit:true variant: deliverLocalMessage routes it
+  // to a busy agent's bus inbox (Stop hook injects it as a continuation turn) or
+  // runs it immediately when the target is idle — same routing as
+  // `cc-handoff msg send`.
   void _interjectToPeer(String fromId, String targetId, String text) =>
       deliverLocalMessage(LocalMsg(fromId, targetId, text, true));
 
@@ -1422,8 +1422,8 @@ class TerminalDeck extends StatelessWidget {
   groupsFor;
   final void Function(String fromId, String targetId, String text)?
   onSendToPeer;
-  // onInterjectToPeer(fromId, targetId, text): submit:true forwarding (interject
-  // into a busy peer's turn via its hook, or run when idle); null hides it.
+  // onInterjectToPeer(fromId, targetId, text): submit:true forwarding (park for
+  // a busy peer's Stop hook, or run when idle); null hides it.
   final void Function(String fromId, String targetId, String text)?
   onInterjectToPeer;
   // onSendToOnline(text): forward a selection to the cross-user picker; null

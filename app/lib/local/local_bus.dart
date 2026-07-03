@@ -58,13 +58,13 @@ List<HookActivity> localBusHookActivities(String sessionId, {int limit = 20}) {
 //
 // One session's inbox (<bus>/inbox/<id>/) has two independent drainers that
 // must never act on the same parked message at once: the receiving agent's
-// own `cc-handoff bus-hook` (PostToolUse/Stop, Go side — ListMsgs+ClearMsgs in
+// own `cc-handoff bus-hook` (Stop delivery, Go side — ListMsgs+ClearMsgs in
 // runBusHookDrain) and this app's escalate-timeout fallback in
 // terminal_deck.dart (a message the target's hook hasn't drained within a few
 // seconds gets force-pasted instead of waiting forever — the "parked
 // forever" bug this exists to fix). Without coordination the failure mode is
-// a double delivery: the hook injects the message as additionalContext at the
-// same moment the app is independently pasting the same text into the PTY.
+// a double delivery: the Stop hook wakes the agent with the parked message at
+// the same moment the app is independently pasting the same text into the PTY.
 //
 // Both sides coordinate through the SAME claim file, <inbox>/.lock, using the
 // one mutual-exclusion primitive guaranteed to behave identically in Go and

@@ -351,7 +351,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         }
       }
     }
-    final latest = _latestHookActivity(s);
+    final activities = _recentHookActivities(s, limit: 4);
+    final latest = _latestHookActivityFrom(activities);
     final status = _statusFor(s, latest);
     final detail = _statusDetailFor(s, status, latest);
     return SessionCard(
@@ -368,13 +369,27 @@ class _WorkspacePageState extends State<WorkspacePage>
       preview: s.overviewPreview ?? '',
       agentSessionId: s.agentSessionId,
       workdir: s.workdir,
+      recentActivity: [
+        for (final a in activities) a.overviewSummary(),
+      ],
       isSupervisor: s.supervisor,
     );
   }
 
   HookActivity? _latestHookActivity(TerminalSession s) {
     if (!s.isAgent) return null;
-    final recent = localBusHookActivities(s.id, limit: 8);
+    return _latestHookActivityFrom(_recentHookActivities(s, limit: 8));
+  }
+
+  List<HookActivity> _recentHookActivities(
+    TerminalSession s, {
+    int limit = 8,
+  }) {
+    if (!s.isAgent) return const [];
+    return localBusHookActivities(s.id, limit: limit);
+  }
+
+  HookActivity? _latestHookActivityFrom(List<HookActivity> recent) {
     for (final a in recent) {
       if (a.event != 'SessionStart') {
         return a;
@@ -874,8 +889,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       const Duration(seconds: 1),
       (_) => _publishHookActivities(),
     );
-    // Wire the bus PostToolUse/Stop hooks so a busy agent session can be
-    // interrupted by a sibling's message mid-turn. Idempotent + env-guarded;
+    // Wire the bus lifecycle hooks so busy agent sessions can record activity
+    // and receive sibling messages at Stop. Idempotent + env-guarded;
     // fire-and-forget so a missing/old cc-handoff binary never blocks startup.
     Cli.installBusHooks();
     _connectRelayPresence();

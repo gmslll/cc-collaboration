@@ -61,11 +61,12 @@ class _AccountPageState extends State<AccountPage> {
   );
 
   // Local-bus / session-id hooks self-check (desktop only). The app auto-installs
-  // the PostToolUse+Stop hook into ~/.claude/settings.json + ~/.codex/hooks.json
+  // the lifecycle bus hook into ~/.claude/settings.json + ~/.codex/hooks.json
   // on start; this shows whether they're actually present (e.g. on a fresh
   // machine) and offers a manual reinstall.
   List<({String name, String path, bool ok})>? _hooks;
   bool _reinstalling = false;
+  final Set<String> _reinstallingAgents = {};
 
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -139,14 +140,43 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  Future<void> _reinstallHooks() async {
-    setState(() => _reinstalling = true);
-    await Cli.installBusHooks();
+  Future<void> _reinstallHooks({String? agent}) async {
+    setState(() {
+      if (agent == null) {
+        _reinstalling = true;
+      } else {
+        _reinstallingAgents.add(agent);
+      }
+    });
+    Object? installError;
+    try {
+      await Cli.installBusHooks(
+        agents: agent == null ? const [] : [agent],
+        throwOnError: true,
+      );
+    } catch (e) {
+      installError = e;
+    }
     await _loadHookStatus();
     if (!mounted) return;
-    setState(() => _reinstalling = false);
-    final all = _hooks?.every((h) => h.ok) ?? false;
-    snack(context, all ? 'hook 已安装' : 'hook 安装未全部成功,请检查 agent 是否已安装');
+    setState(() {
+      if (agent == null) {
+        _reinstalling = false;
+      } else {
+        _reinstallingAgents.remove(agent);
+      }
+    });
+    final ok = agent == null
+        ? (_hooks?.every((h) => h.ok) ?? false)
+        : (_hooks?.any((h) => h.name == agent && h.ok) ?? false);
+    snack(
+      context,
+      ok
+          ? 'hook 已安装'
+          : installError == null
+              ? 'hook 安装未成功,请检查 agent 是否已安装'
+              : errorText(installError),
+    );
   }
 
   Future<void> _saveLocalConfig() async {
@@ -481,7 +511,9 @@ class _AccountPageState extends State<AccountPage> {
                   ),
                 ),
                 TextButton.icon(
-                  onPressed: _reinstalling ? null : _reinstallHooks,
+                  onPressed: _reinstalling || _reinstallingAgents.isNotEmpty
+                      ? null
+                      : () => _reinstallHooks(),
                   icon: _reinstalling
                       ? const SizedBox(
                           width: 14,
@@ -515,6 +547,7 @@ class _AccountPageState extends State<AccountPage> {
 
   Widget _hookRow(({String name, String path, bool ok}) h) {
     final color = h.ok ? CcColors.ok : CcColors.danger;
+    final installing = _reinstallingAgents.contains(h.name);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -548,6 +581,19 @@ class _AccountPageState extends State<AccountPage> {
           Text(
             h.ok ? '已安装' : '未安装',
             style: TextStyle(fontSize: 11, color: color),
+          ),
+          const SizedBox(width: 6),
+          TextButton(
+            onPressed: _reinstalling || installing
+                ? null
+                : () => _reinstallHooks(agent: h.name),
+            child: installing
+                ? const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('只装这个'),
           ),
         ],
       ),

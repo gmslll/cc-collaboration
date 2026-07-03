@@ -287,7 +287,10 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Text(c.sid, style: CcType.code(size: 10.5, color: CcColors.subtle)),
+                  Text(
+                    c.sid,
+                    style: CcType.code(size: 10.5, color: CcColors.subtle),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -296,6 +299,10 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
                 c.usageLabel,
                 statusDetail: c.statusDetail,
               ),
+              if (c.recentActivity.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                sessionActivityList(c.recentActivity),
+              ],
               const SizedBox(height: 8),
               sessionPreviewBox(c.preview),
             ],
