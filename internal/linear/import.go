@@ -76,6 +76,9 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 	if teamKey == "" {
 		return ImportResult{}, fmt.Errorf("no Linear team key: pass --team, or set [integrations.linear] team_key in .cc-handoff.toml")
 	}
+	if linearProjectID != "" && !looksLikeUUID(linearProjectID) {
+		return ImportResult{}, fmt.Errorf("linear project_id must be a UUID (got %q); in Linear Web open the project and copy its model UUID", linearProjectID)
+	}
 	if relayURL == "" || token == "" || me == "" {
 		return ImportResult{}, fmt.Errorf("incomplete user config: relay_url/token/identity must be set")
 	}
@@ -190,6 +193,25 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, te
 		}
 	}
 	return true, nil
+}
+
+func looksLikeUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // mapIssueStatus maps Linear's state.type onto our (now Linear-shaped)

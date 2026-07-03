@@ -63,6 +63,10 @@ final List<_BoardColumnDef> _boardColumnDefs = [
     (title: _boardColumnTitles[s]!, statuses: {s}, dropStatus: s),
 ];
 
+final _uuidPattern = RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+);
+
 // TodosPage is the top-level 待办 destination: a filterable list (left) + the
 // selected todo's detail/edit panel (right), mirroring HandoffsPage's split
 // layout. All scope/status/project filtering happens in memory over
@@ -191,11 +195,16 @@ class _TodosPageState extends State<TodosPage> {
       if (mounted) snack(context, '先配置 Linear team_key');
       return;
     }
+    final linearProjectId = _linearProjectId.trim();
+    if (linearProjectId.isNotEmpty && !_uuidPattern.hasMatch(linearProjectId)) {
+      if (mounted) snack(context, 'Linear project_id 必须是完整 UUID，当前值可能少了一位');
+      return;
+    }
     setState(() => _importingLinear = true);
     try {
       final out = await Cli.todoImportLinear(
         teamKey: teamKey,
-        linearProjectId: _linearProjectId.trim(),
+        linearProjectId: linearProjectId,
       );
       if (mounted) snack(context, out.isNotEmpty ? out : '已从 Linear 导入');
       await _store.refresh();
@@ -313,6 +322,10 @@ class _TodosPageState extends State<TodosPage> {
     final token = tokenCtl.text.trim();
     final team = teamCtl.text.trim();
     final project = projectCtl.text.trim();
+    if (project.isNotEmpty && !_uuidPattern.hasMatch(project)) {
+      if (mounted) snack(context, 'Linear project_id 必须是完整 UUID，当前值可能少了一位');
+      return;
+    }
     try {
       if (_canUseLocalCli) {
         await Cli.configSet(linearToken: token);

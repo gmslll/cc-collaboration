@@ -74,3 +74,14 @@ func TestMatchAssigneeIdentity(t *testing.T) {
 		t.Errorf("case-insensitive match: got %q, want %q", got, want)
 	}
 }
+
+func TestLooksLikeUUID(t *testing.T) {
+	valid := "0b643943-60c1-4df5-9f56-2c63c5268767"
+	if !looksLikeUUID(valid) {
+		t.Fatalf("looksLikeUUID(%q) = false, want true", valid)
+	}
+	invalid := "b643943-60c1-4df5-9f56-2c63c5268767"
+	if looksLikeUUID(invalid) {
+		t.Fatalf("looksLikeUUID(%q) = true, want false", invalid)
+	}
+}

@@ -37,7 +37,8 @@ type graphqlRequest struct {
 }
 
 type graphqlError struct {
-	Message string `json:"message"`
+	Message    string          `json:"message"`
+	Extensions json.RawMessage `json:"extensions,omitempty"`
 }
 
 type graphqlResponse struct {
@@ -78,9 +79,41 @@ func (c *Client) Query(ctx context.Context, query string, vars map[string]any) (
 		return nil, fmt.Errorf("linear decode: %w (body=%s)", err, truncate(raw, 200))
 	}
 	if len(gr.Errors) > 0 {
-		return nil, fmt.Errorf("linear graphql: %s", gr.Errors[0].Message)
+		return nil, fmt.Errorf("linear graphql: %s", formatGraphQLErrors(gr.Errors))
 	}
 	return gr.Data, nil
+}
+
+func formatGraphQLErrors(errs []graphqlError) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	msg := errs[0].Message
+	if len(errs[0].Extensions) == 0 {
+		return msg
+	}
+	var ext struct {
+		ValidationErrors []struct {
+			Children []struct {
+				Constraints map[string]string `json:"constraints"`
+			} `json:"children"`
+			Constraints map[string]string `json:"constraints"`
+		} `json:"validationErrors"`
+	}
+	if err := json.Unmarshal(errs[0].Extensions, &ext); err != nil {
+		return msg
+	}
+	for _, ve := range ext.ValidationErrors {
+		for _, detail := range ve.Constraints {
+			return msg + ": " + detail
+		}
+		for _, child := range ve.Children {
+			for _, detail := range child.Constraints {
+				return msg + ": " + detail
+			}
+		}
+	}
+	return msg
 }
 
 func truncate(b []byte, n int) string {
