@@ -399,9 +399,24 @@ class TerminalSession {
   // path, shared by usage scanning and the overview preview so it's resolved
   // once (not per refresh/tick). Null for non-agent sessions / before the log
   // exists (left uncached so it keeps retrying until it appears).
+  //
+  // Only cached once [agentSessionId] is known: before then (codex capture
+  // still in flight), resolveTranscriptPath falls back to a cwd/mtime guess
+  // that can land on a sibling session's rollout — caching that guess would
+  // pin the wrong transcript for this session's whole lifetime even after
+  // _captureAgentId later lands the real id. So while agentSessionId is null,
+  // every call re-resolves (cheap: a directory scan) instead of trusting the
+  // first guess forever.
   Future<String?> transcriptPath() async {
     if (!isAgent) return null;
-    return _usagePath ??= await resolveTranscriptPath(
+    if (agentSessionId != null) {
+      return _usagePath ??= await resolveTranscriptPath(
+        agentKind: agentKind,
+        agentSessionId: agentSessionId,
+        workdir: workdir,
+      );
+    }
+    return resolveTranscriptPath(
       agentKind: agentKind,
       agentSessionId: agentSessionId,
       workdir: workdir,

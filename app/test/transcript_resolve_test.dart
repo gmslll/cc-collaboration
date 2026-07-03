@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:app/local/agent_transcript.dart';
+import 'package:app/screens/terminal_pane.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // resolveTranscriptPath reads ~/.claude/projects and ~/.codex/sessions under
@@ -149,5 +150,44 @@ void main() {
     expect(p, isNull,
         reason: 'concurrent sibling sessions in the same cwd must not '
             'resolve to either one\'s transcript');
+  });
+
+  // The round-3 fix: TerminalSession.transcriptPath() caches its resolution
+  // in _usagePath so it's not re-resolved on every preview refresh. Before
+  // this fix it cached unconditionally — including a pre-capture cwd/mtime
+  // guess — so if that guess landed on a sibling's rollout (the only
+  // candidate that happened to exist yet), it stayed pinned to the wrong
+  // transcript for the session's whole lifetime even after _captureAgentId
+  // later learned the real id. transcriptPath() must only cache once
+  // agentSessionId is known; while it's null every call has to re-resolve.
+  test(
+      'codex: a pre-capture guess is never cached, so capturing the real id '
+      'later re-resolves to this session\'s own rollout, not the stale guess',
+      () async {
+    if (!isolated) return;
+    const wd = '/w/codex-e';
+    final dir = codexBucketDir();
+    // Only the sibling's rollout exists when the preview first refreshes
+    // (this session's own log hasn't been flushed yet) — the only guess
+    // available, and it belongs to someone else.
+    writeRollout(dir, 'sibling', cwd: wd, id: 'sibling-id');
+
+    final s = TerminalSession(wd, 'codex', agent: 'codex');
+    addTearDown(s.dispose);
+
+    final guessed = await s.transcriptPath();
+    expect(guessed, contains('rollout-sibling.jsonl'),
+        reason: 'the only candidate available pre-capture is the sibling\'s');
+
+    // _captureAgentId lands the real id, and this session's own rollout
+    // finally exists too.
+    const ownId = 'own-id-1234';
+    final own = writeRollout(dir, 'own', cwd: wd, id: ownId);
+    s.agentSessionId = ownId;
+
+    final resolved = await s.transcriptPath();
+    expect(resolved, own.path,
+        reason: 'must re-resolve to the now-known exact id, not stay pinned '
+            'to the earlier pre-capture guess');
   });
 }
