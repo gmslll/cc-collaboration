@@ -6,6 +6,20 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-07-03
+
+### Added
+
+- **待办指派给 AI 会话自动落地为文件** — 指派时不再只把标题+正文粘贴进终端：完整内容(元信息/描述/评论/附件清单)会写到目标会话 workdir 下的 `.cc-handoff/todos/<id>/todo.md`，附件下载到同目录 `attachments/`，终端里只提示"完整内容见 …，用 Read 工具打开"，AI 因此能读到评论和附件、也知道怎么读附件。任一环节失败都会回退到原来的整段粘贴。
+- **指派即"开始处理"** — 指派待办给会话时，若状态仍是 Backlog/Todo/Triage 会自动跳到"进行中"；已经在 In Review/Done/Canceled/Duplicate 的不受影响。指派与状态在后端仍是独立维度，这只是指派弹窗里加的一层 UI 便利。
+- **Git 日志的 Tag 右键菜单** — Tags 列表新增 Push Tag / Copy Tag Name / New Branch from tag / Checkout Tag，本地打好 tag 后可以直接在图形界面推送，不用切回终端。
+- **总线 hook 支持按事件类型选择安装** — 账号页现在能看到每个 agent 已安装/缺失的具体 hook 事件，并可以按事件粒度选择要装哪些，不再是全有或全无。
+
+### Fixed
+
+- **手动选择的 hook 事件重启后丢失** — 补上了持久化，并收紧了偏好读取逻辑，避免又回退成默认全装。
+- **会话总览的执行记录默认占用过多空间** — 活动记录默认收起，需要时再展开查看。
+
 ## [0.9.1] - 2026-07-03
 
 ### Added
