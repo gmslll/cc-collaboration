@@ -6,6 +6,13 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-07-04
+
+### Fixed
+
+- **Linear 项目 UUID 配置防呆** — 导入前校验 `project_id` 必须是完整 UUID，并把 Linear GraphQL validation 详情透出，避免只看到泛化的 `Argument Validation Error`。
+- **待办页 Linear 项目可快速切回全部** — 已选择 Linear 项目时新增“全部 Linear”入口，并在导入成功后清空状态筛选，避免看起来卡在无匹配状态。
+
 ## [0.9.7] - 2026-07-04
 
 ### Fixed
