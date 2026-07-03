@@ -5394,7 +5394,23 @@ class _WorkspacePageState extends State<WorkspacePage>
                           _welcomeAction(
                             'Open Project',
                             Icons.account_tree_outlined,
-                            () => _openLeftTool(_LeftToolView.project),
+                            // With nothing configured yet, revealing the tree
+                            // sidebar just shows a one-line "no workspace"
+                            // hint — indistinguishable from "the button did
+                            // nothing" to a first-time user expecting a
+                            // folder picker (like every other "Open
+                            // Project"). Go straight to the same
+                            // pick-a-folder-and-import flow the sidebar's
+                            // import icon already uses; once at least one
+                            // workspace exists, fall back to just focusing
+                            // the (now non-empty, actually useful) sidebar.
+                            _busy
+                                ? null
+                                : (_cfg.workspaces.isEmpty
+                                      ? _importWorkspace
+                                      : () => _openLeftTool(
+                                          _LeftToolView.project,
+                                        )),
                           ),
                           _welcomeAction(
                             'Show Terminal',
