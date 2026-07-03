@@ -772,7 +772,79 @@ Widget sessionPreviewBox(String preview, {double height = 100}) {
 }
 
 Widget sessionActivityList(List<HookActivity> items, {int take = 3}) {
-  final shown = items.take(take).toList();
+  if (items.isEmpty) {
+    return const SizedBox.shrink();
+  }
+  return _SessionActivityDisclosure(items: items, take: take);
+}
+
+class _SessionActivityDisclosure extends StatefulWidget {
+  final List<HookActivity> items;
+  final int take;
+
+  const _SessionActivityDisclosure({required this.items, required this.take});
+
+  @override
+  State<_SessionActivityDisclosure> createState() =>
+      _SessionActivityDisclosureState();
+}
+
+class _SessionActivityDisclosureState
+    extends State<_SessionActivityDisclosure> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = widget.items.take(widget.take).toList();
+    if (shown.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    if (!_expanded) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(CcRadius.sm),
+          onTap: () => setState(() => _expanded = true),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.bolt_rounded,
+                  size: 12,
+                  color: CcColors.subtle,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  '执行记录 ${widget.items.length}',
+                  style: CcType.code(size: 10.5, color: CcColors.subtle),
+                ),
+                const SizedBox(width: 3),
+                const Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 14,
+                  color: CcColors.subtle,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return _sessionActivityPanel(
+      shown,
+      total: widget.items.length,
+      onCollapse: () => setState(() => _expanded = false),
+    );
+  }
+}
+
+Widget _sessionActivityPanel(
+  List<HookActivity> shown, {
+  required int total,
+  required VoidCallback onCollapse,
+}) {
   if (shown.isEmpty) {
     return const SizedBox.shrink();
   }
@@ -796,8 +868,21 @@ Widget sessionActivityList(List<HookActivity> items, {int take = 3}) {
             ),
             const SizedBox(width: 5),
             Text(
-              '执行记录',
+              '执行记录 $total',
               style: CcType.code(size: 10.5, color: CcColors.subtle),
+            ),
+            const Spacer(),
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: IconButton(
+                tooltip: '收起执行记录',
+                padding: EdgeInsets.zero,
+                iconSize: 14,
+                color: CcColors.subtle,
+                onPressed: onCollapse,
+                icon: const Icon(Icons.keyboard_arrow_up_rounded),
+              ),
             ),
           ],
         ),
