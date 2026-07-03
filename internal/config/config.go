@@ -146,14 +146,13 @@ type Integrations struct {
 	Linear LinearIntegration `toml:"linear,omitempty"`
 }
 
-// LinearIntegration controls Linear-issue sync. cc-handoff itself never calls
-// the Linear API; instead, when Enabled is true, MCP tool results get an
-// extra "## 同步到 Linear" block appended at the end, listing the exact
-// mcp__linear__* calls Claude should make. Authentication and HTTP are
-// delegated to whichever Linear MCP server the user already has configured.
+// LinearIntegration controls Linear issue sync/import. When Enabled is true,
+// MCP tool results can include a "## 同步到 Linear" instruction block; import
+// and notification flows also use the user-level LinearPersonalToken directly.
 type LinearIntegration struct {
 	Enabled       bool     `toml:"enabled"`
 	TeamKey       string   `toml:"team_key"`
+	ProjectID     string   `toml:"project_id,omitempty"`
 	DefaultLabels []string `toml:"default_labels,omitempty"`
 	// MCPPrefix overrides the Linear MCP tool-name prefix (default "linear"),
 	// for installs that namespace their MCP tools differently.

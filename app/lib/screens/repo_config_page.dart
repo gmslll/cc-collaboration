@@ -212,6 +212,8 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
         _switch('enabled', c.linearEnabled,
             (v) => setState(() => c.linearEnabled = v)),
         _text('team_key', c.teamKey, (v) => c.teamKey = v),
+        _text('project_id(Linear 项目 UUID)', c.linearProjectId,
+            (v) => c.linearProjectId = v),
         _text('default_labels(逗号分隔)', c.defaultLabels,
             (v) => c.defaultLabels = v),
         _text('mcp_prefix', c.mcpPrefix, (v) => c.mcpPrefix = v),

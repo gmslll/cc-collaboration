@@ -42,7 +42,7 @@ class RepoConfig {
   String inboxDir;
   // [integrations.linear]
   bool linearEnabled, syncOnSubmit, syncOnPickup, syncOnComment, syncOnRetract;
-  String teamKey, defaultLabels, mcpPrefix, pollInterval, types;
+  String teamKey, linearProjectId, defaultLabels, mcpPrefix, pollInterval, types;
 
   // the raw parsed map, kept so save() preserves any unknown top-level keys.
   final Map<String, dynamic> raw;
@@ -73,6 +73,7 @@ class RepoConfig {
     this.syncOnComment = false,
     this.syncOnRetract = false,
     this.teamKey = '',
+    this.linearProjectId = '',
     this.defaultLabels = '',
     this.mcpPrefix = '',
     this.pollInterval = '',
@@ -131,6 +132,7 @@ class RepoConfig {
       inboxDir: _s(inbox['dir']),
       linearEnabled: lin['enabled'] == true,
       teamKey: _s(lin['team_key']),
+      linearProjectId: _s(lin['project_id']),
       defaultLabels: _list(lin['default_labels']),
       mcpPrefix: _s(lin['mcp_prefix']),
       syncOnSubmit: lin['sync_on_submit'] == true,
@@ -195,6 +197,7 @@ class RepoConfig {
     final lin = <String, dynamic>{};
     _putBool(lin, 'enabled', linearEnabled);
     _putStr(lin, 'team_key', teamKey);
+    _putStr(lin, 'project_id', linearProjectId);
     _putList(lin, 'default_labels', defaultLabels);
     _putStr(lin, 'mcp_prefix', mcpPrefix);
     _putBool(lin, 'sync_on_submit', syncOnSubmit);
@@ -205,8 +208,15 @@ class RepoConfig {
     _putStr(notif, 'poll_interval', pollInterval);
     _putList(notif, 'types', types);
     if (notif.isNotEmpty) lin['notifications'] = notif;
+    final integrations =
+        Map<String, dynamic>.from((m['integrations'] as Map?) ?? const {});
     if (lin.isNotEmpty) {
-      m['integrations'] = {'linear': lin};
+      integrations['linear'] = lin;
+    } else {
+      integrations.remove('linear');
+    }
+    if (integrations.isNotEmpty) {
+      m['integrations'] = integrations;
     } else {
       m.remove('integrations');
     }

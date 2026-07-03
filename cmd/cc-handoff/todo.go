@@ -32,7 +32,7 @@ const todoUsage = `cc-handoff todo — 待办事项(个人 / 团队),经 relay �
   cc-handoff todo assign <id> <identity> [--session ID] [--label TEXT]
   cc-handoff todo assign <id> --unassign
   cc-handoff todo comment <id> <body...> | --list <id>
-  cc-handoff todo import-linear --team KEY [--project ID]
+  cc-handoff todo import-linear --team KEY [--linear-project ID] [--project ID]
 
 create 选项:
   --body TEXT                  正文(Markdown)
@@ -59,6 +59,8 @@ status 取值: triage | backlog | todo | in_progress | in_review | done | cancel
 
 import-linear 选项:
   --team KEY     Linear team key(如 ENG)。省略则用 .cc-handoff.toml [integrations.linear] team_key
+  --linear-project ID
+                 Linear project UUID。省略则导入整个 Linear team
   --project ID   导入到的 cc-handoff Project ID(团队待办)。不传 = 个人待办
 
   按 source_ref(linear:<identifier>) 幂等:已导入过的 issue 会更新标题/正文/优先级/
@@ -487,6 +489,7 @@ func runTodoComment(ctx context.Context, args []string) error {
 func runTodoImportLinear(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("todo import-linear", flag.ContinueOnError)
 	team := fs.String("team", "", "Linear team key(如 ENG),省略则用 .cc-handoff.toml [integrations.linear] team_key")
+	linearProject := fs.String("linear-project", "", "Linear project UUID; 省略则导入整个 Linear team")
 	project := fs.String("project", "", "导入到的 cc-handoff Project ID(团队待办);不传 = 个人待办")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -496,11 +499,15 @@ func runTodoImportLinear(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := linear.ImportTeamIssuesForRepo(ctx, cwd, *team, *project)
+	result, err := linear.ImportTeamIssuesForRepo(ctx, cwd, *team, *linearProject, *project)
 	if err != nil {
 		return relayCompatError(err, "todo import-linear")
 	}
-	fmt.Printf("✓ imported from Linear team %s: %d issue(s) — %d created, %d updated\n",
-		result.TeamKey, result.Issues, result.Created, result.Updated)
+	scope := fmt.Sprintf("team %s", result.TeamKey)
+	if result.LinearProjectID != "" {
+		scope = fmt.Sprintf("%s project %s", scope, result.LinearProjectID)
+	}
+	fmt.Printf("✓ imported from Linear %s: %d issue(s) — %d created, %d updated\n",
+		scope, result.Issues, result.Created, result.Updated)
 	return nil
 }

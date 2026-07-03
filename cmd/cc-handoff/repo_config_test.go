@@ -43,6 +43,7 @@ dir = ".cc-handoff/inbox"
 [integrations.linear]
 enabled = true
 team_key = "ENG"
+project_id = "proj-123"
 default_labels = ["handoff"]
 sync_on_submit = true
 
@@ -83,7 +84,8 @@ func TestLoadRepo_FullFeatured(t *testing.T) {
 		r.Triggers.PreLaunch != "nvm use 18" {
 		t.Fatalf("triggers: %+v", r.Triggers)
 	}
-	if !r.Integrations.Linear.Enabled || r.Integrations.Linear.TeamKey != "ENG" {
+	if !r.Integrations.Linear.Enabled || r.Integrations.Linear.TeamKey != "ENG" ||
+		r.Integrations.Linear.ProjectID != "proj-123" {
 		t.Fatalf("linear: %+v", r.Integrations.Linear)
 	}
 	if r.Integrations.Linear.Notifications.PollInterval != "5m" {

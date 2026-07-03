@@ -6,6 +6,19 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-07-03
+
+### Added
+
+- **Linear 导入支持按本地项目配置过滤** — 每个 repo 的 `.cc-handoff.toml` 可配置 `[integrations.linear] project_id`，导入时按 `team_key` + Linear Project UUID 拉取；待办页导入前由用户在项目下拉中明确选择目标 cc-handoff 项目，避免自动猜测。
+- **待办页 Linear 配置说明** — 团队待办视图新增帮助入口，说明 `linear_personal_token`、`team_key`、Linear Project UUID 获取方式和导入流程。
+
+### Fixed
+
+- **待办看板隐藏空状态列** — 看板只展示当前筛选下有内容的状态列，整页无结果时显示统一空态，不再铺满空列。
+- **Linear 导入防止跨项目误更新** — 已导入到其他 cc-handoff 项目的 Linear issue 会提示处理旧待办，不再静默更新错误项目。
+- **项目配置保存保留其它 integration** — 保存 Linear 配置时不再覆盖 `[integrations]` 下的其它未知配置。
+
 ## [0.9.3] - 2026-07-03
 
 ### Fixed

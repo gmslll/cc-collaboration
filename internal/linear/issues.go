@@ -30,15 +30,34 @@ type Issue struct {
 	DueDate       *time.Time
 }
 
-// teamIssuesQuery filters to a single team by its short key (e.g. "ENG") and
-// pulls the fields the todo-import flow maps onto a todoschema.Todo. Capped
-// at a single page of 250 — good enough for "keep re-running import to stay
-// in sync"; a team with more open+closed issues than that would need a
+// teamIssuesQuery filters to a single team by its short key (e.g. "ENG").
+// projectIssuesQuery further narrows the source to one Linear project UUID.
+// Both pull the fields the todo-import flow maps onto a todoschema.Todo.
+// Capped at a single page of 250 — good enough for "keep re-running import to
+// stay in sync"; a team with more open+closed issues than that would need a
 // follow-up cursor loop (out of scope for now, same tradeoff pollQuery in
 // poll.go makes with first: 50).
 const teamIssuesQuery = `
 query CCHandoffTeamIssues($teamKey: String!) {
   issues(filter: { team: { key: { eq: $teamKey } } }, first: 250, orderBy: updatedAt) {
+    nodes {
+      identifier
+      url
+      title
+      description
+      state { name type }
+      priority
+      assignee { email }
+      labels { nodes { name } }
+      dueDate
+    }
+  }
+}
+`
+
+const projectIssuesQuery = `
+query CCHandoffProjectIssues($teamKey: String!, $projectID: String!) {
+  issues(filter: { team: { key: { eq: $teamKey } }, project: { id: { eq: $projectID } } }, first: 250, orderBy: updatedAt) {
     nodes {
       identifier
       url
@@ -84,11 +103,17 @@ type issueNode struct {
 }
 
 // GetTeamIssues fetches every issue (up to the first page — see
-// teamIssuesQuery) belonging to the Linear team identified by teamKey,
-// newest-updated first. Reuses c exactly like PollOnce does (poll.go) —
-// no separate client construction here.
-func GetTeamIssues(ctx context.Context, c *Client, teamKey string) ([]Issue, error) {
-	raw, err := c.Query(ctx, teamIssuesQuery, map[string]any{"teamKey": teamKey})
+// teamIssuesQuery/projectIssuesQuery) belonging to the Linear team identified
+// by teamKey, optionally narrowed to projectID, newest-updated first. Reuses c
+// exactly like PollOnce does (poll.go) — no separate client construction here.
+func GetTeamIssues(ctx context.Context, c *Client, teamKey, projectID string) ([]Issue, error) {
+	query := teamIssuesQuery
+	vars := map[string]any{"teamKey": teamKey}
+	if projectID != "" {
+		query = projectIssuesQuery
+		vars["projectID"] = projectID
+	}
+	raw, err := c.Query(ctx, query, vars)
 	if err != nil {
 		return nil, err
 	}

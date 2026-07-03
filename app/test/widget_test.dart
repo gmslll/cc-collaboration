@@ -210,7 +210,11 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('repocfg');
     try {
       final c = RepoConfig(
-        raw: const {},
+        raw: const {
+          'integrations': {
+            'other': {'enabled': true}
+          }
+        },
         partner: 'alex@frontend',
         partners: 'a@x, b@y',
         base: 'origin/main',
@@ -218,6 +222,7 @@ void main() {
         terminalApp: 'iterm2',
         linearEnabled: true,
         teamKey: 'ENG',
+        linearProjectId: 'proj-123',
         types: 'mention',
         rules: [
           RuleCfg(
@@ -236,7 +241,9 @@ void main() {
       expect(back.terminalApp, 'iterm2');
       expect(back.linearEnabled, isTrue);
       expect(back.teamKey, 'ENG');
+      expect(back.linearProjectId, 'proj-123');
       expect(back.types, 'mention');
+      expect((back.raw['integrations'] as Map?)?['other'], isNotNull);
       expect(back.rules.length, 1);
       expect(back.rules.first.whenPathMatches, '^x/');
       expect(back.rules.first.suggestCreate, isTrue);

@@ -13,11 +13,12 @@ import (
 // ImportResult summarizes one `cc-handoff todo import-linear` /
 // import_linear_issues run.
 type ImportResult struct {
-	TeamKey   string
-	ProjectID string
-	Issues    int
-	Created   int
-	Updated   int
+	TeamKey         string
+	LinearProjectID string
+	ProjectID       string
+	Issues          int
+	Created         int
+	Updated         int
 }
 
 // ImportTeamIssuesForRepo is the shared "do the whole import" entry point
@@ -27,9 +28,11 @@ type ImportResult struct {
 // clients, fetches every issue for teamKey (falling back to the repo's
 // configured [integrations.linear] team_key when teamKey is empty), and
 // upserts each as a todo keyed by SourceRef ("linear:<identifier>") so
-// re-running is idempotent. projectID scopes created todos to a cc-handoff
-// team project; empty means personal todos owned by the caller's identity.
-func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, projectID string) (ImportResult, error) {
+// re-running is idempotent. linearProjectID optionally narrows the Linear
+// source to one project under the team; empty imports the whole team.
+// projectID scopes created todos to a cc-handoff team project; empty means
+// personal todos owned by the caller's identity.
+func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID, projectID string) (ImportResult, error) {
 	res, err := config.Resolve(cwd)
 	if err != nil {
 		return ImportResult{}, err
@@ -38,8 +41,14 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, projectID string
 		return ImportResult{}, fmt.Errorf("linear_personal_token not set in user config (~/.config/cc-handoff/config.toml). " +
 			"Generate one at Linear → Account → Security & Access → Personal API Keys.")
 	}
+	teamKey = strings.TrimSpace(teamKey)
+	linearProjectID = strings.TrimSpace(linearProjectID)
+	projectID = strings.TrimSpace(projectID)
 	if teamKey == "" {
-		teamKey = res.Linear.TeamKey
+		teamKey = strings.TrimSpace(res.Linear.TeamKey)
+	}
+	if linearProjectID == "" {
+		linearProjectID = strings.TrimSpace(res.Linear.ProjectID)
 	}
 	if teamKey == "" {
 		return ImportResult{}, fmt.Errorf("no Linear team key: pass --team, or set [integrations.linear] team_key in .cc-handoff.toml")
@@ -62,12 +71,21 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, projectID string
 		}
 	}
 
-	issues, err := GetTeamIssues(ctx, gql, teamKey)
+	issues, err := GetTeamIssues(ctx, gql, teamKey, linearProjectID)
 	if err != nil {
-		return ImportResult{}, fmt.Errorf("fetch linear issues for team %s: %w", teamKey, err)
+		source := teamKey
+		if linearProjectID != "" {
+			source = fmt.Sprintf("%s project %s", teamKey, linearProjectID)
+		}
+		return ImportResult{}, fmt.Errorf("fetch linear issues for %s: %w", source, err)
 	}
 
-	result := ImportResult{TeamKey: teamKey, ProjectID: projectID, Issues: len(issues)}
+	result := ImportResult{
+		TeamKey:         teamKey,
+		LinearProjectID: linearProjectID,
+		ProjectID:       projectID,
+		Issues:          len(issues),
+	}
 	for _, iss := range issues {
 		created, err := upsertTodoFromIssue(ctx, todoClient, iss, projectID, candidates)
 		if err != nil {
@@ -97,6 +115,10 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, pr
 		return false, fmt.Errorf("lookup: %w", err)
 	}
 	if found {
+		if existing.ProjectID != projectID {
+			return false, fmt.Errorf("already imported as todo %s in project %q, cannot update into project %q; move or delete the existing todo first",
+				existing.ID, existing.ProjectID, projectID)
+		}
 		title := iss.Title
 		if _, err := c.PatchTodo(ctx, existing.ID, transport.TodoPatch{
 			Title:    &title,

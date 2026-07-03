@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ func TestGetTeamIssues(t *testing.T) {
 
 	c := NewClient("lin_test_token")
 	c.Endpoint = srv.URL
-	issues, err := GetTeamIssues(t.Context(), c, "ENG")
+	issues, err := GetTeamIssues(t.Context(), c, "ENG", "")
 	if err != nil {
 		t.Fatalf("GetTeamIssues: %v", err)
 	}
@@ -81,6 +82,37 @@ func TestGetTeamIssues(t *testing.T) {
 	}
 	if got1.DueDate != nil {
 		t.Errorf("issue[1].DueDate = %v, want nil", got1.DueDate)
+	}
+}
+
+func TestGetTeamIssuesWithProjectFilter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req graphqlRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Variables["teamKey"] != "ENG" {
+			t.Errorf("teamKey variable = %v, want ENG", req.Variables["teamKey"])
+		}
+		if req.Variables["projectID"] != "proj-123" {
+			t.Errorf("projectID variable = %v, want proj-123", req.Variables["projectID"])
+		}
+		if !strings.Contains(req.Query, "project: { id: { eq: $projectID } }") {
+			t.Errorf("query did not include project filter: %s", req.Query)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"issues":{"nodes":[]}}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("lin_test_token")
+	c.Endpoint = srv.URL
+	issues, err := GetTeamIssues(t.Context(), c, "ENG", "proj-123")
+	if err != nil {
+		t.Fatalf("GetTeamIssues: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("got %d issues, want 0", len(issues))
 	}
 }
 

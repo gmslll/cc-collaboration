@@ -65,7 +65,14 @@ final List<_BoardColumnDef> _boardColumnDefs = [
 // _LinearImportRepo is a local project whose .cc-handoff.toml configures
 // [integrations.linear] team_key — the "从 Linear 导入" header button is only
 // offered when at least one exists (see _TodosPageState._loadLinearRepos).
-typedef _LinearImportRepo = ({String name, String path, String teamKey});
+// projectId is Linear's own project UUID, optional: empty imports the whole
+// Linear team, non-empty restricts the import to that Linear project.
+typedef _LinearImportRepo = ({
+  String name,
+  String path,
+  String teamKey,
+  String projectId,
+});
 
 // TodosPage is the top-level 待办 destination: a filterable list (left) + the
 // selected todo's detail/edit panel (right), mirroring HandoffsPage's split
@@ -110,11 +117,13 @@ class _TodosPageState extends State<TodosPage> {
   // scope=all, just show no group filter at all rather than a misleading one.
   String? _groupFilter;
   List<String> _groups = [];
+  int _groupsLoadSeq = 0;
   Todo? _selected;
   bool _boardView = true; // board is the default, Linear-flavored view
   final Set<String> _collapsedMobileGroups = {};
   final _detailKey = GlobalKey<TodoDetailViewState>();
   List<_LinearImportRepo> _linearRepos = [];
+  int _linearReposLoadSeq = 0;
   bool _importingLinear = false;
 
   RelayClient get _client => widget.client;
@@ -131,7 +140,6 @@ class _TodosPageState extends State<TodosPage> {
     // comment list if that's the todo currently open (TodoStore itself
     // doesn't model comments, it just flags which todo needs a reload).
     _store.onComment = _onComment;
-    _loadLinearRepos();
     _loadGroups();
   }
 
@@ -140,20 +148,21 @@ class _TodosPageState extends State<TodosPage> {
   // one. Best-effort: a failed fetch just leaves the filter empty rather than
   // surfacing an error, since it's a secondary affordance.
   Future<void> _loadGroups() async {
+    final seq = ++_groupsLoadSeq;
     String? projectId;
     if (_scope == 'personal') {
       projectId = null;
     } else if (_scope == 'team' && _projectFilter != null) {
       projectId = _projectFilter;
     } else {
-      if (mounted) setState(() => _groups = []);
+      if (mounted && seq == _groupsLoadSeq) setState(() => _groups = []);
       return;
     }
     try {
       final groups = await _client.todoGroups(projectId: projectId);
-      if (mounted) setState(() => _groups = groups);
+      if (mounted && seq == _groupsLoadSeq) setState(() => _groups = groups);
     } catch (_) {
-      if (mounted) setState(() => _groups = []);
+      if (mounted && seq == _groupsLoadSeq) setState(() => _groups = []);
     }
   }
 
@@ -163,26 +172,45 @@ class _TodosPageState extends State<TodosPage> {
   // read path. Best-effort: a project with no/unreadable .cc-handoff.toml
   // is silently skipped rather than failing the whole scan.
   Future<void> _loadLinearRepos() async {
+    final seq = ++_linearReposLoadSeq;
     final found = <_LinearImportRepo>[];
     for (final entry in _cfg.repos.entries) {
       try {
         final c = await RepoConfig.load(entry.value);
         final key = c.teamKey.trim();
-        if (key.isNotEmpty) {
-          found.add((name: entry.key, path: entry.value, teamKey: key));
+        if (c.linearEnabled && key.isNotEmpty) {
+          found.add((
+            name: entry.key,
+            path: entry.value,
+            teamKey: key,
+            projectId: c.linearProjectId.trim(),
+          ));
         }
       } catch (_) {}
     }
-    if (mounted) setState(() => _linearRepos = found);
+    if (mounted && seq == _linearReposLoadSeq) {
+      setState(() => _linearRepos = found);
+    }
+  }
+
+  void _refresh() {
+    _store.refresh();
+    if (_scope == 'team') _loadLinearRepos();
+    _loadGroups();
   }
 
   // _importFromLinear shells `cc-handoff todo import-linear` (Cli.
-  // todoImportLinear) in whichever local repo's team_key applies, scoped to
-  // the currently-selected team project filter (personal todos when no
-  // project is selected). See internal/linear/import.go for the server-side
-  // upsert-by-source_ref logic this triggers.
+  // todoImportLinear) in whichever local repo's Linear config applies. The
+  // target cc-handoff Project is the current Project filter; without one,
+  // importing is blocked so a team import doesn't silently create personal
+  // todos or guess a project mapping.
   Future<void> _importFromLinear() async {
     if (_importingLinear) return;
+    final targetProjectId = _projectFilter;
+    if (targetProjectId == null || targetProjectId.isEmpty) {
+      if (mounted) snack(context, '先在待办页选择一个项目，再从 Linear 导入');
+      return;
+    }
     final repo =
         _linearRepos.length == 1 ? _linearRepos.first : await _pickLinearRepo();
     if (repo == null) return;
@@ -191,7 +219,8 @@ class _TodosPageState extends State<TodosPage> {
       final out = await Cli.todoImportLinear(
         repoPath: repo.path,
         teamKey: repo.teamKey,
-        projectId: _projectFilter,
+        linearProjectId: repo.projectId,
+        projectId: targetProjectId,
       );
       if (mounted) snack(context, out.isNotEmpty ? out : '已从 Linear 导入');
       await _store.refresh();
@@ -210,9 +239,47 @@ class _TodosPageState extends State<TodosPage> {
         children: _linearRepos
             .map((r) => SimpleDialogOption(
                   onPressed: () => Navigator.pop(ctx, r),
-                  child: Text('${r.name} (${r.teamKey})'),
+                  child: Text(
+                    r.projectId.isEmpty
+                        ? '${r.name} (${r.teamKey} / 全部项目)'
+                        : '${r.name} (${r.teamKey} / ${r.projectId})',
+                  ),
                 ))
             .toList(),
+      ),
+    );
+  }
+
+  Future<void> _linearHelpDialog() {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Linear 导入配置'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _HelpText('1. 在用户配置里设置 linear_personal_token。'),
+              _HelpText('2. 在工作区项目菜单打开“项目配置”，启用 Linear 集成。'),
+              _HelpText('3. team_key 填 issue 编号前缀，例如 INF-502 填 INF。'),
+              _HelpText('4. project_id 填 Linear Project UUID；不填会拉整个 team。'),
+              _HelpText('5. Web 版 Linear 里打开项目，按 Cmd/Ctrl+K，搜索 Copy model UUID。'),
+              _HelpText('6. 回到待办页，先在项目下拉里选目标项目，再执行导入。'),
+              SizedBox(height: 10),
+              Text(
+                '导入时会按 source_ref(linear:<编号>) 幂等更新；如果同一个 Linear issue 已导入到其他 cc-handoff 项目，会提示你先移动或删除旧待办。',
+                style: TextStyle(color: CcColors.muted, height: 1.35),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
+          ),
+        ],
       ),
     );
   }
@@ -381,7 +448,7 @@ class _TodosPageState extends State<TodosPage> {
             IconButton(
               icon: const Icon(Icons.refresh_rounded, size: 18),
               tooltip: '刷新',
-              onPressed: _store.refresh,
+              onPressed: _refresh,
             ),
             IconButton(
               icon: const Icon(Icons.add_rounded),
@@ -405,12 +472,16 @@ class _TodosPageState extends State<TodosPage> {
             visualDensity: VisualDensity.compact,
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          onSelectionChanged: (s) => setState(() {
-            _scope = s.first;
-            if (_scope != 'team') _projectFilter = null;
-            _groupFilter = null;
+          onSelectionChanged: (s) {
+            final nextScope = s.first;
+            setState(() {
+              _scope = nextScope;
+              if (_scope != 'team') _projectFilter = null;
+              _groupFilter = null;
+            });
+            if (nextScope == 'team') _loadLinearRepos();
             _loadGroups();
-          }),
+          },
         ),
       ),
       if (_scope == 'team' && _me.projects.isNotEmpty)
@@ -439,11 +510,13 @@ class _TodosPageState extends State<TodosPage> {
                     ),
                   ),
                 ],
-                onChanged: (v) => setState(() {
-                  _projectFilter = v;
-                  _groupFilter = null;
+                onChanged: (v) {
+                  setState(() {
+                    _projectFilter = v;
+                    _groupFilter = null;
+                  });
                   _loadGroups();
-                }),
+                },
               ),
             ],
           ),
@@ -476,21 +549,35 @@ class _TodosPageState extends State<TodosPage> {
             ],
           ),
         ),
-      if (_scope == 'team' && _linearRepos.isNotEmpty)
+      if (_scope == 'team')
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _importingLinear ? null : _importFromLinear,
-              icon: _importingLinear
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.sync_alt_rounded, size: 16),
-              label: const Text('从 Linear 导入'),
-            ),
+          child: Row(
+            children: [
+              if (_linearRepos.isNotEmpty)
+                Tooltip(
+                  message:
+                      _projectFilter == null ? '先在项目下拉里选择目标项目' : '从 Linear 导入',
+                  child: TextButton.icon(
+                    onPressed: _importingLinear || _projectFilter == null
+                        ? null
+                        : _importFromLinear,
+                    icon: _importingLinear
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.sync_alt_rounded, size: 16),
+                    label: const Text('从 Linear 导入'),
+                  ),
+                ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Linear 导入配置',
+                onPressed: _linearHelpDialog,
+                icon: const Icon(Icons.help_outline_rounded, size: 18),
+              ),
+            ],
           ),
         ),
       Padding(
@@ -722,25 +809,40 @@ class _TodosPageState extends State<TodosPage> {
   // out in a horizontally-scrolling row (the reference layout doesn't flex
   // column width to the viewport), each a DragTarget<Todo> that maps a drop
   // to its dropStatus via _dropStatus.
-  Widget _boardPane() {
-    final items = _filtered;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+  Widget _boardPane() => asyncBody(
+        loading: _store.loading && _store.all.isEmpty,
+        error: _store.error,
+        onRetry: _store.refresh,
+        child: () {
+          final items = _filtered;
+          if (items.isEmpty) {
+            return centerMsg(
+              _store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配',
+            );
+          }
+          final columns = [
             for (final def in _boardColumnDefs)
-              _boardColumn(
-                def,
-                items.where((t) => def.statuses.contains(t.status)).toList(),
+              (
+                def: def,
+                items: items
+                    .where((t) => def.statuses.contains(t.status))
+                    .toList(),
               ),
-          ],
-        ),
-      ),
-    );
-  }
+          ].where((c) => c.items.isNotEmpty).toList();
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final c in columns) _boardColumn(c.def, c.items),
+                ],
+              ),
+            ),
+          );
+        },
+      );
 
   Widget _boardColumn(_BoardColumnDef def, List<Todo> items) => Container(
     width: 272,
@@ -1777,4 +1879,15 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       ),
     ],
   );
+}
+
+class _HelpText extends StatelessWidget {
+  final String text;
+  const _HelpText(this.text);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(text, style: const TextStyle(height: 1.35)),
+      );
 }

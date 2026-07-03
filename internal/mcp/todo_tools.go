@@ -519,22 +519,24 @@ func importLinearIssuesTool() Tool {
   "type": "object",
   "properties": {
     "team":       {"type": "string", "description": "Linear team key(如 ENG)。省略则用 .cc-handoff.toml [integrations.linear] team_key。"},
+    "linear_project_id": {"type": "string", "description": "Linear project UUID。省略则使用 .cc-handoff.toml [integrations.linear] project_id；仍为空则导入整个 Linear team。"},
     "project_id": {"type": "string", "description": "导入到的 cc-handoff Project ID(团队待办)。省略 = 个人待办。"},
     "cwd":        {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
 	return Tool{
 		Name:        ToolImportLinearIssues,
-		Description: "Import every issue from a Linear team into cc-handoff todos, upserting by source_ref (\"linear:<identifier>\") so re-running is idempotent: new issues become new todos, previously-imported ones get title/body/priority/due/status refreshed in place. Requires linear_personal_token in the user config (~/.config/cc-handoff/config.toml).",
+		Description: "Import issues from a Linear team, optionally restricted to one Linear project, into cc-handoff todos, upserting by source_ref (\"linear:<identifier>\") so re-running is idempotent: new issues become new todos, previously-imported ones get title/body/priority/due/status refreshed in place. Requires linear_personal_token in the user config (~/.config/cc-handoff/config.toml).",
 		InputSchema: schema,
 		Handler:     importLinearIssuesHandler,
 	}
 }
 
 type importLinearIssuesArgs struct {
-	Team      string `json:"team"`
-	ProjectID string `json:"project_id"`
-	CWD       string `json:"cwd"`
+	Team            string `json:"team"`
+	LinearProjectID string `json:"linear_project_id"`
+	ProjectID       string `json:"project_id"`
+	CWD             string `json:"cwd"`
 }
 
 func importLinearIssuesHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -546,10 +548,14 @@ func importLinearIssuesHandler(ctx context.Context, raw json.RawMessage) (ToolRe
 	if err != nil {
 		return ToolResult{}, err
 	}
-	result, err := linear.ImportTeamIssuesForRepo(ctx, cwd, a.Team, a.ProjectID)
+	result, err := linear.ImportTeamIssuesForRepo(ctx, cwd, a.Team, a.LinearProjectID, a.ProjectID)
 	if err != nil {
 		return ToolResult{}, err
 	}
-	return textResult(fmt.Sprintf("Imported from Linear team `%s`: %d issue(s) — %d created, %d updated.",
-		result.TeamKey, result.Issues, result.Created, result.Updated)), nil
+	source := fmt.Sprintf("team `%s`", result.TeamKey)
+	if result.LinearProjectID != "" {
+		source = fmt.Sprintf("%s project `%s`", source, result.LinearProjectID)
+	}
+	return textResult(fmt.Sprintf("Imported from Linear %s: %d issue(s) — %d created, %d updated.",
+		source, result.Issues, result.Created, result.Updated)), nil
 }
