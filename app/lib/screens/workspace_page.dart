@@ -7658,6 +7658,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     final current = _gitBranches.where((b) => b.current).firstOrNull;
     final localCollapsed = _logBranchGroupsCollapsed.contains('local');
     final remoteCollapsed = _logBranchGroupsCollapsed.contains('remote');
+    final tagsCollapsed = _logBranchGroupsCollapsed.contains('tags');
     return SizedBox(
       width: _logBranchWidth,
       child: DecoratedBox(
@@ -7679,7 +7680,12 @@ class _WorkspacePageState extends State<WorkspacePage>
                     if (!remoteCollapsed)
                       ..._logBranchNodeWidgets(p, remoteRoot, 'remote', 0),
                   ],
-                  _logTagsRow(),
+                  _logTagsRow(tagsCollapsed),
+                  if (!tagsCollapsed)
+                    if (_gitTags.isEmpty)
+                      _logEmptyTagRow()
+                    else
+                      for (final t in _gitTags) _logTagTile(p, t),
                 ],
               ),
       ),
@@ -7754,8 +7760,14 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
       );
 
-  Widget _logTagsRow() => InkWell(
-    onTap: () {},
+  Widget _logTagsRow(bool collapsed) => InkWell(
+    onTap: () => setState(() {
+      if (collapsed) {
+        _logBranchGroupsCollapsed.remove('tags');
+      } else {
+        _logBranchGroupsCollapsed.add('tags');
+      }
+    }),
     child: Container(
       height: 26,
       margin: const EdgeInsets.only(left: 8, right: 8, top: 4),
@@ -7766,10 +7778,14 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.chevron_right_rounded,
+          Icon(
+            collapsed
+                ? Icons.chevron_right_rounded
+                : Icons.keyboard_arrow_down_rounded,
             size: 15,
-            color: CcColors.subtle,
+            color: _activeLogTagName == null
+                ? CcColors.subtle
+                : CcColors.accentBright,
           ),
           const SizedBox(width: 5),
           Expanded(
@@ -7780,10 +7796,62 @@ class _WorkspacePageState extends State<WorkspacePage>
               style: CcType.code(size: 12, color: CcColors.muted),
             ),
           ),
+          if (_gitTags.isNotEmpty)
+            Text(
+              '${_gitTags.length}',
+              style: CcType.code(size: 11, color: CcColors.subtle),
+            ),
         ],
       ),
     ),
   );
+
+  Widget _logEmptyTagRow() => Container(
+    height: 24,
+    padding: const EdgeInsets.only(left: 30, right: 8),
+    alignment: Alignment.centerLeft,
+    child: Text(
+      '没有标签',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: CcType.code(size: 12, color: CcColors.subtle),
+    ),
+  );
+
+  Widget _logTagTile(ProjectCfg p, GitTag t) {
+    final active = _activeLogTagName == t.name;
+    return InkWell(
+      onTap: () => _filterLogByTag(t),
+      onSecondaryTapDown: (d) => _showLogTagMenu(p, t, d.globalPosition),
+      child: Container(
+        height: 26,
+        color: active ? CcColors.warning.withValues(alpha: 0.12) : null,
+        padding: const EdgeInsets.only(left: 24, right: 8),
+        child: Row(
+          children: [
+            Icon(
+              Icons.sell_outlined,
+              size: 14,
+              color: active ? CcColors.warning : CcColors.subtle,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                t.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CcType.code(
+                  size: 12,
+                  color: active ? CcColors.text : CcColors.muted,
+                  weight: active ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   _LogBranchNode _buildLogBranchTree(List<GitBranch> branches, String scope) {
     final root = _LogBranchNode(scope, scope);
@@ -7847,8 +7915,17 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   String? get _activeLogBranchName {
     if (_gitLogAllBranches) return null;
-    if (_gitLogRefFilter.isNotEmpty) return _gitLogRefFilter;
+    if (_gitLogRefFilter.isNotEmpty) {
+      return _gitBranches.any((b) => b.name == _gitLogRefFilter)
+          ? _gitLogRefFilter
+          : null;
+    }
     return _gitBranches.where((b) => b.current).firstOrNull?.name;
+  }
+
+  String? get _activeLogTagName {
+    if (_gitLogAllBranches || _gitLogRefFilter.isEmpty) return null;
+    return _gitTags.where((t) => t.ref == _gitLogRefFilter).firstOrNull?.name;
   }
 
   Widget _logBranchFolderTile(_LogBranchNode node, String scope, int depth) {
@@ -7955,6 +8032,15 @@ class _WorkspacePageState extends State<WorkspacePage>
   void _filterLogByBranch(GitBranch b) {
     setState(() {
       _gitLogRefFilter = b.name;
+      _gitLogAllBranches = false;
+    });
+    Prefs.setBool('ws.gitLogAllBranches', false);
+    _refreshGit();
+  }
+
+  void _filterLogByTag(GitTag t) {
+    setState(() {
+      _gitLogRefFilter = t.ref;
       _gitLogAllBranches = false;
     });
     Prefs.setBool('ws.gitLogAllBranches', false);

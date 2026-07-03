@@ -25,6 +25,7 @@ mixin _GitMixin on State<WorkspacePage> {
   final Map<String, List<GitChange>> _worktreeChanges = {};
   List<GitCommit> _gitLog = const [];
   List<GitBranch> _gitBranches = const [];
+  List<GitTag> _gitTags = const [];
   List<GitStash> _gitStashes = const [];
   List<FileDiff> _commitFiles = const [];
   String? _selectedCommit;
@@ -93,10 +94,16 @@ mixin _GitMixin on State<WorkspacePage> {
       final operation = await gitOperationState(p.path);
       final changes = await gitChanges(p.path);
       final diff = await gitDiffWorking(p.path);
-      final branches = await gitBranches(p.path);
+      final (branches, tags) = await (
+        gitBranches(p.path),
+        gitTags(p.path),
+      ).wait;
+      final validRefs = {
+        for (final b in branches) b.name,
+        for (final t in tags) t.ref,
+      };
       final logRef =
-          _gitLogRefFilter.isNotEmpty &&
-              branches.any((b) => b.name == _gitLogRefFilter)
+          _gitLogRefFilter.isNotEmpty && validRefs.contains(_gitLogRefFilter)
           ? _gitLogRefFilter
           : '';
       final log = await gitLog(
@@ -127,6 +134,7 @@ mixin _GitMixin on State<WorkspacePage> {
           _gitLogRefFilter = '';
         }
         _gitBranches = branches;
+        _gitTags = tags;
         _gitStashes = stashes;
         if (_selectedStash == null ||
             !stashes.any((s) => s.ref == _selectedStash)) {
@@ -161,7 +169,9 @@ mixin _GitMixin on State<WorkspacePage> {
 
   /// 懒加载某个附加 worktree 的 git 改动(展开 worktree 节点时调用)。
   Future<void> _ensureWorktreeChanges(String wtPath) async {
-    if (_worktreeChanges.containsKey(wtPath)) return; // cached until _refreshGit
+    if (_worktreeChanges.containsKey(wtPath)) {
+      return; // cached until _refreshGit
+    }
     final changes = await gitChanges(wtPath);
     if (mounted) setState(() => _worktreeChanges[wtPath] = changes);
   }

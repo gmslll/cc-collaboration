@@ -63,6 +63,22 @@ class GitBranch {
   });
 }
 
+class GitTag {
+  final String name;
+  final String hash;
+  final DateTime? date;
+  final String subject;
+
+  const GitTag({
+    required this.name,
+    required this.hash,
+    this.date,
+    this.subject = '',
+  });
+
+  String get ref => 'refs/tags/$name';
+}
+
 class GitCommit {
   final String hash;
   final String shortHash;
@@ -415,6 +431,34 @@ Future<List<GitBranch>> gitBranches(String dir) async {
   return branches;
 }
 
+Future<List<GitTag>> gitTags(String dir) async {
+  final out = await _git(
+    dir,
+    'tag --format="%(refname:short)%09%(*objectname:short)%09%(objectname:short)%09%(creatordate:iso-strict)%09%(subject)" --sort=-creatordate',
+  );
+  final tags = <GitTag>[];
+  for (final raw in out.split('\n')) {
+    final line = raw.trimRight();
+    if (line.trim().isEmpty) continue;
+    final parts = line.split('\t');
+    if (parts.isEmpty) continue;
+    final name = parts[0].trim();
+    if (name.isEmpty) continue;
+    final peeledHash = parts.length > 1 ? parts[1].trim() : '';
+    final objectHash = parts.length > 2 ? parts[2].trim() : '';
+    final dateText = parts.length > 3 ? parts[3].trim() : '';
+    tags.add(
+      GitTag(
+        name: name,
+        hash: peeledHash.isNotEmpty ? peeledHash : objectHash,
+        date: dateText.isEmpty ? null : DateTime.tryParse(dateText),
+        subject: parts.length > 4 ? parts.sublist(4).join('\t') : '',
+      ),
+    );
+  }
+  return tags;
+}
+
 Future<void> gitCheckout(String dir, String branch) async {
   await _git(dir, 'checkout ${shQuote(branch)}');
 }
@@ -515,6 +559,12 @@ Future<void> gitPushBranch(
   final b = branch.trim();
   if (b.isEmpty) throw GitException('branch 不能为空');
   await _git(dir, 'push ${setUpstream ? '-u ' : ''}origin ${shQuote(b)}');
+}
+
+Future<void> gitPushTag(String dir, String tag) async {
+  final t = tag.trim();
+  if (t.isEmpty) throw GitException('tag 不能为空');
+  await _git(dir, 'push origin ${shQuote('refs/tags/$t:refs/tags/$t')}');
 }
 
 Future<void> gitStageAll(String dir) async {
@@ -946,6 +996,12 @@ Future<void> gitTag(
   } else {
     await _git(dir, 'tag -a ${shQuote(n)} -m ${shQuote(msg)}$tail');
   }
+}
+
+Future<void> gitDeleteTag(String dir, String name) async {
+  final n = name.trim();
+  if (n.isEmpty) throw GitException('tag 名不能为空');
+  await _git(dir, 'tag -d ${shQuote(n)}');
 }
 
 // gitFormatPatch returns the mail-formatted patch of a single commit
