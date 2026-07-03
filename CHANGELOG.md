@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-07-04
+
+### Fixed
+
+- **Linear 项目筛选导入修复 GraphQL 类型** — Linear Project UUID 过滤变量改为 `ID!`，修复按 `project_id` 导入时报 `projectID` 类型不匹配的问题。
+
 ## [0.9.6] - 2026-07-04
 
 ### Fixed
