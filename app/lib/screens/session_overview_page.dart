@@ -286,6 +286,8 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
+                  const SizedBox(width: 6),
+                  Text(c.sid, style: CcType.code(size: 10.5, color: CcColors.subtle)),
                 ],
               ),
               const SizedBox(height: 8),
