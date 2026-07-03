@@ -120,6 +120,8 @@ class TerminalSession {
   bool deferred = false;
   // started exposes _started so the tree can dim a not-yet-loaded (deferred) session.
   bool get started => _started;
+  @visibleForTesting
+  ({int rows, int cols})? get debugRemoteSize => _remoteSize;
   // Resolved agent launch token (abs path / user override / bare name), set in
   // _startAsync before the PTY spawns. Null until resolved (non-agent sessions
   // leave it null and _resolvedCommand ignores it).
@@ -128,6 +130,7 @@ class TerminalSession {
   // remoteSink, when set, also receives this terminal's (utf8-decoded) PTY
   // output so a remote phone client can mirror it. Null when nobody's watching.
   void Function(String chunk)? remoteSink;
+  ({int rows, int cols})? _remoteSize;
 
   // --- "agent finished a turn" detection (bell-only) ----------------------
   //
@@ -652,6 +655,7 @@ class TerminalSession {
 
     final Pty pty;
     try {
+      final remoteSize = _remoteSize;
       pty = Pty.start(
         shell,
         arguments: args,
@@ -665,8 +669,8 @@ class TerminalSession {
         // cmd.exe has no SystemRoot and the terminal spawns blank).
         environment: _sessionEnv(),
         workingDirectory: wd,
-        rows: terminal.viewHeight,
-        columns: terminal.viewWidth,
+        rows: remoteSize?.rows ?? terminal.viewHeight,
+        columns: remoteSize?.cols ?? terminal.viewWidth,
       );
     } catch (e) {
       // A spawn failure used to leave a silent blank terminal — surface it.
@@ -1041,6 +1045,7 @@ class TerminalSession {
   // reject that — it must reach the PTY or the phone overflows.
   void resizeFromRemote(int rows, int cols) {
     if (rows >= 2 && cols >= 2) {
+      _remoteSize = (rows: rows, cols: cols);
       ghostty?.resize(cols, rows);
       _pty?.resize(rows, cols);
     }
@@ -1052,6 +1057,7 @@ class TerminalSession {
   // terminal.viewWidth/Height track the Mac's xterm fit (decoupled from the
   // PTY), so they hold the desktop's current size even after the phone shrank it.
   void restoreLocalSize() {
+    _remoteSize = null;
     final r = terminal.viewHeight, c = terminal.viewWidth;
     if (r > 0 && c > 0) {
       ghostty?.resize(c, r);

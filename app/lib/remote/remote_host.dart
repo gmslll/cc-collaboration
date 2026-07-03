@@ -390,10 +390,16 @@ class RemoteHost extends RemoteChannel {
           });
         }
       case 'term.resize':
-        _sessionById(f['sid'] as String?)?.resizeFromRemote(
-          (f['rows'] as num?)?.toInt() ?? 0,
-          (f['cols'] as num?)?.toInt() ?? 0,
-        );
+        final sid = f['sid'] as String?;
+        final from = (f['from'] as num?)?.toInt();
+        if (sid != null &&
+            from != null &&
+            (_watchers[sid]?.contains(from) ?? false)) {
+          _sessionById(sid)?.resizeFromRemote(
+            (f['rows'] as num?)?.toInt() ?? 0,
+            (f['cols'] as num?)?.toInt() ?? 0,
+          );
+        }
       case 'session.new':
         onNewSession?.call(
           (f['project'] as String?) ?? '',
@@ -629,7 +635,24 @@ class RemoteHost extends RemoteChannel {
     // never redraws to correct it.
     final cols = (f['cols'] as num?)?.toInt() ?? 0;
     final rows = (f['rows'] as num?)?.toInt() ?? 0;
+    (_watchers[s.id] ??= {}).add(from);
+    onSessionWatched?.call(s.id); // baseline voice reading for this session
+    // Setting remoteSink starts mirroring this session's output to the phone and
+    // hands it authority over the PTY size (see TerminalSession.onResize). Output
+    // is coalesced per session (see _OutputBatcher) then fanned out to watchers.
+    final batcher = _batchers[s.id] ??= _OutputBatcher((data) {
+      for (final c in _watchers[s.id] ?? const <int>{}) {
+        send({'t': 'term.output', 'to': c, 'sid': s.id, 'd': data});
+      }
+    });
+    s.remoteSink = batcher.add;
     if (cols >= 2 && rows >= 2) s.resizeFromRemote(rows, cols);
+    final wasDormant = s.deferred && !s.started;
+    if (wasDormant) {
+      s.deferred = false;
+      s.start();
+      notifyListeners(); // repaint the desktop tree: clear the 休眠 glyph.
+    }
     final mode = (f['historyMode'] ?? 'text').toString();
     // Replay the FULL backlog so the phone can scroll back through history; the
     // phone re-wraps the plain text at its own width, so this stays readable.
@@ -645,17 +668,6 @@ class RemoteHost extends RemoteChannel {
       });
       i = end;
     }
-    (_watchers[s.id] ??= {}).add(from);
-    onSessionWatched?.call(s.id); // baseline voice reading for this session
-    // Setting remoteSink starts mirroring this session's output to the phone and
-    // hands it authority over the PTY size (see TerminalSession.onResize). Output
-    // is coalesced per session (see _OutputBatcher) then fanned out to watchers.
-    final batcher = _batchers[s.id] ??= _OutputBatcher((data) {
-      for (final c in _watchers[s.id] ?? const <int>{}) {
-        send({'t': 'term.output', 'to': c, 'sid': s.id, 'd': data});
-      }
-    });
-    s.remoteSink = batcher.add;
   }
 
   void _dropClient(int connId) {
