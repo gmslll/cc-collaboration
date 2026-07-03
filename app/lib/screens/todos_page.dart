@@ -12,6 +12,7 @@ import '../local/config.dart';
 import '../local/local_bus.dart';
 import '../local/repo_config.dart';
 import '../local/session_overview.dart';
+import '../local/todo_materialize.dart';
 import '../local/todo_store.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -1362,6 +1363,14 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   }
 }
 
+// _AssignPrep is what _prepareAssignment resolves to just before dispatch:
+// the exact text to paste into the terminal (either the "go read this file"
+// pointer when materialization succeeded, or the raw title+body fallback), plus
+// the todo's status as freshly re-fetched at prep time — _maybeBumpToInProgress
+// decides the triage/backlog/todo → in_progress transition off that, not off
+// the possibly-stale widget.todo.status from the list row.
+typedef _AssignPrep = ({String taskText, TodoStatus statusAtPrep});
+
 // _AssignTodoDialog is the "一键指派" flow: dispatch to an existing local
 // session, or spawn a brand-new one first (optionally in a fresh worktree
 // branch) and then dispatch. Both branches deliver through
@@ -1402,11 +1411,79 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     return matches.isEmpty ? const [] : matches.first.projects;
   }
 
+  // _taskText is the legacy raw-paste form, kept as the fallback whenever
+  // materialization can't run (no resolvable workdir, fetch failure, etc.):
+  // just the title + the untouched body, no comments/attachments.
   String get _taskText {
     final t = widget.todo;
     return t.bodyMd.trim().isEmpty
         ? '[待办] ${t.title}'
         : '[待办] ${t.title}\n\n${t.bodyMd}';
+  }
+
+  // _prepareAssignment resolves the terminal text to paste for a dispatch to
+  // session [sid]. It re-fetches the FULL todo (widget.todo comes from the list
+  // endpoint, which omits attachments to dodge an N+1 join — see _RowThumb) and
+  // its comments concurrently, resolves the target session's workdir (polling
+  // briefly since this runs earlier than _syncAssignVisibility and a
+  // just-spawned session's card may not carry a workdir yet), then writes the
+  // full todo to a file under that workdir and returns a "go read it" pointer.
+  // Any failure along the way (fetch error, no workdir, materialize returned
+  // null) degrades to the raw _taskText — assignment must never be blocked by
+  // materialization. statusAtPrep carries the freshly-fetched status so the
+  // caller can decide the in_progress bump off current server state.
+  Future<_AssignPrep> _prepareAssignment(String sid) async {
+    try {
+      // Kick both off before awaiting so they run concurrently.
+      final todoF = widget.client.todo(widget.todo.id);
+      final commentsF = widget.client.todoComments(widget.todo.id);
+      final full = await todoF;
+      final comments = await commentsF;
+
+      String? workdir = _findCard(sid)?.workdir;
+      for (var i = 0; i < 5 && (workdir == null || workdir.isEmpty); i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (!mounted) {
+          return (taskText: _taskText, statusAtPrep: full.status);
+        }
+        workdir = _findCard(sid)?.workdir;
+      }
+      if (workdir == null || workdir.isEmpty) {
+        return (taskText: _taskText, statusAtPrep: full.status);
+      }
+
+      final result = await materializeTodoAssignment(
+        workdir: workdir,
+        todo: full,
+        comments: comments,
+        fetchAttachment: (name) => widget.client.todoAttachment(full.id, name),
+      );
+      if (result == null) {
+        return (taskText: _taskText, statusAtPrep: full.status);
+      }
+      return (
+        taskText: buildAssignTaskText(full, result),
+        statusAtPrep: full.status,
+      );
+    } catch (_) {
+      return (taskText: _taskText, statusAtPrep: widget.todo.status);
+    }
+  }
+
+  // _maybeBumpToInProgress makes "指派" mean "开始处理": a todo still sitting in
+  // an unstarted lane (triage/backlog/todo) jumps to 进行中. Anything already
+  // past that (in_progress/in_review/done/canceled/duplicate) is left alone —
+  // assignee and status are independent dimensions on the backend, this bump is
+  // purely a UI-side convenience. Failure only snacks; it never blocks the
+  // dialog from closing (same try/catch+snack shape as _dropStatus).
+  Future<void> _maybeBumpToInProgress(TodoStatus current) async {
+    const bumpable = {TodoStatus.triage, TodoStatus.backlog, TodoStatus.todo};
+    if (!bumpable.contains(current)) return;
+    try {
+      await widget.client.setTodoStatus(widget.todo.id, TodoStatus.inProgress);
+    } catch (e) {
+      if (mounted) snack(context, '更新状态失败: ${errorText(e)}');
+    }
   }
 
   @override
@@ -1510,8 +1587,11 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final sid = _targetSid;
     if (sid == null) return;
     setState(() => _submitting = true);
+    // Materialize the todo.md BEFORE dispatching: the pasted text points the
+    // agent at that file, so the file must already be on disk when it lands.
+    final prep = await _prepareAssignment(sid);
     final err = widget.overviewStore.dispatch(
-      LocalMsg('', sid, _taskText, true),
+      LocalMsg('', sid, prep.taskText, true),
     );
     if (err != null) {
       if (mounted) {
@@ -1527,6 +1607,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       workspaceName: card?.workspace ?? '',
       repoName: card?.project ?? '',
     );
+    await _maybeBumpToInProgress(prep.statusAtPrep);
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -1551,8 +1632,13 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
+    // Prep (materialize) AFTER the session exists but BEFORE dispatch — the
+    // pointer text must reference an already-written file. _prepareAssignment
+    // polls for the fresh card's workdir since it may not be populated the
+    // instant spawn returns; it falls back to a raw paste if it never appears.
+    final prep = await _prepareAssignment(sid);
     final dispatchErr = widget.overviewStore.dispatch(
-      LocalMsg('', sid, _taskText, true),
+      LocalMsg('', sid, prep.taskText, true),
     );
     if (dispatchErr != null && mounted) {
       snack(context, '会话已创建，但投递失败: $dispatchErr');
@@ -1564,6 +1650,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       repoName: proj,
       waitForAgentId: true,
     );
+    await _maybeBumpToInProgress(prep.statusAtPrep);
     if (mounted) Navigator.pop(context, true);
   }
 
