@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-07-04
+
+### Fixed
+
+- **macOS app 打包恢复待办附件读取** — 待办快速创建上传本地附件时恢复 `dart:io` 文件读取依赖，修复 `File` 未定义导致的 Flutter macOS package 失败。
+
 ## [0.9.5] - 2026-07-03
 
 ### Changed
