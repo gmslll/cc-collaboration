@@ -51,8 +51,8 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		// issue a todo came from — see pkg/todoschema.Todo.SourceRef and
 		// Store.FindTodoBySourceRef. Set once at creation; there's no PATCH
 		// support for them since they're not meant to change afterward.
-		SourceRef string `json:"source_ref"`
-		SourceURL string `json:"source_url"`
+		SourceRef       string `json:"source_ref"`
+		SourceURL       string `json:"source_url"`
 		SourceProvider  string `json:"source_provider"`
 		SourceTeamKey   string `json:"source_team_key"`
 		SourceProjectID string `json:"source_project_id"`
@@ -96,14 +96,14 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		DueAt:         req.DueAt,
 		CreatedAt:     now,
 		UpdatedAt:     now,
-		SourceRef:     req.SourceRef,
-		SourceURL:     req.SourceURL,
+		SourceRef:       req.SourceRef,
+		SourceURL:       req.SourceURL,
 		SourceProvider:  req.SourceProvider,
 		SourceTeamKey:   req.SourceTeamKey,
 		SourceProjectID: req.SourceProjectID,
-		WorkspaceName: req.WorkspaceName,
-		RepoName:      req.RepoName,
-		GroupName:     req.GroupName,
+		WorkspaceName:   req.WorkspaceName,
+		RepoName:        req.RepoName,
+		GroupName:       req.GroupName,
 	}
 	if err := s.Store.CreateTodo(r.Context(), t); err != nil {
 		writeStoreError(w, err)

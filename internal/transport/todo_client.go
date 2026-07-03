@@ -136,7 +136,7 @@ type TodoPatch struct {
 	RepoName      *string
 	// GroupName: nil means "leave alone"; a non-nil empty string clears it to
 	// ungrouped — same *string semantics as WorkspaceName/RepoName.
-	GroupName *string
+	GroupName       *string
 	SourceProvider  *string
 	SourceTeamKey   *string
 	SourceProjectID *string
