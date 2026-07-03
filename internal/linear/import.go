@@ -165,13 +165,13 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, te
 	}
 
 	out, err := c.CreateTodo(ctx, &todoschema.Todo{
-		ProjectID:        projectID,
-		Title:            iss.Title,
-		BodyMD:           bodyMD,
-		Priority:         priority,
-		DueAt:            iss.DueDate,
-		SourceRef:        sourceRef,
-		SourceURL:        iss.URL,
+		ProjectID:       projectID,
+		Title:           iss.Title,
+		BodyMD:          bodyMD,
+		Priority:        priority,
+		DueAt:           iss.DueDate,
+		SourceRef:       sourceRef,
+		SourceURL:       iss.URL,
 		SourceProvider:  sourceProvider,
 		SourceTeamKey:   teamKey,
 		SourceProjectID: sourceProjectID,
