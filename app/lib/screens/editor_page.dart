@@ -2,8 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:re_editor/re_editor.dart';
-import 'package:re_highlight/styles/atom-one-dark.dart';
 
+import '../editor_theme.dart';
 import '../local/path_utils.dart';
 import '../plugins/plugin_manager.dart';
 import '../syntax.dart';
@@ -386,7 +386,7 @@ CodeHighlightTheme? _themeFor(String path) {
   if (mode == null) return null;
   return CodeHighlightTheme(
     languages: {'code': CodeHighlightThemeMode(mode: mode)},
-    theme: atomOneDarkTheme,
+    theme: ccCodeTheme,
   );
 }
 
