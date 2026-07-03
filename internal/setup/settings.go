@@ -88,7 +88,7 @@ func EnsureStopHook(repoRoot string) (EnsureResult, error) {
 const BusHookInvocation = "cc-handoff bus-hook"
 
 const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && ` + BusHookInvocation + ` || true`
-const BusHookJSONCommand = `[ -n "$CC_BUS_DIR" ] && ` + BusHookInvocation + ` || printf "{}\n"`
+const BusHookJSONCommand = `if [ -n "$CC_BUS_DIR" ]; then _cc_hook_out="$(` + BusHookInvocation + `)"; [ -n "$_cc_hook_out" ] && printf "%s\n" "$_cc_hook_out" || printf "{}\n"; else printf "{}\n"; fi`
 
 // codexBusHookEvents are the lifecycle events currently documented by Codex.
 // The bus hook records all of them; only Stop drains the local-bus inbox.

@@ -77,6 +77,16 @@ func TestBusHookDrain_StopNoMessagesOutputsEmptyJSON(t *testing.T) {
 	}
 }
 
+func TestBusHookDrain_MalformedPayloadStaysSilent(t *testing.T) {
+	t.Setenv("CC_BUS_DIR", t.TempDir())
+	t.Setenv("CC_SESSION_ID", "ts-parent")
+
+	out := runDrainCapture(t, `{`)
+	if out != "" {
+		t.Fatalf("malformed payload stdout=%q, want shell wrapper to provide fallback JSON", out)
+	}
+}
+
 func TestBusHookDrain_StopWithMessagesKeepsDeliveryJSON(t *testing.T) {
 	bus := t.TempDir()
 	const sid = "ts-parent"
