@@ -58,7 +58,7 @@ query CCHandoffTeamIssues($teamKey: String!) {
 `
 
 const projectIssuesQuery = `
-query CCHandoffProjectIssues($teamKey: String!, $projectID: String!) {
+query CCHandoffProjectIssues($teamKey: String!, $projectID: ID!) {
   issues(filter: { team: { key: { eq: $teamKey } }, project: { id: { eq: $projectID } } }, first: 250, orderBy: updatedAt) {
     nodes {
       identifier

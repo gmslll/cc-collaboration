@@ -97,6 +97,9 @@ func TestGetTeamIssuesWithProjectFilter(t *testing.T) {
 		if req.Variables["projectID"] != "proj-123" {
 			t.Errorf("projectID variable = %v, want proj-123", req.Variables["projectID"])
 		}
+		if !strings.Contains(req.Query, "$projectID: ID!") {
+			t.Errorf("projectID variable should be GraphQL ID, query: %s", req.Query)
+		}
 		if !strings.Contains(req.Query, "project: { id: { eq: $projectID } }") {
 			t.Errorf("query did not include project filter: %s", req.Query)
 		}
