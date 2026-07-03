@@ -6,6 +6,19 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-03
+
+### Added
+
+- **会话总览执行记录** — 会话总览现在能展示 hook/activity 执行记录,用于追踪 Codex/Claude 生命周期事件、工具调用与消息投递相关状态。
+- **Codex/Claude hook 文档与可观测性补齐** — 记录 Codex hook 类型、Claude hook 类型、各 hook 可拿到的数据,并把这些信息沉淀到架构文档和会话总览里。
+- **手动重装 hook 支持按 agent 选择** — 用户现在可以只重装 Claude 或只重装 Codex 的 bus hook,不用每次全量覆盖。
+
+### Fixed
+
+- **Codex `PostToolUse` 消息投递干扰工具输出** — 现在只有 `Stop` 会 drain 本地 inbox,`PostToolUse` 只记录活动与会话 id,避免工具执行中插入总线消息导致输出被遮挡或丢失。
+- **Claude hook 安装安全性** — 跳过/清理高频或不适合 bus 投递的 hook,并按 agent 类型做 status 校验,降低误装后导致会话变慢或行为异常的风险。
+
 ## [0.9.0] - 2026-07-03
 
 ### Added
