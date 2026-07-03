@@ -197,6 +197,32 @@ void main() {
       expect(r.paneActivePath['pane-w'], '/w.dart');
     });
 
+    // Models the editor's per-pane "关闭此分屏" (_closePaneFiles): every file
+    // in one pane closes at once, so that pane empties and must fold back into
+    // its sibling — the whole-pane analog of the single-file collapse above.
+    test('collapses a pane whose entire multi-file set was closed at once', () {
+      final tree = PaneSplit(
+        id: 's1',
+        axis: SplitAxis.horizontal,
+        children: const [PaneLeaf('root'), PaneLeaf('pane-1')],
+        weights: const [0.5, 0.5],
+      );
+      // pane-1 held /b.dart + /c.dart; "关闭此分屏" closed both together.
+      final r = reconcilePaneTree(
+        tree: tree,
+        openPaths: const ['/a.dart'],
+        fileToPane: const {'/b.dart': 'pane-1', '/c.dart': 'pane-1'},
+        paneActivePath: const {'root': '/a.dart', 'pane-1': '/c.dart'},
+        focusedPaneId: 'pane-1',
+      );
+      expect(r.tree, const PaneLeaf('root'));
+      expect(r.focusedPaneId, 'root'); // focus follows off the folded pane
+      expect(r.paneActivePath['root'], '/a.dart');
+      expect(r.paneActivePath.containsKey('pane-1'), isFalse);
+      expect(r.fileToPane.containsKey('/b.dart'), isFalse);
+      expect(r.fileToPane.containsKey('/c.dart'), isFalse);
+    });
+
     test('drops every pane entry when nothing is open anywhere', () {
       final tree = PaneSplit(
         id: 's1',

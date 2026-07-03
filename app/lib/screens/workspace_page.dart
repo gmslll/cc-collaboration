@@ -2344,6 +2344,34 @@ class _WorkspacePageState extends State<WorkspacePage>
     });
   }
 
+  // _closePaneFiles closes every file open in [paneId] at once, folding that
+  // split back into its sibling — the editor counterpart of the terminal
+  // deck's per-pane "关闭此分屏" button. Modeled on _closeOtherCodeFiles's
+  // dirty-file confirm + _reconcilePaneTree collapse, but scoped to the whole
+  // pane rather than "every tab except one". Guarded so a stale tap can't act
+  // on the unsplit editor (no split → nothing to fold) or a pane that's
+  // already gone/empty. _reconcilePaneTree already repoints focus + _activeFile
+  // onto a surviving pane when the focused (here: closed) pane collapses, so
+  // there's nothing extra to reposition afterward.
+  Future<void> _closePaneFiles(String paneId) async {
+    if (_filePaneTree is! PaneSplit) return;
+    final scope = _paneFileIndices(paneId);
+    if (scope.isEmpty) return;
+    final closePaths = {for (final i in scope) _codeFiles[i].path};
+    final dirty = [
+      for (final f in _codeFiles)
+        if (closePaths.contains(f.path) && f.dirty) f.path,
+    ];
+    if (dirty.isNotEmpty) {
+      final ok = await _confirm('关闭此分屏未保存文件?', _previewList(dirty));
+      if (!ok) return;
+    }
+    setState(() {
+      _codeFiles.removeWhere((f) => closePaths.contains(f.path));
+      if (_filePaneTree is PaneSplit) _reconcilePaneTree();
+    });
+  }
+
   void _copyFilePath(String path) {
     Clipboard.setData(ClipboardData(text: path));
     _snack('已复制路径');
@@ -4654,25 +4682,43 @@ class _WorkspacePageState extends State<WorkspacePage>
         color: CcColors.editorTabBar,
         border: Border(bottom: BorderSide(color: CcColors.border)),
       ),
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: indices.length,
-        itemBuilder: (_, j) {
-          final i = indices[j];
-          final file = _codeFiles[i];
-          return _editorTab(
-            icon: file.isDiff
-                ? Icons.difference_rounded
-                : _iconForFile(file.path),
-            label: '${file.dirty ? '● ' : ''}${file.name}',
-            active: i == activeIndex,
-            change: _fileGitChange(file.path),
-            onTap: () => _activatePaneTab(paneId, file.path),
-            onClose: () => _closeCodeFile(i),
-            tabMenu: _editorFileTabMenu(i),
-            onSecondaryTapDown: (d) => _showEditorTabMenu(d.globalPosition, i),
-          );
-        },
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: indices.length,
+              itemBuilder: (_, j) {
+                final i = indices[j];
+                final file = _codeFiles[i];
+                return _editorTab(
+                  icon: file.isDiff
+                      ? Icons.difference_rounded
+                      : _iconForFile(file.path),
+                  label: '${file.dirty ? '● ' : ''}${file.name}',
+                  active: i == activeIndex,
+                  change: _fileGitChange(file.path),
+                  onTap: () => _activatePaneTab(paneId, file.path),
+                  onClose: () => _closeCodeFile(i),
+                  tabMenu: _editorFileTabMenu(i),
+                  onSecondaryTapDown: (d) =>
+                      _showEditorTabMenu(d.globalPosition, i),
+                );
+              },
+            ),
+          ),
+          // "关闭此分屏": non-root panes only — 'root' is the primary editor
+          // pane, not a closeable split. Closes every file in this pane (with
+          // the usual dirty-file confirm inside _closePaneFiles) and folds the
+          // split back into its sibling.
+          if (paneId != 'root')
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 16),
+              tooltip: '关闭此分屏',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _closePaneFiles(paneId),
+            ),
+        ],
       ),
     );
   }

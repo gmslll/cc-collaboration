@@ -566,6 +566,50 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     unawaited(_save());
   }
 
+  // closeEntirePaneTerms/closeEntirePaneTermsView back a split pane's "关闭此
+  // 分屏" trailing button — the whole-pane siblings of closeOtherTerms/
+  // closeOtherTermsView (which spare one tab), scoped by paneId instead of a
+  // kept index. Real-kill vs hide-only is picked by the host's hideClosedTabs
+  // exactly like every other bulk close, so closing a split in the workspace
+  // (hideClosedTabs: true) only backgrounds its agents — they stay alive,
+  // reopenable from the project tree — while a hideClosedTabs: false host
+  // (e.g. the inbox cockpit) actually kills them.
+  //
+  // Either way the pane has to fold back out of the tree. The kill path gets
+  // that for free: _closeTermsWhere → _removeSessionFromPane → _collapseIfEmpty
+  // drops a pane the instant its last session leaves `terms`. The hide path
+  // never touches `terms`/_paneSessions, so it can't lean on that collapse — it
+  // hides the tabs (PTYs keep running), then explicitly closes the leaf and
+  // merges its still-alive sessions into a surviving sibling so a later
+  // reopenTermView brings them back into a pane that still exists (rather than
+  // orphaning them onto _paneOf's defensive first-leaf fallback).
+  void closeEntirePaneTerms(String paneId) {
+    final scope = _paneTermIndices(paneId).toSet();
+    if (scope.isEmpty) return;
+    _closeTermsWhere(scope.contains);
+  }
+
+  void closeEntirePaneTermsView(String paneId) {
+    // A lone pane has nothing to fold into — the "关闭此分屏" button only shows
+    // on non-root panes, but guard anyway so a stale tap can't blank the strip.
+    if (leafIds(_termPaneTree).length <= 1) return;
+    final scope = _paneTermIndices(paneId);
+    if (scope.isEmpty) return;
+    final ids = [for (final i in scope) terms[i].id];
+    _hideTermsWhere(scope.toSet().contains);
+    setState(() {
+      final newTree =
+          closeLeaf(_termPaneTree, paneId) ?? const PaneLeaf(_rootPaneId);
+      final target = leafIds(newTree).first;
+      _termPaneTree = newTree;
+      (_paneSessions[target] ??= []).addAll(ids);
+      _paneSessions.remove(paneId);
+      _paneActiveSession.remove(paneId);
+      if (_focusedPaneId == paneId) _focusedPaneId = target;
+    });
+    unawaited(_save());
+  }
+
   void disposeTerms() {
     for (final s in terms) {
       s.dispose();
@@ -1239,9 +1283,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
                   : closeTermsToRight,
               onSplitRight: splitTermRight,
               onSplitDown: splitTermDown,
-              trailing: (onNewShell == null && !(paneId == firstLeaf && onCollapse != null))
-                  ? null
-                  : Row(
+              trailing:
+                  (paneId != firstLeaf ||
+                      onNewShell != null ||
+                      onCollapse != null)
+                  ? Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (onNewShell != null)
@@ -1254,6 +1300,21 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
                               onNewShell();
                             },
                           ),
+                        // "关闭此分屏": only on non-root (non-firstLeaf) panes —
+                        // the root pane is the primary strip, not a closeable
+                        // split. Follows the host's hideClosedTabs like every
+                        // other bulk close (hide+fold in the workspace so the
+                        // agents survive, real-kill in a cockpit), then the pane
+                        // collapses away.
+                        if (paneId != firstLeaf)
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, size: 16),
+                            tooltip: '关闭此分屏',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => hideClosedTabs
+                                ? closeEntirePaneTermsView(paneId)
+                                : closeEntirePaneTerms(paneId),
+                          ),
                         if (paneId == firstLeaf && onCollapse != null)
                           IconButton(
                             icon: const Icon(
@@ -1265,7 +1326,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
                             onPressed: onCollapse,
                           ),
                       ],
-                    ),
+                    )
+                  : null,
             ),
             Expanded(
               child: paneSessions.isEmpty

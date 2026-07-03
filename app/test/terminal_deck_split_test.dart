@@ -377,4 +377,97 @@ void main() {
       },
     );
   });
+
+  // "关闭此分屏": closeEntirePaneTerms (real-kill, e.g. inbox cockpit) and
+  // closeEntirePaneTermsView (hide-only, e.g. workspace) close every session
+  // in one pane so the split folds away — the whole-pane siblings of
+  // closeOtherTerms/closeOtherTermsView.
+  group('closeEntirePaneTerms / closeEntirePaneTermsView collapse a pane', () {
+    testWidgets(
+      'closeEntirePaneTerms real-closes every session in the pane and collapses it',
+      (tester) async {
+        final key = GlobalKey<_HostState>();
+        await tester.pumpWidget(_Host(key: key));
+        final host = key.currentState!;
+        final s1 = _plainSession();
+        final s2 = _plainSession();
+        final s3 = _plainSession();
+        addTearDown(s1.dispose); // s2, s3 disposed by the close itself
+        host.terms.addAll([s1, s2, s3]);
+        host.debugAssignSessionToPane(s1.id);
+        host.debugAssignSessionToPane(s2.id);
+        host.splitTermRight(host.terms.indexOf(s2)); // s2 -> its own pane, focused
+        _settleAll(host);
+        await tester.pump();
+        // s3 added after the split lands in the now-focused split pane.
+        host.debugAssignSessionToPane(s3.id);
+        final paneId = leafIds(host.debugPaneTree).firstWhere((l) => l != 'root');
+        expect(host.debugPaneSessions[paneId], [s2.id, s3.id]);
+
+        host.closeEntirePaneTerms(paneId);
+        _settleAll(host);
+        await tester.pump();
+
+        // Both pane sessions really closed (gone from terms) → pane collapses.
+        expect(host.terms.map((s) => s.id).toSet(), {s1.id});
+        expect(host.debugPaneTree, const PaneLeaf('root'));
+        expect(host.debugPaneSessions.keys, ['root']);
+        expect(host.debugPaneSessions['root'], [s1.id]);
+      },
+    );
+
+    testWidgets(
+      'closeEntirePaneTermsView hides every session, collapses the pane, and merges the survivors into the sibling',
+      (tester) async {
+        final key = GlobalKey<_HostState>();
+        await tester.pumpWidget(_Host(key: key));
+        final host = key.currentState!;
+        final s1 = _plainSession();
+        final s2 = _plainSession();
+        addTearDown(s1.dispose);
+        addTearDown(s2.dispose); // hide-only: s2 stays alive, we dispose it
+        host.terms.addAll([s1, s2]);
+        host.debugAssignSessionToPane(s1.id);
+        host.debugAssignSessionToPane(s2.id);
+        host.splitTermRight(host.terms.indexOf(s2)); // s2 -> its own pane
+        _settleAll(host);
+        await tester.pump();
+        final paneId = leafIds(host.debugPaneTree).firstWhere((l) => l != 'root');
+
+        host.closeEntirePaneTermsView(paneId);
+        _settleAll(host);
+        await tester.pump();
+
+        // Nobody actually closed: s2 is still in terms, just hidden…
+        expect(host.terms, hasLength(2));
+        expect(host.isTabHidden(s2.id), isTrue);
+        expect(host.isTabHidden(s1.id), isFalse);
+        // …and the pane folded back, with s2 merged into the surviving root so
+        // a later reopen lands it in a pane that still exists.
+        expect(host.debugPaneTree, const PaneLeaf('root'));
+        expect(host.debugPaneSessions.containsKey(paneId), isFalse);
+        expect(host.debugPaneSessions['root'], [s1.id, s2.id]);
+      },
+    );
+
+    testWidgets('closeEntirePaneTermsView no-ops on a lone unsplit pane', (
+      tester,
+    ) async {
+      final key = GlobalKey<_HostState>();
+      await tester.pumpWidget(_Host(key: key));
+      final host = key.currentState!;
+      final s1 = _plainSession();
+      addTearDown(s1.dispose);
+      host.terms.add(s1);
+      host.debugAssignSessionToPane(s1.id);
+
+      host.closeEntirePaneTermsView('root'); // last pane: nothing to fold into
+      _settleAll(host);
+      await tester.pump();
+
+      expect(host.debugPaneTree, const PaneLeaf('root'));
+      expect(host.isTabHidden(s1.id), isFalse);
+      expect(host.debugPaneSessions['root'], [s1.id]);
+    });
+  });
 }
