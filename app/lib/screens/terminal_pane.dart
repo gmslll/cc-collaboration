@@ -773,10 +773,10 @@ class TerminalSession {
     });
   }
 
-  // _scanCodexRolloutId returns the newest rollout id under [dirs] whose cwd
-  // matches this session. [floor], when set, stops the scan once files predate
-  // it (the post-launch capture ignores pre-existing rollouts; the resume
-  // resolver leaves it null to accept any age). One statSync per file.
+  // _scanCodexRolloutId returns a rollout id under [dirs] whose cwd matches
+  // this session. [floor], when set, stops the scan once files predate it and
+  // requires the match to be UNIQUE (see below); left null, it accepts any
+  // age and returns the first (newest) match. One statSync per file.
   Future<String?> _scanCodexRolloutId(
     Set<String> dirs, {
     DateTime? floor,
@@ -784,12 +784,28 @@ class TerminalSession {
     final dated = [
       for (final f in await _rolloutFilesIn(dirs)) (f, f.statSync().modified),
     ]..sort((a, b) => b.$2.compareTo(a.$2));
-    for (final (f, mtime) in dated) {
-      if (floor != null && mtime.isBefore(floor)) break;
-      final id = await _rolloutId(f);
-      if (id != null) return id;
+    if (floor == null) {
+      // Resume-resolver (_newestCodexIdForWorkdir): no time bound, so many
+      // historical rollouts for this cwd are normal and the newest cwd match
+      // is deliberately the answer — keep "first hit wins".
+      for (final (f, _) in dated) {
+        final id = await _rolloutId(f);
+        if (id != null) return id;
+      }
+      return null;
     }
-    return null;
+    // Post-launch capture polling (_captureAgentId): candidates are only
+    // rollouts written since this session started, so more than one cwd match
+    // means a sibling session launched in the same window and we can't yet
+    // tell them apart — pickUniqueRolloutId returns null (still-unknown)
+    // rather than guessing which one is ours (串味); the 30x600ms retry loop
+    // tries again next tick.
+    final inWindow = <File>[];
+    for (final (f, mtime) in dated) {
+      if (mtime.isBefore(floor)) break;
+      inWindow.add(f);
+    }
+    return pickUniqueRolloutId(inWindow, workdir);
   }
 
   Future<List<File>> _rolloutFilesIn(Set<String> dirs) async {
@@ -875,44 +891,11 @@ class TerminalSession {
   // already belongs to this session's process (and its recorded cwd may differ
   // by symlink).
   Future<String?> _rolloutId(File f, {bool checkCwd = true}) async {
-    final meta = await _readRolloutMeta(f);
+    final meta = await readRolloutMeta(f);
     if (meta == null) return null;
-    if (checkCwd && !_cwdMatches(meta['cwd']?.toString())) return null;
+    if (checkCwd && !cwdMatches(meta['cwd']?.toString(), workdir)) return null;
     final id = meta['id']?.toString();
     return (id != null && id.isNotEmpty) ? id : null;
-  }
-
-  // _readRolloutMeta reads a rollout's session_meta payload (first JSONL line).
-  Future<Map?> _readRolloutMeta(File f) async {
-    try {
-      final firstLine = await f
-          .openRead()
-          .transform(const Utf8Decoder(allowMalformed: true))
-          .transform(const LineSplitter())
-          .first;
-      final m = jsonDecode(firstLine);
-      if (m is! Map) return null;
-      final payload = m['payload'];
-      return payload is Map ? payload : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // _cwdMatches compares a rollout's recorded cwd to this session's workdir,
-  // tolerating a trailing slash and symlinked paths (so /tmp vs /private/tmp,
-  // common on macOS, still matches).
-  bool _cwdMatches(String? cwd) {
-    if (cwd == null || cwd.isEmpty) return false;
-    String trim(String p) =>
-        normalizePathSeparators(p).replaceFirst(RegExp(r'/+$'), '');
-    if (trim(cwd) == trim(workdir)) return true;
-    try {
-      return Directory(cwd).resolveSymbolicLinksSync() ==
-          Directory(workdir).resolveSymbolicLinksSync();
-    } catch (_) {
-      return false;
-    }
   }
 
   int? get pid => _pty?.pid;
