@@ -57,6 +57,55 @@ func TestBusHookResponse_StopBlocks(t *testing.T) {
 	}
 }
 
+func TestBusHookDrain_StopNoEnvOutputsEmptyJSON(t *testing.T) {
+	t.Setenv("CC_BUS_DIR", "")
+	t.Setenv("CC_SESSION_ID", "")
+
+	out := runDrainCapture(t, `{"hook_event_name":"Stop"}`)
+	if out != "{}\n" {
+		t.Fatalf("Stop without app env stdout=%q, want empty JSON", out)
+	}
+}
+
+func TestBusHookDrain_StopNoMessagesOutputsEmptyJSON(t *testing.T) {
+	t.Setenv("CC_BUS_DIR", t.TempDir())
+	t.Setenv("CC_SESSION_ID", "ts-parent")
+
+	out := runDrainCapture(t, `{"hook_event_name":"Stop"}`)
+	if out != "{}\n" {
+		t.Fatalf("Stop with no messages stdout=%q, want empty JSON", out)
+	}
+}
+
+func TestBusHookDrain_StopWithMessagesKeepsDeliveryJSON(t *testing.T) {
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	out := runDrainCapture(t, `{"hook_event_name":"Stop"}`)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("parse stdout %q: %v", out, err)
+	}
+	if m["decision"] != "block" {
+		t.Fatalf("Stop with messages must keep delivery response, got %+v", m)
+	}
+}
+
+func TestBusHookDrain_StopFailureNoMessagesOutputsEmptyJSON(t *testing.T) {
+	t.Setenv("CC_BUS_DIR", t.TempDir())
+	t.Setenv("CC_SESSION_ID", "ts-parent")
+
+	out := runDrainCapture(t, `{"hook_event_name":"StopFailure"}`)
+	if out != "{}\n" {
+		t.Fatalf("StopFailure stdout=%q, want empty JSON", out)
+	}
+}
+
 // The hook is installed on many lifecycle events for activity tracking, but bus
 // delivery must only drain on Stop. Events such as PermissionRequest do not
 // support the additionalContext shape this delivery path needs; clearing markers
@@ -128,6 +177,11 @@ func TestBusHookDrain_PostToolUseLeavesInboxParked(t *testing.T) {
 // the env (set via t.Setenv by the caller) and the hook event from stdin.
 func runDrainWith(t *testing.T, payload string) {
 	t.Helper()
+	_ = runDrainCapture(t, payload)
+}
+
+func runDrainCapture(t *testing.T, payload string) string {
+	t.Helper()
 	rIn, wIn, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -154,6 +208,11 @@ func runDrainWith(t *testing.T, payload string) {
 	if drainErr != nil {
 		t.Fatalf("runBusHookDrain: %v", drainErr)
 	}
+	out, err := io.ReadAll(rOut)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	return string(out)
 }
 
 // A Task subagent inherits the parent's CC_SESSION_ID, so its tool-call

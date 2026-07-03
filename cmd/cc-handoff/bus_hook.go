@@ -182,7 +182,7 @@ func runBusHookDrain() error {
 	if busDir == "" || sid == "" {
 		// Not an app-spawned session. Quiet no-op (the installed hook command
 		// also shell-guards on $CC_BUS_DIR, so we usually aren't even invoked).
-		return nil
+		return writeEmptyStopHookJSON(ev)
 	}
 
 	recordHookActivity(busDir, sid, raw, ev)
@@ -192,7 +192,7 @@ func runBusHookDrain() error {
 	// into this subagent's context (and ClearMsgs would delete them). Bail so
 	// they stay parked for the parent session itself. See busHookEvent.AgentID.
 	if ev.AgentID != "" {
-		return nil
+		return writeEmptyStopHookJSON(ev)
 	}
 
 	// Record this tab's agent session id for the desktop app to resume exactly.
@@ -213,14 +213,14 @@ func runBusHookDrain() error {
 	// parked for Stop instead of
 	// clearing them into an ignored hook response.
 	if !supportsBusDeliveryEvent(ev.HookEventName) {
-		return nil
+		return writeEmptyStopHookJSON(ev)
 	}
 
 	// A Stop already inside a hook-driven continuation must not re-block (a
 	// wake-loop). Bail BEFORE draining so the messages stay parked for a later
 	// top-level Stop — clearing them here would silently drop them.
 	if ev.HookEventName == "Stop" && ev.StopHookActive {
-		return nil
+		return writeEmptyStopHookJSON(ev)
 	}
 
 	// Hold the inbox drain lock for the whole list-render-clear sequence below,
@@ -232,13 +232,13 @@ func runBusHookDrain() error {
 	// messages the app didn't escalate stay parked for the next hook.
 	release, lockErr := localbus.AcquireDrainLock(busDir, sid, busHookDrainLockTimeout)
 	if lockErr != nil {
-		return nil
+		return writeEmptyStopHookJSON(ev)
 	}
 	defer release()
 
 	entries, err := localbus.ListMsgs(busDir, sid)
 	if err != nil || len(entries) == 0 {
-		return nil
+		return writeEmptyStopHookJSON(ev)
 	}
 
 	// Render the same "[来自 label · id] body" header + reply hint the app pastes
@@ -267,6 +267,22 @@ func runBusHookDrain() error {
 
 func supportsBusDeliveryEvent(name string) bool {
 	return name == "Stop"
+}
+
+func writeEmptyStopHookJSON(ev busHookEvent) error {
+	if !requiresStopHookJSON(ev.HookEventName) {
+		return nil
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{})
+}
+
+func requiresStopHookJSON(name string) bool {
+	switch name {
+	case "Stop", "StopFailure", "SubagentStop":
+		return true
+	default:
+		return false
+	}
 }
 
 func recordHookActivity(busDir, sid string, raw []byte, ev busHookEvent) {

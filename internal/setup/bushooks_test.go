@@ -38,6 +38,13 @@ func loadJSON(t *testing.T, path string) map[string]any {
 	return m
 }
 
+func expectedBusHookCommand(event string) string {
+	if busHookJSONEvents[event] {
+		return BusHookJSONCommand
+	}
+	return BusHookCommand
+}
+
 func TestEnsureClaudeBusHooks_CreatesAndIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".claude", "settings.json")
 
@@ -55,8 +62,9 @@ func TestEnsureClaudeBusHooks_CreatesAndIdempotent(t *testing.T) {
 		t.Fatalf("missing hooks block: %+v", root)
 	}
 	for _, ev := range claudeBusHookEvents {
-		if got := firstHookCommand(t, hooks, ev); got != BusHookCommand {
-			t.Errorf("%s command=%q, want %q", ev, got, BusHookCommand)
+		want := expectedBusHookCommand(ev)
+		if got := firstHookCommand(t, hooks, ev); got != want {
+			t.Errorf("%s command=%q, want %q", ev, got, want)
 		}
 	}
 	if _, has := hooks["MessageDisplay"]; has {
@@ -155,6 +163,44 @@ func TestEnsureClaudeBusHooks_PreservesExistingHooks(t *testing.T) {
 	stops, _ := hooks["Stop"].([]any)
 	if len(stops) != 2 {
 		t.Fatalf("expected 2 Stop entries (existing + bus), got %d", len(stops))
+	}
+}
+
+func TestEnsureClaudeBusHooks_ReplacesStaleStopCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	seed := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": BusHookCommand},
+						map[string]any{"type": "command", "command": BusHookJSONCommand},
+						map[string]any{"type": "command", "command": "custom-stop-hook"},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureClaudeBusHooks(path); err != nil {
+		t.Fatalf("EnsureClaudeBusHooks: %v", err)
+	}
+	hooks, _ := loadJSON(t, path)["hooks"].(map[string]any)
+	stops, _ := hooks["Stop"].([]any)
+	if hookGroupsContain(stops, BusHookCommand) {
+		t.Fatal("stale Stop bus hook command should be removed")
+	}
+	if !hookGroupsContainExact(stops, BusHookJSONCommand) {
+		t.Fatal("JSON-safe Stop bus hook command should remain")
+	}
+	if !hookGroupsContain(stops, "custom-stop-hook") {
+		t.Fatal("custom Stop hook should be preserved")
 	}
 }
 
@@ -270,8 +316,9 @@ func TestEnsureCodexBusHooks_NestedUnderHooks(t *testing.T) {
 		t.Fatalf("missing top-level hooks object: %+v", root)
 	}
 	for _, ev := range codexBusHookEvents {
-		if got := firstHookCommand(t, hooks, ev); got != BusHookCommand {
-			t.Errorf("%s command=%q, want %q", ev, got, BusHookCommand)
+		want := expectedBusHookCommand(ev)
+		if got := firstHookCommand(t, hooks, ev); got != want {
+			t.Errorf("%s command=%q, want %q", ev, got, want)
 		}
 	}
 	if _, has := hooks["SessionEnd"]; has {
@@ -322,8 +369,9 @@ func TestEnsureCodexBusHooks_MigratesRootLayout(t *testing.T) {
 		if len(arr) != 1 {
 			t.Errorf("%s should have exactly 1 entry after migration, got %d", ev, len(arr))
 		}
-		if got := firstHookCommand(t, hooks, ev); got != BusHookCommand {
-			t.Errorf("%s command=%q, want %q", ev, got, BusHookCommand)
+		want := expectedBusHookCommand(ev)
+		if got := firstHookCommand(t, hooks, ev); got != want {
+			t.Errorf("%s command=%q, want %q", ev, got, want)
 		}
 	}
 }

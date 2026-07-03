@@ -88,6 +88,7 @@ func EnsureStopHook(repoRoot string) (EnsureResult, error) {
 const BusHookInvocation = "cc-handoff bus-hook"
 
 const BusHookCommand = `[ -n "$CC_BUS_DIR" ] && ` + BusHookInvocation + ` || true`
+const BusHookJSONCommand = `[ -n "$CC_BUS_DIR" ] && ` + BusHookInvocation + ` || printf "{}\n"`
 
 // codexBusHookEvents are the lifecycle events currently documented by Codex.
 // The bus hook records all of them; only Stop drains the local-bus inbox.
@@ -151,6 +152,12 @@ var claudeBusHookEvents = []string{
 var claudeBusHookExcludedEvents = []string{
 	"MessageDisplay",
 	"WorktreeCreate",
+}
+
+var busHookJSONEvents = map[string]bool{
+	"Stop":         true,
+	"StopFailure":  true,
+	"SubagentStop": true,
 }
 
 func CodexBusHookEvents() []string {
@@ -255,7 +262,7 @@ func EnsureClaudeBusHooksFor(settingsPath string, selectedEvents []string) (Ensu
 			}
 			continue
 		}
-		if ensureHookEntry(hooks, ev, BusHookCommand) {
+		if ensureBusHookEntry(hooks, ev, busHookCommandForEvent(ev)) {
 			changed = true
 		}
 	}
@@ -305,7 +312,7 @@ func EnsureCodexBusHooksFor(hooksPath string, selectedEvents []string) (EnsureRe
 			}
 			continue
 		}
-		if ensureHookEntry(hooks, ev, BusHookCommand) {
+		if ensureBusHookEntry(hooks, ev, busHookCommandForEvent(ev)) {
 			changed = true
 		}
 	}
@@ -322,6 +329,26 @@ func stringSet(items []string) map[string]bool {
 		out[item] = true
 	}
 	return out
+}
+
+func busHookCommandForEvent(event string) string {
+	if busHookJSONEvents[event] {
+		return BusHookJSONCommand
+	}
+	return BusHookCommand
+}
+
+func ensureBusHookEntry(container map[string]any, event, command string) bool {
+	arr, _ := container[event].([]any)
+	if hookGroupsContainExact(arr, command) &&
+		!hookGroupsContainStaleBusCommand(arr, command) {
+		return false
+	}
+	changed := removeHookEntry(container, event, BusHookInvocation)
+	if ensureHookEntry(container, event, command) {
+		changed = true
+	}
+	return changed
 }
 
 // ensureHookEntry appends a matcher-less command hook for `event` into
@@ -425,6 +452,52 @@ func hookGroupsContain(arr []any, command string) bool {
 				continue
 			}
 			if cmd, _ := hm["command"].(string); strings.Contains(cmd, command) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hookGroupsContainExact(arr []any, command string) bool {
+	for _, e := range arr {
+		entry, _ := e.(map[string]any)
+		if entry == nil {
+			continue
+		}
+		if cmd, _ := entry["command"].(string); cmd == command {
+			return true
+		}
+		nested, _ := entry["hooks"].([]any)
+		for _, h := range nested {
+			hm, _ := h.(map[string]any)
+			if hm == nil {
+				continue
+			}
+			if cmd, _ := hm["command"].(string); cmd == command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hookGroupsContainStaleBusCommand(arr []any, desired string) bool {
+	for _, e := range arr {
+		entry, _ := e.(map[string]any)
+		if entry == nil {
+			continue
+		}
+		if cmd, _ := entry["command"].(string); strings.Contains(cmd, BusHookInvocation) && cmd != desired {
+			return true
+		}
+		nested, _ := entry["hooks"].([]any)
+		for _, h := range nested {
+			hm, _ := h.(map[string]any)
+			if hm == nil {
+				continue
+			}
+			if cmd, _ := hm["command"].(string); strings.Contains(cmd, BusHookInvocation) && cmd != desired {
 				return true
 			}
 		}
