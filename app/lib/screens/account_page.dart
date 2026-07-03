@@ -157,7 +157,7 @@ class _AccountPageState extends State<AccountPage> {
     return [for (final x in v) x.toString()];
   }
 
-  Future<void> _reinstallHooks({String? agent, List<String>? events}) async {
+  Future<bool> _reinstallHooks({String? agent, List<String>? events}) async {
     setState(() {
       if (agent == null) {
         _reinstalling = true;
@@ -176,7 +176,7 @@ class _AccountPageState extends State<AccountPage> {
       installError = e;
     }
     await _loadHookStatus();
-    if (!mounted) return;
+    if (!mounted) return false;
     setState(() {
       if (agent == null) {
         _reinstalling = false;
@@ -201,6 +201,7 @@ class _AccountPageState extends State<AccountPage> {
               ? 'hook 安装未成功,请检查 agent 是否已安装'
               : errorText(installError),
     );
+    return ok;
   }
 
   Future<void> _chooseHookEvents(HookInstallStatus h) async {
@@ -275,8 +276,10 @@ class _AccountPageState extends State<AccountPage> {
       ),
     );
     if (picked == null || picked.isEmpty) return;
-    Prefs.setString('busHook.events.${h.name}', jsonEncode(picked));
-    await _reinstallHooks(agent: h.name, events: picked);
+    final ok = await _reinstallHooks(agent: h.name, events: picked);
+    if (ok) {
+      Prefs.setString('busHook.events.${h.name}', jsonEncode(picked));
+    }
   }
 
   Future<void> _saveLocalConfig() async {
@@ -613,7 +616,7 @@ class _AccountPageState extends State<AccountPage> {
                 TextButton.icon(
                   onPressed: _reinstalling || _reinstallingAgents.isNotEmpty
                       ? null
-                      : () => _reinstallHooks(),
+                      : _reinstallAllHooks,
                   icon: _reinstalling
                       ? const SizedBox(
                           width: 14,
@@ -643,6 +646,13 @@ class _AccountPageState extends State<AccountPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _reinstallAllHooks() async {
+    final ok = await _reinstallHooks();
+    if (!ok) return;
+    Prefs.remove('busHook.events.claude');
+    Prefs.remove('busHook.events.codex');
   }
 
   Widget _hookRow(HookInstallStatus h) {

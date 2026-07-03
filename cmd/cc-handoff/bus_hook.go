@@ -626,18 +626,23 @@ func runBusHookInstall(args []string) error {
 			targets = append(targets, ag)
 		}
 	}
+	eventsByAgent := map[string][]string{}
+	if selectedEvents != nil {
+		for _, ag := range targets {
+			events, err := validateBusHookEvents(ag.Name(), selectedEvents)
+			if err != nil {
+				return err
+			}
+			eventsByAgent[ag.Name()] = events
+		}
+	}
 	var firstErr error
 	for _, ag := range targets {
 		var err error
 		if selectedEvents == nil {
 			err = ag.InstallBusHooks(os.Stdout)
 		} else {
-			events, evErr := validateBusHookEvents(ag.Name(), selectedEvents)
-			if evErr != nil {
-				err = evErr
-			} else {
-				err = installBusHooksForAgentEvents(ag, events)
-			}
+			err = installBusHooksForAgentEvents(ag, eventsByAgent[ag.Name()])
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bus-hook install (%s): %v\n", ag.Name(), err)

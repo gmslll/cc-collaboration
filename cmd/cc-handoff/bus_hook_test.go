@@ -430,6 +430,24 @@ func TestBusHookInstall_SelectedEventsRejectsUnsupported(t *testing.T) {
 	}
 }
 
+func TestBusHookInstall_SelectedEventsValidatesAllTargetsBeforeWriting(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "codex-home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if err := runBusHookInstall([]string{"--events", "SessionEnd"}); err == nil {
+		t.Fatal("expected unsupported event error for codex")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings should not be written after cross-agent validation failure, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("codex hooks should not be written after validation failure, err=%v", err)
+	}
+}
+
 func TestBusHookInstall_UnknownAgentErrors(t *testing.T) {
 	if err := runBusHookInstall([]string{"nope"}); err == nil {
 		t.Fatal("expected unknown agent error")
