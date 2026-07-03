@@ -122,6 +122,8 @@ class Todo {
   final int commentCount, attachmentCount;
   // Only populated by GET-by-id; list responses omit this to avoid N+1 joins.
   final List<TodoAttachment> attachments;
+  final String? sourceRef, sourceUrl, sourceProvider, sourceTeamKey;
+  final String? sourceProjectId;
 
   Todo({
     required this.id,
@@ -149,6 +151,11 @@ class Todo {
     required this.commentCount,
     required this.attachmentCount,
     required this.attachments,
+    required this.sourceRef,
+    required this.sourceUrl,
+    required this.sourceProvider,
+    required this.sourceTeamKey,
+    required this.sourceProjectId,
   });
 
   factory Todo.fromJson(Map<String, dynamic> j) => Todo(
@@ -180,6 +187,11 @@ class Todo {
                 ?.map((e) => TodoAttachment.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [],
+        sourceRef: _sn(j['source_ref']),
+        sourceUrl: _sn(j['source_url']),
+        sourceProvider: _sn(j['source_provider']),
+        sourceTeamKey: _sn(j['source_team_key']),
+        sourceProjectId: _sn(j['source_project_id']),
       );
 
   // PATCH /v1/todos/{id} and the status-update endpoint both reuse the bare
@@ -214,6 +226,11 @@ class Todo {
         commentCount: commentCount,
         attachmentCount: attachmentCount,
         attachments: attachments ?? this.attachments,
+        sourceRef: sourceRef,
+        sourceUrl: sourceUrl,
+        sourceProvider: sourceProvider,
+        sourceTeamKey: sourceTeamKey,
+        sourceProjectId: sourceProjectId,
       );
 
   // scope is never sent by the relay — it's derived locally so the UI can
@@ -222,4 +239,6 @@ class Todo {
   // so it round-trips cleanly through RelayClient.todos(scope: ...).
   bool get isPersonal => projectId == null;
   String get scope => isPersonal ? 'personal' : 'project';
+  bool get isLinear =>
+      sourceProvider == 'linear' || (sourceRef ?? '').startsWith('linear:');
 }

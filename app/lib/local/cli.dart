@@ -160,16 +160,14 @@ class Cli {
     return (res.stdout as String).trim();
   }
 
-  // todoImportLinear runs `cc-handoff todo import-linear` inside repoPath (so
-  // config.Resolve(cwd) picks up that repo's .cc-handoff.toml) — see the
-  // Track A note on internal/linear/import.go. linearProjectId narrows the
-  // Linear source; projectId is the cc-handoff Project ID to import into
-  // (team todos); omit projectId for personal todos.
+  // todoImportLinear runs `cc-handoff todo import-linear`. When no
+  // workingDirectory is supplied, the CLI resolves user-level config only;
+  // teamKey/linearProjectId must be provided by the caller.
   static Future<String> todoImportLinear({
-    required String repoPath,
     required String teamKey,
     String? linearProjectId,
     String? projectId,
+    String? workingDirectory,
   }) =>
       run([
         'todo', 'import-linear',
@@ -182,7 +180,7 @@ class Cli {
           '--project',
           projectId,
         ],
-      ], workingDirectory: repoPath);
+      ], workingDirectory: workingDirectory);
 
   // --- workspace / project management (config.toml round-trips via SaveUser) ---
 

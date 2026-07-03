@@ -6,6 +6,18 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-07-03
+
+### Changed
+
+- **待办页新增远程来源切换** — 团队待办可在 relay 项目和 Linear `team_key`/`project_id` 两种远程来源之间切换；Linear 导入会记录来源元数据用于筛选，原有每条 todo 绑定本地 workspace/repo 的能力保持不变。
+- **Linear 导入不再绑定本地项目配置** — 待办页直接配置 Linear team/project 作为远程来源；一个 Linear 项目可以导入后再由每条 todo 单独绑定到不同本地 workspace/repo。
+- **移动端待办筛选跟随远程来源切换** — 窄屏下团队来源、Linear 导入入口和分组筛选改为横向滚动工具条，避免按钮挤出或遮挡。
+
+### Fixed
+
+- **Linear source_ref 去重按目标 scope 生效** — 同一个 Linear issue 可分别存在于个人待办和不同 relay 项目中，不再被其它 scope 的旧导入误拦截；重跑导入会回补来源元数据。
+
 ## [0.9.4] - 2026-07-03
 
 ### Added

@@ -28,6 +28,7 @@ type Issue struct {
 	AssigneeEmail string
 	Labels        []string
 	DueDate       *time.Time
+	ProjectID     string
 }
 
 // teamIssuesQuery filters to a single team by its short key (e.g. "ENG").
@@ -48,6 +49,7 @@ query CCHandoffTeamIssues($teamKey: String!) {
       state { name type }
       priority
       assignee { email }
+      project { id }
       labels { nodes { name } }
       dueDate
     }
@@ -66,6 +68,7 @@ query CCHandoffProjectIssues($teamKey: String!, $projectID: String!) {
       state { name type }
       priority
       assignee { email }
+      project { id }
       labels { nodes { name } }
       dueDate
     }
@@ -92,6 +95,9 @@ type issueNode struct {
 	Assignee *struct {
 		Email string `json:"email"`
 	} `json:"assignee"`
+	Project *struct {
+		ID string `json:"id"`
+	} `json:"project"`
 	Labels struct {
 		Nodes []struct {
 			Name string `json:"name"`
@@ -136,6 +142,9 @@ func GetTeamIssues(ctx context.Context, c *Client, teamKey, projectID string) ([
 		}
 		if n.Assignee != nil {
 			iss.AssigneeEmail = n.Assignee.Email
+		}
+		if n.Project != nil {
+			iss.ProjectID = n.Project.ID
 		}
 		for _, l := range n.Labels.Nodes {
 			iss.Labels = append(iss.Labels, l.Name)

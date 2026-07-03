@@ -426,8 +426,69 @@ func TestCreateTodoSourceRefAndFindBySourceRefHTTP(t *testing.T) {
 		t.Fatalf("by-source on unseen ref should report found=false")
 	}
 
-	// A stranger can't discover alice's personal todo through by-source either.
-	if code, _ := getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", bobTok); code != http.StatusForbidden {
-		t.Errorf("stranger by-source = %d, want 403", code)
+	// A stranger can't discover alice's personal todo through by-source either,
+	// and should be free to import the same external issue into their own view.
+	code, body = getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", bobTok)
+	if code != http.StatusOK {
+		t.Fatalf("stranger by-source = %d %s", code, body)
+	}
+	if err := json.Unmarshal(body, &notFound); err != nil {
+		t.Fatalf("decode stranger by-source response: %v", err)
+	}
+	if notFound.Found {
+		t.Fatalf("stranger by-source should report found=false")
+	}
+}
+
+func TestFindTodoBySourceRefHTTPScopesToProject(t *testing.T) {
+	srv, st, _ := todoTestRig(t)
+	mkUser(t, st, "alice@x", "alicepass1")
+	aliceTok := loginToken(t, srv.URL, "alice@x", "alicepass1")
+
+	code, body := postJSON(t, srv.URL+"/v1/projects", aliceTok, map[string]string{"name": "Kunlun"})
+	if code != http.StatusCreated {
+		t.Fatalf("create project = %d %s", code, body)
+	}
+	var proj struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &proj); err != nil {
+		t.Fatalf("decode project: %v", err)
+	}
+
+	personal := createTodoHTTP(t, srv.URL, aliceTok, map[string]any{
+		"title":      "Personal copy",
+		"source_ref": "linear:ENG-456",
+	})
+	team := createTodoHTTP(t, srv.URL, aliceTok, map[string]any{
+		"title":      "Team copy",
+		"project_id": proj.ID,
+		"source_ref": "linear:ENG-456",
+	})
+
+	var found struct {
+		Found bool            `json:"found"`
+		Todo  todoschema.Todo `json:"todo"`
+	}
+	code, body = getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", aliceTok)
+	if code != http.StatusOK {
+		t.Fatalf("personal by-source = %d %s", code, body)
+	}
+	if err := json.Unmarshal(body, &found); err != nil {
+		t.Fatalf("decode personal by-source: %v", err)
+	}
+	if !found.Found || found.Todo.ID != personal.ID {
+		t.Fatalf("personal by-source should find personal copy: %+v", found)
+	}
+
+	code, body = getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456&project="+proj.ID, aliceTok)
+	if code != http.StatusOK {
+		t.Fatalf("project by-source = %d %s", code, body)
+	}
+	if err := json.Unmarshal(body, &found); err != nil {
+		t.Fatalf("decode project by-source: %v", err)
+	}
+	if !found.Found || found.Todo.ID != team.ID {
+		t.Fatalf("project by-source should find team copy: %+v", found)
 	}
 }

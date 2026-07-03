@@ -152,8 +152,11 @@ type Todo struct {
 	// Import commands use it for idempotency — see
 	// internal/relay/store/todos.go FindTodoBySourceRef. SourceURL is the
 	// corresponding external issue link, purely informational.
-	SourceRef string `json:"source_ref,omitempty"`
-	SourceURL string `json:"source_url,omitempty"`
+	SourceRef       string `json:"source_ref,omitempty"`
+	SourceURL       string `json:"source_url,omitempty"`
+	SourceProvider  string `json:"source_provider,omitempty"`
+	SourceTeamKey   string `json:"source_team_key,omitempty"`
+	SourceProjectID string `json:"source_project_id,omitempty"`
 	// GroupName is a free-form, user-defined bucket ("我的日常", "xxx项目") —
 	// same "plain string, no separate table" design as WorkspaceName/RepoName
 	// above. Empty means ungrouped. A group comes into existence just by a

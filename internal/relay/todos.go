@@ -53,6 +53,9 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		// support for them since they're not meant to change afterward.
 		SourceRef string `json:"source_ref"`
 		SourceURL string `json:"source_url"`
+		SourceProvider  string `json:"source_provider"`
+		SourceTeamKey   string `json:"source_team_key"`
+		SourceProjectID string `json:"source_project_id"`
 		// WorkspaceName/RepoName are the optional workspace/repo binding (see
 		// pkg/todoschema.Todo field docs) — both empty (the default) means
 		// "not bound".
@@ -95,6 +98,9 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:     now,
 		SourceRef:     req.SourceRef,
 		SourceURL:     req.SourceURL,
+		SourceProvider:  req.SourceProvider,
+		SourceTeamKey:   req.SourceTeamKey,
+		SourceProjectID: req.SourceProjectID,
 		WorkspaceName: req.WorkspaceName,
 		RepoName:      req.RepoName,
 		GroupName:     req.GroupName,
@@ -141,11 +147,11 @@ func (s *Server) getTodo(w http.ResponseWriter, r *http.Request) {
 
 // findTodoBySourceRef exposes Store.FindTodoBySourceRef over HTTP for import
 // commands (e.g. `cc-handoff todo import-linear`) to decide "already
-// imported — update it" vs. "not seen before — create it". Unlike getTodo,
-// "no such source_ref" is an expected, common outcome rather than an error,
-// so it's always a 200 with found=false rather than a 404 — that keeps
-// transport.Client.FindTodoBySourceRef from having to special-case 404 the
-// way ErrAttachmentNotFound does.
+// imported — update it" vs. "not seen before — create it". The optional
+// ?project= query parameter scopes the lookup to that relay project; omitting
+// it scopes the lookup to the caller's personal todos. Unlike getTodo, "no
+// such source_ref" is an expected, common outcome rather than an error, so
+// it's always a 200 with found=false rather than a 404.
 func (s *Server) findTodoBySourceRef(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	ref := r.URL.Query().Get("ref")
@@ -153,7 +159,7 @@ func (s *Server) findTodoBySourceRef(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ref query param required", http.StatusBadRequest)
 		return
 	}
-	t, found, err := s.Store.FindTodoBySourceRef(r.Context(), identity, ref)
+	t, found, err := s.Store.FindTodoBySourceRef(r.Context(), identity, ref, r.URL.Query().Get("project"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -318,6 +324,30 @@ func (s *Server) patchTodo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		patch.GroupName = &val
+	}
+	if v, ok := raw["source_provider"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid source_provider", http.StatusBadRequest)
+			return
+		}
+		patch.SourceProvider = &val
+	}
+	if v, ok := raw["source_team_key"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid source_team_key", http.StatusBadRequest)
+			return
+		}
+		patch.SourceTeamKey = &val
+	}
+	if v, ok := raw["source_project_id"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid source_project_id", http.StatusBadRequest)
+			return
+		}
+		patch.SourceProjectID = &val
 	}
 
 	updated, err := s.Store.UpdateTodoFields(r.Context(), id, identity, patch)

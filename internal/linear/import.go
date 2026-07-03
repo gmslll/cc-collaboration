@@ -34,10 +34,33 @@ type ImportResult struct {
 // personal todos owned by the caller's identity.
 func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID, projectID string) (ImportResult, error) {
 	res, err := config.Resolve(cwd)
-	if err != nil {
-		return ImportResult{}, err
+	var (
+		relayURL            string
+		token               string
+		me                  string
+		linearPersonalToken string
+		linearCfg           config.LinearIntegration
+	)
+	if err == nil {
+		relayURL = res.RelayURL
+		token = res.Token
+		me = res.Me
+		linearPersonalToken = res.LinearPersonalToken
+		linearCfg = res.Linear
+	} else {
+		u, _, userErr := config.LoadUser()
+		if userErr != nil {
+			return ImportResult{}, userErr
+		}
+		if u == nil {
+			return ImportResult{}, fmt.Errorf("user config missing; run `cc-handoff init`")
+		}
+		relayURL = u.RelayURL
+		token = u.Token
+		me = u.Identity
+		linearPersonalToken = u.LinearPersonalToken
 	}
-	if res.LinearPersonalToken == "" {
+	if linearPersonalToken == "" {
 		return ImportResult{}, fmt.Errorf("linear_personal_token not set in user config (~/.config/cc-handoff/config.toml). " +
 			"Generate one at Linear → Account → Security & Access → Personal API Keys.")
 	}
@@ -45,22 +68,25 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 	linearProjectID = strings.TrimSpace(linearProjectID)
 	projectID = strings.TrimSpace(projectID)
 	if teamKey == "" {
-		teamKey = strings.TrimSpace(res.Linear.TeamKey)
+		teamKey = strings.TrimSpace(linearCfg.TeamKey)
 	}
 	if linearProjectID == "" {
-		linearProjectID = strings.TrimSpace(res.Linear.ProjectID)
+		linearProjectID = strings.TrimSpace(linearCfg.ProjectID)
 	}
 	if teamKey == "" {
 		return ImportResult{}, fmt.Errorf("no Linear team key: pass --team, or set [integrations.linear] team_key in .cc-handoff.toml")
 	}
+	if relayURL == "" || token == "" || me == "" {
+		return ImportResult{}, fmt.Errorf("incomplete user config: relay_url/token/identity must be set")
+	}
 
-	gql := NewClient(res.LinearPersonalToken)
-	todoClient := transport.New(res.RelayURL, res.Token)
+	gql := NewClient(linearPersonalToken)
+	todoClient := transport.New(relayURL, token)
 
 	// Candidate identity pool for assignee-email matching (see
 	// matchAssigneeIdentity): always the caller's own identity, plus every
 	// member of the target project when importing into a team project.
-	candidates := []string{res.Me}
+	candidates := []string{me}
 	if projectID != "" {
 		members, err := todoClient.ListProjectMembers(ctx, projectID)
 		if err != nil {
@@ -87,7 +113,7 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 		Issues:          len(issues),
 	}
 	for _, iss := range issues {
-		created, err := upsertTodoFromIssue(ctx, todoClient, iss, projectID, candidates)
+		created, err := upsertTodoFromIssue(ctx, todoClient, iss, teamKey, linearProjectID, projectID, candidates)
 		if err != nil {
 			return result, fmt.Errorf("import %s: %w", iss.Identifier, err)
 		}
@@ -104,27 +130,31 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 // Linear issue: find-by-SourceRef decides create vs. update. Assignee
 // matching only applies on create — a re-import shouldn't clobber a manual
 // reassignment made inside cc-handoff after the fact.
-func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, projectID string, candidates []string) (created bool, err error) {
+func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, teamKey, linearProjectID, projectID string, candidates []string) (created bool, err error) {
 	sourceRef := "linear:" + iss.Identifier
+	sourceProvider := "linear"
+	sourceProjectID := linearProjectID
+	if sourceProjectID == "" {
+		sourceProjectID = strings.TrimSpace(iss.ProjectID)
+	}
 	status := mapIssueStatus(iss.StateType)
 	priority := mapIssuePriority(iss.Priority)
 	bodyMD := composeBodyMD(iss.Labels, iss.Description)
 
-	existing, found, err := c.FindTodoBySourceRef(ctx, sourceRef)
+	existing, found, err := c.FindTodoBySourceRef(ctx, sourceRef, projectID)
 	if err != nil {
 		return false, fmt.Errorf("lookup: %w", err)
 	}
 	if found {
-		if existing.ProjectID != projectID {
-			return false, fmt.Errorf("already imported as todo %s in project %q, cannot update into project %q; move or delete the existing todo first",
-				existing.ID, existing.ProjectID, projectID)
-		}
 		title := iss.Title
 		if _, err := c.PatchTodo(ctx, existing.ID, transport.TodoPatch{
 			Title:    &title,
 			BodyMD:   &bodyMD,
 			Priority: &priority,
 			DueAt:    transport.OptionalTime{Set: true, Value: iss.DueDate},
+			SourceProvider:  &sourceProvider,
+			SourceTeamKey:   &teamKey,
+			SourceProjectID: &sourceProjectID,
 		}); err != nil {
 			return false, fmt.Errorf("patch: %w", err)
 		}
@@ -142,6 +172,9 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, pr
 		DueAt:     iss.DueDate,
 		SourceRef: sourceRef,
 		SourceURL: iss.URL,
+		SourceProvider:  sourceProvider,
+		SourceTeamKey:   teamKey,
+		SourceProjectID: sourceProjectID,
 	})
 	if err != nil {
 		return false, fmt.Errorf("create: %w", err)

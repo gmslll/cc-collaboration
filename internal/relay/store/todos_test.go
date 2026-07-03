@@ -336,7 +336,7 @@ func TestFindTodoBySourceRef(t *testing.T) {
 
 	// Not found: no todo has this source_ref yet, and that's not an error —
 	// the caller (an import command) should go on to create one.
-	_, found, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456")
+	_, found, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456", "")
 	if err != nil {
 		t.Fatalf("FindTodoBySourceRef on empty store: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestFindTodoBySourceRef(t *testing.T) {
 	td := &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "ENG-456: fix the thing", SourceRef: "linear:ENG-456", SourceURL: "https://linear.app/x/issue/ENG-456"}
 	mustCreateTodo(t, st, td)
 
-	got, found, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456")
+	got, found, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456", "")
 	if err != nil || !found {
 		t.Fatalf("FindTodoBySourceRef should find imported todo: found=%v err=%v", found, err)
 	}
@@ -355,18 +355,44 @@ func TestFindTodoBySourceRef(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 
-	// A stranger with no view access gets ErrForbidden, not a silent "not found".
-	if _, _, err := st.FindTodoBySourceRef(ctx, "bob@x", "linear:ENG-456"); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("stranger FindTodoBySourceRef: want ErrForbidden, got %v", err)
+	// A stranger with no view access gets found=false, so one user's personal
+	// Linear import does not block another user importing the same issue.
+	_, found, err = st.FindTodoBySourceRef(ctx, "bob@x", "linear:ENG-456", "")
+	if err != nil {
+		t.Fatalf("stranger FindTodoBySourceRef: %v", err)
+	}
+	if found {
+		t.Fatal("stranger should not see alice's personal source_ref")
 	}
 
 	// A different source_ref that nothing matches is still "not found".
-	_, found, err = st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-999")
+	_, found, err = st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-999", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if found {
 		t.Fatal("unrelated source_ref should not be found")
+	}
+}
+
+func TestFindTodoBySourceRefScopesToDestination(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateProject(ctx, "p1", "Kunlun", "alice@x", now); err != nil {
+		t.Fatal(err)
+	}
+
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "personal", OwnerIdentity: "alice@x", Title: "personal", SourceRef: "linear:ENG-456"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "team", ProjectID: "p1", OwnerIdentity: "alice@x", Title: "team", SourceRef: "linear:ENG-456"})
+
+	got, found, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456", "")
+	if err != nil || !found || got.ID != "personal" {
+		t.Fatalf("personal by-source = %+v found=%v err=%v", got, found, err)
+	}
+	got, found, err = st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456", "p1")
+	if err != nil || !found || got.ID != "team" {
+		t.Fatalf("project by-source = %+v found=%v err=%v", got, found, err)
 	}
 }
 
@@ -416,7 +442,7 @@ func TestCreateTodoWithSourceRef(t *testing.T) {
 		t.Fatalf("CreateTodo did not persist source fields: %+v", got)
 	}
 
-	found, ok, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456")
+	found, ok, err := st.FindTodoBySourceRef(ctx, "alice@x", "linear:ENG-456", "")
 	if err != nil || !ok || found.ID != "td1" {
 		t.Fatalf("newly created todo should be findable by source_ref: found=%+v ok=%v err=%v", found, ok, err)
 	}

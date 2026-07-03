@@ -20,7 +20,7 @@ const todoColumns = `t.id, t.project_id, t.owner_identity, t.title, t.body_md, t
        t.assignee_agent_session_id, t.assignee_workdir, t.assignee_agent_kind,
        t.workspace_name, t.repo_name, t.recurrence, t.group_name,
        t.due_at, t.next_occurrence_at, t.created_at, t.updated_at, t.completed_at,
-       t.source_ref, t.source_url,
+       t.source_ref, t.source_url, t.source_provider, t.source_team_key, t.source_project_id,
        (SELECT COUNT(*) FROM todo_comments c WHERE c.todo_id = t.id) AS comment_count,
        (SELECT COUNT(*) FROM todo_attachments a WHERE a.todo_id = t.id) AS attachment_count`
 
@@ -37,7 +37,7 @@ func scanTodoRow(row scanner) (todoschema.Todo, error) {
 		&t.AssigneeAgentSessionID, &t.AssigneeWorkdir, &t.AssigneeAgentKind,
 		&t.WorkspaceName, &t.RepoName, &t.Recurrence, &t.GroupName,
 		&dueMS, &nextMS, &createdMS, &updatedMS, &completedMS,
-		&t.SourceRef, &t.SourceURL,
+		&t.SourceRef, &t.SourceURL, &t.SourceProvider, &t.SourceTeamKey, &t.SourceProjectID,
 		&t.CommentCount, &t.AttachmentCount,
 	); err != nil {
 		return todoschema.Todo{}, err
@@ -212,12 +212,12 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
 			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence, group_name,
 			due_at, next_occurrence_at, created_at, updated_at, completed_at,
-			source_ref, source_url)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			source_ref, source_url, source_provider, source_team_key, source_project_id)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, nullableString(t.ProjectID), t.OwnerIdentity, t.Title, t.BodyMD, string(t.Status), string(t.Priority),
 		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, t.WorkspaceName, t.RepoName, string(t.Recurrence), t.GroupName,
 		timeToNullMS(t.DueAt), timeToNullMS(t.NextOccurrenceAt), t.CreatedAt.UnixMilli(), t.UpdatedAt.UnixMilli(), timeToNullMS(t.CompletedAt),
-		t.SourceRef, t.SourceURL,
+		t.SourceRef, t.SourceURL, t.SourceProvider, t.SourceTeamKey, t.SourceProjectID,
 	)
 	return err
 }
@@ -241,37 +241,44 @@ func (s *Store) GetTodo(ctx context.Context, id, callerIdentity string) (todosch
 	return s.withAttachments(ctx, t)
 }
 
-// FindTodoBySourceRef looks up the todo previously imported from sourceRef
-// (see pkg/todoschema.Todo.SourceRef), for an import command to decide
-// "already imported — update it" (found=true) vs. "not seen before — create
-// it" (found=false, not an error). Authorization mirrors GetTodo exactly
-// (same todoPermission check + withAttachments join): a match that
-// callerIdentity can't view still surfaces as ErrForbidden rather than
-// being reported as not-found.
-func (s *Store) FindTodoBySourceRef(ctx context.Context, callerIdentity, sourceRef string) (todoschema.Todo, bool, error) {
+// FindTodoBySourceRef looks up the visible todo previously imported from
+// sourceRef in the requested destination scope: projectID empty means the
+// caller's personal todos, non-empty means that exact relay project. This
+// keeps source_ref idempotency scoped to where the import writes; source_ref
+// is an external identifier, not a globally-owned unique key.
+func (s *Store) FindTodoBySourceRef(ctx context.Context, callerIdentity, sourceRef, projectID string) (todoschema.Todo, bool, error) {
 	if sourceRef == "" {
 		return todoschema.Todo{}, false, nil
 	}
-	t, err := scanTodoRow(s.db.QueryRowContext(ctx,
-		`SELECT `+todoColumns+` FROM todos t WHERE t.source_ref = ? LIMIT 1`, sourceRef))
-	if errors.Is(err, sql.ErrNoRows) {
-		return todoschema.Todo{}, false, nil
+	query := `SELECT ` + todoColumns + ` FROM todos t WHERE t.source_ref = ?`
+	args := []any{sourceRef}
+	if projectID == "" {
+		query += ` AND t.project_id IS NULL AND t.owner_identity = ?`
+		args = append(args, callerIdentity)
+	} else {
+		query += ` AND t.project_id = ?`
+		args = append(args, projectID)
 	}
+	query += ` ORDER BY t.created_at DESC`
+	items, err := s.queryTodos(ctx, query, args...)
 	if err != nil {
 		return todoschema.Todo{}, false, err
 	}
-	perm, err := s.todoPermission(ctx, t, callerIdentity)
-	if err != nil {
-		return todoschema.Todo{}, false, err
+	for _, t := range items {
+		perm, err := s.todoPermission(ctx, t, callerIdentity)
+		if err != nil {
+			return todoschema.Todo{}, false, err
+		}
+		if !perm.view {
+			continue
+		}
+		t, err = s.withAttachments(ctx, t)
+		if err != nil {
+			return todoschema.Todo{}, false, err
+		}
+		return t, true, nil
 	}
-	if !perm.view {
-		return todoschema.Todo{}, false, forbidTodo("view", callerIdentity, t.ID)
-	}
-	t, err = s.withAttachments(ctx, t)
-	if err != nil {
-		return todoschema.Todo{}, false, err
-	}
-	return t, true, nil
+	return todoschema.Todo{}, false, nil
 }
 
 // withAttachments joins t.Attachments in from listTodoAttachmentsRaw. Every
@@ -391,6 +398,11 @@ type TodoPatch struct {
 	// empty string means "clear to ungrouped" (see pkg/todoschema.Todo field
 	// docs).
 	GroupName *string
+	// Source metadata is set by importers and may be backfilled on re-import
+	// for older rows that only had source_ref/source_url.
+	SourceProvider  *string
+	SourceTeamKey   *string
+	SourceProjectID *string
 }
 
 type OptionalTime struct {
@@ -451,6 +463,18 @@ func (s *Store) UpdateTodoFields(ctx context.Context, id, callerIdentity string,
 	if patch.GroupName != nil {
 		sets = append(sets, "group_name = ?")
 		args = append(args, *patch.GroupName)
+	}
+	if patch.SourceProvider != nil {
+		sets = append(sets, "source_provider = ?")
+		args = append(args, *patch.SourceProvider)
+	}
+	if patch.SourceTeamKey != nil {
+		sets = append(sets, "source_team_key = ?")
+		args = append(args, *patch.SourceTeamKey)
+	}
+	if patch.SourceProjectID != nil {
+		sets = append(sets, "source_project_id = ?")
+		args = append(args, *patch.SourceProjectID)
 	}
 	args = append(args, id)
 	if _, err := s.db.ExecContext(ctx,

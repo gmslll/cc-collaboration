@@ -233,6 +233,9 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 	for _, ddl := range []struct{ what, sql string }{
 		{"source_ref", `ALTER TABLE todos ADD COLUMN source_ref TEXT NOT NULL DEFAULT ''`},
 		{"source_url", `ALTER TABLE todos ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`},
+		{"source_provider", `ALTER TABLE todos ADD COLUMN source_provider TEXT NOT NULL DEFAULT ''`},
+		{"source_team_key", `ALTER TABLE todos ADD COLUMN source_team_key TEXT NOT NULL DEFAULT ''`},
+		{"source_project_id", `ALTER TABLE todos ADD COLUMN source_project_id TEXT NOT NULL DEFAULT ''`},
 		{"assignee_agent_session_id", `ALTER TABLE todos ADD COLUMN assignee_agent_session_id TEXT NOT NULL DEFAULT ''`},
 		{"assignee_workdir", `ALTER TABLE todos ADD COLUMN assignee_workdir TEXT NOT NULL DEFAULT ''`},
 		{"assignee_agent_kind", `ALTER TABLE todos ADD COLUMN assignee_agent_kind TEXT NOT NULL DEFAULT ''`},
@@ -254,6 +257,9 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_source_ref ON todos(source_ref) WHERE source_ref != ''`); err != nil {
 		return fmt.Errorf("create source_ref index: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_source_scope ON todos(source_provider, source_team_key, source_project_id) WHERE source_provider != ''`); err != nil {
+		return fmt.Errorf("create source scope index: %w", err)
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_group ON todos(group_name) WHERE group_name != ''`); err != nil {
 		return fmt.Errorf("create group_name index: %w", err)

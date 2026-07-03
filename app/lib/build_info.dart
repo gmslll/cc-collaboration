@@ -2,7 +2,7 @@
 // confirm AT A GLANCE which build a device is actually running — desktop and
 // phone must both show the latest tag for cross-device features (e.g. remote
 // workspace/project sync) to work. Bump it whenever you cut a build to verify.
-const String kBuildMarker = 'b36 · 2026-07-03 · 待办指派落地文件 + hook事件级选装 + Git标签菜单';
+const String kBuildMarker = 'b37 · 2026-07-03 · 待办远程来源切换 + Linear来源筛选';
 
 // kAppVersion is the semver this build reports (matches the v<X.Y.Z> release
 // tag), injected at build time from the repo VERSION file via

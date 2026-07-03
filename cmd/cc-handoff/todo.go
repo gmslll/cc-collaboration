@@ -63,8 +63,8 @@ import-linear 选项:
                  Linear project UUID。省略则导入整个 Linear team
   --project ID   导入到的 cc-handoff Project ID(团队待办)。不传 = 个人待办
 
-  按 source_ref(linear:<identifier>) 幂等:已导入过的 issue 会更新标题/正文/优先级/
-  截止时间/状态,而不是建重复待办。需要先在用户配置里设置 linear_personal_token。
+  按 source_ref(linear:<identifier>) 在目标 scope 内幂等:同一目标已导入过的 issue
+  会更新标题/正文/优先级/截止时间/状态,而不是建重复待办。需要先在用户配置里设置 linear_personal_token。
 `
 
 func runTodo(ctx context.Context, args []string) error {

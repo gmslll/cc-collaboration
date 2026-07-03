@@ -1,16 +1,16 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/todo_models.dart';
-import '../local/cli.dart';
+import '../local/cli_stub.dart' if (dart.library.io) '../local/cli.dart';
 import '../local/config.dart';
 import '../local/local_bus.dart';
-import '../local/repo_config.dart';
+import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
 import '../local/todo_store.dart';
@@ -62,18 +62,6 @@ final List<_BoardColumnDef> _boardColumnDefs = [
     (title: _boardColumnTitles[s]!, statuses: {s}, dropStatus: s),
 ];
 
-// _LinearImportRepo is a local project whose .cc-handoff.toml configures
-// [integrations.linear] team_key — the "从 Linear 导入" header button is only
-// offered when at least one exists (see _TodosPageState._loadLinearRepos).
-// projectId is Linear's own project UUID, optional: empty imports the whole
-// Linear team, non-empty restricts the import to that Linear project.
-typedef _LinearImportRepo = ({
-  String name,
-  String path,
-  String teamKey,
-  String projectId,
-});
-
 // TodosPage is the top-level 待办 destination: a filterable list (left) + the
 // selected todo's detail/edit panel (right), mirroring HandoffsPage's split
 // layout. All scope/status/project filtering happens in memory over
@@ -107,6 +95,7 @@ class TodosPage extends StatefulWidget {
 
 class _TodosPageState extends State<TodosPage> {
   String _scope = 'personal'; // personal | team | all
+  String _teamSource = 'relay'; // relay | linear
   final Set<TodoStatus> _statusFilter = {};
   String? _projectFilter; // project id, only meaningful when _scope == 'team'
   // _groupFilter/_groups back the 分组 dropdown next to 项目: null = 全部.
@@ -122,14 +111,22 @@ class _TodosPageState extends State<TodosPage> {
   bool _boardView = true; // board is the default, Linear-flavored view
   final Set<String> _collapsedMobileGroups = {};
   final _detailKey = GlobalKey<TodoDetailViewState>();
-  List<_LinearImportRepo> _linearRepos = [];
-  int _linearReposLoadSeq = 0;
+  String _linearTeamKey = '';
+  String _linearProjectId = '';
+  String? _linearTokenOverride;
   bool _importingLinear = false;
 
   RelayClient get _client => widget.client;
   AppConfig get _cfg => widget.config;
   Me get _me => widget.me;
   TodoStore get _store => widget.store;
+  bool get _canUseLocalCli =>
+      !kIsWeb &&
+      {
+        TargetPlatform.linux,
+        TargetPlatform.macOS,
+        TargetPlatform.windows,
+      }.contains(defaultTargetPlatform);
   SessionOverviewStore get _overview => widget.overviewStore;
 
   @override
@@ -140,6 +137,7 @@ class _TodosPageState extends State<TodosPage> {
     // comment list if that's the todo currently open (TodoStore itself
     // doesn't model comments, it just flags which todo needs a reload).
     _store.onComment = _onComment;
+    _loadLinearImportPrefs();
     _loadGroups();
   }
 
@@ -152,7 +150,9 @@ class _TodosPageState extends State<TodosPage> {
     String? projectId;
     if (_scope == 'personal') {
       projectId = null;
-    } else if (_scope == 'team' && _projectFilter != null) {
+    } else if (_scope == 'team' &&
+        _teamSource == 'relay' &&
+        _projectFilter != null) {
       projectId = _projectFilter;
     } else {
       if (mounted && seq == _groupsLoadSeq) setState(() => _groups = []);
@@ -166,64 +166,48 @@ class _TodosPageState extends State<TodosPage> {
     }
   }
 
-  // _loadLinearRepos scans every locally-tracked project (across all
-  // workspaces) for one whose .cc-handoff.toml sets [integrations.linear]
-  // team_key — see repo_config_page.dart for the same RepoConfig.load
-  // read path. Best-effort: a project with no/unreadable .cc-handoff.toml
-  // is silently skipped rather than failing the whole scan.
-  Future<void> _loadLinearRepos() async {
-    final seq = ++_linearReposLoadSeq;
-    final found = <_LinearImportRepo>[];
-    for (final entry in _cfg.repos.entries) {
-      try {
-        final c = await RepoConfig.load(entry.value);
-        final key = c.teamKey.trim();
-        if (c.linearEnabled && key.isNotEmpty) {
-          found.add((
-            name: entry.key,
-            path: entry.value,
-            teamKey: key,
-            projectId: c.linearProjectId.trim(),
-          ));
-        }
-      } catch (_) {}
-    }
-    if (mounted && seq == _linearReposLoadSeq) {
-      setState(() => _linearRepos = found);
-    }
+  void _loadLinearImportPrefs() {
+    _linearTeamKey = Prefs.getString('todo.linear.teamKey', def: '');
+    _linearProjectId = Prefs.getString('todo.linear.projectId', def: '');
+    _teamSource = Prefs.getString('todo.team.source', def: 'relay') == 'linear'
+        ? 'linear'
+        : 'relay';
   }
 
   void _refresh() {
     _store.refresh();
-    if (_scope == 'team') _loadLinearRepos();
     _loadGroups();
   }
 
-  // _importFromLinear shells `cc-handoff todo import-linear` (Cli.
-  // todoImportLinear) in whichever local repo's Linear config applies. The
-  // target cc-handoff Project is the current Project filter; without one,
-  // importing is blocked so a team import doesn't silently create personal
-  // todos or guess a project mapping.
+  // _importFromLinear shells `cc-handoff todo import-linear` using the Todo
+  // page's own Linear source settings. Linear team/project is a remote source
+  // scope, mutually exclusive with relay Project filtering; local workspace
+  // binding remains per-todo and is not changed by import.
   Future<void> _importFromLinear() async {
     if (_importingLinear) return;
-    final targetProjectId = _projectFilter;
-    if (targetProjectId == null || targetProjectId.isEmpty) {
-      if (mounted) snack(context, '先在待办页选择一个项目，再从 Linear 导入');
+    final teamKey = _linearTeamKey.trim();
+    if (teamKey.isEmpty) {
+      if (mounted) snack(context, '先配置 Linear team_key');
       return;
     }
-    final repo =
-        _linearRepos.length == 1 ? _linearRepos.first : await _pickLinearRepo();
-    if (repo == null) return;
     setState(() => _importingLinear = true);
     try {
       final out = await Cli.todoImportLinear(
-        repoPath: repo.path,
-        teamKey: repo.teamKey,
-        linearProjectId: repo.projectId,
-        projectId: targetProjectId,
+        teamKey: teamKey,
+        linearProjectId: _linearProjectId.trim(),
       );
       if (mounted) snack(context, out.isNotEmpty ? out : '已从 Linear 导入');
       await _store.refresh();
+      if (mounted) {
+        setState(() {
+          _scope = 'team';
+          _teamSource = 'linear';
+          _projectFilter = null;
+          _groupFilter = null;
+        });
+        Prefs.setString('todo.team.source', 'linear');
+        _loadGroups();
+      }
     } catch (e) {
       if (mounted) snack(context, errorText(e));
     } finally {
@@ -231,44 +215,28 @@ class _TodosPageState extends State<TodosPage> {
     }
   }
 
-  Future<_LinearImportRepo?> _pickLinearRepo() {
-    return showDialog<_LinearImportRepo>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('从哪个项目的 Linear team 导入？'),
-        children: _linearRepos
-            .map((r) => SimpleDialogOption(
-                  onPressed: () => Navigator.pop(ctx, r),
-                  child: Text(
-                    r.projectId.isEmpty
-                        ? '${r.name} (${r.teamKey} / 全部项目)'
-                        : '${r.name} (${r.teamKey} / ${r.projectId})',
-                  ),
-                ))
-            .toList(),
-      ),
-    );
-  }
-
   Future<void> _linearHelpDialog() {
     return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Linear 导入配置'),
-        content: const SingleChildScrollView(
+        content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _HelpText('1. 在用户配置里设置 linear_personal_token。'),
-              _HelpText('2. 在工作区项目菜单打开“项目配置”，启用 Linear 集成。'),
-              _HelpText('3. team_key 填 issue 编号前缀，例如 INF-502 填 INF。'),
-              _HelpText('4. project_id 填 Linear Project UUID；不填会拉整个 team。'),
-              _HelpText('5. Web 版 Linear 里打开项目，按 Cmd/Ctrl+K，搜索 Copy model UUID。'),
-              _HelpText('6. 回到待办页，先在项目下拉里选目标项目，再执行导入。'),
-              SizedBox(height: 10),
+              if (_canUseLocalCli)
+                const _HelpText('1. 在用户配置里设置 linear_personal_token。')
+              else
+                const _HelpText('1. 手机/Web 端只切换查看来源；导入需在桌面端执行。'),
+              const _HelpText('2. 在待办页的 Linear 配置里填 team_key 和 project_id。'),
+              const _HelpText('3. team_key 填 issue 编号前缀，例如 INF-502 填 INF。'),
+              const _HelpText('4. project_id 是 Linear Project UUID；不填会看整个 team。'),
+              const _HelpText('5. Web 版 Linear 里打开项目，按 Cmd/Ctrl+K，搜索 Copy model UUID。'),
+              const _HelpText('6. 团队视图可在 Relay 项目和 Linear 项目之间切换；两者互斥。'),
+              const SizedBox(height: 10),
               Text(
-                '导入时会按 source_ref(linear:<编号>) 幂等更新；如果同一个 Linear issue 已导入到其他 cc-handoff 项目，会提示你先移动或删除旧待办。',
+                '导入时会按 source_ref(linear:<编号>) 幂等更新；Linear project 只作为远程来源筛选，不会覆盖每条 todo 的本地 workspace/repo 绑定。',
                 style: TextStyle(color: CcColors.muted, height: 1.35),
               ),
             ],
@@ -282,6 +250,85 @@ class _TodosPageState extends State<TodosPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _linearConfigDialog() async {
+    final tokenCtl =
+        TextEditingController(text: _linearTokenOverride ?? _cfg.linearToken);
+    final teamCtl = TextEditingController(text: _linearTeamKey);
+    final projectCtl = TextEditingController(text: _linearProjectId);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Linear 团队 / 项目'),
+        content: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_canUseLocalCli) ...[
+                TextField(
+                  controller: tokenCtl,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'linear_personal_token',
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              TextField(
+                controller: teamCtl,
+                decoration: const InputDecoration(
+                  labelText: '团队 team_key',
+                  hintText: '例如 INF',
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: projectCtl,
+                decoration: const InputDecoration(
+                  labelText: '项目 project_id（Linear Project UUID，可选）',
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (saved != true) return;
+    final token = tokenCtl.text.trim();
+    final team = teamCtl.text.trim();
+    final project = projectCtl.text.trim();
+    try {
+      if (_canUseLocalCli) {
+        await Cli.configSet(linearToken: token);
+      }
+      Prefs.setString('todo.linear.teamKey', team);
+      Prefs.setString('todo.linear.projectId', project);
+      if (mounted) {
+        setState(() {
+          _linearTeamKey = team;
+          _linearProjectId = project;
+          _linearTokenOverride = token;
+        });
+        snack(context, 'Linear 导入配置已保存');
+      }
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
   }
 
   @override
@@ -309,11 +356,15 @@ class _TodosPageState extends State<TodosPage> {
   List<Todo> get _filtered {
     final items = _store.all.where((t) {
       if (_scope == 'personal' && !t.isPersonal) return false;
-      if (_scope == 'team' && t.isPersonal) return false;
-      if (_scope == 'team' &&
-          _projectFilter != null &&
-          t.projectId != _projectFilter) {
-        return false;
+      if (_scope == 'team') {
+        if (_teamSource == 'linear') {
+          if (!_matchesLinearSource(t)) return false;
+        } else {
+          if (t.isPersonal) return false;
+          if (_projectFilter != null && t.projectId != _projectFilter) {
+            return false;
+          }
+        }
       }
       if (_statusFilter.isNotEmpty && !_statusFilter.contains(t.status)) {
         return false;
@@ -323,6 +374,28 @@ class _TodosPageState extends State<TodosPage> {
     }).toList();
     items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return items;
+  }
+
+  bool _matchesLinearSource(Todo t) {
+    if (!t.isLinear) return false;
+    final team = _linearTeamKey.trim();
+    final project = _linearProjectId.trim();
+    if (team.isEmpty) return false;
+    final sourceTeam = (t.sourceTeamKey ?? '').trim();
+    final ref = (t.sourceRef ?? '').trim();
+    if (sourceTeam.isNotEmpty) {
+      if (sourceTeam.toLowerCase() != team.toLowerCase()) {
+        return false;
+      }
+    } else if (!ref
+        .toLowerCase()
+        .startsWith('linear:${team.toLowerCase()}-')) {
+      return false;
+    }
+    if (project.isNotEmpty && (t.sourceProjectId ?? '').trim() != project) {
+      return false;
+    }
+    return true;
   }
 
   // _projectName resolves a team todo's project id to its display name for
@@ -345,8 +418,10 @@ class _TodosPageState extends State<TodosPage> {
       builder: (_) => _QuickCreateDialog(
         client: _client,
         me: _me,
-        initialScope: _scope == 'team' ? 'team' : 'personal',
-        initialProjectId: _scope == 'team' ? _projectFilter : null,
+        initialScope:
+            _scope == 'team' && _teamSource == 'relay' ? 'team' : 'personal',
+        initialProjectId:
+            _scope == 'team' && _teamSource == 'relay' ? _projectFilter : null,
         groups: _groups,
       ),
     );
@@ -479,106 +554,24 @@ class _TodosPageState extends State<TodosPage> {
               if (_scope != 'team') _projectFilter = null;
               _groupFilter = null;
             });
-            if (nextScope == 'team') _loadLinearRepos();
             _loadGroups();
           },
         ),
       ),
-      if (_scope == 'team' && _me.projects.isNotEmpty)
+      if (_scope == 'team')
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Row(
-            children: [
-              const Text(
-                '项目',
-                style: TextStyle(color: CcColors.muted, fontSize: 12.5),
-              ),
-              const Spacer(),
-              DropdownButton<String?>(
-                value: _projectFilter,
-                hint: const Text('全部项目'),
-                underline: const SizedBox(),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('全部项目'),
-                  ),
-                  ..._me.projects.map(
-                    (p) => DropdownMenuItem<String?>(
-                      value: p.id,
-                      child: Text(p.name),
-                    ),
-                  ),
-                ],
-                onChanged: (v) {
-                  setState(() {
-                    _projectFilter = v;
-                    _groupFilter = null;
-                  });
-                  _loadGroups();
-                },
-              ),
-            ],
-          ),
+          child: _teamSourceControls(wide: wide),
         ),
       if (_groups.isNotEmpty)
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Row(
-            children: [
-              const Text(
-                '分组',
-                style: TextStyle(color: CcColors.muted, fontSize: 12.5),
-              ),
-              const Spacer(),
-              DropdownButton<String?>(
-                value: _groupFilter,
-                hint: const Text('全部分组'),
-                underline: const SizedBox(),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('全部分组'),
-                  ),
-                  ..._groups.map(
-                    (g) => DropdownMenuItem<String?>(value: g, child: Text(g)),
-                  ),
-                ],
-                onChanged: (v) => setState(() => _groupFilter = v),
-              ),
-            ],
-          ),
+          child: _groupControls(wide: wide),
         ),
-      if (_scope == 'team')
+      if (_scope == 'team' && _teamSource == 'linear')
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-          child: Row(
-            children: [
-              if (_linearRepos.isNotEmpty)
-                Tooltip(
-                  message:
-                      _projectFilter == null ? '先在项目下拉里选择目标项目' : '从 Linear 导入',
-                  child: TextButton.icon(
-                    onPressed: _importingLinear || _projectFilter == null
-                        ? null
-                        : _importFromLinear,
-                    icon: _importingLinear
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.sync_alt_rounded, size: 16),
-                    label: const Text('从 Linear 导入'),
-                  ),
-                ),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Linear 导入配置',
-                onPressed: _linearHelpDialog,
-                icon: const Icon(Icons.help_outline_rounded, size: 18),
-              ),
-            ],
-          ),
+          child: _linearImportControls(wide: wide),
         ),
       Padding(
         padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
@@ -595,6 +588,173 @@ class _TodosPageState extends State<TodosPage> {
       const Divider(height: 12),
     ],
   );
+
+  Widget _teamSourceControls({required bool wide}) {
+    final controls = <Widget>[
+      SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'relay', label: Text('Relay')),
+          ButtonSegment(value: 'linear', label: Text('Linear')),
+        ],
+        selected: {_teamSource},
+        showSelectedIcon: false,
+        style: const ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        onSelectionChanged: (s) {
+          final source = s.first;
+          setState(() {
+            _teamSource = source;
+            _projectFilter = null;
+            _groupFilter = null;
+          });
+          Prefs.setString('todo.team.source', source);
+          _loadGroups();
+        },
+      ),
+      const SizedBox(width: 14),
+      if (_teamSource == 'relay') ...[
+        const Text(
+          '项目',
+          style: TextStyle(color: CcColors.muted, fontSize: 12.5),
+        ),
+        const SizedBox(width: 8),
+        DropdownButton<String?>(
+          value: _projectFilter,
+          hint: const Text('全部项目'),
+          underline: const SizedBox(),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('全部项目'),
+            ),
+            ..._me.projects.map(
+              (p) => DropdownMenuItem<String?>(
+                value: p.id,
+                child: Text(p.name),
+              ),
+            ),
+          ],
+          onChanged: (v) {
+            setState(() {
+              _projectFilter = v;
+              _groupFilter = null;
+            });
+            _loadGroups();
+          },
+        ),
+      ] else ...[
+        const Text(
+          'Linear',
+          style: TextStyle(color: CcColors.muted, fontSize: 12.5),
+        ),
+        const SizedBox(width: 10),
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: wide ? 420 : 220),
+          child: Text(
+            _linearTeamKey.trim().isEmpty
+                ? '未配置团队'
+                : _linearProjectId.trim().isEmpty
+                    ? '${_linearTeamKey.trim()} / 全部项目'
+                    : '${_linearTeamKey.trim()} / ${_linearProjectId.trim()}',
+            style: const TextStyle(color: CcColors.subtle, fontSize: 12.5),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        TextButton.icon(
+          onPressed: _linearConfigDialog,
+          icon: const Icon(Icons.tune_rounded, size: 16),
+          label: const Text('切换团队/项目'),
+        ),
+      ],
+    ];
+    if (!wide) {
+      return scrollableBar(scrolling: controls);
+    }
+    return Row(
+      children: [
+        ...controls,
+        const Spacer(),
+      ],
+    );
+  }
+
+  Widget _linearImportControls({required bool wide}) {
+    final importTooltip = !_canUseLocalCli
+        ? '桌面端可从 Linear 导入'
+        : _linearTeamKey.trim().isEmpty
+            ? '先配置 Linear 团队'
+            : '从 Linear 导入';
+    final importButton = Tooltip(
+      message: importTooltip,
+      child: TextButton.icon(
+        onPressed: !_canUseLocalCli ||
+                _importingLinear ||
+                _linearTeamKey.trim().isEmpty
+            ? null
+            : _importFromLinear,
+        icon: _importingLinear
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.sync_alt_rounded, size: 16),
+        label: const Text('从 Linear 导入'),
+      ),
+    );
+    final helpButton = IconButton(
+      tooltip: 'Linear 导入配置',
+      onPressed: _linearHelpDialog,
+      icon: const Icon(Icons.help_outline_rounded, size: 18),
+    );
+    if (!wide) {
+      return scrollableBar(scrolling: [importButton, helpButton]);
+    }
+    return Row(
+      children: [
+        importButton,
+        const Spacer(),
+        helpButton,
+      ],
+    );
+  }
+
+  Widget _groupControls({required bool wide}) {
+    final label = const Text(
+      '分组',
+      style: TextStyle(color: CcColors.muted, fontSize: 12.5),
+    );
+    final dropdown = DropdownButton<String?>(
+      value: _groupFilter,
+      hint: const Text('全部分组'),
+      underline: const SizedBox(),
+      items: [
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('全部分组'),
+        ),
+        ..._groups.map(
+          (g) => DropdownMenuItem<String?>(value: g, child: Text(g)),
+        ),
+      ],
+      onChanged: (v) => setState(() => _groupFilter = v),
+    );
+    if (!wide) {
+      return scrollableBar(
+        scrolling: [label, const SizedBox(width: 10), dropdown],
+      );
+    }
+    return Row(
+      children: [
+        label,
+        const Spacer(),
+        dropdown,
+      ],
+    );
+  }
 
   Widget _statusChip(TodoStatus s) {
     final selected = _statusFilter.contains(s);

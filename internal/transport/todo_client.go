@@ -89,15 +89,17 @@ func (c *Client) GetTodo(ctx context.Context, id string) (*todoschema.Todo, erro
 }
 
 // FindTodoBySourceRef looks up the todo previously imported from sourceRef
-// (see pkg/todoschema.Todo.SourceRef / Store.FindTodoBySourceRef), for an
-// import command to decide "already imported — update it" (found=true) vs.
-// "not seen before — create it" (found=false, not an error).
-func (c *Client) FindTodoBySourceRef(ctx context.Context, sourceRef string) (*todoschema.Todo, bool, error) {
+// in the destination scope: projectID empty = caller's personal todos,
+// non-empty = that relay project.
+func (c *Client) FindTodoBySourceRef(ctx context.Context, sourceRef, projectID string) (*todoschema.Todo, bool, error) {
 	var out struct {
 		Found bool             `json:"found"`
 		Todo  *todoschema.Todo `json:"todo"`
 	}
 	path := "/v1/todos/by-source?ref=" + url.QueryEscape(sourceRef)
+	if projectID != "" {
+		path += "&project=" + url.QueryEscape(projectID)
+	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, false, err
 	}
@@ -135,6 +137,9 @@ type TodoPatch struct {
 	// GroupName: nil means "leave alone"; a non-nil empty string clears it to
 	// ungrouped — same *string semantics as WorkspaceName/RepoName.
 	GroupName *string
+	SourceProvider  *string
+	SourceTeamKey   *string
+	SourceProjectID *string
 }
 
 // PatchTodo applies a partial update to todo id. Only fields set on patch
@@ -165,6 +170,15 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 	}
 	if patch.GroupName != nil {
 		fields["group_name"] = *patch.GroupName
+	}
+	if patch.SourceProvider != nil {
+		fields["source_provider"] = *patch.SourceProvider
+	}
+	if patch.SourceTeamKey != nil {
+		fields["source_team_key"] = *patch.SourceTeamKey
+	}
+	if patch.SourceProjectID != nil {
+		fields["source_project_id"] = *patch.SourceProjectID
 	}
 	body, err := json.Marshal(fields)
 	if err != nil {
