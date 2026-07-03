@@ -101,6 +101,12 @@ build_android() {
   need flutter
   # The phone is a remote client (talks to the relay); it never calls the local
   # CLI, so no binary is embedded.
+  echo "==> Android: flutter pub get (populates the pub cache cargokit's gradle9 patch targets)"
+  (cd app && flutter pub get)
+  # cargokit (bundled inside irondash_engine_context/super_native_extensions, both
+  # pulled in transitively by super_clipboard) calls the Project#exec(Closure) API
+  # Gradle 9 removed outright — see the script for the full story/upstream status.
+  "$ROOT/scripts/patch_cargokit_gradle9.sh"
   echo "==> Android: flutter build apk --release"
   # --build-name/-number drive the APK's versionName/versionCode from VERSION
   # (not pubspec's fixed 1.0.0+1), so each release is a proper, higher-versioned
