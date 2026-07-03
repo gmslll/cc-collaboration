@@ -2209,62 +2209,87 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  // _closeOtherCodeFiles/_closeCodeFilesToRight/_closeCodeFilesToLeft are all
+  // scoped to [keep]'s own pane (see _paneFileIndices) rather than the global
+  // _codeFiles list — closing "others"/"left"/"right" from a tab in a split
+  // pane must never touch files open in a *different* pane. While unsplit,
+  // _paneOfPath always resolves to 'root' and _paneFileIndices('root') is
+  // every open file, so scope == the whole list and behavior is unchanged
+  // from before split-pane existed. _activeFile is always [keep]'s new index
+  // afterward — by the time any of these run, the tab menu that dispatched
+  // here has already made [keep] the active file (see _activateMenuTarget),
+  // so this just keeps it active through the removal.
   Future<void> _closeOtherCodeFiles(int keep) async {
     if (keep < 0 || keep >= _codeFiles.length) return;
-    final dirty = _codeFiles
-        .asMap()
-        .entries
-        .where((e) => e.key != keep && e.value.dirty)
-        .map((e) => e.value.path)
-        .toList();
+    final scope = _paneFileIndices(_paneOfPath(_codeFiles[keep].path));
+    final closePaths = {
+      for (final i in scope)
+        if (i != keep) _codeFiles[i].path,
+    };
+    if (closePaths.isEmpty) return;
+    final dirty = [
+      for (final f in _codeFiles)
+        if (closePaths.contains(f.path) && f.dirty) f.path,
+    ];
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭其他未保存文件?', _previewList(dirty));
       if (!ok) return;
     }
-    final kept = _codeFiles[keep];
+    final keepPath = _codeFiles[keep].path;
     setState(() {
-      _codeFiles
-        ..clear()
-        ..add(kept);
-      _activeFile = 0;
+      _codeFiles.removeWhere((f) => closePaths.contains(f.path));
+      final idx = _codeFiles.indexWhere((f) => f.path == keepPath);
+      _activeFile = idx >= 0 ? idx : (_codeFiles.isEmpty ? -1 : 0);
       if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
 
   Future<void> _closeCodeFilesToRight(int keep) async {
-    if (keep < 0 || keep >= _codeFiles.length - 1) return;
-    final dirty = _codeFiles
-        .asMap()
-        .entries
-        .where((e) => e.key > keep && e.value.dirty)
-        .map((e) => e.value.path)
-        .toList();
+    if (keep < 0 || keep >= _codeFiles.length) return;
+    final scope = _paneFileIndices(_paneOfPath(_codeFiles[keep].path));
+    final pos = scope.indexOf(keep);
+    if (pos < 0 || pos >= scope.length - 1) return;
+    final closePaths = {
+      for (final i in scope.sublist(pos + 1)) _codeFiles[i].path,
+    };
+    final dirty = [
+      for (final f in _codeFiles)
+        if (closePaths.contains(f.path) && f.dirty) f.path,
+    ];
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭右侧未保存文件?', _previewList(dirty));
       if (!ok) return;
     }
+    final keepPath = _codeFiles[keep].path;
     setState(() {
-      _codeFiles.removeRange(keep + 1, _codeFiles.length);
-      if (_activeFile > keep) _activeFile = keep;
+      _codeFiles.removeWhere((f) => closePaths.contains(f.path));
+      final idx = _codeFiles.indexWhere((f) => f.path == keepPath);
+      _activeFile = idx >= 0 ? idx : (_codeFiles.isEmpty ? -1 : 0);
       if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
 
   Future<void> _closeCodeFilesToLeft(int keep) async {
-    if (keep <= 0 || keep >= _codeFiles.length) return;
-    final dirty = _codeFiles
-        .asMap()
-        .entries
-        .where((e) => e.key < keep && e.value.dirty)
-        .map((e) => e.value.path)
-        .toList();
+    if (keep < 0 || keep >= _codeFiles.length) return;
+    final scope = _paneFileIndices(_paneOfPath(_codeFiles[keep].path));
+    final pos = scope.indexOf(keep);
+    if (pos <= 0) return;
+    final closePaths = {
+      for (final i in scope.sublist(0, pos)) _codeFiles[i].path,
+    };
+    final dirty = [
+      for (final f in _codeFiles)
+        if (closePaths.contains(f.path) && f.dirty) f.path,
+    ];
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭左侧未保存文件?', _previewList(dirty));
       if (!ok) return;
     }
+    final keepPath = _codeFiles[keep].path;
     setState(() {
-      _codeFiles.removeRange(0, keep);
-      _activeFile = _activeFile >= keep ? _activeFile - keep : 0;
+      _codeFiles.removeWhere((f) => closePaths.contains(f.path));
+      final idx = _codeFiles.indexWhere((f) => f.path == keepPath);
+      _activeFile = idx >= 0 ? idx : (_codeFiles.isEmpty ? -1 : 0);
       if (_filePaneTree is PaneSplit) _reconcilePaneTree();
     });
   }
@@ -5046,8 +5071,16 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   // 文件标签页右键/⋮菜单共用的 item 列表 + 派发逻辑，两个触发方式(showMenu 右键、
-  // PopupMenuButton 左键小图标)都喂同一份，不在两处各写一份。
-  List<PopupMenuEntry<String>> _editorFileTabMenuItems(int index) => [
+  // PopupMenuButton 左键小图标)都喂同一份，不在两处各写一份。closeOthers/Left/Right
+  // 的 enabled/显示条件按 [index] 所在 pane 的范围算（未分屏时 scope 就是全部文件，
+  // 跟以前完全一样），保证菜单里"能不能点/有没有这一行"跟 _closeOtherCodeFiles 等
+  // 实际生效范围一致。
+  List<PopupMenuEntry<String>> _editorFileTabMenuItems(int index) {
+    final scope = index >= 0 && index < _codeFiles.length
+        ? _paneFileIndices(_paneOfPath(_codeFiles[index].path))
+        : const <int>[];
+    final pos = scope.indexOf(index);
+    return [
     ccMenuItem(
       value: 'copyPath',
       icon: Icons.content_copy_rounded,
@@ -5096,15 +5129,15 @@ class _WorkspacePageState extends State<WorkspacePage>
       value: 'closeOthers',
       icon: Icons.clear_rounded,
       label: 'Close Others',
-      enabled: _codeFiles.length > 1,
+      enabled: scope.length > 1,
     ),
-    if (index > 0)
+    if (pos > 0)
       ccMenuItem(
         value: 'closeLeft',
         icon: Icons.first_page_rounded,
         label: 'Close Tabs to the Left',
       ),
-    if (index < _codeFiles.length - 1)
+    if (pos >= 0 && pos < scope.length - 1)
       ccMenuItem(
         value: 'closeRight',
         icon: Icons.keyboard_tab_rounded,
@@ -5120,7 +5153,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       icon: Icons.clear_all_rounded,
       label: 'Close All',
     ),
-  ];
+    ];
+  }
 
   void _handleEditorFileTabMenuSelect(String v, int index) {
     if (index < 0 || index >= _codeFiles.length) return;

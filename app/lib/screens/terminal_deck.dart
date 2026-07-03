@@ -437,29 +437,52 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     return null;
   }
 
+  // _paneTermIndices lists [paneId]'s sessions as *global* terms indices, in
+  // terms' own order — this is the order the tab strip actually renders them
+  // in (TerminalTabBar filters/orders by walking `terms`, not by
+  // _paneSessions' insertion order), so it's what "left"/"right" must be
+  // computed against. While unsplit, _paneOf resolves every session to the
+  // single root pane, so this is just every index — same as before split-pane
+  // existed.
+  List<int> _paneTermIndices(String paneId) => [
+    for (var i = 0; i < terms.length; i++)
+      if (_paneOf(terms[i].id) == paneId) i,
+  ];
+
   // closeOtherTerms/closeTermsToLeft/closeTermsToRight back the terminal tab's
   // right-click "关闭其他/左侧/右侧" — a real close (kills the PTY) for every
   // matched session. Only wired up for hosts whose × is itself a real close
   // (hideClosedTabs: false, e.g. the inbox cockpit) — see the View-suffixed
   // siblings below for the hide-only counterpart used wherever × is
-  // closeTermView. Routed through _closeTermsWhere so a bulk close re-anchors
-  // activeTerm on the previously active session's *new* index rather than
-  // reusing closeTerm's simple length-clamp, which only accounts for removals
-  // at-or-after the active tab (a bulk close can also drop tabs strictly
-  // before it).
+  // closeTermView. Scoped to [keep]/[index]'s own pane (_paneTermIndices) so
+  // a bulk close triggered from one split pane's tab strip never reaches
+  // into a sibling pane's sessions. Routed through _closeTermsWhere so a bulk
+  // close re-anchors activeTerm on the previously active session's *new*
+  // index rather than reusing closeTerm's simple length-clamp, which only
+  // accounts for removals at-or-after the active tab (a bulk close can also
+  // drop tabs strictly before it).
   void closeOtherTerms(int keep) {
     if (keep < 0 || keep >= terms.length) return;
-    _closeTermsWhere((i) => i != keep);
+    final scope = _paneTermIndices(_paneOf(terms[keep].id)).toSet();
+    _closeTermsWhere((i) => scope.contains(i) && i != keep);
   }
 
   void closeTermsToLeft(int index) {
-    if (index <= 0 || index >= terms.length) return;
-    _closeTermsWhere((i) => i < index);
+    if (index < 0 || index >= terms.length) return;
+    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final pos = scope.indexOf(index);
+    if (pos <= 0) return;
+    final toClose = scope.sublist(0, pos).toSet();
+    _closeTermsWhere(toClose.contains);
   }
 
   void closeTermsToRight(int index) {
-    if (index < 0 || index >= terms.length - 1) return;
-    _closeTermsWhere((i) => i > index);
+    if (index < 0 || index >= terms.length) return;
+    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final pos = scope.indexOf(index);
+    if (pos < 0 || pos >= scope.length - 1) return;
+    final toClose = scope.sublist(pos + 1).toSet();
+    _closeTermsWhere(toClose.contains);
   }
 
   void _closeTermsWhere(bool Function(int index) shouldClose) {
@@ -497,20 +520,30 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // running, tab just drops out of the strip, reopenTermView brings it back).
   // Wired up for hosts whose × is closeTermView (hideClosedTabs: true, e.g.
   // the workspace) so a right-click "关闭其他/左侧/右侧" can never surprise-kill
-  // a background session the single × would have merely hidden.
+  // a background session the single × would have merely hidden. Scoped to
+  // the same pane as their non-View siblings above.
   void closeOtherTermsView(int keep) {
     if (keep < 0 || keep >= terms.length) return;
-    _hideTermsWhere((i) => i != keep);
+    final scope = _paneTermIndices(_paneOf(terms[keep].id)).toSet();
+    _hideTermsWhere((i) => scope.contains(i) && i != keep);
   }
 
   void closeTermsToLeftView(int index) {
-    if (index <= 0 || index >= terms.length) return;
-    _hideTermsWhere((i) => i < index);
+    if (index < 0 || index >= terms.length) return;
+    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final pos = scope.indexOf(index);
+    if (pos <= 0) return;
+    final toHide = scope.sublist(0, pos).toSet();
+    _hideTermsWhere(toHide.contains);
   }
 
   void closeTermsToRightView(int index) {
-    if (index < 0 || index >= terms.length - 1) return;
-    _hideTermsWhere((i) => i > index);
+    if (index < 0 || index >= terms.length) return;
+    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final pos = scope.indexOf(index);
+    if (pos < 0 || pos >= scope.length - 1) return;
+    final toHide = scope.sublist(pos + 1).toSet();
+    _hideTermsWhere(toHide.contains);
   }
 
   void _hideTermsWhere(bool Function(int index) shouldHide) {
@@ -1458,6 +1491,18 @@ class TerminalTabBar extends StatelessWidget {
     this.trailing,
   });
 
+  // _visibleIndices is this strip's own displayed tabs, in display order —
+  // when this TerminalTabBar is one pane of a split layout, [hiddenIds]
+  // already includes every session that belongs to a *different* pane (see
+  // _splitTerminalDeck's paneHidden), so filtering by it here is exactly
+  // "this pane's tabs", with no separate pane-awareness needed. Unsplit, it's
+  // just the hideClosedTabs host's usual hidden-view filter (or everything,
+  // for the inbox cockpit) — same as before this existed.
+  List<int> _visibleIndices() => [
+    for (var i = 0; i < terms.length; i++)
+      if (!(hiddenIds?.contains(terms[i].id) ?? false)) i,
+  ];
+
   // 右键菜单项：跟 workspace_page.dart 里文件标签页的 _editorFileTabMenuItems 同一
   // 视觉风格(ccMenuItem/showMenu/menuPosAt)。"关闭"直接调 onClose(i) ——跟标签上
   // 那颗 × 按钮完全同一个回调，语义天然一致(workspace 里是 closeTermView 只隐藏
@@ -1465,22 +1510,27 @@ class TerminalTabBar extends StatelessWidget {
   // 该调哪个。"关闭其他/左侧/右侧"同理：onCloseOthers/onCloseLeft/onCloseRight 由
   // terminalDeck() 按 hideClosedTabs 挑一套(真杀 closeOtherTerms 系列 vs 隐藏
   // closeOtherTermsView 系列)传进来，跟单个 × 保持同一语义——不会出现"点了关闭
-  // 其他，结果背景在跑的会话被杀掉"这种意外。
-  List<PopupMenuEntry<String>> _tabMenuItems(int i) => [
+  // 其他，结果背景在跑的会话被杀掉"这种意外。enabled/是否显示这几行按 _visibleIndices
+  // （这个 strip 自己实际展示的标签，分屏时已经是"这个 pane 自己的标签"）算，不是
+  // 按 terms 全量，保证菜单状态跟 closeOtherTerms 等实际生效范围一致。
+  List<PopupMenuEntry<String>> _tabMenuItems(int i) {
+    final visible = _visibleIndices();
+    final pos = visible.indexOf(i);
+    return [
     ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
     ccMenuItem(
       value: 'closeOthers',
       icon: Icons.clear_rounded,
       label: 'Close Others',
-      enabled: onCloseOthers != null && terms.length > 1,
+      enabled: onCloseOthers != null && visible.length > 1,
     ),
-    if (onCloseLeft != null && i > 0)
+    if (onCloseLeft != null && pos > 0)
       ccMenuItem(
         value: 'closeLeft',
         icon: Icons.first_page_rounded,
         label: 'Close Tabs to the Left',
       ),
-    if (onCloseRight != null && i < terms.length - 1)
+    if (onCloseRight != null && pos >= 0 && pos < visible.length - 1)
       ccMenuItem(
         value: 'closeRight',
         icon: Icons.keyboard_tab_rounded,
@@ -1505,7 +1555,8 @@ class TerminalTabBar extends StatelessWidget {
       icon: Icons.content_copy_rounded,
       label: 'Copy Path',
     ),
-  ];
+    ];
+  }
 
   Future<void> _showTabMenu(BuildContext context, Offset pos, int i) async {
     final v = await showMenu<String>(

@@ -236,4 +236,145 @@ void main() {
       },
     );
   });
+
+  // Regression coverage for pane-scoped closeOtherTerms/closeTermsToLeft/
+  // closeTermsToRight (and their View siblings): before this fix these bulk
+  // actions reasoned about the *global* terms list/index, so a "close
+  // others/left/right" fired from one split pane's tab strip could reach
+  // into a sibling pane's sessions whenever their global indices happened to
+  // fall in the wrong direction. Deliberately split off a session at a
+  // *lower* global index than the pane under test, so a naive
+  // index-comparison implementation would wrongly sweep it up.
+  group('bulk close is scoped to the acting tab\'s own pane', () {
+    testWidgets('closeOtherTerms leaves a sibling pane fully untouched', (
+      tester,
+    ) async {
+      final key = GlobalKey<_HostState>();
+      await tester.pumpWidget(_Host(key: key));
+      final host = key.currentState!;
+      final s1 = _plainSession();
+      final s2 = _plainSession();
+      final s3 = _plainSession();
+      final s4 = _plainSession();
+      addTearDown(s1.dispose);
+      addTearDown(s3.dispose);
+      host.terms.addAll([s1, s2, s3, s4]);
+      for (final s in host.terms) {
+        host.debugAssignSessionToPane(s.id);
+      }
+      host.splitTermRight(0); // s1 -> its own pane; root becomes [s2, s3, s4]
+      _settleAll(host);
+      await tester.pump();
+      expect(host.debugPaneSessions['root'], [s2.id, s3.id, s4.id]);
+
+      host.closeOtherTerms(host.terms.indexOf(s3)); // keep s3, within root
+      _settleAll(host);
+      await tester.pump();
+
+      // s2/s4 (root's own siblings) are gone; s1, split off into its own
+      // pane, must survive even though "close others" ran elsewhere.
+      final remaining = host.terms.map((s) => s.id).toSet();
+      expect(remaining, {s1.id, s3.id});
+      expect(host.debugPaneSessions['root'], [s3.id]);
+    });
+
+    testWidgets(
+      'closeTermsToLeft does not reach into a pane split off at a lower global index',
+      (tester) async {
+        final key = GlobalKey<_HostState>();
+        await tester.pumpWidget(_Host(key: key));
+        final host = key.currentState!;
+        final s1 = _plainSession();
+        final s2 = _plainSession();
+        final s3 = _plainSession();
+        final s4 = _plainSession();
+        addTearDown(s1.dispose);
+        addTearDown(s3.dispose);
+        addTearDown(s4.dispose);
+        host.terms.addAll([s1, s2, s3, s4]);
+        for (final s in host.terms) {
+          host.debugAssignSessionToPane(s.id);
+        }
+        host.splitTermRight(0); // s1 -> its own pane; root becomes [s2, s3, s4]
+        _settleAll(host);
+        await tester.pump();
+
+        // s3 sits at global index 2, position 1 within root's own ordering.
+        host.closeTermsToLeft(host.terms.indexOf(s3));
+        _settleAll(host);
+        await tester.pump();
+
+        // Only s2 (root's own tab to s3's left) is gone. s1 — global index 0,
+        // numerically "to the left" of s3 — lives in a different pane and
+        // must survive: exactly the cross-pane bug this scoping guards.
+        final remaining = host.terms.map((s) => s.id).toSet();
+        expect(remaining, {s1.id, s3.id, s4.id});
+      },
+    );
+
+    testWidgets(
+      'closeTermsToRight does not reach into a pane split off at a higher global index',
+      (tester) async {
+        final key = GlobalKey<_HostState>();
+        await tester.pumpWidget(_Host(key: key));
+        final host = key.currentState!;
+        final s1 = _plainSession();
+        final s2 = _plainSession();
+        final s3 = _plainSession();
+        final s4 = _plainSession();
+        addTearDown(s1.dispose);
+        addTearDown(s2.dispose);
+        addTearDown(s4.dispose);
+        host.terms.addAll([s1, s2, s3, s4]);
+        for (final s in host.terms) {
+          host.debugAssignSessionToPane(s.id);
+        }
+        host.splitTermRight(3); // s4 -> its own pane; root becomes [s1, s2, s3]
+        _settleAll(host);
+        await tester.pump();
+
+        // s2 sits at global index 1, position 1 within root's own ordering.
+        host.closeTermsToRight(host.terms.indexOf(s2));
+        _settleAll(host);
+        await tester.pump();
+
+        // Only s3 (root's own tab to s2's right) is gone. s4 — global index
+        // 3, numerically "to the right" of s2 — lives in a different pane
+        // and must survive.
+        final remaining = host.terms.map((s) => s.id).toSet();
+        expect(remaining, {s1.id, s2.id, s4.id});
+      },
+    );
+
+    testWidgets(
+      'closeOtherTermsView hides only the acting tab\'s own pane siblings',
+      (tester) async {
+        final key = GlobalKey<_HostState>();
+        await tester.pumpWidget(_Host(key: key));
+        final host = key.currentState!;
+        final s1 = _plainSession();
+        final s2 = _plainSession();
+        final s3 = _plainSession();
+        addTearDown(s1.dispose);
+        addTearDown(s2.dispose);
+        addTearDown(s3.dispose);
+        host.terms.addAll([s1, s2, s3]);
+        for (final s in host.terms) {
+          host.debugAssignSessionToPane(s.id);
+        }
+        host.splitTermRight(0); // s1 -> its own pane; root becomes [s2, s3]
+        _settleAll(host);
+        await tester.pump();
+
+        host.closeOtherTermsView(host.terms.indexOf(s2)); // keep s2, in root
+        _settleAll(host);
+        await tester.pump();
+
+        expect(host.isTabHidden(s3.id), isTrue);
+        expect(host.isTabHidden(s2.id), isFalse);
+        expect(host.isTabHidden(s1.id), isFalse); // different pane, untouched
+        expect(host.terms, hasLength(3)); // hide-only: nobody actually closed
+      },
+    );
+  });
 }
