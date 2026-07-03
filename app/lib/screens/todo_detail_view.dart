@@ -469,12 +469,16 @@ class TodoDetailViewState extends State<TodoDetailView> {
     return DefaultTabController(
       length: 2,
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _header(),
+        Expanded(
+          flex: 2,
+          child: SingleChildScrollView(child: _header()),
+        ),
         TabBar(tabs: [
           Tab(text: '评论 (${_comments.length})'),
           Tab(text: '附件 (${_current.attachmentCount})'),
         ]),
         Expanded(
+          flex: 3,
           child: TabBarView(children: [
             _commentsTab(),
             SingleChildScrollView(

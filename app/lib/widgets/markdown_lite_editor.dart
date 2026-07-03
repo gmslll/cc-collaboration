@@ -136,18 +136,22 @@ class MarkdownLiteController extends TextEditingController {
     required bool withComposing,
   }) {
     final base = style ?? const TextStyle();
-    // Mid-IME-composition (e.g. typing Chinese pinyin), fall back to the
-    // stock underline-the-composing-range rendering: offset math for a
-    // partially-composed syllable is fiddly to keep in sync with the
-    // decorator, and the composing window is a few hundred ms anyway — the
-    // markdown styling simply resumes once the character commits.
+    // Mid-IME-composition (e.g. typing Chinese pinyin), still run the
+    // decorator over the text before/after the composing range — only the
+    // in-progress syllable itself falls back to the stock underline
+    // rendering. An inline token (`**bold**`, `` `code` ``) that straddles
+    // the composing break degrades to plain text for the duration of that
+    // composition (regex can't see a matching pair split across the
+    // underlined span) and restyles the instant it commits — an acceptable
+    // edge case, far better than the whole document flattening on every
+    // keystroke.
     if (withComposing && value.composing.isValid) {
       return TextSpan(style: base, children: [
-        TextSpan(text: value.composing.textBefore(value.text)),
+        ..._decorate(value.composing.textBefore(value.text), base),
         TextSpan(
             text: value.composing.textInside(value.text),
             style: const TextStyle(decoration: TextDecoration.underline)),
-        TextSpan(text: value.composing.textAfter(value.text)),
+        ..._decorate(value.composing.textAfter(value.text), base),
       ]);
     }
     return TextSpan(style: base, children: _decorate(text, base));
