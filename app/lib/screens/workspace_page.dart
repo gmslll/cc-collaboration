@@ -34,6 +34,7 @@ import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../voice/voice.dart';
 import '../widgets.dart';
+import '../widgets/inbox_item_card.dart';
 import '../widgets/split_pane.dart';
 import '../widgets/todo_card.dart';
 import 'workspace/file_pane_state.dart';
@@ -661,10 +662,21 @@ class _WorkspacePageState extends State<WorkspacePage>
   // The todo currently drilled into inside the sidebar (list ↔ detail swap in
   // place, no Navigator) — null shows the list.
   Todo? _todosSidebarSelected;
+  // Starts collapsed, same rationale as _todosSidebarCollapsed above — 收件箱
+  // is a new panel too.
+  bool _inboxSidebarCollapsed = Prefs.getBool(
+    'ws.inboxSidebarCollapsed',
+    def: true,
+  );
+  // The handoff currently drilled into inside the sidebar (list ↔ detail swap
+  // in place, no Navigator) — null shows the list. Reuses ListItem +
+  // HandoffDetailView, same as _detailItem/_detailPanel.
+  ListItem? _inboxSidebarSelected;
   bool _terminalCollapsed = Prefs.getBool('ws.terminalCollapsed');
   double _treeWidth = Prefs.getDouble('ws.treeWidth', def: 340);
   double _detailWidth = Prefs.getDouble('ws.detailWidth', def: 520);
   double _todosSidebarWidth = Prefs.getDouble('ws.todosSidebarWidth', def: 420);
+  double _inboxSidebarWidth = Prefs.getDouble('ws.inboxSidebarWidth', def: 420);
   double _terminalHeight = Prefs.getDouble('ws.terminalHeight', def: 360);
   double _logBranchWidth = Prefs.getDouble('ws.logBranchWidth', def: 240);
   double _logDiffWidth = Prefs.getDouble('ws.logDiffWidth', def: 340);
@@ -3060,12 +3072,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     setState(() {
       _detailItem = it;
       _detailCollapsed = false;
-      // The two right-side info panels are mutually exclusive — see
-      // _setDetailCollapsed/_setTodosSidebarCollapsed.
+      // The three right-side info panels are mutually exclusive — see
+      // _setDetailCollapsed/_setTodosSidebarCollapsed/_setInboxSidebarCollapsed.
       _todosSidebarCollapsed = true;
+      _inboxSidebarCollapsed = true;
     });
     Prefs.setBool('ws.detailCollapsed', false);
     Prefs.setBool('ws.todosSidebarCollapsed', true);
+    Prefs.setBool('ws.inboxSidebarCollapsed', true);
   }
 
   // ---------------------------------------------------------------- view ----
@@ -3705,6 +3719,21 @@ class _WorkspacePageState extends State<WorkspacePage>
           _runChip('Claude', Icons.play_arrow_rounded, _launchDefaultClaude),
           _runChip('Codex', Icons.smart_toy_outlined, _launchDefaultCodex),
           _runChip('总管', Icons.account_tree_outlined, _launchDefaultSupervisor),
+          const VerticalDivider(width: 14),
+          _toolButton(
+            icon: Icons.inbox_rounded,
+            tooltip: '收件箱',
+            selected: !_inboxSidebarCollapsed,
+            onPressed: () =>
+                _setInboxSidebarCollapsed(!_inboxSidebarCollapsed),
+          ),
+          _toolButton(
+            icon: Icons.checklist_rounded,
+            tooltip: '待办',
+            selected: !_todosSidebarCollapsed,
+            onPressed: () =>
+                _setTodosSidebarCollapsed(!_todosSidebarCollapsed),
+          ),
         ],
         pinnedTrailing: [
           if (_busy)
@@ -3872,25 +3901,52 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (_gitViewForLeftTool(view) != null) _refreshGit();
   }
 
-  // The Handoff detail panel and the 待办 sidebar share the same right-hand
-  // slot — opening one collapses the other rather than the two competing for
-  // width side by side.
+  // The Handoff detail panel, the 待办 sidebar, and the 收件箱 sidebar share the
+  // same right-hand slot — opening one collapses the other two rather than
+  // the three competing for width side by side.
   void _setDetailCollapsed(bool v) {
     setState(() {
       _detailCollapsed = v;
-      if (!v) _todosSidebarCollapsed = true;
+      if (!v) {
+        _todosSidebarCollapsed = true;
+        _inboxSidebarCollapsed = true;
+      }
     });
     Prefs.setBool('ws.detailCollapsed', v);
-    if (!v) Prefs.setBool('ws.todosSidebarCollapsed', true);
+    if (!v) {
+      Prefs.setBool('ws.todosSidebarCollapsed', true);
+      Prefs.setBool('ws.inboxSidebarCollapsed', true);
+    }
   }
 
   void _setTodosSidebarCollapsed(bool v) {
     setState(() {
       _todosSidebarCollapsed = v;
-      if (!v) _detailCollapsed = true;
+      if (!v) {
+        _detailCollapsed = true;
+        _inboxSidebarCollapsed = true;
+      }
     });
     Prefs.setBool('ws.todosSidebarCollapsed', v);
-    if (!v) Prefs.setBool('ws.detailCollapsed', true);
+    if (!v) {
+      Prefs.setBool('ws.detailCollapsed', true);
+      Prefs.setBool('ws.inboxSidebarCollapsed', true);
+    }
+  }
+
+  void _setInboxSidebarCollapsed(bool v) {
+    setState(() {
+      _inboxSidebarCollapsed = v;
+      if (!v) {
+        _detailCollapsed = true;
+        _todosSidebarCollapsed = true;
+      }
+    });
+    Prefs.setBool('ws.inboxSidebarCollapsed', v);
+    if (!v) {
+      Prefs.setBool('ws.detailCollapsed', true);
+      Prefs.setBool('ws.todosSidebarCollapsed', true);
+    }
   }
 
   void _setTerminalCollapsed(bool v) {
@@ -4307,6 +4363,20 @@ class _WorkspacePageState extends State<WorkspacePage>
                     SizedBox(
                       width: _todosSidebarWidth,
                       child: _todosSidebarPanel(),
+                    ),
+                  ],
+                  if (!_inboxSidebarCollapsed) ...[
+                    resizeHandle(
+                      prefKey: 'ws.inboxSidebarWidth',
+                      get: () => _inboxSidebarWidth,
+                      set: (v) => setState(() => _inboxSidebarWidth = v),
+                      min: 360,
+                      max: 820,
+                      invert: true,
+                    ),
+                    SizedBox(
+                      width: _inboxSidebarWidth,
+                      child: _inboxSidebarPanel(),
                     ),
                   ],
                   if (_detailItem != null) ...[
@@ -5952,6 +6022,91 @@ class _WorkspacePageState extends State<WorkspacePage>
       setState(() => _todosSidebarSelected = null);
       widget.store.refresh();
     },
+  );
+
+  // _inboxSidebarPanel hosts a flattened Handoff inbox (list ↔ detail swap in
+  // place via _inboxSidebarSelected, no Navigator) inside the right tool
+  // window — lets the user triage handoffs without leaving the workspace.
+  // Mutually exclusive with _detailPanel/_todosSidebarPanel (see
+  // _setInboxSidebarCollapsed/_setDetailCollapsed/_setTodosSidebarCollapsed).
+  Widget _inboxSidebarPanel() {
+    final sel = _inboxSidebarSelected;
+    return Column(
+      children: [
+        _panelHeader(
+          padding: const EdgeInsets.only(left: 10, right: 4),
+          leading: [
+            if (sel != null)
+              IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, size: 17),
+                tooltip: '返回列表',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _inboxSidebarSelected = null),
+              )
+            else
+              const Icon(Icons.inbox_rounded, size: 16, color: CcColors.muted),
+            const SizedBox(width: 8),
+            Text(
+              sel == null ? '收件箱' : 'Handoff',
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          trailing: [
+            IconButton(
+              icon: const Icon(Icons.more_horiz_rounded, size: 17),
+              tooltip: '收起',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _setInboxSidebarCollapsed(true),
+            ),
+          ],
+        ),
+        Expanded(
+          child: sel == null ? _inboxSidebarList() : _inboxSidebarDetail(sel),
+        ),
+      ],
+    );
+  }
+
+  // _inboxSidebarItems flattens the already-loaded _tasksByRepo (no separate
+  // fetch — same data backing the file tree's repo badges) and sorts newest
+  // first.
+  List<ListItem> get _inboxSidebarItems {
+    final items = _tasksByRepo.values.expand((l) => l).toList();
+    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return items;
+  }
+
+  Widget _inboxSidebarList() {
+    final items = _inboxSidebarItems;
+    if (items.isEmpty) return centerMsg('收件箱为空');
+    return ListView.separated(
+      padding: const EdgeInsets.all(10),
+      itemCount: items.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      itemBuilder: (_, i) {
+        final it = items[i];
+        return InboxItemCard(
+          item: it,
+          onTap: () => setState(() => _inboxSidebarSelected = it),
+        );
+      },
+    );
+  }
+
+  Widget _inboxSidebarDetail(ListItem it) => HandoffDetailView(
+    client: widget.client,
+    config: _cfg,
+    item: it,
+    onOpenTerminal: (wt, cmd) {
+      addTerm(wt, cmd);
+      _setTerminalCollapsed(false);
+    },
+    onSendToTerminal: sendToTerminal,
+    onChanged: _loadTasks,
   );
 
   void _setBottomTool(_BottomTool tool) {
