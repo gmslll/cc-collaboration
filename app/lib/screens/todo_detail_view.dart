@@ -43,6 +43,11 @@ class TodoDetailView extends StatefulWidget {
   // session bus (there isn't one today) just doesn't get the button.
   final SessionOverviewStore? overviewStore;
   final AppConfig? config;
+  // groups seeds the 分组 GroupControl's picker with the host's currently
+  // known group names (a snapshot, not a live query — see TodosPage's
+  // _groups field doc). Typing a name not in this list still works; it's
+  // created on first use like everywhere else GroupControl appears.
+  final List<String> groups;
   // onOpenSession additionally switches the host's own top-level nav to the
   // 工作区 tab before focusing the session (mirrors main.dart's
   // _openSessionInWorkspace, used by SessionOverviewPage) — pass this when
@@ -60,6 +65,7 @@ class TodoDetailView extends StatefulWidget {
     this.onDeleted,
     this.overviewStore,
     this.config,
+    this.groups = const [],
     this.onOpenSession,
   });
 
@@ -271,6 +277,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
     bool clearDueAt = false,
     String? workspaceName,
     String? repoName,
+    String? groupName,
   }) async {
     try {
       final updated = await _client.updateTodo(
@@ -281,6 +288,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
         clearDueAt: clearDueAt,
         workspaceName: workspaceName,
         repoName: repoName,
+        groupName: groupName,
       );
       _applyUpdated(updated);
     } catch (e) {
@@ -296,6 +304,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
       _patch(workspaceName: workspaceName, repoName: repoName);
 
   Future<void> _clearRepo() => _patch(workspaceName: '', repoName: '');
+
+  // _setGroup/_clearGroup back the GroupControl pill — see the field docs on
+  // pkg/todoschema.Todo.GroupName: there's no separate "create a group" call,
+  // a todo just starts pointing at a new name.
+  Future<void> _setGroup(String name) => _patch(groupName: name);
+
+  Future<void> _clearGroup() => _patch(groupName: '');
 
   Future<void> _pickDueDate() async {
     final now = DateTime.now();
@@ -455,14 +470,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
     await _loadFull();
   }
 
-  Color _statusColor(TodoStatus s) => switch (s) {
-        TodoStatus.done => CcColors.ok,
-        TodoStatus.cancelled => CcColors.subtle,
-        TodoStatus.blocked => CcColors.danger,
-        TodoStatus.inProgress => CcColors.accent,
-        TodoStatus.assigned => CcColors.warning,
-        TodoStatus.pending => CcColors.muted,
-      };
+  Color _statusColor(TodoStatus s) => todoStatusColor(s);
 
   @override
   Widget build(BuildContext context) {
@@ -563,6 +571,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
                 workspaces: widget.config?.workspaces ?? const [],
                 onBind: _bindRepo,
                 onClear: _clearRepo,
+              ),
+              _dot(),
+              GroupControl(
+                groupName: _current.groupName,
+                existingGroups: widget.groups,
+                onSelect: _setGroup,
+                onClear: _clearGroup,
               ),
             ],
           ),

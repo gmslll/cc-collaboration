@@ -8,13 +8,13 @@ import (
 
 func TestMapIssueStatus(t *testing.T) {
 	cases := map[string]todoschema.Status{
-		"backlog":     todoschema.StatusPending,
-		"unstarted":   todoschema.StatusInProgress,
+		"backlog":     todoschema.StatusBacklog,
+		"unstarted":   todoschema.StatusTodo,
 		"started":     todoschema.StatusInProgress,
 		"completed":   todoschema.StatusDone,
-		"canceled":    todoschema.StatusCancelled,
-		"":            todoschema.StatusPending, // unrecognized -> pending, not an error
-		"made-up-typ": todoschema.StatusPending,
+		"canceled":    todoschema.StatusCanceled,
+		"":            todoschema.StatusTriage, // unrecognized -> triage, not an error
+		"made-up-typ": todoschema.StatusTriage,
 	}
 	for in, want := range cases {
 		if got := mapIssueStatus(in); got != want {

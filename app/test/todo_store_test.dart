@@ -13,7 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 Map<String, dynamic> _todoJson({
   required String id,
   String? projectId,
-  String status = 'pending',
+  String status = 'todo',
   String title = 'title',
 }) => {
   'id': id,
@@ -104,7 +104,7 @@ void main() {
 
     test('todo.updated replaces the existing row in place', () {
       final store = TodoStore();
-      store.all = [Todo.fromJson(_todoJson(id: 'x1', status: 'pending'))];
+      store.all = [Todo.fromJson(_todoJson(id: 'x1', status: 'todo'))];
       store.onSseEvent(
         SseEvent(
           'todo.updated',
@@ -117,7 +117,7 @@ void main() {
 
     test('todo.status_changed upserts by id like todo.updated', () {
       final store = TodoStore();
-      store.all = [Todo.fromJson(_todoJson(id: 'x1', status: 'pending'))];
+      store.all = [Todo.fromJson(_todoJson(id: 'x1', status: 'todo'))];
       store.onSseEvent(
         SseEvent(
           'todo.status_changed',
@@ -127,14 +127,16 @@ void main() {
       expect(store.all.single.status, TodoStatus.done);
     });
 
-    test('todo.assigned upserts the assignee fields', () {
+    test('todo.assigned upserts the assignee fields (status is independent)', () {
       final store = TodoStore();
-      final json = _todoJson(id: 'x1')
-        ..['assignee_identity'] = 'bob'
-        ..['status'] = 'assigned';
+      // Assignee and status are unrelated dimensions (see AssignTodo's doc in
+      // internal/relay/store/todos.go) — a todo.assigned event can carry any
+      // status at all, not a dedicated "assigned" one.
+      final json = _todoJson(id: 'x1', status: 'in_progress')
+        ..['assignee_identity'] = 'bob';
       store.onSseEvent(SseEvent('todo.assigned', jsonEncode(json)));
       expect(store.all.single.assigneeIdentity, 'bob');
-      expect(store.all.single.status, TodoStatus.assigned);
+      expect(store.all.single.status, TodoStatus.inProgress);
     });
 
     test('todo.deleted removes the row by id', () {

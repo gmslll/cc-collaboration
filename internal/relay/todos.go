@@ -58,6 +58,9 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		// "not bound".
 		WorkspaceName string `json:"workspace_name"`
 		RepoName      string `json:"repo_name"`
+		// GroupName is the optional free-form bucket (see
+		// pkg/todoschema.Todo.GroupName) — empty means ungrouped.
+		GroupName string `json:"group_name"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
@@ -94,6 +97,7 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		SourceURL:     req.SourceURL,
 		WorkspaceName: req.WorkspaceName,
 		RepoName:      req.RepoName,
+		GroupName:     req.GroupName,
 	}
 	if err := s.Store.CreateTodo(r.Context(), t); err != nil {
 		writeStoreError(w, err)
@@ -110,6 +114,7 @@ func (s *Server) listTodos(w http.ResponseWriter, r *http.Request) {
 		Scope:     q.Get("scope"),
 		ProjectID: q.Get("project"),
 		Status:    q.Get("status"),
+		GroupName: q.Get("group"),
 	}
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -158,6 +163,68 @@ func (s *Server) findTodoBySourceRef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"found": true, "todo": t})
+}
+
+// listTodoGroups exposes Store.ListTodoGroups over HTTP: the distinct,
+// non-empty group names in use, personal-scoped by default or scoped to one
+// team project via ?project=.
+func (s *Server) listTodoGroups(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	groups, err := s.Store.ListTodoGroups(r.Context(), identity, r.URL.Query().Get("project"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+}
+
+// renameTodoGroup exposes Store.RenameTodoGroup over HTTP: bulk-renames
+// every todo currently in old_name (within the project_id scope, or personal
+// when empty) to new_name.
+func (s *Server) renameTodoGroup(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	var req struct {
+		ProjectID string `json:"project_id"`
+		OldName   string `json:"old_name"`
+		NewName   string `json:"new_name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.OldName) == "" || strings.TrimSpace(req.NewName) == "" {
+		http.Error(w, "old_name and new_name required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.RenameTodoGroup(r.Context(), identity, req.ProjectID, req.OldName, req.NewName); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// clearTodoGroup exposes Store.ClearTodoGroup over HTTP: bulk-clears
+// group_name back to ungrouped on every todo currently in name (within the
+// project_id scope, or personal when empty), without deleting them.
+func (s *Server) clearTodoGroup(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	var req struct {
+		ProjectID string `json:"project_id"`
+		Name      string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.ClearTodoGroup(r.Context(), identity, req.ProjectID, req.Name); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // patchTodo decodes the body as map[string]json.RawMessage rather than a
@@ -243,6 +310,14 @@ func (s *Server) patchTodo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		patch.RepoName = &val
+	}
+	if v, ok := raw["group_name"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid group_name", http.StatusBadRequest)
+			return
+		}
+		patch.GroupName = &val
 	}
 
 	updated, err := s.Store.UpdateTodoFields(r.Context(), id, identity, patch)

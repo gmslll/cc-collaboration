@@ -42,6 +42,7 @@ type TodoListFilter struct {
 	Scope     string // "personal" (default) | "project" | "assigned" | "all"
 	ProjectID string // scope=project only; empty = union of every project the caller belongs to
 	Status    string // optional exact-match filter
+	GroupName string // optional exact-match filter
 	Limit     int
 }
 
@@ -56,6 +57,9 @@ func (c *Client) ListTodos(ctx context.Context, f TodoListFilter) ([]todoschema.
 	}
 	if f.Status != "" {
 		parts = append(parts, "status="+f.Status)
+	}
+	if f.GroupName != "" {
+		parts = append(parts, "group="+url.QueryEscape(f.GroupName))
 	}
 	if f.Limit > 0 {
 		parts = append(parts, "limit="+strconv.Itoa(f.Limit))
@@ -128,6 +132,9 @@ type TodoPatch struct {
 	// pkg/todoschema.Todo field docs).
 	WorkspaceName *string
 	RepoName      *string
+	// GroupName: nil means "leave alone"; a non-nil empty string clears it to
+	// ungrouped — same *string semantics as WorkspaceName/RepoName.
+	GroupName *string
 }
 
 // PatchTodo applies a partial update to todo id. Only fields set on patch
@@ -155,6 +162,9 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 	}
 	if patch.RepoName != nil {
 		fields["repo_name"] = *patch.RepoName
+	}
+	if patch.GroupName != nil {
+		fields["group_name"] = *patch.GroupName
 	}
 	body, err := json.Marshal(fields)
 	if err != nil {
@@ -199,6 +209,44 @@ func (c *Client) AssignTodo(ctx context.Context, id, assigneeIdentity, assigneeS
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ListTodoGroups returns the distinct, non-empty group names in use,
+// personal-scoped when projectID is empty or scoped to that one team
+// project otherwise — mirrors store.Store.ListTodoGroups' scoping exactly.
+func (c *Client) ListTodoGroups(ctx context.Context, projectID string) ([]string, error) {
+	path := "/v1/todos/groups"
+	if projectID != "" {
+		path += "?project=" + url.QueryEscape(projectID)
+	}
+	var out struct {
+		Groups []string `json:"groups"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Groups, nil
+}
+
+// RenameTodoGroup bulk-renames every todo in oldName (within the same scope
+// as ListTodoGroups) to newName.
+func (c *Client) RenameTodoGroup(ctx context.Context, projectID, oldName, newName string) error {
+	payload, _ := json.Marshal(map[string]string{
+		"project_id": projectID,
+		"old_name":   oldName,
+		"new_name":   newName,
+	})
+	return c.do(ctx, http.MethodPost, "/v1/todos/groups/rename", bytes.NewReader(payload), nil)
+}
+
+// ClearTodoGroup bulk-clears group_name back to ungrouped on every todo in
+// name (within the same scope as ListTodoGroups), without deleting them.
+func (c *Client) ClearTodoGroup(ctx context.Context, projectID, name string) error {
+	payload, _ := json.Marshal(map[string]string{
+		"project_id": projectID,
+		"name":       name,
+	})
+	return c.do(ctx, http.MethodPost, "/v1/todos/groups/clear", bytes.NewReader(payload), nil)
 }
 
 // RecurAdvanceTodo manually forces the recurrence sweep's effect on todo id

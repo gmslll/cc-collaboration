@@ -356,7 +356,7 @@ func TestTodoRecurAdvanceHTTP(t *testing.T) {
 
 	// Not done yet: recur-advance refuses.
 	if code, _ := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/recur-advance", aliceTok, nil); code != http.StatusConflict {
-		t.Errorf("recur-advance on pending todo = %d, want 409", code)
+		t.Errorf("recur-advance on non-done todo = %d, want 409", code)
 	}
 
 	if code, body := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/status", aliceTok, map[string]any{"status": "done"}); code != http.StatusOK {
@@ -368,7 +368,7 @@ func TestTodoRecurAdvanceHTTP(t *testing.T) {
 		t.Fatalf("recur-advance = %d %s", code, body)
 	}
 	got := decodeTodo(t, body)
-	if got.Status != todoschema.StatusPending || got.CompletedAt != nil || got.NextOccurrenceAt != nil {
+	if got.Status != todoschema.StatusTodo || got.CompletedAt != nil || got.NextOccurrenceAt != nil {
 		t.Fatalf("recur-advance didn't reset cleanly: %+v", got)
 	}
 }

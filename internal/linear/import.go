@@ -124,7 +124,7 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, pr
 	if err != nil {
 		return false, fmt.Errorf("create: %w", err)
 	}
-	if status != todoschema.StatusPending {
+	if status != todoschema.StatusTodo {
 		if _, err := c.SetTodoStatus(ctx, out.ID, status); err != nil {
 			return true, fmt.Errorf("set status: %w", err)
 		}
@@ -137,23 +137,27 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, pr
 	return true, nil
 }
 
-// mapIssueStatus compresses Linear's state.type into our Status. unstarted
-// and started both land on in_progress (no precise "assigned"/"blocked"
-// equivalent on the Linear side, so import doesn't guess); any unrecognized
-// type (Linear adds new ones rarely, but schemas drift) falls back to
-// pending rather than erroring the whole import.
+// mapIssueStatus maps Linear's state.type onto our (now Linear-shaped)
+// Status 1:1 — backlog/unstarted/started/completed/canceled each have a
+// direct counterpart, unlike the old 6-value taxonomy where backlog and
+// unstarted both had to compress onto the same "pending" bucket. Any
+// unrecognized type (Linear adds new ones rarely, but schemas drift) falls
+// back to triage rather than erroring the whole import — "needs a human to
+// figure out what this is" is triage's actual purpose.
 func mapIssueStatus(stateType string) todoschema.Status {
 	switch stateType {
 	case "backlog":
-		return todoschema.StatusPending
-	case "unstarted", "started":
+		return todoschema.StatusBacklog
+	case "unstarted":
+		return todoschema.StatusTodo
+	case "started":
 		return todoschema.StatusInProgress
 	case "completed":
 		return todoschema.StatusDone
 	case "canceled":
-		return todoschema.StatusCancelled
+		return todoschema.StatusCanceled
 	default:
-		return todoschema.StatusPending
+		return todoschema.StatusTriage
 	}
 }
 

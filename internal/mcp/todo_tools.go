@@ -33,6 +33,7 @@ func createTodoTool() Tool {
     "assignee_identity": {"type": "string", "description": "创建时直接指派给的身份标识。省略 = 不指派。"},
     "workspace_name":    {"type": "string", "description": "可选，绑定到的 workspace 名字（本地 config.toml [[workspace]] name）。要绑定库，须与 repo_name 一起传。"},
     "repo_name":         {"type": "string", "description": "可选，绑定到的库/repo 名字（workspace_name 下的某个 [[project]] name）。"},
+    "group_name":        {"type": "string", "description": "可选，分组名（如 \"我的日常\"）。分组是纯字符串标签，不存在的名字会在第一次使用时自动创建，无需提前建组。"},
     "attachment_paths":  {"type": "array", "items": {"type": "string"}, "description": "本地文件路径数组（绝对路径或相对 cwd）。创建成功拿到 id 后依次上传为附件。"},
     "cwd":               {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   },
@@ -56,6 +57,7 @@ type createTodoArgs struct {
 	AssigneeIdentity string   `json:"assignee_identity"`
 	WorkspaceName    string   `json:"workspace_name"`
 	RepoName         string   `json:"repo_name"`
+	GroupName        string   `json:"group_name"`
 	AttachmentPaths  []string `json:"attachment_paths"`
 	CWD              string   `json:"cwd"`
 }
@@ -118,6 +120,7 @@ func createTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 		AssigneeIdentity: a.AssigneeIdentity,
 		WorkspaceName:    a.WorkspaceName,
 		RepoName:         a.RepoName,
+		GroupName:        a.GroupName,
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -165,6 +168,9 @@ func formatTodoSummary(t *todoschema.Todo) string {
 	if t.WorkspaceName != "" || t.RepoName != "" {
 		fmt.Fprintf(&sb, "- repo: %s/%s\n", t.WorkspaceName, t.RepoName)
 	}
+	if t.GroupName != "" {
+		fmt.Fprintf(&sb, "- group: %s\n", t.GroupName)
+	}
 	if t.Recurrence != "" {
 		fmt.Fprintf(&sb, "- recurrence: %s\n", t.Recurrence)
 	}
@@ -189,7 +195,8 @@ func listTodosTool() Tool {
   "properties": {
     "scope":      {"type": "string", "enum": ["personal", "project", "assigned"], "description": "personal(默认)=我创建的个人待办；project=我所在的所有 Project 的团队待办并集（配合 project_id 可限定到单个 Project）；assigned=指派给我的待办。"},
     "project_id": {"type": "string", "description": "配合 scope=project 使用，限定到某一个 Project；省略 = 我所在所有 Project 的并集。"},
-    "status":     {"type": "string", "description": "按状态精确过滤（pending/assigned/in_progress/blocked/done/cancelled）。省略 = 不过滤。"},
+    "status":     {"type": "string", "description": "按状态精确过滤（triage/backlog/todo/in_progress/in_review/done/canceled/duplicate）。省略 = 不过滤。"},
+    "group_name": {"type": "string", "description": "按分组精确过滤。省略 = 不过滤。"},
     "limit":      {"type": "integer", "description": "最多返回条数。"},
     "cwd":        {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
@@ -206,6 +213,7 @@ type listTodosArgs struct {
 	Scope     string `json:"scope"`
 	ProjectID string `json:"project_id"`
 	Status    string `json:"status"`
+	GroupName string `json:"group_name"`
 	Limit     int    `json:"limit"`
 	CWD       string `json:"cwd"`
 }
@@ -232,6 +240,7 @@ func listTodosHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 		Scope:     scope,
 		ProjectID: a.ProjectID,
 		Status:    a.Status,
+		GroupName: a.GroupName,
 		Limit:     a.Limit,
 	})
 	if err != nil {
@@ -332,7 +341,7 @@ func updateTodoStatusTool() Tool {
   "type": "object",
   "properties": {
     "id":     {"type": "string", "description": "Todo id."},
-    "status": {"type": "string", "enum": ["pending", "assigned", "in_progress", "blocked", "done", "cancelled"], "description": "新状态。done 会自动记录完成时间 completed_at；如果该待办是周期性的（recurrence != \"\"），还会自动计算 next_occurrence_at 并安排下次出现时间——relay 的周期扫描 goroutine 到点后会把它自动重置回 pending，不会打断当前状态之外的其它待办。"},
+    "status": {"type": "string", "enum": ["triage", "backlog", "todo", "in_progress", "in_review", "done", "canceled", "duplicate"], "description": "新状态。done 会自动记录完成时间 completed_at；如果该待办是周期性的（recurrence != \"\"），还会自动计算 next_occurrence_at 并安排下次出现时间——relay 的周期扫描 goroutine 到点后会把它自动重置回 todo，不会打断当前状态之外的其它待办。注意：指派（assign_todo）不会自动改变状态，两者是独立维度。"},
     "cwd":    {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   },
   "required": ["id", "status"]
@@ -361,7 +370,7 @@ func updateTodoStatusHandler(ctx context.Context, raw json.RawMessage) (ToolResu
 	}
 	status := todoschema.Status(a.Status)
 	if !todoschema.ValidStatus(status) {
-		return ToolResult{}, fmt.Errorf("invalid status %q (want pending|assigned|in_progress|blocked|done|cancelled)", a.Status)
+		return ToolResult{}, fmt.Errorf("invalid status %q (want triage|backlog|todo|in_progress|in_review|done|canceled|duplicate)", a.Status)
 	}
 	cwd, err := resolveCWD(a.CWD)
 	if err != nil {

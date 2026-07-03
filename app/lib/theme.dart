@@ -21,6 +21,12 @@ class CcColors {
   static const danger = Color(0xFFFF6B68);
   static const warning = Color(0xFFFFC66D);
   static const ok = Color(0xFF6AAB73);
+  // info/violet round out the todo-status palette (todoStatusColor in
+  // todo_property_controls.dart) — In Review and Duplicate need their own
+  // hues distinct from accent/muted/subtle so all 8 statuses stay visually
+  // distinguishable at a glance on the board.
+  static const info = Color(0xFF5FC9D6);
+  static const violet = Color(0xFFB98AE0);
 }
 
 class CcRadius {

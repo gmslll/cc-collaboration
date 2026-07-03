@@ -27,34 +27,38 @@ import 'todo_detail_view.dart';
 const double _wideBreakpoint = 720;
 
 // _BoardColumnDef drives both the kanban board's columns and the mobile
-// card stream's collapsible groups, so they always agree on what "Backlog /
-// In Progress / Done / Cancelled" means — In Progress folds assigned +
-// in_progress + blocked together (TodoCard flags blocked with its own badge
-// so it never fully disappears into the crowd), and dropStatus is what a
-// card's status becomes when dropped into that column on the board.
+// card stream's collapsible groups, so they always agree on column meaning.
+// One status = one column now (the real Linear layout this board was always
+// modeled on) — statuses is a singleton set purely so the rest of the board
+// code (DragTarget.onWillAcceptWithDetails, the mobile grouping filter) can
+// stay written against "does this column contain status X" without special-
+// casing the 1:1 case.
 typedef _BoardColumnDef = ({
   String title,
   Set<TodoStatus> statuses,
   TodoStatus dropStatus,
 });
 
-const List<_BoardColumnDef> _boardColumnDefs = [
-  (
-    title: 'Backlog',
-    statuses: {TodoStatus.pending},
-    dropStatus: TodoStatus.pending,
-  ),
-  (
-    title: 'In Progress',
-    statuses: {TodoStatus.assigned, TodoStatus.inProgress, TodoStatus.blocked},
-    dropStatus: TodoStatus.inProgress,
-  ),
-  (title: 'Done', statuses: {TodoStatus.done}, dropStatus: TodoStatus.done),
-  (
-    title: 'Cancelled',
-    statuses: {TodoStatus.cancelled},
-    dropStatus: TodoStatus.cancelled,
-  ),
+// Column headers stay in Linear's own English names (matching this board's
+// pre-existing convention — the filter chips above it use todoStatusLabel's
+// Chinese instead). Order mirrors TodoStatus.values' declaration order in
+// todo_models.dart (Triage first as the "待分诊" inbox, per Linear's real
+// board layout) so there's one source of truth for "what order do the 8
+// statuses go in".
+const Map<TodoStatus, String> _boardColumnTitles = {
+  TodoStatus.triage: 'Triage',
+  TodoStatus.backlog: 'Backlog',
+  TodoStatus.todo: 'Todo',
+  TodoStatus.inProgress: 'In Progress',
+  TodoStatus.inReview: 'In Review',
+  TodoStatus.done: 'Done',
+  TodoStatus.canceled: 'Canceled',
+  TodoStatus.duplicate: 'Duplicate',
+};
+
+final List<_BoardColumnDef> _boardColumnDefs = [
+  for (final s in TodoStatus.values)
+    (title: _boardColumnTitles[s]!, statuses: {s}, dropStatus: s),
 ];
 
 // _LinearImportRepo is a local project whose .cc-handoff.toml configures
@@ -97,6 +101,14 @@ class _TodosPageState extends State<TodosPage> {
   String _scope = 'personal'; // personal | team | all
   final Set<TodoStatus> _statusFilter = {};
   String? _projectFilter; // project id, only meaningful when _scope == 'team'
+  // _groupFilter/_groups back the 分组 dropdown next to 项目: null = 全部.
+  // _groups is only populated when the current scope has a well-defined
+  // single group-listing scope (personal, or team with one project picked —
+  // see ListTodoGroups' scoping) since there's no "union of every project"
+  // group listing on the relay; scope=team with no project picked, or
+  // scope=all, just show no group filter at all rather than a misleading one.
+  String? _groupFilter;
+  List<String> _groups = [];
   Todo? _selected;
   bool _boardView = true; // board is the default, Linear-flavored view
   final Set<String> _collapsedMobileGroups = {};
@@ -119,6 +131,29 @@ class _TodosPageState extends State<TodosPage> {
     // doesn't model comments, it just flags which todo needs a reload).
     _store.onComment = _onComment;
     _loadLinearRepos();
+    _loadGroups();
+  }
+
+  // _loadGroups refreshes the 分组 filter's option list for the current
+  // scope/project — see the _groups field doc for which scopes actually get
+  // one. Best-effort: a failed fetch just leaves the filter empty rather than
+  // surfacing an error, since it's a secondary affordance.
+  Future<void> _loadGroups() async {
+    String? projectId;
+    if (_scope == 'personal') {
+      projectId = null;
+    } else if (_scope == 'team' && _projectFilter != null) {
+      projectId = _projectFilter;
+    } else {
+      if (mounted) setState(() => _groups = []);
+      return;
+    }
+    try {
+      final groups = await _client.todoGroups(projectId: projectId);
+      if (mounted) setState(() => _groups = groups);
+    } catch (_) {
+      if (mounted) setState(() => _groups = []);
+    }
   }
 
   // _loadLinearRepos scans every locally-tracked project (across all
@@ -215,6 +250,7 @@ class _TodosPageState extends State<TodosPage> {
       if (_statusFilter.isNotEmpty && !_statusFilter.contains(t.status)) {
         return false;
       }
+      if (_groupFilter != null && t.groupName != _groupFilter) return false;
       return true;
     }).toList();
     items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -233,14 +269,7 @@ class _TodosPageState extends State<TodosPage> {
     return null;
   }
 
-  Color _statusColor(TodoStatus s) => switch (s) {
-    TodoStatus.done => CcColors.ok,
-    TodoStatus.cancelled => CcColors.subtle,
-    TodoStatus.blocked => CcColors.danger,
-    TodoStatus.inProgress => CcColors.accent,
-    TodoStatus.assigned => CcColors.warning,
-    TodoStatus.pending => CcColors.muted,
-  };
+  Color _statusColor(TodoStatus s) => todoStatusColor(s);
 
   Future<void> _createDialog() async {
     final created = await showDialog<bool>(
@@ -250,9 +279,13 @@ class _TodosPageState extends State<TodosPage> {
         me: _me,
         initialScope: _scope == 'team' ? 'team' : 'personal',
         initialProjectId: _scope == 'team' ? _projectFilter : null,
+        groups: _groups,
       ),
     );
-    if (created == true) await _store.refresh();
+    if (created == true) {
+      await _store.refresh();
+      await _loadGroups();
+    }
   }
 
   // _dropStatus is the board's drag-to-change-status action. The relay
@@ -374,6 +407,8 @@ class _TodosPageState extends State<TodosPage> {
           onSelectionChanged: (s) => setState(() {
             _scope = s.first;
             if (_scope != 'team') _projectFilter = null;
+            _groupFilter = null;
+            _loadGroups();
           }),
         ),
       ),
@@ -403,7 +438,39 @@ class _TodosPageState extends State<TodosPage> {
                     ),
                   ),
                 ],
-                onChanged: (v) => setState(() => _projectFilter = v),
+                onChanged: (v) => setState(() {
+                  _projectFilter = v;
+                  _groupFilter = null;
+                  _loadGroups();
+                }),
+              ),
+            ],
+          ),
+        ),
+      if (_groups.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Row(
+            children: [
+              const Text(
+                '分组',
+                style: TextStyle(color: CcColors.muted, fontSize: 12.5),
+              ),
+              const Spacer(),
+              DropdownButton<String?>(
+                value: _groupFilter,
+                hint: const Text('全部分组'),
+                underline: const SizedBox(),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('全部分组'),
+                  ),
+                  ..._groups.map(
+                    (g) => DropdownMenuItem<String?>(value: g, child: Text(g)),
+                  ),
+                ],
+                onChanged: (v) => setState(() => _groupFilter = v),
               ),
             ],
           ),
@@ -508,7 +575,7 @@ class _TodosPageState extends State<TodosPage> {
         t.dueAt != null &&
         t.dueAt!.isBefore(DateTime.now()) &&
         t.status != TodoStatus.done &&
-        t.status != TodoStatus.cancelled;
+        t.status != TodoStatus.canceled;
     return Material(
       color: sel ? CcColors.accent.withValues(alpha: 0.07) : Colors.transparent,
       child: InkWell(
@@ -631,9 +698,11 @@ class _TodosPageState extends State<TodosPage> {
             todo: sel,
             overviewStore: _overview,
             config: _cfg,
+            groups: _groups,
             onOpenSession: widget.onOpenSession,
             onChanged: (updated) {
               if (mounted) setState(() => _selected = updated);
+              _loadGroups();
             },
             onDeleted: () {
               if (!mounted) return;
@@ -935,7 +1004,9 @@ class _TodosPageState extends State<TodosPage> {
             todo: t,
             overviewStore: _overview,
             config: _cfg,
+            groups: _groups,
             onOpenSession: widget.onOpenSession,
+            onChanged: (_) => _loadGroups(),
             onDeleted: () {
               if (Navigator.of(context).canPop()) Navigator.of(context).pop();
               _store.refresh();
@@ -1024,12 +1095,19 @@ class _QuickCreateDialog extends StatefulWidget {
   final Me me;
   final String initialScope;
   final String? initialProjectId;
+  // groups seeds the create dialog's GroupControl picker with the current
+  // filter's known group names — this is a snapshot from TodosPage, not a
+  // live query, so a name typed here that isn't in the list yet still works
+  // (it's created on first use, same "输入即创建" contract as everywhere
+  // else GroupControl appears).
+  final List<String> groups;
 
   const _QuickCreateDialog({
     required this.client,
     required this.me,
     this.initialScope = 'personal',
     this.initialProjectId,
+    this.groups = const [],
   });
 
   @override
@@ -1044,6 +1122,7 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   String _priority = 'normal';
   String _recurrence = '';
   DateTime? _dueAt;
+  String? _groupName;
   final List<PlatformFile> _files = [];
   bool _submitting = false;
 
@@ -1118,6 +1197,7 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
         projectId: _scope == 'team' ? _projectId : null,
         recurrence: _recurrence,
         dueAt: _dueAt,
+        groupName: _groupName,
       );
       for (final f in _files) {
         try {
@@ -1232,6 +1312,13 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
                     dueAt: _dueAt,
                     onTap: _pickDueDate,
                     onClear: () => setState(() => _dueAt = null),
+                  ),
+                  const SizedBox(width: 6),
+                  GroupControl(
+                    groupName: _groupName,
+                    existingGroups: widget.groups,
+                    onSelect: (v) => setState(() => _groupName = v),
+                    onClear: () => setState(() => _groupName = null),
                   ),
                   const Spacer(),
                   IconButton(

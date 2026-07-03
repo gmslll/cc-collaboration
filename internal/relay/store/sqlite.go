@@ -241,6 +241,10 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 		// postdates the Phase 0 five-column migration above.
 		{"workspace_name", `ALTER TABLE todos ADD COLUMN workspace_name TEXT NOT NULL DEFAULT ''`},
 		{"repo_name", `ALTER TABLE todos ADD COLUMN repo_name TEXT NOT NULL DEFAULT ''`},
+		// group_name: free-form, user-defined bucket (see pkg/todoschema.Todo
+		// field docs) — plain string, no separate table, same pattern as
+		// workspace_name/repo_name above.
+		{"group_name", `ALTER TABLE todos ADD COLUMN group_name TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := s.db.Exec(ddl.sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {
@@ -250,6 +254,30 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_source_ref ON todos(source_ref) WHERE source_ref != ''`); err != nil {
 		return fmt.Errorf("create source_ref index: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_group ON todos(group_name) WHERE group_name != ''`); err != nil {
+		return fmt.Errorf("create group_name index: %w", err)
+	}
+
+	// Status taxonomy migration: 6 values -> 8 (see pkg/todoschema/todo.go's
+	// Status doc). Unlike every other block in this function, this rewrites
+	// existing DATA, not schema — each WHERE targets only the old spelling,
+	// so re-running on an already-migrated (or brand-new, empty) database is
+	// a harmless no-op, matching migrate()'s no-schema_version-table,
+	// run-every-boot, idempotence-by-construction style.
+	//   pending, assigned -> todo (assigned duplicated AssigneeIdentity, no
+	//     longer a distinct status)
+	//   blocked -> in_progress (not part of the new taxonomy)
+	//   cancelled -> canceled (single-L spelling)
+	for _, stmt := range []string{
+		`UPDATE todos SET status = 'todo' WHERE status = 'pending'`,
+		`UPDATE todos SET status = 'todo' WHERE status = 'assigned'`,
+		`UPDATE todos SET status = 'in_progress' WHERE status = 'blocked'`,
+		`UPDATE todos SET status = 'canceled' WHERE status = 'cancelled'`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate status taxonomy: %w", err)
+		}
 	}
 	return nil
 }

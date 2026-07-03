@@ -21,36 +21,56 @@ int _i(dynamic v) => v is int ? v : int.tryParse(_s(v)) ?? 0;
 
 // TodoStatus is the mutable lifecycle state (unlike handoffs' append-only
 // state machine, any of these can transition to any other at any time).
-enum TodoStatus { pending, assigned, inProgress, blocked, done, cancelled }
+// Declaration order is also the Linear board column order — Triage first as
+// the "待分诊" inbox, then the rest of the pipeline through to Duplicate —
+// see _boardColumnDefs in todos_page.dart, which iterates TodoStatus.values
+// directly rather than re-declaring the order.
+enum TodoStatus {
+  triage,
+  backlog,
+  todo,
+  inProgress,
+  inReview,
+  done,
+  canceled,
+  duplicate,
+}
 
 TodoStatus todoStatusFromName(String? n) => switch (n) {
-  'pending' => TodoStatus.pending,
-  'assigned' => TodoStatus.assigned,
+  'triage' => TodoStatus.triage,
+  'backlog' => TodoStatus.backlog,
+  'todo' => TodoStatus.todo,
   'in_progress' => TodoStatus.inProgress,
-  'blocked' => TodoStatus.blocked,
+  'in_review' => TodoStatus.inReview,
   'done' => TodoStatus.done,
-  'cancelled' => TodoStatus.cancelled,
-  _ => TodoStatus.pending,
+  'canceled' => TodoStatus.canceled,
+  'duplicate' => TodoStatus.duplicate,
+  _ => TodoStatus.todo,
 };
 
 // todoStatusName is the wire form (snake_case) — NOT the same as the enum's
-// built-in .name for inProgress, so callers must use this when serialising.
+// built-in .name for inProgress/inReview, so callers must use this when
+// serialising.
 String todoStatusName(TodoStatus s) => switch (s) {
-  TodoStatus.pending => 'pending',
-  TodoStatus.assigned => 'assigned',
+  TodoStatus.triage => 'triage',
+  TodoStatus.backlog => 'backlog',
+  TodoStatus.todo => 'todo',
   TodoStatus.inProgress => 'in_progress',
-  TodoStatus.blocked => 'blocked',
+  TodoStatus.inReview => 'in_review',
   TodoStatus.done => 'done',
-  TodoStatus.cancelled => 'cancelled',
+  TodoStatus.canceled => 'canceled',
+  TodoStatus.duplicate => 'duplicate',
 };
 
 String todoStatusLabel(TodoStatus s) => switch (s) {
-  TodoStatus.pending => '待处理',
-  TodoStatus.assigned => '已指派',
+  TodoStatus.triage => '待分诊',
+  TodoStatus.backlog => '待办池',
+  TodoStatus.todo => '待办',
   TodoStatus.inProgress => '进行中',
-  TodoStatus.blocked => '受阻',
+  TodoStatus.inReview => '待审核',
   TodoStatus.done => '已完成',
-  TodoStatus.cancelled => '已取消',
+  TodoStatus.canceled => '已取消',
+  TodoStatus.duplicate => '重复',
 };
 
 class TodoAttachment {
@@ -92,6 +112,10 @@ class Todo {
   // assigneeWorkdir (an absolute path, meaningful only on the machine that
   // set it), these are plain names that stay valid across machines.
   final String? workspaceName, repoName;
+  // groupName is a free-form, user-defined bucket (e.g. "我的日常",
+  // "xxx项目") — plain string, no separate group entity server-side (see
+  // pkg/todoschema.Todo.GroupName). null/empty means ungrouped.
+  final String? groupName;
   final String recurrence; // '' | daily | weekly | monthly
   final DateTime? dueAt, nextOccurrenceAt, completedAt;
   final DateTime createdAt, updatedAt;
@@ -115,6 +139,7 @@ class Todo {
     required this.assigneeAgentKind,
     required this.workspaceName,
     required this.repoName,
+    required this.groupName,
     required this.recurrence,
     required this.dueAt,
     required this.nextOccurrenceAt,
@@ -142,6 +167,7 @@ class Todo {
         assigneeAgentKind: _sn(j['assignee_agent_kind']),
         workspaceName: _sn(j['workspace_name']),
         repoName: _sn(j['repo_name']),
+        groupName: _sn(j['group_name']),
         recurrence: _s(j['recurrence']),
         dueAt: _tn(j['due_at']),
         nextOccurrenceAt: _tn(j['next_occurrence_at']),
@@ -178,6 +204,7 @@ class Todo {
         assigneeAgentKind: assigneeAgentKind,
         workspaceName: workspaceName,
         repoName: repoName,
+        groupName: groupName,
         recurrence: recurrence,
         dueAt: dueAt,
         nextOccurrenceAt: nextOccurrenceAt,

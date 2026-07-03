@@ -44,16 +44,18 @@ create 选项:
   --workspace NAME              可选,绑定到的 workspace 名字(config.toml [[workspace]] name)
   --repo NAME                    可选,绑定到的库/repo 名字;只传 --workspace 时自动取当前目录的
                                   .cc-handoff.toml [paths] repo(或目录名)作为 --repo
+  --group NAME                  可选,分组名(如 "我的日常");不存在的分组名直接创建
   --attach PATH                附件文件路径(可重复传多次)
 
 list 选项:
   --scope personal|project|assigned|all   默认 personal
   --project ID   scope=project 时限定单个 Project(不传 = 所在全部 Project 的并集)
-  --status S     按状态过滤(pending/assigned/in_progress/blocked/done/cancelled)
+  --status S     按状态过滤(triage/backlog/todo/in_progress/in_review/done/canceled/duplicate)
+  --group NAME   按分组过滤
   --limit N
   --json
 
-status 取值: pending | assigned | in_progress | blocked | done | cancelled
+status 取值: triage | backlog | todo | in_progress | in_review | done | canceled | duplicate
 
 import-linear 选项:
   --team KEY     Linear team key(如 ENG)。省略则用 .cc-handoff.toml [integrations.linear] team_key
@@ -144,6 +146,7 @@ func runTodoCreate(ctx context.Context, args []string) error {
 	assignee := fs.String("assignee", "", "指派对象身份")
 	workspace := fs.String("workspace", "", "可选,绑定到的 workspace 名字")
 	repo := fs.String("repo", "", "可选,绑定到的库/repo 名字(只传 --workspace 时自动取当前目录解析出的 repo 名)")
+	group := fs.String("group", "", "可选,分组名;不存在的分组名直接创建")
 	var attach attachFlag
 	fs.Var(&attach, "attach", "附件文件路径(可重复传多次)")
 	pos, err := parseFlexible(fs, args)
@@ -151,7 +154,7 @@ func runTodoCreate(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: cc-handoff todo create <title> [--body TEXT] [--project ID] [--priority low|normal|high] [--due RFC3339] [--recurrence daily|weekly|monthly] [--assignee IDENTITY] [--workspace NAME] [--repo NAME] [--attach PATH ...]")
+		return fmt.Errorf("usage: cc-handoff todo create <title> [--body TEXT] [--project ID] [--priority low|normal|high] [--due RFC3339] [--recurrence daily|weekly|monthly] [--assignee IDENTITY] [--workspace NAME] [--repo NAME] [--group NAME] [--attach PATH ...]")
 	}
 	title := strings.Join(pos, " ")
 
@@ -205,6 +208,7 @@ func runTodoCreate(ctx context.Context, args []string) error {
 		AssigneeIdentity: *assignee,
 		WorkspaceName:    *workspace,
 		RepoName:         repoName,
+		GroupName:        *group,
 	})
 	if err != nil {
 		return relayCompatError(err, "todo create")
@@ -234,6 +238,7 @@ func runTodoList(ctx context.Context, args []string) error {
 	scope := fs.String("scope", "personal", "personal|project|assigned|all")
 	project := fs.String("project", "", "scope=project 时限定单个 Project(不传 = 并集)")
 	status := fs.String("status", "", "按状态过滤")
+	group := fs.String("group", "", "按分组过滤")
 	limit := fs.Int("limit", 0, "最多返回条数")
 	asJSON := fs.Bool("json", false, "输出 JSON 而非表格")
 	if err := fs.Parse(args); err != nil {
@@ -248,6 +253,7 @@ func runTodoList(ctx context.Context, args []string) error {
 		Scope:     *scope,
 		ProjectID: *project,
 		Status:    *status,
+		GroupName: *group,
 		Limit:     *limit,
 	})
 	if err != nil {
@@ -315,6 +321,9 @@ func printTodoDetail(t *todoschema.Todo) {
 	if t.WorkspaceName != "" || t.RepoName != "" {
 		fmt.Printf("  repo      : %s/%s\n", t.WorkspaceName, t.RepoName)
 	}
+	if t.GroupName != "" {
+		fmt.Printf("  group     : %s\n", t.GroupName)
+	}
 	if t.AssigneeIdentity != "" {
 		if t.AssigneeSessionID != "" {
 			fmt.Printf("  assignee  : %s (session=%s label=%q)\n", t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel)
@@ -355,11 +364,11 @@ func runTodoStatus(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(pos) < 2 {
-		return fmt.Errorf("usage: cc-handoff todo status <id> <pending|assigned|in_progress|blocked|done|cancelled>")
+		return fmt.Errorf("usage: cc-handoff todo status <id> <triage|backlog|todo|in_progress|in_review|done|canceled|duplicate>")
 	}
 	s := todoschema.Status(pos[1])
 	if !todoschema.ValidStatus(s) {
-		return fmt.Errorf("invalid status %q (want pending|assigned|in_progress|blocked|done|cancelled)", pos[1])
+		return fmt.Errorf("invalid status %q (want triage|backlog|todo|in_progress|in_review|done|canceled|duplicate)", pos[1])
 	}
 
 	client, err := todoClient()

@@ -18,7 +18,7 @@ import (
 const todoColumns = `t.id, t.project_id, t.owner_identity, t.title, t.body_md, t.status, t.priority,
        t.assignee_identity, t.assignee_session_id, t.assignee_session_label,
        t.assignee_agent_session_id, t.assignee_workdir, t.assignee_agent_kind,
-       t.workspace_name, t.repo_name, t.recurrence,
+       t.workspace_name, t.repo_name, t.recurrence, t.group_name,
        t.due_at, t.next_occurrence_at, t.created_at, t.updated_at, t.completed_at,
        t.source_ref, t.source_url,
        (SELECT COUNT(*) FROM todo_comments c WHERE c.todo_id = t.id) AS comment_count,
@@ -35,7 +35,7 @@ func scanTodoRow(row scanner) (todoschema.Todo, error) {
 		&t.ID, &projectID, &t.OwnerIdentity, &t.Title, &t.BodyMD, &t.Status, &t.Priority,
 		&t.AssigneeIdentity, &t.AssigneeSessionID, &t.AssigneeSessionLabel,
 		&t.AssigneeAgentSessionID, &t.AssigneeWorkdir, &t.AssigneeAgentKind,
-		&t.WorkspaceName, &t.RepoName, &t.Recurrence,
+		&t.WorkspaceName, &t.RepoName, &t.Recurrence, &t.GroupName,
 		&dueMS, &nextMS, &createdMS, &updatedMS, &completedMS,
 		&t.SourceRef, &t.SourceURL,
 		&t.CommentCount, &t.AttachmentCount,
@@ -174,7 +174,7 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 		return fmt.Errorf("create todo: title required")
 	}
 	if t.Status == "" {
-		t.Status = todoschema.StatusPending
+		t.Status = todoschema.StatusTodo
 	} else if !todoschema.ValidStatus(t.Status) {
 		return fmt.Errorf("create todo: invalid status %q", t.Status)
 	}
@@ -210,12 +210,12 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
-			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence,
+			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence, group_name,
 			due_at, next_occurrence_at, created_at, updated_at, completed_at,
 			source_ref, source_url)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, nullableString(t.ProjectID), t.OwnerIdentity, t.Title, t.BodyMD, string(t.Status), string(t.Priority),
-		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, t.WorkspaceName, t.RepoName, string(t.Recurrence),
+		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, t.WorkspaceName, t.RepoName, string(t.Recurrence), t.GroupName,
 		timeToNullMS(t.DueAt), timeToNullMS(t.NextOccurrenceAt), t.CreatedAt.UnixMilli(), t.UpdatedAt.UnixMilli(), timeToNullMS(t.CompletedAt),
 		t.SourceRef, t.SourceURL,
 	)
@@ -299,6 +299,7 @@ type TodoListFilter struct {
 	Scope     string
 	ProjectID string // scope="project" only; empty = union of every project callerIdentity belongs to
 	Status    string // optional exact-match filter
+	GroupName string // optional exact-match filter (see pkg/todoschema.Todo.GroupName)
 	Limit     int
 }
 
@@ -359,6 +360,10 @@ func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoList
 		query += ` AND t.status = ?`
 		args = append(args, f.Status)
 	}
+	if f.GroupName != "" {
+		query += ` AND t.group_name = ?`
+		args = append(args, f.GroupName)
+	}
 	query += ` ORDER BY t.created_at DESC LIMIT ?`
 	args = append(args, limit)
 	return s.queryTodos(ctx, query, args...)
@@ -382,6 +387,10 @@ type TodoPatch struct {
 	// "clear the binding" (see pkg/todoschema.Todo field docs).
 	WorkspaceName *string
 	RepoName      *string
+	// GroupName uses the same *string "nil = leave alone" semantics — an
+	// empty string means "clear to ungrouped" (see pkg/todoschema.Todo field
+	// docs).
+	GroupName *string
 }
 
 type OptionalTime struct {
@@ -438,6 +447,10 @@ func (s *Store) UpdateTodoFields(ctx context.Context, id, callerIdentity string,
 	if patch.RepoName != nil {
 		sets = append(sets, "repo_name = ?")
 		args = append(args, *patch.RepoName)
+	}
+	if patch.GroupName != nil {
+		sets = append(sets, "group_name = ?")
+		args = append(args, *patch.GroupName)
 	}
 	args = append(args, id)
 	if _, err := s.db.ExecContext(ctx,
@@ -502,11 +515,11 @@ func (s *Store) SetTodoStatus(ctx context.Context, id, callerIdentity string, st
 // target is a live agent session so "open the bound session" can respawn it
 // with --resume long after the bus session id itself has gone stale; pass
 // all three empty to leave the todo with no resumable session recorded.
-// As a convenience this also nudges Status: assigning a still-pending todo
-// flips it to "assigned", and fully clearing the assignment on an
-// "assigned" (not yet started) todo reverts it to "pending" — any
-// further-along status (in_progress/blocked/done/cancelled) is left alone
-// so unassigning doesn't clobber work already underway.
+// Unlike the pre-taxonomy-rework version of this method, assignment no
+// longer touches Status at all: "who" (assignee) and "what stage" (status)
+// are independent dimensions now that Status has no "assigned" value of its
+// own to nudge toward — matching Linear's own model, where assignee and
+// state are unrelated fields.
 func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIdentity, assigneeSessionID, assigneeSessionLabel, assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind string) (todoschema.Todo, error) {
 	t, err := s.getTodoRow(ctx, id)
 	if err != nil {
@@ -519,22 +532,14 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 	if !perm.edit {
 		return todoschema.Todo{}, forbidTodo("assign", callerIdentity, id)
 	}
-	status := t.Status
-	assigning := assigneeIdentity != "" || assigneeSessionID != "" || assigneeAgentSessionID != ""
-	switch {
-	case assigning && t.Status == todoschema.StatusPending:
-		status = todoschema.StatusAssigned
-	case !assigning && t.Status == todoschema.StatusAssigned:
-		status = todoschema.StatusPending
-	}
 	now := time.Now().UTC()
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE todos SET assignee_identity = ?, assignee_session_id = ?, assignee_session_label = ?,
 			assignee_agent_session_id = ?, assignee_workdir = ?, assignee_agent_kind = ?,
-			status = ?, updated_at = ? WHERE id = ?`,
+			updated_at = ? WHERE id = ?`,
 		assigneeIdentity, assigneeSessionID, assigneeSessionLabel,
 		assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind,
-		string(status), now.UnixMilli(), id,
+		now.UnixMilli(), id,
 	); err != nil {
 		return todoschema.Todo{}, err
 	}
@@ -576,20 +581,136 @@ func (s *Store) DueRecurringTodos(ctx context.Context, now time.Time) ([]todosch
 	)
 }
 
-// ResetRecurringTodo resets a due recurring todo back to pending, clearing
-// completed_at/next_occurrence_at. Guarded on status='done' in the WHERE
-// clause so a concurrent status change (e.g. someone reopened it manually
-// between DueRecurringTodos and this call) is a harmless no-op rather than
+// ResetRecurringTodo resets a due recurring todo back to todo (its default
+// creation status — see pkg/todoschema.StatusTodo), clearing completed_at/
+// next_occurrence_at. Guarded on status='done' in the WHERE clause so a
+// concurrent status change (e.g. someone reopened it manually between
+// DueRecurringTodos and this call) is a harmless no-op rather than
 // clobbering their change; system-level like DueRecurringTodos.
 func (s *Store) ResetRecurringTodo(ctx context.Context, id string, now time.Time) (todoschema.Todo, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE todos SET status = ?, completed_at = NULL, next_occurrence_at = NULL, updated_at = ?
 		  WHERE id = ? AND status = ?`,
-		string(todoschema.StatusPending), now.UnixMilli(), id, string(todoschema.StatusDone),
+		string(todoschema.StatusTodo), now.UnixMilli(), id, string(todoschema.StatusDone),
 	); err != nil {
 		return todoschema.Todo{}, err
 	}
 	return s.getTodoRow(ctx, id)
+}
+
+// requireTodoProjectMember checks that callerIdentity has at least view
+// access to project's todos (any member role including viewer, or global
+// admin) — the same tier ListTodos' scope="project" branch already uses.
+func (s *Store) requireTodoProjectMember(ctx context.Context, callerIdentity, projectID string) error {
+	isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
+	if err != nil {
+		return err
+	}
+	if isAdmin {
+		return nil
+	}
+	_, ok, err := s.MemberRole(ctx, projectID, callerIdentity)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return forbidTodo("list", callerIdentity, "project:"+projectID)
+	}
+	return nil
+}
+
+// requireTodoProjectEditor checks that callerIdentity can edit todos in
+// project (owner/member, not viewer, or global admin) — the same tier
+// CreateTodo requires for creating a team todo.
+func (s *Store) requireTodoProjectEditor(ctx context.Context, callerIdentity, projectID string) error {
+	isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
+	if err != nil {
+		return err
+	}
+	if isAdmin {
+		return nil
+	}
+	role, ok, err := s.MemberRole(ctx, projectID, callerIdentity)
+	if err != nil {
+		return err
+	}
+	if !ok || role == RoleViewer {
+		return forbidTodo("edit todo groups in", callerIdentity, projectID)
+	}
+	return nil
+}
+
+// ListTodoGroups returns the distinct, non-empty group names currently in
+// use (see pkg/todoschema.Todo.GroupName), scoped to callerIdentity's own
+// personal todos (projectID == "") or to one team project (any member role,
+// including viewer, may list — same tier as ListTodos' scope="project"
+// branch). Unlike ListTodos there's no "union of every project" mode: a
+// group name is only meaningful within the one scope it was set in.
+func (s *Store) ListTodoGroups(ctx context.Context, callerIdentity, projectID string) ([]string, error) {
+	var rows *sql.Rows
+	var err error
+	if projectID == "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT DISTINCT group_name FROM todos WHERE project_id IS NULL AND owner_identity = ? AND group_name != '' ORDER BY group_name`,
+			callerIdentity)
+	} else {
+		if err := s.requireTodoProjectMember(ctx, callerIdentity, projectID); err != nil {
+			return nil, err
+		}
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT DISTINCT group_name FROM todos WHERE project_id = ? AND group_name != '' ORDER BY group_name`,
+			projectID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return scanRows(rows, func(r *sql.Rows) (string, error) {
+		var g string
+		err := r.Scan(&g)
+		return g, err
+	})
+}
+
+// RenameTodoGroup bulk-renames every todo currently in oldName to newName,
+// scoped like ListTodoGroups but requiring edit access (owner/member, not
+// viewer) since it mutates. A no-op (oldName not in use in this scope) is
+// not an error. There's no dedicated "create a group" API — a todo simply
+// starts pointing at a new name (see the field docs on
+// pkg/todoschema.Todo.GroupName); this is only for relabeling one that
+// already has todos in it.
+func (s *Store) RenameTodoGroup(ctx context.Context, callerIdentity, projectID, oldName, newName string) error {
+	if projectID == "" {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE todos SET group_name = ? WHERE project_id IS NULL AND owner_identity = ? AND group_name = ?`,
+			newName, callerIdentity, oldName)
+		return err
+	}
+	if err := s.requireTodoProjectEditor(ctx, callerIdentity, projectID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE todos SET group_name = ? WHERE project_id = ? AND group_name = ?`,
+		newName, projectID, oldName)
+	return err
+}
+
+// ClearTodoGroup bulk-clears group_name back to "" (ungrouped) on every todo
+// currently in name, without deleting the todos themselves. Same
+// scoping/permission tier as RenameTodoGroup.
+func (s *Store) ClearTodoGroup(ctx context.Context, callerIdentity, projectID, name string) error {
+	if projectID == "" {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE todos SET group_name = '' WHERE project_id IS NULL AND owner_identity = ? AND group_name = ?`,
+			callerIdentity, name)
+		return err
+	}
+	if err := s.requireTodoProjectEditor(ctx, callerIdentity, projectID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE todos SET group_name = '' WHERE project_id = ? AND group_name = ?`,
+		projectID, name)
+	return err
 }
 
 // InsertTodoComment posts a comment on todo id, requiring comment access

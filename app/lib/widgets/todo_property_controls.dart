@@ -25,6 +25,26 @@ Color priorityColor(String p) => switch (p) {
       _ => CcColors.muted,
     };
 
+// todoStatusColor is the single source of truth for status dot/pill colors —
+// shared by the board (todos_page.dart), the detail view's StatusControl
+// pill (todo_detail_view.dart), and StatusControl's own dropdown here, so
+// the 8-status palette only needs to be picked once. Triage's warning amber
+// signals "needs a decision"; backlog/todo/canceled stay in the neutral
+// gray family (dormant/default/receded) while in_progress/in_review/done
+// each get their own hue so the pipeline stages read apart on the board;
+// duplicate gets a distinct violet since it isn't really a pipeline stage at
+// all, just a terminal "merged into another issue" marker.
+Color todoStatusColor(TodoStatus s) => switch (s) {
+      TodoStatus.triage => CcColors.warning,
+      TodoStatus.backlog => CcColors.borderSoft,
+      TodoStatus.todo => CcColors.muted,
+      TodoStatus.inProgress => CcColors.accent,
+      TodoStatus.inReview => CcColors.info,
+      TodoStatus.done => CcColors.ok,
+      TodoStatus.canceled => CcColors.subtle,
+      TodoStatus.duplicate => CcColors.violet,
+    };
+
 // priorityBars is Linear's priority glyph: 3 bars of increasing height,
 // filled up to the level (low=1, normal=2, high=3) in the level's color.
 Widget priorityBars(String priority, {double maxHeight = 11, double barWidth = 3}) {
@@ -350,6 +370,171 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
           ),
         ],
       ]),
+    );
+  }
+}
+
+// GroupControl is the 分组 pill: a single-level "输入即创建" picker — unlike
+// WorkspaceRepoControl's two-step workspace-then-repo menu, a group is just
+// one flat name, so tapping opens one dialog with a text field (type a new
+// name or filter the existing list) plus the matching existing groups below
+// it. There's no separate "create group" action: submitting a name that
+// doesn't exist yet simply assigns it, and it "exists" from then on because
+// some todo points at it (see pkg/todoschema.Todo.GroupName).
+class GroupControl extends StatefulWidget {
+  final String? groupName;
+  final List<String> existingGroups;
+  final ValueChanged<String> onSelect;
+  final VoidCallback? onClear;
+  const GroupControl({
+    super.key,
+    required this.groupName,
+    required this.existingGroups,
+    required this.onSelect,
+    this.onClear,
+  });
+
+  @override
+  State<GroupControl> createState() => _GroupControlState();
+}
+
+class _GroupControlState extends State<GroupControl> {
+  final _key = GlobalKey();
+
+  Future<void> _open() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => _GroupPickerDialog(
+        current: widget.groupName,
+        existing: widget.existingGroups,
+      ),
+    );
+    if (result != null && result.isNotEmpty) widget.onSelect(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.groupName ?? '';
+    final has = name.isNotEmpty;
+    return _pillTap(
+      key: _key,
+      onTap: _open,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.folder_outlined,
+            size: 14, color: has ? CcColors.accentBright : CcColors.subtle),
+        const SizedBox(width: 6),
+        Text(
+          has ? name : '未分组',
+          style: TextStyle(fontSize: 12.5, color: has ? CcColors.text : CcColors.subtle),
+        ),
+        if (has && widget.onClear != null) ...[
+          const SizedBox(width: 2),
+          InkWell(
+            onTap: widget.onClear,
+            borderRadius: BorderRadius.circular(10),
+            child: const Padding(
+              padding: EdgeInsets.all(2),
+              child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+            ),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+class _GroupPickerDialog extends StatefulWidget {
+  final String? current;
+  final List<String> existing;
+  const _GroupPickerDialog({required this.current, required this.existing});
+
+  @override
+  State<_GroupPickerDialog> createState() => _GroupPickerDialogState();
+}
+
+class _GroupPickerDialogState extends State<_GroupPickerDialog> {
+  late final _ctl = TextEditingController(text: widget.current ?? '');
+
+  List<String> get _filtered {
+    final q = _ctl.text.trim().toLowerCase();
+    final names = widget.existing.where((g) => g.isNotEmpty);
+    if (q.isEmpty) return names.toList();
+    return names.where((g) => g.toLowerCase().contains(q)).toList();
+  }
+
+  void _submit(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    Navigator.pop(context, trimmed);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _ctl.text.trim();
+    final matches = _filtered;
+    final isNewName = q.isNotEmpty && !matches.any((g) => g.toLowerCase() == q.toLowerCase());
+    return AlertDialog(
+      title: const Text('分组'),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _ctl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: '输入分组名，回车创建/选择',
+                isDense: true,
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: _submit,
+            ),
+            if (matches.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 180),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final g in matches)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.folder_outlined, size: 16),
+                          title: Text(g),
+                          onTap: () => Navigator.pop(context, g),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            else if (isNewName)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '将创建新分组 "$q"',
+                  style: const TextStyle(color: CcColors.muted, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        FilledButton(
+          onPressed: q.isEmpty ? null : () => _submit(q),
+          child: const Text('确定'),
+        ),
+      ],
     );
   }
 }

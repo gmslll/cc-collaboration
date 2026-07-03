@@ -29,7 +29,6 @@ class TodoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final blocked = todo.status == TodoStatus.blocked;
     final recurrenceLabel = todo.recurrence.isEmpty
         ? null
         : recurrenceLabels[todo.recurrence];
@@ -43,17 +42,6 @@ class TodoCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               priorityBars(todo.priority, maxHeight: 12),
-              if (blocked) ...[
-                const SizedBox(width: 6),
-                const Tooltip(
-                  message: '受阻',
-                  child: Icon(
-                    Icons.error_outline_rounded,
-                    size: 14,
-                    color: CcColors.danger,
-                  ),
-                ),
-              ],
               const Spacer(),
               _AssigneeAvatar(identity: todo.assigneeIdentity),
             ],
@@ -71,7 +59,8 @@ class TodoCard extends StatelessWidget {
           ),
           if (recurrenceLabel != null ||
               projectName != null ||
-              (todo.repoName ?? '').isNotEmpty) ...[
+              (todo.repoName ?? '').isNotEmpty ||
+              (todo.groupName ?? '').isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
@@ -87,6 +76,12 @@ class TodoCard extends StatelessWidget {
                   _miniTag(Icons.folder_rounded, projectName!, CcColors.muted),
                 if ((todo.repoName ?? '').isNotEmpty)
                   _miniTag(Icons.source_rounded, todo.repoName!, CcColors.muted),
+                if ((todo.groupName ?? '').isNotEmpty)
+                  _miniTag(
+                    Icons.folder_outlined,
+                    todo.groupName!,
+                    CcColors.subtle,
+                  ),
               ],
             ),
           ],

@@ -93,7 +93,7 @@ func TestSweepDueTodosResetsPersonalTodoAndNotifiesOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after due sweep: %v", err)
 	}
-	if got.Status != todoschema.StatusPending {
+	if got.Status != todoschema.StatusTodo {
 		t.Fatalf("status after due sweep = %q, want pending", got.Status)
 	}
 	if got.CompletedAt != nil || got.NextOccurrenceAt != nil {
@@ -108,7 +108,7 @@ func TestSweepDueTodosResetsPersonalTodoAndNotifiesOwner(t *testing.T) {
 	if err := json.Unmarshal(e.Data, &payload); err != nil {
 		t.Fatalf("unmarshal event payload: %v", err)
 	}
-	if payload.ID != "td1" || payload.Status != todoschema.StatusPending {
+	if payload.ID != "td1" || payload.Status != todoschema.StatusTodo {
 		t.Fatalf("event payload = %+v, want reset td1/pending", payload)
 	}
 
@@ -173,7 +173,7 @@ func TestSweepDueTodosNotifiesEveryProjectMemberForTeamTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after sweep: %v", err)
 	}
-	if got.Status != todoschema.StatusPending {
+	if got.Status != todoschema.StatusTodo {
 		t.Fatalf("status after sweep = %q, want pending", got.Status)
 	}
 }
@@ -205,7 +205,7 @@ func TestSweepDueTodosNilHubIsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after sweep: %v", err)
 	}
-	if got.Status != todoschema.StatusPending {
+	if got.Status != todoschema.StatusTodo {
 		t.Fatalf("status after sweep = %q, want pending", got.Status)
 	}
 }

@@ -80,12 +80,14 @@ class RelayClient {
     required String scope, // personal | project | assigned | all
     String? project,
     String? status,
+    String? group,
     int? limit,
   }) async {
     final r = await _dio.get('/v1/todos', queryParameters: {
       'scope': scope,
       'project': ?project,
       'status': ?status,
+      'group': ?group,
       'limit': ?limit,
     });
     return _asList(r.data, 'items')
@@ -107,6 +109,7 @@ class RelayClient {
     DateTime? dueAt,
     String? workspaceName,
     String? repoName,
+    String? groupName,
   }) async {
     final r = await _dio.post('/v1/todos', data: {
       'title': title,
@@ -117,6 +120,7 @@ class RelayClient {
       if (dueAt != null) 'due_at': dueAt.toUtc().toIso8601String(),
       'workspace_name': ?workspaceName,
       'repo_name': ?repoName,
+      'group_name': ?groupName,
     });
     return Todo.fromJson(r.data as Map<String, dynamic>);
   }
@@ -124,8 +128,8 @@ class RelayClient {
   // updateTodo only sends fields the caller actually passed — except due_at,
   // which needs [clearDueAt] to distinguish "leave it alone" (key omitted)
   // from "clear it" (key present with a JSON null value). workspaceName/
-  // repoName follow the plain-optional pattern (null = leave alone): pass an
-  // empty string, not null, to clear an existing binding.
+  // repoName/groupName follow the plain-optional pattern (null = leave
+  // alone): pass an empty string, not null, to clear an existing value.
   Future<Todo> updateTodo(
     String id, {
     String? title,
@@ -136,6 +140,7 @@ class RelayClient {
     bool clearDueAt = false,
     String? workspaceName,
     String? repoName,
+    String? groupName,
   }) async {
     final r = await _dio.patch('/v1/todos/$id', data: {
       'title': ?title,
@@ -148,9 +153,36 @@ class RelayClient {
         'due_at': dueAt.toUtc().toIso8601String(),
       'workspace_name': ?workspaceName,
       'repo_name': ?repoName,
+      'group_name': ?groupName,
     });
     return Todo.fromJson(r.data as Map<String, dynamic>);
   }
+
+  // --- todo groups (free-form string field, no separate table) ---
+
+  // todoGroups lists the distinct, non-empty group names in use —
+  // personal-scoped when projectId is omitted, or scoped to that one team
+  // project otherwise. Mirrors store.Store.ListTodoGroups' scoping exactly;
+  // there's no "union of every project" mode.
+  Future<List<String>> todoGroups({String? projectId}) async {
+    final r = await _dio.get('/v1/todos/groups',
+        queryParameters: {'project': ?projectId});
+    return _asList(r.data, 'groups').cast<String>();
+  }
+
+  Future<void> renameTodoGroup(String oldName, String newName,
+          {String? projectId}) =>
+      _dio.post('/v1/todos/groups/rename', data: {
+        'project_id': projectId ?? '',
+        'old_name': oldName,
+        'new_name': newName,
+      });
+
+  Future<void> clearTodoGroup(String name, {String? projectId}) =>
+      _dio.post('/v1/todos/groups/clear', data: {
+        'project_id': projectId ?? '',
+        'name': name,
+      });
 
   Future<Todo> setTodoStatus(String id, TodoStatus status) async {
     final r = await _dio

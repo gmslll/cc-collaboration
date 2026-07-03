@@ -29,7 +29,7 @@ func TestTodoPersonalVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner GetTodo: %v", err)
 	}
-	if got.Title != "buy milk" || got.Status != todoschema.StatusPending || got.Priority != todoschema.PriorityNormal {
+	if got.Title != "buy milk" || got.Status != todoschema.StatusTodo || got.Priority != todoschema.PriorityNormal {
 		t.Fatalf("got %+v", got)
 	}
 
@@ -267,7 +267,7 @@ func TestTodoRecurrenceSweep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reset.Status != todoschema.StatusPending || reset.CompletedAt != nil || reset.NextOccurrenceAt != nil {
+	if reset.Status != todoschema.StatusTodo || reset.CompletedAt != nil || reset.NextOccurrenceAt != nil {
 		t.Fatalf("recurring todo not reset cleanly: %+v", reset)
 	}
 
@@ -283,9 +283,16 @@ func TestTodoRecurrenceSweep(t *testing.T) {
 	}
 }
 
-// --- assign auto-status nudge ---
+// --- assign/status are independent dimensions (no auto-status nudge) ---
 
-func TestTodoAssignAutoStatus(t *testing.T) {
+// TestTodoAssignDoesNotChangeStatus locks in the taxonomy-rework decision:
+// assignee and status used to be coupled (assigning a pending todo flipped it
+// to "assigned"; clearing reverted it) back when Status had an "assigned"
+// value of its own. That value is gone from the new 8-value taxonomy, and
+// AssignTodo no longer touches status at all under any circumstance —
+// assignee ("who") and status ("what stage") are independent dimensions now,
+// matching Linear's own model.
+func TestTodoAssignDoesNotChangeStatus(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 
@@ -296,19 +303,19 @@ func TestTodoAssignAutoStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != todoschema.StatusAssigned || got.AssigneeIdentity != "bob@x" {
-		t.Fatalf("assign should flip pending->assigned: %+v", got)
+	if got.Status != todoschema.StatusTodo || got.AssigneeIdentity != "bob@x" {
+		t.Fatalf("assigning must leave status untouched: %+v", got)
 	}
 
 	got, err = st.AssignTodo(ctx, "td1", "alice@x", "", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != todoschema.StatusPending || got.AssigneeIdentity != "" {
-		t.Fatalf("clearing assignment should revert assigned->pending: %+v", got)
+	if got.Status != todoschema.StatusTodo || got.AssigneeIdentity != "" {
+		t.Fatalf("clearing assignment must leave status untouched: %+v", got)
 	}
 
-	// Once work is underway, (un)assigning must not clobber status.
+	// Once work is underway, (un)assigning still must not clobber status.
 	if _, err := st.SetTodoStatus(ctx, "td1", "alice@x", todoschema.StatusInProgress); err != nil {
 		t.Fatal(err)
 	}
@@ -378,8 +385,8 @@ func TestAssignTodoResumeFields(t *testing.T) {
 		got.AssigneeWorkdir != "/Users/bob/repo" || got.AssigneeAgentKind != "claude" {
 		t.Fatalf("AssignTodo did not return resume fields: %+v", got)
 	}
-	if got.Status != todoschema.StatusAssigned {
-		t.Fatalf("assigning via resume fields alone should still flip pending->assigned: %+v", got)
+	if got.Status != todoschema.StatusTodo {
+		t.Fatalf("assigning via resume fields alone must not change status: %+v", got)
 	}
 
 	// Fetched independently, GetTodo must see the same values (i.e. they
@@ -582,6 +589,132 @@ func TestTodoMutatorsReturnAttachments(t *testing.T) {
 	}
 	if len(assigned.Attachments) != 1 || assigned.Attachments[0].Name != "photo.png" {
 		t.Fatalf("AssignTodo should return Attachments: %+v", assigned.Attachments)
+	}
+}
+
+// --- todo groups: free-form string field, no separate table ---
+
+func TestListTodoGroupsPersonalScope(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "a", GroupName: "我的日常"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td2", OwnerIdentity: "alice@x", Title: "b", GroupName: "我的日常"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td3", OwnerIdentity: "alice@x", Title: "c", GroupName: "xxx项目"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td4", OwnerIdentity: "alice@x", Title: "ungrouped"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td5", OwnerIdentity: "bob@x", Title: "not alice's", GroupName: "我的日常"})
+
+	groups, err := st.ListTodoGroups(ctx, "alice@x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, g := range groups {
+		got[g] = true
+	}
+	if !got["我的日常"] || !got["xxx项目"] || len(got) != 2 {
+		t.Fatalf("ListTodoGroups(alice) = %v, want exactly [我的日常, xxx项目]", groups)
+	}
+
+	// bob only sees his own group, not alice's.
+	bobGroups, err := st.ListTodoGroups(ctx, "bob@x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bobGroups) != 1 || bobGroups[0] != "我的日常" {
+		t.Fatalf("ListTodoGroups(bob) = %v", bobGroups)
+	}
+}
+
+func TestListTodoGroupsProjectScope(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "viewer@x", RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "a", GroupName: "sprint-1"})
+
+	// A project viewer can list groups — listing is a read op (view tier),
+	// same as ListTodos' scope="project" branch.
+	groups, err := st.ListTodoGroups(ctx, "viewer@x", "p1")
+	if err != nil || len(groups) != 1 || groups[0] != "sprint-1" {
+		t.Fatalf("viewer ListTodoGroups: %+v err=%v", groups, err)
+	}
+
+	if _, err := st.ListTodoGroups(ctx, "stranger@x", "p1"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-member ListTodoGroups: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestRenameTodoGroup(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "a", GroupName: "old-name"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td2", OwnerIdentity: "alice@x", Title: "b", GroupName: "old-name"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td3", OwnerIdentity: "alice@x", Title: "c", GroupName: "other"})
+
+	if err := st.RenameTodoGroup(ctx, "alice@x", "", "old-name", "new-name"); err != nil {
+		t.Fatal(err)
+	}
+	td1, _ := st.GetTodo(ctx, "td1", "alice@x")
+	td2, _ := st.GetTodo(ctx, "td2", "alice@x")
+	td3, _ := st.GetTodo(ctx, "td3", "alice@x")
+	if td1.GroupName != "new-name" || td2.GroupName != "new-name" {
+		t.Fatalf("rename did not apply to both todos: td1=%q td2=%q", td1.GroupName, td2.GroupName)
+	}
+	if td3.GroupName != "other" {
+		t.Fatalf("rename leaked into an unrelated group: %q", td3.GroupName)
+	}
+}
+
+func TestClearTodoGroup(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "a", GroupName: "temp"})
+
+	if err := st.ClearTodoGroup(ctx, "alice@x", "", "temp"); err != nil {
+		t.Fatal(err)
+	}
+	td1, err := st.GetTodo(ctx, "td1", "alice@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if td1.GroupName != "" {
+		t.Fatalf("group not cleared: %q", td1.GroupName)
+	}
+	if td1.Title != "a" {
+		t.Fatalf("ClearTodoGroup should not delete the todo itself")
+	}
+}
+
+func TestRenameClearTodoGroupRequiresEditorTierInProjectScope(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "viewer@x", RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "a", GroupName: "sprint-1"})
+
+	if err := st.RenameTodoGroup(ctx, "viewer@x", "p1", "sprint-1", "sprint-2"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer rename: want ErrForbidden, got %v", err)
+	}
+	if err := st.ClearTodoGroup(ctx, "viewer@x", "p1", "sprint-1"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer clear: want ErrForbidden, got %v", err)
+	}
+	if err := st.RenameTodoGroup(ctx, "owner@x", "p1", "sprint-1", "sprint-2"); err != nil {
+		t.Fatalf("owner rename: %v", err)
 	}
 }
 

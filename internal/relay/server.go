@@ -147,6 +147,10 @@ func (s *Server) Handler() http.Handler {
 	// Go 1.22's ServeMux prefers the more specific (non-wildcard) pattern for
 	// the literal path "/v1/todos/by-source" regardless of registration order.
 	api.HandleFunc("GET /v1/todos/by-source", s.findTodoBySourceRef)
+	// Same "literal segment beats the {id} wildcard" rule as by-source above.
+	api.HandleFunc("GET /v1/todos/groups", s.listTodoGroups)
+	api.HandleFunc("POST /v1/todos/groups/rename", s.renameTodoGroup)
+	api.HandleFunc("POST /v1/todos/groups/clear", s.clearTodoGroup)
 	api.HandleFunc("GET /v1/todos/{id}", s.getTodo)
 	api.HandleFunc("PATCH /v1/todos/{id}", s.patchTodo)
 	api.HandleFunc("DELETE /v1/todos/{id}", s.deleteTodo)
