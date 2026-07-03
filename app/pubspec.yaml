@@ -80,11 +80,20 @@ dev_dependencies:
 # path/arg/env bytes to UTF-16 by a per-byte cast, mangling non-ASCII (e.g. a
 # Chinese working dir) → CreateProcessW failed and the terminal wouldn't start.
 # See third_party/flutter_pty/src/flutter_pty_win.c (marked PATCH cc-handoff).
+#
+# Vendored re_highlight 0.0.3 with a Dart-language fix: upstream's dart.dart
+# lumped every core type (String, int, List, ...) into the "built_in" keyword
+# category alongside real built-ins (print, window, ...), so the editor theme
+# had no way to color types distinctly. Split types into their own "type"
+# category. See third_party/re_highlight/lib/languages/dart.dart (marked
+# PATCH cc-handoff).
 dependency_overrides:
   xterm:
     path: third_party/xterm
   flutter_pty:
     path: third_party/flutter_pty
+  re_highlight:
+    path: third_party/re_highlight
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
