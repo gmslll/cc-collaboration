@@ -306,8 +306,8 @@ func (c *Client) ListTodoComments(ctx context.Context, id string) ([]todoschema.
 // attachments reuse the handoff attachment byte protocol byte-for-byte (see
 // the feature plan).
 func (c *Client) UploadTodoAttachment(ctx context.Context, todoID, name string, content []byte) error {
-	url := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + name
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(content))
+	endpoint := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + url.PathEscape(name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(content))
 	if err != nil {
 		return err
 	}

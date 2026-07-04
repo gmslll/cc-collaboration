@@ -29,6 +29,13 @@ type Issue struct {
 	Labels        []string
 	DueDate       *time.Time
 	ProjectID     string
+	Assets        []IssueAsset
+	Comments      []string
+}
+
+type IssueAsset struct {
+	Title string
+	URL   string
 }
 
 // teamIssuesQuery filters to a single team by its short key (e.g. "ENG").
@@ -52,6 +59,8 @@ query CCHandoffTeamIssues($teamKey: String!) {
       project { id }
       labels { nodes { name } }
       dueDate
+      attachments(first: 25) { nodes { title url } }
+      comments(first: 50) { nodes { body } }
     }
   }
 }
@@ -71,6 +80,8 @@ query CCHandoffProjectIssues($teamKey: String!, $projectID: ID!) {
       project { id }
       labels { nodes { name } }
       dueDate
+      attachments(first: 25) { nodes { title url } }
+      comments(first: 50) { nodes { body } }
     }
   }
 }
@@ -103,6 +114,17 @@ type issueNode struct {
 			Name string `json:"name"`
 		} `json:"nodes"`
 	} `json:"labels"`
+	Attachments struct {
+		Nodes []struct {
+			Title string `json:"title"`
+			URL   string `json:"url"`
+		} `json:"nodes"`
+	} `json:"attachments"`
+	Comments struct {
+		Nodes []struct {
+			Body string `json:"body"`
+		} `json:"nodes"`
+	} `json:"comments"`
 	// DueDate is Linear's TimelessDate scalar: a bare "YYYY-MM-DD" string, or
 	// null.
 	DueDate *string `json:"dueDate"`
@@ -148,6 +170,12 @@ func GetTeamIssues(ctx context.Context, c *Client, teamKey, projectID string) ([
 		}
 		for _, l := range n.Labels.Nodes {
 			iss.Labels = append(iss.Labels, l.Name)
+		}
+		for _, a := range n.Attachments.Nodes {
+			iss.Assets = append(iss.Assets, IssueAsset{Title: a.Title, URL: a.URL})
+		}
+		for _, c := range n.Comments.Nodes {
+			iss.Comments = append(iss.Comments, c.Body)
 		}
 		if n.DueDate != nil && *n.DueDate != "" {
 			if t, err := time.Parse("2006-01-02", *n.DueDate); err == nil {

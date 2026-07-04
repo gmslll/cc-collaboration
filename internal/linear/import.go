@@ -3,9 +3,15 @@ package linear
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"path"
+	"regexp"
 	"strings"
 
 	"github.com/cc-collaboration/internal/config"
+	"github.com/cc-collaboration/internal/handoff"
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/todoschema"
 )
@@ -19,6 +25,8 @@ type ImportResult struct {
 	Issues          int
 	Created         int
 	Updated         int
+	Attachments     int
+	SkippedAssets   int
 }
 
 // ImportTeamIssuesForRepo is the shared "do the whole import" entry point
@@ -116,7 +124,7 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 		Issues:          len(issues),
 	}
 	for _, iss := range issues {
-		created, err := upsertTodoFromIssue(ctx, todoClient, iss, teamKey, linearProjectID, projectID, candidates)
+		created, uploaded, skipped, err := upsertTodoFromIssue(ctx, todoClient, gql, iss, teamKey, linearProjectID, projectID, candidates)
 		if err != nil {
 			return result, fmt.Errorf("import %s: %w", iss.Identifier, err)
 		}
@@ -125,6 +133,8 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 		} else {
 			result.Updated++
 		}
+		result.Attachments += uploaded
+		result.SkippedAssets += skipped
 	}
 	return result, nil
 }
@@ -133,7 +143,7 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 // Linear issue: find-by-SourceRef decides create vs. update. Assignee
 // matching only applies on create — a re-import shouldn't clobber a manual
 // reassignment made inside cc-handoff after the fact.
-func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, teamKey, linearProjectID, projectID string, candidates []string) (created bool, err error) {
+func upsertTodoFromIssue(ctx context.Context, c *transport.Client, gql *Client, iss Issue, teamKey, linearProjectID, projectID string, candidates []string) (created bool, uploaded, skipped int, err error) {
 	sourceRef := "linear:" + iss.Identifier
 	sourceProvider := "linear"
 	sourceProjectID := linearProjectID
@@ -146,7 +156,7 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, te
 
 	existing, found, err := c.FindTodoBySourceRef(ctx, sourceRef, projectID)
 	if err != nil {
-		return false, fmt.Errorf("lookup: %w", err)
+		return false, 0, 0, fmt.Errorf("lookup: %w", err)
 	}
 	if found {
 		title := iss.Title
@@ -159,12 +169,13 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, te
 			SourceTeamKey:   &teamKey,
 			SourceProjectID: &sourceProjectID,
 		}); err != nil {
-			return false, fmt.Errorf("patch: %w", err)
+			return false, 0, 0, fmt.Errorf("patch: %w", err)
 		}
 		if _, err := c.SetTodoStatus(ctx, existing.ID, status); err != nil {
-			return false, fmt.Errorf("set status: %w", err)
+			return false, 0, 0, fmt.Errorf("set status: %w", err)
 		}
-		return false, nil
+		uploaded, skipped = uploadIssueAssets(ctx, c, gql, existing.ID, iss)
+		return false, uploaded, skipped, nil
 	}
 
 	out, err := c.CreateTodo(ctx, &todoschema.Todo{
@@ -180,19 +191,20 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, iss Issue, te
 		SourceProjectID: sourceProjectID,
 	})
 	if err != nil {
-		return false, fmt.Errorf("create: %w", err)
+		return false, 0, 0, fmt.Errorf("create: %w", err)
 	}
 	if status != todoschema.StatusTodo {
 		if _, err := c.SetTodoStatus(ctx, out.ID, status); err != nil {
-			return true, fmt.Errorf("set status: %w", err)
+			return true, 0, 0, fmt.Errorf("set status: %w", err)
 		}
 	}
 	if assignee := matchAssigneeIdentity(candidates, iss.AssigneeEmail); assignee != "" {
 		if _, err := c.AssignTodo(ctx, out.ID, assignee, "", "", "", "", ""); err != nil {
-			return true, fmt.Errorf("assign: %w", err)
+			return true, 0, 0, fmt.Errorf("assign: %w", err)
 		}
 	}
-	return true, nil
+	uploaded, skipped = uploadIssueAssets(ctx, c, gql, out.ID, iss)
+	return true, uploaded, skipped, nil
 }
 
 func looksLikeUUID(s string) bool {
@@ -212,6 +224,168 @@ func looksLikeUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+var markdownURLRe = regexp.MustCompile(`!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
+
+func uploadIssueAssets(ctx context.Context, c *transport.Client, gql *Client, todoID string, iss Issue) (uploaded, skipped int) {
+	usedNames := map[string]bool{}
+	for _, asset := range issueAssets(iss) {
+		name, content, err := downloadIssueAsset(ctx, gql, asset)
+		if err != nil || len(content) == 0 {
+			skipped++
+			continue
+		}
+		name = uniqueAssetName(name, usedNames)
+		if err := c.UploadTodoAttachment(ctx, todoID, name, content); err != nil {
+			skipped++
+			continue
+		}
+		uploaded++
+	}
+	return uploaded, skipped
+}
+
+func uniqueAssetName(name string, used map[string]bool) string {
+	if !used[name] {
+		used[name] = true
+		return name
+	}
+	ext := path.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	if stem == "" {
+		stem = "linear-attachment"
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
+		if !used[candidate] {
+			used[candidate] = true
+			return candidate
+		}
+	}
+}
+
+func issueAssets(iss Issue) []IssueAsset {
+	seen := map[string]bool{}
+	var out []IssueAsset
+	add := func(a IssueAsset) {
+		a.URL = strings.TrimSpace(a.URL)
+		if a.URL == "" || seen[a.URL] {
+			return
+		}
+		seen[a.URL] = true
+		out = append(out, a)
+	}
+	for _, a := range iss.Assets {
+		add(a)
+	}
+	for _, u := range markdownURLs(iss.Description) {
+		add(IssueAsset{URL: u})
+	}
+	for _, body := range iss.Comments {
+		for _, u := range markdownURLs(body) {
+			add(IssueAsset{URL: u})
+		}
+	}
+	return out
+}
+
+func markdownURLs(s string) []string {
+	var out []string
+	for _, m := range markdownURLRe.FindAllStringSubmatch(s, -1) {
+		if len(m) > 1 {
+			out = append(out, strings.Trim(m[1], `"'`))
+		}
+	}
+	return out
+}
+
+func downloadIssueAsset(ctx context.Context, gql *Client, asset IssueAsset) (string, []byte, error) {
+	u, err := url.Parse(asset.URL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", nil, fmt.Errorf("invalid url")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.URL, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	if strings.Contains(u.Host, "linear.app") {
+		req.Header.Set("Authorization", gql.Token)
+	}
+	resp, err := gql.HTTP.Do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return "", nil, fmt.Errorf("download %s: %s", asset.URL, resp.Status)
+	}
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(ct, "text/html") {
+		return "", nil, fmt.Errorf("skip html")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, handoff.AttachmentMaxBytes+1))
+	if err != nil {
+		return "", nil, err
+	}
+	if len(body) > handoff.AttachmentMaxBytes {
+		return "", nil, fmt.Errorf("attachment too large")
+	}
+	name := assetName(asset, ct)
+	return name, body, nil
+}
+
+func assetName(asset IssueAsset, contentType string) string {
+	if name := cleanAssetName(asset.Title); name != "" && path.Ext(name) != "" {
+		return name
+	}
+	if u, err := url.Parse(asset.URL); err == nil {
+		if base := cleanAssetName(path.Base(u.Path)); base != "" && base != "." && base != "/" {
+			if path.Ext(base) == "" {
+				base += extensionForContentType(contentType)
+			}
+			return base
+		}
+	}
+	name := cleanAssetName(asset.Title)
+	if name == "" {
+		name = "linear-attachment"
+	}
+	return name + extensionForContentType(contentType)
+}
+
+func cleanAssetName(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
+			return '-'
+		default:
+			return r
+		}
+	}, s)
+	rs := []rune(s)
+	if len(rs) > 120 {
+		s = string(rs[:120])
+	}
+	return strings.Trim(s, ". ")
+}
+
+func extensionForContentType(ct string) string {
+	switch {
+	case strings.Contains(ct, "image/png"):
+		return ".png"
+	case strings.Contains(ct, "image/jpeg"):
+		return ".jpg"
+	case strings.Contains(ct, "image/gif"):
+		return ".gif"
+	case strings.Contains(ct, "image/webp"):
+		return ".webp"
+	case strings.Contains(ct, "application/pdf"):
+		return ".pdf"
+	default:
+		return ".bin"
+	}
 }
 
 // mapIssueStatus maps Linear's state.type onto our (now Linear-shaped)

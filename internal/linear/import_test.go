@@ -85,3 +85,34 @@ func TestLooksLikeUUID(t *testing.T) {
 		t.Fatalf("looksLikeUUID(%q) = true, want false", invalid)
 	}
 }
+
+func TestIssueAssets(t *testing.T) {
+	iss := Issue{
+		Description: "body ![a](https://example.com/a.png) [doc](https://example.com/doc.pdf)",
+		Assets: []IssueAsset{
+			{Title: "external", URL: "https://example.com/a.png"},
+			{Title: "trace.log", URL: "https://example.com/trace.log"},
+		},
+		Comments: []string{"comment ![b](https://example.com/b.jpg)"},
+	}
+	got := issueAssets(iss)
+	if len(got) != 4 {
+		t.Fatalf("issueAssets len = %d, want 4: %+v", len(got), got)
+	}
+	if got[0].URL != "https://example.com/a.png" || got[1].URL != "https://example.com/trace.log" {
+		t.Fatalf("explicit attachments should lead and dedupe: %+v", got)
+	}
+}
+
+func TestUniqueAssetName(t *testing.T) {
+	used := map[string]bool{}
+	if got := uniqueAssetName("shot.png", used); got != "shot.png" {
+		t.Fatalf("first uniqueAssetName = %q", got)
+	}
+	if got := uniqueAssetName("shot.png", used); got != "shot-2.png" {
+		t.Fatalf("second uniqueAssetName = %q", got)
+	}
+	if got := uniqueAssetName("shot.png", used); got != "shot-3.png" {
+		t.Fatalf("third uniqueAssetName = %q", got)
+	}
+}

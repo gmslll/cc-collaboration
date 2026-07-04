@@ -31,6 +31,8 @@ func TestGetTeamIssues(t *testing.T) {
 							"priority": 1,
 							"assignee": {"email": "dev@company.com"},
 							"labels": {"nodes": [{"name": "bug"}, {"name": "urgent"}]},
+							"attachments": {"nodes": [{"title": "trace.log", "url": "https://example.com/trace.log"}]},
+							"comments": {"nodes": [{"body": "screenshot ![shot](https://example.com/shot.png)"}]},
 							"dueDate": "2026-07-10"
 						},
 						{
@@ -42,6 +44,8 @@ func TestGetTeamIssues(t *testing.T) {
 							"priority": 0,
 							"assignee": null,
 							"labels": {"nodes": []},
+							"attachments": {"nodes": []},
+							"comments": {"nodes": []},
 							"dueDate": null
 						}
 					]
@@ -71,6 +75,12 @@ func TestGetTeamIssues(t *testing.T) {
 	}
 	if got0.DueDate == nil || got0.DueDate.Format("2006-01-02") != "2026-07-10" {
 		t.Errorf("issue[0].DueDate = %v, want 2026-07-10", got0.DueDate)
+	}
+	if len(got0.Assets) != 1 || got0.Assets[0].URL != "https://example.com/trace.log" {
+		t.Errorf("issue[0].Assets = %+v", got0.Assets)
+	}
+	if len(got0.Comments) != 1 || got0.Comments[0] == "" {
+		t.Errorf("issue[0].Comments = %+v", got0.Comments)
 	}
 
 	got1 := issues[1]
