@@ -126,10 +126,12 @@ func TestRewriteImageRefs(t *testing.T) {
 	}
 	body := "intro\n![字段配置](" + url1 + ")\ntext\n![列宽](" + url2 + ")\n" +
 		"a plain [doc](" + url1 + ") link stays a url\n" +
+		"![quoted]('" + url2 + "')\n" +
 		"![unknown](https://uploads.linear.app/w/i/nope)"
 	got := rewriteImageRefs(body, renamed)
 	want := "intro\n![字段配置](79d19f5f-b331-4131.png)\ntext\n![列宽](074ae41f-9ce1-4190.png)\n" +
 		"a plain [doc](" + url1 + ") link stays a url\n" +
+		"![quoted](074ae41f-9ce1-4190.png)\n" +
 		"![unknown](https://uploads.linear.app/w/i/nope)"
 	if got != want {
 		t.Fatalf("rewriteImageRefs mismatch:\n got: %q\nwant: %q", got, want)

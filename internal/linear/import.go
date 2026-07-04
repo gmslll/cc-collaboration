@@ -276,17 +276,17 @@ func rewriteImageRefs(body string, renamed map[string]string) string {
 	}
 	return markdownURLRe.ReplaceAllStringFunc(body, func(m string) string {
 		if !strings.HasPrefix(m, "!") {
-			return m
+			return m // image refs only; plain [text](url) links keep their URL
 		}
-		sub := markdownURLRe.FindStringSubmatch(m)
-		if len(sub) < 2 {
-			return m
-		}
-		name, ok := renamed[strings.TrimSpace(sub[1])]
+		// m always matches markdownURLRe, so submatch[1] (the URL) is present.
+		// Trim quotes the same way markdownURLs did when it built the keys, so a
+		// quoted ref still resolves to its uploaded attachment.
+		url := markdownURLRe.FindStringSubmatch(m)[1]
+		name, ok := renamed[strings.Trim(url, `"'`)]
 		if !ok {
 			return m
 		}
-		return strings.Replace(m, sub[1], name, 1)
+		return strings.Replace(m, url, name, 1)
 	})
 }
 

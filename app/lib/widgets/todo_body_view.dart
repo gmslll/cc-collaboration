@@ -48,12 +48,14 @@ class TodoBodyView extends StatelessWidget {
     for (final a in attachments) {
       if (a.name == name) return a;
     }
-    // Linear-imported bodies may still reference the original
-    // uploads.linear.app URL instead of the bare attachment name: the importer
-    // stores the image as an attachment named after the URL's last path
-    // segment (+ a content-type extension) but older imports didn't rewrite the
-    // body ref. Resolve those by matching that last segment against attachment
-    // names — exact, or by stem when an extension was appended.
+    // TRANSITIONAL — safe to delete once every Linear import rewrites body refs
+    // at import time (rewriteImageRefs in internal/linear/import.go) and a final
+    // backfill has run; until then this is the only net for a body imported by
+    // an older relay binary. Older imports kept the original uploads.linear.app
+    // URL as the ref while storing the image as an attachment named after the
+    // URL's last path segment (+ a content-type extension), so resolve those by
+    // matching that segment against attachment names — exact, or by stem when an
+    // extension was appended.
     final base = _urlLastSegment(name);
     if (base != null) {
       for (final a in attachments) {
@@ -65,19 +67,15 @@ class TodoBodyView extends StatelessWidget {
     return null;
   }
 
-  // Last path segment of an http(s) URL, sans query/fragment. Returns null for
-  // anything that isn't a URL (a bare attachment name falls through to exact
-  // match only), so this never shadows a legitimately-named attachment.
+  // Last path segment of an http(s) URL, percent-decoded (matching Go's
+  // url.URL.Path, which is how the importer derives the attachment name).
+  // Returns null for anything without a scheme — a bare attachment name falls
+  // through to exact match only, so this never shadows a real attachment.
   static String? _urlLastSegment(String ref) {
-    if (!ref.contains('://')) return null;
-    var s = ref;
-    final q = s.indexOf('?');
-    if (q >= 0) s = s.substring(0, q);
-    final h = s.indexOf('#');
-    if (h >= 0) s = s.substring(0, h);
-    final slash = s.lastIndexOf('/');
-    if (slash < 0 || slash == s.length - 1) return null;
-    return s.substring(slash + 1);
+    final uri = Uri.tryParse(ref);
+    if (uri == null || !uri.hasScheme) return null;
+    final segs = uri.pathSegments;
+    return segs.isEmpty || segs.last.isEmpty ? null : segs.last;
   }
 
   List<InlineSpan> _decorateBlock(List<String> lines, TextStyle base) {
