@@ -6,6 +6,13 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-07-04
+
+### Added
+
+- **待办页支持批量删除** — 列表、看板和移动端卡片都可进入选择态，按当前筛选结果批量选择后统一确认删除。
+- **Linear 导入同步附件和图片** — 导入 Linear issue 时会下载 Linear attachment 链接，以及描述/评论中的 Markdown 图片或文件链接，并保存为待办附件；重复文件名自动加序号，HTML/超大文件会跳过。
+
 ## [0.9.8] - 2026-07-04
 
 ### Fixed
