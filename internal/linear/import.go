@@ -174,8 +174,8 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, gql *Client, 
 		if _, err := c.SetTodoStatus(ctx, existing.ID, status); err != nil {
 			return false, 0, 0, fmt.Errorf("set status: %w", err)
 		}
-		uploaded, skipped = uploadIssueAssets(ctx, c, gql, existing.ID, iss)
-		return false, uploaded, skipped, nil
+		uploaded, skipped, err = uploadAndRewrite(ctx, c, gql, existing.ID, bodyMD, iss)
+		return false, uploaded, skipped, err
 	}
 
 	out, err := c.CreateTodo(ctx, &todoschema.Todo{
@@ -203,8 +203,8 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, gql *Client, 
 			return true, 0, 0, fmt.Errorf("assign: %w", err)
 		}
 	}
-	uploaded, skipped = uploadIssueAssets(ctx, c, gql, out.ID, iss)
-	return true, uploaded, skipped, nil
+	uploaded, skipped, err = uploadAndRewrite(ctx, c, gql, out.ID, bodyMD, iss)
+	return true, uploaded, skipped, err
 }
 
 func looksLikeUUID(s string) bool {
@@ -228,8 +228,15 @@ func looksLikeUUID(s string) bool {
 
 var markdownURLRe = regexp.MustCompile(`!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
 
-func uploadIssueAssets(ctx context.Context, c *transport.Client, gql *Client, todoID string, iss Issue) (uploaded, skipped int) {
+// uploadIssueAssets downloads every image/file the issue references and
+// re-uploads it as a todo attachment. It returns, alongside the counts, a
+// map from each source URL to the bare attachment name it was stored under so
+// the caller can rewrite the body's image refs (TodoBodyView resolves body
+// `![alt](name)` refs by attachment name, not URL — an un-rewritten
+// uploads.linear.app URL renders as a broken image).
+func uploadIssueAssets(ctx context.Context, c *transport.Client, gql *Client, todoID string, iss Issue) (uploaded, skipped int, renamed map[string]string) {
 	usedNames := map[string]bool{}
+	renamed = map[string]string{}
 	for _, asset := range issueAssets(iss) {
 		name, content, err := downloadIssueAsset(ctx, gql, asset)
 		if err != nil || len(content) == 0 {
@@ -241,9 +248,46 @@ func uploadIssueAssets(ctx context.Context, c *transport.Client, gql *Client, to
 			skipped++
 			continue
 		}
+		renamed[asset.URL] = name
 		uploaded++
 	}
-	return uploaded, skipped
+	return uploaded, skipped, renamed
+}
+
+// uploadAndRewrite uploads the issue's assets to the todo, then rewrites the
+// body's image refs from the source URLs to the bare attachment names just
+// created and PATCHes the body when anything changed.
+func uploadAndRewrite(ctx context.Context, c *transport.Client, gql *Client, todoID, bodyMD string, iss Issue) (uploaded, skipped int, err error) {
+	uploaded, skipped, renamed := uploadIssueAssets(ctx, c, gql, todoID, iss)
+	if newBody := rewriteImageRefs(bodyMD, renamed); newBody != bodyMD {
+		if _, err := c.PatchTodo(ctx, todoID, transport.TodoPatch{BodyMD: &newBody}); err != nil {
+			return uploaded, skipped, fmt.Errorf("rewrite body: %w", err)
+		}
+	}
+	return uploaded, skipped, nil
+}
+
+// rewriteImageRefs swaps `![alt](url)` image references for the bare attachment
+// name each URL was uploaded under. Only image refs (leading `!`) are touched;
+// plain `[text](url)` links keep their URL so they stay navigable.
+func rewriteImageRefs(body string, renamed map[string]string) string {
+	if len(renamed) == 0 {
+		return body
+	}
+	return markdownURLRe.ReplaceAllStringFunc(body, func(m string) string {
+		if !strings.HasPrefix(m, "!") {
+			return m
+		}
+		sub := markdownURLRe.FindStringSubmatch(m)
+		if len(sub) < 2 {
+			return m
+		}
+		name, ok := renamed[strings.TrimSpace(sub[1])]
+		if !ok {
+			return m
+		}
+		return strings.Replace(m, sub[1], name, 1)
+	})
 }
 
 func uniqueAssetName(name string, used map[string]bool) string {

@@ -48,7 +48,36 @@ class TodoBodyView extends StatelessWidget {
     for (final a in attachments) {
       if (a.name == name) return a;
     }
+    // Linear-imported bodies may still reference the original
+    // uploads.linear.app URL instead of the bare attachment name: the importer
+    // stores the image as an attachment named after the URL's last path
+    // segment (+ a content-type extension) but older imports didn't rewrite the
+    // body ref. Resolve those by matching that last segment against attachment
+    // names — exact, or by stem when an extension was appended.
+    final base = _urlLastSegment(name);
+    if (base != null) {
+      for (final a in attachments) {
+        if (a.name == base) return a;
+        final dot = a.name.lastIndexOf('.');
+        if (dot > 0 && a.name.substring(0, dot) == base) return a;
+      }
+    }
     return null;
+  }
+
+  // Last path segment of an http(s) URL, sans query/fragment. Returns null for
+  // anything that isn't a URL (a bare attachment name falls through to exact
+  // match only), so this never shadows a legitimately-named attachment.
+  static String? _urlLastSegment(String ref) {
+    if (!ref.contains('://')) return null;
+    var s = ref;
+    final q = s.indexOf('?');
+    if (q >= 0) s = s.substring(0, q);
+    final h = s.indexOf('#');
+    if (h >= 0) s = s.substring(0, h);
+    final slash = s.lastIndexOf('/');
+    if (slash < 0 || slash == s.length - 1) return null;
+    return s.substring(slash + 1);
   }
 
   List<InlineSpan> _decorateBlock(List<String> lines, TextStyle base) {

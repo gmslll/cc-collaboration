@@ -116,3 +116,26 @@ func TestUniqueAssetName(t *testing.T) {
 		t.Fatalf("third uniqueAssetName = %q", got)
 	}
 }
+
+func TestRewriteImageRefs(t *testing.T) {
+	url1 := "https://uploads.linear.app/w/i/79d19f5f-b331-4131"
+	url2 := "https://uploads.linear.app/w/i/074ae41f-9ce1-4190"
+	renamed := map[string]string{
+		url1: "79d19f5f-b331-4131.png",
+		url2: "074ae41f-9ce1-4190.png",
+	}
+	body := "intro\n![字段配置](" + url1 + ")\ntext\n![列宽](" + url2 + ")\n" +
+		"a plain [doc](" + url1 + ") link stays a url\n" +
+		"![unknown](https://uploads.linear.app/w/i/nope)"
+	got := rewriteImageRefs(body, renamed)
+	want := "intro\n![字段配置](79d19f5f-b331-4131.png)\ntext\n![列宽](074ae41f-9ce1-4190.png)\n" +
+		"a plain [doc](" + url1 + ") link stays a url\n" +
+		"![unknown](https://uploads.linear.app/w/i/nope)"
+	if got != want {
+		t.Fatalf("rewriteImageRefs mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	// No-op when nothing was uploaded.
+	if got := rewriteImageRefs(body, nil); got != body {
+		t.Fatalf("rewriteImageRefs with empty map changed body")
+	}
+}
