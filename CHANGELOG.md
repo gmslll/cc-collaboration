@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-07-04
+
+### Fixed
+
+- **Linear 导入的正文内联图片不再显示为坏图** — 导入时把描述/评论里 `![](uploads.linear.app/…)` 的图片引用改写为已保存的附件名（正文引用的是原始 Linear URL、而附件按 URL 末段命名，导致 App 按名字查不到而加载失败）；App 端同时兼容历史数据里残留的 Linear URL 引用。
+
 ## [0.9.9] - 2026-07-04
 
 ### Added
