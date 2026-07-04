@@ -113,6 +113,7 @@ class _TodosPageState extends State<TodosPage> {
   List<String> _groups = [];
   int _groupsLoadSeq = 0;
   Todo? _selected;
+  final Set<String> _selectedTodoIds = {};
   bool _boardView = true; // board is the default, Linear-flavored view
   final Set<String> _collapsedMobileGroups = {};
   final _detailKey = GlobalKey<TodoDetailViewState>();
@@ -365,7 +366,47 @@ class _TodosPageState extends State<TodosPage> {
         final match = _store.all.where((t) => t.id == sel.id);
         _selected = match.isEmpty ? null : match.first;
       }
+      _selectedTodoIds.removeWhere((id) => !_store.all.any((t) => t.id == id));
     });
+  }
+
+  bool get _selectingTodos => _selectedTodoIds.isNotEmpty;
+
+  void _toggleTodoSelection(Todo t) {
+    setState(() {
+      if (!_selectedTodoIds.add(t.id)) {
+        _selectedTodoIds.remove(t.id);
+      }
+    });
+  }
+
+  Future<void> _deleteSelectedTodos() async {
+    final ids = _selectedTodoIds.toList();
+    if (ids.isEmpty) return;
+    final ok = await confirm(
+      context,
+      '删除后不可恢复，附件和评论也会一起删除。',
+      title: '删除 ${ids.length} 个待办？',
+      okLabel: '删除',
+    );
+    if (ok != true) return;
+    var failed = 0;
+    for (final id in ids) {
+      try {
+        await _client.deleteTodo(id);
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _selectedTodoIds.clear();
+      if (_selected != null && ids.contains(_selected!.id)) _selected = null;
+    });
+    await _store.refresh();
+    if (mounted) {
+      snack(context, failed == 0 ? '已删除 ${ids.length} 个待办' : '已删除 ${ids.length - failed} 个，失败 $failed 个');
+    }
   }
 
   List<Todo> get _filtered {
@@ -524,6 +565,37 @@ class _TodosPageState extends State<TodosPage> {
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
             const Spacer(),
+            if (_selectingTodos) ...[
+              Text(
+                '已选 ${_selectedTodoIds.length}',
+                style: const TextStyle(
+                  color: CcColors.muted,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                tooltip: '删除选中待办',
+                onPressed: _deleteSelectedTodos,
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, size: 18),
+                tooltip: '取消选择',
+                onPressed: () => setState(_selectedTodoIds.clear),
+              ),
+            ] else
+              IconButton(
+                icon: const Icon(Icons.checklist_rtl_rounded, size: 18),
+                tooltip: '选择当前筛选结果',
+                onPressed: _filtered.isEmpty
+                    ? null
+                    : () => setState(
+                        () => _selectedTodoIds.addAll(
+                          _filtered.map((t) => t.id),
+                        ),
+                      ),
+              ),
             if (wide)
               IconButton(
                 icon: Icon(
@@ -847,6 +919,7 @@ class _TodosPageState extends State<TodosPage> {
 
   Widget _row(Todo t) {
     final sel = _selected?.id == t.id;
+    final checked = _selectedTodoIds.contains(t.id);
     final color = _statusColor(t.status);
     final overdue =
         t.dueAt != null &&
@@ -856,7 +929,14 @@ class _TodosPageState extends State<TodosPage> {
     return Material(
       color: sel ? CcColors.accent.withValues(alpha: 0.07) : Colors.transparent,
       child: InkWell(
-        onTap: () => setState(() => _selected = t),
+        onTap: () {
+          if (_selectingTodos) {
+            _toggleTodoSelection(t);
+          } else {
+            setState(() => _selected = t);
+          }
+        },
+        onLongPress: () => _toggleTodoSelection(t),
         child: Container(
           decoration: BoxDecoration(
             border: Border(
@@ -869,6 +949,14 @@ class _TodosPageState extends State<TodosPage> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             children: [
+              if (_selectingTodos) ...[
+                Checkbox(
+                  value: checked,
+                  onChanged: (_) => _toggleTodoSelection(t),
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 4),
+              ],
               Tooltip(
                 message: todoStatusLabel(t.status),
                 child: statusDot(
@@ -1129,11 +1217,11 @@ class _TodosPageState extends State<TodosPage> {
   );
 
   Widget _draggableCard(Todo t) {
-    final card = TodoCard(
-      todo: t,
-      projectName: _projectName(t),
-      onTap: () => setState(() => _selected = t),
+    final card = _todoCardSelectable(
+      t,
+      onOpen: () => setState(() => _selected = t),
     );
+    if (_selectingTodos) return card;
     return Draggable<Todo>(
       data: t,
       feedback: Opacity(
@@ -1145,6 +1233,52 @@ class _TodosPageState extends State<TodosPage> {
       ),
       childWhenDragging: Opacity(opacity: 0.35, child: card),
       child: card,
+    );
+  }
+
+  Widget _todoCardSelectable(Todo t, {required VoidCallback onOpen}) {
+    final checked = _selectedTodoIds.contains(t.id);
+    return GestureDetector(
+      onLongPress: () => _toggleTodoSelection(t),
+      child: Stack(
+        children: [
+          TodoCard(
+            todo: t,
+            projectName: _projectName(t),
+            onTap: _selectingTodos ? () => _toggleTodoSelection(t) : onOpen,
+          ),
+          if (_selectingTodos)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: CcColors.panel.withValues(alpha: 0.9),
+                  shape: BoxShape.circle,
+                ),
+                child: Checkbox(
+                  value: checked,
+                  onChanged: (_) => _toggleTodoSelection(t),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+          if (checked)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(CcRadius.md),
+                    border: Border.all(
+                      color: CcColors.accent.withValues(alpha: 0.72),
+                      width: 1.2,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -1264,10 +1398,9 @@ class _TodosPageState extends State<TodosPage> {
               for (final t in items)
                 SizedBox(
                   width: cardW,
-                  child: TodoCard(
-                    todo: t,
-                    projectName: _projectName(t),
-                    onTap: () => _openMobileDetail(t),
+                  child: _todoCardSelectable(
+                    t,
+                    onOpen: () => _openMobileDetail(t),
                   ),
                 ),
             ],
