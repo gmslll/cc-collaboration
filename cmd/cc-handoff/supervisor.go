@@ -149,11 +149,34 @@ func runSupervisorInit(args []string) error {
 	return nil
 }
 
+// supervisorContextPreamble is emitted by `supervisor context` ahead of the
+// project's own .cc-handoff/supervisor docs, so a supervisor session always
+// learns how to manage sessions from the bus — even before the project has run
+// `supervisor init` (which is what seeds those docs). It's the on-demand,
+// always-present companion to the app's injected startup prompt: a supervisor
+// that only ever runs `supervisor context` still discovers spawn/kill and the
+// `--window` anti-pattern.
+const supervisorContextPreamble = `--- 会话管理工具(内置) ---
+你可以直接管理本工作区的其它 AI 会话,都走桌面 App 注入的本地总线(需 CC_BUS_DIR):
+
+- cc-handoff supervisor overview / queue —— 看所有会话 / 找需处理的
+- cc-handoff supervisor read <目标> —— 读对方结构化 transcript
+- cc-handoff supervisor send <目标> <内容> —— 给对方发消息
+- cc-handoff supervisor spawn <项目> [--worktree PATH] [--agent claude|codex|shell] [--supervisor]
+    —— 开一个挂总线的托管子会话(进会话树,等价项目右键『起 claude/codex/总管』)。
+    ⚠️ 开子会话别用 open / workspace open --window:那是 App 之外的脱离终端,不上总线、不进会话树。
+- cc-handoff supervisor kill <目标> —— 关闭一个会话(不能关自己或总管)
+- cc-handoff supervisor decide <标题> <内容> —— 记录产品/架构决策
+
+开子会话前先选隔离档:默认共享 Tier1;重活/并行改同模块/破坏性 git/要 build-run → --worktree(Tier2);只读 → Tier0。详见下方 principles.md(若已 init)。
+`
+
 func runSupervisorContext(args []string) error {
 	fs, dir := supervisorDirFromFlag(args, "supervisor context")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	fmt.Print(supervisorContextPreamble)
 	root := supervisorRoot(*dir)
 	sections := []string{
 		"profile.md",
