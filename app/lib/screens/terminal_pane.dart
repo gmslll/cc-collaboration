@@ -44,6 +44,12 @@ class TerminalSession {
       'attention, `cc-handoff supervisor read <target>` to read a structured '
       'transcript, `cc-handoff supervisor send <target> <message>` to respond, '
       '`cc-handoff supervisor context` to read .cc-handoff/supervisor docs, '
+      '`cc-handoff supervisor spawn <project> [--worktree PATH] [--agent '
+      'claude|codex|shell] [--supervisor]` to open a managed child session '
+      '(it joins the session tree and the bus, equivalent to right-clicking a '
+      'project to launch it — do NOT use `open --window`, which spawns a '
+      'detached terminal outside the app that never registers on the bus), '
+      '`cc-handoff supervisor kill <target>` to close a session, '
       'and `cc-handoff supervisor decide <title> <decision>` to record product '
       'or architecture decisions.';
 
