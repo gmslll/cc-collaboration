@@ -79,6 +79,19 @@ func supervisorRoot(dir string) string {
 	return filepath.Join(dir, ".cc-handoff", "supervisor")
 }
 
+// utf8BOM prefixes the generated supervisor .md files so Windows editors
+// (Notepad, etc.) detect them as UTF-8 instead of the legacy ANSI/GBK code
+// page — without it the Chinese content opens as mojibake (乱码). Readers strip
+// it back off (see printSupervisorFile) so the AI/terminal never sees the mark.
+const utf8BOM = "\uFEFF"
+
+// writeUTF8Doc writes a generated supervisor .md file BOM-first \u2014 the one place
+// the BOM policy lives, so every doc writer (init templates, decide's fresh
+// decisions.md) stays consistent.
+func writeUTF8Doc(path, body string) error {
+	return os.WriteFile(path, []byte(utf8BOM+body), 0o644)
+}
+
 func runSupervisorInit(args []string) error {
 	fs, dir := supervisorDirFromFlag(args, "supervisor init")
 	if err := fs.Parse(args); err != nil {
@@ -141,7 +154,7 @@ func runSupervisorInit(args []string) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		if err := writeUTF8Doc(p, body); err != nil {
 			return err
 		}
 	}
@@ -208,7 +221,10 @@ func printSupervisorFile(root, rel string) {
 	if err != nil {
 		return
 	}
-	fmt.Printf("\n--- %s ---\n%s\n", filepath.ToSlash(rel), strings.TrimRight(string(b), "\n"))
+	// Strip the UTF-8 BOM these files are written with (see utf8BOM) so the
+	// supervisor AI never sees a stray mark at the top of a section.
+	body := strings.TrimPrefix(string(b), utf8BOM)
+	fmt.Printf("\n--- %s ---\n%s\n", filepath.ToSlash(rel), strings.TrimRight(body, "\n"))
 }
 
 func runSupervisorOverview(args []string, queueOnly bool) error {
@@ -413,6 +429,13 @@ func runSupervisorDecide(args []string) error {
 		return err
 	}
 	path := filepath.Join(root, "decisions.md")
+	// Seed a fresh decisions.md with the BOM + header so one created here (not
+	// via `supervisor init`) still opens as UTF-8 in Windows editors.
+	if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+		if err := writeUTF8Doc(path, "# Decisions\n\n"); err != nil {
+			return err
+		}
+	}
 	now := time.Now().Format("2006-01-02 15:04")
 	entry := fmt.Sprintf("\n## %s %s\n\n%s\n", now, rest[0], strings.Join(rest[1:], " "))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
