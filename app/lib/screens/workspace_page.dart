@@ -1442,6 +1442,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     String agent,
     String preLaunch, {
     bool supervisor = false,
+    bool todoAssistant = false,
     String? resumeAgentSessionId,
   }) {
     if (supervisor) unawaited(_ensureSupervisorDocs(dir));
@@ -1457,6 +1458,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       agent: agent,
       preLaunch: preLaunch.trim(),
       supervisor: supervisor,
+      todoAssistant: todoAssistant,
       agentSessionId: resumeAgentSessionId,
       resume: resumeAgentSessionId != null && resumeAgentSessionId.isNotEmpty,
     );
@@ -1470,6 +1472,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     String agent,
     String preLaunch, {
     bool supervisor = false,
+    bool todoAssistant = false,
     String? resumeAgentSessionId,
   }) {
     // _launch → addTerm → onTermAdded already surfaces + expands the terminal
@@ -1479,6 +1482,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       agent,
       preLaunch,
       supervisor: supervisor,
+      todoAssistant: todoAssistant,
       resumeAgentSessionId: resumeAgentSessionId,
     );
     final ctl = _ctlFor(p.path);
@@ -1625,16 +1629,25 @@ class _WorkspacePageState extends State<WorkspacePage>
   };
 
   // --- remote (phone) session actions; wired into _remoteHost ---
-  String? _supervisorAgentForKind(String kind) {
-    if (kind == 'supervisor') return 'claude';
-    if (kind == 'supervisor:claude' || kind == 'supervisor-claude') {
+
+  // _agentForPrefixedKind parses a role-prefixed spawn kind — 'supervisor' and
+  // 'todo' both take the shape '<role>[:claude|:codex]' (or the '-' variant),
+  // defaulting to claude — into the agent to launch, or null if [kind] isn't
+  // that role. The two wrappers below name the roles _spawnManagedSession fans
+  // out on; a 'todo:*' session gets the 待办助手 persona injected and
+  // 'supervisor:*' the supervisor one (see TerminalSession).
+  String? _agentForPrefixedKind(String kind, String prefix) {
+    if (kind == prefix || kind == '$prefix:claude' || kind == '$prefix-claude') {
       return 'claude';
     }
-    if (kind == 'supervisor:codex' || kind == 'supervisor-codex') {
-      return 'codex';
-    }
+    if (kind == '$prefix:codex' || kind == '$prefix-codex') return 'codex';
     return null;
   }
+
+  String? _supervisorAgentForKind(String kind) =>
+      _agentForPrefixedKind(kind, 'supervisor');
+
+  String? _todoAgentForKind(String kind) => _agentForPrefixedKind(kind, 'todo');
 
   // _isSessionWorkdir guards an externally-requested workdir: it may only be the
   // project root or a path under <project>/.worktrees/ — never an arbitrary dir a
@@ -1644,7 +1657,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _spawnManagedSession launches a new app-managed session for project [p] and
   // returns its bus id (ts<N>). [kind]: ''/'shell' | 'claude' | 'codex' |
-  // 'supervisor[:claude|:codex]'. [workdir] is honored only when it passes
+  // 'supervisor[:claude|:codex]' | 'todo[:claude|:codex]'. [workdir] is honored only when it passes
   // _isSessionWorkdir, else it falls back to p.path. Shared by _remoteNewSession
   // (phone relay) and _busSpawn (supervisor spawn) so both produce an identical
   // managed session that lands in the tree + on the bus.
@@ -1658,9 +1671,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     final dir = (workdir != null && _isSessionWorkdir(p, workdir))
         ? workdir
         : p.path;
+    // supervisor:* and todo:* are mutually exclusive role prefixes; at most one
+    // resolves. Both fan out through _openAgent with their persona flag set.
     final supervisorAgent = _supervisorAgentForKind(kind);
-    // Agent/supervisor sessions go through _openAgent (launch + reveal the project
-    // node) — the single source of truth for that pair. A plain shell carries no
+    final todoAgent = _todoAgentForKind(kind);
+    final specialAgent = supervisorAgent ?? todoAgent;
+    // Agent sessions go through _openAgent (launch + reveal the project node) —
+    // the single source of truth for that pair. A plain shell carries no
     // agent/preLaunch so it can't use _openAgent; open it and reveal directly.
     // resumeAgentSessionId only makes sense for an agent session — a plain
     // shell has no transcript to resume, so that branch ignores it.
@@ -1668,13 +1685,14 @@ class _WorkspacePageState extends State<WorkspacePage>
       addTerm(dir, ''); // '' = plain interactive shell
       final ctl = _ctlFor(p.path);
       if (!ctl.isExpanded) ctl.expand();
-    } else if (supervisorAgent != null) {
+    } else if (specialAgent != null) {
       _openAgent(
         p,
         dir,
-        supervisorAgent,
+        specialAgent,
         ws.preLaunch,
-        supervisor: true,
+        supervisor: supervisorAgent != null,
+        todoAssistant: todoAgent != null,
         resumeAgentSessionId: resumeAgentSessionId,
       );
     } else {
@@ -1745,6 +1763,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       'codex',
       'supervisor:claude',
       'supervisor:codex',
+      'todo:claude',
+      'todo:codex',
     };
     if (!validKinds.contains(k)) return (null, '未知 agent "$kind"');
 

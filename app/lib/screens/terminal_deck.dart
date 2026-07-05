@@ -334,6 +334,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     String agent = '',
     String preLaunch = '',
     bool supervisor = false,
+    bool todoAssistant = false,
     String? agentSessionId,
     bool resume = false,
   }) {
@@ -354,6 +355,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           agent: agent,
           preLaunch: preLaunch,
           supervisor: supervisor,
+          todoAssistant: todoAssistant,
           agentSessionId: sid,
           resume: resume,
         )
@@ -361,6 +363,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           ..onBusyChanged = _onSessionBusyChanged
           ..onPersist = persistTerms;
     if (supervisor) session.name = '总管';
+    if (todoAssistant) session.name = '待办助手';
     setState(() {
       terms.add(session);
       activeTerm = terms.length - 1;
@@ -642,6 +645,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         var agent = (e['agent'] ?? '').toString();
         var preLaunch = (e['preLaunch'] ?? '').toString();
         final supervisor = e['supervisor'] == true;
+        final todoAssistant = e['todoAssistant'] == true;
         final sid = (e['sessionId'] ?? '').toString();
         // Back-compat: pre-upgrade entries from _launch have no 'agent' field and
         // baked preLaunch into command as "pre && claude"/"pre && codex" (or a
@@ -670,6 +674,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
           agent: agent,
           preLaunch: preLaunch,
           supervisor: supervisor,
+          todoAssistant: todoAssistant,
           agentSessionId: sid.isEmpty ? null : sid,
           resume: true,
         )
@@ -679,6 +684,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
         if (nm.isEmpty && supervisor) ts.name = '总管';
+        if (nm.isEmpty && todoAssistant) ts.name = '待办助手';
         // A tab that was closed to the tree comes back hidden AND deferred: it
         // shows in the tree but its PTY spawns only when the user reopens it.
         if (e['hidden'] == true) {
@@ -752,6 +758,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
                 if (s.agent.isNotEmpty) 'agent': s.agent,
                 if (s.preLaunch.isNotEmpty) 'preLaunch': s.preLaunch,
                 if (s.supervisor) 'supervisor': true,
+                if (s.todoAssistant) 'todoAssistant': true,
                 if (s.agentSessionId != null) 'sessionId': s.agentSessionId,
                 // Tab visibility + focus, so restore eager-starts only the visible
                 // tabs and re-focuses the right one (hidden tabs stay lazy).

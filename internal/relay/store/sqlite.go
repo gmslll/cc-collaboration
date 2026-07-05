@@ -285,6 +285,22 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 			return fmt.Errorf("migrate status taxonomy: %w", err)
 		}
 	}
+
+	// Per-identity UI settings (key -> opaque JSON value), synced across a
+	// user's own devices so e.g. the Todo board's view config (scope / team
+	// source / Linear team key) renders identically on desktop and phone. Small
+	// KV; the value is a blob the client owns and the relay never interprets.
+	// See internal/relay/store/settings.go and internal/relay/settings.go.
+	if _, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS user_settings (
+  identity   TEXT NOT NULL,
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (identity, key)
+);`); err != nil {
+		return fmt.Errorf("create user_settings table: %w", err)
+	}
 	return nil
 }
 

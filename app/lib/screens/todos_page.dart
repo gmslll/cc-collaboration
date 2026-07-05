@@ -145,6 +145,87 @@ class _TodosPageState extends State<TodosPage> {
     _store.onComment = _onComment;
     _loadLinearImportPrefs();
     _loadGroups();
+    // Local Prefs render instantly above; then pull the identity's synced view
+    // so this device shows the same board as the user's other devices (手机=电脑).
+    _pullTodoView();
+  }
+
+  // --- board view config sync (手机=电脑) ---------------------------------
+  //
+  // The board-defining view state — scope, team source (relay/linear), the
+  // Linear team/project keys, and the picked relay project — has always lived in
+  // local Prefs (per-device, unsynced). That's why the desktop's Linear board
+  // never appeared on the phone: same identity + same todos on the relay, but
+  // the phone had no copy of "which board" to reconstruct. _pushTodoView mirrors
+  // the current selection to a per-identity relay setting so this user's other
+  // devices open the identical board; _pullTodoView applies it on load. Local
+  // Prefs stay the instant-render cache; the cloud value is the cross-device
+  // source of truth (last write wins, stamped server-side).
+  static const _todoViewKey = 'todo.view';
+  // Signature of the last snapshot pushed to the relay, so re-selecting the
+  // current tab (or applying what we just pulled) skips the PUT instead of
+  // firing one per SegmentedButton tap.
+  String? _lastPushedView;
+
+  Map<String, dynamic> _todoViewToMap() => {
+    'scope': _scope,
+    'teamSource': _teamSource,
+    'linearTeamKey': _linearTeamKey,
+    'linearProjectId': _linearProjectId,
+    if (_projectFilter != null) 'projectFilter': _projectFilter,
+  };
+
+  String get _viewSignature =>
+      '$_scope|$_teamSource|$_linearTeamKey|$_linearProjectId|$_projectFilter';
+
+  // _mirrorViewToPrefs keeps the local Prefs cache in lockstep with the current
+  // view so a cold start (or offline) renders the last-known board instantly,
+  // before the synced cloud value arrives.
+  void _mirrorViewToPrefs() {
+    Prefs.setString('todo.team.source', _teamSource);
+    Prefs.setString('todo.linear.teamKey', _linearTeamKey);
+    Prefs.setString('todo.linear.projectId', _linearProjectId);
+  }
+
+  void _pushTodoView() {
+    _mirrorViewToPrefs();
+    final sig = _viewSignature;
+    if (sig == _lastPushedView) return; // nothing actually changed → no PUT
+    _lastPushedView = sig;
+    _client.putSetting(_todoViewKey, _todoViewToMap()).catchError((_) {});
+  }
+
+  Future<void> _pullTodoView() async {
+    Map<String, dynamic>? m;
+    try {
+      m = await _client.getSetting(_todoViewKey);
+    } catch (_) {
+      return; // best-effort: keep the local view
+    }
+    if (m == null || !mounted) return;
+    final before = _viewSignature;
+    final scope = m['scope'];
+    final source = m['teamSource'];
+    final teamKey = m['linearTeamKey'];
+    final projectId = m['linearProjectId'];
+    final projectFilter = m['projectFilter'];
+    setState(() {
+      if (scope is String && const {'personal', 'team', 'all'}.contains(scope)) {
+        _scope = scope;
+      }
+      if (source is String && const {'relay', 'linear'}.contains(source)) {
+        _teamSource = source;
+      }
+      if (teamKey is String) _linearTeamKey = teamKey;
+      if (projectId is String) _linearProjectId = projectId;
+      _projectFilter = projectFilter is String ? projectFilter : null;
+      _groupFilter = null;
+    });
+    _mirrorViewToPrefs();
+    _lastPushedView = _viewSignature; // don't PUT back what we just pulled
+    // Only the group list depends on scope/source/project — reload it only when
+    // the pulled view actually differs from what initState already loaded.
+    if (_viewSignature != before) _loadGroups();
   }
 
   // _loadGroups refreshes the 分组 filter's option list for the current
@@ -185,6 +266,117 @@ class _TodosPageState extends State<TodosPage> {
     _loadGroups();
   }
 
+  // _summonTodoAssistant spawns a dedicated 待办助手 session (claude/codex) in a
+  // chosen project. It boots with the todoAssistant persona injected
+  // (TerminalSession._todoInstructions via kind 'todo:<agent>'), so it can
+  // generate/manage todos with the `cc-handoff todo` CLI against the same relay
+  // this board reads — changes then sync live back here and to the phone.
+  // Desktop-only: spawning needs the host app that owns the local bus
+  // (overviewStore.spawn errors out when no spawnHandler is registered).
+  Future<void> _summonTodoAssistant() async {
+    final workspaces = _cfg.workspaces;
+    if (workspaces.isEmpty) {
+      snack(context, '没有可用的 workspace/项目');
+      return;
+    }
+    List<ProjectCfg> projsFor(String w) {
+      final m = workspaces.where((e) => e.name == w);
+      return m.isEmpty ? const [] : m.first.projects;
+    }
+
+    var ws = workspaces.first.name;
+    String? proj = projsFor(ws).isNotEmpty ? projsFor(ws).first.name : null;
+    var agent = 'claude';
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('召唤待办助手'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '起一个专门帮你生成/管理待办的会话,已注入待办助手人格,可直接用 '
+                  'cc-handoff todo 在同一 relay 上增删改;改动会同步回看板和手机。',
+                  style:
+                      TextStyle(color: CcColors.muted, fontSize: 12, height: 1.35),
+                ),
+                const SizedBox(height: 12),
+                DropdownButton<String>(
+                  isExpanded: true,
+                  value: ws,
+                  items: workspaces
+                      .map((w) =>
+                          DropdownMenuItem(value: w.name, child: Text(w.name)))
+                      .toList(),
+                  onChanged: (v) => setLocal(() {
+                    ws = v ?? ws;
+                    final ps = projsFor(ws);
+                    proj = ps.isNotEmpty ? ps.first.name : null;
+                  }),
+                ),
+                const SizedBox(height: 8),
+                DropdownButton<String>(
+                  isExpanded: true,
+                  hint: const Text('project'),
+                  value: proj,
+                  items: projsFor(ws)
+                      .map((p) =>
+                          DropdownMenuItem(value: p.name, child: Text(p.name)))
+                      .toList(),
+                  onChanged: (v) => setLocal(() => proj = v),
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'claude', label: Text('Claude')),
+                    ButtonSegment(value: 'codex', label: Text('Codex')),
+                  ],
+                  selected: {agent},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (s) => setLocal(() => agent = s.first),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: proj == null ? null : () => Navigator.pop(ctx, true),
+              child: const Text('召唤'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (go != true || proj == null) return;
+    final (sid, err) = await _overview.spawn(
+      workspace: ws,
+      project: proj!,
+      kind: 'todo:$agent',
+    );
+    if (!mounted) return;
+    if (sid == null) {
+      snack(context, '召唤失败: ${err ?? "未知错误"}');
+      return;
+    }
+    _overview.dispatch(LocalMsg(
+      '',
+      sid,
+      '你是这个看板的待办助手。请先运行 `cc-handoff todo list` 查看当前待办并简要汇报,'
+      '然后等我的指示。',
+      true,
+    ));
+    snack(context, '已召唤待办助手');
+    widget.onOpenSession?.call(sid);
+  }
+
   // _importFromLinear shells `cc-handoff todo import-linear` using the Todo
   // page's own Linear source settings. Linear team/project is a remote source
   // scope, mutually exclusive with relay Project filtering; local workspace
@@ -217,8 +409,8 @@ class _TodosPageState extends State<TodosPage> {
           _groupFilter = null;
           _statusFilter.clear();
         });
-        Prefs.setString('todo.team.source', 'linear');
         _loadGroups();
+        _pushTodoView();
       }
     } catch (e) {
       if (mounted) snack(context, errorText(e));
@@ -332,14 +524,14 @@ class _TodosPageState extends State<TodosPage> {
       if (_canUseLocalCli) {
         await Cli.configSet(linearToken: token);
       }
-      Prefs.setString('todo.linear.teamKey', team);
-      Prefs.setString('todo.linear.projectId', project);
+      _linearTeamKey = team;
+      _linearProjectId = project;
+      _linearTokenOverride = token;
+      // Persists teamKey/projectId to local Prefs AND syncs the view to the
+      // relay so the phone reproduces this exact Linear board.
+      _pushTodoView();
       if (mounted) {
-        setState(() {
-          _linearTeamKey = team;
-          _linearProjectId = project;
-          _linearTokenOverride = token;
-        });
+        setState(() {});
         snack(context, 'Linear 导入配置已保存');
       }
     } catch (e) {
@@ -612,6 +804,12 @@ class _TodosPageState extends State<TodosPage> {
               tooltip: '刷新',
               onPressed: _refresh,
             ),
+            if (_canUseLocalCli)
+              IconButton(
+                icon: const Icon(Icons.smart_toy_outlined, size: 18),
+                tooltip: '召唤待办助手',
+                onPressed: _summonTodoAssistant,
+              ),
             IconButton(
               icon: const Icon(Icons.add_rounded),
               tooltip: '新建待办',
@@ -642,6 +840,7 @@ class _TodosPageState extends State<TodosPage> {
               _groupFilter = null;
             });
             _loadGroups();
+            _pushTodoView();
           },
         ),
       ),
@@ -696,8 +895,8 @@ class _TodosPageState extends State<TodosPage> {
             _projectFilter = null;
             _groupFilter = null;
           });
-          Prefs.setString('todo.team.source', source);
           _loadGroups();
+          _pushTodoView();
         },
       ),
       const SizedBox(width: 14),
@@ -729,6 +928,7 @@ class _TodosPageState extends State<TodosPage> {
               _groupFilter = null;
             });
             _loadGroups();
+            _pushTodoView();
           },
         ),
       ] else ...[
@@ -763,8 +963,8 @@ class _TodosPageState extends State<TodosPage> {
                 _linearProjectId = '';
                 _groupFilter = null;
               });
-              Prefs.setString('todo.linear.projectId', '');
               _loadGroups();
+              _pushTodoView();
             },
             child: const Text('全部 Linear'),
           ),
@@ -1828,6 +2028,23 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   final _branchCtl = TextEditingController();
   bool _submitting = false;
 
+  // --- "指派给成员" mode: assign the todo to a real teammate by identity,
+  // leaving the session-binding trio empty (same shape as a Linear import's
+  // assignee). This is the only assign path on mobile, where there are no
+  // local agent sessions to dispatch to. Candidates = self + the todo's
+  // project members + currently-online users, deduped; display names are a
+  // best-effort overlay from /v1/users (may be admin-only → falls back to
+  // the raw identity). Loaded lazily: eagerly when there are no local
+  // sessions (member mode is forced), otherwise on first switch to the tab.
+  bool _membersRequested = false;
+  bool _loadingMembers = false;
+  String? _membersError;
+  List<String> _memberIds = const [];
+  Map<String, String> _memberNames = const {};
+  Set<String> _onlineIds = const {};
+  String? _pickedIdentity;
+  late final String _selfIdentity = widget.config.identity.trim();
+
   List<SessionCard> get _cards => widget.overviewStore.cards;
 
   List<ProjectCfg> get _projectsForWorkspace {
@@ -1910,10 +2127,187 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
   }
 
+  // _loadMembers builds the candidate list for "指派给成员". Every fetch is
+  // best-effort: display names, project members and online users each degrade
+  // independently so a 403 on the admin-only /v1/users (non-admin callers) or
+  // an offline peer list never blocks assigning. self goes first, then the
+  // current assignee (so it's always selectable even if they've since left the
+  // project), then project members, then anyone else online.
+  Future<void> _loadMembers() async {
+    setState(() {
+      _loadingMembers = true;
+      _membersError = null;
+    });
+    final self = _selfIdentity;
+    final cur = (widget.todo.assigneeIdentity ?? '').trim();
+    final online = <String>{};
+    final ids = <String>[];
+    final seen = <String>{};
+    void add(String raw) {
+      final id = raw.trim();
+      if (id.isEmpty || !seen.add(id)) return;
+      ids.add(id);
+    }
+
+    // Fire the three independent fetches together (1 RTT instead of 3). Only
+    // project() is load-bearing — its failure means "no members" and sets
+    // _membersError; display names and the online set each degrade to empty on
+    // their own, so a 403 on the admin-only /v1/users never blocks assigning.
+    final pid = widget.todo.projectId ?? '';
+    final usersF = widget.client.users().catchError((_) => <User>[]);
+    final onlineF = widget.client.onlineUsers().catchError((_) => <OnlineUser>[]);
+    final membersF = pid.isEmpty
+        ? Future.value(const <ProjectMember>[])
+        : widget.client.project(pid).then((d) => d.members);
+
+    final List<ProjectMember> members;
+    try {
+      members = await membersF;
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _membersError = errorText(e);
+          _loadingMembers = false;
+        });
+      }
+      return;
+    }
+    final names = <String, String>{
+      for (final u in await usersF)
+        if (u.displayName.trim().isNotEmpty) u.identity: u.displayName,
+    };
+    add(self);
+    add(cur);
+    for (final m in members) {
+      add(m.identity);
+    }
+    for (final u in await onlineF) {
+      if (u.online) online.add(u.identity);
+      add(u.identity);
+    }
+    if (!mounted) return;
+    setState(() {
+      _memberIds = ids;
+      _memberNames = names;
+      _onlineIds = online;
+      _pickedIdentity = cur.isNotEmpty
+          ? cur
+          : (self.isNotEmpty ? self : (ids.isNotEmpty ? ids.first : null));
+      _loadingMembers = false;
+    });
+  }
+
+  // _assignToMember writes assignee_identity only (session trio left empty),
+  // the "pure human assignment" shape — matches internal/linear/import.go's
+  // AssignTodo(id, identity, "", ...) so it doesn't collide with the
+  // 打开/恢复会话 button (which keys off the resume trio, see todo_detail_view).
+  Future<void> _assignToMember() async {
+    final picked = (_pickedIdentity ?? '').trim();
+    if (picked.isEmpty) {
+      snack(context, '请选择要指派的成员');
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      await widget.client.assignTodo(widget.todo.id, assigneeIdentity: picked);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _submitting = false);
+        snack(context, '指派失败: ${errorText(e)}');
+      }
+      return;
+    }
+    await _maybeBumpToInProgress(widget.todo.status);
+    if (mounted) Navigator.pop(context, true);
+  }
+
+  Widget _memberForm() {
+    if (_loadingMembers) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    if (_membersError != null) {
+      return Text('加载成员失败: $_membersError',
+          style: TextStyle(color: CcColors.muted));
+    }
+    if (_memberIds.isEmpty) {
+      return Text(
+        widget.todo.isPersonal ? '个人待办只能指派给自己。' : '该项目暂无可指派的成员。',
+        style: TextStyle(color: CcColors.muted),
+      );
+    }
+    // Hand-drawn radio rows — the project avoids the deprecated
+    // RadioListTile.groupValue (see git_log_commit_menu._pickResetMode).
+    final self = _selfIdentity;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 320),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: _memberIds.map((id) {
+            final sel = _pickedIdentity == id;
+            final name = (_memberNames[id] ?? '').trim();
+            final primary = (name.isEmpty ? id : name) + (id == self ? '（我）' : '');
+            return InkWell(
+              onTap: () => setState(() => _pickedIdentity = id),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      sel
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      size: 18,
+                      color: sel ? CcColors.accent : CcColors.subtle,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(primary,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 12.5, color: CcColors.text)),
+                          if (name.isNotEmpty)
+                            Text(id,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 11, color: CcColors.muted)),
+                        ],
+                      ),
+                    ),
+                    if (_onlineIds.contains(id))
+                      const Padding(
+                        padding: EdgeInsets.only(left: 6),
+                        child: Icon(Icons.circle, size: 9, color: Colors.green),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
-    if (_cards.isNotEmpty) _targetSid = _cards.first.sid;
+    if (_cards.isNotEmpty) {
+      _targetSid = _cards.first.sid;
+    } else {
+      // No local sessions (mobile, or a desktop with nothing open): the only
+      // assign path is 指派给成员, so force that mode and load candidates.
+      _mode = 'member';
+      _membersRequested = true;
+      Future.microtask(_loadMembers);
+    }
     if (widget.config.workspaces.isNotEmpty) {
       _workspace = widget.config.workspaces.first.name;
       final projs = _projectsForWorkspace;
@@ -2080,20 +2474,25 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
 
   @override
   Widget build(BuildContext context) {
-    if (_cards.isEmpty) {
-      return AlertDialog(
-        title: const Text('一键指派'),
-        content: const Text('仅桌面版可指派到本机会话。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
-        ],
-      );
-    }
+    const spinner = SizedBox(
+      width: 16,
+      height: 16,
+      child: CircularProgressIndicator(strokeWidth: 2),
+    );
+    // With no local sessions (mobile, or a desktop with nothing open) the
+    // session segments are hidden and 指派给成员 is the only mode — initState
+    // already forced _mode='member', so the shared body below covers both.
+    final VoidCallback? primaryAction = _submitting
+        ? null
+        : _mode == 'existing'
+            ? _assignToExisting
+            : _mode == 'new'
+                ? _assignToNew
+                : (_loadingMembers || _pickedIdentity == null)
+                    ? null
+                    : _assignToMember;
     return AlertDialog(
-      title: const Text('一键指派'),
+      title: Text(_cards.isEmpty ? '指派给成员' : '一键指派'),
       content: SizedBox(
         width: 440,
         child: SingleChildScrollView(
@@ -2101,17 +2500,31 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'existing', label: Text('已有会话')),
-                  ButtonSegment(value: 'new', label: Text('新建会话')),
-                ],
-                selected: {_mode},
-                showSelectedIcon: false,
-                onSelectionChanged: (s) => setState(() => _mode = s.first),
-              ),
-              const SizedBox(height: 12),
-              if (_mode == 'existing') _existingForm() else _newForm(),
+              if (_cards.isNotEmpty) ...[
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'existing', label: Text('已有会话')),
+                    ButtonSegment(value: 'new', label: Text('新建会话')),
+                    ButtonSegment(value: 'member', label: Text('指派成员')),
+                  ],
+                  selected: {_mode},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (s) => setState(() {
+                    _mode = s.first;
+                    if (_mode == 'member' && !_membersRequested) {
+                      _membersRequested = true;
+                      _loadMembers();
+                    }
+                  }),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (_mode == 'existing')
+                _existingForm()
+              else if (_mode == 'new')
+                _newForm()
+              else
+                _memberForm(),
             ],
           ),
         ),
@@ -2122,16 +2535,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: _submitting
-              ? null
-              : (_mode == 'existing' ? _assignToExisting : _assignToNew),
+          onPressed: primaryAction,
           child: _submitting
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('指派并开始'),
+              ? spinner
+              : Text(_mode == 'member' ? '指派' : '指派并开始'),
         ),
       ],
     );

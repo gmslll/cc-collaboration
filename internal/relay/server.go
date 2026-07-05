@@ -137,6 +137,10 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/tokens", s.listTokens)
 	api.HandleFunc("POST /v1/tokens", s.createToken)
 	api.HandleFunc("DELETE /v1/tokens/{id}", s.deleteToken)
+	// Per-identity synced UI settings (any authenticated user, own keys only) —
+	// see internal/relay/settings.go.
+	api.HandleFunc("GET /v1/settings/{key}", s.getSetting)
+	api.HandleFunc("PUT /v1/settings/{key}", s.putSetting)
 	// Todos: personal + project-scoped, freely-mutable-status items (see
 	// internal/relay/todos.go). Authorization lives entirely in
 	// internal/relay/store/todos.go; these handlers just translate

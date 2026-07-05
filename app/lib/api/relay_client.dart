@@ -271,6 +271,23 @@ class RelayClient {
         .toList();
   }
 
+  // --- per-identity synced settings (see internal/relay/settings.go) ---
+
+  // getSetting returns the caller's synced setting blob for [key], or null when
+  // unset. The relay stores an opaque JSON value scoped to the identity; the
+  // Todo board's view config (todo.view) is an object, so this decodes to a Map.
+  Future<Map<String, dynamic>?> getSetting(String key) async {
+    final r = await _dio.get('/v1/settings/${Uri.encodeComponent(key)}');
+    final data = r.data as Map<String, dynamic>;
+    if (data['found'] != true) return null;
+    final v = data['value'];
+    return v is Map<String, dynamic> ? v : null;
+  }
+
+  Future<void> putSetting(String key, Map<String, dynamic> value) =>
+      _dio.put('/v1/settings/${Uri.encodeComponent(key)}',
+          data: {'value': value});
+
   // --- cross-user session messaging ---
 
   // publishSessions advertises this app's currently-open terminal sessions so

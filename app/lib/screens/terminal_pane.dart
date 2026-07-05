@@ -53,12 +53,32 @@ class TerminalSession {
       'and `cc-handoff supervisor decide <title> <decision>` to record product '
       'or architecture decisions.';
 
+  static const String _todoInstructions =
+      'You are the 待办助手 (todo assistant) for this workspace. Help the user '
+      'turn ideas, requirements and conversations into todo cards, and keep the '
+      'board tidy — set status, assign, comment, group, and split work into '
+      'subtasks. Operate on the shared todo relay with the `cc-handoff todo` CLI; '
+      'changes sync live to the desktop board and the user\'s phone. Commands: '
+      '`cc-handoff todo list [--scope personal|project|assigned|all] [--project '
+      'ID] [--status S] [--json]` to inspect the board, `cc-handoff todo create '
+      '<title> [--body TEXT] [--project ID] [--priority low|normal|high] [--due '
+      'RFC3339] [--assignee IDENTITY] [--group NAME]` to add one (omit --project '
+      'for a personal todo, or pass the team Project ID so the whole team and '
+      'their phones can see it), `cc-handoff todo get <id> [--json]`, '
+      '`cc-handoff todo status <id> <triage|backlog|todo|in_progress|in_review|'
+      'done|canceled|duplicate>`, `cc-handoff todo assign <id> <identity>` (or '
+      '`--unassign`), and `cc-handoff todo comment <id> <body>`. Pass --json when '
+      'you need to read fields back. Confirm with the user before bulk changes or '
+      'before canceling/deleting existing work.';
+
   static String _argQuote(String value) =>
       Platform.isWindows ? '"${value.replaceAll('"', r'\"')}"' : shQuote(value);
 
-  String _startupInstructions() => supervisor
-      ? '$_startupMsgInstructions $_supervisorInstructions'
-      : _startupMsgInstructions;
+  String _startupInstructions() {
+    if (supervisor) return '$_startupMsgInstructions $_supervisorInstructions';
+    if (todoAssistant) return '$_startupMsgInstructions $_todoInstructions';
+    return _startupMsgInstructions;
+  }
 
   String _codexDeveloperInstructionsConfig() =>
       'developer_instructions=${_startupInstructions()}';
@@ -93,6 +113,10 @@ class TerminalSession {
   final String agent;
   final String preLaunch;
   final bool supervisor;
+  // todoAssistant injects the 待办助手 persona (see _todoInstructions) the same
+  // way [supervisor] injects the supervisor one — a session spawned from the
+  // Todo page to generate/manage todos via the `cc-handoff todo` CLI.
+  final bool todoAssistant;
   // Mutable: claude gets a fixed id at construction; codex can't be given one at
   // launch, so it's captured from codex's rollout file after start (see
   // _maybeCaptureCodexId) and then persisted.
@@ -462,6 +486,7 @@ class TerminalSession {
     this.agent = '',
     this.preLaunch = '',
     this.supervisor = false,
+    this.todoAssistant = false,
     this.agentSessionId,
     this.resume = false,
   }) : id = id ?? 'ts${_seq++}',
