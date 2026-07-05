@@ -157,6 +157,13 @@ class Me {
                 ?.map((e) => ProjectRole.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [];
+
+  // Minimal valid identity: a non-admin member with no projects. Used as a
+  // fallback when the real role isn't known yet (e.g. /v1/me unreachable at
+  // launch) so consumers always get a legal Me instead of null.
+  const Me.member(this.identity)
+      : isAdmin = false,
+        projects = const [];
 }
 
 class Project {

@@ -27,9 +27,57 @@ import 'widgets.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Any uncaught build/layout/paint error shows a readable panel instead of
+  // the release default — a silent grey box that fills the whole window. This
+  // is the safety net that turns a future regression (like the _me! one that
+  // grey-screened the app on a transient /v1/me failure) into a legible error.
+  ErrorWidget.builder = (details) => _ErrorPanel(details);
   await Prefs.load();
   Notifications.init();
   runApp(const CcApp());
+}
+
+// Release-safe replacement for Flutter's default grey ErrorWidget. Kept
+// deliberately minimal and dependency-free: it can be invoked outside a
+// MaterialApp (e.g. if the root itself throws), so it brings its own
+// Directionality/Material and must never throw itself.
+class _ErrorPanel extends StatelessWidget {
+  const _ErrorPanel(this.details);
+  final FlutterErrorDetails details;
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: Material(
+        color: CcColors.bg,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline,
+                    color: CcColors.danger, size: 40),
+                const SizedBox(height: 12),
+                const Text('出错了',
+                    style: TextStyle(
+                        color: CcColors.text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Text(
+                  details.exceptionAsString(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: CcColors.muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // Zoom the whole UI in/out (⌘+ / ⌘- / ⌘0) — see ui_scale.dart.
@@ -114,6 +162,9 @@ class _HomeShellState extends State<HomeShell> {
   Me? _me;
   bool _loading = true;
   bool _needLogin = false;
+  // True when /v1/me failed at launch and _me is a synthesized fallback (see
+  // _bootstrap). Drives the degraded banner + reconnect affordance in build().
+  bool _meDegraded = false;
   String? _relayHint;
   int _index = 0;
   // Top-level nav rail (工作区/收件箱/项目/账号) starts hidden for more canvas
@@ -187,7 +238,12 @@ class _HomeShellState extends State<HomeShell> {
         cfg?.workspaces ?? const [],
       );
       _client = client;
-      _me = me;
+      // /v1/me can fail transiently (relay 502 / timeout / offline). Fall back
+      // to a non-admin member identity so the local workspace still renders —
+      // build() force-unwraps _me!, and a null here used to grey-screen the
+      // whole window. _meDegraded surfaces a reconnect banner instead.
+      _me = me ?? Me.member(session.identity);
+      _meDegraded = me == null;
       _relayHint = session.relayUrl;
       _loading = false;
     });
@@ -295,6 +351,7 @@ class _HomeShellState extends State<HomeShell> {
         _client = null;
         _cfg = null;
         _me = null;
+        _meDegraded = false;
         _index = 0;
         _needLogin = true;
       });
@@ -395,7 +452,12 @@ class _HomeShellState extends State<HomeShell> {
     // dests and pages are built with matching `if (_isDesktop)` / `if (isAdmin)`
     // guards; keep them index-aligned for IndexedStack + the nav rail.
     assert(dests.length == pages.length, 'nav dests/pages must align');
-    final body = IndexedStack(index: _index, children: pages);
+    Widget body = IndexedStack(index: _index, children: pages);
+    // When /v1/me failed at launch (_meDegraded), sit a reconnect banner above
+    // the pages so the user knows relay-backed views are empty on purpose.
+    if (_meDegraded) {
+      body = Column(children: [_degradedBar(), Expanded(child: body)]);
+    }
 
     if (_isDesktop) {
       return Scaffold(
@@ -452,6 +514,47 @@ class _HomeShellState extends State<HomeShell> {
               ),
             )
             .toList(),
+      ),
+    );
+  }
+
+  // Shown at the top of the shell when /v1/me failed at launch and _me is a
+  // fallback member identity. Local workspace works; relay-backed views (待办/
+  // 团队/Admin) are empty until a successful reconnect. Tapping re-runs
+  // _bootstrap — once /v1/me returns, TodoStore.start fires and it clears.
+  Widget _degradedBar() {
+    // Amber warning strip, aligned with _statusBanner in remote_workspace_page:
+    // CcColors.warning at 0.14 for the fill, solid warning for text/icons.
+    return Material(
+      color: CcColors.warning.withValues(alpha: 0.14),
+      child: InkWell(
+        onTap: _bootstrap,
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            children: [
+              Icon(Icons.cloud_off_rounded, size: 15, color: CcColors.warning),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '未连接 relay,部分功能暂不可用(本地工作区正常)',
+                  style: TextStyle(color: CcColors.warning, fontSize: 12),
+                ),
+              ),
+              SizedBox(width: 8),
+              Text(
+                '重试',
+                style: TextStyle(
+                  color: CcColors.warning,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              SizedBox(width: 3),
+              Icon(Icons.refresh_rounded, size: 15, color: CcColors.warning),
+            ],
+          ),
+        ),
       ),
     );
   }
