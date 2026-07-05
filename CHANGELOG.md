@@ -6,6 +6,21 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.11] - 2026-07-05
+
+### Added
+
+- **待办支持手机端指派给团队成员** — 移动端「指派」不再是死路,可从项目成员 + 在线用户 + 自己中选一人纯指派（只写 assignee，不绑定本机会话）；桌面端在原有「已有/新建会话」外多一个「指派成员」页。
+- **待办页可召唤专属 AI 助手** — 桌面待办页一键起一个注入了「待办助手」人格的 claude/codex 会话，用 `cc-handoff todo create|list|status|assign|comment` 直接在同一 relay 上生成/管理待办，改动实时同步回看板。
+- **待办视图配置跨设备同步** — scope／团队来源（relay/linear）／Linear team/project 等看板视图配置存到 relay（按身份隔离的 `user_settings`），同一账号的手机与电脑打开看到同一个看板，不再因本地 Prefs 不同步而各看各的。
+- **总管 `supervisor context` 内置会话管理工具说明** — 即使项目未 init 也输出 spawn/kill/overview 等工具用法。
+- **总管启动注入提示补充 spawn/kill 声明** — 注入的启动提示词里声明会话 spawn/kill 能力与 `open --window` 反模式。
+
+### Fixed
+
+- **生成的总管知识库 .md 在 Windows 编辑器里显示乱码** — `supervisor init`/`decide` 生成的 `.md` 现以 UTF-8 BOM 写入，Windows 编辑器（记事本等）不再按 GBK 误解码；`supervisor context` 读取时剥离 BOM，AI 看到的内容不变。
+- **relay 启动时 `/v1/me` 连不通导致灰屏** — 改为优雅降级，不再白/灰屏。
+
 ## [0.9.10] - 2026-07-04
 
 ### Fixed
