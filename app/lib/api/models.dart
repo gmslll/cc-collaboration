@@ -195,10 +195,13 @@ class Project {
 }
 
 class ProjectMember {
-  final String identity, role;
+  final String identity, role, displayName;
   ProjectMember.fromJson(Map<String, dynamic> j)
       : identity = _s(j['identity']),
-        role = _s(j['role']);
+        role = _s(j['role']),
+        // Empty on a relay that predates the display_name join (getProject) —
+        // the member picker then falls back to showing the raw identity.
+        displayName = _s(j['display_name']);
 }
 
 class ProjectDetail {

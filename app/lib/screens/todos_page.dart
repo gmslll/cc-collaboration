@@ -2131,12 +2131,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
   }
 
-  // _loadMembers builds the candidate list for "指派给成员". Every fetch is
-  // best-effort: display names, project members and online users each degrade
-  // independently so a 403 on the admin-only /v1/users (non-admin callers) or
-  // an offline peer list never blocks assigning. self goes first, then the
-  // current assignee (so it's always selectable even if they've since left the
-  // project), then project members, then anyone else online.
+  // _loadMembers builds the candidate list for "指派给成员": self + the todo's
+  // project members (a personal todo — no project — is self-only). Display names
+  // come from the project-members payload (degrades to the raw identity on a
+  // relay that predates the display_name join). The online set is best-effort
+  // and drives ONLY the green dot — assignees must be project members, never
+  // arbitrary online strangers, so online users are not added to the pool.
   Future<void> _loadMembers() async {
     setState(() {
       _loadingMembers = true;
@@ -2146,19 +2146,18 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final cur = (widget.todo.assigneeIdentity ?? '').trim();
     final online = <String>{};
     final ids = <String>[];
+    final names = <String, String>{};
     final seen = <String>{};
-    void add(String raw) {
+    void add(String raw, [String name = '']) {
       final id = raw.trim();
       if (id.isEmpty || !seen.add(id)) return;
       ids.add(id);
+      if (name.trim().isNotEmpty) names[id] = name.trim();
     }
 
-    // Fire the three independent fetches together (1 RTT instead of 3). Only
-    // project() is load-bearing — its failure means "no members" and sets
-    // _membersError; display names and the online set each degrade to empty on
-    // their own, so a 403 on the admin-only /v1/users never blocks assigning.
     final pid = widget.todo.projectId ?? '';
-    final usersF = widget.client.users().catchError((_) => <User>[]);
+    // onlineUsers is best-effort (dot only). project() is load-bearing — failure
+    // means "no members" and surfaces as _membersError.
     final onlineF = widget.client.onlineUsers().catchError((_) => <OnlineUser>[]);
     final membersF = pid.isEmpty
         ? Future.value(const <ProjectMember>[])
@@ -2176,27 +2175,24 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
-    final names = <String, String>{
-      for (final u in await usersF)
-        if (u.displayName.trim().isNotEmpty) u.identity: u.displayName,
-    };
     add(self);
-    add(cur);
+    add(cur); // keep the current assignee selectable even if they left the project
     for (final m in members) {
-      add(m.identity);
+      add(m.identity, m.displayName);
     }
     for (final u in await onlineF) {
       if (u.online) online.add(u.identity);
-      add(u.identity);
     }
     if (!mounted) return;
     setState(() {
       _memberIds = ids;
       _memberNames = names;
       _onlineIds = online;
-      _pickedIdentity = cur.isNotEmpty
-          ? cur
-          : (self.isNotEmpty ? self : (ids.isNotEmpty ? ids.first : null));
+      // Default to self, never the current assignee — pre-selecting the existing
+      // assignee silently re-assigns to them if the user taps 指派 without
+      // changing the radio (the "指派错了" report).
+      _pickedIdentity =
+          self.isNotEmpty ? self : (ids.isNotEmpty ? ids.first : null);
       _loadingMembers = false;
     });
   }

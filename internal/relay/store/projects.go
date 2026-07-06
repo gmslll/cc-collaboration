@@ -31,8 +31,9 @@ type Project struct {
 }
 
 type ProjectMember struct {
-	Identity string `json:"identity"`
-	Role     string `json:"role"`
+	Identity    string `json:"identity"`
+	Role        string `json:"role"`
+	DisplayName string `json:"display_name"`
 }
 
 // ProjectRole is a project with the calling identity's role in it (for /v1/me).
@@ -161,14 +162,20 @@ func (s *Store) RemoveMember(ctx context.Context, projectID, identity string) er
 }
 
 func (s *Store) ListMembers(ctx context.Context, projectID string) ([]ProjectMember, error) {
+	// LEFT JOIN users for the member's display name so the assign-member picker
+	// shows real names instead of raw identities — getProject is member-gated, so
+	// this works for non-admins (unlike the admin-only /v1/users).
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT identity, role FROM project_members WHERE project_id = ? ORDER BY identity`, projectID)
+		`SELECT pm.identity, pm.role, COALESCE(u.display_name, '')
+		   FROM project_members pm
+		   LEFT JOIN users u ON u.identity = pm.identity
+		  WHERE pm.project_id = ? ORDER BY pm.identity`, projectID)
 	if err != nil {
 		return nil, err
 	}
 	return scanRows(rows, func(r *sql.Rows) (ProjectMember, error) {
 		var m ProjectMember
-		err := r.Scan(&m.Identity, &m.Role)
+		err := r.Scan(&m.Identity, &m.Role, &m.DisplayName)
 		return m, err
 	})
 }
