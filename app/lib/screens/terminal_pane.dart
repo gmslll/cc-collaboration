@@ -1537,13 +1537,13 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
   void didUpdateWidget(_WindowsImeInputLayer old) {
     super.didUpdateWidget(old);
     if (old.active == widget.active) return;
+    logBreadcrumb(
+        'ime.${widget.active ? 'activate' : 'deactivate'} ${widget.session.id}');
     if (widget.active) {
-      logBreadcrumb('ime.activate ${widget.session.id}');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && widget.active) _focus.requestFocus();
       });
     } else {
-      logBreadcrumb('ime.deactivate ${widget.session.id}');
       _focus.unfocus();
     }
   }

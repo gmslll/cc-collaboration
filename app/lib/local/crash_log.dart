@@ -40,7 +40,12 @@ void _append(String line) {
   final f = _logFile;
   if (f == null) return;
   try {
-    f.writeAsStringSync(line, mode: FileMode.append, flush: true);
+    // Synchronous write only — no flush. The synchronous write() syscall hands
+    // the bytes to the kernel before returning, so they survive the user-space
+    // 闪退 we're diagnosing (ConPTY/IME native crash; the kernel lives) and are
+    // readable after restart. An fsync would only guard against power loss /
+    // BSOD — irrelevant here, and costly on the main thread on every breadcrumb.
+    f.writeAsStringSync(line, mode: FileMode.append);
   } catch (_) {}
 }
 
@@ -50,23 +55,20 @@ String _ts() => DateTime.now().toIso8601String();
 // Cheap enough to call on hot lifecycle paths.
 void logBreadcrumb(String msg) => _append('${_ts()} · $msg\n');
 
-// logCrash records an uncaught error + stack.
+// logCrash records an uncaught error + stack. A null stack (a FlutterError with
+// no captured stack) logs as "null" rather than substituting the handler's own
+// stack, which would just be misleading noise.
 void logCrash(Object error, StackTrace? stack) =>
-    _append('${_ts()} !! $error\n${stack ?? StackTrace.current}\n');
+    _append('${_ts()} !! $error\n$stack\n');
 
 // installCrashHandlers routes Flutter framework errors and uncaught async
 // (platform-dispatcher) errors into crash.log, while preserving the existing
 // on-screen behavior (FlutterError still presents; the app keeps running). It
 // does NOT replace ErrorWidget.builder — main() sets that separately.
 void installCrashHandlers() {
-  final prev = FlutterError.onError;
   FlutterError.onError = (details) {
     logCrash(details.exception, details.stack);
-    if (prev != null) {
-      prev(details);
-    } else {
-      FlutterError.presentError(details);
-    }
+    FlutterError.presentError(details);
   };
   PlatformDispatcher.instance.onError = (error, stack) {
     logCrash(error, stack);
