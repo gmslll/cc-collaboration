@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import '../api/relay_client.dart';
 import '../api/todo_models.dart';
 import 'path_utils.dart';
 
@@ -159,6 +160,63 @@ String buildAssignTaskText(Todo todo, TodoMaterializeResult result) {
   }
   return sb.toString();
 }
+
+// TodoAssignPrep is what prepareTodoAssignmentText resolves to: the terminal
+// text to paste (materialized-file pointer or raw fallback) plus the full Todo
+// it fetched, so callers that also need the fresh status/id (e.g. the assign
+// dialog's in_progress bump) don't have to re-fetch.
+typedef TodoAssignPrep = ({String taskText, Todo full});
+
+// prepareTodoAssignmentText is the shared core of "把待办交给某个会话终端": it
+// concurrently re-fetches the full Todo (the list endpoint omits attachments,
+// so a GET-by-id is needed) plus its comments; when [workdir] is non-empty and
+// materialization succeeds it lands the file+attachments and returns a "go read
+// this file" pointer, otherwise it returns the raw [plainTaskText]. Any failure
+// along the way — empty [workdir], materialize returned null, or the fetch
+// itself threw — degrades gracefully; a fetch exception falls back to the
+// caller-supplied [fallbackTodo] rather than a half-fetched result.
+//
+// [workdir] must be resolved by the caller and passed in — this function never
+// polls: _AssignTodoDialogState polls the just-spawned session card, while
+// _openOrResumeSession already holds the saved assigneeWorkdir, and the two
+// resolve it differently. It's Flutter-free (RelayClient is Dio-backed with no
+// widget dependency) so it stays reusable from both call sites.
+Future<TodoAssignPrep> prepareTodoAssignmentText({
+  required RelayClient client,
+  required String todoId,
+  required Todo fallbackTodo,
+  required String workdir,
+}) async {
+  try {
+    // Kick both off before awaiting so they run concurrently.
+    final todoF = client.todo(todoId);
+    final commentsF = client.todoComments(todoId);
+    final full = await todoF;
+    final comments = await commentsF;
+
+    if (workdir.trim().isNotEmpty) {
+      final result = await materializeTodoAssignment(
+        workdir: workdir,
+        todo: full,
+        comments: comments,
+        fetchAttachment: (name) => client.todoAttachment(full.id, name),
+      );
+      if (result != null) {
+        return (taskText: buildAssignTaskText(full, result), full: full);
+      }
+    }
+    return (taskText: plainTaskText(full), full: full);
+  } catch (_) {
+    return (taskText: plainTaskText(fallbackTodo), full: fallbackTodo);
+  }
+}
+
+// plainTaskText is the legacy raw-paste form — just the title + untouched body,
+// no comments/attachments — used whenever materialization can't run (no
+// resolvable workdir, materialize failure, or a fetch exception).
+String plainTaskText(Todo t) => t.bodyMd.trim().isEmpty
+    ? '[待办] ${t.title}'
+    : '[待办] ${t.title}\n\n${t.bodyMd}';
 
 String _fmtDateTime(DateTime t) {
   String two(int n) => n.toString().padLeft(2, '0');

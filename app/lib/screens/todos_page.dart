@@ -2052,63 +2052,28 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     return matches.isEmpty ? const [] : matches.first.projects;
   }
 
-  // _taskText is the legacy raw-paste form, kept as the fallback whenever
-  // materialization can't run (no resolvable workdir, fetch failure, etc.):
-  // just the title + the untouched body, no comments/attachments.
-  String get _taskText {
-    final t = widget.todo;
-    return t.bodyMd.trim().isEmpty
-        ? '[待办] ${t.title}'
-        : '[待办] ${t.title}\n\n${t.bodyMd}';
-  }
-
   // _prepareAssignment resolves the terminal text to paste for a dispatch to
-  // session [sid]. It re-fetches the FULL todo (widget.todo comes from the list
-  // endpoint, which omits attachments to dodge an N+1 join — see _RowThumb) and
-  // its comments concurrently, resolves the target session's workdir (polling
-  // briefly since this runs earlier than _syncAssignVisibility and a
-  // just-spawned session's card may not carry a workdir yet), then writes the
-  // full todo to a file under that workdir and returns a "go read it" pointer.
-  // Any failure along the way (fetch error, no workdir, materialize returned
-  // null) degrades to the raw _taskText — assignment must never be blocked by
-  // materialization. statusAtPrep carries the freshly-fetched status so the
-  // caller can decide the in_progress bump off current server state.
+  // session [sid]. It resolves the target session's workdir (polling briefly
+  // since this runs earlier than _syncAssignVisibility and a just-spawned
+  // session's card may not carry a workdir yet), then hands off to the shared
+  // prepareTodoAssignmentText — which re-fetches the full todo+comments,
+  // materializes the file under that workdir, and degrades to a raw paste on any
+  // failure. statusAtPrep carries the freshly-fetched status so the caller can
+  // decide the in_progress bump off current server state.
   Future<_AssignPrep> _prepareAssignment(String sid) async {
-    try {
-      // Kick both off before awaiting so they run concurrently.
-      final todoF = widget.client.todo(widget.todo.id);
-      final commentsF = widget.client.todoComments(widget.todo.id);
-      final full = await todoF;
-      final comments = await commentsF;
-
-      String? workdir = _findCard(sid)?.workdir;
-      for (var i = 0; i < 5 && (workdir == null || workdir.isEmpty); i++) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        if (!mounted) {
-          return (taskText: _taskText, statusAtPrep: full.status);
-        }
-        workdir = _findCard(sid)?.workdir;
-      }
-      if (workdir == null || workdir.isEmpty) {
-        return (taskText: _taskText, statusAtPrep: full.status);
-      }
-
-      final result = await materializeTodoAssignment(
-        workdir: workdir,
-        todo: full,
-        comments: comments,
-        fetchAttachment: (name) => widget.client.todoAttachment(full.id, name),
-      );
-      if (result == null) {
-        return (taskText: _taskText, statusAtPrep: full.status);
-      }
-      return (
-        taskText: buildAssignTaskText(full, result),
-        statusAtPrep: full.status,
-      );
-    } catch (_) {
-      return (taskText: _taskText, statusAtPrep: widget.todo.status);
+    String? workdir = _findCard(sid)?.workdir;
+    for (var i = 0; i < 5 && (workdir == null || workdir.isEmpty); i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (!mounted) break;
+      workdir = _findCard(sid)?.workdir;
     }
+    final prep = await prepareTodoAssignmentText(
+      client: widget.client,
+      todoId: widget.todo.id,
+      fallbackTodo: widget.todo,
+      workdir: workdir ?? '',
+    );
+    return (taskText: prep.taskText, statusAtPrep: prep.full.status);
   }
 
   // _maybeBumpToInProgress makes "指派" mean "开始处理": a todo still sitting in
