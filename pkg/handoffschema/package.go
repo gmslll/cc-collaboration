@@ -222,10 +222,10 @@ func (c *Capsule) EffectiveVisibility() CapsuleVisibility {
 // CapsuleListItem is the compact plaza row (GET /v1/capsules): enough to render
 // a browsable capsule gallery without fetching each full Package.
 type CapsuleListItem struct {
-	ID            string            `json:"id"`
-	Owner         string            `json:"owner"`
-	Visibility    CapsuleVisibility `json:"visibility"`
-	SourceAgent   string            `json:"source_agent"`
+	ID          string            `json:"id"`
+	Owner       string            `json:"owner"`
+	Visibility  CapsuleVisibility `json:"visibility"`
+	SourceAgent string            `json:"source_agent"`
 	// OriginSessionID is the capture-side session id — the filename id a
 	// same-tool native --resume writes the imported transcript under.
 	OriginSessionID string    `json:"origin_session_id,omitempty"`
