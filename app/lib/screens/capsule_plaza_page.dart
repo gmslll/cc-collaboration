@@ -8,6 +8,7 @@ import '../local/agent_transcript.dart';
 import '../local/config.dart';
 import '../local/local_bus.dart';
 import '../local/session_overview.dart';
+import '../local/skill_pack.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -180,25 +181,87 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
               if (c.repoName.isNotEmpty) meta(c.repoName),
             ],
           ),
-          if (widget.isDesktop && (c.hasTranscript || c.hasPersona)) ...[
+          if (mine || (widget.isDesktop && (c.hasTranscript || c.hasPersona))) ...[
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: () => _loadCapsule(c),
-                icon: const Icon(Icons.download_rounded, size: 15),
-                label: const Text('载入'),
-                style: OutlinedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  minimumSize: const Size(0, 30),
-                ),
-              ),
+            Row(
+              children: [
+                // Owner-only edit/delete.
+                if (mine) ...[
+                  _cardAction(
+                      Icons.edit_rounded, '编辑', () => _editCapsule(c)),
+                  const SizedBox(width: 2),
+                  _cardAction(Icons.delete_outline_rounded, '删除',
+                      () => _deleteCapsule(c),
+                      color: CcColors.danger),
+                ],
+                const Spacer(),
+                if (widget.isDesktop && (c.hasTranscript || c.hasPersona))
+                  OutlinedButton.icon(
+                    onPressed: () => _loadCapsule(c),
+                    icon: const Icon(Icons.download_rounded, size: 15),
+                    label: const Text('载入'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      minimumSize: const Size(0, 30),
+                    ),
+                  ),
+              ],
             ),
           ],
         ],
       ),
     );
+  }
+
+  Widget _cardAction(IconData icon, String label, VoidCallback onPressed,
+          {Color? color}) =>
+      TextButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 15, color: color),
+        label: Text(label, style: color == null ? null : TextStyle(color: color)),
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          minimumSize: const Size(0, 30),
+        ),
+      );
+
+  Future<void> _deleteCapsule(CapsuleListItem c) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除胶囊?'),
+        content: Text(
+            '「${c.headline.isEmpty ? c.id : c.headline}」将从广场移除,不可恢复。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await widget.client.deleteCapsule(c.id);
+      if (!mounted) return;
+      snack(context, '胶囊已删除');
+      _load();
+    } catch (e) {
+      if (mounted) snack(context, '删除失败: ${errorText(e)}');
+    }
+  }
+
+  Future<void> _editCapsule(CapsuleListItem c) async {
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _CapsuleEditDialog(client: widget.client, capsule: c),
+    );
+    if (changed == true) _load();
   }
 
   Future<void> _loadCapsule(CapsuleListItem c) => showDialog(
@@ -211,6 +274,16 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
         ),
       );
 }
+
+// _crossMachineNote is appended to a loaded capsule's opening prompt. A capsule
+// usually comes from another machine, so absolute paths / local scripts / skill
+// locations baked into its context may not exist here — tell the session to
+// resolve tools by name in the local env instead of assuming paths, and not to
+// burn turns re-scanning the whole disk when something isn't where it expected.
+const _crossMachineNote =
+    '\n\n⚠️ 注意:此上下文可能来自**另一台机器**——里面提到的绝对路径 / 本地脚本 / 技能位置,'
+    '在本机可能不存在或位置不同。遇到时**按名字与用途在本机环境(技能、当前仓库、PATH)里找**'
+    '对应的技能/脚本/工具,不要假设路径一致;找不到时先在当前仓库定位,别反复全盘搜索。';
 
 // _CapsuleLoadDialog spins up a fresh specialized session from a plaza capsule:
 // the receiver picks a form (② distilled role / ① full-context snapshot), a
@@ -287,6 +360,11 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
     }
     setState(() => _submitting = true);
     try {
+      // Place any bundled skill packs into the local skills dir first, so the
+      // session (resumed or seeded) can use them immediately.
+      final skills = await _extractSkillPacks();
+      if (!mounted) return;
+
       // ① same-tool: import the raw log locally → native `--resume` (highest
       // fidelity). Falls through to the seed path if it can't be set up.
       if (_wouldNativeResume) {
@@ -312,7 +390,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
       }
 
       // Seed path: ② role, ① cross-tool, or native import unavailable.
-      final prompt = await _buildOpeningPrompt();
+      final prompt = await _buildOpeningPrompt(skills);
       if (!mounted) return;
       if (prompt == null) {
         _fail('拉取胶囊内容失败');
@@ -370,14 +448,17 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
 
   // _buildOpeningPrompt fetches the chosen form's payload and wraps it into the
   // new session's first turn. Returns null if the payload can't be fetched.
-  Future<String?> _buildOpeningPrompt() async {
+  Future<String?> _buildOpeningPrompt(List<String> skills) async {
     final c = widget.capsule;
+    final skillsNote = skills.isEmpty
+        ? ''
+        : '\n\n胶囊自带的技能已落到本机 `~/.claude/skills/`:${skills.join('、')} —— 需要时直接用 `/<名字>` 调用,不用再去别处找。';
     if (_form == 'role') {
       final body = await _fetchText('persona.md');
       if (body == null) return null;
       return '你现在是一个「专职会话」。下面是你的角色定义(来自胶囊 ${c.id}),'
           '请把它作为工作准则严格遵守,不要复述它。读完后用一两句话说明你将专注做什么,然后待命。\n\n'
-          '---\n$body\n---';
+          '---\n$body\n---$_crossMachineNote$skillsNote';
     }
     // ① snapshot: prefer the compact seed, else the full neutral transcript.
     // Try seed.md directly (returns null when absent) rather than a get(c.id)
@@ -386,7 +467,24 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
     if (body == null) return null;
     return '下面是另一个会话冻结下来的上下文(来自胶囊 ${c.id},源工具 ${c.sourceAgent})。'
         '请把它当作你自己的前情:先读完,用一两句话复述「目标 / 已完成 / 当前进度 / 待办」,'
-        '确认理解后无缝接着干。\n\n---\n$body\n---';
+        '确认理解后无缝接着干。\n\n---\n$body\n---$_crossMachineNote$skillsNote';
+  }
+
+  // _extractSkillPacks downloads the capsule's bundled skill packs (attachments
+  // ending in .skillpack.zip) and unzips each into ~/.claude/skills/, so the
+  // session has them even on a machine that never installed the skill. Returns
+  // the extracted skill names (for the opening prompt).
+  Future<List<String>> _extractSkillPacks() async {
+    final pkg = await widget.client.get(widget.capsule.id);
+    final names = <String>[];
+    for (final a in pkg.attachments) {
+      if (!a.name.endsWith(capsuleSkillPackSuffix)) continue;
+      final bytes = await _fetchBytes(a.name);
+      if (bytes == null) continue;
+      final name = await installSkillPack(bytes, a.name);
+      if (name != null) names.add(name);
+    }
+    return names;
   }
 
   Future<String?> _fetchText(String name) async {
@@ -521,6 +619,134 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                           )
                         : const Icon(Icons.rocket_launch_rounded, size: 16),
                     label: const Text('起会话'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// _CapsuleEditDialog lets an owner edit their plaza capsule's visibility and
+// description (summary). Persona/seed content editing is a separate step.
+class _CapsuleEditDialog extends StatefulWidget {
+  final RelayClient client;
+  final CapsuleListItem capsule;
+  const _CapsuleEditDialog({required this.client, required this.capsule});
+
+  @override
+  State<_CapsuleEditDialog> createState() => _CapsuleEditDialogState();
+}
+
+class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
+  late bool _public;
+  late final TextEditingController _summary;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _public = widget.capsule.visibility == 'public';
+    _summary = TextEditingController(text: widget.capsule.headline);
+  }
+
+  @override
+  void dispose() {
+    _summary.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      await widget.client.patchCapsule(
+        widget.capsule.id,
+        visibility: _public ? 'public' : 'private',
+        summary: _summary.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+      snack(context, '已保存');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      snack(context, '保存失败: ${errorText(e)}');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.edit_rounded,
+                      size: 20, color: CcColors.accent),
+                  const SizedBox(width: 8),
+                  const Text('编辑胶囊',
+                      style:
+                          TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: '关闭',
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    onPressed: () => Navigator.of(context).pop(false),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _summary,
+                decoration:
+                    const InputDecoration(labelText: '说明', isDense: true),
+              ),
+              const SizedBox(height: 14),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(
+                      value: false,
+                      label: Text('个人'),
+                      icon: Icon(Icons.lock_outline_rounded, size: 16)),
+                  ButtonSegment(
+                      value: true,
+                      label: Text('公开'),
+                      icon: Icon(Icons.public_rounded, size: 16)),
+                ],
+                selected: {_public},
+                onSelectionChanged: (s) => setState(() => _public = s.first),
+              ),
+              const SizedBox(height: 6),
+              Text(_public ? '团队所有人能在广场看到' : '只有你自己能在广场看到',
+                  style: CcType.code(size: 11.5, color: CcColors.subtle)),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed:
+                        _saving ? null : () => Navigator.of(context).pop(false),
+                    child: const Text('取消'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _save,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.check_rounded, size: 16),
+                    label: const Text('保存'),
                   ),
                 ],
               ),

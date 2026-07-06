@@ -19,7 +19,9 @@ import 'dart:io';
 
 const String _personaFileName = 'persona.md';
 const String _seedFileName = 'seed.md';
+const String depsFileName = 'deps.txt';
 const String _doneMarker = 'CAPSULE_DISTILL_DONE';
+const String _skillListDoneMarker = 'CAPSULE_SKILLS_DONE';
 
 /// How a capsule's persona/seed get produced.
 enum DistillStrategy { selfDistill, offline }
@@ -97,8 +99,9 @@ String selfDistillPrompt({
 1. 写 `$personaPath` —— 一个「专职角色」定义(给未来一个干净的新会话当 system 指令):
    - 这个会话专门在干的那类活是什么(一句话职责)
    - 必须遵守的规矩 / 约束 / 踩过的坑(要点列表)
-   - 可复用的关键路径 / 命令 / 领域知识
+   - 可复用的领域知识 / 约定 / 会用到的技能·脚本·命令
    不要写某次对话的流水账,要写「下次干这类活的人需要知道的、稳定可复用的东西」。
+   **可移植性(重要)**:这份角色**可能在别人的机器上加载**,所以引用技能 / 脚本 / 工具时用**名字 + 用途**(如「用 `kunlun-customer-import` 技能导客户」),**不要写死某台机器的绝对路径**;确需路径时用相对仓库根的相对路径,并注明「按名字在本机环境里找」。
 
 2. 写 `$seedPath` —— 一段压缩的上下文摘要(有人想「接着这个会话继续干」时当开场白):
    - 目标 / 已完成 / 待办 / 当前状态
@@ -107,10 +110,17 @@ String selfDistillPrompt({
 
 两个文件都写完后,**只输出一行**:$_doneMarker''';
 
+/// skillListPrompt is the SECOND self-distill step, delivered only after the
+/// conversation is already saved (persona/seed written). It asks the same live
+/// session to list the local skill/script dirs the work depends on, so they can
+/// be bundled into the capsule for teammates who don't have them.
+String skillListPrompt(String depsPath) =>
+    '''刚才你已经把这个会话蒸馏成了角色(persona/seed 已保存)。现在**只做一件事**:把这活**依赖的、不在当前仓库里的本地技能/脚本目录**(比如 `~/.claude/skills/<某技能>`)的**绝对路径每行一个**写到 `$depsPath`;没有就写**空文件**。只列真正必需、且不在共享仓库里的——它们会被打包进胶囊,让没装该技能的队友也能直接用。写完后**只输出一行**:$_skillListDoneMarker''';
+
 /// offlinePersonaPrompt drives a HEADLESS agent over [transcript]: distill the
 /// conversation into the reusable role, emitting ONLY the persona markdown.
 String offlinePersonaPrompt(String transcript) =>
-    '''下面是一段会话的完整转录。把它蒸馏成一个可复用的「专职角色」定义(markdown),给未来一个干净的新会话当 system 指令:一句话职责 + 必须遵守的规矩/坑 + 可复用的关键路径/命令/领域知识。不要流水账,只要下次干这类活的人需要的、稳定可复用的东西。**只输出 persona 的 markdown 正文,不要任何前后缀说明。**
+    '''下面是一段会话的完整转录。把它蒸馏成一个可复用的「专职角色」定义(markdown),给未来一个干净的新会话当 system 指令:一句话职责 + 必须遵守的规矩/坑 + 可复用的领域知识/约定/会用到的技能·脚本·命令。**可移植性**:这份角色可能在别人的机器上加载,引用技能/脚本/工具时用**名字 + 用途**(如「用 kunlun-customer-import 技能」),**不要写死某台机器的绝对路径**。不要流水账,只要下次干这类活的人需要的、稳定可复用的东西。**只输出 persona 的 markdown 正文,不要任何前后缀说明。**
 
 转录:
 ---
@@ -155,6 +165,13 @@ Future<DistillOutcome> distillCapsule({
       poll: selfPoll,
     );
     if (ok) {
+      // Conversation saved (persona/seed written) — now a focused SECOND ask:
+      // have the same session list its skill/script deps into deps.txt.
+      await _runSkillList(
+        depsFile: File('$draftDir/$depsFileName'),
+        deliverToSession: deliverToSession,
+        poll: selfPoll,
+      );
       return DistillOutcome(
         strategy: DistillStrategy.selfDistill,
         personaWritten: personaFile.existsSync(),
@@ -183,25 +200,59 @@ Future<DistillOutcome> distillCapsule({
 // _runSelfDistill delivers the distill prompt to the live session, then polls
 // for persona.md to appear (non-empty) within [timeout]. persona is the ②
 // must-have; seed is best-effort and may or may not land.
+// _deliverAndAwaitFile delivers [prompt] to the live session, then polls [ready]
+// until true or [timeout]. The shared body of both self-distill steps. Returns
+// false when delivery failed or the expected file never landed.
+Future<bool> _deliverAndAwaitFile({
+  required String prompt,
+  required Future<bool> Function(String prompt) deliverToSession,
+  required Future<bool> Function() ready,
+  required Duration timeout,
+  required Duration poll,
+}) async {
+  if (!await deliverToSession(prompt)) return false;
+  final start = DateTime.now();
+  while (DateTime.now().difference(start) < timeout) {
+    if (await ready()) return true;
+    await Future<void>.delayed(poll);
+  }
+  return false;
+}
+
 Future<bool> _runSelfDistill({
   required File personaFile,
   required String seedPath,
   required Future<bool> Function(String prompt) deliverToSession,
   required Duration timeout,
   required Duration poll,
+}) =>
+    _deliverAndAwaitFile(
+      prompt:
+          selfDistillPrompt(personaPath: personaFile.path, seedPath: seedPath),
+      deliverToSession: deliverToSession,
+      ready: () async =>
+          await personaFile.exists() && (await personaFile.length()) > 0,
+      timeout: timeout,
+      poll: poll,
+    );
+
+// _runSkillList is the SECOND self-distill step, run only after the conversation
+// is already saved: it asks the (now-idle) source session to list its skill /
+// script deps into deps.txt, then waits briefly. Best-effort — a miss just
+// means no skills are bundled.
+Future<void> _runSkillList({
+  required File depsFile,
+  required Future<bool> Function(String prompt) deliverToSession,
+  required Duration poll,
+  Duration timeout = const Duration(seconds: 90),
 }) async {
-  final delivered = await deliverToSession(
-    selfDistillPrompt(personaPath: personaFile.path, seedPath: seedPath),
+  await _deliverAndAwaitFile(
+    prompt: skillListPrompt(depsFile.path),
+    deliverToSession: deliverToSession,
+    ready: depsFile.exists,
+    timeout: timeout,
+    poll: poll,
   );
-  if (!delivered) return false;
-  final start = DateTime.now();
-  while (DateTime.now().difference(start) < timeout) {
-    if (await personaFile.exists() && (await personaFile.length()) > 0) {
-      return true;
-    }
-    await Future<void>.delayed(poll);
-  }
-  return false;
 }
 
 /// runOfflineDistill produces the drafts with two headless one-shot calls (one

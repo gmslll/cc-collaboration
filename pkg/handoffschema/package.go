@@ -63,6 +63,11 @@ const (
 	// CapsuleSeedName is a compacted context summary, the fallback seed when the
 	// full neutral transcript is too long.
 	CapsuleSeedName = "seed.md"
+	// CapsuleSkillPackSuffix marks an attachment that bundles a local skill /
+	// script directory (zipped) the capsule's work depends on, so a teammate on
+	// a machine without that skill still gets it. Named "<skill>.skillpack.zip";
+	// unpacked into the receiver's skills dir on load.
+	CapsuleSkillPackSuffix = ".skillpack.zip"
 )
 
 // CapsuleVisibility controls who can see a capsule in the plaza. Default
@@ -76,15 +81,20 @@ const (
 	CapsulePublic CapsuleVisibility = "public"
 )
 
+// IsCapsuleSkillPack reports whether name is a bundled skill/script pack.
+func IsCapsuleSkillPack(name string) bool {
+	return strings.HasSuffix(name, CapsuleSkillPackSuffix)
+}
+
 // IsReservedCapsuleAttachment reports whether name is one of the structural
 // capsule payload slots (rendered specially, not listed in the generic
-// attachments section).
+// attachments section) — the fixed payloads plus any bundled skill pack.
 func IsReservedCapsuleAttachment(name string) bool {
 	switch name {
 	case CapsuleTranscriptJSONLName, CapsuleTranscriptTextName, CapsulePersonaName, CapsuleSeedName:
 		return true
 	}
-	return false
+	return IsCapsuleSkillPack(name)
 }
 
 // EffectiveKind returns the package's Kind, defaulting an empty value to
@@ -125,6 +135,30 @@ func (p *Package) RequiresRecipient() bool {
 // the per-capsule read authz (server.canViewPackage) so they never drift.
 func (p *Package) CapsuleVisibleTo(viewer string) bool {
 	return p.CapsuleOrEmpty().EffectiveVisibility() == CapsulePublic || p.Sender == viewer
+}
+
+// ParseCapsuleVisibility normalizes a visibility string to the enum, defaulting
+// anything but "public" to private. One place for the string→enum rule.
+func ParseCapsuleVisibility(s string) CapsuleVisibility {
+	if s == CapsulePublic {
+		return CapsulePublic
+	}
+	return CapsulePrivate
+}
+
+// ApplyCapsuleEdit mutates a capsule package's editable metadata in place —
+// visibility and/or summary (nil = unchanged), ensuring Capsule is non-nil so
+// callers (the store) needn't know the payload's shape.
+func (p *Package) ApplyCapsuleEdit(visibility, summary *string) {
+	if p.Capsule == nil {
+		p.Capsule = &Capsule{}
+	}
+	if visibility != nil {
+		p.Capsule.Visibility = ParseCapsuleVisibility(*visibility)
+	}
+	if summary != nil {
+		p.SummaryMD = *summary
+	}
 }
 
 // EffectiveRecipients returns the recipient list. For bug-kind packages this

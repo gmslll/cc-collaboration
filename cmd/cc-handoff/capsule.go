@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/handoff"
@@ -12,6 +14,15 @@ import (
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
+
+// repeatedFlag collects a repeatable string flag (e.g. --skill A --skill B).
+type repeatedFlag []string
+
+func (r *repeatedFlag) String() string  { return strings.Join(*r, ",") }
+func (r *repeatedFlag) Set(v string) error {
+	*r = append(*r, v)
+	return nil
+}
 
 // runCapsule dispatches `cc-handoff capsule <subcommand>`. Currently only
 // `submit`: package a captured session (transcript + distilled persona/seed)
@@ -39,6 +50,8 @@ func runCapsuleSubmit(ctx context.Context, args []string) error {
 	transcriptTextPath := fs.String("transcript-text", "", "path to transcript.txt (neutral render, cross-tool seed)")
 	personaPath := fs.String("persona", "", "path to persona.md (distilled role, ②)")
 	seedPath := fs.String("seed", "", "path to seed.md (compact context summary)")
+	var skills repeatedFlag
+	fs.Var(&skills, "skill", "path to a bundled skill zip (repeatable; basename must end in .skillpack.zip) — travels with the capsule so a teammate without the skill still gets it")
 	summary := fs.String("summary", "", "short human description of what this capsule is for")
 	summaryFile := fs.String("summary-file", "", "read --summary from a file instead")
 	note := fs.String("note", "", "extra note rendered to the receiver")
@@ -103,6 +116,22 @@ func runCapsuleSubmit(ctx context.Context, args []string) error {
 		urgency = handoffschema.UrgencyUrgent
 	}
 
+	var skillPacks map[string][]byte
+	for _, p := range skills {
+		name := filepath.Base(p)
+		if !handoffschema.IsCapsuleSkillPack(name) {
+			return fmt.Errorf("--skill %s: basename must end in %s", p, handoffschema.CapsuleSkillPackSuffix)
+		}
+		body, err := os.ReadFile(p)
+		if err != nil {
+			return fmt.Errorf("read --skill %s: %w", p, err)
+		}
+		if skillPacks == nil {
+			skillPacks = map[string][]byte{}
+		}
+		skillPacks[name] = body
+	}
+
 	pkg, attachments, err := handoff.BuildCapsule(handoff.CapsuleOptions{
 		RepoName:        res.RepoName,
 		Sender:          res.Me,
@@ -117,6 +146,7 @@ func runCapsuleSubmit(ctx context.Context, args []string) error {
 		TranscriptText:  transcriptText,
 		Persona:         persona,
 		Seed:            seed,
+		SkillPacks:      skillPacks,
 	})
 	if err != nil {
 		return err

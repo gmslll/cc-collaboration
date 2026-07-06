@@ -31,10 +31,14 @@ void main() {
 
   test('prompts name both draft files + marker (self) and ask stdout-only (offline)',
       () {
-    final self = selfDistillPrompt(personaPath: '/d/persona.md', seedPath: '/d/seed.md');
+    final self =
+        selfDistillPrompt(personaPath: '/d/persona.md', seedPath: '/d/seed.md');
     expect(self, contains('/d/persona.md'));
     expect(self, contains('/d/seed.md'));
     expect(self, contains('CAPSULE_DISTILL_DONE'));
+    // Skill listing is a SEPARATE second step, not baked into the distill prompt.
+    expect(self, isNot(contains('deps.txt')));
+    expect(skillListPrompt('/d/deps.txt'), contains('/d/deps.txt'));
 
     final p = offlinePersonaPrompt('TRANSCRIPT-XYZ');
     expect(p, contains('TRANSCRIPT-XYZ'));
@@ -104,9 +108,10 @@ void main() {
       sessionIdle: true,
       userWantsSelf: true,
       deliverToSession: (prompt) async {
-        // Simulate the live session writing its persona draft.
+        // Simulate the live session: step 1 writes persona, step 2 writes deps.
         delivered = true;
         File('$dir/persona.md').writeAsStringSync('SELF-PERSONA');
+        File('$dir/deps.txt').writeAsStringSync('');
         return true;
       },
       runProc: (_, _, {stdin}) async => fail('self path must not go headless'),

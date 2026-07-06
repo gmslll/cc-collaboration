@@ -287,6 +287,9 @@ type CapsuleOptions struct {
 	TranscriptText  []byte
 	Persona         []byte
 	Seed            []byte
+	// SkillPacks are bundled skill/script dirs (zipped), keyed by the attachment
+	// name (must end in handoffschema.CapsuleSkillPackSuffix). Empty entries skipped.
+	SkillPacks map[string][]byte
 }
 
 // BuildCapsule assembles a KindCapsule Package plus its attachment blobs (keyed
@@ -308,6 +311,9 @@ func BuildCapsule(opts CapsuleOptions) (*handoffschema.Package, map[string][]byt
 	add(handoffschema.CapsuleTranscriptTextName, opts.TranscriptText)
 	add(handoffschema.CapsulePersonaName, opts.Persona)
 	add(handoffschema.CapsuleSeedName, opts.Seed)
+	for name, body := range opts.SkillPacks {
+		add(name, body)
+	}
 
 	hasTranscript := len(opts.TranscriptJSONL) > 0 || len(opts.TranscriptText) > 0
 	hasPersona := len(opts.Persona) > 0

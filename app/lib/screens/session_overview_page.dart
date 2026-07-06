@@ -8,6 +8,7 @@ import 'package:xterm/xterm.dart';
 import '../local/local_bus.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
+import '../local/skill_pack.dart';
 import '../terminal_theme.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -653,6 +654,10 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   bool _public = false; // default 个人 (private)
   bool _submitting = false;
   bool _loading = true;
+  // Skill/script dirs the work depends on (from deps.txt), each with a "bundle
+  // it?" flag. Bundled dirs travel with the capsule so a teammate without the
+  // skill still gets it.
+  final Map<String, bool> _skillDirs = {};
 
   @override
   void initState() {
@@ -666,6 +671,16 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
     final s = File('${widget.draft.draftDir}/seed.md');
     if (await p.exists()) _persona.text = await p.readAsString();
     if (await s.exists()) _seed.text = await s.readAsString();
+    // deps.txt (from self-distill) lists local skill/script dirs to bundle.
+    final deps = File('${widget.draft.draftDir}/deps.txt');
+    if (await deps.exists()) {
+      for (final line in (await deps.readAsString()).split('\n')) {
+        final dir = line.trim();
+        if (dir.isNotEmpty && await Directory(dir).exists()) {
+          _skillDirs[dir] = true; // default: bundle it
+        }
+      }
+    }
     if (mounted) setState(() => _loading = false);
   }
 
@@ -686,10 +701,18 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
     if (_seed.text.trim().isNotEmpty) {
       await File('${widget.draft.draftDir}/seed.md').writeAsString(_seed.text);
     }
+    // Zip the skill dirs the user kept checked so they ride with the capsule.
+    final skillZips = <String>[];
+    for (final e in _skillDirs.entries) {
+      if (!e.value) continue;
+      final zip = await packSkillDir(e.key, widget.draft.draftDir);
+      if (zip != null) skillZips.add(zip);
+    }
     final (ok, err) = await widget.store.submitCapsule(
       widget.draft,
       visibility: _public ? 'public' : 'private',
       summary: _summary.text.trim(),
+      skillZips: skillZips,
     );
     if (!mounted) return;
     setState(() => _submitting = false);
@@ -798,6 +821,27 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                         maxLines: 6,
                       ),
                       const SizedBox(height: 12),
+                      if (_skillDirs.isNotEmpty) ...[
+                        const Text('自带技能 / 脚本(缺技能的队友也能用)',
+                            style: TextStyle(fontWeight: FontWeight.w600)),
+                        for (final dir in _skillDirs.keys)
+                          CheckboxListTile(
+                            value: _skillDirs[dir],
+                            onChanged: (v) =>
+                                setState(() => _skillDirs[dir] = v ?? false),
+                            title: Text(dir.split('/').last,
+                                style: CcType.code(size: 12)),
+                            subtitle: Text(dir,
+                                style: CcType.code(
+                                    size: 10.5, color: CcColors.subtle),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis),
+                            controlAffinity: ListTileControlAffinity.leading,
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        const SizedBox(height: 12),
+                      ],
                       Row(
                         children: [
                           SegmentedButton<bool>(

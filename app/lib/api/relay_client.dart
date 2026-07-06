@@ -41,6 +41,16 @@ class RelayClient {
         .toList();
   }
 
+  // deleteCapsule / patchCapsule are owner-only edits of one's own plaza capsule.
+  Future<void> deleteCapsule(String id) => _dio.delete('/v1/capsules/$id');
+
+  Future<void> patchCapsule(String id, {String? visibility, String? summary}) {
+    final data = <String, String>{};
+    if (visibility != null) data['visibility'] = visibility;
+    if (summary != null) data['summary'] = summary;
+    return _dio.patch('/v1/capsules/$id', data: data);
+  }
+
   Future<Status> status(String id) async {
     final r = await _dio.get('/v1/handoffs/$id/status');
     return Status.fromJson(r.data as Map<String, dynamic>);

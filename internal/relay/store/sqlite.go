@@ -486,6 +486,72 @@ func (s *Store) ListCapsules(ctx context.Context, identity string, limit int) ([
 	return out, rows.Err()
 }
 
+// capsuleOwnerRow fetches (sender, kind) for id, enforcing "exists + is a
+// capsule + owned by owner" — the shared guard for owner-only capsule edits.
+func capsuleOwnerRow(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id, owner string) error {
+	var sender, kind string
+	err := q.QueryRowContext(ctx, `SELECT sender, kind FROM handoffs WHERE id = ?`, id).Scan(&sender, &kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if kind != string(handoffschema.KindCapsule) {
+		return ErrNotFound // not a capsule — don't leak other handoffs here
+	}
+	if sender != owner {
+		return fmt.Errorf("%w: capsule is owned by %s", ErrForbidden, sender)
+	}
+	return nil
+}
+
+// DeleteCapsule removes an owner's capsule (and, via FK cascade, its
+// attachments) from the plaza. Only capsules, only the owner.
+func (s *Store) DeleteCapsule(ctx context.Context, id, owner string) error {
+	if err := capsuleOwnerRow(ctx, s.db, id, owner); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM handoffs WHERE id = ?`, id)
+	return err
+}
+
+// UpdateCapsuleMeta edits an owner's capsule metadata in place — visibility
+// and/or summary (nil = unchanged). Only capsules, only the owner; attachment
+// bodies (persona/seed) are not touched here.
+func (s *Store) UpdateCapsuleMeta(ctx context.Context, id, owner string, visibility, summary *string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := capsuleOwnerRow(ctx, tx, id, owner); err != nil {
+		return err
+	}
+	var payload string
+	if err := tx.QueryRowContext(ctx, `SELECT payload FROM handoffs WHERE id = ?`, id).Scan(&payload); err != nil {
+		return err
+	}
+	var p handoffschema.Package
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		return fmt.Errorf("decode capsule payload: %w", err)
+	}
+	p.ApplyCapsuleEdit(visibility, summary)
+	updated, err := json.Marshal(&p)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE handoffs SET payload = ?, headline = ? WHERE id = ?`,
+		string(updated), p.Headline(), id,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // scanListItem reads one row produced by the standard ListItem column set
 // (h.id, h.sender, h.recipients, h.urgency, h.state, h.created_at,
 // h.repo_name, h.branch, h.headline, h.kind, h.bug_group_id) — recipients

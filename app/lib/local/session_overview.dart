@@ -239,6 +239,7 @@ class SessionOverviewStore extends ChangeNotifier {
     CapsuleDraft draft, {
     required String visibility,
     required String summary,
+    required List<String> skillZips,
   })?
   submitCapsuleHandler;
 
@@ -327,9 +328,11 @@ class SessionOverviewStore extends ChangeNotifier {
     CapsuleDraft draft, {
     required String visibility,
     required String summary,
+    List<String> skillZips = const [],
   }) async {
     if (submitCapsuleHandler == null) return (false, '会话总览未就绪');
-    return submitCapsuleHandler!(draft, visibility: visibility, summary: summary);
+    return submitCapsuleHandler!(draft,
+        visibility: visibility, summary: summary, skillZips: skillZips);
   }
 }
 

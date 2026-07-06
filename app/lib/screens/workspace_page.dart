@@ -1891,6 +1891,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     CapsuleDraft draft, {
     required String visibility,
     required String summary,
+    List<String> skillZips = const [],
   }) async {
     final d = draft.draftDir;
     final args = <String>['capsule', 'submit', '--source-agent', draft.sourceAgent];
@@ -1917,6 +1918,11 @@ class _WorkspacePageState extends State<WorkspacePage>
     addFlag('--origin-session', draft.originSessionId);
     if (visibility == 'public') args.add('--public'); // else defaults to 个人
     addFlag('--summary', summary);
+    for (final z in skillZips) {
+      args
+        ..add('--skill')
+        ..add(z);
+    }
 
     try {
       await Cli.run(args, workingDirectory: draft.workdir);

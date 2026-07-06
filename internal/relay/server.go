@@ -97,6 +97,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/handoffs", s.submit)
 	api.HandleFunc("GET /v1/handoffs", s.list)
 	api.HandleFunc("GET /v1/capsules", s.listCapsules)
+	api.HandleFunc("PATCH /v1/capsules/{id}", s.patchCapsule)
+	api.HandleFunc("DELETE /v1/capsules/{id}", s.deleteCapsule)
 	api.HandleFunc("GET /v1/handoffs/{id}", s.get)
 	api.HandleFunc("GET /v1/handoffs/{id}/status", s.status)
 	api.HandleFunc("GET /v1/handoffs/{id}/prompt", s.prompt)
@@ -315,6 +317,35 @@ func (s *Server) listCapsules(w http.ResponseWriter, r *http.Request) {
 		items = []handoffschema.CapsuleListItem{}
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+// deleteCapsule removes the caller's own capsule from the plaza (owner-only).
+func (s *Server) deleteCapsule(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	if err := s.Store.DeleteCapsule(r.Context(), r.PathValue("id"), identity); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// patchCapsule edits the caller's own capsule metadata — visibility / summary
+// (owner-only).
+func (s *Server) patchCapsule(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	var body struct {
+		Visibility *string `json:"visibility,omitempty"`
+		Summary    *string `json:"summary,omitempty"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.UpdateCapsuleMeta(r.Context(), r.PathValue("id"), identity, body.Visibility, body.Summary); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // publishHandoffCreated fans a handoff.created SSE event out to each of the
