@@ -8,9 +8,11 @@ import 'package:flutter/material.dart';
 import '../api/relay_client.dart';
 import '../api/todo_models.dart';
 import '../local/config.dart';
+import '../local/local_bus.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
+import '../local/todo_materialize.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_lite_editor.dart';
@@ -410,6 +412,24 @@ class TodoDetailViewState extends State<TodoDetailView> {
     if (sid == null) {
       snack(context, '恢复会话失败: ${err ?? "未知错误"}');
       return;
+    }
+    // A respawned --resume session is brand-new terminal state: even if the CLI
+    // restored the conversation history, Flutter has no signal telling "history
+    // came back" from "silently got a blank session" apart (overview.spawn only
+    // returns (sid, error)). So always re-deliver the task pointer — the
+    // materialized file is overwrite-based (reflects latest state) and the
+    // message is short, so a redundant reminder when history did restore is far
+    // cheaper than leaving the user staring at a blank session with no context.
+    final prep = await prepareTodoAssignmentText(
+      client: _client,
+      todoId: t.id,
+      fallbackTodo: t,
+      workdir: workdir,
+    );
+    if (!mounted) return;
+    final dispatchErr = overview.dispatch(LocalMsg('', sid, prep.taskText, true));
+    if (dispatchErr != null) {
+      snack(context, '会话已恢复，但投递任务说明失败: $dispatchErr');
     }
     _openSession(sid);
   }
