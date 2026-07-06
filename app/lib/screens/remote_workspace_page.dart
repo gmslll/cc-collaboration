@@ -87,12 +87,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     // A desktop file offer → prompt 接受/拒绝 (one dialog at a time).
     _c.onIncomingOffer = (_) => _pumpOffers();
     _c.connect();
+    // Publish this connection so TodosPage's 一键指派 can reach the paired
+    // desktop's sessions/roots + send a remote assign (see phoneRemoteClient).
+    phoneRemoteClient = _c;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _c.removeListener(_onClientChange);
+    if (identical(phoneRemoteClient, _c)) phoneRemoteClient = null;
     _c.dispose();
     super.dispose();
   }

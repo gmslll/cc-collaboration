@@ -15,6 +15,7 @@ import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
 import '../local/todo_store.dart';
+import '../remote/remote_client.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_lite_editor.dart';
@@ -2050,10 +2051,45 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   String? _pickedIdentity;
   late final String _selfIdentity = widget.config.identity.trim();
 
-  List<SessionCard> get _cards => widget.overviewStore.cards;
+  // On mobile there are no local sessions (overviewStore is desktop-only), so
+  // 已有会话/新建会话 instead drive the paired desktop's sessions over the WS
+  // channel. _remote is that connection (null on desktop, or before the phone's
+  // RemoteWorkspacePage published it); when present, session/project data comes
+  // from its pushed overview/roots (not the local overviewStore/config) and the
+  // two session modes dispatch via requestAssign (see _remoteAssign*).
+  RemoteClient? get _remote =>
+      widget.overviewStore.cards.isEmpty ? phoneRemoteClient : null;
+  bool get _remoteReady => _remote?.hostOnline ?? false;
+  // Offer the 已有会话/新建会话 segments when local sessions exist, or the paired
+  // desktop is online (new-session works even with zero existing sessions).
+  bool get _showSessionModes =>
+      widget.overviewStore.cards.isNotEmpty || _remoteReady;
 
-  List<ProjectCfg> get _projectsForWorkspace =>
-      projectsOf(widget.config, _workspace);
+  List<SessionCard> get _cards => widget.overviewStore.cards.isNotEmpty
+      ? widget.overviewStore.cards
+      : (_remote?.overview.values.toList() ?? const []);
+
+  // workspace / project NAME lists for the 新建会话 form — from the paired
+  // desktop's pushed roots when remote, else the local config.
+  List<String> get _workspaceNames {
+    final r = _remote;
+    if (r != null) {
+      final seen = <String>{};
+      return [
+        for (final root in r.roots)
+          if (seen.add(root.workspace)) root.workspace,
+      ];
+    }
+    return [for (final w in widget.config.workspaces) w.name];
+  }
+
+  List<String> _projectNamesFor(String? ws) {
+    final r = _remote;
+    if (r != null) {
+      return [for (final root in r.roots) if (root.workspace == ws) root.name];
+    }
+    return [for (final p in projectsOf(widget.config, ws)) p.name];
+  }
 
   // _prepareAssignment resolves the terminal text to paste for a dispatch to
   // session [sid]. It resolves the target session's workdir (polling briefly
@@ -2272,17 +2308,19 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       _existingWorkspace = first.workspace;
       _existingProject = first.project;
       _targetSid = first.sid;
-    } else {
-      // No local sessions (mobile, or a desktop with nothing open): the only
+    }
+    if (!_showSessionModes) {
+      // No sessions to dispatch to and no online desktop to drive → the only
       // assign path is 指派给成员, so force that mode and load candidates.
       _mode = 'member';
       _membersRequested = true;
       Future.microtask(_loadMembers);
     }
-    if (widget.config.workspaces.isNotEmpty) {
-      _workspace = widget.config.workspaces.first.name;
-      final projs = _projectsForWorkspace;
-      if (projs.isNotEmpty) _project = projs.first.name;
+    final wss = _workspaceNames;
+    if (wss.isNotEmpty) {
+      _workspace = wss.first;
+      final projs = _projectNamesFor(_workspace);
+      if (projs.isNotEmpty) _project = projs.first;
     }
   }
 
@@ -2443,27 +2481,86 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     if (mounted) Navigator.pop(context, true);
   }
 
+  // Remote variants (mobile): instead of dispatching to a LOCAL session, ask the
+  // paired desktop to do it — RemoteClient.requestAssign → RemoteHost.onAssignTodo
+  // → workspace_page._remoteAssignTodo materializes/dispatches/spawns/binds on
+  // its side. Returns null on success; on error keep the dialog open + snack.
+  Future<void> _remoteAssignExisting() async {
+    final r = _remote;
+    final sid = _targetSid;
+    if (r == null || sid == null) {
+      snack(context, '请选择会话');
+      return;
+    }
+    setState(() => _submitting = true);
+    final err =
+        await r.requestAssign(todoId: widget.todo.id, mode: 'existing', sid: sid);
+    if (!mounted) return;
+    if (err != null) {
+      setState(() => _submitting = false);
+      snack(context, err);
+      return;
+    }
+    Navigator.pop(context, true);
+  }
+
+  Future<void> _remoteAssignNew() async {
+    final r = _remote;
+    final ws = _workspace, proj = _project;
+    if (r == null || ws == null || proj == null) {
+      snack(context, '请选择 workspace / project');
+      return;
+    }
+    setState(() => _submitting = true);
+    final branch = _branchCtl.text.trim();
+    final err = await r.requestAssign(
+      todoId: widget.todo.id,
+      mode: 'new',
+      workspace: ws,
+      project: proj,
+      kind: _kind,
+      branch: branch.isEmpty ? null : branch,
+    );
+    if (!mounted) return;
+    if (err != null) {
+      setState(() => _submitting = false);
+      snack(context, err);
+      return;
+    }
+    Navigator.pop(context, true);
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Rebuild when the paired desktop's session list / online state changes
+    // (mobile remote mode) so the selectors + segments stay live while open.
+    final r = _remote;
+    return r == null
+        ? _buildDialog()
+        : ListenableBuilder(listenable: r, builder: (_, _) => _buildDialog());
+  }
+
+  Widget _buildDialog() {
     const spinner = SizedBox(
       width: 16,
       height: 16,
       child: CircularProgressIndicator(strokeWidth: 2),
     );
-    // With no local sessions (mobile, or a desktop with nothing open) the
-    // session segments are hidden and 指派给成员 is the only mode — initState
-    // already forced _mode='member', so the shared body below covers both.
+    // Collapse to 指派给成员 whenever the session modes are unavailable (no local
+    // sessions AND no online desktop), regardless of the last-selected _mode —
+    // on mobile the desktop can go offline mid-dialog.
+    final mode = _showSessionModes ? _mode : 'member';
     final VoidCallback? primaryAction = _submitting
         ? null
-        : _mode == 'existing'
-            ? _assignToExisting
-            : _mode == 'new'
-                ? _assignToNew
+        : mode == 'existing'
+            ? (_remote != null ? _remoteAssignExisting : _assignToExisting)
+            : mode == 'new'
+                ? (_remote != null ? _remoteAssignNew : _assignToNew)
                 : (_loadingMembers || _pickedIdentity == null)
                     ? null
                     : _assignToMember;
     return AlertDialog(
-      title: Text(_cards.isEmpty ? '指派给成员' : '一键指派'),
+      title: Text(_showSessionModes ? '一键指派' : '指派给成员'),
       content: SizedBox(
         width: 440,
         child: SingleChildScrollView(
@@ -2471,7 +2568,15 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_cards.isNotEmpty) ...[
+              if (phoneRemoteClient != null && !_remoteReady)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    '桌面离线:已有会话/新建会话需要桌面 App 在线并已配对',
+                    style: TextStyle(color: CcColors.muted, fontSize: 12),
+                  ),
+                ),
+              if (_showSessionModes) ...[
                 SegmentedButton<String>(
                   segments: const [
                     ButtonSegment(value: 'existing', label: Text('已有会话')),
@@ -2490,9 +2595,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                 ),
                 const SizedBox(height: 12),
               ],
-              if (_mode == 'existing')
+              if (mode == 'existing')
                 _existingForm()
-              else if (_mode == 'new')
+              else if (mode == 'new')
                 _newForm()
               else
                 _memberForm(),
@@ -2509,7 +2614,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           onPressed: primaryAction,
           child: _submitting
               ? spinner
-              : Text(_mode == 'member' ? '指派' : '指派并开始'),
+              : Text(mode == 'member' ? '指派' : '指派并开始'),
         ),
       ],
     );
@@ -2538,7 +2643,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         DropdownButton<String>(
           isExpanded: true,
           hint: const Text('workspace'),
-          value: _existingWorkspace,
+          // Guard against a value no longer in items — remote session lists
+          // (mobile) can change under an open dialog and a stale value asserts.
+          value: workspaces.contains(_existingWorkspace) ? _existingWorkspace : null,
           items: [
             for (final w in workspaces)
               DropdownMenuItem(value: w, child: Text(_groupLabel(w))),
@@ -2563,7 +2670,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         DropdownButton<String>(
           isExpanded: true,
           hint: const Text('project'),
-          value: _existingProject,
+          value: projects.contains(_existingProject) ? _existingProject : null,
           items: [
             for (final p in projects)
               DropdownMenuItem(value: p, child: Text(_groupLabel(p))),
@@ -2580,7 +2687,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         DropdownButton<String>(
           isExpanded: true,
           hint: const Text('会话'),
-          value: _targetSid,
+          value: sessions.any((c) => c.sid == _targetSid) ? _targetSid : null,
           items: [
             for (final c in sessions)
               DropdownMenuItem(
@@ -2601,29 +2708,35 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     );
   }
 
-  Widget _newForm() => Column(
+  Widget _newForm() {
+    // Names come from remote roots (mobile) or local config (desktop). Guard the
+    // Dropdown value against its item list — remote roots can arrive/refresh
+    // after initState set a default, and a value not in items would assert.
+    final wss = _workspaceNames;
+    final projs = _projectNamesFor(_workspace);
+    return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       DropdownButton<String>(
         isExpanded: true,
         hint: const Text('workspace'),
-        value: _workspace,
-        items: widget.config.workspaces
-            .map((w) => DropdownMenuItem(value: w.name, child: Text(w.name)))
+        value: wss.contains(_workspace) ? _workspace : null,
+        items: wss
+            .map((w) => DropdownMenuItem(value: w, child: Text(w)))
             .toList(),
         onChanged: (v) => setState(() {
           _workspace = v;
-          final projs = _projectsForWorkspace;
-          _project = projs.isEmpty ? null : projs.first.name;
+          final ps = _projectNamesFor(_workspace);
+          _project = ps.isEmpty ? null : ps.first;
         }),
       ),
       const SizedBox(height: 8),
       DropdownButton<String>(
         isExpanded: true,
         hint: const Text('project'),
-        value: _project,
-        items: _projectsForWorkspace
-            .map((p) => DropdownMenuItem(value: p.name, child: Text(p.name)))
+        value: projs.contains(_project) ? _project : null,
+        items: projs
+            .map((p) => DropdownMenuItem(value: p, child: Text(p)))
             .toList(),
         onChanged: (v) => setState(() => _project = v),
       ),
@@ -2647,7 +2760,8 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         ),
       ),
     ],
-  );
+    );
+  }
 }
 
 class _HelpText extends StatelessWidget {

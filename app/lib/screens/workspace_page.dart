@@ -28,6 +28,7 @@ import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
+import '../local/todo_materialize.dart';
 import '../local/todo_store.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
@@ -253,6 +254,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     onCloseSession: _remoteCloseSession,
     onRenameSession: _remoteRenameSession,
     onConfigAction: _remoteConfigAction,
+    onAssignTodo: _remoteAssignTodo,
   );
   bool _remoteWasConnected = false;
   int _remoteLastClients = 0;
@@ -1725,6 +1727,103 @@ class _WorkspacePageState extends State<WorkspacePage>
         }
       }
     }
+  }
+
+  // _remoteAssignTodo runs a phone's remote 一键指派 request on this desktop
+  // (RemoteHost.onAssignTodo). The phone has no local session / filesystem /
+  // synchronous spawn, so it delegates: we do exactly what the local assign
+  // dialog's _assignToExisting / _assignToNew do — materialize the todo under the
+  // target session's workdir, dispatch it there (existing sid, or a freshly
+  // spawned session), then bind the todo's assignee + resume trio. Returns null
+  // on success or a user-facing error the phone shows.
+  Future<String?> _remoteAssignTodo(Map<String, dynamic> req) async {
+    final todoId = (req['todoId'] as String?)?.trim() ?? '';
+    if (todoId.isEmpty) return '缺少 todoId';
+    final Todo fallback;
+    try {
+      fallback = await widget.client.todo(todoId);
+    } catch (e) {
+      return '读取待办失败: ${errorText(e)}';
+    }
+
+    final String sid;
+    var waitForAgentId = false;
+    if ((req['mode'] as String?) == 'new') {
+      final (spawnedSid, err) = await _spawnForDispatch(
+        workspace: (req['workspace'] as String?) ?? '',
+        project: (req['project'] as String?) ?? '',
+        kind: (req['kind'] as String?) ?? 'claude',
+        newWorktreeBranch: req['branch'] as String?,
+      );
+      if (spawnedSid == null) return '新建会话失败: ${err ?? "未知错误"}';
+      sid = spawnedSid;
+      waitForAgentId = true; // codex mints its id async — poll before binding
+    } else {
+      sid = (req['sid'] as String?) ?? '';
+      if (sid.isEmpty) return '缺少目标会话';
+      if (sessionById(sid) == null) return '目标会话不存在(可能已关闭)';
+    }
+
+    // Resolve the target session's workdir — a just-spawned card may not carry it
+    // the instant spawn returns, so poll briefly (mirrors _prepareAssignment).
+    var card = _remoteCard(sid);
+    for (var i = 0; i < 5 && (card?.workdir ?? '').isEmpty; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      card = _remoteCard(sid);
+    }
+    final prep = await prepareTodoAssignmentText(
+      client: widget.client,
+      todoId: todoId,
+      fallbackTodo: fallback,
+      workdir: card?.workdir ?? '',
+    );
+    final dispatchErr =
+        deliverLocalMessage(LocalMsg('', sid, prep.taskText, true));
+    if (dispatchErr != null) return '投递失败: $dispatchErr';
+
+    // Bind assignee + resume trio, best-effort (mirrors _syncAssignVisibility).
+    card = _remoteCard(sid);
+    if (waitForAgentId && (card?.agentSessionId ?? '').isEmpty) {
+      for (var i = 0; i < 15 && (card?.agentSessionId ?? '').isEmpty; i++) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        card = _remoteCard(sid);
+      }
+    }
+    try {
+      await widget.client.assignTodo(
+        todoId,
+        assigneeIdentity: _cfg.identity,
+        assigneeSessionId: sid,
+        assigneeSessionLabel: card?.label ?? '',
+        assigneeAgentSessionId: card?.agentSessionId,
+        assigneeWorkdir: card?.workdir,
+        assigneeAgentKind: card == null || card.agentKind.isEmpty
+            ? null
+            : (card.isSupervisor
+                ? 'supervisor:${card.agentKind}'
+                : card.agentKind),
+      );
+      await widget.client.updateTodo(
+        todoId,
+        workspaceName: card?.workspace ?? '',
+        repoName: card?.project ?? '',
+      );
+    } catch (_) {}
+    // 指派 = 开始处理: bump an unstarted todo to 进行中.
+    if (const {TodoStatus.triage, TodoStatus.backlog, TodoStatus.todo}
+        .contains(prep.full.status)) {
+      try {
+        await widget.client.setTodoStatus(todoId, TodoStatus.inProgress);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  SessionCard? _remoteCard(String sid) {
+    for (final c in widget.overviewStore.cards) {
+      if (c.sid == sid) return c;
+    }
+    return null;
   }
 
   // _captureSessionCapsule backs SessionOverviewStore.captureCapsuleHandler: it

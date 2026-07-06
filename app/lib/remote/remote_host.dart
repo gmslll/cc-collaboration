@@ -105,6 +105,12 @@ class RemoteHost extends RemoteChannel {
   // Cli command, reload config, then call broadcastRoots. Null = read-only host.
   final Future<void> Function(String action, Map<String, dynamic> args)?
   onConfigAction;
+  // onAssignTodo runs a phone's remote todo-assign request on this desktop:
+  // dispatch the todo to an existing local session, or spawn a new one and
+  // dispatch — then bind the todo (assignee + session resume trio). The phone
+  // has no local session/filesystem to do this itself, so it delegates here.
+  // Returns null on success or a human-readable error. Null on read-only hosts.
+  final Future<String?> Function(Map<String, dynamic> req)? onAssignTodo;
 
   RemoteHost({
     required super.relayUrl,
@@ -116,6 +122,7 @@ class RemoteHost extends RemoteChannel {
     this.onCloseSession,
     this.onRenameSession,
     this.onConfigAction,
+    this.onAssignTodo,
   }) : super(role: 'host');
 
   int _clients = 0;
@@ -406,6 +413,22 @@ class RemoteHost extends RemoteChannel {
           (f['agent'] as String?) ?? 'claude',
           f['workdir'] as String?,
         );
+      case 'todo.assign':
+        // The phone asks this desktop to assign a todo to an existing/new local
+        // session (it can't dispatch/spawn/materialize itself). Run it via
+        // onAssignTodo and reply ok/err directed back to the requesting client.
+        final from = (f['from'] as num?)?.toInt();
+        if (from != null) {
+          final todoId = (f['todoId'] as String?) ?? '';
+          (onAssignTodo?.call(f) ??
+                  Future.value('桌面版不支持远程指派,请升级桌面 App'))
+              .then((err) => send({
+                    't': err == null ? 'todo.assign.ok' : 'todo.assign.err',
+                    'to': from,
+                    'todoId': todoId,
+                    'msg': ?err,
+                  }));
+        }
       case 'session.close':
         final sid = f['sid'] as String?;
         if (sid != null) onCloseSession?.call(sid);

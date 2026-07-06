@@ -45,6 +45,14 @@ class RemoteSession {
   RemoteSession(this.sid, this.title, this.workdir, this.agent);
 }
 
+// phoneRemoteClient is the phone's single live RemoteClient (its WS connection to
+// the paired desktop host), published here by RemoteWorkspacePage — which owns
+// its lifecycle and is always mounted in the mobile IndexedStack — so a sibling
+// page (TodosPage's 一键指派) can reach the desktop's live sessions/roots and
+// send a remote assign, without prop-drilling the instance through main.dart.
+// Null on desktop (no RemoteWorkspacePage) and before the page first builds.
+RemoteClient? phoneRemoteClient;
+
 class RemoteRootInfo {
   final String name;
   final String path;
@@ -584,6 +592,12 @@ class RemoteClient extends RemoteChannel {
         }
         _setHostOnline(true);
         notifyListeners();
+      case 'todo.assign.ok':
+        _assignWaiters.remove(f['todoId'] as String?)?.complete(null);
+      case 'todo.assign.err':
+        _assignWaiters
+            .remove(f['todoId'] as String?)
+            ?.complete((f['msg'] as String?) ?? '远程指派失败');
       case 'overview':
         final ov = <String, SessionCard>{};
         for (final m in (f['items'] as List? ?? [])) {
@@ -1071,6 +1085,44 @@ class RemoteClient extends RemoteChannel {
   void closeSession(String sid) => send({'t': 'session.close', 'sid': sid});
   void renameSession(String sid, String name) =>
       send({'t': 'session.rename', 'sid': sid, 'name': name});
+
+  // requestAssign asks the paired desktop host to assign [todoId] to one of its
+  // local sessions — mode 'existing' (dispatch to [sid]) or 'new' (spawn in
+  // [workspace]/[project] with agent [kind], optional new-worktree [branch]).
+  // The host does the materialize/dispatch/spawn/bind locally (the phone has no
+  // local session or filesystem) and replies todo.assign.ok/err, completing the
+  // returned future: null on success, an error string otherwise. Times out if
+  // the host never answers (old desktop version / dropped link).
+  final Map<String, Completer<String?>> _assignWaiters = {};
+
+  Future<String?> requestAssign({
+    required String todoId,
+    required String mode, // 'existing' | 'new'
+    String? sid,
+    String? workspace,
+    String? project,
+    String? kind,
+    String? branch,
+  }) {
+    // Supersede any in-flight request for the same todo.
+    _assignWaiters.remove(todoId)?.complete('已被新的指派请求取代');
+    final c = Completer<String?>();
+    _assignWaiters[todoId] = c;
+    send({
+      't': 'todo.assign',
+      'todoId': todoId,
+      'mode': mode,
+      'sid': ?sid,
+      'workspace': ?workspace,
+      'project': ?project,
+      'kind': ?kind,
+      if (branch != null && branch.isNotEmpty) 'branch': branch,
+    });
+    Timer(const Duration(seconds: 30), () {
+      _assignWaiters.remove(todoId)?.complete('桌面无响应(请确认桌面 App 在线)');
+    });
+    return c.future;
+  }
 
   void openDir(String path) {
     fsLoading = true;
