@@ -1343,11 +1343,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
                       color: CcColors.bg,
                       child: IndexedStack(
                         index: contentIdx,
-                        children: paneSessions.map((s) {
+                        children: paneSessions.indexed.map((r) {
+                          final (i, s) = r;
                           final g = sendGroupsFor(s.id);
                           return TerminalPane(
                             key: ValueKey(s),
                             session: s,
+                            active: i == contentIdx,
                             same: g.same,
                             others: g.others,
                             onSendToPeer: _sendToPeer,
@@ -1381,11 +1383,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       color: CcColors.bg,
       child: IndexedStack(
         index: idx,
-        children: terms.map((s) {
+        children: terms.indexed.map((r) {
+          final (i, s) = r;
           final g = sendGroupsFor(s.id);
           return TerminalPane(
             key: ValueKey(s),
             session: s,
+            active: i == idx,
             same: g.same,
             others: g.others,
             onSendToPeer: _sendToPeer,
@@ -1501,11 +1505,13 @@ class TerminalDeck extends StatelessWidget {
             color: CcColors.bg,
             child: IndexedStack(
               index: idx,
-              children: terms.map((s) {
+              children: terms.indexed.map((r) {
+                final (i, s) = r;
                 final g = groupsFor?.call(s.id);
                 return TerminalPane(
                   key: ValueKey(s),
                   session: s,
+                  active: i == idx,
                   same: g?.same ?? const [],
                   others: g?.others ?? const [],
                   onSendToPeer: onSendToPeer,

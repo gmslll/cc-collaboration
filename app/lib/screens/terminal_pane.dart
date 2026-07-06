@@ -14,6 +14,7 @@ import '../local/agent_resolver.dart';
 import '../local/agent_transcript.dart';
 import '../local/agent_usage.dart';
 import '../local/cli.dart';
+import '../local/crash_log.dart';
 import '../local/local_bus.dart';
 import '../local/path_utils.dart';
 import '../local/platform.dart';
@@ -688,6 +689,9 @@ class TerminalSession {
     final Pty pty;
     try {
       final remoteSize = _remoteSize;
+      // Breadcrumb: the last line in crash.log before a silent Windows 闪退
+      // localizes the crash to the native ConPTY spawn (see crash_log.dart).
+      logBreadcrumb('pty.spawn $id agent="$agent" shell="$shell"');
       pty = Pty.start(
         shell,
         arguments: args,
@@ -728,6 +732,7 @@ class TerminalSession {
           _noteBootOutput(); // launch-settle detector → flips the session to ready
         });
     pty.exitCode.then((code) {
+      logBreadcrumb('pty.exit $id code=$code');
       // Non-zero exits in red so a process that dies on startup isn't mistaken
       // for an empty terminal.
       final exitMessage =
@@ -1131,6 +1136,12 @@ class TerminalPane extends StatefulWidget {
   // onSendToOnline(text): hand the selection to the host's "发送到在线用户" flow
   // (pick a remote user + their session). Null hides that menu entry.
   final void Function(String text)? onSendToOnline;
+  // active = this pane is the one currently shown by its IndexedStack (vs an
+  // offstage sibling kept alive but not drawn). Only consumed on Windows, where
+  // it drives the IME layer to drop its text-input connection when offstage —
+  // see _WindowsImeInputLayer. Defaults true so non-IndexedStack callers behave
+  // as before.
+  final bool active;
   const TerminalPane({
     super.key,
     required this.session,
@@ -1139,6 +1150,7 @@ class TerminalPane extends StatefulWidget {
     this.onSendToPeer,
     this.onInterjectToPeer,
     this.onSendToOnline,
+    this.active = true,
   });
 
   @override
@@ -1390,7 +1402,11 @@ class _TerminalPaneState extends State<TerminalPane> {
     // — which the engine DOES feed IME — to capture typing + composition and forward
     // it to the PTY, while the TerminalView underneath keeps display/scroll/selection.
     final base = Platform.isWindows
-        ? _WindowsImeInputLayer(session: widget.session, child: view)
+        ? _WindowsImeInputLayer(
+            session: widget.session,
+            active: widget.active,
+            child: view,
+          )
         : view;
     // Agent sessions get a compact usage chip in the top-right corner (model ·
     // context% · tokens · est. cost). IgnorePointer so it never steals selection.
@@ -1467,7 +1483,17 @@ class _UsageChip extends StatelessWidget {
 class _WindowsImeInputLayer extends StatefulWidget {
   final TerminalSession session;
   final Widget child;
-  const _WindowsImeInputLayer({required this.session, required this.child});
+  // active = this pane is the currently-focused one. When it goes false the
+  // hidden EditableText releases its Windows TSF/IME connection (see
+  // didUpdateWidget) so at most one live text-input connection exists at a time
+  // — an offstage-but-still-connected EditableText is the Flutter Windows
+  // engine's most crash-prone state and the suspected 开会话闪退 trigger.
+  final bool active;
+  const _WindowsImeInputLayer({
+    required this.session,
+    required this.child,
+    required this.active,
+  });
 
   @override
   State<_WindowsImeInputLayer> createState() => _WindowsImeInputLayerState();
@@ -1499,10 +1525,32 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
   void initState() {
     super.initState();
     _ctrl.addListener(_onChanged);
+    logBreadcrumb('ime.init ${widget.session.id} active=${widget.active}');
+  }
+
+  // When this pane stops being the active one, drop the EditableText's TSF/IME
+  // connection (unfocus) so no offstage input stays connected; refocus when it
+  // becomes active again so the user can type immediately (post-frame — the
+  // pane isn't laid out yet at didUpdateWidget time). This keeps exactly one
+  // live text-input connection across all open sessions.
+  @override
+  void didUpdateWidget(_WindowsImeInputLayer old) {
+    super.didUpdateWidget(old);
+    if (old.active == widget.active) return;
+    if (widget.active) {
+      logBreadcrumb('ime.activate ${widget.session.id}');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.active) _focus.requestFocus();
+      });
+    } else {
+      logBreadcrumb('ime.deactivate ${widget.session.id}');
+      _focus.unfocus();
+    }
   }
 
   @override
   void dispose() {
+    logBreadcrumb('ime.dispose ${widget.session.id}');
     _ctrl.dispose();
     _focus.dispose();
     super.dispose();

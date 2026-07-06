@@ -180,6 +180,7 @@ static DWORD WINAPI read_loop(LPVOID arg)
         Dart_PostCObject_DL(options->port, &result);
     }
 
+    free(options);
     return 0;
 }
 
@@ -226,6 +227,7 @@ static DWORD WINAPI wait_exit_thread(LPVOID arg)
 
     Dart_PostInteger_DL(options->port, exit_code);
 
+    free(options);
     return 0;
 }
 
@@ -381,9 +383,22 @@ FFI_PLUGIN_EXPORT PtyHandle *pty_create(PtyOptions *options)
         return NULL;
     }
 
-    // free(startupInfo.lpAttributeList);
+    // CreatePseudoConsole duplicated the pipe ends it needs (inputReadSide for
+    // the child's stdin, outputWriteSide for its stdout), so the parent closes
+    // its own copies. Crucially, keeping outputWriteSide open in the parent
+    // means the output pipe never reaches EOF after the child exits, so the
+    // read thread lingers forever as a zombie still holding its Dart port —
+    // handle/thread pressure that accumulates across session open/close cycles.
+    // (The child keeps writing through the pseudoconsole's own duplicate, so
+    // terminal output is unaffected — verify this on Windows.)
+    CloseHandle(inputReadSide);
+    CloseHandle(outputWriteSide);
 
-    // CloseHandle(processInfo.hThread);
+    // Release the proc-thread attribute list and the unused child-thread handle
+    // instead of leaking one of each per spawn.
+    DeleteProcThreadAttributeList(startupInfo.lpAttributeList);
+    free(startupInfo.lpAttributeList);
+    CloseHandle(processInfo.hThread);
 
     HANDLE mutex = CreateSemaphore(
         NULL, // default security attributes

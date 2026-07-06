@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'api/models.dart';
 import 'api/relay_client.dart';
 import 'local/config.dart';
+import 'local/crash_log.dart';
 import 'local/prefs.dart';
 import 'local/session.dart';
 import 'local/session_overview.dart';
@@ -25,16 +27,25 @@ import 'theme.dart';
 import 'ui_scale.dart';
 import 'widgets.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // Any uncaught build/layout/paint error shows a readable panel instead of
-  // the release default — a silent grey box that fills the whole window. This
-  // is the safety net that turns a future regression (like the _me! one that
-  // grey-screened the app on a transient /v1/me failure) into a legible error.
-  ErrorWidget.builder = (details) => _ErrorPanel(details);
-  await Prefs.load();
-  Notifications.init();
-  runApp(const CcApp());
+void main() {
+  // runZonedGuarded + installCrashHandlers() route uncaught Dart errors (and
+  // lifecycle breadcrumbs) into <appSupport>/crash.log — see crash_log.dart.
+  // On Windows the app can vanish outright on a NATIVE crash (ConPTY / IME) that
+  // no Dart handler catches, so the value is the breadcrumb trail before the
+  // process dies. ensureInitialized() must run inside the same zone as runApp.
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    await initCrashLog();
+    installCrashHandlers();
+    // Any uncaught build/layout/paint error shows a readable panel instead of
+    // the release default — a silent grey box that fills the whole window. This
+    // is the safety net that turns a future regression (like the _me! one that
+    // grey-screened the app on a transient /v1/me failure) into a legible error.
+    ErrorWidget.builder = (details) => _ErrorPanel(details);
+    await Prefs.load();
+    Notifications.init();
+    runApp(const CcApp());
+  }, (error, stack) => logCrash(error, stack));
 }
 
 // Release-safe replacement for Flutter's default grey ErrorWidget. Kept
