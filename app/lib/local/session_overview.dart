@@ -222,6 +222,40 @@ class SessionOverviewStore extends ChangeNotifier {
   })?
   spawnHandler;
 
+  // captureCapsuleHandler / submitCapsuleHandler back the session card's "打成
+  // 胶囊" action. Split in two so the config/relay-dependent work stays in
+  // WorkspacePage (capture the transcript + distill; shell `cc-handoff capsule
+  // submit`) while the review/edit dialog lives in the overview page.
+  // captureCapsuleHandler freezes the session into a scratch draft dir (returns
+  // a CapsuleDraft); the user reviews/edits persona/seed; submitCapsuleHandler
+  // ships it. preferSelfDistill is the user's opt-in to have the LIVE session
+  // distill itself (only honored when it's also idle — see chooseDistillStrategy).
+  Future<(CapsuleDraft? draft, String? error)> Function(
+    SessionCard card, {
+    required bool preferSelfDistill,
+  })?
+  captureCapsuleHandler;
+  Future<(bool ok, String? error)> Function(
+    CapsuleDraft draft, {
+    required String visibility,
+    required String summary,
+  })?
+  submitCapsuleHandler;
+
+  // capsuleInFlight tracks sessions whose capsule is currently being captured/
+  // distilled, so the UI debounces repeat "打成胶囊" clicks and can show a busy
+  // state on the card. Mutated only through the mark/clear helpers so listeners
+  // (the overview cards) rebuild.
+  final Set<String> capsuleInFlight = {};
+  bool isCapsuleInFlight(String sid) => capsuleInFlight.contains(sid);
+  void markCapsuleInFlight(String sid) {
+    if (capsuleInFlight.add(sid)) notifyListeners();
+  }
+
+  void clearCapsuleInFlight(String sid) {
+    if (capsuleInFlight.remove(sid)) notifyListeners();
+  }
+
   void publish(List<SessionCard> c) {
     cards = c;
     notifyListeners();
@@ -274,4 +308,50 @@ class SessionOverviewStore extends ChangeNotifier {
       workdir: workdir,
     );
   }
+
+  // captureCapsule freezes [card]'s context into a draft (transcript + distilled
+  // persona/seed) for review. Returns (draft, null) or (null, error); the
+  // '会话总览未就绪' error covers surfaces with no local WorkspacePage (mobile).
+  Future<(CapsuleDraft?, String?)> captureCapsule(
+    SessionCard card, {
+    required bool preferSelfDistill,
+  }) async {
+    if (captureCapsuleHandler == null) return (null, '会话总览未就绪');
+    return captureCapsuleHandler!(card, preferSelfDistill: preferSelfDistill);
+  }
+
+  // submitCapsule ships a (possibly user-edited) capsule draft to the plaza with
+  // a visibility of 'private' (个人 — only the owner) or 'public' (公开 — visible
+  // to the team via the plaza). Returns (true, null) or (false, error).
+  Future<(bool, String?)> submitCapsule(
+    CapsuleDraft draft, {
+    required String visibility,
+    required String summary,
+  }) async {
+    if (submitCapsuleHandler == null) return (false, '会话总览未就绪');
+    return submitCapsuleHandler!(draft, visibility: visibility, summary: summary);
+  }
+}
+
+// CapsuleDraft is the output of a capture+distill pass: a scratch dir holding
+// the capsule payloads (transcript.jsonl/.txt, and — when distill succeeded —
+// persona.md/seed.md) plus the metadata the submit step needs. The review
+// dialog lets the user edit persona/seed in place before submitCapsule ships it.
+class CapsuleDraft {
+  final String draftDir;
+  final String sourceAgent; // 'claude' | 'codex'
+  final String? originSessionId;
+  final String workdir;
+  final bool hasTranscript;
+  final bool hasPersona;
+  final String label; // source session label, for a default summary
+  const CapsuleDraft({
+    required this.draftDir,
+    required this.sourceAgent,
+    required this.originSessionId,
+    required this.workdir,
+    required this.hasTranscript,
+    required this.hasPersona,
+    required this.label,
+  });
 }

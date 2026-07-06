@@ -32,6 +32,15 @@ class RelayClient {
     return Package.fromJson(r.data as Map<String, dynamic>);
   }
 
+  // capsules lists the plaza: every public capsule + the caller's own private
+  // ones, newest first.
+  Future<List<CapsuleListItem>> capsules() async {
+    final r = await _dio.get('/v1/capsules');
+    return _asList(r.data, 'capsules')
+        .map((e) => CapsuleListItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<Status> status(String id) async {
     final r = await _dio.get('/v1/handoffs/$id/status');
     return Status.fromJson(r.data as Map<String, dynamic>);

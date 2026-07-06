@@ -1,0 +1,255 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+// Capsule "distill": turn a working session into two reusable artifacts —
+//   persona.md : a distilled role (② the durable, reusable job definition)
+//   seed.md    : a compacted context summary (opening prompt for "continue this")
+// The hybrid policy (user's decision): when the source session is IDLE and the
+// user opted in, ask the LIVE session to distill itself (it knows its own
+// context best); otherwise run a HEADLESS one-shot agent over the neutral
+// transcript. Either way the drafts land in a dir the user reviews/edits before
+// the capsule is submitted.
+//
+// Process spawning and live-session delivery are injected (ProcRunner /
+// deliverToSession) so the orchestration is unit-testable; the real adapters
+// (systemProcRunner + the bus delivery) live in the wiring layer and get
+// validated by running the app. File names match the Go reserved capsule
+// constants (handoffschema.CapsulePersonaName / CapsuleSeedName).
+
+const String _personaFileName = 'persona.md';
+const String _seedFileName = 'seed.md';
+const String _doneMarker = 'CAPSULE_DISTILL_DONE';
+
+/// How a capsule's persona/seed get produced.
+enum DistillStrategy { selfDistill, offline }
+
+/// chooseDistillStrategy implements the hybrid policy: self-distill only when
+/// the source session is idle AND the user opted into it; otherwise headless.
+DistillStrategy chooseDistillStrategy({
+  required bool sessionIdle,
+  required bool userWantsSelf,
+}) =>
+    (sessionIdle && userWantsSelf)
+        ? DistillStrategy.selfDistill
+        : DistillStrategy.offline;
+
+/// ProcOutcome is the injected process runner's result.
+class ProcOutcome {
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+  const ProcOutcome(this.exitCode, this.stdout, this.stderr);
+}
+
+typedef ProcRunner = Future<ProcOutcome> Function(
+  String exe,
+  List<String> args, {
+  String? stdin,
+});
+
+/// systemProcRunner is the real ProcRunner (used by the wiring layer). Spawns
+/// [exe] with [args], optionally piping [stdin], and collects stdout/stderr.
+Future<ProcOutcome> systemProcRunner(
+  String exe,
+  List<String> args, {
+  String? stdin,
+}) async {
+  final p = await Process.start(exe, args, runInShell: false);
+  if (stdin != null) {
+    p.stdin.write(stdin);
+    await p.stdin.close();
+  }
+  final out = await p.stdout.transform(utf8.decoder).join();
+  final err = await p.stderr.transform(utf8.decoder).join();
+  final code = await p.exitCode;
+  return ProcOutcome(code, out, err);
+}
+
+/// DistillOutcome reports what happened so the caller can tell the user which
+/// path ran and which artifacts to open for review.
+class DistillOutcome {
+  final DistillStrategy strategy;
+  final bool personaWritten;
+  final bool seedWritten;
+
+  /// fellBack is true when self-distill was attempted but the live session
+  /// didn't deliver in time, so we fell back to the headless path.
+  final bool fellBack;
+
+  const DistillOutcome({
+    required this.strategy,
+    required this.personaWritten,
+    required this.seedWritten,
+    this.fellBack = false,
+  });
+}
+
+/// selfDistillPrompt asks the LIVE source session to distill itself into the two
+/// draft files then print [_doneMarker]. It has repo + tool access, so it writes
+/// the files directly.
+String selfDistillPrompt({
+  required String personaPath,
+  required String seedPath,
+}) =>
+    '''你正在被「打成一个专职会话胶囊」。请把【当前这个会话】蒸馏成两份可复用的资产,用你的文件写入工具写出来:
+
+1. 写 `$personaPath` —— 一个「专职角色」定义(给未来一个干净的新会话当 system 指令):
+   - 这个会话专门在干的那类活是什么(一句话职责)
+   - 必须遵守的规矩 / 约束 / 踩过的坑(要点列表)
+   - 可复用的关键路径 / 命令 / 领域知识
+   不要写某次对话的流水账,要写「下次干这类活的人需要知道的、稳定可复用的东西」。
+
+2. 写 `$seedPath` —— 一段压缩的上下文摘要(有人想「接着这个会话继续干」时当开场白):
+   - 目标 / 已完成 / 待办 / 当前状态
+   - 关键决策及其原因
+   比 persona 更贴当前进度,但仍是摘要不是逐字。
+
+两个文件都写完后,**只输出一行**:$_doneMarker''';
+
+/// offlinePersonaPrompt drives a HEADLESS agent over [transcript]: distill the
+/// conversation into the reusable role, emitting ONLY the persona markdown.
+String offlinePersonaPrompt(String transcript) =>
+    '''下面是一段会话的完整转录。把它蒸馏成一个可复用的「专职角色」定义(markdown),给未来一个干净的新会话当 system 指令:一句话职责 + 必须遵守的规矩/坑 + 可复用的关键路径/命令/领域知识。不要流水账,只要下次干这类活的人需要的、稳定可复用的东西。**只输出 persona 的 markdown 正文,不要任何前后缀说明。**
+
+转录:
+---
+$transcript''';
+
+/// offlineSeedPrompt drives a HEADLESS agent over [transcript]: compress it into
+/// a context seed, emitting ONLY the summary markdown.
+String offlineSeedPrompt(String transcript) =>
+    '''下面是一段会话的完整转录。压缩成一段「上下文摘要」(markdown),当有人想接着这个会话继续干时当开场白:目标/已完成/待办/当前状态 + 关键决策及原因。是摘要不是逐字。**只输出摘要正文,不要任何前后缀说明。**
+
+转录:
+---
+$transcript''';
+
+/// distillCapsule runs the hybrid policy and writes persona.md / seed.md into
+/// [draftDir] for the user to review before submit.
+Future<DistillOutcome> distillCapsule({
+  required String agentKind,
+  required String headlessExe,
+  required String draftDir,
+  required String transcriptText,
+  required bool sessionIdle,
+  required bool userWantsSelf,
+  required Future<bool> Function(String prompt) deliverToSession,
+  required ProcRunner runProc,
+  Duration selfTimeout = const Duration(minutes: 3),
+  Duration selfPoll = const Duration(seconds: 2),
+}) async {
+  await Directory(draftDir).create(recursive: true);
+  final personaFile = File('$draftDir/$_personaFileName');
+  final seedFile = File('$draftDir/$_seedFileName');
+
+  final strategy =
+      chooseDistillStrategy(sessionIdle: sessionIdle, userWantsSelf: userWantsSelf);
+
+  if (strategy == DistillStrategy.selfDistill) {
+    final ok = await _runSelfDistill(
+      personaFile: personaFile,
+      seedPath: seedFile.path,
+      deliverToSession: deliverToSession,
+      timeout: selfTimeout,
+      poll: selfPoll,
+    );
+    if (ok) {
+      return DistillOutcome(
+        strategy: DistillStrategy.selfDistill,
+        personaWritten: personaFile.existsSync(),
+        seedWritten: seedFile.existsSync(),
+      );
+    }
+    // The live session didn't deliver in time — fall through to headless so the
+    // user still gets drafts to review.
+  }
+
+  await runOfflineDistill(
+    agentKind: agentKind,
+    headlessExe: headlessExe,
+    draftDir: draftDir,
+    transcriptText: transcriptText,
+    runProc: runProc,
+  );
+  return DistillOutcome(
+    strategy: DistillStrategy.offline,
+    personaWritten: personaFile.existsSync(),
+    seedWritten: seedFile.existsSync(),
+    fellBack: strategy == DistillStrategy.selfDistill,
+  );
+}
+
+// _runSelfDistill delivers the distill prompt to the live session, then polls
+// for persona.md to appear (non-empty) within [timeout]. persona is the ②
+// must-have; seed is best-effort and may or may not land.
+Future<bool> _runSelfDistill({
+  required File personaFile,
+  required String seedPath,
+  required Future<bool> Function(String prompt) deliverToSession,
+  required Duration timeout,
+  required Duration poll,
+}) async {
+  final delivered = await deliverToSession(
+    selfDistillPrompt(personaPath: personaFile.path, seedPath: seedPath),
+  );
+  if (!delivered) return false;
+  final start = DateTime.now();
+  while (DateTime.now().difference(start) < timeout) {
+    if (await personaFile.exists() && (await personaFile.length()) > 0) {
+      return true;
+    }
+    await Future<void>.delayed(poll);
+  }
+  return false;
+}
+
+/// runOfflineDistill produces the drafts with two headless one-shot calls (one
+/// per artifact, so each output stays clean and bounded) over the neutral
+/// transcript. The two calls are independent, so they run concurrently — the
+/// interactive path's biggest wall-clock cost is these LLM round-trips. persona
+/// is required; seed is best-effort. [headlessExe] is the resolved agent
+/// executable (see AgentResolver — a bare name is unreliable under a GUI's
+/// minimal PATH). Returns true when at least the persona was written.
+Future<bool> runOfflineDistill({
+  required String agentKind,
+  required String headlessExe,
+  required String draftDir,
+  required String transcriptText,
+  required ProcRunner runProc,
+}) async {
+  final results = await Future.wait([
+    _oneShot(headlessExe, agentKind, offlinePersonaPrompt(transcriptText), runProc),
+    _oneShot(headlessExe, agentKind, offlineSeedPrompt(transcriptText), runProc),
+  ]);
+  final persona = results[0];
+  final seed = results[1];
+  if (persona != null) {
+    await File('$draftDir/$_personaFileName').writeAsString(persona);
+  }
+  if (seed != null) {
+    await File('$draftDir/$_seedFileName').writeAsString(seed);
+  }
+  return persona != null;
+}
+
+// _oneShot runs a single headless prompt and returns trimmed stdout, or null on
+// non-zero exit / empty output. The transcript is embedded in [prompt]; very
+// large transcripts should be capped at capture time (captureCapsuleTranscript
+// maxTextChars) since it rides as a CLI arg.
+Future<String?> _oneShot(
+  String exe,
+  String agentKind,
+  String prompt,
+  ProcRunner runProc,
+) async {
+  final r = await runProc(exe, _headlessArgs(agentKind, prompt));
+  if (r.exitCode != 0) return null;
+  final out = r.stdout.trim();
+  return out.isEmpty ? null : out;
+}
+
+// _headlessArgs is the non-interactive one-shot argument list for an agent kind
+// (the executable itself is resolved by the caller via AgentResolver).
+List<String> _headlessArgs(String agentKind, String prompt) =>
+    agentKind == 'codex' ? ['exec', prompt] : ['-p', prompt];

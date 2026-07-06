@@ -23,6 +23,26 @@ class ListItem {
         createdAt = _t(j['created_at']);
 }
 
+// CapsuleListItem is one plaza row (GET /v1/capsules) — mirrors
+// handoffschema.CapsuleListItem.
+class CapsuleListItem {
+  final String id, owner, visibility, sourceAgent, originSessionId, headline, repoName;
+  final bool hasTranscript, hasPersona;
+  final DateTime createdAt;
+
+  CapsuleListItem.fromJson(Map<String, dynamic> j)
+      : id = _s(j['id']),
+        owner = _s(j['owner']),
+        visibility = _s(j['visibility']), // server normalizes (never empty)
+        sourceAgent = _s(j['source_agent']),
+        originSessionId = _s(j['origin_session_id']),
+        headline = _s(j['headline']),
+        repoName = _s(j['repo_name']),
+        hasTranscript = j['has_transcript'] == true,
+        hasPersona = j['has_persona'] == true,
+        createdAt = _t(j['created_at']);
+}
+
 class Repo {
   final String name, branch;
   Repo.fromJson(Map<String, dynamic>? j)

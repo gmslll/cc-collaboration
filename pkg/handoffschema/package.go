@@ -32,14 +32,60 @@ const (
 // summary describes what's missing and why. "bug" is a tester-originated
 // report sent to one or both engineering sides simultaneously, with a
 // decision tree at pickup time (fix it / reassign to the other side / pull
-// the other side into the discussion).
+// the other side into the discussion). "capsule" is a frozen session context
+// snapshot shared to a team (relay Project): the payload carries a session's
+// transcript and/or a distilled role so a teammate can launch a specialized
+// session from it — the Capsule field describes which forms are present.
 type Kind string
 
 const (
 	KindDelivery Kind = "delivery"
 	KindRequest  Kind = "request"
 	KindBug      Kind = "bug"
+	KindCapsule  Kind = "capsule"
 )
+
+// Reserved attachment names for KindCapsule payloads. The bytes ride through
+// the ordinary Package.Attachments channel (upload/download + sha256 integrity);
+// these constants let the builder, materializer and receiver agree on the slot
+// each payload lands in. Kept here in handoffschema (no deps) so both the
+// handoff builder and the inbox materializer can reference them without a cycle.
+const (
+	// CapsuleTranscriptJSONLName is the raw source-session log (claude .jsonl /
+	// codex rollout). Only usable for a native --resume when the receiver
+	// launches the SAME tool on a compatible version.
+	CapsuleTranscriptJSONLName = "transcript.jsonl"
+	// CapsuleTranscriptTextName is the neutral text rendering of the same log,
+	// portable across tools/machines as a seed prompt (claude↔codex).
+	CapsuleTranscriptTextName = "transcript.txt"
+	// CapsulePersonaName is the distilled reusable role (tool-agnostic markdown).
+	CapsulePersonaName = "persona.md"
+	// CapsuleSeedName is a compacted context summary, the fallback seed when the
+	// full neutral transcript is too long.
+	CapsuleSeedName = "seed.md"
+)
+
+// CapsuleVisibility controls who can see a capsule in the plaza. Default
+// (empty) is treated as private.
+type CapsuleVisibility = string
+
+const (
+	// CapsulePrivate (个人) — only the owner sees it in the plaza.
+	CapsulePrivate CapsuleVisibility = "private"
+	// CapsulePublic (公开) — visible to the whole team via the plaza.
+	CapsulePublic CapsuleVisibility = "public"
+)
+
+// IsReservedCapsuleAttachment reports whether name is one of the structural
+// capsule payload slots (rendered specially, not listed in the generic
+// attachments section).
+func IsReservedCapsuleAttachment(name string) bool {
+	switch name {
+	case CapsuleTranscriptJSONLName, CapsuleTranscriptTextName, CapsulePersonaName, CapsuleSeedName:
+		return true
+	}
+	return false
+}
 
 // EffectiveKind returns the package's Kind, defaulting an empty value to
 // KindDelivery so older payloads (no kind field) keep their original
@@ -49,6 +95,36 @@ func (p *Package) EffectiveKind() Kind {
 		return KindDelivery
 	}
 	return p.Kind
+}
+
+// CapsuleOrEmpty returns p.Capsule, or a pointer to a zero Capsule when nil, so
+// capsule renderers don't each repeat the same nil guard.
+func (p *Package) CapsuleOrEmpty() *Capsule {
+	if p.Capsule != nil {
+		return p.Capsule
+	}
+	return &Capsule{}
+}
+
+// Headline is the first line of SummaryMD — the compact one-liner every
+// list/notice/plaza projection shows.
+func (p *Package) Headline() string {
+	headline, _, _ := strings.Cut(p.SummaryMD, "\n")
+	return headline
+}
+
+// RequiresRecipient reports whether a package must name a recipient. Every kind
+// does except capsules, which go to the visibility-keyed plaza, not an inbox.
+func (p *Package) RequiresRecipient() bool {
+	return p.EffectiveKind() != KindCapsule
+}
+
+// CapsuleVisibleTo reports whether this capsule is visible to viewer: a public
+// capsule to anyone, a private one only to its owner. The single source of the
+// plaza's visibility rule — shared by the plaza list (store.ListCapsules) and
+// the per-capsule read authz (server.canViewPackage) so they never drift.
+func (p *Package) CapsuleVisibleTo(viewer string) bool {
+	return p.CapsuleOrEmpty().EffectiveVisibility() == CapsulePublic || p.Sender == viewer
 }
 
 // EffectiveRecipients returns the recipient list. For bug-kind packages this
@@ -102,6 +178,79 @@ type Package struct {
 	// passing the bug along ("this is a frontend issue because …"). Renders
 	// as a banner in the bug prompt template.
 	ReassignedReason string `json:"reassigned_reason,omitempty"`
+	// Capsule carries session-capsule metadata (KindCapsule only). The payload
+	// bytes ride as Attachments under the reserved capsule names; this records
+	// the source tool, origin session id, team scope, and which forms are
+	// present so the receiver's loader can pick a reconstruction path.
+	Capsule *Capsule `json:"capsule,omitempty"`
+}
+
+// Capsule is the metadata for a KindCapsule package — a frozen session context
+// shared to a team so a teammate can spin up a specialized session from it. The
+// actual payloads (transcript.jsonl / transcript.txt / persona.md / seed.md)
+// ride as Package.Attachments under the reserved Capsule*Name constants; this
+// struct only records how to reconstruct them on the far end.
+type Capsule struct {
+	// SourceAgent is the agent tool the capsule was captured from ("claude" or
+	// "codex"). The loader compares it to the receiver's chosen target tool: a
+	// match permits a native --resume (same tool + same machine + compatible
+	// version); a mismatch forces the neutral-transcript seed path.
+	SourceAgent string `json:"source_agent"`
+	// OriginSessionID is the capture-side agent session id (claude uuid / codex
+	// rollout id). Only meaningful for same-tool same-machine native resume.
+	OriginSessionID string `json:"origin_session_id,omitempty"`
+	// Visibility controls plaza reach: "private" (个人, owner-only) or "public"
+	// (公开, visible to the team). Empty is treated as private.
+	Visibility CapsuleVisibility `json:"visibility,omitempty"`
+	// HasTranscript is true when a transcript payload (raw and/or neutral text)
+	// is present, so the pickup UI can offer the "① full snapshot" form.
+	HasTranscript bool `json:"has_transcript,omitempty"`
+	// HasPersona is true when a distilled persona payload is present, so the
+	// pickup UI can offer the "② distilled role" form.
+	HasPersona bool `json:"has_persona,omitempty"`
+}
+
+// EffectiveVisibility returns the capsule's visibility, defaulting empty to
+// private so a capsule is never accidentally public.
+func (c *Capsule) EffectiveVisibility() CapsuleVisibility {
+	if c.Visibility == CapsulePublic {
+		return CapsulePublic
+	}
+	return CapsulePrivate
+}
+
+// CapsuleListItem is the compact plaza row (GET /v1/capsules): enough to render
+// a browsable capsule gallery without fetching each full Package.
+type CapsuleListItem struct {
+	ID            string            `json:"id"`
+	Owner         string            `json:"owner"`
+	Visibility    CapsuleVisibility `json:"visibility"`
+	SourceAgent   string            `json:"source_agent"`
+	// OriginSessionID is the capture-side session id — the filename id a
+	// same-tool native --resume writes the imported transcript under.
+	OriginSessionID string    `json:"origin_session_id,omitempty"`
+	HasTranscript   bool      `json:"has_transcript"`
+	HasPersona      bool      `json:"has_persona"`
+	Headline        string    `json:"headline,omitempty"`
+	RepoName        string    `json:"repo_name,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// NewCapsuleListItem projects a stored capsule Package into its plaza row.
+func NewCapsuleListItem(p *Package) CapsuleListItem {
+	c := p.CapsuleOrEmpty()
+	return CapsuleListItem{
+		ID:              p.ID,
+		Owner:           p.Sender,
+		Visibility:      c.EffectiveVisibility(),
+		SourceAgent:     c.SourceAgent,
+		OriginSessionID: c.OriginSessionID,
+		HasTranscript:   c.HasTranscript,
+		HasPersona:      c.HasPersona,
+		Headline:        p.Headline(),
+		RepoName:        p.Repo.Name,
+		CreatedAt:       p.CreatedAt,
+	}
 }
 
 // Attachment is metadata for a binary blob stored on the relay alongside the
@@ -294,7 +443,6 @@ func DedupeIdentities(in []string) []string {
 // returns so a watch client sees the same shape whether it came from
 // /v1/handoffs or events.
 func NoticeListItem(p *Package, state State) ListItem {
-	headline, _, _ := strings.Cut(p.SummaryMD, "\n")
 	return ListItem{
 		ID:         p.ID,
 		Kind:       p.Kind,
@@ -305,7 +453,7 @@ func NoticeListItem(p *Package, state State) ListItem {
 		CreatedAt:  p.CreatedAt,
 		RepoName:   p.Repo.Name,
 		Branch:     p.Repo.Branch,
-		Headline:   headline,
+		Headline:   p.Headline(),
 		BugGroupID: p.BugGroupID,
 	}
 }

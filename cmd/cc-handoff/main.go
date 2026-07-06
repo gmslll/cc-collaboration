@@ -25,6 +25,8 @@ func main() {
 		err = runInit(ctx, args)
 	case "submit":
 		err = runSubmit(ctx, args)
+	case "capsule":
+		err = runCapsule(ctx, args)
 	case "list":
 		err = runList(ctx, args)
 	case "pickup":
@@ -106,6 +108,8 @@ Sender flow:
   cc-handoff status       <id> [--json]                 show state / picked_at / comments
   cc-handoff retract      <id> [--reason TEXT]          cancel a still-pending handoff
   cc-handoff check-drift  [--to ID] [--limit N] [--json] swagger drifted since the last handoff?
+  cc-handoff capsule      submit --source-agent claude|codex [--public] [--transcript F] [--transcript-text F] [--persona F] [--seed F] [--origin-session ID] [--summary TEXT]
+                                                        freeze a session context (① transcript / ② distilled role) to the plaza — 个人 (default) or --public (公开, team-visible)
 
 Receiver flow:
   cc-handoff list     [--json]                          inbox: pending handoffs on relay

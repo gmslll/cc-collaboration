@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("POST /v1/handoffs", s.submit)
 	api.HandleFunc("GET /v1/handoffs", s.list)
+	api.HandleFunc("GET /v1/capsules", s.listCapsules)
 	api.HandleFunc("GET /v1/handoffs/{id}", s.get)
 	api.HandleFunc("GET /v1/handoffs/{id}/status", s.status)
 	api.HandleFunc("GET /v1/handoffs/{id}/prompt", s.prompt)
@@ -266,7 +267,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(p.EffectiveRecipients()) == 0 {
+	// Capsules go to the plaza (keyed by visibility), not to a recipient's
+	// inbox — so they alone may omit a recipient. Every other kind must have one.
+	if len(p.EffectiveRecipients()) == 0 && p.RequiresRecipient() {
 		http.Error(w, "recipient required", http.StatusBadRequest)
 		return
 	}
@@ -291,6 +294,27 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		"id":         p.ID,
 		"created_at": p.CreatedAt,
 	})
+}
+
+// listCapsules serves the plaza: GET /v1/capsules returns the capsules visible
+// to the caller (all public + the caller's own private), newest first.
+func (s *Server) listCapsules(w http.ResponseWriter, r *http.Request) {
+	identity := auth.Identity(r.Context())
+	limit := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	items, err := s.Store.ListCapsules(r.Context(), identity, limit)
+	if err != nil {
+		http.Error(w, "list capsules: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if items == nil {
+		items = []handoffschema.CapsuleListItem{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 // publishHandoffCreated fans a handoff.created SSE event out to each of the
@@ -496,6 +520,10 @@ func (s *Server) callerCanView(ctx context.Context, pkg *handoffschema.Package, 
 func (s *Server) canViewPackage(ctx context.Context, pkg *handoffschema.Package, identity string) bool {
 	if s.isAdmin(ctx, identity) {
 		return true
+	}
+	// Capsules follow the plaza's visibility rule, not the recipient one.
+	if pkg.EffectiveKind() == handoffschema.KindCapsule {
+		return pkg.CapsuleVisibleTo(identity)
 	}
 	if s.callerCanView(ctx, pkg, identity) {
 		return true

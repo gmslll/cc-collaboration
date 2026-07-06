@@ -2052,10 +2052,8 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
 
   List<SessionCard> get _cards => widget.overviewStore.cards;
 
-  List<ProjectCfg> get _projectsForWorkspace {
-    final matches = widget.config.workspaces.where((w) => w.name == _workspace);
-    return matches.isEmpty ? const [] : matches.first.projects;
-  }
+  List<ProjectCfg> get _projectsForWorkspace =>
+      projectsOf(widget.config, _workspace);
 
   // _prepareAssignment resolves the terminal text to paste for a dispatch to
   // session [sid]. It resolves the target session's workdir (polling briefly

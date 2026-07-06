@@ -16,6 +16,7 @@ import 'local/update_service.dart';
 import 'notifications.dart';
 import 'screens/account_page.dart';
 import 'screens/admin_page.dart';
+import 'screens/capsule_plaza_page.dart';
 import 'screens/handoffs_page.dart';
 import 'screens/login_screen.dart';
 import 'screens/projects_page.dart';
@@ -416,6 +417,7 @@ class _HomeShellState extends State<HomeShell> {
       if (!_isDesktop)
         const _Dest('远程', Icons.cast_rounded, Icons.cast_connected_rounded),
       const _Dest('收件箱', Icons.inbox_rounded, Icons.inbox_rounded),
+      const _Dest('广场', Icons.storefront_rounded, Icons.storefront_rounded),
       const _Dest('待办', Icons.checklist_rounded, Icons.checklist_rounded),
       const _Dest('项目', Icons.folder_rounded, Icons.folder_rounded),
       const _Dest('账号', Icons.person_rounded, Icons.person_rounded),
@@ -444,6 +446,13 @@ class _HomeShellState extends State<HomeShell> {
       if (!_isDesktop)
         RemoteWorkspacePage(relayUrl: _cfg!.relayUrl, token: _cfg!.token),
       HandoffsPage(client: _client!, config: _cfg!, showTerminal: _isDesktop),
+      CapsulePlazaPage(
+        client: _client!,
+        identity: _cfg!.identity,
+        overviewStore: _overviewStore,
+        config: _cfg!,
+        isDesktop: _isDesktop,
+      ),
       TodosPage(
         client: _client!,
         config: _cfg!,

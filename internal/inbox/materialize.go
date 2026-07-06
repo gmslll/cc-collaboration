@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cc-collaboration/internal/handoff"
 	"github.com/cc-collaboration/pkg/handoffschema"
@@ -77,7 +78,58 @@ func Materialize(inboxDir string, p *handoffschema.Package, mode Mode) (Result, 
 			return Result{}, err
 		}
 	}
+	if p.EffectiveKind() == handoffschema.KindCapsule {
+		if err := writeCapsuleManifest(dir, p); err != nil {
+			return Result{}, err
+		}
+	}
 	return Result{Dir: dir, Prompt: prompt}, nil
+}
+
+// CapsuleManifest is the loader-facing entry the app reads to reconstruct a
+// session from a materialized capsule: source tool + origin id + team scope +
+// which payload files landed (under attachments/). The raw Package lives in
+// package.json alongside; this is the trimmed, stable view the loader keys on.
+type CapsuleManifest struct {
+	ID              string                          `json:"id"`
+	Sender          string                          `json:"sender"`
+	SourceAgent     string                          `json:"source_agent"`
+	OriginSessionID string                          `json:"origin_session_id,omitempty"`
+	Visibility      handoffschema.CapsuleVisibility `json:"visibility"`
+	CreatedAt       time.Time                       `json:"created_at"`
+	Repo            handoffschema.Repo              `json:"repo"`
+	HasTranscript   bool                            `json:"has_transcript"`
+	HasPersona      bool                            `json:"has_persona"`
+	// Payloads maps each present reserved capsule name to its path relative to
+	// the capsule dir (attachments/<name>), so the loader doesn't re-scan.
+	Payloads map[string]string `json:"payloads"`
+}
+
+func writeCapsuleManifest(dir string, p *handoffschema.Package) error {
+	c := p.CapsuleOrEmpty()
+	payloads := map[string]string{}
+	for _, a := range p.Attachments {
+		if handoffschema.IsReservedCapsuleAttachment(a.Name) {
+			payloads[a.Name] = filepath.ToSlash(filepath.Join("attachments", a.Name))
+		}
+	}
+	m := CapsuleManifest{
+		ID:              p.ID,
+		Sender:          p.Sender,
+		SourceAgent:     c.SourceAgent,
+		OriginSessionID: c.OriginSessionID,
+		Visibility:      c.EffectiveVisibility(),
+		CreatedAt:       p.CreatedAt,
+		Repo:            p.Repo,
+		HasTranscript:   c.HasTranscript,
+		HasPersona:      c.HasPersona,
+		Payloads:        payloads,
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFile(filepath.Join(dir, "manifest.json"), b)
 }
 
 func renderAPIDeltaMD(d *handoffschema.APIDelta) string {
@@ -280,9 +332,12 @@ func DownloadAttachments(ctx context.Context, fetcher AttachmentFetcher, dir str
 func renderSummaryMD(p *handoffschema.Package) string {
 	var sb strings.Builder
 	isRequest := p.EffectiveKind() == handoffschema.KindRequest
-	if isRequest {
+	switch {
+	case isRequest:
 		fmt.Fprintf(&sb, "# Request %s\n\n", p.ID)
-	} else {
+	case p.EffectiveKind() == handoffschema.KindCapsule:
+		fmt.Fprintf(&sb, "# Session Capsule %s\n\n", p.ID)
+	default:
 		fmt.Fprintf(&sb, "# Handoff %s\n\n", p.ID)
 	}
 	repoLine := fmt.Sprintf("`%s`", p.Repo.Name)
@@ -374,6 +429,12 @@ func renderAttachmentsSection(p *handoffschema.Package) string {
 		if a.Name == handoff.SwaggerSnapshotName {
 			continue
 		}
+		// Capsule payloads (transcript/persona/seed) are structural — the
+		// capsule prompt lists them separately, so keep them out of the generic
+		// attachments section to avoid double-counting.
+		if handoffschema.IsReservedCapsuleAttachment(a.Name) {
+			continue
+		}
 		items = append(items, item{name: a.Name, size: a.Size})
 	}
 	if len(items) == 0 {
@@ -412,6 +473,8 @@ func RenderPromptMD(p *handoffschema.Package, mode Mode) string {
 		return renderRequestPromptMD(p, mode)
 	case handoffschema.KindBug:
 		return renderBugPromptMD(p, mode)
+	case handoffschema.KindCapsule:
+		return renderCapsulePromptMD(p)
 	}
 	integrationPath := fmt.Sprintf("docs/integrations/%s.md", p.ID)
 	// Detect module-brief mode by content shape, not just the ModulePaths
@@ -795,4 +858,63 @@ func renderBugPromptMD(p *handoffschema.Package, mode Mode) string {
 	fmt.Fprintf(&sb, "- 报告人(`%s`)+ 同 bug_group 内出现过的所有身份都会自动收到本 group 任何 handoff 上的评论。你不用人肉中转。\n", originalSender)
 	sb.WriteString("- 用 `status_handoff` 看每一格的 pickup 状态(谁还没读 / 谁已读 / 谁已转交)。\n")
 	return sb.String()
+}
+
+// renderCapsulePromptMD generates the receiver-side notice for a KindCapsule
+// package. Unlike delivery/request/bug there's no code task here: the payload is
+// a frozen session context. The app's capsule loader is what actually launches
+// a specialized session (the receiver picks ① full snapshot / ② distilled role
+// and the target tool); this prompt just orients whoever reads the materialized
+// inbox entry.
+func renderCapsulePromptMD(p *handoffschema.Package) string {
+	c := p.CapsuleOrEmpty()
+	src := c.SourceAgent
+	if src == "" {
+		src = "—"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Session Capsule\n\n")
+	fmt.Fprintf(&sb, "收到会话胶囊 `%s`(from `%s`,源工具 `%s`)。\n\n", p.ID, p.Sender, src)
+	sb.WriteString("**这是一个冻结的会话上下文,不是待办任务。** 由 app 的胶囊加载器启动一个专职会话 —— 启动时你选**形态**:\n\n")
+	fmt.Fprintf(&sb, "- **① 完整上下文快照** —— 带原会话前情接着干%s\n", availNote(c.HasTranscript, "本胶囊未附 transcript,①不可用"))
+	fmt.Fprintf(&sb, "- **② 蒸馏后的角色** —— 固化的职责/规矩,起干净的专职会话%s\n\n", availNote(c.HasPersona, "本胶囊未附 persona,②不可用"))
+	sb.WriteString("再选**目标工具**(claude / codex):源工具 = 目标工具且同机时,①可原生 `--resume`;跨工具/跨机时①走中性转录(transcript.txt / seed.md)作 seed。②是纯文本角色,两工具都能起。\n\n")
+
+	if p.SummaryMD != "" {
+		sb.WriteString("## 胶囊说明\n\n")
+		sb.WriteString(p.SummaryMD)
+		if !strings.HasSuffix(p.SummaryMD, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+	if note := strings.TrimSpace(p.NoteMD); note != "" {
+		sb.WriteString("## 发送端备注\n\n")
+		sb.WriteString(note)
+		sb.WriteString("\n\n")
+	}
+
+	var payloads []string
+	for _, a := range p.Attachments {
+		if handoffschema.IsReservedCapsuleAttachment(a.Name) {
+			payloads = append(payloads, fmt.Sprintf("- `attachments/%s` — %s", a.Name, humanSize(a.Size)))
+		}
+	}
+	if len(payloads) > 0 {
+		sb.WriteString("## 胶囊载荷\n\n")
+		sb.WriteString(strings.Join(payloads, "\n"))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// availNote returns "" when the form is available, or a parenthesized caveat
+// (e.g. "(本胶囊未附 persona,②不可用)") when it isn't — so the capsule prompt
+// only advertises forms the payload can actually instantiate.
+func availNote(available bool, missing string) string {
+	if available {
+		return ""
+	}
+	return "(" + missing + ")"
 }

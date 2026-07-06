@@ -28,6 +28,13 @@ class WorkspaceCfg {
       this.preLaunch, this.projects);
 }
 
+// projectsOf returns [workspace]'s projects (empty when the workspace is null /
+// unknown). Shared by every workspace→project cascade picker.
+List<ProjectCfg> projectsOf(AppConfig cfg, String? workspace) {
+  final m = cfg.workspaces.where((w) => w.name == workspace);
+  return m.isEmpty ? const [] : m.first.projects;
+}
+
 // AppConfig reads the same ~/.config/cc-handoff/config.toml the CLI uses, so the
 // desktop app is auto-authenticated and can resolve a handoff's repo name to a
 // local clone for pickup, and render the Workspace→Project tree.

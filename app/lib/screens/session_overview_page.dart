@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
@@ -114,6 +115,10 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
           '$total 个会话',
           style: CcType.code(size: 12.5, color: CcColors.muted),
         ),
+        const SizedBox(width: 8),
+        // TEMP build marker — confirms this (capsule) build is the one running.
+        // Remove once verified.
+        tag('capsule ✦', CcColors.accent),
         const Spacer(),
         if (reviewCount > 0)
           tag('待 review $reviewCount', CcColors.warning, bold: true),
@@ -291,6 +296,33 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
                     c.sid,
                     style: CcType.code(size: 10.5, color: CcColors.subtle),
                   ),
+                  // Always-visible "打成胶囊" entry (agent sessions only) so it
+                  // doesn't hide behind the quick-reply popup; shows a busy
+                  // spinner + is debounced while its capsule is distilling.
+                  if (c.isAgent && (c.workdir?.isNotEmpty ?? false)) ...[
+                    const SizedBox(width: 2),
+                    if (_store.isCapsuleInFlight(c.sid))
+                      const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else
+                      IconButton(
+                        tooltip: '打成胶囊',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 28,
+                          minHeight: 28,
+                        ),
+                        icon: const Icon(Icons.science_rounded, size: 16),
+                        onPressed: () => startCapsuleFlow(context, _store, c),
+                      ),
+                  ],
                 ],
               ),
               const SizedBox(height: 8),
@@ -505,16 +537,326 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                 ],
               ),
               const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: widget.onOpenInWorkspace,
-                  icon: const Icon(Icons.open_in_full_rounded, size: 16),
-                  label: const Text('在工作区打开'),
-                ),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: widget.onOpenInWorkspace,
+                    icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                    label: const Text('在工作区打开'),
+                  ),
+                  const Spacer(),
+                  // Only agent sessions with a working dir can be frozen into a
+                  // capsule (a shell session has no transcript to distill).
+                  if (c.isAgent && (c.workdir?.isNotEmpty ?? false))
+                    TextButton.icon(
+                      onPressed: () => startCapsuleFlow(context, widget.store, c),
+                      icon: const Icon(Icons.science_rounded, size: 16),
+                      label: const Text('打成胶囊'),
+                    ),
+                ],
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// startCapsuleFlow runs the whole "打成胶囊" UX from either entry point (the
+// always-visible card button or the quick-reply popup): when the session is
+// idle, first pick a distill strategy; then capture+distill behind a spinner;
+// then open the review/submit dialog. Uses context.mounted since it outlives no
+// single State — both call sites pass their own BuildContext.
+Future<void> startCapsuleFlow(
+  BuildContext context,
+  SessionOverviewStore store,
+  SessionCard card,
+) async {
+  if (store.isCapsuleInFlight(card.sid)) return; // debounce repeat clicks
+
+  var preferSelf = false;
+  if (!sessionStatusIsActive(card.status)) {
+    final choice = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('怎么蒸馏这个会话?'),
+        content: const Text(
+          '「让它自己蒸馏」更懂上下文,但会占用该会话一会儿;「后台蒸馏」不打扰它,读转录来做。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('后台蒸馏'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('让它自己蒸馏'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null) return; // cancelled
+    preferSelf = choice;
+  }
+  if (!context.mounted) return;
+
+  // No blocking modal: a self-distill runs *inside* the session (the user should
+  // keep watching/working while it does), and even the headless path can take a
+  // while. So just announce it — the distill runs in the background (the card
+  // shows a busy spinner meanwhile) and the review dialog pops when it's ready.
+  store.markCapsuleInFlight(card.sid);
+  snack(
+    context,
+    preferSelf
+        ? '已让会话 ${card.sid} 自己蒸馏胶囊,完成后自动弹出复查'
+        : '正在后台蒸馏胶囊,完成后自动弹出复查',
+  );
+
+  CapsuleDraft? draft;
+  String? err;
+  try {
+    (draft, err) = await store.captureCapsule(card, preferSelfDistill: preferSelf);
+  } finally {
+    store.clearCapsuleInFlight(card.sid); // distill done → stop the card spinner
+  }
+  if (!context.mounted) return;
+  final ready = draft;
+  if (ready == null) {
+    snack(context, '打成胶囊失败: ${err ?? "未知错误"}');
+    return;
+  }
+  // The review dialog is modal — the card behind can't be re-clicked — so the
+  // in-flight guard isn't needed here.
+  await showDialog(
+    context: context,
+    builder: (_) => _CapsuleReviewDialog(store: store, draft: ready),
+  );
+}
+
+// _CapsuleReviewDialog previews the distilled persona/seed, lets the user edit
+// them in place (the user's "先落草稿供编辑再发" choice), pick a visibility
+// (个人 / 公开), and publish the capsule to the plaza.
+class _CapsuleReviewDialog extends StatefulWidget {
+  final SessionOverviewStore store;
+  final CapsuleDraft draft;
+  const _CapsuleReviewDialog({required this.store, required this.draft});
+
+  @override
+  State<_CapsuleReviewDialog> createState() => _CapsuleReviewDialogState();
+}
+
+class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
+  final _persona = TextEditingController();
+  final _seed = TextEditingController();
+  final _summary = TextEditingController();
+  bool _public = false; // default 个人 (private)
+  bool _submitting = false;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _summary.text = '来自会话「${widget.draft.label}」的专职胶囊';
+    _load();
+  }
+
+  Future<void> _load() async {
+    final p = File('${widget.draft.draftDir}/persona.md');
+    final s = File('${widget.draft.draftDir}/seed.md');
+    if (await p.exists()) _persona.text = await p.readAsString();
+    if (await s.exists()) _seed.text = await s.readAsString();
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  void dispose() {
+    _persona.dispose();
+    _seed.dispose();
+    _summary.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _submitting = true);
+    // Persist the user's edits back to the draft before shipping.
+    if (_persona.text.trim().isNotEmpty) {
+      await File('${widget.draft.draftDir}/persona.md').writeAsString(_persona.text);
+    }
+    if (_seed.text.trim().isNotEmpty) {
+      await File('${widget.draft.draftDir}/seed.md').writeAsString(_seed.text);
+    }
+    final (ok, err) = await widget.store.submitCapsule(
+      widget.draft,
+      visibility: _public ? 'public' : 'private',
+      summary: _summary.text.trim(),
+    );
+    if (!mounted) return;
+    setState(() => _submitting = false);
+    if (ok) {
+      Navigator.of(context).pop();
+      snack(context, '胶囊已发出');
+    } else {
+      snack(context, '发送失败: ${err ?? "未知错误"}');
+    }
+  }
+
+  // _labeledCodeField is a titled multiline code editor — the shared shape of
+  // the persona and seed draft boxes.
+  Widget _labeledCodeField({
+    required String label,
+    required TextEditingController controller,
+    required int minLines,
+    required int maxLines,
+    String? hint,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        TextField(
+          controller: controller,
+          minLines: minLines,
+          maxLines: maxLines,
+          style: CcType.code(size: 12),
+          decoration: InputDecoration(
+            border: const OutlineInputBorder(),
+            isDense: true,
+            hintText: hint,
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = widget.draft;
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 620),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: _loading
+              ? const SizedBox(
+                  height: 120,
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              : SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.science_rounded, size: 20),
+                          const SizedBox(width: 8),
+                          const Text(
+                            '复查并发送胶囊',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: '关闭',
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '源工具 ${d.sourceAgent} · ①快照 ${d.hasTranscript ? "有" : "无"} · '
+                        '②角色 ${d.hasPersona ? "有" : "无(蒸馏未产出)"}',
+                        style: CcType.code(size: 11.5, color: CcColors.subtle),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _summary,
+                        decoration: const InputDecoration(
+                          labelText: '说明',
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _labeledCodeField(
+                        label: '② 角色 (persona.md) — 可编辑',
+                        controller: _persona,
+                        minLines: 3,
+                        maxLines: 8,
+                        hint: '(蒸馏未产出角色,可留空 — 只发 ① 快照)',
+                      ),
+                      const SizedBox(height: 12),
+                      _labeledCodeField(
+                        label: 'seed 摘要 (seed.md) — 可编辑',
+                        controller: _seed,
+                        minLines: 2,
+                        maxLines: 6,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(
+                                value: false,
+                                label: Text('个人'),
+                                icon: Icon(Icons.lock_outline_rounded, size: 16),
+                              ),
+                              ButtonSegment(
+                                value: true,
+                                label: Text('公开'),
+                                icon: Icon(Icons.public_rounded, size: 16),
+                              ),
+                            ],
+                            selected: {_public},
+                            onSelectionChanged: (s) =>
+                                setState(() => _public = s.first),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _public
+                                  ? '团队所有人能在广场看到'
+                                  : '只有你自己能在广场看到',
+                              style: CcType.code(size: 11.5, color: CcColors.subtle),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: _submitting
+                                ? null
+                                : () => Navigator.of(context).pop(),
+                            child: const Text('取消'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            onPressed: _submitting ? null : _submit,
+                            icon: _submitting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.send_rounded, size: 16),
+                            label: const Text('发送'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
         ),
       ),
     );

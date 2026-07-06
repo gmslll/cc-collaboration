@@ -330,10 +330,15 @@ func insertHandoffInTx(ctx context.Context, tx *sql.Tx, p *handoffschema.Package
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	headline, _, _ := strings.Cut(p.SummaryMD, "\n")
 	recipients := p.EffectiveRecipients()
-	if len(recipients) == 0 {
+	// Capsules aren't delivered to anyone — they live in the plaza, keyed by
+	// visibility — so they legitimately have no recipient. Every other kind must.
+	if len(recipients) == 0 && p.RequiresRecipient() {
 		return fmt.Errorf("insert handoff: no recipients")
+	}
+	firstRecipient := ""
+	if len(recipients) > 0 {
+		firstRecipient = recipients[0]
 	}
 	recipientsJSON := ""
 	if len(p.Recipients) > 0 {
@@ -346,9 +351,9 @@ func insertHandoffInTx(ctx context.Context, tx *sql.Tx, p *handoffschema.Package
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO handoffs(id, sender, recipient, recipients, urgency, state, created_at, repo_name, branch, headline, kind, bug_group_id, payload)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Sender, recipients[0], recipientsJSON, string(p.Urgency),
+		p.ID, p.Sender, firstRecipient, recipientsJSON, string(p.Urgency),
 		string(handoffschema.StatePending), p.CreatedAt.UnixMilli(),
-		p.Repo.Name, p.Repo.Branch, headline, string(p.Kind), p.BugGroupID, string(payload),
+		p.Repo.Name, p.Repo.Branch, p.Headline(), string(p.Kind), p.BugGroupID, string(payload),
 	); err != nil {
 		return fmt.Errorf("insert handoff: %w", err)
 	}
@@ -442,6 +447,41 @@ func (s *Store) ListHistory(ctx context.Context, recipient string, limit int) ([
 			return nil, err
 		}
 		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// ListCapsules returns the plaza rows visible to [identity]: every public
+// capsule plus the caller's own (any visibility), newest first. Visibility
+// lives in the JSON payload, so this loads capsule rows and filters in Go —
+// fine for the plaza's modest scale; [limit] bounds the scan.
+func (s *Store) ListCapsules(ctx context.Context, identity string, limit int) ([]handoffschema.CapsuleListItem, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT payload FROM handoffs WHERE kind = ? ORDER BY created_at DESC LIMIT ?`,
+		string(handoffschema.KindCapsule), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []handoffschema.CapsuleListItem
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var p handoffschema.Package
+		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+			continue // skip a corrupt row rather than fail the whole plaza
+		}
+		// Public capsules to anyone, private ones only to their owner.
+		if !p.CapsuleVisibleTo(identity) {
+			continue
+		}
+		out = append(out, handoffschema.NewCapsuleListItem(&p))
 	}
 	return out, rows.Err()
 }

@@ -416,7 +416,27 @@ type Resolved struct {
 	LinearPersonalToken string
 }
 
+type resolveOpts struct {
+	requireRepo    bool
+	requirePartner bool
+}
+
+// Resolve loads the full user + repo config for the standard point-to-point
+// flows: a repo config (with a partner) is required.
 func Resolve(cwd string) (*Resolved, error) {
+	return resolveWith(cwd, resolveOpts{requireRepo: true, requirePartner: true})
+}
+
+// ResolveRelay loads just enough to reach the relay: the user-level connection
+// (relay_url/token/identity) is required, but a repo config and a partner are
+// not — the plaza/capsule flows target the relay's team by visibility, not a
+// recipient. A missing repo config degrades to best-effort context (RepoName
+// falls back to the directory name; rules/swagger/partner stay empty).
+func ResolveRelay(cwd string) (*Resolved, error) {
+	return resolveWith(cwd, resolveOpts{requireRepo: false, requirePartner: false})
+}
+
+func resolveWith(cwd string, opts resolveOpts) (*Resolved, error) {
 	u, _, err := LoadUser()
 	if err != nil {
 		return nil, err
@@ -429,7 +449,10 @@ func Resolve(cwd string) (*Resolved, error) {
 		return nil, err
 	}
 	if r == nil {
-		return nil, fmt.Errorf("repo config missing at %s; run `cc-handoff init`", RepoConfigPath(cwd))
+		if opts.requireRepo {
+			return nil, fmt.Errorf("repo config missing at %s; run `cc-handoff init`", RepoConfigPath(cwd))
+		}
+		r = &Repo{} // no repo config → user-level defaults + best-effort RepoName
 	}
 	me := r.Identity.Me
 	if me == "" {
@@ -479,7 +502,7 @@ func Resolve(cwd string) (*Resolved, error) {
 	if out.RelayURL == "" || out.Token == "" || out.Me == "" {
 		return nil, fmt.Errorf("incomplete config: relay_url/token/identity must be set in user config")
 	}
-	if len(out.Partners) == 0 {
+	if opts.requirePartner && len(out.Partners) == 0 {
 		return nil, fmt.Errorf("incomplete repo config: identity.partner or identity.partners must be set in %s", RepoConfigPath(cwd))
 	}
 	return out, nil

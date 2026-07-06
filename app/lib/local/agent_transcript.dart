@@ -60,9 +60,14 @@ Future<String?> resolveTranscriptPath({
 
 // _newestClaudeInCwd: claude encodes the cwd as the project dir name with '/' and
 // '.' replaced by '-' (e.g. /a/github.com/b -> -a-github-com-b).
+// _claudeProjectDir is where claude keeps a cwd's sessions:
+// ~/.claude/projects/<cwd with every '/' and '.' turned into '->. The one place
+// that encoding lives (both the resolver and the resume-import writer use it).
+String _claudeProjectDir(String home, String workdir) =>
+    '$home/.claude/projects/${workdir.replaceAll(RegExp(r'[/.]'), '-')}';
+
 Future<String?> _newestClaudeInCwd(String home, String workdir) async {
-  final enc = workdir.replaceAll(RegExp(r'[/.]'), '-');
-  final dir = Directory('$home/.claude/projects/$enc');
+  final dir = Directory(_claudeProjectDir(home, workdir));
   if (!await dir.exists()) return null;
   String? best;
   DateTime? bestMod;
@@ -177,7 +182,18 @@ Future<Map?> readRolloutMeta(File f) async {
         .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .first;
-    final m = jsonDecode(firstLine);
+    return _rolloutMetaFromLine(firstLine);
+  } catch (_) {
+    return null;
+  }
+}
+
+// _rolloutMetaFromLine parses a codex rollout's session_meta payload from its
+// first JSONL line — the shared core so the file reader and the downloaded-bytes
+// variant never diverge on this format (keeps "exactly one parser" honest).
+Map? _rolloutMetaFromLine(String line) {
+  try {
+    final m = jsonDecode(line);
     if (m is! Map) return null;
     final payload = m['payload'];
     return payload is Map ? payload : null;
@@ -223,6 +239,36 @@ Future<String?> pickUniqueRolloutId(List<File> files, String workdir) async {
   return matches.length == 1 ? matches.first : null;
 }
 
+// _claudeAssistantSegments renders one claude assistant message's content list
+// into text segments: `text` blocks verbatim, `tool_use` blocks as `[tool:
+// <name>]` markers (thinking + tool_result blocks dropped). Shared by the tail
+// reader and the full neutral render so the two never drift on log-shape changes.
+List<String> _claudeAssistantSegments(List content) {
+  final parts = <String>[];
+  for (final b in content) {
+    if (b is! Map) continue;
+    if (b['type'] == 'text' && b['text'] is String) {
+      parts.add((b['text'] as String).trimRight());
+    } else if (b['type'] == 'tool_use' && b['name'] is String) {
+      parts.add('[tool: ${b['name']}]');
+    }
+  }
+  return parts;
+}
+
+// _codexAssistantMessage returns the assistant text of a codex `agent_message`
+// event, or null for any other line. Shared by the tail reader and full render.
+String? _codexAssistantMessage(Map<String, dynamic> o) {
+  final p = o['payload'];
+  if (o['type'] == 'event_msg' &&
+      p is Map &&
+      p['type'] == 'agent_message' &&
+      p['message'] is String) {
+    return (p['message'] as String).trimRight();
+  }
+  return null;
+}
+
 // _tailCap bounds how many bytes we read off the END of the log so a multi-MB
 // transcript stays cheap — we only want recent output anyway.
 const int _tailCap = 512 * 1024;
@@ -264,25 +310,13 @@ Future<String> renderTranscriptTail(
       continue;
     }
     if (agentKind == 'codex') {
-      final p = o['payload'];
-      if (o['type'] == 'event_msg' &&
-          p is Map &&
-          p['type'] == 'agent_message' &&
-          p['message'] is String) {
-        rendered.add((p['message'] as String).trimRight());
-      }
+      final m = _codexAssistantMessage(o);
+      if (m != null) rendered.add(m);
     } else {
       final msg = o['message'];
       final content = msg is Map ? msg['content'] : null;
       if (o['type'] == 'assistant' && content is List) {
-        for (final b in content) {
-          if (b is! Map) continue;
-          if (b['type'] == 'text' && b['text'] is String) {
-            rendered.add((b['text'] as String).trimRight());
-          } else if (b['type'] == 'tool_use' && b['name'] is String) {
-            rendered.add('[tool: ${b['name']}]');
-          }
-        }
+        rendered.addAll(_claudeAssistantSegments(content));
       }
     }
   }
@@ -293,3 +327,212 @@ Future<String> renderTranscriptTail(
   final ls = rendered.join('\n').split('\n');
   return ls.length <= lines ? ls.join('\n') : ls.sublist(ls.length - lines).join('\n');
 }
+
+// CapsuleTranscript is the result of captureCapsuleTranscript: the two on-disk
+// payloads written for a session capsule — the raw log (for a same-tool native
+// --resume) and the neutral text render (the portable cross-tool seed).
+class CapsuleTranscript {
+  final String jsonlPath;
+  final String textPath;
+  // text is the neutral render, also written to [textPath] — carried here so
+  // the caller (which feeds it straight to the headless distill) needn't read
+  // the file it just wrote back off disk.
+  final String text;
+  const CapsuleTranscript(this.jsonlPath, this.textPath, this.text);
+  int get textChars => text.length;
+}
+
+// captureCapsuleTranscript locates the source session's on-disk log via the
+// same precise resolver used everywhere else (never a cwd guess) and writes two
+// capsule payloads into [destDir]:
+//   - transcript.jsonl : the raw log copied byte-for-byte, usable only for a
+//     same-tool + same-machine + compatible-version native --resume.
+//   - transcript.txt   : renderTranscriptFull's neutral full-conversation
+//     render, the portable seed that works ACROSS tools (claude↔codex) and
+//     machines by being fed as an opening prompt.
+// Names match the Go reserved constants (handoffschema.Capsule*Name). Returns
+// null when the log can't be located yet (dormant / not-flushed session), so
+// the caller can surface "capture the ① snapshot again once the session has
+// written its log" rather than shipping an empty transcript.
+Future<CapsuleTranscript?> captureCapsuleTranscript({
+  required String agentKind,
+  required String? agentSessionId,
+  required String workdir,
+  required String destDir,
+  int maxTextChars = 0,
+}) async {
+  final src = await resolveTranscriptPath(
+    agentKind: agentKind,
+    agentSessionId: agentSessionId,
+    workdir: workdir,
+  );
+  if (src == null) return null;
+  await Directory(destDir).create(recursive: true);
+  final jsonlDest = '$destDir/transcript.jsonl';
+  await File(src).copy(jsonlDest);
+  final text =
+      await renderTranscriptFull(src, agentKind: agentKind, maxChars: maxTextChars);
+  final textDest = '$destDir/transcript.txt';
+  await File(textDest).writeAsString(text);
+  return CapsuleTranscript(jsonlDest, textDest, text);
+}
+
+// importCapsuleTranscriptForResume writes a capsule's raw transcript into THIS
+// machine's local agent session store so a same-tool native `--resume <id>` can
+// pick it up — the high-fidelity ① path when the receiver launches with the
+// SAME tool the capsule was captured from (the raw log is already uploaded as a
+// capsule attachment; this is the "pull it down and resume locally" step).
+// Returns the session id to resume, or null when it can't be set up (missing
+// id) so the caller falls back to a text seed. Cross-tool resume is impossible
+// (claude/codex formats differ) — only call this when target == source tool.
+//   claude: the log lives at ~/.claude/projects/<cwd-encoded>/<id>.jsonl and
+//     `--resume <id>` runs in that cwd, so we write it into the TARGET session's
+//     project dir under the origin id.
+//   codex: `codex resume <id>` locates the rollout by the id in its session_meta,
+//     so we preserve that id and drop the file in a dated sessions bucket.
+Future<String?> importCapsuleTranscriptForResume({
+  required String agentKind,
+  required List<int> bytes,
+  required String workdir,
+  required String originId,
+  required DateTime now,
+}) async {
+  final home = Platform.environment['HOME'] ?? '';
+  if (home.isEmpty) return null;
+  if (agentKind == 'codex') {
+    // The resume id must come from the rollout itself, not the caller.
+    final id = _rolloutIdFromBytes(bytes);
+    if (id == null || id.isEmpty) return null;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final dir = await Directory(
+      '$home/.codex/sessions/${now.year}/${two(now.month)}/${two(now.day)}',
+    ).create(recursive: true);
+    await File('${dir.path}/rollout-imported-$id.jsonl').writeAsBytes(bytes);
+    return id;
+  }
+  // claude
+  if (originId.isEmpty) return null;
+  final dir =
+      await Directory(_claudeProjectDir(home, workdir)).create(recursive: true);
+  await File('${dir.path}/$originId.jsonl').writeAsBytes(bytes);
+  return originId;
+}
+
+// _rolloutIdFromBytes reads a codex rollout's session_meta id from downloaded
+// bytes. Decodes only up to the first newline (rollouts can be multi-MB; we only
+// need line one) and shares the session_meta parser with readRolloutMeta.
+String? _rolloutIdFromBytes(List<int> bytes) {
+  var end = bytes.indexOf(0x0A); // first '\n'
+  if (end < 0) end = bytes.length;
+  final firstLine = utf8.decode(bytes.sublist(0, end), allowMalformed: true);
+  return _rolloutMetaFromLine(firstLine)?['id']?.toString();
+}
+
+// renderTranscriptFull reads the ENTIRE [path] and renders the whole
+// conversation as neutral plain text: user turns labeled `## 用户`, assistant
+// turns `## 助手`, tool calls as `[tool: <name>]` markers (thinking blocks and
+// raw tool-result echoes dropped). Unlike renderTranscriptTail — recent
+// assistant output only, for previews/voice — this captures BOTH sides so a
+// DIFFERENT tool (or a teammate's machine) can reconstruct the context from a
+// seed prompt. Bad/partial lines are skipped, not fatal. [maxChars] > 0 caps
+// the output, keeping the most recent turns (older text is elided).
+Future<String> renderTranscriptFull(
+  String path, {
+  required String agentKind,
+  int maxChars = 0,
+}) async {
+  final f = File(path);
+  final turns = <String>[];
+  await for (final line in f
+      .openRead()
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .transform(const LineSplitter())) {
+    if (line.trim().isEmpty) continue;
+    Map<String, dynamic> o;
+    try {
+      o = jsonDecode(line) as Map<String, dynamic>;
+    } catch (_) {
+      continue;
+    }
+    if (agentKind == 'codex') {
+      _renderCodexTurn(o, turns);
+    } else {
+      _renderClaudeTurn(o, turns);
+    }
+  }
+  var text = turns.join('\n\n');
+  if (maxChars > 0 && text.length > maxChars) {
+    text = '…(前文略)…\n\n${text.substring(text.length - maxChars)}';
+  }
+  return text;
+}
+
+// _renderClaudeTurn appends a labeled turn for one claude JSONL entry. User
+// messages contribute their text (tool_result echoes render empty and are
+// dropped); assistant messages contribute text blocks + `[tool: name]` markers.
+void _renderClaudeTurn(Map<String, dynamic> o, List<String> turns) {
+  final type = o['type'];
+  final msg = o['message'];
+  if (msg is! Map) return;
+  final content = msg['content'];
+  if (type == 'user') {
+    final text = _blocksText(content, typeFilter: 'text');
+    if (text.trim().isNotEmpty) turns.add('## 用户\n$text');
+  } else if (type == 'assistant' && content is List) {
+    final joined = _claudeAssistantSegments(content)
+        .where((p) => p.trim().isNotEmpty)
+        .join('\n');
+    if (joined.trim().isNotEmpty) turns.add('## 助手\n$joined');
+  }
+}
+
+// _blocksText extracts plain text from a message `content` — a bare string, or
+// a list of blocks. With [typeFilter] set, only blocks of that `type` count
+// (claude keeps `text` blocks only, dropping tool_result/image so the render
+// stays a readable conversation; codex has untyped text parts).
+String _blocksText(dynamic content, {String? typeFilter}) {
+  if (content is String) return content.trimRight();
+  if (content is! List) return '';
+  final parts = <String>[];
+  for (final b in content) {
+    if (b is Map &&
+        b['text'] is String &&
+        (typeFilter == null || b['type'] == typeFilter)) {
+      parts.add((b['text'] as String).trimRight());
+    }
+  }
+  return parts.join('\n');
+}
+
+// _renderCodexTurn appends a labeled turn for one codex rollout entry. The
+// assistant `agent_message` event is the shape confirmed by renderTranscriptTail;
+// user turns are best-effort across codex's evolving formats (older
+// `event_msg`/`user_message`, newer `response_item`/`message` with a role) —
+// unrecognized lines are skipped rather than guessed.
+void _renderCodexTurn(Map<String, dynamic> o, List<String> turns) {
+  final asst = _codexAssistantMessage(o);
+  if (asst != null) {
+    if (asst.trim().isNotEmpty) turns.add('## 助手\n$asst');
+    return;
+  }
+  final p = o['payload'];
+  if (p is! Map) return;
+  if (o['type'] == 'event_msg' &&
+      p['type'] == 'user_message' &&
+      p['message'] is String) {
+    final m = (p['message'] as String).trimRight();
+    if (m.trim().isNotEmpty) turns.add('## 用户\n$m');
+    return;
+  }
+  if (o['type'] == 'response_item' && p['type'] == 'message') {
+    final text = _blocksText(p['content']);
+    if (text.trim().isEmpty) return;
+    final role = p['role'];
+    if (role == 'user') {
+      turns.add('## 用户\n$text');
+    } else if (role == 'assistant') {
+      turns.add('## 助手\n$text');
+    }
+  }
+}
+

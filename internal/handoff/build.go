@@ -243,8 +243,15 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 		pkg.OriginalSender = opts.Sender
 	}
 
-	// Populate Package.Attachments metadata (name + sha256 + size) in a
-	// stable order so receivers can verify integrity before download.
+	attachMetadata(pkg, attachments)
+
+	return pkg, attachments, nil
+}
+
+// attachMetadata populates pkg.Attachments (name + sha256 + size) from the raw
+// blob map in a stable (sorted) order so receivers can verify integrity before
+// download. Shared by Build and BuildCapsule.
+func attachMetadata(pkg *handoffschema.Package, attachments map[string][]byte) {
 	names := make([]string, 0, len(attachments))
 	for n := range attachments {
 		names = append(names, n)
@@ -259,7 +266,79 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 			Size:   len(body),
 		})
 	}
+}
 
+// CapsuleOptions configures BuildCapsule. Unlike Build there's no git diff /
+// swagger / rules work — the transcript is captured by the app and the
+// persona/seed are distilled by the source session, then handed in directly.
+// Like Build, ID and CreatedAt are left unset for the relay to stamp at submit.
+type CapsuleOptions struct {
+	RepoName        string
+	Sender          string
+	Visibility      handoffschema.CapsuleVisibility // "private" (个人, default) | "public" (公开)
+	Urgency         handoffschema.Urgency
+	SourceAgent     string // "claude" | "codex"
+	OriginSessionID string
+	SummaryMD       string // short human description of what this capsule is for
+	NoteMD          string
+	Repo            handoffschema.Repo
+	// Payloads — any subset may be nil. Empty byte slices are treated as absent.
+	TranscriptJSONL []byte
+	TranscriptText  []byte
+	Persona         []byte
+	Seed            []byte
+}
+
+// BuildCapsule assembles a KindCapsule Package plus its attachment blobs (keyed
+// by the reserved capsule names) for upload via the normal transport path. The
+// HasTranscript / HasPersona flags are derived from which payloads are present
+// so the receiver's pickup UI only offers the forms this capsule can instantiate.
+func BuildCapsule(opts CapsuleOptions) (*handoffschema.Package, map[string][]byte, error) {
+	if opts.SourceAgent != "claude" && opts.SourceAgent != "codex" {
+		return nil, nil, fmt.Errorf("capsule source_agent must be \"claude\" or \"codex\", got %q", opts.SourceAgent)
+	}
+
+	attachments := map[string][]byte{}
+	add := func(name string, body []byte) {
+		if len(body) > 0 {
+			attachments[name] = body
+		}
+	}
+	add(handoffschema.CapsuleTranscriptJSONLName, opts.TranscriptJSONL)
+	add(handoffschema.CapsuleTranscriptTextName, opts.TranscriptText)
+	add(handoffschema.CapsulePersonaName, opts.Persona)
+	add(handoffschema.CapsuleSeedName, opts.Seed)
+
+	hasTranscript := len(opts.TranscriptJSONL) > 0 || len(opts.TranscriptText) > 0
+	hasPersona := len(opts.Persona) > 0
+	if !hasTranscript && !hasPersona {
+		return nil, nil, fmt.Errorf("capsule is empty: provide at least a transcript or a persona")
+	}
+
+	urgency := opts.Urgency
+	if urgency == "" {
+		urgency = handoffschema.UrgencyNormal
+	}
+	repo := opts.Repo
+	repo.Name = opts.RepoName
+
+	pkg := &handoffschema.Package{
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindCapsule,
+		Sender:        opts.Sender,
+		Urgency:       urgency,
+		Repo:          repo,
+		SummaryMD:     opts.SummaryMD,
+		NoteMD:        opts.NoteMD,
+		Capsule: &handoffschema.Capsule{
+			SourceAgent:     opts.SourceAgent,
+			OriginSessionID: opts.OriginSessionID,
+			Visibility:      opts.Visibility,
+			HasTranscript:   hasTranscript,
+			HasPersona:      hasPersona,
+		},
+	}
+	attachMetadata(pkg, attachments)
 	return pkg, attachments, nil
 }
 

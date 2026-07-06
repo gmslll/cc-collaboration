@@ -671,6 +671,8 @@ func tagFor(k handoffschema.Kind) string {
 		return "REQUEST"
 	case handoffschema.KindBug:
 		return "BUG"
+	case handoffschema.KindCapsule:
+		return "CAPSULE"
 	}
 	return "handoff"
 }

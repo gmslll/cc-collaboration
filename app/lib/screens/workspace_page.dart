@@ -15,7 +15,9 @@ import '../api/todo_models.dart';
 import '../file_icons.dart';
 import '../fs_clipboard.dart';
 import '../local/cli.dart';
+import '../local/agent_resolver.dart';
 import '../local/agent_transcript.dart';
+import '../local/capsule_distill.dart';
 import '../local/config.dart';
 import '../local/diff_parse.dart';
 import '../local/git.dart';
@@ -842,6 +844,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     // creation first, so it routes through _spawnForDispatch below.
     widget.overviewStore.dispatchHandler = deliverLocalMessage;
     widget.overviewStore.spawnHandler = _spawnForDispatch;
+    // "打成胶囊": capture+distill a session into a shareable capsule, then ship
+    // it. Both need config/relay + Cli, which only live here.
+    widget.overviewStore.captureCapsuleHandler = _captureSessionCapsule;
+    widget.overviewStore.submitCapsuleHandler = _submitSessionCapsule;
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
@@ -968,6 +974,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     widget.overviewStore.openHandler = null;
     widget.overviewStore.inputHandler = null;
     widget.overviewStore.previewHandler = null;
+    widget.overviewStore.captureCapsuleHandler = null;
+    widget.overviewStore.submitCapsuleHandler = null;
     widget.overviewStore.reviewedHandler = null;
     widget.overviewStore.dispatchHandler = null;
     widget.overviewStore.spawnHandler = null;
@@ -1716,6 +1724,108 @@ class _WorkspacePageState extends State<WorkspacePage>
           return;
         }
       }
+    }
+  }
+
+  // _captureSessionCapsule backs SessionOverviewStore.captureCapsuleHandler: it
+  // freezes a live agent session into a scratch draft dir — copies the raw log +
+  // neutral render (captureCapsuleTranscript), then distills persona/seed
+  // (distillCapsule, hybrid: self-distill only when the session is idle AND the
+  // user opted in). Returns (draft, null) or (null, error).
+  Future<(CapsuleDraft?, String?)> _captureSessionCapsule(
+    SessionCard card, {
+    required bool preferSelfDistill,
+  }) async {
+    final workdir = card.workdir;
+    if (card.agentKind.isEmpty) return (null, '只有 agent 会话能打成胶囊');
+    if (workdir == null || workdir.isEmpty) return (null, '会话没有工作目录');
+
+    final draftDir = (await Directory.systemTemp.createTemp('cc-capsule-')).path;
+    final cap = await captureCapsuleTranscript(
+      agentKind: card.agentKind,
+      agentSessionId: card.agentSessionId,
+      workdir: workdir,
+      destDir: draftDir,
+      maxTextChars: 200000, // cap the neutral render fed to the headless distill
+    );
+    if (cap == null) {
+      return (null, '会话日志还没落盘,等它写一轮后再试');
+    }
+
+    final outcome = await distillCapsule(
+      agentKind: card.agentKind,
+      // Resolve the agent's real executable up front — a bare name is unreliable
+      // under the GUI's minimal PATH (same helper the PTY launcher uses).
+      headlessExe: await AgentResolver.resolve(card.agentKind),
+      draftDir: draftDir,
+      transcriptText: cap.text, // already in memory from capture — no re-read
+      sessionIdle: !sessionStatusIsActive(card.status),
+      userWantsSelf: preferSelfDistill,
+      deliverToSession: (prompt) async {
+        final s = sessionById(card.sid);
+        if (s == null) return false;
+        s.pasteText(prompt, submit: true);
+        return true;
+      },
+      runProc: systemProcRunner,
+    );
+
+    return (
+      CapsuleDraft(
+        draftDir: draftDir,
+        sourceAgent: card.agentKind,
+        originSessionId: card.agentSessionId,
+        workdir: workdir,
+        hasTranscript: true,
+        hasPersona: outcome.personaWritten,
+        label: card.label,
+      ),
+      null,
+    );
+  }
+
+  // _submitSessionCapsule backs SessionOverviewStore.submitCapsuleHandler: ship
+  // the (possibly user-edited) draft via the bundled `cc-handoff capsule submit`
+  // so the transport + relay-id-stamping path is shared with normal handoffs.
+  // Only flags for payloads that exist on disk are passed.
+  Future<(bool, String?)> _submitSessionCapsule(
+    CapsuleDraft draft, {
+    required String visibility,
+    required String summary,
+  }) async {
+    final d = draft.draftDir;
+    final args = <String>['capsule', 'submit', '--source-agent', draft.sourceAgent];
+    Future<void> addIfExists(String flag, String name) async {
+      if (await File('$d/$name').exists()) {
+        args
+          ..add(flag)
+          ..add('$d/$name');
+      }
+    }
+
+    void addFlag(String flag, String? v) {
+      if (v != null && v.isNotEmpty) {
+        args
+          ..add(flag)
+          ..add(v);
+      }
+    }
+
+    await addIfExists('--transcript', 'transcript.jsonl');
+    await addIfExists('--transcript-text', 'transcript.txt');
+    await addIfExists('--persona', 'persona.md');
+    await addIfExists('--seed', 'seed.md');
+    addFlag('--origin-session', draft.originSessionId);
+    if (visibility == 'public') args.add('--public'); // else defaults to 个人
+    addFlag('--summary', summary);
+
+    try {
+      await Cli.run(args, workingDirectory: draft.workdir);
+      return (true, null);
+    } on CliException catch (e) {
+      return (false, e.message);
+    } catch (e) {
+      return (false, '$e');
     }
   }
 
