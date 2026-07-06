@@ -6,6 +6,7 @@ import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
+import '../local/word_diff.dart';
 import '../syntax.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -445,8 +446,10 @@ class _DiffViewState extends State<DiffView> {
   );
 
   // _rightCell is the editable new-side cell: inline TextField while editing,
-  // else the text with a pencil on hover (when editing is allowed).
-  Widget _rightCell(DiffRow r) {
+  // else the text with a pencil on hover (when editing is allowed). [wordSpans]
+  // carries the new side's per-word diff (from diffSplitRow) so the read-only
+  // rendering matches the default cell's highlighting.
+  Widget _rightCell(DiffRow r, List<WordDiffSpan>? wordSpans) {
     if (_editingNewNo != null && _editingNewNo == r.newNo) {
       return ColoredBox(
         color: CcColors.panelHigh,
@@ -494,11 +497,14 @@ class _DiffViewState extends State<DiffView> {
         widget.editRoot != null &&
         r.newNo != null &&
         r.rightKind != DiffKind.empty;
-    if (!editable) return diffCell(r.right, r.rightKind, langId: _lang);
+    if (!editable) {
+      return diffCell(r.right, r.rightKind, langId: _lang, wordSpans: wordSpans);
+    }
     return _EditableCell(
       text: r.right,
       kind: r.rightKind,
       langId: _lang,
+      wordSpans: wordSpans,
       onEdit: () => _startEdit(r),
     );
   }
@@ -510,12 +516,14 @@ class _EditableCell extends StatefulWidget {
   final String text;
   final DiffKind kind;
   final String? langId;
+  final List<WordDiffSpan>? wordSpans;
   final VoidCallback onEdit;
   const _EditableCell({
     required this.text,
     required this.kind,
     required this.onEdit,
     this.langId,
+    this.wordSpans,
   });
 
   @override
@@ -528,9 +536,17 @@ class _EditableCellState extends State<_EditableCell> {
   Widget build(BuildContext context) {
     // expand leading tabs for display only; onEdit still uses the original text.
     final shown = expandLeadingTabs(widget.text);
-    final span = widget.langId == null
+    final syntaxSpan = widget.langId == null
         ? null
         : highlightLine(shown, widget.langId, base: diffCellStyle);
+    // Overlay per-word diff backgrounds (no-op passthrough when wordSpans null).
+    final span = applyDiffBackground(
+      shown,
+      syntaxSpan,
+      base: diffCellStyle,
+      wordSpans: widget.wordSpans,
+      diffBg: wordDiffBg(widget.kind),
+    );
     return MouseRegion(
       onEnter: (_) => setState(() => _h = true),
       onExit: (_) => setState(() => _h = false),

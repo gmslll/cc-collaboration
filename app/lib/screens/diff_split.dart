@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../local/diff_parse.dart';
 import '../local/prefs.dart';
+import '../local/word_diff.dart';
 import '../syntax.dart';
 import '../theme.dart';
 
@@ -66,6 +67,16 @@ Color? diffCellBg(DiffKind kind) => switch (kind) {
   DiffKind.context => null,
 };
 
+// wordDiffBg is the stronger per-word highlight painted on top of the whole-cell
+// diffCellBg tint: same ok/danger hue, but a heavier alpha so a changed word
+// reads as an emphasized box over the row's faint background — GoLand's "faint
+// line tint + strong changed-word" look. The 0.32 alpha is a tunable knob.
+Color? wordDiffBg(DiffKind kind) => switch (kind) {
+  DiffKind.added => CcColors.ok.withValues(alpha: 0.32),
+  DiffKind.removed => CcColors.danger.withValues(alpha: 0.32),
+  DiffKind.empty || DiffKind.context => null,
+};
+
 Widget diffGutter(int? no) => Container(
   width: 44,
   alignment: Alignment.topRight,
@@ -84,11 +95,25 @@ Widget diffGutter(int? no) => Container(
 // diffCell renders one side's line. wrap=true (desktop, Expanded cells) lets long
 // lines soft-wrap within the column; wrap=false (phone, fixed-width cells) keeps
 // each line on one line so the grid reads like the desktop and scrolls instead.
-Widget diffCell(String text, DiffKind kind, {bool wrap = true, String? langId}) {
+Widget diffCell(
+  String text,
+  DiffKind kind, {
+  bool wrap = true,
+  String? langId,
+  List<WordDiffSpan>? wordSpans,
+}) {
   final shown = expandLeadingTabs(text); // tab-indented code → visible indent
-  final span = langId == null
+  final syntaxSpan = langId == null
       ? null
       : highlightLine(shown, langId, base: diffCellStyle);
+  // Overlay per-word diff backgrounds; a no-op passthrough when wordSpans is null.
+  final span = applyDiffBackground(
+    shown,
+    syntaxSpan,
+    base: diffCellStyle,
+    wordSpans: wordSpans,
+    diffBg: wordDiffBg(kind),
+  );
   return Container(
     color: diffCellBg(kind),
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
@@ -131,7 +156,10 @@ Widget fileDiffBadges(FileDiff f) => Row(
 // (read-only) for the phone.
 Widget diffSplitRow(
   DiffRow r, {
-  Widget Function(DiffRow r)? rightCell,
+  // rightCell overrides the new-side cell; it receives the row plus the new
+  // side's per-word spans (null on non-changed rows) so an editable cell can
+  // paint the same highlighting the default cell would.
+  Widget Function(DiffRow r, List<WordDiffSpan>? wordSpans)? rightCell,
   Widget? Function(DiffRow r)? hunkTrailing,
   double?
   cellWidth, // null = Expanded (desktop); set = fixed-width (phone scroll)
@@ -163,17 +191,26 @@ Widget diffSplitRow(
   final wrap = cellWidth == null;
   Widget col(Widget child) =>
       wrap ? Expanded(child: child) : SizedBox(width: cellWidth, child: child);
+  // Per-word diff for changed (removed↔added) rows only. Diff the tab-expanded
+  // text — diffCell displays and highlights that same expanded form, so the
+  // character offsets must line up (expandLeadingTabs is idempotent, so
+  // diffCell re-expanding has no effect). null on all other rows → no overlay.
+  final wordDiff = r.isWordDiffPair
+      ? diffWords(expandLeadingTabs(r.left), expandLeadingTabs(r.right))
+      : null;
   return IntrinsicHeight(
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         diffGutter(r.oldNo),
-        col(diffCell(r.left, r.leftKind, wrap: wrap, langId: langId)),
+        col(diffCell(r.left, r.leftKind,
+            wrap: wrap, langId: langId, wordSpans: wordDiff?.oldSpans)),
         const VerticalDivider(width: 1),
         diffGutter(r.newNo),
         col(
-          rightCell?.call(r) ??
-              diffCell(r.right, r.rightKind, wrap: wrap, langId: langId),
+          rightCell?.call(r, wordDiff?.newSpans) ??
+              diffCell(r.right, r.rightKind,
+                  wrap: wrap, langId: langId, wordSpans: wordDiff?.newSpans),
         ),
       ],
     ),

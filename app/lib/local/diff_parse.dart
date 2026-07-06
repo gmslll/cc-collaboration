@@ -36,6 +36,12 @@ class DiffRow {
         leftKind = DiffKind.empty,
         right = '',
         rightKind = DiffKind.empty;
+
+  // isWordDiffPair marks a changed line where both sides carry real text (a
+  // removed line paired with an added line) — the only rows worth running a
+  // per-word diff on. Empty/context/hunk rows have nothing to compare.
+  bool get isWordDiffPair =>
+      !isHunk && leftKind == DiffKind.removed && rightKind == DiffKind.added;
 }
 
 // One changed file: path + status + add/del counts + its raw unified-diff text
