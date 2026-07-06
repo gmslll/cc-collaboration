@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.12] - 2026-07-06
+
+### Fixed
+
+- **Windows 版开终端/开项目间歇性闪退** — 从三条线一起收:①原生 ConPTY 句柄卫生(`CreateProcessW` 后关闭父进程多余的管道端,让输出管道能干净 EOF、读线程不再残留;恢复被注释掉的 attribute list / 子线程句柄 / 线程 options 的释放);②Windows 中文输入层在终端 pane 离屏(失去焦点)时释放其 TSF/IME 文本输入连接,避免"隐藏却仍连着的输入框"这一 Flutter Windows 引擎已知崩溃态;③新增崩溃日志兜底(`runZonedGuarded` + `FlutterError.onError` + `PlatformDispatcher.onError` 落 `<应用支持目录>/crash.log`)与会话 spawn/退出、IME 焦点变化的面包屑,便于定位任何残留问题。
+
 ## [0.9.11] - 2026-07-05
 
 ### Added
