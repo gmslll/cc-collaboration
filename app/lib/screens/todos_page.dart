@@ -2022,6 +2022,11 @@ class _AssignTodoDialog extends StatefulWidget {
 class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   String _mode = 'existing'; // existing | new
   String? _targetSid;
+  // "已有会话" tab 的三级级联选择状态，跟 "新建会话" tab 的 _workspace/_project
+  // 完全分开：这边筛的是已有 SessionCard，那边选的是 config 里可新建的
+  // workspace/project，两套语义不同，各自维护。空字符串代表未绑定的孤儿会话。
+  String? _existingWorkspace;
+  String? _existingProject;
   String? _workspace;
   String? _project;
   String _kind = 'claude';
@@ -2265,7 +2270,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   void initState() {
     super.initState();
     if (_cards.isNotEmpty) {
-      _targetSid = _cards.first.sid;
+      final first = _cards.first;
+      _existingWorkspace = first.workspace;
+      _existingProject = first.project;
+      _targetSid = first.sid;
     } else {
       // No local sessions (mobile, or a desktop with nothing open): the only
       // assign path is 指派给成员, so force that mode and load candidates.
@@ -2509,22 +2517,91 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     );
   }
 
-  Widget _existingForm() => DropdownButton<String>(
-    isExpanded: true,
-    value: _targetSid,
-    items: _cards
-        .map(
-          (c) => DropdownMenuItem(
-            value: c.sid,
-            child: Text(
-              '${c.label} (${c.workspace}/${c.project})',
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        )
-        .toList(),
-    onChanged: (v) => setState(() => _targetSid = v),
-  );
+  // 未绑定 workspace/project 的孤儿会话 (c.workspace/c.project == '') 在下拉里
+  // 显示成 "（未分组）"，但保留空字符串作为筛选值，跟真实 workspace 一致。
+  static String _groupLabel(String name) => name.isEmpty ? '（未分组）' : name;
+
+  // 已有会话的 workspace→project→会话 三级级联，跟 _newForm() 一个体验。
+  Widget _existingForm() {
+    final workspaces = {for (final c in _cards) c.workspace}.toList()..sort();
+    final projects = _cards
+        .where((c) => c.workspace == _existingWorkspace)
+        .map((c) => c.project)
+        .toSet()
+        .toList()
+      ..sort();
+    final sessions = _cards
+        .where((c) =>
+            c.workspace == _existingWorkspace && c.project == _existingProject)
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButton<String>(
+          isExpanded: true,
+          hint: const Text('workspace'),
+          value: _existingWorkspace,
+          items: [
+            for (final w in workspaces)
+              DropdownMenuItem(value: w, child: Text(_groupLabel(w))),
+          ],
+          onChanged: (v) => setState(() {
+            _existingWorkspace = v;
+            final projs = _cards
+                .where((c) => c.workspace == v)
+                .map((c) => c.project)
+                .toSet()
+                .toList()
+              ..sort();
+            _existingProject = projs.isEmpty ? null : projs.first;
+            final sess = _cards
+                .where(
+                    (c) => c.workspace == v && c.project == _existingProject)
+                .toList();
+            _targetSid = sess.isEmpty ? null : sess.first.sid;
+          }),
+        ),
+        const SizedBox(height: 8),
+        DropdownButton<String>(
+          isExpanded: true,
+          hint: const Text('project'),
+          value: _existingProject,
+          items: [
+            for (final p in projects)
+              DropdownMenuItem(value: p, child: Text(_groupLabel(p))),
+          ],
+          onChanged: (v) => setState(() {
+            _existingProject = v;
+            final sess = _cards
+                .where((c) => c.workspace == _existingWorkspace && c.project == v)
+                .toList();
+            _targetSid = sess.isEmpty ? null : sess.first.sid;
+          }),
+        ),
+        const SizedBox(height: 8),
+        DropdownButton<String>(
+          isExpanded: true,
+          hint: const Text('会话'),
+          value: _targetSid,
+          items: [
+            for (final c in sessions)
+              DropdownMenuItem(
+                value: c.sid,
+                // 同一 workspace/project 下可能有多个同名 label（比如两个
+                // "kunlun-frontend" tab），有 worktree 名时拼上去帮着区分。
+                child: Text(
+                  c.worktree == null || c.worktree!.isEmpty
+                      ? c.label
+                      : '${c.label} · ${c.worktree}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: (v) => setState(() => _targetSid = v),
+        ),
+      ],
+    );
+  }
 
   Widget _newForm() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
