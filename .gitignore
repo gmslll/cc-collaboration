@@ -8,6 +8,10 @@ bin/
 # Android release signing (key.properties + cc-handoff-release.jks) is committed
 # on purpose so CI signs with a stable key without secrets — see build.gradle.kts.
 /cc-handoff
+# Sibling root binaries from `make build` (cli/relay/mcp) — regenerable build
+# artifacts, same as /cc-handoff above; never committed.
+/relay
+/mcp
 # cc-handoff runtime state (materialized inbox, watch cursor, supervisor scaffold).
 # The committed per-repo config is the .cc-handoff.toml file, not this directory.
 .cc-handoff/
