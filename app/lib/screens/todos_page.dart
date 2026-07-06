@@ -120,12 +120,21 @@ class _TodosPageState extends State<TodosPage> {
   final _detailKey = GlobalKey<TodoDetailViewState>();
   String _linearTeamKey = '';
   String _linearProjectId = '';
+  // Relay project to import Linear todos INTO — they become team todos, visible
+  // under the relay team「全部项目」view and assignable to members. Empty = import
+  // as personal todos (owner-only, invisible in the team view — the reason
+  // Linear imports "disappeared" from a relay team before this option existed).
+  String _linearImportProjectId = '';
   String? _linearTokenOverride;
   bool _importingLinear = false;
 
   RelayClient get _client => widget.client;
   AppConfig get _cfg => widget.config;
   Me get _me => widget.me;
+  // widget.me is fetched once at login; _myProjects is a live copy re-pulled on
+  // refresh so a relay project created after launch (via the 项目 page) appears
+  // in the project filter + the Linear import target without an app restart.
+  late List<ProjectRole> _myProjects = widget.me.projects;
   TodoStore get _store => widget.store;
   bool get _canUseLocalCli =>
       !kIsWeb &&
@@ -146,6 +155,7 @@ class _TodosPageState extends State<TodosPage> {
     _store.onComment = _onComment;
     _loadLinearImportPrefs();
     _loadGroups();
+    _refreshMyProjects();
     // Local Prefs render instantly above; then pull the identity's synced view
     // so this device shows the same board as the user's other devices (手机=电脑).
     _pullTodoView();
@@ -257,6 +267,8 @@ class _TodosPageState extends State<TodosPage> {
   void _loadLinearImportPrefs() {
     _linearTeamKey = Prefs.getString('todo.linear.teamKey', def: '');
     _linearProjectId = Prefs.getString('todo.linear.projectId', def: '');
+    _linearImportProjectId =
+        Prefs.getString('todo.linear.importProjectId', def: '');
     _teamSource = Prefs.getString('todo.team.source', def: 'relay') == 'linear'
         ? 'linear'
         : 'relay';
@@ -265,6 +277,16 @@ class _TodosPageState extends State<TodosPage> {
   void _refresh() {
     _store.refresh();
     _loadGroups();
+    _refreshMyProjects();
+  }
+
+  // Best-effort re-pull of /v1/me so newly-created relay projects show up in the
+  // project filter + the Linear import target. Keeps the old list on error.
+  Future<void> _refreshMyProjects() async {
+    try {
+      final m = await widget.client.me();
+      if (mounted) setState(() => _myProjects = m.projects);
+    } catch (_) {/* keep the login-time list */}
   }
 
   // _summonTodoAssistant spawns a dedicated 待办助手 session (claude/codex) in a
@@ -399,14 +421,26 @@ class _TodosPageState extends State<TodosPage> {
       final out = await Cli.todoImportLinear(
         teamKey: teamKey,
         linearProjectId: linearProjectId,
+        // Relay project to land the todos in (empty = personal). This is what
+        // makes imported Linear todos show up under 团队 / Relay instead of
+        // silently becoming personal (owner-only) todos.
+        projectId: _linearImportProjectId,
       );
       if (mounted) snack(context, out.isNotEmpty ? out : '已从 Linear 导入');
       await _store.refresh();
       if (mounted) {
         setState(() {
           _scope = 'team';
-          _teamSource = 'linear';
-          _projectFilter = null;
+          if (_linearImportProjectId.isNotEmpty) {
+            // Imported into a relay team project → show the team/relay view
+            // filtered to it (where these todos now live).
+            _teamSource = 'relay';
+            _projectFilter = _linearImportProjectId;
+          } else {
+            // Personal import → the Linear-source view (team/relay hides them).
+            _teamSource = 'linear';
+            _projectFilter = null;
+          }
           _groupFilter = null;
           _statusFilter.clear();
         });
@@ -462,13 +496,15 @@ class _TodosPageState extends State<TodosPage> {
         TextEditingController(text: _linearTokenOverride ?? _cfg.linearToken);
     final teamCtl = TextEditingController(text: _linearTeamKey);
     final projectCtl = TextEditingController(text: _linearProjectId);
+    var importPid = _linearImportProjectId;
     final saved = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Linear 团队 / 项目'),
         content: SizedBox(
           width: 440,
-          child: Column(
+          child: StatefulBuilder(
+            builder: (ctx, setLocal) => Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (_canUseLocalCli) ...[
@@ -498,7 +534,29 @@ class _TodosPageState extends State<TodosPage> {
                   isDense: true,
                 ),
               ),
+              const SizedBox(height: 12),
+              // Relay project to import INTO. Empty = 个人待办 (owner-only, hidden
+              // in the team view); picking a team project makes the imported
+              // Linear todos show under 团队 / 全部项目 and be assignable.
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('导入到 relay 项目',
+                    style: TextStyle(color: CcColors.muted, fontSize: 12)),
+              ),
+              DropdownButton<String>(
+                isExpanded: true,
+                value:
+                    _myProjects.any((p) => p.id == importPid) ? importPid : '',
+                items: [
+                  const DropdownMenuItem(
+                      value: '', child: Text('个人待办（仅自己可见）')),
+                  for (final p in _myProjects)
+                    DropdownMenuItem(value: p.id, child: Text(p.name)),
+                ],
+                onChanged: (v) => setLocal(() => importPid = v ?? ''),
+              ),
             ],
+            ),
           ),
         ),
         actions: [
@@ -528,6 +586,8 @@ class _TodosPageState extends State<TodosPage> {
       _linearTeamKey = team;
       _linearProjectId = project;
       _linearTokenOverride = token;
+      _linearImportProjectId = importPid;
+      Prefs.setString('todo.linear.importProjectId', importPid);
       // Persists teamKey/projectId to local Prefs AND syncs the view to the
       // relay so the phone reproduces this exact Linear board.
       _pushTodoView();
@@ -653,7 +713,7 @@ class _TodosPageState extends State<TodosPage> {
   // necessarily have the full Me/projects list in scope.
   String? _projectName(Todo t) {
     if (t.projectId == null) return null;
-    for (final p in _me.projects) {
+    for (final p in _myProjects) {
       if (p.id == t.projectId) return p.name;
     }
     return null;
@@ -667,6 +727,7 @@ class _TodosPageState extends State<TodosPage> {
       builder: (_) => _QuickCreateDialog(
         client: _client,
         me: _me,
+        projects: _myProjects,
         initialScope:
             _scope == 'team' && _teamSource == 'relay' ? 'team' : 'personal',
         initialProjectId:
@@ -916,7 +977,7 @@ class _TodosPageState extends State<TodosPage> {
               value: null,
               child: Text('全部项目'),
             ),
-            ..._me.projects.map(
+            ..._myProjects.map(
               (p) => DropdownMenuItem<String?>(
                 value: p.id,
                 child: Text(p.name),
@@ -1108,7 +1169,10 @@ class _TodosPageState extends State<TodosPage> {
         return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
       }
       return RefreshIndicator(
-        onRefresh: _store.refresh,
+        onRefresh: () async {
+          await _store.refresh();
+          await _refreshMyProjects();
+        },
         child: ListView.separated(
           itemCount: items.length,
           separatorBuilder: (_, _) => const Divider(height: 1),
@@ -1516,7 +1580,10 @@ class _TodosPageState extends State<TodosPage> {
           ),
       ].where((g) => g.$2.isNotEmpty).toList();
       return RefreshIndicator(
-        onRefresh: _store.refresh,
+        onRefresh: () async {
+          await _store.refresh();
+          await _refreshMyProjects();
+        },
         child: ListView(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
           children: [
@@ -1728,9 +1795,14 @@ class _QuickCreateDialog extends StatefulWidget {
   // else GroupControl appears).
   final List<String> groups;
 
+  // projects is TodosPage's live (refreshed) project list, passed in rather than
+  // read off `me` so a relay project created after login is selectable here too.
+  final List<ProjectRole> projects;
+
   const _QuickCreateDialog({
     required this.client,
     required this.me,
+    required this.projects,
     this.initialScope = 'personal',
     this.initialProjectId,
     this.groups = const [],
@@ -1758,8 +1830,8 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
     _projectId = widget.initialProjectId;
     if (_scope == 'team' &&
         _projectId == null &&
-        widget.me.projects.isNotEmpty) {
-      _projectId = widget.me.projects.first.id;
+        widget.projects.isNotEmpty) {
+      _projectId = widget.projects.first.id;
     }
   }
 
@@ -1856,7 +1928,7 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
             children: [
               Row(
                 children: [
-                  if (widget.me.projects.isNotEmpty)
+                  if (widget.projects.isNotEmpty)
                     SegmentedButton<String>(
                       segments: const [
                         ButtonSegment(value: 'personal', label: Text('个人')),
@@ -1872,18 +1944,18 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
                         _scope = s.first;
                         if (_scope == 'team' &&
                             _projectId == null &&
-                            widget.me.projects.isNotEmpty) {
-                          _projectId = widget.me.projects.first.id;
+                            widget.projects.isNotEmpty) {
+                          _projectId = widget.projects.first.id;
                         }
                       }),
                     ),
                   const Spacer(),
-                  if (_scope == 'team' && widget.me.projects.isNotEmpty)
+                  if (_scope == 'team' && widget.projects.isNotEmpty)
                     DropdownButton<String>(
                       isDense: true,
                       underline: const SizedBox(),
                       value: _projectId,
-                      items: widget.me.projects
+                      items: widget.projects
                           .map(
                             (p) => DropdownMenuItem(
                               value: p.id,
