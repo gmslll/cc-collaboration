@@ -150,7 +150,7 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, gql *Client, 
 	if sourceProjectID == "" {
 		sourceProjectID = strings.TrimSpace(iss.ProjectID)
 	}
-	status := mapIssueStatus(iss.StateType)
+	status := mapIssueStatus(iss.StateType, iss.StateName)
 	priority := mapIssuePriority(iss.Priority)
 	bodyMD := composeBodyMD(iss.Labels, iss.Description)
 
@@ -433,19 +433,30 @@ func extensionForContentType(ct string) string {
 }
 
 // mapIssueStatus maps Linear's state.type onto our (now Linear-shaped)
-// Status 1:1 — backlog/unstarted/started/completed/canceled each have a
-// direct counterpart, unlike the old 6-value taxonomy where backlog and
-// unstarted both had to compress onto the same "pending" bucket. Any
-// unrecognized type (Linear adds new ones rarely, but schemas drift) falls
-// back to triage rather than erroring the whole import — "needs a human to
-// figure out what this is" is triage's actual purpose.
-func mapIssueStatus(stateType string) todoschema.Status {
+// Status — backlog/unstarted/completed/canceled each have a direct 1:1
+// counterpart, unlike the old 6-value taxonomy where backlog and unstarted
+// both had to compress onto the same "pending" bucket. Any unrecognized type
+// (Linear adds new ones rarely, but schemas drift) falls back to triage
+// rather than erroring the whole import — "needs a human to figure out what
+// this is" is triage's actual purpose.
+//
+// The "started" type is the one exception to the clean 1:1 mapping: Linear's
+// coarse type enum has no "review" category, so a team's custom "In Review"
+// state is still type=started, indistinguishable from "In Progress" by type
+// alone. So started disambiguates on the human-readable state.name (which
+// GetTeamIssues already fetches into Issue.StateName) — a review-ish name maps
+// to StatusInReview, everything else stays StatusInProgress. The other four
+// types have no such intra-type ambiguity and ignore stateName entirely.
+func mapIssueStatus(stateType, stateName string) todoschema.Status {
 	switch stateType {
 	case "backlog":
 		return todoschema.StatusBacklog
 	case "unstarted":
 		return todoschema.StatusTodo
 	case "started":
+		if isReviewStateName(stateName) {
+			return todoschema.StatusInReview
+		}
 		return todoschema.StatusInProgress
 	case "completed":
 		return todoschema.StatusDone
@@ -454,6 +465,19 @@ func mapIssueStatus(stateType string) todoschema.Status {
 	default:
 		return todoschema.StatusTriage
 	}
+}
+
+// isReviewStateName reports whether a Linear state.name denotes a review
+// stage. It's only consulted when stateType=="started" (the only type that
+// carries "same type, different meaning" ambiguity). The match is a
+// case-insensitive "review" substring, which covers the common "In Review"
+// and "Code Review" namings without guessing at team-specific conventions
+// like "QA" or "Testing" that nobody has reported — deliberately under-
+// matching rather than over-fitting. StatusDuplicate is intentionally out of
+// scope: Linear has no native "duplicate" workflow state (duplicate is an
+// issue-relation field, not something this function can see).
+func isReviewStateName(name string) bool {
+	return strings.Contains(strings.ToLower(name), "review")
 }
 
 // mapIssuePriority compresses Linear's own priority scale onto our

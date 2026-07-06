@@ -7,18 +7,35 @@ import (
 )
 
 func TestMapIssueStatus(t *testing.T) {
-	cases := map[string]todoschema.Status{
-		"backlog":     todoschema.StatusBacklog,
-		"unstarted":   todoschema.StatusTodo,
-		"started":     todoschema.StatusInProgress,
-		"completed":   todoschema.StatusDone,
-		"canceled":    todoschema.StatusCanceled,
-		"":            todoschema.StatusTriage, // unrecognized -> triage, not an error
-		"made-up-typ": todoschema.StatusTriage,
+	// stateName now varies independently of stateType (Linear's type enum has
+	// no "review" category, so a custom "In Review" state is still
+	// type=started and can only be told apart from "In Progress" by name), so
+	// this is a struct table rather than a plain type->status map.
+	cases := []struct {
+		stateType string
+		stateName string
+		want      todoschema.Status
+	}{
+		// The started branch disambiguates on name. The In Progress case is
+		// the most important regression guard: the common path must not get
+		// swept into StatusInReview by the new name check.
+		{"started", "In Progress", todoschema.StatusInProgress},
+		{"started", "In Review", todoschema.StatusInReview},   // the reported bug
+		{"started", "Code Review", todoschema.StatusInReview}, // adjacent naming
+		{"started", "", todoschema.StatusInProgress},          // no name -> stays in progress
+		// name only matters for started: a "review"-ish name on any other
+		// type must be ignored, so backlog stays backlog even with "In Review".
+		{"backlog", "In Review", todoschema.StatusBacklog},
+		{"backlog", "Backlog", todoschema.StatusBacklog},
+		{"unstarted", "Todo", todoschema.StatusTodo},
+		{"completed", "Done", todoschema.StatusDone},
+		{"canceled", "Canceled", todoschema.StatusCanceled},
+		{"", "", todoschema.StatusTriage},            // unrecognized -> triage, not an error
+		{"made-up-typ", "", todoschema.StatusTriage}, // unrecognized -> triage
 	}
-	for in, want := range cases {
-		if got := mapIssueStatus(in); got != want {
-			t.Errorf("mapIssueStatus(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := mapIssueStatus(c.stateType, c.stateName); got != c.want {
+			t.Errorf("mapIssueStatus(%q, %q) = %q, want %q", c.stateType, c.stateName, got, c.want)
 		}
 	}
 }

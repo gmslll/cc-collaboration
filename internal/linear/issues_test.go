@@ -67,7 +67,7 @@ func TestGetTeamIssues(t *testing.T) {
 
 	got0 := issues[0]
 	if got0.Identifier != "ENG-456" || got0.Title != "Fix the thing" || got0.StateType != "started" ||
-		got0.Priority != 1 || got0.AssigneeEmail != "dev@company.com" {
+		got0.StateName != "In Progress" || got0.Priority != 1 || got0.AssigneeEmail != "dev@company.com" {
 		t.Errorf("issue[0] mismatch: %+v", got0)
 	}
 	if want := []string{"bug", "urgent"}; !equalStrings(got0.Labels, want) {
@@ -84,6 +84,9 @@ func TestGetTeamIssues(t *testing.T) {
 	}
 
 	got1 := issues[1]
+	if got1.StateType != "backlog" || got1.StateName != "Backlog" {
+		t.Errorf("issue[1] state = {%q, %q}, want {backlog, Backlog}", got1.StateType, got1.StateName)
+	}
 	if got1.AssigneeEmail != "" {
 		t.Errorf("issue[1].AssigneeEmail = %q, want empty (null assignee)", got1.AssigneeEmail)
 	}
