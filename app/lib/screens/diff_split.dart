@@ -60,22 +60,25 @@ const diffCellStyle = TextStyle(
   color: CcColors.text,
 );
 
-Color? diffCellBg(DiffKind kind) => switch (kind) {
-  DiffKind.added => CcColors.ok.withValues(alpha: 0.10),
-  DiffKind.removed => CcColors.danger.withValues(alpha: 0.10),
-  DiffKind.empty => CcColors.bgGradTop.withValues(alpha: 0.5),
-  DiffKind.context => null,
-};
-
-// wordDiffBg is the stronger per-word highlight painted on top of the whole-cell
-// diffCellBg tint: same ok/danger hue, but a heavier alpha so a changed word
-// reads as an emphasized box over the row's faint background — GoLand's "faint
-// line tint + strong changed-word" look. The 0.32 alpha is a tunable knob.
-Color? wordDiffBg(DiffKind kind) => switch (kind) {
-  DiffKind.added => CcColors.ok.withValues(alpha: 0.32),
-  DiffKind.removed => CcColors.danger.withValues(alpha: 0.32),
+// _diffHue is the single added/removed color choice shared by diffCellBg (the
+// whole-cell tint) and wordDiffBg (the stronger per-word highlight) — one
+// table instead of two switches over DiffKind that would otherwise have to be
+// kept in sync by hand.
+Color? _diffHue(DiffKind kind) => switch (kind) {
+  DiffKind.added => CcColors.ok,
+  DiffKind.removed => CcColors.danger,
   DiffKind.empty || DiffKind.context => null,
 };
+
+Color? diffCellBg(DiffKind kind) => kind == DiffKind.empty
+    ? CcColors.bgGradTop.withValues(alpha: 0.5)
+    : _diffHue(kind)?.withValues(alpha: 0.10);
+
+// wordDiffBg is the stronger per-word highlight painted on top of the whole-cell
+// diffCellBg tint: same hue, but a heavier alpha so a changed word reads as an
+// emphasized box over the row's faint background — GoLand's "faint line tint +
+// strong changed-word" look. The 0.32 alpha is a tunable knob.
+Color? wordDiffBg(DiffKind kind) => _diffHue(kind)?.withValues(alpha: 0.32);
 
 Widget diffGutter(int? no) => Container(
   width: 44,
@@ -92,13 +95,14 @@ Widget diffGutter(int? no) => Container(
   ),
 );
 
-// diffCell renders one side's line. wrap=true (desktop, Expanded cells) lets long
-// lines soft-wrap within the column; wrap=false (phone, fixed-width cells) keeps
-// each line on one line so the grid reads like the desktop and scrolls instead.
-Widget diffCell(
+// diffCellSpan composes one cell's render pieces — the tab-expanded display
+// text and its highlighted span (syntax color, plus a word-diff background
+// overlay when [wordSpans] is given) — so the expand→highlight→overlay
+// sequence lives in one place instead of being duplicated between diffCell
+// and _EditableCell (diff_view.dart).
+({String shown, TextSpan? span}) diffCellSpan(
   String text,
   DiffKind kind, {
-  bool wrap = true,
   String? langId,
   List<WordDiffSpan>? wordSpans,
 }) {
@@ -114,6 +118,21 @@ Widget diffCell(
     wordSpans: wordSpans,
     diffBg: wordDiffBg(kind),
   );
+  return (shown: shown, span: span);
+}
+
+// diffCell renders one side's line. wrap=true (desktop, Expanded cells) lets long
+// lines soft-wrap within the column; wrap=false (phone, fixed-width cells) keeps
+// each line on one line so the grid reads like the desktop and scrolls instead.
+Widget diffCell(
+  String text,
+  DiffKind kind, {
+  bool wrap = true,
+  String? langId,
+  List<WordDiffSpan>? wordSpans,
+}) {
+  final (:shown, :span) =
+      diffCellSpan(text, kind, langId: langId, wordSpans: wordSpans);
   return Container(
     color: diffCellBg(kind),
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
@@ -148,6 +167,13 @@ Widget fileDiffBadges(FileDiff f) => Row(
       ),
   ],
 );
+
+// _isWordDiffPair marks a changed line where both sides carry real text (a
+// removed line paired with an added line) — the only rows worth running a
+// per-word diff on. Empty/context/hunk rows have nothing to compare, so this
+// is a diffSplitRow rendering concern, not a DiffRow parse-model field.
+bool _isWordDiffPair(DiffRow r) =>
+    !r.isHunk && r.leftKind == DiffKind.removed && r.rightKind == DiffKind.added;
 
 // diffSplitRow renders one aligned old|new row (gutters + cells, Expanded so the
 // two columns split the available width). [rightCell] overrides the new-side
@@ -195,7 +221,7 @@ Widget diffSplitRow(
   // text — diffCell displays and highlights that same expanded form, so the
   // character offsets must line up (expandLeadingTabs is idempotent, so
   // diffCell re-expanding has no effect). null on all other rows → no overlay.
-  final wordDiff = r.isWordDiffPair
+  final wordDiff = _isWordDiffPair(r)
       ? diffWords(expandLeadingTabs(r.left), expandLeadingTabs(r.right))
       : null;
   return IntrinsicHeight(

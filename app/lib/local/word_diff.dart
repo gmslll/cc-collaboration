@@ -22,9 +22,6 @@ class WordDiffSpan {
 // added line. Each strictly, seamlessly covers its side's full length.
 typedef WordDiffResult = ({List<WordDiffSpan> oldSpans, List<WordDiffSpan> newSpans});
 
-// _Op is one step of the LCS alignment between the two token sequences.
-enum _Op { equal, removed, added }
-
 // A tokenizer match: the token text plus its [start, end) offset in the line.
 class _Tok {
   final int start, end;
@@ -42,10 +39,12 @@ List<_Tok> _tokenize(String line) => [
       for (final m in _tokenRe.allMatches(line)) _Tok(m.start, m.end),
     ];
 
-// Memoize by (oldLine, newLine) so per-frame rebuilds don't re-run the DP.
-// Mirrors syntax.dart's _spanCache (bounded, cleared wholesale when large).
-// Null results (fallbacks) are cached too, so we don't recompute them.
-final Map<String, WordDiffResult?> _cache = {};
+// Memoize by (oldLine, newLine) so per-frame rebuilds don't re-run the DP. A
+// record key avoids concatenating (and rehashing) a fresh string on every
+// call, including hits. Mirrors syntax.dart's _spanCache (bounded, cleared
+// wholesale when large). Null results (fallbacks) are cached too, so we don't
+// recompute them.
+final Map<(String, String), WordDiffResult?> _cache = {};
 
 // diffWords aligns [oldLine] and [newLine] token-by-token and returns the
 // per-side equal/diff spans, or null to fall back to a plain whole-line tint:
@@ -56,8 +55,9 @@ final Map<String, WordDiffResult?> _cache = {};
 // The caller treats null as "no per-word highlight for this row".
 WordDiffResult? diffWords(String oldLine, String newLine) {
   if (oldLine == newLine) return null;
-  final key = '$oldLine\n$newLine';
-  if (_cache.containsKey(key)) return _cache[key];
+  final key = (oldLine, newLine);
+  final hit = _cache[key];
+  if (hit != null || _cache.containsKey(key)) return hit;
 
   final result = _compute(oldLine, newLine);
   if (_cache.length > 4000) _cache.clear();
@@ -65,6 +65,13 @@ WordDiffResult? diffWords(String oldLine, String newLine) {
   return result;
 }
 
+// _compute aligns the two token sequences via a standard suffix-LCS DP
+// (dp[i][j] = LCS length of oldToks[i:], newToks[j:]; O(n·m), fine for single
+// lines of a few dozen tokens — no need for Myers), then walks forward from
+// (0,0) along that table, directly emitting each token's per-side span and
+// tallying the equal-token count in one pass (no intermediate op list).
+// Coalescing adjacent same-kind spans afterward turns the per-token spans
+// into the seamless [0, line.length) partitions callers expect.
 WordDiffResult? _compute(String oldLine, String newLine) {
   final oldToks = _tokenize(oldLine);
   final newToks = _tokenize(newLine);
@@ -72,87 +79,55 @@ WordDiffResult? _compute(String oldLine, String newLine) {
   // Pathological-input guard: skip the O(n·m) DP for absurd token counts.
   if (n * m > 200000) return null;
 
-  final ops = _lcsOps(oldLine, newLine, oldToks, newToks);
-
-  // Dice similarity over tokens: too little in common → a rewrite, bail out.
-  var commonCount = 0;
-  for (final op in ops) {
-    if (op == _Op.equal) commonCount++;
-  }
-  final denom = n + m;
-  if (denom == 0) return null;
-  final ratio = 2 * commonCount / denom;
-  if (ratio < 0.25) return null;
-
-  // Walk the op sequence, assigning each token a per-token span on its side,
-  // then coalesce runs of the same kind. Because tokens are consumed in order
-  // and the tokenizer leaves no gaps, the coalesced spans seamlessly cover
-  // [0, line.length) on each side.
-  final oldUnits = <WordDiffSpan>[];
-  final newUnits = <WordDiffSpan>[];
-  var oi = 0, ni = 0;
-  for (final op in ops) {
-    switch (op) {
-      case _Op.equal:
-        oldUnits.add(WordDiffSpan(oldToks[oi].start, oldToks[oi].end, WordDiffKind.equal));
-        newUnits.add(WordDiffSpan(newToks[ni].start, newToks[ni].end, WordDiffKind.equal));
-        oi++;
-        ni++;
-      case _Op.removed:
-        oldUnits.add(WordDiffSpan(oldToks[oi].start, oldToks[oi].end, WordDiffKind.diff));
-        oi++;
-      case _Op.added:
-        newUnits.add(WordDiffSpan(newToks[ni].start, newToks[ni].end, WordDiffKind.diff));
-        ni++;
-    }
-  }
-
-  return (
-    oldSpans: _coalesce(oldUnits, oldLine.length),
-    newSpans: _coalesce(newUnits, newLine.length),
-  );
-}
-
-// _lcsOps computes a longest-common-subsequence alignment of the two token
-// sequences via a standard suffix DP (dp[i][j] = LCS length of a[i:], b[j:]),
-// then walks forward from (0,0) emitting equal/removed/added ops. O(n·m) time
-// and space; fine for single lines (tens of tokens), no need for Myers.
-List<_Op> _lcsOps(String a, String b, List<_Tok> at, List<_Tok> bt) {
-  final n = at.length, m = bt.length;
   final dp = List.generate(n + 1, (_) => List<int>.filled(m + 1, 0));
   for (var i = n - 1; i >= 0; i--) {
     for (var j = m - 1; j >= 0; j--) {
-      if (_tokEq(a, at[i], b, bt[j])) {
+      if (_tokEq(oldLine, oldToks[i], newLine, newToks[j])) {
         dp[i][j] = dp[i + 1][j + 1] + 1;
       } else {
         dp[i][j] = dp[i + 1][j] >= dp[i][j + 1] ? dp[i + 1][j] : dp[i][j + 1];
       }
     }
   }
-  final ops = <_Op>[];
+
+  final oldUnits = <WordDiffSpan>[];
+  final newUnits = <WordDiffSpan>[];
+  var commonCount = 0;
   var i = 0, j = 0;
   while (i < n && j < m) {
-    if (_tokEq(a, at[i], b, bt[j])) {
-      ops.add(_Op.equal);
+    if (_tokEq(oldLine, oldToks[i], newLine, newToks[j])) {
+      oldUnits.add(WordDiffSpan(oldToks[i].start, oldToks[i].end, WordDiffKind.equal));
+      newUnits.add(WordDiffSpan(newToks[j].start, newToks[j].end, WordDiffKind.equal));
+      commonCount++;
       i++;
       j++;
     } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      ops.add(_Op.removed);
+      oldUnits.add(WordDiffSpan(oldToks[i].start, oldToks[i].end, WordDiffKind.diff));
       i++;
     } else {
-      ops.add(_Op.added);
+      newUnits.add(WordDiffSpan(newToks[j].start, newToks[j].end, WordDiffKind.diff));
       j++;
     }
   }
   while (i < n) {
-    ops.add(_Op.removed);
+    oldUnits.add(WordDiffSpan(oldToks[i].start, oldToks[i].end, WordDiffKind.diff));
     i++;
   }
   while (j < m) {
-    ops.add(_Op.added);
+    newUnits.add(WordDiffSpan(newToks[j].start, newToks[j].end, WordDiffKind.diff));
     j++;
   }
-  return ops;
+
+  // Dice similarity over tokens: too little in common → a rewrite, bail out.
+  final denom = n + m;
+  if (denom == 0) return null;
+  final ratio = 2 * commonCount / denom;
+  if (ratio < 0.25) return null;
+
+  return (
+    oldSpans: _coalesce(oldUnits, oldLine.length),
+    newSpans: _coalesce(newUnits, newLine.length),
+  );
 }
 
 // Token equality by substring — avoids materializing token strings up front.

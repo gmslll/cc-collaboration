@@ -141,37 +141,54 @@ TextSpan? applyDiffBackground(
     _flattenSpan(syntaxSpan, base, runs);
   }
 
-  // Sweep runs and word spans together; a new TextSpan is emitted for each
-  // maximal stretch that shares one run style and one word-span kind.
+  final ranges = [
+    for (final w in wordSpans)
+      (start: w.start, end: w.end, bg: w.kind == WordDiffKind.diff ? diffBg : null),
+  ];
+  return TextSpan(style: base, children: _overlayRanges(line, base, runs, ranges));
+}
+
+// _overlayRanges is the general "keep each run's own style, overlay a
+// background over specific sub-ranges" merge: two independent boundary
+// systems — [runs] (styled text runs) and [ranges] (background overlays) —
+// each covering [0, line.length) with no gaps, combined into one flat span
+// list at their shared finest-grained partition. applyDiffBackground is the
+// only caller today (mapping WordDiffSpan into this range shape), but the
+// sweep itself carries no word-diff-specific assumption, so a second overlay
+// concern (e.g. search-hit highlighting) can reuse it directly.
+List<TextSpan> _overlayRanges(
+  String line,
+  TextStyle base,
+  List<(String, TextStyle)> runs,
+  List<({int start, int end, Color? bg})> ranges,
+) {
+  final runEnds = List<int>.filled(runs.length, 0);
+  var acc = 0;
+  for (var k = 0; k < runs.length; k++) {
+    acc += runs[k].$1.length;
+    runEnds[k] = acc;
+  }
   final out = <TextSpan>[];
-  var runIdx = 0;
-  var runStart = 0; // char offset where runs[runIdx] begins
-  var wsIdx = 0;
-  var cursor = 0;
+  var runIdx = 0, rangeIdx = 0, cursor = 0;
   while (cursor < line.length) {
-    while (runIdx < runs.length &&
-        runStart + runs[runIdx].$1.length <= cursor) {
-      runStart += runs[runIdx].$1.length;
+    while (runIdx < runs.length && runEnds[runIdx] <= cursor) {
       runIdx++;
     }
-    while (wsIdx < wordSpans.length && wordSpans[wsIdx].end <= cursor) {
-      wsIdx++;
+    while (rangeIdx < ranges.length && ranges[rangeIdx].end <= cursor) {
+      rangeIdx++;
     }
-    final runEnd =
-        runIdx < runs.length ? runStart + runs[runIdx].$1.length : line.length;
+    final runEnd = runIdx < runs.length ? runEnds[runIdx] : line.length;
     final runStyle = runIdx < runs.length ? runs[runIdx].$2 : base;
-    final wsEnd = wsIdx < wordSpans.length ? wordSpans[wsIdx].end : line.length;
-    final isDiff =
-        wsIdx < wordSpans.length && wordSpans[wsIdx].kind == WordDiffKind.diff;
-    var segEnd = runEnd < wsEnd ? runEnd : wsEnd;
+    final rangeEnd = rangeIdx < ranges.length ? ranges[rangeIdx].end : line.length;
+    final bg = rangeIdx < ranges.length ? ranges[rangeIdx].bg : null;
+    var segEnd = runEnd < rangeEnd ? runEnd : rangeEnd;
     if (segEnd > line.length) segEnd = line.length;
     if (segEnd <= cursor) break; // safety: guarantee forward progress
-    final bg = isDiff ? diffBg : null;
     final style = bg == null ? runStyle : runStyle.copyWith(backgroundColor: bg);
     out.add(TextSpan(text: line.substring(cursor, segEnd), style: style));
     cursor = segEnd;
   }
-  return TextSpan(style: base, children: out);
+  return out;
 }
 
 // _flattenSpan walks a highlightLine span tree depth-first into a flat list of

@@ -535,17 +535,11 @@ class _EditableCellState extends State<_EditableCell> {
   @override
   Widget build(BuildContext context) {
     // expand leading tabs for display only; onEdit still uses the original text.
-    final shown = expandLeadingTabs(widget.text);
-    final syntaxSpan = widget.langId == null
-        ? null
-        : highlightLine(shown, widget.langId, base: diffCellStyle);
-    // Overlay per-word diff backgrounds (no-op passthrough when wordSpans null).
-    final span = applyDiffBackground(
-      shown,
-      syntaxSpan,
-      base: diffCellStyle,
+    final (:shown, :span) = diffCellSpan(
+      widget.text,
+      widget.kind,
+      langId: widget.langId,
       wordSpans: widget.wordSpans,
-      diffBg: wordDiffBg(widget.kind),
     );
     return MouseRegion(
       onEnter: (_) => setState(() => _h = true),
