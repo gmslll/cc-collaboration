@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.14] - 2026-07-06
+
+### Fixed
+
+- **待办「指派给成员」修正几处易选错人的问题** — ①候选池只放「自己 + 该待办所属项目的成员」,不再把整个 relay 的在线用户都塞进来(个人待办则只有自己);②列表显示**真实姓名**而非裸 identity(名字来自项目成员接口的 `display_name`,普通成员可访问,不再依赖 admin-only 的 `/v1/users`);③默认选中**自己**而不是当前被指派人,避免打开已指派的待办、没改选项就把它误派回原来那个人。名字显示需 relay 更新到本版(旧 relay 会优雅退回显示 identity)。
+
 ## [0.9.13] - 2026-07-06
 
 ### Added
