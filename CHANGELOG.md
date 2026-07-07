@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.18] - 2026-07-07
+
+### Fixed
+
+- **修复 CI 打包失败(gofmt 门槛)** — `cmd/cc-handoff/capsule.go` 有一处未通过 `gofmt` 的对齐空格,导致 v0.9.16 / v0.9.17 的 tag CI 在 gofmt 检查就失败、**没产出安装包**。本版格式化后恢复打包;功能内容同 0.9.16(会话胶囊)+ 0.9.17(复查对话框总能勾选要带的技能),这是第一个能成功打包的版本。
+
 ## [0.9.17] - 2026-07-07
 
 ### Fixed
