@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.17] - 2026-07-07
+
+### Fixed
+
+- **胶囊复查对话框现在总能选要带的技能** — 之前技能勾选清单只在「自蒸馏」写出 `deps.txt` 时才显示,走**后台蒸馏**的胶囊没有 deps.txt → 复查时**根本看不到地方选技能**。现在对话框**总是列出本机已装技能(`~/.claude/skills/*`)**供勾选,自蒸馏检测到依赖的默认勾上、其余不勾;只有勾选的才随胶囊打包(不会误带全部)。
+
 ## [0.9.16] - 2026-07-07
 
 ### Added
