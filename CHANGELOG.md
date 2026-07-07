@@ -6,6 +6,15 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.19] - 2026-07-07
+
+### Added
+
+- **Linear 增量导入** — 不再每次全量重写。给导入的待办存一份源端更新时间(`source_updated_at`=Linear 的 `updatedAt`),重复导入时同一 Issue 若 `updatedAt` 没变就**整条跳过**(不 patch、不重设状态、不重传附件),导入汇总里多一列 `unchanged`。首次导入本版会做一次全量以回填 updatedAt,之后即增量。
+- **Linear 指派人昵称 + 头像** — GraphQL 从 `assignee { email }` 扩到 `email name displayName avatarUrl`,存进待办的 `source_assignee_name`/`source_assignee_avatar_url`。待办卡片现在显示 Linear 指派人的**头像 + 昵称**(tooltip),即使这个人不是 relay 用户也能显示(以前只有 email 匹配到 relay 成员才显示、匹配不上就空白)。头像加载失败(URL 过期 / web CORS)自动退回首字母。
+
+> 需要 relay 部署到 ≥0.9.19(新增 3 列 + display_name 见 v0.9.14)。旧 relay 会优雅退化:CLI 传的新字段被忽略、不报错,只是增量/头像暂不生效。
+
 ## [0.9.18] - 2026-07-07
 
 ### Fixed
