@@ -11,6 +11,20 @@ const String capsuleSkillPackSuffix = '.skillpack.zip';
 // skillsDir is where Claude Code keeps user-level skills: ~/.claude/skills.
 String skillsDir() => '${homeDir()}/.claude/skills';
 
+// listInstalledSkills returns the absolute paths of the user's installed skill
+// dirs (~/.claude/skills/*), sorted — so the capture UI can always offer a
+// "bundle a skill" picker even when distill produced no deps.txt.
+Future<List<String>> listInstalledSkills() async {
+  final root = Directory(skillsDir());
+  if (!await root.exists()) return const [];
+  final dirs = <String>[];
+  await for (final e in root.list(followLinks: false)) {
+    if (e is Directory) dirs.add(e.path);
+  }
+  dirs.sort();
+  return dirs;
+}
+
 // skillNameFromPack strips the pack suffix to the bare skill name.
 String skillNameFromPack(String attachmentName) =>
     attachmentName.endsWith(capsuleSkillPackSuffix)

@@ -671,15 +671,22 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
     final s = File('${widget.draft.draftDir}/seed.md');
     if (await p.exists()) _persona.text = await p.readAsString();
     if (await s.exists()) _seed.text = await s.readAsString();
-    // deps.txt (from self-distill) lists local skill/script dirs to bundle.
+    // deps.txt (from self-distill) auto-detects dirs to bundle → pre-checked.
+    final detected = <String>{};
     final deps = File('${widget.draft.draftDir}/deps.txt');
     if (await deps.exists()) {
       for (final line in (await deps.readAsString()).split('\n')) {
         final dir = line.trim();
-        if (dir.isNotEmpty && await Directory(dir).exists()) {
-          _skillDirs[dir] = true; // default: bundle it
-        }
+        if (dir.isNotEmpty && await Directory(dir).exists()) detected.add(dir);
       }
+    }
+    // Always list every installed skill so there's a place to pick even after a
+    // background distill (no deps.txt); auto-detected ones start checked.
+    for (final dir in await listInstalledSkills()) {
+      _skillDirs[dir] = detected.contains(dir);
+    }
+    for (final dir in detected) {
+      _skillDirs.putIfAbsent(dir, () => true); // a dep outside ~/.claude/skills
     }
     if (mounted) setState(() => _loading = false);
   }
@@ -822,7 +829,7 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                       ),
                       const SizedBox(height: 12),
                       if (_skillDirs.isNotEmpty) ...[
-                        const Text('自带技能 / 脚本(缺技能的队友也能用)',
+                        const Text('带上技能 / 脚本(勾选随胶囊发;缺技能的队友也能用。蒸馏检测到的已勾选)',
                             style: TextStyle(fontWeight: FontWeight.w600)),
                         for (final dir in _skillDirs.keys)
                           CheckboxListTile(
