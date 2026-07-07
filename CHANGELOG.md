@@ -6,6 +6,16 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.20] - 2026-07-07
+
+### Fixed
+
+- **胶囊自带技能现在能在 Codex 用** — Claude 和 Codex 都采用 SKILL.md 开放标准,但扫**不同目录**(Claude `~/.claude/skills`、Codex `~/.codex/skills`)。之前载入胶囊时不论目标工具都把技能装进 Claude 目录,导致载入 **Codex** 时技能落在它读不到的地方、白带。现按目标工具装到对的目录(SKILL.md 格式两边通用),载入 Codex 后直接 `/名字` 可用;开场提示 / 载入框「装到…」提示也按所选工具说对路径。
+
+### Added(补记 —— 代码自 v0.9.19 起随包,当时漏记)
+
+- **广场编辑 / 载入对话框可查看胶囊内容** — 编辑对话框拉取并展示 persona / seed 只读预览 + 自带技能;载入对话框在起会话前展示会带上哪些技能(及装到哪个技能目录)。owner 仍可在编辑框改可见性 / 说明。
+
 ## [0.9.19] - 2026-07-07
 
 ### Added
