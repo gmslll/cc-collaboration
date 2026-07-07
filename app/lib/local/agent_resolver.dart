@@ -33,6 +33,34 @@ class AgentResolver {
     return abs.isNotEmpty ? abs : agent;
   }
 
+  static String? _loginPath;
+
+  // loginPath returns PATH from a login+interactive shell (so nvm / rc-file
+  // additions apply), cached for the app's lifetime. Headless spawns inject it
+  // so a node-shim CLI like codex (`#!/usr/bin/env node`) can find `node` under
+  // a GUI app's minimal PATH — the same reason resolve() probes a login shell.
+  // Empty on Windows (a GUI there already inherits the full environment) or on
+  // probe failure; callers then just inherit the parent env unchanged.
+  static Future<String> loginPath() async {
+    final cached = _loginPath;
+    if (cached != null) return cached;
+    var path = '';
+    if (!Platform.isWindows) {
+      final shell = Platform.environment['SHELL'] ?? '/bin/sh';
+      try {
+        final r = await Process.run(shell, ['-lic', 'echo "\$PATH"']);
+        if (r.exitCode == 0) {
+          path = (r.stdout as String)
+              .split('\n')
+              .map((s) => s.trim())
+              .lastWhere((s) => s.contains('/'), orElse: () => '');
+        }
+      } catch (_) {}
+    }
+    _loginPath = path;
+    return path;
+  }
+
   static Future<String> _override(String agent) async {
     final cfg = await AppConfig.load();
     if (cfg == null) return '';
@@ -99,8 +127,10 @@ class AgentResolver {
         // shim cmd.exe can actually launch via `/c` (.cmd/.bat/.exe), else fall
         // back to the first hit.
         if (lines.isNotEmpty) {
-          final pick =
-              lines.firstWhere(_runnableOnWindows, orElse: () => lines.first);
+          final pick = lines.firstWhere(
+            _runnableOnWindows,
+            orElse: () => lines.first,
+          );
           if (File(pick).existsSync()) return pick;
         }
       }
@@ -131,12 +161,11 @@ class AgentResolver {
   // nvm-windows setups end up without the prefix shim, so the in-package exe
   // is the only hit.
   static List<String> _npmGlobalCandidates(String dir, String agent) {
-    final out = <String>[
-      '$dir\\$agent.cmd',
-      '$dir\\$agent.exe',
-    ];
+    final out = <String>['$dir\\$agent.cmd', '$dir\\$agent.exe'];
     if (agent == 'claude') {
-      out.add('$dir\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe');
+      out.add(
+        '$dir\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe',
+      );
     }
     return out;
   }

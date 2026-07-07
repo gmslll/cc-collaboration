@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'agent_resolver.dart';
+
 // Capsule "distill": turn a working session into two reusable artifacts —
 //   persona.md : a distilled role (② the durable, reusable job definition)
 //   seed.md    : a compacted context summary (opening prompt for "continue this")
@@ -31,10 +33,9 @@ enum DistillStrategy { selfDistill, offline }
 DistillStrategy chooseDistillStrategy({
   required bool sessionIdle,
   required bool userWantsSelf,
-}) =>
-    (sessionIdle && userWantsSelf)
-        ? DistillStrategy.selfDistill
-        : DistillStrategy.offline;
+}) => (sessionIdle && userWantsSelf)
+    ? DistillStrategy.selfDistill
+    : DistillStrategy.offline;
 
 /// ProcOutcome is the injected process runner's result.
 class ProcOutcome {
@@ -44,11 +45,12 @@ class ProcOutcome {
   const ProcOutcome(this.exitCode, this.stdout, this.stderr);
 }
 
-typedef ProcRunner = Future<ProcOutcome> Function(
-  String exe,
-  List<String> args, {
-  String? stdin,
-});
+typedef ProcRunner =
+    Future<ProcOutcome> Function(
+      String exe,
+      List<String> args, {
+      String? stdin,
+    });
 
 /// systemProcRunner is the real ProcRunner (used by the wiring layer). Spawns
 /// [exe] with [args], optionally piping [stdin], and collects stdout/stderr.
@@ -57,11 +59,25 @@ Future<ProcOutcome> systemProcRunner(
   List<String> args, {
   String? stdin,
 }) async {
-  final p = await Process.start(exe, args, runInShell: false);
-  if (stdin != null) {
-    p.stdin.write(stdin);
+  // Inject a login-shell PATH so a node-shim agent (codex is `#!/usr/bin/env
+  // node`) can find `node` — a GUI app's minimal PATH omits nvm/etc, which made
+  // codex die instantly. Empty on Windows / probe failure → inherit parent env.
+  final pathEnv = await AgentResolver.loginPath();
+  // runInShell on Windows so a `.cmd`/`.bat` agent shim (what npm installs) can
+  // actually launch — Process.start can't exec those directly. The prompt rides
+  // on stdin (not argv), so cmd.exe never sees it to mangle. POSIX: no shell.
+  final p = await Process.start(
+    exe,
+    args,
+    runInShell: Platform.isWindows,
+    environment: pathEnv.isEmpty ? null : {'PATH': pathEnv},
+  );
+  // Always close stdin (with EOF): `codex exec` peeks stdin and would otherwise
+  // block waiting for it. Guarded — a fast-exiting proc may already be gone.
+  try {
+    if (stdin != null) p.stdin.write(stdin);
     await p.stdin.close();
-  }
+  } catch (_) {}
   final out = await p.stdout.transform(utf8.decoder).join();
   final err = await p.stderr.transform(utf8.decoder).join();
   final code = await p.exitCode;
@@ -153,8 +169,10 @@ Future<DistillOutcome> distillCapsule({
   final personaFile = File('$draftDir/$_personaFileName');
   final seedFile = File('$draftDir/$_seedFileName');
 
-  final strategy =
-      chooseDistillStrategy(sessionIdle: sessionIdle, userWantsSelf: userWantsSelf);
+  final strategy = chooseDistillStrategy(
+    sessionIdle: sessionIdle,
+    userWantsSelf: userWantsSelf,
+  );
 
   if (strategy == DistillStrategy.selfDistill) {
     final ok = await _runSelfDistill(
@@ -225,16 +243,14 @@ Future<bool> _runSelfDistill({
   required Future<bool> Function(String prompt) deliverToSession,
   required Duration timeout,
   required Duration poll,
-}) =>
-    _deliverAndAwaitFile(
-      prompt:
-          selfDistillPrompt(personaPath: personaFile.path, seedPath: seedPath),
-      deliverToSession: deliverToSession,
-      ready: () async =>
-          await personaFile.exists() && (await personaFile.length()) > 0,
-      timeout: timeout,
-      poll: poll,
-    );
+}) => _deliverAndAwaitFile(
+  prompt: selfDistillPrompt(personaPath: personaFile.path, seedPath: seedPath),
+  deliverToSession: deliverToSession,
+  ready: () async =>
+      await personaFile.exists() && (await personaFile.length()) > 0,
+  timeout: timeout,
+  poll: poll,
+);
 
 // _runSkillList is the SECOND self-distill step, run only after the conversation
 // is already saved: it asks the (now-idle) source session to list its skill /
@@ -270,8 +286,18 @@ Future<bool> runOfflineDistill({
   required ProcRunner runProc,
 }) async {
   final results = await Future.wait([
-    _oneShot(headlessExe, agentKind, offlinePersonaPrompt(transcriptText), runProc),
-    _oneShot(headlessExe, agentKind, offlineSeedPrompt(transcriptText), runProc),
+    _oneShot(
+      headlessExe,
+      agentKind,
+      offlinePersonaPrompt(transcriptText),
+      runProc,
+    ),
+    _oneShot(
+      headlessExe,
+      agentKind,
+      offlineSeedPrompt(transcriptText),
+      runProc,
+    ),
   ]);
   final persona = results[0];
   final seed = results[1];
@@ -285,22 +311,37 @@ Future<bool> runOfflineDistill({
 }
 
 // _oneShot runs a single headless prompt and returns trimmed stdout, or null on
-// non-zero exit / empty output. The transcript is embedded in [prompt]; very
-// large transcripts should be capped at capture time (captureCapsuleTranscript
-// maxTextChars) since it rides as a CLI arg.
+// non-zero exit / empty output. The prompt (with the embedded transcript) is fed
+// on STDIN, not as a CLI arg — so there's no ARG_MAX ceiling on big transcripts,
+// and nothing for a Windows cmd.exe shim wrapper to mangle.
 Future<String?> _oneShot(
   String exe,
   String agentKind,
   String prompt,
   ProcRunner runProc,
 ) async {
-  final r = await runProc(exe, _headlessArgs(agentKind, prompt));
+  final r = await runProc(exe, _headlessArgs(agentKind), stdin: prompt);
   if (r.exitCode != 0) return null;
   final out = r.stdout.trim();
   return out.isEmpty ? null : out;
 }
 
 // _headlessArgs is the non-interactive one-shot argument list for an agent kind
-// (the executable itself is resolved by the caller via AgentResolver).
-List<String> _headlessArgs(String agentKind, String prompt) =>
-    agentKind == 'codex' ? ['exec', prompt] : ['-p', prompt];
+// (the executable is resolved by the caller via AgentResolver). The prompt is
+// fed on STDIN, so it isn't in the args: `claude -p` reads stdin when given no
+// prompt; `codex exec -` means read the prompt from stdin.
+List<String> _headlessArgs(String agentKind) => agentKind == 'codex'
+    // exec = non-interactive; read-only sandbox (distill only reads/answers, no
+    // tool use); skip the git-repo check (draft dir may not be one); no color so
+    // stdout stays clean markdown; `-` = read the prompt from stdin. codex prints
+    // the final message to stdout, its session log to stderr.
+    ? [
+        'exec',
+        '--skip-git-repo-check',
+        '-s',
+        'read-only',
+        '--color',
+        'never',
+        '-',
+      ]
+    : ['-p'];
