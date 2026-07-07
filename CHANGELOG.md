@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.21] - 2026-07-07
+
+### Fixed
+
+- **codex 会话的「后台蒸馏」现在真能跑出角色** — 之前对 codex 会话打胶囊,后台蒸馏「秒回、persona/seed 空(蒸馏未产出)」。根因:codex 是 `#!/usr/bin/env node` 脚本,而 App(GUI)用**最小 PATH** 起 headless 进程时找不到 `node` → 启动即失败(claude 是 bash 脚本、bash 在 `/bin` 里,所以一直正常)。现在给 headless 蒸馏进程注入**登录 shell 的完整 PATH**,codex 能正常起、蒸出 persona/seed(约十几秒)。顺带:prompt 改从 **stdin** 喂(绕开命令行长度上限,Windows 下也不经 cmd.exe 引号处理)、`codex exec` 加固参数(`--skip-git-repo-check -s read-only --color never`)、Windows 上 `runInShell` 以起 `.cmd`/`.bat` shim、总是 close stdin(codex exec 会试读 stdin)。
+
 ## [0.9.20] - 2026-07-07
 
 ### Fixed
