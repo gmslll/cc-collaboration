@@ -248,6 +248,13 @@ CREATE TABLE IF NOT EXISTS todo_attachments (
 		// field docs) — plain string, no separate table, same pattern as
 		// workspace_name/repo_name above.
 		{"group_name", `ALTER TABLE todos ADD COLUMN group_name TEXT NOT NULL DEFAULT ''`},
+		// Linear incremental import + external-assignee display (see
+		// pkg/todoschema.Todo field docs): source_updated_at is the idempotency
+		// watermark that lets re-import skip unchanged issues; the two assignee
+		// columns hold the external assignee's name/avatar for the card.
+		{"source_updated_at", `ALTER TABLE todos ADD COLUMN source_updated_at TEXT NOT NULL DEFAULT ''`},
+		{"source_assignee_name", `ALTER TABLE todos ADD COLUMN source_assignee_name TEXT NOT NULL DEFAULT ''`},
+		{"source_assignee_avatar_url", `ALTER TABLE todos ADD COLUMN source_assignee_avatar_url TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := s.db.Exec(ddl.sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {

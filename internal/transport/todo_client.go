@@ -140,6 +140,11 @@ type TodoPatch struct {
 	SourceProvider  *string
 	SourceTeamKey   *string
 	SourceProjectID *string
+	// SourceUpdatedAt / SourceAssignee* mirror the store's re-import bookkeeping
+	// (see store.TodoPatch) — set on every Linear upsert.
+	SourceUpdatedAt         *string
+	SourceAssigneeName      *string
+	SourceAssigneeAvatarURL *string
 }
 
 // PatchTodo applies a partial update to todo id. Only fields set on patch
@@ -179,6 +184,15 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 	}
 	if patch.SourceProjectID != nil {
 		fields["source_project_id"] = *patch.SourceProjectID
+	}
+	if patch.SourceUpdatedAt != nil {
+		fields["source_updated_at"] = *patch.SourceUpdatedAt
+	}
+	if patch.SourceAssigneeName != nil {
+		fields["source_assignee_name"] = *patch.SourceAssigneeName
+	}
+	if patch.SourceAssigneeAvatarURL != nil {
+		fields["source_assignee_avatar_url"] = *patch.SourceAssigneeAvatarURL
 	}
 	body, err := json.Marshal(fields)
 	if err != nil {

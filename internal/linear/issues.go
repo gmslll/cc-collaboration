@@ -12,7 +12,11 @@ import (
 // ping, this carries full issue content for the todo-import flow (see
 // internal/linear/import.go).
 type Issue struct {
-	Identifier  string // e.g. "ENG-456"
+	Identifier string // e.g. "ENG-456"
+	// UpdatedAt is Linear's issue updatedAt (ISO8601), stored verbatim as an
+	// opaque idempotency token: re-import skips an issue whose updatedAt equals
+	// the todo's stored source_updated_at.
+	UpdatedAt   string
 	URL         string
 	Title       string
 	Description string // Markdown — Linear's native format, so it round-trips into body_md as-is.
@@ -26,11 +30,15 @@ type Issue struct {
 	// mapIssuePriority in import.go).
 	Priority      int
 	AssigneeEmail string
-	Labels        []string
-	DueDate       *time.Time
-	ProjectID     string
-	Assets        []IssueAsset
-	Comments      []string
+	// AssigneeName/AssigneeAvatarURL are the Linear assignee's display name +
+	// avatar, shown on the card even when the assignee isn't a relay user.
+	AssigneeName      string
+	AssigneeAvatarURL string
+	Labels            []string
+	DueDate           *time.Time
+	ProjectID         string
+	Assets            []IssueAsset
+	Comments          []string
 }
 
 type IssueAsset struct {
@@ -50,12 +58,13 @@ query CCHandoffTeamIssues($teamKey: String!) {
   issues(filter: { team: { key: { eq: $teamKey } } }, first: 250, orderBy: updatedAt) {
     nodes {
       identifier
+      updatedAt
       url
       title
       description
       state { name type }
       priority
-      assignee { email }
+      assignee { email name displayName avatarUrl }
       project { id }
       labels { nodes { name } }
       dueDate
@@ -71,12 +80,13 @@ query CCHandoffProjectIssues($teamKey: String!, $projectID: ID!) {
   issues(filter: { team: { key: { eq: $teamKey } }, project: { id: { eq: $projectID } } }, first: 250, orderBy: updatedAt) {
     nodes {
       identifier
+      updatedAt
       url
       title
       description
       state { name type }
       priority
-      assignee { email }
+      assignee { email name displayName avatarUrl }
       project { id }
       labels { nodes { name } }
       dueDate
@@ -95,6 +105,7 @@ type teamIssuesResponse struct {
 
 type issueNode struct {
 	Identifier  string `json:"identifier"`
+	UpdatedAt   string `json:"updatedAt"`
 	URL         string `json:"url"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -104,7 +115,10 @@ type issueNode struct {
 	} `json:"state"`
 	Priority int `json:"priority"`
 	Assignee *struct {
-		Email string `json:"email"`
+		Email       string `json:"email"`
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
+		AvatarURL   string `json:"avatarUrl"`
 	} `json:"assignee"`
 	Project *struct {
 		ID string `json:"id"`
@@ -153,6 +167,7 @@ func GetTeamIssues(ctx context.Context, c *Client, teamKey, projectID string) ([
 	for _, n := range resp.Issues.Nodes {
 		iss := Issue{
 			Identifier:  n.Identifier,
+			UpdatedAt:   n.UpdatedAt,
 			URL:         n.URL,
 			Title:       n.Title,
 			Description: n.Description,
@@ -164,6 +179,12 @@ func GetTeamIssues(ctx context.Context, c *Client, teamKey, projectID string) ([
 		}
 		if n.Assignee != nil {
 			iss.AssigneeEmail = n.Assignee.Email
+			// name is the full name; fall back to the shorter displayName.
+			iss.AssigneeName = n.Assignee.Name
+			if iss.AssigneeName == "" {
+				iss.AssigneeName = n.Assignee.DisplayName
+			}
+			iss.AssigneeAvatarURL = n.Assignee.AvatarURL
 		}
 		if n.Project != nil {
 			iss.ProjectID = n.Project.ID

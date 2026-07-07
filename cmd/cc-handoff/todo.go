@@ -507,8 +507,8 @@ func runTodoImportLinear(ctx context.Context, args []string) error {
 	if result.LinearProjectID != "" {
 		scope = fmt.Sprintf("%s project %s", scope, result.LinearProjectID)
 	}
-	fmt.Printf("✓ imported from Linear %s: %d issue(s) — %d created, %d updated, %d attachment(s)",
-		scope, result.Issues, result.Created, result.Updated, result.Attachments)
+	fmt.Printf("✓ imported from Linear %s: %d issue(s) — %d created, %d updated, %d unchanged, %d attachment(s)",
+		scope, result.Issues, result.Created, result.Updated, result.Unchanged, result.Attachments)
 	if result.SkippedAssets > 0 {
 		fmt.Printf(" (%d skipped)", result.SkippedAssets)
 	}

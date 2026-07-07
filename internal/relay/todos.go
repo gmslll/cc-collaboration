@@ -56,6 +56,11 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		SourceProvider  string `json:"source_provider"`
 		SourceTeamKey   string `json:"source_team_key"`
 		SourceProjectID string `json:"source_project_id"`
+		// SourceUpdatedAt is the external updatedAt idempotency watermark;
+		// SourceAssigneeName/AvatarURL are the external assignee for display.
+		SourceUpdatedAt         string `json:"source_updated_at"`
+		SourceAssigneeName      string `json:"source_assignee_name"`
+		SourceAssigneeAvatarURL string `json:"source_assignee_avatar_url"`
 		// WorkspaceName/RepoName are the optional workspace/repo binding (see
 		// pkg/todoschema.Todo field docs) — both empty (the default) means
 		// "not bound".
@@ -101,9 +106,13 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		SourceProvider:  req.SourceProvider,
 		SourceTeamKey:   req.SourceTeamKey,
 		SourceProjectID: req.SourceProjectID,
-		WorkspaceName:   req.WorkspaceName,
-		RepoName:        req.RepoName,
-		GroupName:       req.GroupName,
+
+		SourceUpdatedAt:         req.SourceUpdatedAt,
+		SourceAssigneeName:      req.SourceAssigneeName,
+		SourceAssigneeAvatarURL: req.SourceAssigneeAvatarURL,
+		WorkspaceName:           req.WorkspaceName,
+		RepoName:                req.RepoName,
+		GroupName:               req.GroupName,
 	}
 	if err := s.Store.CreateTodo(r.Context(), t); err != nil {
 		writeStoreError(w, err)
@@ -348,6 +357,30 @@ func (s *Server) patchTodo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		patch.SourceProjectID = &val
+	}
+	if v, ok := raw["source_updated_at"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid source_updated_at", http.StatusBadRequest)
+			return
+		}
+		patch.SourceUpdatedAt = &val
+	}
+	if v, ok := raw["source_assignee_name"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid source_assignee_name", http.StatusBadRequest)
+			return
+		}
+		patch.SourceAssigneeName = &val
+	}
+	if v, ok := raw["source_assignee_avatar_url"]; ok {
+		var val string
+		if err := json.Unmarshal(v, &val); err != nil {
+			http.Error(w, "invalid source_assignee_avatar_url", http.StatusBadRequest)
+			return
+		}
+		patch.SourceAssigneeAvatarURL = &val
 	}
 
 	updated, err := s.Store.UpdateTodoFields(r.Context(), id, identity, patch)

@@ -25,8 +25,11 @@ type ImportResult struct {
 	Issues          int
 	Created         int
 	Updated         int
-	Attachments     int
-	SkippedAssets   int
+	// Unchanged counts issues skipped because their Linear updatedAt matched the
+	// stored source_updated_at (incremental import — no re-write / re-upload).
+	Unchanged     int
+	Attachments   int
+	SkippedAssets int
 }
 
 // ImportTeamIssuesForRepo is the shared "do the whole import" entry point
@@ -124,9 +127,13 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 		Issues:          len(issues),
 	}
 	for _, iss := range issues {
-		created, uploaded, skipped, err := upsertTodoFromIssue(ctx, todoClient, gql, iss, teamKey, linearProjectID, projectID, candidates)
+		created, unchanged, uploaded, skipped, err := upsertTodoFromIssue(ctx, todoClient, gql, iss, teamKey, linearProjectID, projectID, candidates)
 		if err != nil {
 			return result, fmt.Errorf("import %s: %w", iss.Identifier, err)
+		}
+		if unchanged {
+			result.Unchanged++
+			continue
 		}
 		if created {
 			result.Created++
@@ -143,7 +150,7 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 // Linear issue: find-by-SourceRef decides create vs. update. Assignee
 // matching only applies on create — a re-import shouldn't clobber a manual
 // reassignment made inside cc-handoff after the fact.
-func upsertTodoFromIssue(ctx context.Context, c *transport.Client, gql *Client, iss Issue, teamKey, linearProjectID, projectID string, candidates []string) (created bool, uploaded, skipped int, err error) {
+func upsertTodoFromIssue(ctx context.Context, c *transport.Client, gql *Client, iss Issue, teamKey, linearProjectID, projectID string, candidates []string) (created, unchanged bool, uploaded, skipped int, err error) {
 	sourceRef := "linear:" + iss.Identifier
 	sourceProvider := "linear"
 	sourceProjectID := linearProjectID
@@ -156,55 +163,68 @@ func upsertTodoFromIssue(ctx context.Context, c *transport.Client, gql *Client, 
 
 	existing, found, err := c.FindTodoBySourceRef(ctx, sourceRef, projectID)
 	if err != nil {
-		return false, 0, 0, fmt.Errorf("lookup: %w", err)
+		return false, false, 0, 0, fmt.Errorf("lookup: %w", err)
 	}
 	if found {
+		// Skip an issue whose Linear updatedAt is unchanged since the last import
+		// — no PatchTodo / SetTodoStatus / attachment re-upload. Guard on a
+		// non-empty stored watermark so rows imported before source_updated_at
+		// existed still take one full pass (which backfills it).
+		if iss.UpdatedAt != "" && existing.SourceUpdatedAt == iss.UpdatedAt {
+			return false, true, 0, 0, nil
+		}
 		title := iss.Title
 		if _, err := c.PatchTodo(ctx, existing.ID, transport.TodoPatch{
-			Title:           &title,
-			BodyMD:          &bodyMD,
-			Priority:        &priority,
-			DueAt:           transport.OptionalTime{Set: true, Value: iss.DueDate},
-			SourceProvider:  &sourceProvider,
-			SourceTeamKey:   &teamKey,
-			SourceProjectID: &sourceProjectID,
+			Title:                   &title,
+			BodyMD:                  &bodyMD,
+			Priority:                &priority,
+			DueAt:                   transport.OptionalTime{Set: true, Value: iss.DueDate},
+			SourceProvider:          &sourceProvider,
+			SourceTeamKey:           &teamKey,
+			SourceProjectID:         &sourceProjectID,
+			SourceUpdatedAt:         &iss.UpdatedAt,
+			SourceAssigneeName:      &iss.AssigneeName,
+			SourceAssigneeAvatarURL: &iss.AssigneeAvatarURL,
 		}); err != nil {
-			return false, 0, 0, fmt.Errorf("patch: %w", err)
+			return false, false, 0, 0, fmt.Errorf("patch: %w", err)
 		}
 		if _, err := c.SetTodoStatus(ctx, existing.ID, status); err != nil {
-			return false, 0, 0, fmt.Errorf("set status: %w", err)
+			return false, false, 0, 0, fmt.Errorf("set status: %w", err)
 		}
 		uploaded, skipped, err = uploadAndRewrite(ctx, c, gql, existing.ID, bodyMD, iss)
-		return false, uploaded, skipped, err
+		return false, false, uploaded, skipped, err
 	}
 
 	out, err := c.CreateTodo(ctx, &todoschema.Todo{
-		ProjectID:       projectID,
-		Title:           iss.Title,
-		BodyMD:          bodyMD,
-		Priority:        priority,
-		DueAt:           iss.DueDate,
-		SourceRef:       sourceRef,
-		SourceURL:       iss.URL,
-		SourceProvider:  sourceProvider,
-		SourceTeamKey:   teamKey,
-		SourceProjectID: sourceProjectID,
+		ProjectID:               projectID,
+		Title:                   iss.Title,
+		BodyMD:                  bodyMD,
+		Priority:                priority,
+		DueAt:                   iss.DueDate,
+		SourceRef:               sourceRef,
+		SourceURL:               iss.URL,
+		SourceProvider:          sourceProvider,
+		SourceTeamKey:           teamKey,
+		SourceProjectID:         sourceProjectID,
+		SourceUpdatedAt:         iss.UpdatedAt,
+		SourceAssigneeName:      iss.AssigneeName,
+		SourceAssigneeAvatarURL: iss.AssigneeAvatarURL,
 	})
 	if err != nil {
-		return false, 0, 0, fmt.Errorf("create: %w", err)
+		return false, false, 0, 0, fmt.Errorf("create: %w", err)
 	}
 	if status != todoschema.StatusTodo {
 		if _, err := c.SetTodoStatus(ctx, out.ID, status); err != nil {
-			return true, 0, 0, fmt.Errorf("set status: %w", err)
+			return true, false, 0, 0, fmt.Errorf("set status: %w", err)
 		}
 	}
 	if assignee := matchAssigneeIdentity(candidates, iss.AssigneeEmail); assignee != "" {
 		if _, err := c.AssignTodo(ctx, out.ID, assignee, "", "", "", "", ""); err != nil {
-			return true, 0, 0, fmt.Errorf("assign: %w", err)
+			return true, false, 0, 0, fmt.Errorf("assign: %w", err)
 		}
 	}
 	uploaded, skipped, err = uploadAndRewrite(ctx, c, gql, out.ID, bodyMD, iss)
-	return true, uploaded, skipped, err
+	return true, false, uploaded, skipped, err
 }
 
 func looksLikeUUID(s string) bool {

@@ -21,6 +21,7 @@ const todoColumns = `t.id, t.project_id, t.owner_identity, t.title, t.body_md, t
        t.workspace_name, t.repo_name, t.recurrence, t.group_name,
        t.due_at, t.next_occurrence_at, t.created_at, t.updated_at, t.completed_at,
        t.source_ref, t.source_url, t.source_provider, t.source_team_key, t.source_project_id,
+       t.source_updated_at, t.source_assignee_name, t.source_assignee_avatar_url,
        (SELECT COUNT(*) FROM todo_comments c WHERE c.todo_id = t.id) AS comment_count,
        (SELECT COUNT(*) FROM todo_attachments a WHERE a.todo_id = t.id) AS attachment_count`
 
@@ -38,6 +39,7 @@ func scanTodoRow(row scanner) (todoschema.Todo, error) {
 		&t.WorkspaceName, &t.RepoName, &t.Recurrence, &t.GroupName,
 		&dueMS, &nextMS, &createdMS, &updatedMS, &completedMS,
 		&t.SourceRef, &t.SourceURL, &t.SourceProvider, &t.SourceTeamKey, &t.SourceProjectID,
+		&t.SourceUpdatedAt, &t.SourceAssigneeName, &t.SourceAssigneeAvatarURL,
 		&t.CommentCount, &t.AttachmentCount,
 	); err != nil {
 		return todoschema.Todo{}, err
@@ -212,12 +214,14 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
 			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence, group_name,
 			due_at, next_occurrence_at, created_at, updated_at, completed_at,
-			source_ref, source_url, source_provider, source_team_key, source_project_id)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			source_ref, source_url, source_provider, source_team_key, source_project_id,
+			source_updated_at, source_assignee_name, source_assignee_avatar_url)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, nullableString(t.ProjectID), t.OwnerIdentity, t.Title, t.BodyMD, string(t.Status), string(t.Priority),
 		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, t.WorkspaceName, t.RepoName, string(t.Recurrence), t.GroupName,
 		timeToNullMS(t.DueAt), timeToNullMS(t.NextOccurrenceAt), t.CreatedAt.UnixMilli(), t.UpdatedAt.UnixMilli(), timeToNullMS(t.CompletedAt),
 		t.SourceRef, t.SourceURL, t.SourceProvider, t.SourceTeamKey, t.SourceProjectID,
+		t.SourceUpdatedAt, t.SourceAssigneeName, t.SourceAssigneeAvatarURL,
 	)
 	return err
 }
@@ -403,6 +407,11 @@ type TodoPatch struct {
 	SourceProvider  *string
 	SourceTeamKey   *string
 	SourceProjectID *string
+	// SourceUpdatedAt / SourceAssignee* are re-import bookkeeping, set on every
+	// upsert so the idempotency watermark + external assignee stay current.
+	SourceUpdatedAt         *string
+	SourceAssigneeName      *string
+	SourceAssigneeAvatarURL *string
 }
 
 type OptionalTime struct {
@@ -475,6 +484,18 @@ func (s *Store) UpdateTodoFields(ctx context.Context, id, callerIdentity string,
 	if patch.SourceProjectID != nil {
 		sets = append(sets, "source_project_id = ?")
 		args = append(args, *patch.SourceProjectID)
+	}
+	if patch.SourceUpdatedAt != nil {
+		sets = append(sets, "source_updated_at = ?")
+		args = append(args, *patch.SourceUpdatedAt)
+	}
+	if patch.SourceAssigneeName != nil {
+		sets = append(sets, "source_assignee_name = ?")
+		args = append(args, *patch.SourceAssigneeName)
+	}
+	if patch.SourceAssigneeAvatarURL != nil {
+		sets = append(sets, "source_assignee_avatar_url = ?")
+		args = append(args, *patch.SourceAssigneeAvatarURL)
 	}
 	args = append(args, id)
 	if _, err := s.db.ExecContext(ctx,

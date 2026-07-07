@@ -157,6 +157,20 @@ type Todo struct {
 	SourceProvider  string `json:"source_provider,omitempty"`
 	SourceTeamKey   string `json:"source_team_key,omitempty"`
 	SourceProjectID string `json:"source_project_id,omitempty"`
+	// SourceUpdatedAt is the external issue's own last-modified stamp (Linear
+	// updatedAt), stored verbatim as an opaque idempotency token: a re-import
+	// SKIPS an issue whose updatedAt still equals this, so unchanged issues cost
+	// no PatchTodo / SetTodoStatus / attachment re-upload. Empty on native todos
+	// and on rows imported before this field existed (they take one more full
+	// pass, which backfills it).
+	SourceUpdatedAt string `json:"source_updated_at,omitempty"`
+	// SourceAssigneeName/SourceAssigneeAvatarURL carry the EXTERNAL assignee's
+	// display name + avatar URL (Linear), so a card can show who an issue is
+	// assigned to in Linear even when that person is not a relay user —
+	// AssigneeIdentity only gets set when the Linear assignee's email matches a
+	// project member. Purely informational.
+	SourceAssigneeName      string `json:"source_assignee_name,omitempty"`
+	SourceAssigneeAvatarURL string `json:"source_assignee_avatar_url,omitempty"`
 	// GroupName is a free-form, user-defined bucket ("我的日常", "xxx项目") —
 	// same "plain string, no separate table" design as WorkspaceName/RepoName
 	// above. Empty means ungrouped. A group comes into existence just by a

@@ -560,6 +560,6 @@ func importLinearIssuesHandler(ctx context.Context, raw json.RawMessage) (ToolRe
 	if result.SkippedAssets > 0 {
 		suffix = fmt.Sprintf(" (%d skipped)", result.SkippedAssets)
 	}
-	return textResult(fmt.Sprintf("Imported from Linear %s: %d issue(s) — %d created, %d updated, %d attachment(s)%s.",
-		source, result.Issues, result.Created, result.Updated, result.Attachments, suffix)), nil
+	return textResult(fmt.Sprintf("Imported from Linear %s: %d issue(s) — %d created, %d updated, %d unchanged, %d attachment(s)%s.",
+		source, result.Issues, result.Created, result.Updated, result.Unchanged, result.Attachments, suffix)), nil
 }
