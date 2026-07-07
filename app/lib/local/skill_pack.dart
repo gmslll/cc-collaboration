@@ -12,6 +12,17 @@ const String capsuleSkillPackSuffix = '.skillpack.zip';
 // skillsDir is where Claude Code keeps user-level skills: ~/.claude/skills.
 String skillsDir() => '${homeDir()}/.claude/skills';
 
+// skillsDirFor returns the user-level skills dir for a target tool. Claude and
+// Codex both use the SKILL.md open standard but scan different dirs:
+// Claude → ~/.claude/skills, Codex → ~/.codex/skills. A capsule's bundled skill
+// must land in the dir the LOADED tool actually reads, not always Claude's.
+String skillsDirFor(String tool) =>
+    tool == 'codex' ? '${homeDir()}/.codex/skills' : skillsDir();
+
+// skillsDirLabel is the tilde-form of skillsDirFor for display / prompts.
+String skillsDirLabel(String tool) =>
+    tool == 'codex' ? '~/.codex/skills' : '~/.claude/skills';
+
 // listInstalledSkills returns the absolute paths of the user's installed skill
 // dirs (~/.claude/skills/*), sorted — so the capture UI can always offer a
 // "bundle a skill" picker even when distill produced no deps.txt.
@@ -75,11 +86,15 @@ Future<String?> packSkillDir(String dir, String destDir) async {
   }
 }
 
-// installSkillPack extracts a pack's [bytes] into the local skills dir and
+// installSkillPack extracts a pack's [bytes] into the [tool]'s skills dir and
 // returns the installed skill name, or null on failure / non-macOS.
-Future<String?> installSkillPack(List<int> bytes, String attachmentName) async {
+Future<String?> installSkillPack(
+  List<int> bytes,
+  String attachmentName, {
+  String tool = 'claude',
+}) async {
   try {
-    final root = await Directory(skillsDir()).create(recursive: true);
+    final root = await Directory(skillsDirFor(tool)).create(recursive: true);
     final tmp = await Directory.systemTemp.createTemp('cap-skill-');
     final zip = File('${tmp.path}/$attachmentName');
     await zip.writeAsBytes(bytes);

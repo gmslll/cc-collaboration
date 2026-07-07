@@ -486,7 +486,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
     final c = widget.capsule;
     final skillsNote = skills.isEmpty
         ? ''
-        : '\n\n胶囊自带的技能已落到本机 `~/.claude/skills/`:${skills.join('、')} —— 需要时直接用 `/<名字>` 调用,不用再去别处找。';
+        : '\n\n胶囊自带的技能已落到本机 `${skillsDirLabel(_tool)}/`:${skills.join('、')} —— 需要时直接用 `/<名字>` 调用,不用再去别处找。';
     if (_form == 'role') {
       final body = await _fetchText('persona.md');
       if (body == null) return null;
@@ -506,9 +506,11 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   }
 
   // _extractSkillPacks downloads the capsule's bundled skill packs (attachments
-  // ending in .skillpack.zip) and unzips each into ~/.claude/skills/, so the
-  // session has them even on a machine that never installed the skill. Returns
-  // the extracted skill names (for the opening prompt).
+  // ending in .skillpack.zip) and unzips each into the LOADED tool's skills dir
+  // (Claude ~/.claude/skills, Codex ~/.codex/skills) — SKILL.md is the shared
+  // open standard, so the same pack works in either. Returns the installed
+  // skill names (for the opening prompt), so the session has them even on a
+  // machine that never installed the skill.
   Future<List<String>> _extractSkillPacks() async {
     final pkg = _pkg ?? await widget.client.get(widget.capsule.id);
     final names = <String>[];
@@ -516,7 +518,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
       if (!isCapsuleSkillPack(a.name)) continue;
       final bytes = await _fetchBytes(a.name);
       if (bytes == null) continue;
-      final name = await installSkillPack(bytes, a.name);
+      final name = await installSkillPack(bytes, a.name, tool: _tool);
       if (name != null) names.add(name);
     }
     return names;
@@ -576,7 +578,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
-                    '起会话时自动装到本机 ~/.claude/skills/',
+                    '起会话时自动装到本机 ${skillsDirLabel(_tool)}/',
                     style: CcType.code(size: 11, color: CcColors.subtle),
                   ),
                 ),
