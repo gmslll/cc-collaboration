@@ -6,6 +6,13 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.22] - 2026-07-07
+
+### Fixed
+
+- **新建会话的首条投递不再丢 / 双发** — 待办「新建会话」和胶囊「载入蒸馏角色」现在共用同一条 `spawn → dispatch → wakeAndDeliver` 队列路径。Claude / Codex 的 boot ready 优先等本次会话 fresh `SessionStart` hook,再短暂 settle 后 flush;旧 `tsN` 历史 hook 事件会按本次启动时间过滤,避免误判 ready。hook 缺失时才走较保守的 quiet fallback。
+- **Claude 原样恢复支持特殊字符工作目录** — Claude Code 的项目目录编码现在按真实 cwd 的「非字母数字全转 `-`」规则计算,修复路径包含空格、中文、`·` 等字符时胶囊原样 `--resume` 导入到错误目录的问题。
+
 ## [0.9.21] - 2026-07-07
 
 ### Fixed

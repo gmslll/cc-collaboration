@@ -441,6 +441,12 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
         _fail('起会话失败: ${err ?? "未知错误"}');
         return;
       }
+      // Dispatch immediately after spawn, like 待办指派→新建会话. The live
+      // WorkspacePage owns the TerminalSession and deliverLocalMessage will see
+      // the fresh session as !ready, then queue through wakeAndDeliver until the
+      // boot-ready watch flushes it. Waiting on the overview card's workdir is
+      // only a metadata poll; it can move this first prompt out of the protected
+      // queue path and back into a paste-vs-boot timing window.
       final dispErr = widget.overviewStore.dispatch(
         LocalMsg('', sid, prompt, true),
       );

@@ -58,13 +58,22 @@ Future<String?> resolveTranscriptPath({
   return _newestClaudeInCwd(home, workdir);
 }
 
-// _newestClaudeInCwd: claude encodes the cwd as the project dir name with '/' and
-// '.' replaced by '-' (e.g. /a/github.com/b -> -a-github-com-b).
 // _claudeProjectDir is where claude keeps a cwd's sessions:
-// ~/.claude/projects/<cwd with every '/' and '.' turned into '->. The one place
-// that encoding lives (both the resolver and the resume-import writer use it).
-String _claudeProjectDir(String home, String workdir) =>
-    '$home/.claude/projects/${workdir.replaceAll(RegExp(r'[/.]'), '-')}';
+// ~/.claude/projects/<cwd-encoded>. It mirrors Claude Code's OWN encoding
+// exactly (verified empirically): the OS-resolved cwd (getcwd() follows
+// symlinks, e.g. /tmp→/private/tmp) with EVERY non-alphanumeric char turned into
+// '-' — '/', '.', '_', spaces, and non-ASCII like '·'/CJK all collapse to '-',
+// 1:1 with no coalescing. The earlier [/.]-only rule over the raw path broke
+// native `--resume` on a cwd with spaces/Chinese/etc (e.g. a teammate's
+// "…/Kunlun · Mikey/用户上传"): the imported .jsonl landed in a dir claude never
+// looks in. The one place that encoding lives (resolver + resume-import writer).
+String _claudeProjectDir(String home, String workdir) {
+  var w = workdir;
+  try {
+    w = Directory(workdir).resolveSymbolicLinksSync();
+  } catch (_) {}
+  return '$home/.claude/projects/${w.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '-')}';
+}
 
 Future<String?> _newestClaudeInCwd(String home, String workdir) async {
   final dir = Directory(_claudeProjectDir(home, workdir));
@@ -325,7 +334,9 @@ Future<String> renderTranscriptTail(
   // text block) can itself be multi-line, so join+split makes [lines] count
   // actual lines — matching the screen read's --lines semantics — not blocks.
   final ls = rendered.join('\n').split('\n');
-  return ls.length <= lines ? ls.join('\n') : ls.sublist(ls.length - lines).join('\n');
+  return ls.length <= lines
+      ? ls.join('\n')
+      : ls.sublist(ls.length - lines).join('\n');
 }
 
 // CapsuleTranscript is the result of captureCapsuleTranscript: the two on-disk
@@ -370,8 +381,11 @@ Future<CapsuleTranscript?> captureCapsuleTranscript({
   await Directory(destDir).create(recursive: true);
   final jsonlDest = '$destDir/transcript.jsonl';
   await File(src).copy(jsonlDest);
-  final text =
-      await renderTranscriptFull(src, agentKind: agentKind, maxChars: maxTextChars);
+  final text = await renderTranscriptFull(
+    src,
+    agentKind: agentKind,
+    maxChars: maxTextChars,
+  );
   final textDest = '$destDir/transcript.txt';
   await File(textDest).writeAsString(text);
   return CapsuleTranscript(jsonlDest, textDest, text);
@@ -412,8 +426,9 @@ Future<String?> importCapsuleTranscriptForResume({
   }
   // claude
   if (originId.isEmpty) return null;
-  final dir =
-      await Directory(_claudeProjectDir(home, workdir)).create(recursive: true);
+  final dir = await Directory(
+    _claudeProjectDir(home, workdir),
+  ).create(recursive: true);
   await File('${dir.path}/$originId.jsonl').writeAsBytes(bytes);
   return originId;
 }
@@ -443,10 +458,11 @@ Future<String> renderTranscriptFull(
 }) async {
   final f = File(path);
   final turns = <String>[];
-  await for (final line in f
-      .openRead()
-      .transform(const Utf8Decoder(allowMalformed: true))
-      .transform(const LineSplitter())) {
+  await for (final line
+      in f
+          .openRead()
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter())) {
     if (line.trim().isEmpty) continue;
     Map<String, dynamic> o;
     try {
@@ -479,9 +495,9 @@ void _renderClaudeTurn(Map<String, dynamic> o, List<String> turns) {
     final text = _blocksText(content, typeFilter: 'text');
     if (text.trim().isNotEmpty) turns.add('## 用户\n$text');
   } else if (type == 'assistant' && content is List) {
-    final joined = _claudeAssistantSegments(content)
-        .where((p) => p.trim().isNotEmpty)
-        .join('\n');
+    final joined = _claudeAssistantSegments(
+      content,
+    ).where((p) => p.trim().isNotEmpty).join('\n');
     if (joined.trim().isNotEmpty) turns.add('## 助手\n$joined');
   }
 }
@@ -535,4 +551,3 @@ void _renderCodexTurn(Map<String, dynamic> o, List<String> turns) {
     }
   }
 }
-
