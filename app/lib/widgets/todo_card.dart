@@ -43,7 +43,11 @@ class TodoCard extends StatelessWidget {
             children: [
               priorityBars(todo.priority, maxHeight: 12),
               const Spacer(),
-              _AssigneeAvatar(identity: todo.assigneeIdentity),
+              _AssigneeAvatar(
+                identity: todo.assigneeIdentity,
+                sourceName: todo.sourceAssigneeName,
+                sourceAvatarUrl: todo.sourceAssigneeAvatarUrl,
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -126,19 +130,31 @@ Widget _miniTag(IconData icon, String label, Color color) => Container(
   ),
 );
 
-// _AssigneeAvatar shows a filled initial glyph for an assigned todo, or a
-// hollow ring when nobody's picked it up yet — never invents a new color, it
-// just tints the existing accent color like every other "assigned" affordance
-// in this app (see StatusControl's inProgress dot).
+// _AssigneeAvatar shows who a todo is assigned to: a Linear avatar image when
+// the source (Linear) provides one, else a filled initial glyph, else a hollow
+// ring when nobody's picked it up yet. `identity` is the relay assignee;
+// sourceName/sourceAvatarUrl are the external (Linear) assignee — shown even
+// when that person isn't a relay user (see todoschema.Todo.SourceAssigneeName).
+// Never invents a new color — tints the existing accent like every other
+// "assigned" affordance in this app (see StatusControl's inProgress dot).
 class _AssigneeAvatar extends StatelessWidget {
   final String? identity;
-  const _AssigneeAvatar({required this.identity});
+  final String? sourceName;
+  final String? sourceAvatarUrl;
+  const _AssigneeAvatar({
+    required this.identity,
+    this.sourceName,
+    this.sourceAvatarUrl,
+  });
 
   @override
   Widget build(BuildContext context) {
     const size = 20.0;
-    final id = identity;
-    if (id == null || id.isEmpty) {
+    final id = (identity ?? '').trim();
+    final name = (sourceName ?? '').trim();
+    final avatarUrl = (sourceAvatarUrl ?? '').trim();
+    // Unassigned in both the relay and the source → hollow ring.
+    if (id.isEmpty && name.isEmpty && avatarUrl.isEmpty) {
       return Container(
         width: size,
         height: size,
@@ -148,27 +164,41 @@ class _AssigneeAvatar extends StatelessWidget {
         ),
       );
     }
-    final initial = id.trim().isEmpty ? '?' : id.trim()[0].toUpperCase();
-    return Tooltip(
-      message: id,
-      child: Container(
-        width: size,
-        height: size,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: CcColors.accent.withValues(alpha: 0.18),
-          border: Border.all(color: CcColors.accent.withValues(alpha: 0.5)),
-        ),
-        child: Text(
-          initial,
-          style: const TextStyle(
-            fontSize: 10.5,
-            fontWeight: FontWeight.w700,
-            color: CcColors.accentBright,
-          ),
+    final label = id.isNotEmpty ? id : name;
+    final initial = label.isEmpty ? '?' : label[0].toUpperCase();
+    final glyph = Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: CcColors.accent.withValues(alpha: 0.18),
+        border: Border.all(color: CcColors.accent.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        initial,
+        style: const TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          color: CcColors.accentBright,
         ),
       ),
     );
+    // A real Linear avatar image wins when present; it can fail to load (signed
+    // URL expiry, or CORS on web) → fall back to the initial glyph.
+    final Widget avatar = avatarUrl.isEmpty
+        ? glyph
+        : ClipOval(
+            child: Image.network(
+              avatarUrl,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => glyph,
+              loadingBuilder: (_, child, progress) =>
+                  progress == null ? child : glyph,
+            ),
+          );
+    return Tooltip(message: name.isNotEmpty ? name : id, child: avatar);
   }
 }

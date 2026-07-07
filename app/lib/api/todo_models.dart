@@ -124,6 +124,9 @@ class Todo {
   final List<TodoAttachment> attachments;
   final String? sourceRef, sourceUrl, sourceProvider, sourceTeamKey;
   final String? sourceProjectId;
+  // Linear-side assignee (display name + avatar URL) for the card — shown even
+  // when the assignee isn't a relay user (see todoschema.Todo.SourceAssigneeName).
+  final String? sourceAssigneeName, sourceAssigneeAvatarUrl;
 
   Todo({
     required this.id,
@@ -156,6 +159,8 @@ class Todo {
     required this.sourceProvider,
     required this.sourceTeamKey,
     required this.sourceProjectId,
+    required this.sourceAssigneeName,
+    required this.sourceAssigneeAvatarUrl,
   });
 
   factory Todo.fromJson(Map<String, dynamic> j) => Todo(
@@ -192,6 +197,8 @@ class Todo {
         sourceProvider: _sn(j['source_provider']),
         sourceTeamKey: _sn(j['source_team_key']),
         sourceProjectId: _sn(j['source_project_id']),
+        sourceAssigneeName: _sn(j['source_assignee_name']),
+        sourceAssigneeAvatarUrl: _sn(j['source_assignee_avatar_url']),
       );
 
   // PATCH /v1/todos/{id} and the status-update endpoint both reuse the bare
@@ -231,6 +238,8 @@ class Todo {
         sourceProvider: sourceProvider,
         sourceTeamKey: sourceTeamKey,
         sourceProjectId: sourceProjectId,
+        sourceAssigneeName: sourceAssigneeName,
+        sourceAssigneeAvatarUrl: sourceAssigneeAvatarUrl,
       );
 
   // scope is never sent by the relay — it's derived locally so the UI can
