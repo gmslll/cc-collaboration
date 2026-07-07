@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import '../api/models.dart';
 import 'platform.dart';
 
 // Shared knowledge of the local skill library + capsule "skill packs" — kept in
@@ -28,9 +29,27 @@ Future<List<String>> listInstalledSkills() async {
 // skillNameFromPack strips the pack suffix to the bare skill name.
 String skillNameFromPack(String attachmentName) =>
     attachmentName.endsWith(capsuleSkillPackSuffix)
-        ? attachmentName.substring(
-            0, attachmentName.length - capsuleSkillPackSuffix.length)
-        : attachmentName;
+    ? attachmentName.substring(
+        0,
+        attachmentName.length - capsuleSkillPackSuffix.length,
+      )
+    : attachmentName;
+
+// isCapsuleSkillPack mirrors Go handoffschema.IsCapsuleSkillPack: is this
+// attachment a bundled skill pack? The one predicate the read side uses.
+bool isCapsuleSkillPack(String attachmentName) =>
+    attachmentName.endsWith(capsuleSkillPackSuffix);
+
+// skillPackNames is the single place the read side enumerates a capsule's
+// bundled skills: the sorted bare names of its .skillpack.zip attachments.
+List<String> skillPackNames(Iterable<Attachment> attachments) {
+  final out = <String>[
+    for (final a in attachments)
+      if (isCapsuleSkillPack(a.name)) skillNameFromPack(a.name),
+  ];
+  out.sort();
+  return out;
+}
 
 // packSkillDir zips a skill/script dir into [destDir]/<name>.skillpack.zip via
 // an absolute /usr/bin/ditto (same tool + abs-path approach as update_service —
@@ -43,8 +62,13 @@ Future<String?> packSkillDir(String dir, String destDir) async {
     await File(out).delete();
   } catch (_) {}
   try {
-    final r = await Process.run(
-        '/usr/bin/ditto', ['-c', '-k', '--keepParent', dir, out]);
+    final r = await Process.run('/usr/bin/ditto', [
+      '-c',
+      '-k',
+      '--keepParent',
+      dir,
+      out,
+    ]);
     return r.exitCode == 0 ? out : null;
   } catch (_) {
     return null;
@@ -59,8 +83,12 @@ Future<String?> installSkillPack(List<int> bytes, String attachmentName) async {
     final tmp = await Directory.systemTemp.createTemp('cap-skill-');
     final zip = File('${tmp.path}/$attachmentName');
     await zip.writeAsBytes(bytes);
-    final r =
-        await Process.run('/usr/bin/ditto', ['-x', '-k', zip.path, root.path]);
+    final r = await Process.run('/usr/bin/ditto', [
+      '-x',
+      '-k',
+      zip.path,
+      root.path,
+    ]);
     return r.exitCode == 0 ? skillNameFromPack(attachmentName) : null;
   } catch (_) {
     return null;
