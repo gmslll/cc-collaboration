@@ -71,4 +71,24 @@ void main() {
   test('project owner label uses localized owner text', () {
     expect(projectOwnerLabel('owner@x'), '负责人 · owner@x');
   });
+
+  test(
+    'project member display prefers display name with identity subtitle',
+    () {
+      final named = ProjectMember.fromJson({
+        'identity': 'dev@x',
+        'role': 'member',
+        'display_name': 'Dev',
+      });
+      final unnamed = ProjectMember.fromJson({
+        'identity': 'ops@x',
+        'role': 'viewer',
+      });
+
+      expect(projectMemberTitle(named), 'Dev');
+      expect(projectMemberSubtitle(named), 'dev@x');
+      expect(projectMemberTitle(unnamed), 'ops@x');
+      expect(projectMemberSubtitle(unnamed), isNull);
+    },
+  );
 }

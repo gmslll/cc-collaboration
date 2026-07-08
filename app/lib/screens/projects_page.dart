@@ -48,6 +48,12 @@ String organizationMemberPickerLabel(OrganizationMember member) {
 String projectOwnerLabel(String identity) =>
     '${projectRoleLabel('owner')} · $identity';
 
+String projectMemberTitle(ProjectMember member) =>
+    member.displayName.isEmpty ? member.identity : member.displayName;
+
+String? projectMemberSubtitle(ProjectMember member) =>
+    member.displayName.isEmpty ? null : member.identity;
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -1051,8 +1057,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                     '成员',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  ...d.members.map(
-                    (m) => ListTile(
+                  ...d.members.map((m) {
+                    final subtitle = projectMemberSubtitle(m);
+                    return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                       leading: statusDot(
@@ -1060,10 +1067,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         size: 9,
                         glow: _isOnline(m.identity),
                       ),
-                      title: Text(m.identity),
-                      subtitle: m.displayName.isEmpty
-                          ? null
-                          : Text(m.displayName),
+                      title: Text(projectMemberTitle(m)),
+                      subtitle: subtitle == null ? null : Text(subtitle),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1083,8 +1088,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                             ),
                         ],
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                   if (canManage)
                     Wrap(
                       spacing: 8,
