@@ -60,9 +60,19 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		if err != nil {
 			return nil, err
 		}
+		if role, ok := memberRole(members, sender); ok && role == "viewer" {
+			return nil, errors.New("project viewers cannot send team-shared handoffs")
+		}
+		active, err := c.activeIdentities(ctx)
+		if err != nil {
+			return nil, err
+		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
 			if m.Identity == "" || m.Identity == sender || m.Role == "viewer" {
+				continue
+			}
+			if active != nil && !active[m.Identity] {
 				continue
 			}
 			out = append(out, m.Identity)
@@ -73,9 +83,19 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		if err != nil {
 			return nil, err
 		}
+		if role, ok := orgMemberRole(members, sender); ok && role == "guest" {
+			return nil, errors.New("organization guests cannot send team-shared handoffs")
+		}
+		active, err := c.activeIdentities(ctx)
+		if err != nil {
+			return nil, err
+		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
 			if m.Identity == "" || m.Identity == sender || m.Role == "guest" {
+				continue
+			}
+			if active != nil && !active[m.Identity] {
 				continue
 			}
 			out = append(out, m.Identity)
@@ -84,6 +104,39 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 	default:
 		return nil, nil
 	}
+}
+
+func (c *Client) activeIdentities(ctx context.Context) (map[string]bool, error) {
+	users, err := c.ListOnlineUsers(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotImplemented) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make(map[string]bool, len(users))
+	for _, u := range users {
+		out[u.Identity] = true
+	}
+	return out, nil
+}
+
+func memberRole(members []ProjectMember, identity string) (string, bool) {
+	for _, m := range members {
+		if m.Identity == identity {
+			return m.Role, true
+		}
+	}
+	return "", false
+}
+
+func orgMemberRole(members []OrganizationMember, identity string) (string, bool) {
+	for _, m := range members {
+		if m.Identity == identity {
+			return m.Role, true
+		}
+	}
+	return "", false
 }
 
 func (c *Client) ListProjectHandoffs(ctx context.Context, projectID string, limit int) ([]handoffschema.ListItem, error) {
