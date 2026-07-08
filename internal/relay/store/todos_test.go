@@ -97,6 +97,13 @@ func TestTodoTeamVisibilityByRole(t *testing.T) {
 	if err := st.AddMember(ctx, "p1", "viewer@x", RoleViewer); err != nil {
 		t.Fatal(err)
 	}
+	p, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, p.OrgID, "org-admin@x", OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 
 	// A viewer cannot create a team todo.
 	viewerTodo := &todoschema.Todo{ID: "tdv", ProjectID: "p1", OwnerIdentity: "viewer@x", Title: "nope"}
@@ -111,9 +118,11 @@ func TestTodoTeamVisibilityByRole(t *testing.T) {
 
 	td := &todoschema.Todo{ID: "td2", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "ship the release"}
 	mustCreateTodo(t, st, td)
+	adminTodo := &todoschema.Todo{ID: "tda", ProjectID: "p1", OwnerIdentity: "org-admin@x", Title: "admin task"}
+	mustCreateTodo(t, st, adminTodo)
 
 	// View: owner, member, and viewer can all see it; a non-member cannot.
-	for _, who := range []string{"owner@x", "member@x", "viewer@x"} {
+	for _, who := range []string{"owner@x", "member@x", "viewer@x", "org-admin@x"} {
 		if _, err := st.GetTodo(ctx, "td2", who); err != nil {
 			t.Errorf("%s should be able to view td2: %v", who, err)
 		}
@@ -123,22 +132,33 @@ func TestTodoTeamVisibilityByRole(t *testing.T) {
 	}
 
 	listed, err := st.ListTodos(ctx, "viewer@x", TodoListFilter{Scope: "project", ProjectID: "p1"})
-	if err != nil || len(listed) != 1 {
+	if err != nil || len(listed) != 2 {
 		t.Fatalf("viewer ListTodos project=p1: %+v err=%v", listed, err)
+	}
+	adminListed, err := st.ListTodos(ctx, "org-admin@x", TodoListFilter{Scope: "project", ProjectID: "p1"})
+	if err != nil || len(adminListed) != 2 {
+		t.Fatalf("org admin ListTodos project=p1: %+v err=%v", adminListed, err)
 	}
 	if _, err := st.ListTodos(ctx, "stranger@x", TodoListFilter{Scope: "project", ProjectID: "p1"}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-member ListTodos project=p1: want ErrForbidden, got %v", err)
 	}
 	// scope=project with no project id unions every project the caller belongs to.
 	union, err := st.ListTodos(ctx, "member@x", TodoListFilter{Scope: "project"})
-	if err != nil || len(union) != 1 || union[0].ID != "td2" {
+	if err != nil || len(union) != 2 {
 		t.Fatalf("member ListTodos project union: %+v err=%v", union, err)
+	}
+	adminUnion, err := st.ListTodos(ctx, "org-admin@x", TodoListFilter{Scope: "project"})
+	if err != nil || len(adminUnion) != 2 {
+		t.Fatalf("org admin ListTodos project union: %+v err=%v", adminUnion, err)
 	}
 
 	// Edit: owner and member can; viewer (read-only) cannot.
 	newTitle := "ship the release today"
 	if _, err := st.UpdateTodoFields(ctx, "td2", "member@x", TodoPatch{Title: &newTitle}); err != nil {
 		t.Fatalf("member edit: %v", err)
+	}
+	if _, err := st.UpdateTodoFields(ctx, "td2", "org-admin@x", TodoPatch{Title: &newTitle}); err != nil {
+		t.Fatalf("org admin edit: %v", err)
 	}
 	if _, err := st.UpdateTodoFields(ctx, "td2", "viewer@x", TodoPatch{Title: &newTitle}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer edit: want ErrForbidden, got %v", err)
@@ -151,6 +171,9 @@ func TestTodoTeamVisibilityByRole(t *testing.T) {
 	if _, err := st.InsertTodoComment(ctx, "td2", "member@x", "on it"); err != nil {
 		t.Fatalf("member comment: %v", err)
 	}
+	if _, err := st.InsertTodoComment(ctx, "td2", "org-admin@x", "on it"); err != nil {
+		t.Fatalf("org admin comment: %v", err)
+	}
 	if _, err := st.InsertTodoComment(ctx, "td2", "viewer@x", "nope"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer comment: want ErrForbidden, got %v", err)
 	}
@@ -158,6 +181,9 @@ func TestTodoTeamVisibilityByRole(t *testing.T) {
 	// Delete: member cannot (edit != delete); owner can.
 	if err := st.DeleteTodo(ctx, "td2", "member@x"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("member delete: want ErrForbidden, got %v", err)
+	}
+	if err := st.DeleteTodo(ctx, "tda", "org-admin@x"); err != nil {
+		t.Fatalf("org admin delete: %v", err)
 	}
 	if err := st.DeleteTodo(ctx, "td2", "owner@x"); err != nil {
 		t.Fatalf("owner delete: %v", err)
@@ -175,6 +201,13 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if err := st.AddMember(ctx, "p1", "member@x", RoleMember); err != nil {
 		t.Fatal(err)
 	}
+	p, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, p.OrgID, "org-admin@x", OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "team", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "team task"})
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "personal", OwnerIdentity: "owner@x", Title: "private task"})
 
@@ -183,6 +216,19 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	}
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "stranger@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("assign team todo to non-member: want ErrForbidden, got %v", err)
+	}
+	if _, err := st.AssignTodo(ctx, "team", "owner@x", "org-admin@x", "", "", "", "", ""); err != nil {
+		t.Fatalf("assign team todo to org admin: %v", err)
+	}
+	assignedAdmin, err := st.ListTodos(ctx, "org-admin@x", TodoListFilter{Scope: "assigned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assignedAdmin) != 1 || assignedAdmin[0].ID != "team" {
+		t.Fatalf("assigned scope should show org admin's team todo: %+v", assignedAdmin)
+	}
+	if _, err := st.AssignTodo(ctx, "team", "owner@x", "member@x", "", "", "", "", ""); err != nil {
+		t.Fatalf("reassign team todo to project member: %v", err)
 	}
 	if _, err := st.AssignTodo(ctx, "personal", "owner@x", "owner@x", "", "", "", "", ""); err != nil {
 		t.Fatalf("assign personal todo to owner: %v", err)
@@ -721,6 +767,13 @@ func TestListTodoGroupsProjectScope(t *testing.T) {
 	if err := st.AddMember(ctx, "p1", "viewer@x", RoleViewer); err != nil {
 		t.Fatal(err)
 	}
+	p, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, p.OrgID, "org-admin@x", OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "a", GroupName: "sprint-1"})
 
 	// A project viewer can list groups — listing is a read op (view tier),
@@ -728,6 +781,10 @@ func TestListTodoGroupsProjectScope(t *testing.T) {
 	groups, err := st.ListTodoGroups(ctx, "viewer@x", "p1")
 	if err != nil || len(groups) != 1 || groups[0] != "sprint-1" {
 		t.Fatalf("viewer ListTodoGroups: %+v err=%v", groups, err)
+	}
+	groups, err = st.ListTodoGroups(ctx, "org-admin@x", "p1")
+	if err != nil || len(groups) != 1 || groups[0] != "sprint-1" {
+		t.Fatalf("org admin ListTodoGroups: %+v err=%v", groups, err)
 	}
 
 	if _, err := st.ListTodoGroups(ctx, "stranger@x", "p1"); !errors.Is(err, ErrForbidden) {
@@ -789,6 +846,13 @@ func TestRenameClearTodoGroupRequiresEditorTierInProjectScope(t *testing.T) {
 	if err := st.AddMember(ctx, "p1", "viewer@x", RoleViewer); err != nil {
 		t.Fatal(err)
 	}
+	p, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, p.OrgID, "org-admin@x", OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "a", GroupName: "sprint-1"})
 
 	if err := st.RenameTodoGroup(ctx, "viewer@x", "p1", "sprint-1", "sprint-2"); !errors.Is(err, ErrForbidden) {
@@ -797,6 +861,13 @@ func TestRenameClearTodoGroupRequiresEditorTierInProjectScope(t *testing.T) {
 	if err := st.ClearTodoGroup(ctx, "viewer@x", "p1", "sprint-1"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer clear: want ErrForbidden, got %v", err)
 	}
+	if err := st.RenameTodoGroup(ctx, "org-admin@x", "p1", "sprint-1", "sprint-2"); err != nil {
+		t.Fatalf("org admin rename: %v", err)
+	}
+	if err := st.ClearTodoGroup(ctx, "org-admin@x", "p1", "sprint-2"); err != nil {
+		t.Fatalf("org admin clear: %v", err)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td2", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "b", GroupName: "sprint-1"})
 	if err := st.RenameTodoGroup(ctx, "owner@x", "p1", "sprint-1", "sprint-2"); err != nil {
 		t.Fatalf("owner rename: %v", err)
 	}

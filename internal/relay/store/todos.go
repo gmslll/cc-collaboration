@@ -105,18 +105,18 @@ type todoPerm struct {
 func fullTodoPerm() todoPerm { return todoPerm{view: true, comment: true, edit: true, del: true} }
 
 // todoPermission derives callerIdentity's access to t. Mirrors the project
-// role semantics already documented on RoleOwner/RoleMember/RoleViewer in
-// projects.go ("member can view + comment; viewer is read-only"), extended
-// with two decisions specific to todos (see pkg/todoschema/todo.go and the
+// effective project role semantics already documented on RoleOwner/RoleMember/
+// RoleViewer/RoleAdmin in projects.go ("member can view + comment; viewer is
+// read-only"), extended with two decisions specific to todos (see
+// pkg/todoschema/todo.go and the
 // Phase 0 handoff note for the full rationale):
 //   - "viewer is read-only" is taken literally: a viewer can list/view a
 //     team todo but cannot comment or edit it, let alone delete it.
-//   - delete is stricter than edit: only the project's owner role (or a
-//     personal todo's own owner_identity) may delete; member can edit but
+//   - delete is stricter than edit: only the project's owner/admin role (or
+//     a personal todo's own owner_identity) may delete; member can edit but
 //     not delete, so team members can't casually wipe each other's todos.
 //
-// A global admin (users.is_admin) always gets full access, matching the
-// existing "Global admin supersedes all of these" note on project roles.
+// A global admin (users.is_admin) always gets full access.
 func (s *Store) todoPermission(ctx context.Context, t todoschema.Todo, identity string) (todoPerm, error) {
 	if identity == "" {
 		return todoPerm{}, nil
@@ -134,7 +134,7 @@ func (s *Store) todoPermission(ctx context.Context, t todoschema.Todo, identity 
 		}
 		return todoPerm{}, nil
 	}
-	role, ok, err := s.MemberRole(ctx, t.ProjectID, identity)
+	role, ok, err := s.EffectiveProjectRole(ctx, t.ProjectID, identity)
 	if err != nil {
 		return todoPerm{}, err
 	}
@@ -142,6 +142,8 @@ func (s *Store) todoPermission(ctx context.Context, t todoschema.Todo, identity 
 		return todoPerm{}, nil
 	}
 	switch role {
+	case RoleAdmin:
+		return fullTodoPerm(), nil
 	case RoleOwner:
 		return fullTodoPerm(), nil
 	case RoleMember:
@@ -161,8 +163,9 @@ func forbidTodo(action, identity, id string) error {
 // caller left them zero-valued (all three Phase 1+ entry points — HTTP
 // handler, MCP tool, CLI — build a Todo by hand, so defaulting here avoids
 // triplicating that logic). t.OwnerIdentity is treated as the creator: for
-// a team todo (ProjectID set) they must already be an owner/member of that
-// project (not viewer, matching todoPermission's edit tier); personal
+// a team todo (ProjectID set) they must already be able to edit that project
+// (project owner/member or team owner/admin; not viewer, matching
+// todoPermission's edit tier); personal
 // todos (ProjectID empty) have no such check since owner_identity IS the
 // access boundary.
 func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
@@ -201,7 +204,7 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 			return err
 		}
 		if !isAdmin {
-			role, ok, err := s.MemberRole(ctx, t.ProjectID, t.OwnerIdentity)
+			role, ok, err := s.EffectiveProjectRole(ctx, t.ProjectID, t.OwnerIdentity)
 			if err != nil {
 				return err
 			}
@@ -336,7 +339,7 @@ func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoList
 				return nil, err
 			}
 			if !isAdmin {
-				_, ok, err := s.MemberRole(ctx, f.ProjectID, callerIdentity)
+				_, ok, err := s.EffectiveProjectRole(ctx, f.ProjectID, callerIdentity)
 				if err != nil {
 					return nil, err
 				}
@@ -348,16 +351,22 @@ func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoList
 			args = append(args, f.ProjectID)
 		} else {
 			query = `SELECT ` + todoColumns + ` FROM todos t
-			           JOIN project_members pm ON pm.project_id = t.project_id
-			          WHERE pm.identity = ?`
-			args = append(args, callerIdentity)
+			           JOIN projects p ON p.id = t.project_id
+			           LEFT JOIN project_members pm ON pm.project_id = t.project_id AND pm.identity = ?
+			           LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+			          WHERE pm.identity IS NOT NULL OR om.role IN (?, ?)`
+			args = append(args, callerIdentity, callerIdentity, OrgRoleOwner, OrgRoleAdmin)
 		}
 	case "assigned":
 		query = `SELECT ` + todoColumns + ` FROM todos t
+		           LEFT JOIN projects p ON p.id = t.project_id
 		           LEFT JOIN project_members pm ON pm.project_id = t.project_id AND pm.identity = ?
+		           LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
 		          WHERE t.assignee_identity = ?
-		            AND ((t.project_id IS NULL AND t.owner_identity = ?) OR pm.identity IS NOT NULL)`
-		args = append(args, callerIdentity, callerIdentity, callerIdentity)
+		            AND ((t.project_id IS NULL AND t.owner_identity = ?)
+		              OR pm.identity IS NOT NULL
+		              OR om.role IN (?, ?))`
+		args = append(args, callerIdentity, callerIdentity, callerIdentity, callerIdentity, OrgRoleOwner, OrgRoleAdmin)
 	case "all":
 		isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
 		if err != nil {
@@ -624,7 +633,7 @@ func (s *Store) requireTodoAssignableTo(ctx context.Context, t todoschema.Todo, 
 		}
 		return forbidTodo("assign personal todo to", assigneeIdentity, t.ID)
 	}
-	if _, ok, err := s.MemberRole(ctx, t.ProjectID, assigneeIdentity); err != nil {
+	if _, ok, err := s.EffectiveProjectRole(ctx, t.ProjectID, assigneeIdentity); err != nil {
 		return err
 	} else if ok {
 		return nil
@@ -681,8 +690,8 @@ func (s *Store) ResetRecurringTodo(ctx context.Context, id string, now time.Time
 }
 
 // requireTodoProjectMember checks that callerIdentity has at least view
-// access to project's todos (any member role including viewer, or global
-// admin) — the same tier ListTodos' scope="project" branch already uses.
+// access to project's todos (any direct project member, team owner/admin, or
+// global admin) — the same tier ListTodos' scope="project" branch already uses.
 func (s *Store) requireTodoProjectMember(ctx context.Context, callerIdentity, projectID string) error {
 	isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
 	if err != nil {
@@ -691,7 +700,7 @@ func (s *Store) requireTodoProjectMember(ctx context.Context, callerIdentity, pr
 	if isAdmin {
 		return nil
 	}
-	_, ok, err := s.MemberRole(ctx, projectID, callerIdentity)
+	_, ok, err := s.EffectiveProjectRole(ctx, projectID, callerIdentity)
 	if err != nil {
 		return err
 	}
@@ -702,8 +711,8 @@ func (s *Store) requireTodoProjectMember(ctx context.Context, callerIdentity, pr
 }
 
 // requireTodoProjectEditor checks that callerIdentity can edit todos in
-// project (owner/member, not viewer, or global admin) — the same tier
-// CreateTodo requires for creating a team todo.
+// project (project owner/member, team owner/admin, not viewer, or global
+// admin) — the same tier CreateTodo requires for creating a team todo.
 func (s *Store) requireTodoProjectEditor(ctx context.Context, callerIdentity, projectID string) error {
 	isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
 	if err != nil {
@@ -712,7 +721,7 @@ func (s *Store) requireTodoProjectEditor(ctx context.Context, callerIdentity, pr
 	if isAdmin {
 		return nil
 	}
-	role, ok, err := s.MemberRole(ctx, projectID, callerIdentity)
+	role, ok, err := s.EffectiveProjectRole(ctx, projectID, callerIdentity)
 	if err != nil {
 		return err
 	}
