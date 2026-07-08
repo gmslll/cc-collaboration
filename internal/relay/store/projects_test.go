@@ -298,3 +298,46 @@ func TestProjectOwnerInvariant(t *testing.T) {
 		t.Fatalf("remove last owner: want ErrLastOwner, got %v", err)
 	}
 }
+
+func TestProjectOwnerInvariantIgnoresDisabledOwners(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled-owner@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "disabled-owner@x", RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(ctx, "disabled-owner@x", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.AddMember(ctx, "p1", "owner@x", RoleMember); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("demote last active owner with disabled owner present: want ErrLastOwner, got %v", err)
+	}
+	if err := st.RemoveMember(ctx, "p1", "owner@x"); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("remove last active owner with disabled owner present: want ErrLastOwner, got %v", err)
+	}
+
+	if err := st.CreateUser(ctx, User{Identity: "active-owner@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "active-owner@x", RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RemoveMember(ctx, "p1", "owner@x"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.OwnerIdentity != "active-owner@x" {
+		t.Fatalf("owner_identity = %q, want active-owner@x", p.OwnerIdentity)
+	}
+}

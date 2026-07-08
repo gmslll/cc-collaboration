@@ -513,7 +513,11 @@ func (s *Store) identityHasUserRow(ctx context.Context, identity string) (bool, 
 func (s *Store) CountProjectOwners(ctx context.Context, projectID string) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM project_members WHERE project_id = ? AND role = ?`, projectID, RoleOwner).Scan(&count)
+		`SELECT COUNT(*)
+		   FROM project_members pm
+		   LEFT JOIN users u ON u.identity = pm.identity
+		  WHERE pm.project_id = ? AND pm.role = ? AND (u.identity IS NULL OR u.disabled = 0)`,
+		projectID, RoleOwner).Scan(&count)
 	return count, err
 }
 
@@ -546,9 +550,12 @@ func replaceProjectOwnerIdentity(ctx context.Context, tx *sql.Tx, projectID, rem
 	}
 	var replacement string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT identity FROM project_members
-		  WHERE project_id = ? AND role = ? AND identity != ?
-		  ORDER BY identity LIMIT 1`,
+		`SELECT pm.identity
+		   FROM project_members pm
+		   LEFT JOIN users u ON u.identity = pm.identity
+		  WHERE pm.project_id = ? AND pm.role = ? AND pm.identity != ?
+		    AND (u.identity IS NULL OR u.disabled = 0)
+		  ORDER BY pm.identity LIMIT 1`,
 		projectID, RoleOwner, removedOrDemotedOwner).Scan(&replacement); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrLastOwner

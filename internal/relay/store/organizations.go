@@ -244,7 +244,11 @@ func (s *Store) RemoveOrganizationMember(ctx context.Context, orgID, identity st
 func (s *Store) CountOrganizationOwners(ctx context.Context, orgID string) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM organization_members WHERE org_id = ? AND role = ?`, orgID, OrgRoleOwner).Scan(&count)
+		`SELECT COUNT(*)
+		   FROM organization_members om
+		   LEFT JOIN users u ON u.identity = om.identity
+		  WHERE om.org_id = ? AND om.role = ? AND (u.identity IS NULL OR u.disabled = 0)`,
+		orgID, OrgRoleOwner).Scan(&count)
 	return count, err
 }
 
@@ -320,9 +324,12 @@ func replaceOrganizationOwnerIdentity(ctx context.Context, tx *sql.Tx, orgID, re
 	}
 	var replacement string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT identity FROM organization_members
-		  WHERE org_id = ? AND role = ? AND identity != ?
-		  ORDER BY identity LIMIT 1`,
+		`SELECT om.identity
+		   FROM organization_members om
+		   LEFT JOIN users u ON u.identity = om.identity
+		  WHERE om.org_id = ? AND om.role = ? AND om.identity != ?
+		    AND (u.identity IS NULL OR u.disabled = 0)
+		  ORDER BY om.identity LIMIT 1`,
 		orgID, OrgRoleOwner, removedOrDemotedOwner).Scan(&replacement); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrLastOwner
