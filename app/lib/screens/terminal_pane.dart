@@ -19,6 +19,7 @@ import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
 import '../local/path_utils.dart';
 import '../local/platform.dart';
+import '../local/session_overview.dart';
 import '../local/shell.dart';
 import '../ghostty_shadow.dart';
 import '../terminal_snapshot_formatter.dart';
@@ -637,6 +638,21 @@ class TerminalSession {
   // multi-thousand-line buffer each refresh).
   String snapshotAnsi(int rows) {
     return XtermSnapshotFormatter(terminal).ansiTail(rows);
+  }
+
+  // snapshotSized is snapshotAnsi PLUS the source terminal's geometry, so the
+  // quick-reply preview can render at THIS width (no reflow of TUI chrome). The
+  // tail is exactly viewHeight rows (the current screen) so the snapshot's
+  // logical-line count equals the source rows == the rows the preview sizes to,
+  // keeping the bottom prompt from being clipped.
+  ScreenSnapshot snapshotSized() {
+    final cols = terminal.viewWidth;
+    final rows = terminal.viewHeight;
+    return (
+      ansi: XtermSnapshotFormatter(terminal).ansiTail(rows),
+      cols: cols,
+      rows: rows,
+    );
   }
 
   // _resolvedCommand is the shell command actually run for this session. For a

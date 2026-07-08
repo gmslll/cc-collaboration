@@ -3,15 +3,14 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:xterm/xterm.dart';
 
 import '../local/local_bus.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../local/skill_pack.dart';
-import '../terminal_theme.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../widgets/session_snapshot_view.dart';
 
 // SessionOverviewPage is the desktop top-level "会话总览": every open session
 // laid out flat, grouped by 工作区 → 项目 → worktree, each as a card showing the
@@ -367,10 +366,9 @@ class _QuickReplyDialog extends StatefulWidget {
 
 class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
-  // A throwaway terminal we paint the session's coloured screen snapshot into —
-  // a real xterm view, not stripped text. Independent of the live session's
-  // Terminal so it never fights it for PTY size; small buffer = cheap rewrites.
-  final Terminal _term = ccTerminal(maxLines: 200);
+  // Latest coloured screen snapshot (ansi + source geometry); rendered by
+  // SessionSnapshotView at the source width so TUI chrome doesn't reflow.
+  ScreenSnapshot? _snap;
   Timer? _timer;
 
   @override
@@ -395,10 +393,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   }
 
   Future<void> _refresh() async {
-    final ansi = await widget.store.loadPreview(widget.card.sid);
-    if (!mounted || ansi == null) return;
-    _term.write('\x1b[3J\x1b[2J\x1b[H'); // clear scrollback + screen, home
-    _term.write(ansi);
+    final snap = await widget.store.loadPreview(widget.card.sid);
+    // Records compare structurally → an unchanged screen skips the rebuild.
+    if (!mounted || snap == null || snap == _snap) return;
+    setState(() => _snap = snap);
   }
 
   // _bump re-reads the screen shortly after a send so the agent's reaction shows
@@ -483,25 +481,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                 statusDetail: c.statusDetail,
               ),
               const SizedBox(height: 10),
-              Container(
+              SessionSnapshotView(
+                snapshot: _snap,
                 height: 280,
-                width: double.infinity,
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(
-                  color: ccTerminalTheme.background,
-                  borderRadius: BorderRadius.circular(CcRadius.sm),
-                  border: Border.all(color: CcColors.border),
-                ),
-                child: TerminalView(
-                  _term,
-                  theme: ccTerminalTheme,
-                  textStyle: const TerminalStyle(
-                    fontFamily: 'JetBrainsMono',
-                    fontSize: 12,
-                  ),
-                  padding: const EdgeInsets.all(8),
-                  readOnly: true,
-                ),
+                fontSize: 12,
               ),
               const SizedBox(height: 10),
               Wrap(

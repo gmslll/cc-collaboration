@@ -389,11 +389,16 @@ class RemoteHost extends RemoteChannel {
         final from = (f['from'] as num?)?.toInt();
         final s = _sessionById(f['sid'] as String?);
         if (from != null) {
+          final snap = s?.snapshotSized();
           send({
             't': 'screen',
             'to': from,
             'sid': f['sid'],
-            'text': s?.snapshotAnsi(60) ?? '', // coloured tail (ANSI)
+            'text': snap?.ansi ?? '', // coloured tail (ANSI)
+            // source geometry so the phone renders at the computer's width
+            // (full-screen TUIs format to width) instead of reflowing.
+            'cols': snap?.cols ?? 0,
+            'rows': snap?.rows ?? 0,
           });
         }
       case 'term.resize':

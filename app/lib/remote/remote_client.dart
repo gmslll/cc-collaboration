@@ -183,8 +183,10 @@ class RemoteClient extends RemoteChannel {
   Map<String, SessionCard> overview = {};
   // screens holds the latest one-shot terminal snapshot per session id, fetched
   // by the quick-reply popup via requestScreen (distinct from the full mirror's
-  // streamed output). Updated on each `screen` reply.
-  Map<String, String> screens = {};
+  // streamed output). Updated on each `screen` reply. The record carries the
+  // host terminal's geometry so the popup renders at the computer's width
+  // instead of reflowing TUI chrome to the phone's narrow width.
+  Map<String, ScreenSnapshot> screens = {};
   Map<String, List<HookActivity>> activities = {};
 
   List<ShareSource> shareSources = [];
@@ -611,7 +613,13 @@ class RemoteClient extends RemoteChannel {
       case 'screen':
         final sid = f['sid'] as String?;
         if (sid != null) {
-          screens[sid] = (f['text'] as String?) ?? '';
+          // cols/rows absent from an older host → 0; the popup then falls back
+          // to a default geometry (roughly the pre-fix reflow behaviour).
+          screens[sid] = (
+            ansi: (f['text'] as String?) ?? '',
+            cols: (f['cols'] as num?)?.toInt() ?? 0,
+            rows: (f['rows'] as num?)?.toInt() ?? 0,
+          );
           notifyListeners();
         }
       case 'roots':

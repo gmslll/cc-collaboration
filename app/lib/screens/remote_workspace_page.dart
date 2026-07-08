@@ -28,6 +28,7 @@ import '../theme.dart';
 import '../voice/speaker.dart';
 import '../voice/stt.dart';
 import '../widgets.dart';
+import '../widgets/session_snapshot_view.dart';
 import 'diff_split.dart';
 import '../terminal_theme.dart';
 
@@ -4136,11 +4137,12 @@ class _QuickReplyDialog extends StatefulWidget {
 
 class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
-  // A throwaway terminal we paint the host's coloured screen snapshot into — a
-  // real xterm view, not stripped text.
-  final Terminal _term = ccTerminal(maxLines: 200);
-  String? _lastScreen;
   Timer? _timer;
+  // Last values build() actually consumes, so unrelated client notifications
+  // (other sessions, mirror output, heartbeats) don't re-lay-out the preview —
+  // mirrors the desktop popup's snap-equality guard.
+  ScreenSnapshot? _lastScreen;
+  SessionCard? _lastOverview;
 
   String get _sid => widget.session.sid;
 
@@ -4163,15 +4165,18 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     super.dispose();
   }
 
+  // Rebuild only when one of the two things build() reads actually changed:
+  // the screen snapshot (SessionSnapshotView) or this session's overview card
+  // (status/usage row). overview is replaced wholesale per frame, so identity
+  // is enough; screens are ScreenSnapshot records (structural equality).
   void _onChange() {
     if (!mounted) return;
-    final scr = widget.client.screens[_sid];
-    if (scr != null && scr != _lastScreen) {
-      _lastScreen = scr;
-      _term.write('\x1b[3J\x1b[2J\x1b[H'); // clear scrollback + screen, home
-      _term.write(scr);
-    }
-    setState(() {}); // status/usage may have changed
+    final screen = widget.client.screens[_sid];
+    final overview = widget.client.overview[_sid];
+    if (screen == _lastScreen && identical(overview, _lastOverview)) return;
+    _lastScreen = screen;
+    _lastOverview = overview;
+    setState(() {});
   }
 
   // _bump re-reads the screen shortly after a send so the reaction shows without
@@ -4258,25 +4263,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
               ),
             ],
             const SizedBox(height: 10),
-            Container(
+            SessionSnapshotView(
+              snapshot: widget.client.screens[_sid],
               height: 220,
-              width: double.infinity,
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: ccTerminalTheme.background,
-                borderRadius: BorderRadius.circular(CcRadius.sm),
-                border: Border.all(color: CcColors.border),
-              ),
-              child: TerminalView(
-                _term,
-                theme: ccTerminalTheme,
-                textStyle: const TerminalStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 11,
-                ),
-                padding: const EdgeInsets.all(8),
-                readOnly: true,
-              ),
+              fontSize: 11,
             ),
             const SizedBox(height: 10),
             Wrap(
