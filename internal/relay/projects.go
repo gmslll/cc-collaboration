@@ -92,6 +92,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := s.Store.GetProject(r.Context(), id)
+	p.Role = store.RoleOwner
 	writeJSON(w, http.StatusCreated, p)
 }
 

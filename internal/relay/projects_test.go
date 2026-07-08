@@ -55,10 +55,11 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	var proj struct {
 		ID    string `json:"id"`
 		OrgID string `json:"org_id"`
+		Role  string `json:"role"`
 	}
 	_ = json.Unmarshal(body, &proj)
-	if proj.ID == "" || proj.OrgID == "" {
-		t.Fatal("no project id")
+	if proj.ID == "" || proj.OrgID == "" || proj.Role != "owner" {
+		t.Fatalf("created project response = %+v", proj)
 	}
 	var meAfterCreate struct {
 		Organizations []struct {
@@ -269,6 +270,17 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	}
 	assertOrganizationListRole(t, srv.URL, ownerTok, org.ID, "owner")
 	assertOrganizationListRole(t, srv.URL, teamTok, org.ID, "owner")
+	code, body = getAuthed(t, srv.URL+"/v1/orgs/"+org.ID, teamTok)
+	if code != http.StatusOK {
+		t.Fatalf("get org detail = %d %s", code, body)
+	}
+	var orgDetail struct {
+		Organization store.Organization `json:"organization"`
+	}
+	_ = json.Unmarshal(body, &orgDetail)
+	if orgDetail.Organization.Role != "owner" {
+		t.Fatalf("org detail role = %+v", orgDetail.Organization)
+	}
 
 	code, body = postJSON(t, srv.URL+"/v1/projects", teamTok,
 		map[string]string{"name": "Team Project", "org_id": org.ID})
@@ -277,7 +289,7 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	}
 	var proj store.Project
 	_ = json.Unmarshal(body, &proj)
-	if proj.OrgID != org.ID || proj.OwnerIdentity != "teammate@demo" {
+	if proj.OrgID != org.ID || proj.OwnerIdentity != "teammate@demo" || proj.Role != "owner" {
 		t.Fatalf("project = %+v", proj)
 	}
 

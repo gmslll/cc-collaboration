@@ -85,6 +85,15 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	identity := auth.Identity(r.Context())
+	if s.isAdmin(r.Context(), identity) {
+		org.Role = store.OrgRoleAdmin
+	} else if role, ok, err := s.Store.OrganizationMemberRole(r.Context(), orgID, identity); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ok {
+		org.Role = role
+	}
 	members, err := s.Store.ListOrganizationMembers(r.Context(), orgID)
 	if err != nil {
 		http.Error(w, "list organization members: "+err.Error(), http.StatusInternalServerError)
