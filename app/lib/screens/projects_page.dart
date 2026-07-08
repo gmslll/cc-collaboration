@@ -294,6 +294,7 @@ class _ProjectSheet extends StatefulWidget {
 
 class _ProjectSheetState extends State<_ProjectSheet> {
   ProjectDetail? _d;
+  List<OrganizationMember> _orgMembers = const [];
   final _repo = TextEditingController();
   final _member = TextEditingController();
   String _role = 'member';
@@ -314,7 +315,21 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   Future<void> _load() async {
     try {
       final d = await widget.client.project(widget.id);
-      if (mounted) setState(() => _d = d);
+      var orgMembers = const <OrganizationMember>[];
+      if (d.project.orgId.isNotEmpty) {
+        try {
+          final org = await widget.client.organization(d.project.orgId);
+          orgMembers = org.members;
+        } catch (_) {
+          orgMembers = const [];
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _d = d;
+          _orgMembers = orgMembers;
+        });
+      }
     } catch (e) {
       if (mounted) snack(context, errorText(e));
     }
@@ -388,10 +403,29 @@ class _ProjectSheetState extends State<_ProjectSheet> {
         .any((m) => m.identity == widget.identity && m.role == 'owner');
   }
 
+  List<OrganizationMember> _memberCandidates(ProjectDetail d) {
+    final projectMembers = d.members.map((m) => m.identity).toSet();
+    final candidates =
+        _orgMembers.where((m) => !projectMembers.contains(m.identity)).toList();
+    candidates.sort((a, b) {
+      final an = a.displayName.isEmpty ? a.identity : a.displayName;
+      final bn = b.displayName.isEmpty ? b.identity : b.displayName;
+      return an.compareTo(bn);
+    });
+    return candidates;
+  }
+
+  String _memberLabel(OrganizationMember m) {
+    if (m.displayName.isEmpty) return '${m.identity} · ${m.role}';
+    return '${m.displayName} · ${m.identity} · ${m.role}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = _d;
     final canManage = d != null && _canManage(d);
+    final memberCandidates =
+        d == null ? const <OrganizationMember>[] : _memberCandidates(d);
     return Padding(
       padding: EdgeInsets.only(
           left: 16,
@@ -490,35 +524,62 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         ]),
                       )),
                   if (canManage)
-                    Row(children: [
-                      Expanded(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (memberCandidates.isNotEmpty)
+                          SizedBox(
+                            width: 260,
+                            child: DropdownButtonFormField<String>(
+                              initialValue: null,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                  hintText: '从团队选择', isDense: true),
+                              items: memberCandidates
+                                  .map((m) => DropdownMenuItem(
+                                      value: m.identity,
+                                      child: Text(_memberLabel(m),
+                                          overflow: TextOverflow.ellipsis)))
+                                  .toList(),
+                              onChanged: (v) {
+                                if (v != null) _member.text = v;
+                              },
+                            ),
+                          ),
+                        SizedBox(
+                          width: 260,
                           child: TextField(
                               controller: _member,
                               decoration: const InputDecoration(
-                                  hintText: 'identity', isDense: true))),
-                      const SizedBox(width: 8),
-                      DropdownButton<String>(
-                        value: _role,
-                        items: const [
-                          DropdownMenuItem(
-                              value: 'member', child: Text('member')),
-                          DropdownMenuItem(
-                              value: 'viewer', child: Text('viewer')),
-                          DropdownMenuItem(value: 'owner', child: Text('owner')),
-                        ],
-                        onChanged: (v) => setState(() => _role = v ?? 'member'),
-                      ),
-                      TextButton(
-                          onPressed: () {
-                            final m = _member.text.trim();
-                            if (m.isNotEmpty) {
-                              _member.clear();
-                              _do(() =>
-                                  widget.client.addMember(widget.id, m, _role));
-                            }
-                          },
-                          child: const Text('加成员')),
-                    ]),
+                                  hintText: 'identity', isDense: true)),
+                        ),
+                        DropdownButton<String>(
+                          value: _role,
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'member', child: Text('member')),
+                            DropdownMenuItem(
+                                value: 'viewer', child: Text('viewer')),
+                            DropdownMenuItem(value: 'owner', child: Text('owner')),
+                          ],
+                          onChanged: (v) => setState(() => _role = v ?? 'member'),
+                        ),
+                        FilledButton.icon(
+                            onPressed: () {
+                              final m = _member.text.trim();
+                              if (m.isNotEmpty) {
+                                _member.clear();
+                                _do(() =>
+                                    widget.client.addMember(widget.id, m, _role));
+                              }
+                            },
+                            icon: const Icon(Icons.person_add_alt_1_rounded,
+                                size: 18),
+                            label: const Text('加成员')),
+                      ],
+                    ),
                 ]),
             ),
     );

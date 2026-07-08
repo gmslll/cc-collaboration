@@ -210,6 +210,31 @@ class Organization {
         role = _s(j['role']);
 }
 
+class OrganizationMember {
+  final String identity, role, displayName;
+  OrganizationMember.fromJson(Map<String, dynamic> j)
+      : identity = _s(j['identity']),
+        role = _s(j['role']),
+        displayName = _s(j['display_name']);
+}
+
+class OrganizationDetail {
+  final Organization organization;
+  final List<OrganizationMember> members;
+  final List<Project> projects;
+  OrganizationDetail.fromJson(Map<String, dynamic> j)
+      : organization =
+            Organization.fromJson((j['organization'] ?? const {}) as Map<String, dynamic>),
+        members = (j['members'] as List?)
+                ?.map((e) => OrganizationMember.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
+        projects = (j['projects'] as List?)
+                ?.map((e) => Project.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [];
+}
+
 class Project {
   final String id, orgId, name, ownerIdentity, role;
   Project.fromJson(Map<String, dynamic> j)

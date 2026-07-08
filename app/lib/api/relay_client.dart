@@ -297,6 +297,11 @@ class RelayClient {
         .toList();
   }
 
+  Future<OrganizationDetail> organization(String id) async {
+    final r = await _dio.get('/v1/orgs/$id');
+    return OrganizationDetail.fromJson(r.data as Map<String, dynamic>);
+  }
+
   Future<Organization> createOrganization(String name) async {
     final r = await _dio.post('/v1/orgs', data: {'name': name});
     return Organization.fromJson(r.data as Map<String, dynamic>);
