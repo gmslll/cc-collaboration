@@ -234,6 +234,9 @@ func (s *Server) postAlert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "message required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireReachableIdentity(w, r, alert.Recipient) {
+		return
+	}
 	alert.Sender = sender
 	if s.Hub != nil {
 		if data, err := json.Marshal(alert); err == nil {

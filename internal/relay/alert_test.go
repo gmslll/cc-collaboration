@@ -105,6 +105,66 @@ func TestPostAlert(t *testing.T) {
 	}
 }
 
+func TestPostAlertRequiresSharedTeam(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"},
+		{"token":"tok-bob",  "identity":"bob@frontend"},
+		{"token":"tok-mallory",  "identity":"mallory@other"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	body := `{"recipient":"alice@backend","project":"svc","level":"error","message":"ERROR kaboom"}`
+	if code := postAlertStatus(t, srv.URL, "tok-bob", body); code != http.StatusAccepted {
+		t.Fatalf("shared teammate alert = %d, want 202", code)
+	}
+	if code := postAlertStatus(t, srv.URL, "tok-mallory", body); code != http.StatusForbidden {
+		t.Fatalf("cross-team alert = %d, want 403", code)
+	}
+}
+
+func postAlertStatus(t *testing.T, baseURL, token, body string) int {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, baseURL+"/v1/alerts", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
 // awaitAlertEvent scans SSE lines for an `event: log.alert` frame and returns
 // the decoded payload from its `data:` line.
 func awaitAlertEvent(t *testing.T, lines <-chan string, timeout time.Duration) (handoffschema.LogAlert, bool) {
