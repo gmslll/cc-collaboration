@@ -167,6 +167,42 @@ func TestRegisterFlow(t *testing.T) {
 	}
 }
 
+func TestRegisterRejectsReservedTokenIdentities(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.SeedMachineToken(context.Background(), "hash-cli", "cli@demo", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[{"token":"tok-legacy","identity":"legacy@demo"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: tokens, Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "legacy@demo", "password": "secret pass"}); code != http.StatusConflict {
+		t.Fatalf("register legacy token identity: status=%d, want 409", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "cli@demo", "password": "secret pass"}); code != http.StatusConflict {
+		t.Fatalf("register machine token identity: status=%d, want 409", code)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/me", "tok-legacy"); code != http.StatusOK {
+		t.Fatalf("legacy token should still authenticate: status=%d body=%s", code, body)
+	}
+}
+
 // TestBackCompatFileToken pins that a legacy tokens.json bearer still
 // authenticates via the seed resolver after the multi-source refactor.
 func TestBackCompatFileToken(t *testing.T) {

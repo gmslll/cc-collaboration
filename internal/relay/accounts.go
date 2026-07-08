@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -109,6 +110,15 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "password required", http.StatusBadRequest)
 		return
 	}
+	reserved, err := s.identityReserved(r.Context(), identity)
+	if err != nil {
+		http.Error(w, "check identity: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if reserved {
+		http.Error(w, "该账号已注册", http.StatusConflict)
+		return
+	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -129,6 +139,22 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.issueSession(w, r, identity, http.StatusCreated)
+}
+
+func (s *Server) identityReserved(ctx context.Context, identity string) (bool, error) {
+	if _, err := s.Store.GetUser(ctx, identity); err == nil {
+		return true, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	tokens, err := s.Store.ListMachineTokens(ctx, identity)
+	if err != nil {
+		return false, err
+	}
+	if len(tokens) > 0 {
+		return true, nil
+	}
+	return s.Tokens != nil && slices.Contains(s.Tokens.Identities(), identity), nil
 }
 
 // issueSession mints a session token for identity, persists it, and writes the
