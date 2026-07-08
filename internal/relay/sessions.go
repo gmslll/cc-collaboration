@@ -96,7 +96,7 @@ func (s *Server) postSessions(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Sessions []handoffschema.SessionInfo `json:"sessions"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+	if err := decodeJSONBody(w, r, 1<<20, &body); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -166,7 +166,7 @@ func (s *Server) getUserSessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	sender := auth.Identity(r.Context())
 	var msg handoffschema.Message
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&msg); err != nil {
+	if err := decodeJSONBody(w, r, 1<<20, &msg); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

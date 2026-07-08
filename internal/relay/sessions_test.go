@@ -199,6 +199,66 @@ func TestSessionRegistryNormalizesPublishedSessions(t *testing.T) {
 	}
 }
 
+func TestSessionRegistryRejectsTrailingJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "alice@backend", "alicepass1")
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+	token := loginToken(t, srv.URL, "alice@backend", "alicepass1")
+
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", token, map[string]any{
+		"sessions": []map[string]string{{"id": "ts0", "label": "api"}},
+	}); code != http.StatusOK {
+		t.Fatalf("publish sessions = %d %s", code, body)
+	}
+	if code, body := postRawJSON(t, srv.URL+"/v1/sessions", token,
+		`{"sessions":[{"id":"ts1","label":"bad"}]} {"sessions":[]}`); code != http.StatusBadRequest {
+		t.Fatalf("publish trailing json = %d %s", code, body)
+	}
+
+	code, body := getAuthed(t, srv.URL+"/v1/users/"+url.PathEscape("alice@backend")+"/sessions", token)
+	if code != http.StatusOK {
+		t.Fatalf("get sessions = %d %s", code, body)
+	}
+	var got struct {
+		Sessions []handoffschema.SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].ID != "ts0" {
+		t.Fatalf("trailing json changed published sessions: %+v", got.Sessions)
+	}
+}
+
+func TestPostMessageRejectsTrailingJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "alice@backend", "alicepass1")
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+	token := loginToken(t, srv.URL, "alice@backend", "alicepass1")
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", token, map[string]any{
+		"sessions": []map[string]string{{"id": "ts0", "label": "api"}},
+	}); code != http.StatusOK {
+		t.Fatalf("publish sessions = %d %s", code, body)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/messages", token,
+		`{"recipient":"alice@backend","session_id":"ts0","body":"first"} {"recipient":"alice@backend","session_id":"ts0","body":"second"}`); code != http.StatusBadRequest {
+		t.Fatalf("message trailing json = %d %s", code, body)
+	}
+}
+
 func TestSessionRegistryRequiresSharedTeam(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {
