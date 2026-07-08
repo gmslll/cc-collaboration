@@ -24,6 +24,21 @@ String organizationRoleLabel(String role, {required bool isAdmin}) {
   }
 }
 
+String projectRoleLabel(String role) {
+  switch (role) {
+    case 'admin':
+      return '管理员';
+    case 'owner':
+      return '负责人';
+    case 'member':
+      return '成员';
+    case 'viewer':
+      return '只读';
+    default:
+      return role.isEmpty ? '成员' : role;
+  }
+}
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -152,18 +167,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
               ? 'admin'
               : (p.ownerIdentity == _identity ? 'owner' : 'member'))
         : p.role;
-    switch (role) {
-      case 'admin':
-        return '管理员';
-      case 'owner':
-        return '负责人';
-      case 'member':
-        return '成员';
-      case 'viewer':
-        return '只读';
-      default:
-        return role;
-    }
+    return projectRoleLabel(role);
   }
 
   List<Organization> get _manageableOrgs =>
@@ -611,19 +615,19 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                     items: const [
                                       DropdownMenuItem(
                                         value: 'owner',
-                                        child: Text('owner'),
+                                        child: Text('负责人'),
                                       ),
                                       DropdownMenuItem(
                                         value: 'admin',
-                                        child: Text('admin'),
+                                        child: Text('管理员'),
                                       ),
                                       DropdownMenuItem(
                                         value: 'member',
-                                        child: Text('member'),
+                                        child: Text('成员'),
                                       ),
                                       DropdownMenuItem(
                                         value: 'guest',
-                                        child: Text('guest'),
+                                        child: Text('访客'),
                                       ),
                                     ],
                                     onChanged: isLastOwner
@@ -689,19 +693,16 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                           items: const [
                             DropdownMenuItem(
                               value: 'member',
-                              child: Text('member'),
+                              child: Text('成员'),
                             ),
                             DropdownMenuItem(
                               value: 'admin',
-                              child: Text('admin'),
+                              child: Text('管理员'),
                             ),
-                            DropdownMenuItem(
-                              value: 'guest',
-                              child: Text('guest'),
-                            ),
+                            DropdownMenuItem(value: 'guest', child: Text('访客')),
                             DropdownMenuItem(
                               value: 'owner',
-                              child: Text('owner'),
+                              child: Text('负责人'),
                             ),
                           ],
                           onChanged: (v) =>
@@ -1121,15 +1122,15 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           items: const [
                             DropdownMenuItem(
                               value: 'member',
-                              child: Text('member'),
+                              child: Text('成员'),
                             ),
                             DropdownMenuItem(
                               value: 'viewer',
-                              child: Text('viewer'),
+                              child: Text('只读'),
                             ),
                             DropdownMenuItem(
                               value: 'owner',
-                              child: Text('owner'),
+                              child: Text('负责人'),
                             ),
                           ],
                           onChanged: (v) =>

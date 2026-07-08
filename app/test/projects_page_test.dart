@@ -43,4 +43,13 @@ void main() {
     expect(organizationRoleLabel('member', isAdmin: true), '成员');
     expect(organizationRoleLabel('guest', isAdmin: true), '访客');
   });
+
+  test('project role label uses team-facing Chinese labels', () {
+    expect(projectRoleLabel(''), '成员');
+    expect(projectRoleLabel('admin'), '管理员');
+    expect(projectRoleLabel('owner'), '负责人');
+    expect(projectRoleLabel('member'), '成员');
+    expect(projectRoleLabel('viewer'), '只读');
+    expect(projectRoleLabel('custom'), 'custom');
+  });
 }
