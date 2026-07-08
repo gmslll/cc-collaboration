@@ -14,9 +14,9 @@ import '../local/repo_config.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-// HandoffDetailView is the reusable 对接文档: a 5-tab view (文档 / Prompt / API /
-// 文件 / 评论) + header + actions. Shared by the inbox cockpit (right pane) and
-// the workspace cockpit (a dialog).
+// HandoffDetailView is the reusable delivery package: a 5-tab view (文档 /
+// Prompt / API / 文件 / 评论) + header + actions. Shared by the coordination
+// queue (right pane) and the workspace cockpit.
 //
 // Callbacks let the host wire local-only bits without owning detail state:
 //  - onOpenTerminal(workdir, command): pickup → host adds a terminal session.
@@ -138,7 +138,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   Future<void> _ack() async {
     try {
       await _client.ack(_id);
-      _snack('已标记接收');
+      _snack('已标记为已接收');
       _loadExtras();
       widget.onChanged?.call();
     } catch (e) {
@@ -149,7 +149,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   Future<void> _pickup(Package p) async {
     final path = _cfg.repoPath(p.repo.name);
     if (path == null) {
-      _snack('本地找不到 repo "${p.repo.name}" —— 在 config.toml 的 [[workspace]] 里把它加上');
+      _snack(
+        '本地找不到项目 repo "${p.repo.name}" —— 在 config.toml 的 [[workspace]] 里把它加上',
+      );
       return;
     }
     // pickup requires a per-repo .cc-handoff.toml directly in the repo dir (the
@@ -178,22 +180,30 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('初始化仓库'),
-        content: Text('仓库 "${p.repo.name}" 还没初始化 cc-handoff（缺少 .cc-handoff.toml）。'
-            '要现在初始化并接收吗？\n\npartner = ${p.sender}'),
+        title: const Text('初始化项目接收配置'),
+        content: Text(
+          '仓库 "${p.repo.name}" 还没初始化任务接收配置（缺少 .cc-handoff.toml）。'
+          '要现在初始化并接收吗？\n\npartner = ${p.sender}',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('初始化并接收')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('初始化并接收'),
+          ),
         ],
       ),
     );
     if (ok != true) return false;
     try {
-      await RepoConfig(raw: {}, partner: p.sender, base: 'origin/main').save(path);
+      await RepoConfig(
+        raw: {},
+        partner: p.sender,
+        base: 'origin/main',
+      ).save(path);
       return true;
     } catch (e) {
       _snack('初始化失败: ${errorText(e)}');
@@ -206,16 +216,20 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('撤回 handoff'),
+        title: const Text('撤回协作任务'),
         content: TextField(
-            controller: ctl,
-            decoration: const InputDecoration(hintText: '原因(可选)')),
+          controller: ctl,
+          decoration: const InputDecoration(hintText: '原因(可选)'),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('撤回')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('撤回'),
+          ),
         ],
       ),
     );
@@ -236,28 +250,36 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('转交 bug'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
+        title: const Text('转交缺陷任务'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
               controller: to,
-              decoration: const InputDecoration(labelText: '转交给(identity)')),
-          const SizedBox(height: 8),
-          TextField(
+              decoration: const InputDecoration(labelText: '转交给(identity)'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
               controller: reason,
-              decoration: const InputDecoration(labelText: '原因')),
-        ]),
+              decoration: const InputDecoration(labelText: '原因'),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('转交')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('转交'),
+          ),
         ],
       ),
     );
     if (ok != true) return;
     if (to.text.trim().isEmpty || reason.text.trim().isEmpty) {
-      _snack('需填转交对象和原因');
+      _snack('请填写转交对象和原因');
       return;
     }
     try {
@@ -291,31 +313,40 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final p = _pkg!;
     return DefaultTabController(
       length: 5,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _header(p),
-        const TabBar(
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          tabs: [
-            Tab(text: '文档'),
-            Tab(text: 'Prompt'),
-            Tab(text: 'API'),
-            Tab(text: '文件'),
-            Tab(text: '评论'),
-          ],
-        ),
-        Expanded(
-          child: TabBarView(children: [
-            _mdScroll(p.summaryMd.isNotEmpty ? p.summaryMd : '_(无 summary)_',
-                extras: _summaryExtras(p)),
-            _tabPrompt(),
-            _tabApi(p),
-            _tabFiles(p),
-            SingleChildScrollView(
-                padding: const EdgeInsets.all(16), child: _commentsSection()),
-          ]),
-        ),
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _header(p),
+          const TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            tabs: [
+              Tab(text: '交付文档'),
+              Tab(text: '执行 Prompt'),
+              Tab(text: 'API'),
+              Tab(text: '文件'),
+              Tab(text: '评论'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _mdScroll(
+                  p.summaryMd.isNotEmpty ? p.summaryMd : '_(无 summary)_',
+                  extras: _summaryExtras(p),
+                ),
+                _tabPrompt(),
+                _tabApi(p),
+                _tabFiles(p),
+                SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: _commentsSection(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -323,63 +354,82 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(
-            '${p.sender} → ${p.recipient.isNotEmpty ? p.recipient : _cfg.identity}',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            chip(p.repo.branch.isNotEmpty
-                ? '${p.repo.name} @ ${p.repo.branch}'
-                : p.repo.name),
-            kindBadge(p.kind),
-            if (p.urgency == 'urgent') tag('urgent', CcColors.danger, bold: true),
-            if (_status != null) tag(_status!.state, _stateColor(_status!.state)),
-          ]),
-          const SizedBox(height: 12),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            if (widget.onOpenTerminal != null)
-              FilledButton.icon(
-                onPressed: _picking ? null : () => _pickup(p),
-                icon: _picking
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.download_rounded),
-                label: Text(_picking ? '接收中…' : '接收并开终端'),
-              ),
-            OutlinedButton.icon(
-              onPressed: _ack,
-              icon: const Icon(Icons.check_rounded, size: 18),
-              label: const Text('标记接收'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${p.sender} → ${p.recipient.isNotEmpty ? p.recipient : _cfg.identity}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            if (p.sender == _cfg.identity && _status?.state == 'pending')
-              OutlinedButton.icon(
-                onPressed: () => _retract(p),
-                icon: const Icon(Icons.undo_rounded, size: 18),
-                label: const Text('撤回'),
-              ),
-            if (p.kind == 'bug' && _status?.state == 'pending')
-              OutlinedButton.icon(
-                onPressed: () => _reassign(p),
-                icon: const Icon(Icons.swap_horiz_rounded, size: 18),
-                label: const Text('转交'),
-              ),
-          ]),
-        ]),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                chip(
+                  p.repo.branch.isNotEmpty
+                      ? '${p.repo.name} @ ${p.repo.branch}'
+                      : p.repo.name,
+                ),
+                kindBadge(p.kind),
+                if (p.urgency == 'urgent')
+                  tag('urgent', CcColors.danger, bold: true),
+                if (_status != null)
+                  tag(_status!.state, _stateColor(_status!.state)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (widget.onOpenTerminal != null)
+                  FilledButton.icon(
+                    onPressed: _picking ? null : () => _pickup(p),
+                    icon: _picking
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_rounded),
+                    label: Text(_picking ? '接收中…' : '接收并启动 Agent'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _ack,
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: const Text('标记已接收'),
+                ),
+                if (p.sender == _cfg.identity && _status?.state == 'pending')
+                  OutlinedButton.icon(
+                    onPressed: () => _retract(p),
+                    icon: const Icon(Icons.undo_rounded, size: 18),
+                    label: const Text('撤回'),
+                  ),
+                if (p.kind == 'bug' && _status?.state == 'pending')
+                  OutlinedButton.icon(
+                    onPressed: () => _reassign(p),
+                    icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                    label: const Text('转交'),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _mdScroll(String md, {Widget? extras}) => SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          MarkdownBody(data: md, selectable: true),
-          ?extras,
-        ]),
-      );
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        MarkdownBody(data: md, selectable: true),
+        ?extras,
+      ],
+    ),
+  );
 
   Widget? _summaryExtras(Package p) {
     final parts = <Widget>[];
@@ -391,69 +441,82 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Widget _mdSection(String title, String md) => Padding(
-        padding: const EdgeInsets.only(top: 16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          MarkdownBody(data: md, selectable: true),
-        ]),
-      );
+    padding: const EdgeInsets.only(top: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        MarkdownBody(data: md, selectable: true),
+      ],
+    ),
+  );
 
   Widget _tabPrompt() {
     if (_prompt == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-        child: Wrap(children: [
-          TextButton.icon(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: _prompt!));
-              _snack('已复制 Prompt');
-            },
-            icon: const Icon(Icons.copy_rounded, size: 16),
-            label: const Text('复制 Prompt'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+          child: Wrap(
+            children: [
+              TextButton.icon(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: _prompt!));
+                  _snack('已复制 Prompt');
+                },
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: const Text('复制 Prompt'),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  Clipboard.setData(
+                    ClipboardData(text: 'cc-handoff pickup $_id --worktree'),
+                  );
+                  _snack('已复制 pickup 命令');
+                },
+                icon: const Icon(Icons.terminal_rounded, size: 16),
+                label: const Text('复制 pickup 命令'),
+              ),
+              if (widget.onSendToTerminal != null)
+                TextButton.icon(
+                  onPressed: () {
+                    widget.onSendToTerminal!(_prompt!);
+                    _snack('已发送到终端');
+                  },
+                  icon: const Icon(Icons.keyboard_return_rounded, size: 16),
+                  label: const Text('发送到终端'),
+                ),
+            ],
           ),
-          TextButton.icon(
-            onPressed: () {
-              Clipboard.setData(
-                  ClipboardData(text: 'cc-handoff pickup $_id --worktree'));
-              _snack('已复制 pickup 命令');
-            },
-            icon: const Icon(Icons.terminal_rounded, size: 16),
-            label: const Text('复制 pickup 命令'),
-          ),
-          if (widget.onSendToTerminal != null)
-            TextButton.icon(
-              onPressed: () {
-                widget.onSendToTerminal!(_prompt!);
-                _snack('已发送到终端');
-              },
-              icon: const Icon(Icons.keyboard_return_rounded, size: 16),
-              label: const Text('发送到终端'),
-            ),
-        ]),
-      ),
-      Expanded(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: MarkdownBody(
-              data: _prompt!.isNotEmpty ? _prompt! : '_(无 prompt)_',
-              selectable: true),
         ),
-      ),
-    ]);
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: MarkdownBody(
+              data: _prompt!.isNotEmpty ? _prompt! : '_(无 prompt)_',
+              selectable: true,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _tabApi(Package p) {
     final d = p.apiDelta;
     if (d == null || d.isEmpty) return centerMsg('无 API 变更');
-    return ListView(padding: const EdgeInsets.all(16), children: [
-      ..._apiSection('新增', d.added, CcColors.ok),
-      ..._apiSection('变更', d.changed, CcColors.warning),
-      ..._apiSection('删除', d.removed, CcColors.danger),
-    ]);
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        ..._apiSection('新增', d.added, CcColors.ok),
+        ..._apiSection('变更', d.changed, CcColors.warning),
+        ..._apiSection('删除', d.removed, CcColors.danger),
+      ],
+    );
   }
 
   List<Widget> _apiSection(String title, List<ApiOp> ops, Color c) {
@@ -461,22 +524,31 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     return [
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 6),
-        child: Text(title,
-            style: TextStyle(fontWeight: FontWeight.bold, color: c)),
+        child: Text(
+          title,
+          style: TextStyle(fontWeight: FontWeight.bold, color: c),
+        ),
       ),
-      ...ops.map((op) => Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      ...ops.map(
+        (op) => Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               tag(op.method, c, bold: true),
               const SizedBox(width: 8),
               Expanded(
                 child: SelectableText(
-                  op.summary.isNotEmpty ? '${op.path}  ·  ${op.summary}' : op.path,
+                  op.summary.isNotEmpty
+                      ? '${op.path}  ·  ${op.summary}'
+                      : op.path,
                   style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
                 ),
               ),
-            ]),
-          )),
+            ],
+          ),
+        ),
+      ),
       const SizedBox(height: 8),
     ];
   }
@@ -486,115 +558,164 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     if (p.modulePaths.isNotEmpty) {
       children.add(_filesHeader('模块路径'));
       children.addAll(
-          p.modulePaths.map((m) => _fileRow(m, Icons.folder_rounded)));
+        p.modulePaths.map((m) => _fileRow(m, Icons.folder_rounded)),
+      );
     }
     if (p.attachments.isNotEmpty) {
       children.add(_filesHeader('附件'));
-      children.addAll(p.attachments.map((a) => ListTile(
+      children.addAll(
+        p.attachments.map(
+          (a) => ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.attach_file_rounded, size: 18),
             title: Text(a.name),
-            subtitle: Text(_fmtBytes(a.size),
-                style: const TextStyle(color: CcColors.muted, fontSize: 11)),
+            subtitle: Text(
+              _fmtBytes(a.size),
+              style: const TextStyle(color: CcColors.muted, fontSize: 11),
+            ),
             trailing: IconButton(
               icon: const Icon(Icons.download_rounded, size: 20),
               onPressed: () => _downloadAttachment(a.name),
             ),
-          )));
+          ),
+        ),
+      );
     }
     final git = p.git;
     if (git != null && git.commits.isNotEmpty) {
       children.add(_filesHeader('提交 (${git.commits.length})'));
-      children.addAll(git.commits.map((c) => ListTile(
+      children.addAll(
+        git.commits.map(
+          (c) => ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text(c.subject, maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text(c.sha.length > 8 ? c.sha.substring(0, 8) : c.sha,
-                style: const TextStyle(
-                    color: CcColors.muted,
-                    fontFamily: CcType.mono,
-                    fontSize: 11)),
-          )));
+            title: Text(
+              c.subject,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              c.sha.length > 8 ? c.sha.substring(0, 8) : c.sha,
+              style: const TextStyle(
+                color: CcColors.muted,
+                fontFamily: CcType.mono,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ),
+      );
     }
     if (git != null && git.changedPaths.isNotEmpty) {
       children.add(_filesHeader('变更文件 (${git.changedPaths.length})'));
-      children.addAll(git.changedPaths
-          .map((f) => _fileRow(f, Icons.description_rounded)));
+      children.addAll(
+        git.changedPaths.map((f) => _fileRow(f, Icons.description_rounded)),
+      );
     }
     if (children.isEmpty) return centerMsg('无文件 / 模块信息');
     return ListView(padding: const EdgeInsets.all(16), children: children);
   }
 
   Widget _filesHeader(String s) => Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 4),
-        child: Text(s, style: const TextStyle(fontWeight: FontWeight.bold)),
-      );
+    padding: const EdgeInsets.only(top: 8, bottom: 4),
+    child: Text(s, style: const TextStyle(fontWeight: FontWeight.bold)),
+  );
 
   Widget _fileRow(String s, IconData icon) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(children: [
-          Icon(icon, size: 16, color: CcColors.muted),
-          const SizedBox(width: 8),
-          Expanded(
-              child: Text(s,
-                  style: const TextStyle(fontFamily: CcType.mono, fontSize: 13))),
-        ]),
-      );
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      children: [
+        Icon(icon, size: 16, color: CcColors.muted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            s,
+            style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _commentsSection() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Text('评论', style: TextStyle(fontWeight: FontWeight.bold)),
-            const Spacer(),
-            IconButton(
-                onPressed: reloadComments,
-                tooltip: '刷新',
-                icon: const Icon(Icons.refresh_rounded, size: 18)),
-          ]),
-          if (_comments.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('暂无评论', style: TextStyle(color: CcColors.muted)),
-            )
-          else
-            ..._comments.map((c) => Padding(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text('评论', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                IconButton(
+                  onPressed: reloadComments,
+                  tooltip: '刷新',
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                ),
+              ],
+            ),
+            if (_comments.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('暂无评论', style: TextStyle(color: CcColors.muted)),
+              )
+            else
+              ..._comments.map(
+                (c) => Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Text(c.sender,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 13)),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            c.sender,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
                           const SizedBox(width: 8),
-                          Text(relativeTime(c.createdAt),
-                              style: const TextStyle(
-                                  color: CcColors.muted, fontSize: 11)),
-                        ]),
-                        const SizedBox(height: 2),
-                        SelectableText(c.body),
-                      ]),
-                )),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _commentCtl,
-                minLines: 1,
-                maxLines: 4,
-                decoration:
-                    const InputDecoration(hintText: '写评论…', isDense: true),
-                onSubmitted: (_) => _postComment(),
+                          Text(
+                            relativeTime(c.createdAt),
+                            style: const TextStyle(
+                              color: CcColors.muted,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      SelectableText(c.body),
+                    ],
+                  ),
+                ),
               ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _commentCtl,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      hintText: '写评论…',
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _postComment(),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _postComment,
+                  icon: const Icon(Icons.send_rounded, size: 20),
+                ),
+              ],
             ),
-            IconButton(
-                onPressed: _postComment, icon: const Icon(Icons.send_rounded, size: 20)),
-          ]),
-        ]),
+          ],
+        ),
       ),
     );
   }
@@ -618,5 +739,4 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         return CcColors.accent;
     }
   }
-
 }

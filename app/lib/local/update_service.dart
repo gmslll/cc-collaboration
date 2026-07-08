@@ -50,7 +50,8 @@ int _cmpVer(String a, String b) {
 bool _isNewer(String latest, String current) =>
     current != 'dev' && current.isNotEmpty && _cmpVer(latest, current) > 0;
 
-String _versionFromTag(String tag) => tag.startsWith('v') ? tag.substring(1) : tag;
+String _versionFromTag(String tag) =>
+    tag.startsWith('v') ? tag.substring(1) : tag;
 
 // _assetMatches picks this platform's GUI app release asset by the names
 // scripts/package.* produce. Be strict on Windows: release.yml also uploads CLI
@@ -58,7 +59,14 @@ String _versionFromTag(String tag) => tag.startsWith('v') ? tag.substring(1) : t
 bool _assetMatches(String name, String version) {
   final n = name.toLowerCase();
   if (Platform.isAndroid) return n == 'cc-handoff-android-v$version.apk';
-  if (Platform.isMacOS) return n == 'app-macos-v$version.zip';
+  if (Platform.isMacOS) {
+    // GitHub replaces spaces in uploaded release asset names with dots, so the
+    // rebranded zip lands as infinite.agent.platform-…; accept both spellings
+    // plus the legacy alias package.sh still uploads for pre-rebrand updaters.
+    return n == 'infinite.agent.platform-macos-v$version.zip' ||
+        n == 'infinite agent platform-macos-v$version.zip' ||
+        n == 'app-macos-v$version.zip';
+  }
   if (Platform.isWindows) {
     return n == 'cc-handoff-windows-${_windowsPackageArch()}-v$version.zip';
   }
@@ -75,6 +83,10 @@ String _windowsPackageArch() {
 
 String? _fallbackAssetName(String version) {
   if (Platform.isAndroid) return 'cc-handoff-android-v$version.apk';
+  // Keep the legacy alias here: this name is used to construct a download URL
+  // blindly when the REST asset listing is unavailable, and package.sh
+  // guarantees app-macos-v*.zip exists on every release (the rebranded asset
+  // name gets dot-normalized by GitHub, so guessing it is not reliable).
   if (Platform.isMacOS) return 'app-macos-v$version.zip';
   if (Platform.isWindows) {
     return 'cc-handoff-windows-${_windowsPackageArch()}-v$version.zip';
@@ -102,9 +114,7 @@ Future<String> _latestTagViaWeb(Dio dio) async {
     ),
   );
   final loc = res.headers.value('location');
-  final uri = loc == null
-      ? res.realUri
-      : res.realUri.resolve(loc);
+  final uri = loc == null ? res.realUri : res.realUri.resolve(loc);
   final tag = _tagFromReleaseUrl(uri);
   if (tag == null || tag.isEmpty) {
     throw StateError('无法解析 GitHub 最新版本');
@@ -175,7 +185,10 @@ Future<UpdateCheck> checkForUpdate() async {
 // checkForUpdatesUi runs a check and, when a newer version exists, prompts to
 // download + install. silent suppresses the "已是最新" / failure feedback (for the
 // automatic on-launch check); pass false for a user-tapped "检查更新".
-Future<void> checkForUpdatesUi(BuildContext context, {bool silent = true}) async {
+Future<void> checkForUpdatesUi(
+  BuildContext context, {
+  bool silent = true,
+}) async {
   final check = await checkForUpdate();
   if (!context.mounted) return;
   if (check.error != null) {
@@ -312,7 +325,9 @@ Future<void> _installWindowsUpdate(BuildContext context, String zipPath) async {
   );
   if (ok != true) return;
 
-  final script = File('${temp.path}${Platform.pathSeparator}install-update.ps1');
+  final script = File(
+    '${temp.path}${Platform.pathSeparator}install-update.ps1',
+  );
   final stagedDir = '${currentDir.path}.new';
   final backupDir = '${currentDir.path}.old';
   final logPath = '${temp.path}${Platform.pathSeparator}install-update.log';
@@ -358,13 +373,7 @@ try {
 ''');
   await Process.start(
     'powershell.exe',
-    [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      script.path,
-    ],
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script.path],
     workingDirectory: temp.path,
     mode: ProcessStartMode.detached,
   );
@@ -380,8 +389,12 @@ Future<void> _installMacOSUpdate(BuildContext context, String zipPath) async {
   }
 
   final temp = await Directory.systemTemp.createTemp('cc-handoff-update-');
-  final unzip =
-      await Process.run('/usr/bin/ditto', ['-x', '-k', zipPath, temp.path]);
+  final unzip = await Process.run('/usr/bin/ditto', [
+    '-x',
+    '-k',
+    zipPath,
+    temp.path,
+  ]);
   if (unzip.exitCode != 0) {
     await _openExternally(zipPath);
     if (context.mounted) snack(context, '自动解压失败，请手动安装');
@@ -431,11 +444,9 @@ rm -rf ${_sh(backupApp)}
 /usr/bin/open ${_sh(currentApp.path)}
 ''');
   await Process.run('/bin/chmod', ['700', script.path]);
-  await Process.start(
-    '/bin/zsh',
-    [script.path],
-    mode: ProcessStartMode.detached,
-  );
+  await Process.start('/bin/zsh', [
+    script.path,
+  ], mode: ProcessStartMode.detached);
   exit(0);
 }
 

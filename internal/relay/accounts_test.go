@@ -160,6 +160,92 @@ func TestRegisterFlow(t *testing.T) {
 	}
 }
 
+func TestRegisterCanBeDisabled(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		DisableRegistration: true,
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	code, body := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "carol@demo", "password": "secret pass"})
+	if code != http.StatusForbidden {
+		t.Fatalf("register when disabled: status=%d body=%s", code, body)
+	}
+}
+
+func TestDisabledUserInvalidatesAllBearerSources(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	hash, _ := auth.HashPassword("pw-12345678")
+	if err := st.CreateUser(context.Background(),
+		store.User{Identity: "alice@backend", PasswordHash: hash}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateMachineToken(context.Background(),
+		auth.HashToken("machine-alice"), "alice@backend", "laptop", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[{"token":"file-alice","identity":"alice@backend"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: tokens, Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	code, body := postJSON(t, srv.URL+"/v1/login", "",
+		map[string]string{"identity": "alice@backend", "password": "pw-12345678"})
+	if code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", code, body)
+	}
+	var lr struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &lr); err != nil {
+		t.Fatal(err)
+	}
+	for name, token := range map[string]string{
+		"session": lr.Token,
+		"machine": "machine-alice",
+		"file":    "file-alice",
+	} {
+		if code, _ := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusOK {
+			t.Fatalf("%s token before disable: status=%d", name, code)
+		}
+	}
+
+	if err := st.SetDisabled(context.Background(), "alice@backend", true); err != nil {
+		t.Fatal(err)
+	}
+	for name, token := range map[string]string{
+		"session": lr.Token,
+		"machine": "machine-alice",
+		"file":    "file-alice",
+	} {
+		if code, _ := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusUnauthorized {
+			t.Fatalf("%s token after disable: status=%d", name, code)
+		}
+	}
+}
+
 // TestBackCompatFileToken pins that a legacy tokens.json bearer still
 // authenticates via the seed resolver after the multi-source refactor.
 func TestBackCompatFileToken(t *testing.T) {

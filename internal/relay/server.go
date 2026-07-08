@@ -65,6 +65,10 @@ type Server struct {
 	// operator can never be locked out. Effective admin = SeedAdmins ∪
 	// users.is_admin.
 	SeedAdmins []string
+	// DisableRegistration closes the public /v1/register route for enterprise
+	// deployments that provision users through admins or the relay useradd
+	// bootstrap command. Default false preserves existing self-service installs.
+	DisableRegistration bool
 }
 
 func (s *Server) Handler() http.Handler {
@@ -172,7 +176,7 @@ func (s *Server) Handler() http.Handler {
 	// Login and register are the /v1 routes that must NOT require a bearer (you
 	// don't have one yet); registering them on the outer mux makes the
 	// more-specific pattern win over the "/v1/" catch-all, so they bypass the
-	// auth middleware. register is open self-registration (non-admin accounts).
+	// auth middleware. register can be disabled for enterprise deployments.
 	mux.HandleFunc("POST /v1/login", s.login)
 	mux.HandleFunc("POST /v1/register", s.register)
 

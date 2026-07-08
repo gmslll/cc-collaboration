@@ -158,7 +158,7 @@ func TestUIServing(t *testing.T) {
 		t.Fatalf("GET /ui/ status=%d, want 200", uiResp.StatusCode)
 	}
 	body, _ := io.ReadAll(uiResp.Body)
-	if !strings.Contains(string(body), "cc-handoff") {
+	if !strings.Contains(string(body), "Infinite Agent Platform") {
 		t.Fatalf("GET /ui/ body does not look like the embedded UI")
 	}
 

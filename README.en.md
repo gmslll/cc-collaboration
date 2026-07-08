@@ -1,110 +1,100 @@
-# cc-handoff
+# Infinite Agent Platform
 
-[![CI](https://github.com/gmslll/cc-collaboration/actions/workflows/ci.yml/badge.svg)](https://github.com/gmslll/cc-collaboration/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/cc-collaboration.svg)](https://pkg.go.dev/github.com/cc-collaboration)
 
 > **English** | [中文](README.md)
 
-> Cross-machine handoff for AI coding agents — turn "backend ships an API, frontend has to integrate it" from "paste a blurb in chat + read the swagger yourself" into one agent workflow to push and one workflow to receive. First-class support for Claude Code and OpenAI Codex CLI; other agents work via manual mode (pure CLI flow).
+> Infinite Agent Platform is Infinite State Inc's self-hosted internal platform for agent-driven software development. It brings projects, workspaces, agent sessions, coordination queues, delivery briefs, audit history, account administration, and relay operations into one enterprise control plane for teams using Claude Code, OpenAI Codex CLI, and compatible command-line agents.
 
-> ⚙️ **This repo is developed collaboratively by multiple AI agent sessions** (coordinating through the "local session bus" + "supervisor" described below). Before editing, check whether another session is touching the same file; announce changes to shared files like this README on the bus first.
+> ⚙️ **Compatibility note**: existing binaries, config paths, MCP server names, and several API terms still use the legacy `cc-handoff`, `cc-relay`, and `cc-handoff-mcp` names so deployed clients, systemd units, update channels, and scripts keep working. Starting with this release, the product identity, UI, and docs position the system as Infinite Agent Platform; command examples that use `cc-handoff` are the compatibility layer, not the product brand.
 
-Beyond the cross-machine handoff workflow, this project also ships a **desktop / mobile workspace "cockpit" app** (`app/`): manage projects, spawn claude / codex agent terminals, view git, and edit code in an in-app editor (**go-to-definition** + configurable LSP plugins) — all in one window — and mirror the desktop workspace to your phone. See "Feature overview" and "Desktop / mobile app" below.
+## Product Positioning
 
-## What problem does it solve
+The hard part of adopting AI coding agents inside a company is not sending a prompt to a model. It is giving teams a governed way to coordinate work across people, agents, repositories, machines, and audit trails:
 
-When backend and frontend live in separate repos with separate developers, the real flow for API integration is usually:
+- Multiple agent sessions may work at once; the team needs to know which session owns which project, branch, workspace, or task.
+- Backend, frontend, QA, operations, and product roles need structured delivery context instead of scattered chat messages.
+- Internal platforms need accounts, machine tokens, project memberships, permissions, history, and operational controls.
+- Engineering leaders need a practical desktop, web, and mobile workspace for coordination, not a pile of local scripts.
 
-1. Backend writes the endpoint, merges the PR
-2. Backend posts a blurb in chat: which endpoints are new, field names, error codes, gotchas
-3. Frontend dev copies it back, then has to dig through swagger / read backend code / ping in chat for every detail
-4. Frontend writes the client code; if anything breaks, repeat step 3
+Infinite Agent Platform provides that operating layer:
 
-The pain is that **the integration context is scattered across chat, PR descriptions, and the backend dev's memory**, and every new integration forces the frontend to re-read backend code from scratch.
+- **Agent workspace**: manage workspaces, projects, worktrees, terminals, git, code editing, and agent sessions in the Flutter desktop app.
+- **Coordination queue**: package cross-role delivery as structured work packages with briefs, prompts, API deltas, attachments, comments, status, and audit history.
+- **Enterprise relay**: self-hosted HTTP/SSE relay with accounts, machine tokens, project membership, presence, tasks, agent capsules, and a web admin UI.
+- **Local session bus**: sibling agent sessions on one machine can message each other, read visible screens, and be coordinated by a supervisor.
+- **Web and mobile entry points**: web for relay administration and queue inspection; mobile for remote workspace viewing, lightweight assignment, and status follow-up.
 
-cc-handoff turns that conversation into a structured handoff:
+## Common Workflows
 
-- **Backend** runs `/handoff` inside Claude Code. Claude reads git diff + swagger delta + commit log, drafts the integration writeup, and ships it to your own VPS.
-- **Frontend** machine has a daemon already running: it inboxes the handoff, fires a desktop notification, and for urgent ones can spin up a fresh terminal with `claude -p`.
-- **Frontend** runs `/pickup`. Claude reads the inbound package **+ the actual local frontend code**, and produces an `INTEGRATION.md` draft.
-- **Human review** of `INTEGRATION.md` happens before code lands. By design, the receiving Claude **stops and waits for review; it does not edit code on its own**.
+- **Cross-team delivery**: one agent submits API changes, diffs, swagger deltas, and implementation notes as a work package; the receiving agent picks it up inside the real local repository.
+- **Internal assignment**: product, QA, ops, or engineering leads assign relay projects and todos to people or agent sessions and track progress.
+- **Multi-agent development**: a supervisor observes sibling sessions, reads screens, sends messages, distributes work, and summarizes progress.
+- **Agent capability reuse**: a productive session can be frozen into an agent capsule with persona, seed context, and skill pack, then published to the internal agent library.
+- **Secure operations**: admins create or disable accounts, rotate machine tokens, reset passwords, and keep relay data inside the self-hosted boundary.
 
-Compared to "post a blurb in chat" or "share one Claude session between us," what this gets you:
+## Core Modules
 
-| | Chat blurb + DIY | Shared Claude session | cc-handoff |
-|---|---|---|---|
-| Structured handoff | ✗ | △ (only the current prompt) | ✓ (handoff package + schema) |
-| Receiver reads real code | ✗ (relies on backend's memory) | △ (one session can't truly ground in two repos) | ✓ (receiving Claude runs on the frontend machine) |
-| Cross-machine, cross-timezone | △ (async chat) | ✗ (need to overlap) | ✓ (SSE + persistent inbox) |
-| Contexts don't pollute each other | ✓ | ✗ (shared session) | ✓ (each side has its own Claude session) |
-| Searchable history | ✗ | ✗ | ✓ (SQLite + comments + attachments) |
-| Auto-wake the other side for urgent work | ✗ | ✗ | ✓ (opt-in, off by default) |
+**Desktop / mobile app (`app/`)**
 
-Design principles:
+The Flutter app is the primary workspace. Desktop is for execution: workspace/project/worktree tree, Claude/Codex terminals, git panel, code editor, coordination queue, todos, session overview, agent library, and phone mirroring. Mobile focuses on remote viewing, remote control, status, and lightweight assignment.
 
-- **Manual control over magic.** MVP has no Stop-hook auto-trigger, no automatic retries, no "we'll just go ahead and edit your files for you." Every action prints what it's about to do and waits for a key press.
-- **Receiving Claude writes; humans review.** The sender doesn't know the receiver's directory layout, so any cross-repo guidance is heuristic at best. The actual integration decisions belong to the Claude on the receiving side (which can see the real code) — and that Claude is told, by default, to stop after writing the doc.
-- **Boundaries beat reuse.** The three binaries (CLI / MCP / relay) each own a single thing. They talk over HTTP+SSE; they do not share a database.
+**Enterprise relay (`cc-relay`)**
 
-## Feature overview
+The relay is the self-hosted control plane. It provides REST + SSE, SQLite persistence, account and token administration, project authorization, presence, work packages, comments, attachments, todos, agent capsules, and the web management UI. Production deployments should put it behind a TLS reverse proxy and keep the service itself bound to loopback.
 
-cc-handoff is now two parts:
+**Compatibility CLI / MCP (`cc-handoff`, `cc-handoff-mcp`)**
 
-**A. Cross-machine handoff (CLI / MCP / relay)** — the backend runs one `/handoff` to push integration notes to your own VPS; the frontend runs one `/pickup` to receive them against its real local code. Real-time over SSE, persisted in SQLite, with an inbox + system notifications + auto-opening a terminal for urgent tasks. This is the project's original form; see "Architecture / Quick deploy / Using inside Claude Code" below.
+The CLI and MCP server are the compatibility entry points for current deployments. `cc-handoff submit/list/pickup/watch/comment`, Claude `/handoff` `/pickup`, Codex skills, and MCP tools continue to work. In the new product language, these commands create, receive, and audit agent work packages.
 
-**B. Desktop / mobile workspace cockpit app (`app/`)** — a Flutter app (macOS / Windows desktop + iOS / Android) that folds "manage projects + spawn AI agent sessions + git + edit code + mirror to phone" into one UI. Recent releases have mostly iterated here.
-
-## Desktop / mobile app (cockpit)
-
-`app/` is a Flutter cockpit: open multiple projects, spawn claude / codex agent terminals in any of them, and along the way review git, read/edit code, coordinate across sessions, and mirror to your phone.
+## Desktop / Mobile App
 
 **Core features**
 
-- **Workspace / project / worktree tree** — one click to spawn a claude / codex agent terminal in any project or branch worktree (terminal deck, xterm-based). Terminals restore lazily: visible tabs start immediately, hidden ones defer until you switch to them. Batch-import git repos from a folder; reorder projects per-device.
-- **Git panel** — changes / staging / commit / branches / log / stash / diff, with a JetBrains-style per-file right-click menu.
-- **Built-in code editor (re_editor)** — syntax highlighting + **go-to-definition**: a regex symbol index for all languages, upgraded to precise LSP for languages that have a server. Triggers: Cmd/Ctrl+click, F12, Cmd/Ctrl+B. Language servers are **configured in the "editor plugins" panel** (gopls / dart / jdtls / pyright / typescript-language-server / rust-analyzer / clangd — auto-detected, or point them at your own path). Plus formatter plugins (gofmt / prettier / clang-format / …).
-- **Local session bus** — multiple agent sessions on the same machine message each other point-to-point and read each other's screen (CLI entry `cc-handoff msg`, see "Command reference"). This is also what this repo's multi-agent development relies on.
-- **Supervisor** — spawn and host agent sessions from the bus; there's a "spawn supervisor" entry in the project / session / worktree right-click menus.
-- **Mirror to phone** — cast the desktop workspace to a phone via relay; the phone can view / operate terminals, transfer files both ways, and (on iOS) show session status via Dynamic Island / Live Activity.
-- Also: file-level copy / cut / paste in the file tree (interops with Finder's clipboard), session overview, token usage, hook activity, voice input, etc.
+- **Workspace / project / worktree tree**: spawn Claude or Codex terminals in any project or branch worktree. Terminals restore lazily; git repos can be batch-imported from a folder.
+- **Git panel**: changes, staging, commits, branches, log, stash, diff, and JetBrains-style per-file context menus.
+- **Built-in code editor**: syntax highlighting, go-to-definition, configurable LSP servers, and formatter plugins.
+- **Coordination queue**: inspect assigned work packages, initiated packages, and receive history; pick up work, copy execution prompts, comment, retract, and reassign.
+- **Todos and project management**: relay projects, members, personal/team todos, Linear import, and assignment to agent sessions.
+- **Agent library**: turn sessions into reusable capsules with persona, seed context, and skills.
+- **Remote workspace**: mirror the desktop workspace to mobile for terminal viewing/control, file transfer, and status updates.
 
-**Platforms**: desktop (macOS / Windows) primarily; mobile (iOS / Android) focuses on mirroring / viewing. Local capabilities (terminals, git, formatting, LSP) are **desktop-only**.
+**Platforms**: desktop (macOS / Windows) is primary; mobile (iOS / Android) focuses on mirroring and viewing. Local capabilities such as terminals, git, formatting, and LSP are desktop-only.
 
-**Build / run**: `app/` is a standard Flutter project; packaging / signing scripts are in `scripts/`. Desktop features need the corresponding CLI tools installed on the host (git / language servers / formatters); missing ones show "not detected" in the plugin panel with an install hint.
+**Build / run**: `app/` is a standard Flutter project; packaging / signing scripts live in `scripts/`. Desktop features need the corresponding CLI tools installed on the host (git, language servers, formatters); missing tools are shown in the plugin panel with install hints.
 
 ## Architecture
 
-Three Go binaries, three machines:
+The minimal production topology is one enterprise relay plus multiple employee clients:
 
 ```
-Backend dev's Mac                  Your VPS                    Frontend dev's Mac
-─────────────────                  ────────                    ──────────────────
-Claude Code (backend)                                          Claude Code (frontend)
-  ↓ /handoff                                                     ↑ /pickup
-cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► cc-handoff-mcp
-                                   ↓                              ↑
-                                cc-relay:8080 ◄──SSE──── cc-handoff watch (launchd/systemd)
-                                   ↓
-                                /var/lib/cc-handoff/relay.db
-                                   + comments + attachments
+Employee desktop / mobile / web    Enterprise VPS / intranet host   Employee agent sessions
+────────────────────────────────    ─────────────────────────────   ───────────────────────
+Flutter App / Web UI   ──HTTPS──►   TLS reverse proxy   ◄──SSE──   cc-handoff watch
+Claude / Codex MCP     ──HTTPS──►          │                       cc-handoff-mcp
+cc-handoff CLI         ──HTTPS──►   cc-relay:8080
+                                           │
+                                 /var/lib/cc-handoff/relay.db
+                                 accounts + projects + queue + todos
 ```
 
-- **`cc-relay`** — VPS-side systemd service, listens on loopback only; reverse proxy terminates TLS. HTTP REST + SSE, persisted to SQLite.
-- **`cc-handoff` (CLI)** — installed on both machines. Subcommands: `init` / `submit` / `list` / `pickup` / `watch` / `comment`.
-- **`cc-handoff-mcp`** — MCP server that Claude Code launches over stdio. Exposes every CLI action as an MCP tool, 13 total: `submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear` (the last one is for the optional Linear integration).
-- **`cc-handoff watch`** — receiver-side daemon. Holds an SSE long connection, materializes incoming handoffs into `.cc-handoff/inbox/<id>/`, fires desktop notifications, can spawn a terminal for urgent items.
+- **`cc-relay`** — enterprise relay systemd service, bound to loopback and fronted by TLS. Provides accounts, projects, queue, todos, comments, attachments, SSE, web UI, and administration.
+- **Flutter App** — employee desktop / mobile workspace connected to the relay; desktop also operates local git, terminals, editor, and agent sessions.
+- **`cc-handoff` (CLI)** — compatibility entry point. Subcommands include `init` / `submit` / `list` / `pickup` / `watch` / `comment` / `todo` / `workspace`.
+- **`cc-handoff-mcp`** — compatibility MCP server launched by Claude Code / Codex over stdio so agents can access relay and work-package operations.
+- **`cc-handoff watch`** — receiver-side daemon. Holds an SSE connection to the enterprise relay, materializes work packages under `.cc-handoff/inbox/<id>/`, fires notifications, and can spawn terminals by policy.
 
 Full data flow, SQLite schema, auth model, and failure modes live in [`docs/architecture.md`](docs/architecture.md) (currently Chinese-only).
 
 ## Status
 
-All four milestones shipped, v0.1.0 released:
+v1.0.0 is the enterprise relaunch of Infinite Agent Platform:
 
-- ✓ **M1** — manual submit / list / pickup
-- ✓ **M2** — SSE + watch daemon + osascript notifications + partner_mapping rule engine + swagger delta
-- ✓ **M3** — MCP server (Claude `/handoff` and `/pickup`; Codex uses a skill plus MCP tools)
-- ✓ **M4** — auto terminal launch + back-channel comments + attachment channel + structured audit log
+- ✓ Product name, Flutter app, relay web UI, docs, and platform display names now use Infinite Agent Platform.
+- ✓ Legacy `cc-handoff` / `cc-relay` / `cc-handoff-mcp` compatibility remains for rolling upgrades.
+- ✓ Enterprise relay supports accounts, projects, machine tokens, admins, disabled users, registration shutdown, and the coordination queue.
+- ✓ Desktop / mobile workspace still includes workspaces, agent sessions, git, editor, queue, todos, agent library, and remote workspace access.
 
 ## Quick deploy
 
@@ -273,7 +263,7 @@ cc-handoff status <id>     # state / picked_at / comment count / latest-comment 
 cc-handoff sent             # list my recent sent handoffs with state
 ```
 
-Sent the wrong thing? Retract while it's still pending (after pickup, coordinate via comment):
+Sent the wrong work package? Retract while it's still pending (after pickup, coordinate via comment):
 
 ```bash
 cc-handoff retract <id> --reason "wrong branch"   # marks retracted; recipient watch writes RETRACTED.md + notifies
@@ -330,7 +320,7 @@ cc-handoff pickup h_xxx --repo ~/work/frontend-project2
 
 Once installed, use `cc-handoff <subcommand>`; each has `--help`.
 
-**Handoff collaboration**
+**Agent work packages**
 
 | Command | What it does |
 |---|---|
@@ -464,7 +454,7 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\cc-handoff"
 
 **For Codex users**: `--with-mcp` writes the Codex MCP entry directly. cc-handoff still executes as MCP tools; `--with-commands` turns each `internal/setup/templates/commands/*.md` workflow into a Codex skill under `$CODEX_HOME/skills/cc-handoff-*/`. Restart Codex afterwards, then say things like "use cc-handoff-handoff for this API change" or "use cc-handoff-pickup".
 
-**Inbox path**: new installs use `.cc-handoff/inbox/`; existing repos with `.claude/handoff-inbox/` keep using it (no migration needed). The `[inbox] dir = "..."` override in `.cc-handoff.toml` accepts an absolute or relative path.
+**Queue materialization path**: new installs use `.cc-handoff/inbox/`; existing repos with `.claude/handoff-inbox/` keep using it (no migration needed). The `[inbox] dir = "..."` override in `.cc-handoff.toml` accepts an absolute or relative path.
 
 ## Further reading
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'brand.dart';
 import 'ghostty_runtime.dart';
 import 'local/prefs.dart';
 import 'local/session.dart';
@@ -29,7 +30,7 @@ class CcWebApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'cc-handoff web',
+    title: '${AppBrand.productName} Web',
     debugShowCheckedModeBanner: false,
     theme: ccTheme(),
     home: const WebShell(),

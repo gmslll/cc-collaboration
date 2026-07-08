@@ -34,6 +34,7 @@ func main() {
 	dbPath := flag.String("db", "relay.db", "sqlite database file")
 	tokensPath := flag.String("tokens", "tokens.json", "JSON file mapping tokens to identities")
 	adminsFlag := flag.String("admins", "", "comma-separated seed admin identities (falls back to RELAY_ADMINS)")
+	disableRegister := flag.Bool("disable-register", envBool("RELAY_DISABLE_REGISTER"), "disable public self-registration (or set RELAY_DISABLE_REGISTER=1)")
 	flag.Parse()
 
 	st, err := store.Open(*dbPath)
@@ -60,7 +61,10 @@ func main() {
 	}
 
 	hub := sse.NewHub()
-	relaySrv := &relay.Server{Store: st, Tokens: tokens, Hub: hub, SeedAdmins: seedAdmins}
+	relaySrv := &relay.Server{
+		Store: st, Tokens: tokens, Hub: hub, SeedAdmins: seedAdmins,
+		DisableRegistration: *disableRegister,
+	}
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           relaySrv.Handler(),
@@ -84,6 +88,15 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
+}
+
+func envBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseAdmins splits the -admins flag (or RELAY_ADMINS env when empty) into a

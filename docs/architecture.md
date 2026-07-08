@@ -1,24 +1,29 @@
-# cc-handoff 架构
+# Infinite Agent Platform 架构
 
-读完这份文档,你会知道每个组件做什么、数据怎么流、配置在哪、出错时该看哪里。
-**面向想理解或扩展系统的开发者**;部署和日常运维看 [`deployment.md`](deployment.md),
-跨端 schema 看 [`handoff-package.schema.json`](handoff-package.schema.json) 与
+读完这份文档,你会知道 Infinite Agent Platform 的每个组件做什么、数据怎么流、配置在哪、出错时该看哪里。
+**面向想理解或扩展企业内部 Agent 平台的开发者 / 运维人员**;部署和日常运维看 [`deployment.md`](deployment.md),
+协作任务包 schema 看 [`handoff-package.schema.json`](handoff-package.schema.json) 与
 [`pkg/handoffschema/package.go`](../pkg/handoffschema/package.go)。
+
+兼容说明:当前内部二进制和配置路径仍叫 `cc-handoff`、`cc-relay`、`cc-handoff-mcp`。
+这些名字是为了兼容既有 CLI、MCP、systemd、launchd、更新器和脚本;产品层面的名称是
+Infinite Agent Platform。
 
 ---
 
 ## 1. Components
 
-三个 Go 二进制 + 两端的 Claude Code 进程。
+三个 Go 二进制 + 桌面 / Web / 移动客户端 + 团队里的 Claude Code / Codex / 其它 Agent 进程。
 
 | 组件 | 跑在哪 | 协议入口 | 主要职责 |
 |---|---|---|---|
-| `cc-relay` | VPS,systemd service | HTTP+SSE on `127.0.0.1:8080` | 收 / 发 handoff、广播 SSE 事件、按 recipient 鉴权 |
-| `cc-handoff` (CLI) | 两端开发者 Mac | argv | `init` / `submit` / `list` / `pickup` / `watch` / `comment` / `watch print-unit` |
-| `cc-handoff-mcp` | 两端开发者 Mac,Claude Code 通过 stdio 拉起 | MCP / stdio | 把 CLI 动作全部暴露为 MCP 工具,共 13 个:`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`(最后一个走可选 Linear 集成,见 §11)。给 Claude Code 内的 `/handoff` `/pickup` `/request` `/handoff-from-linear` slash command 用 |
-| `cc-handoff watch` (常驻) | 接收侧 Mac,launchd / systemd user | SSE 长连接 | 拉服务端事件、把 handoff 落到 `.claude/handoff-inbox/<id>/`、必要时弹通知 / `claude -p` |
+| `cc-relay` | 企业 VPS / 内网 Linux,systemd service | HTTP+SSE on `127.0.0.1:8080` | 自托管控制面:账号、机器 token、项目成员、协作任务、评论、附件、待办、在线状态、Web UI、SSE 广播 |
+| Flutter App | 员工桌面 / 手机 | Relay HTTP+SSE、本地 shell / PTY | 企业 Agent 工作台:项目、worktree、Agent 会话、git、编辑器、任务队列、待办、Agent 库、远程工作区 |
+| `cc-handoff` (CLI) | 员工开发机 / CI 辅助环境 | argv | 兼容 CLI:`init` / `submit` / `list` / `pickup` / `watch` / `comment` / `todo` / `workspace` 等 |
+| `cc-handoff-mcp` | 员工开发机,Claude Code / Codex 通过 stdio 拉起 | MCP / stdio | 把协作任务和 relay 操作暴露为 MCP 工具。legacy 工具名仍包含 `handoff`,语义上是 Agent work package |
+| `cc-handoff watch` (常驻) | 接收侧开发机,launchd / systemd user | SSE 长连接 | 拉企业 relay 事件、把任务包落到 `.cc-handoff/inbox/<id>/`、弹通知、按策略唤起 Agent |
 
-VPS 一定挂反向代理(caddy / nginx)终结 TLS,relay 自己只听 loopback。
+生产环境一定挂反向代理(caddy / nginx / NPM)终结 TLS,relay 自己只听 loopback。
 `flush_interval -1` 是 SSE 必须的反向代理配置。
 
 ---
@@ -190,7 +195,7 @@ Claude 通用字段:
 
 ---
 
-## 3. Handoff package schema
+## 3. Agent work package schema
 
 完整定义见 `pkg/handoffschema/package.go`,JSON schema 见
 [`handoff-package.schema.json`](handoff-package.schema.json)。要点:

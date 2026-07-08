@@ -1,111 +1,100 @@
-# cc-handoff
+# Infinite Agent Platform
 
-[![CI](https://github.com/gmslll/cc-collaboration/actions/workflows/ci.yml/badge.svg)](https://github.com/gmslll/cc-collaboration/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/cc-collaboration.svg)](https://pkg.go.dev/github.com/cc-collaboration)
 
 > [English](README.en.md) | **中文**
 
-> 跨机器 AI 编码 agent 协作工具 —— 让"后端写完接口、前端去对接"这件事从「手抄群里贴 + 自己读 swagger」变成「agent 一条 handoff 工作流推过去,前端一条 pickup 工作流接住」。原生支持 Claude Code 与 OpenAI Codex CLI;其他 agent 走 manual 模式可用纯 CLI 流程。
+> Infinite Agent Platform 是 Infinite State Inc 面向企业内部研发团队的 Agent 开发与协作平台。它把项目、工作区、Agent 会话、协作任务、交付文档、审计历史和 relay 运维收进同一套自托管系统，让团队可以用 Claude Code、OpenAI Codex CLI 以及其它命令行 Agent 安全地协同完成研发工作。
 
-> ⚙️ **本仓库由多个 AI agent 会话协作开发**(通过下文的「本地会话总线」+「supervisor 总管」协同)。改动前请先确认其他会话是否正在动同一文件;README 等公共文件的改动请在总线上先打招呼。
+> ⚙️ **兼容说明**：当前二进制、配置目录、MCP server 和部分 API 仍沿用 `cc-handoff` / `cc-relay` / `cc-handoff-mcp` 这些 legacy 名称，目的是让已部署的客户端、systemd unit、更新器和脚本不断线。产品名、UI 和文档定位从本版本起切换为 Infinite Agent Platform；命令示例中的 `cc-handoff` 是兼容层，不代表新的产品品牌。
 
-除了跨机 handoff 工作流,本项目还包含一个**桌面 / 手机端的 workspace「驾驶舱」App**(`app/`):在一个界面里管理项目、一键起 claude / codex 会话终端、看 git、用内置编辑器(带**跳转到定义** + 可配置 LSP 插件),并能把桌面工作区**投屏到手机**。详见下文「功能全景」与「桌面 / 手机 App」两节。
+## 平台定位
 
-## 它解决什么问题
+企业内部使用 AI 编码 Agent 时，真正难的不是“把一个 prompt 发给模型”，而是如何在团队、项目和机器之间建立可审计、可恢复、可治理的工作流：
 
-前后端分仓远程协作时,API 对接的真实流程通常是:
+- 多个 Agent 会话并行工作，需要知道谁在处理哪个项目、哪条分支、哪个工作区。
+- 后端、前端、测试、运维之间需要交付上下文，而不是把临时说明散落在聊天窗口里。
+- 内部平台需要账号、机器 token、项目成员、权限、审计、历史和安全运维，而不是每个人各自维护一堆本地脚本。
+- 研发负责人需要一个能查看任务队列、协作交付、会话状态和项目入口的桌面 / Web / 移动端工作台。
 
-1. 后端写完接口、合并 PR
-2. 后端在群里贴一段说明:有几个新 endpoint、字段名、错误码、踩坑点
-3. 前端开发者拷回去,自己再去翻 swagger / 读后端代码 / 在群里反复确认细节
-4. 写出客户端代码,出问题时重复步骤 3
+Infinite Agent Platform 把这些能力组合成一个内部 Agent 开发平台：
 
-这个流程的痛点是**对接信息散在群里、PR 描述里、后端记忆里**,且每次都要前端重新读后端代码做心理建模。
+- **Agent 工作台**：在 Flutter 桌面应用里管理工作区、项目、worktree、终端、git、代码编辑器和 Agent 会话。
+- **协作任务队列**：把跨角色交付包装成结构化 work package，包含交付文档、Prompt、API delta、附件、评论、状态和审计历史。
+- **企业 relay**：自托管 HTTP/SSE relay，提供账号登录、机器 token、项目成员、在线状态、协作任务、待办、胶囊广场和管理后台。
+- **本地会话总线**：同一台机器上的多个 Agent 会话可以互发消息、读取可见屏幕、由 supervisor 统一协调。
+- **移动与 Web 入口**：手机端用于远程查看 / 操作桌面工作区，Web UI 用于 relay 管理、协作任务查看、账号和 token 管理。
 
-cc-handoff 把这一段变成结构化的 handoff:
+## 典型场景
 
-- **后端**在 Claude Code 内一条 `/handoff`,Claude 读 git diff + swagger 增量 + commit log,自动写出对接说明,打包推到自有 VPS
-- **前端**机器上常驻进程默认入收件箱、系统通知、紧急任务自动开新终端
-- **前端**一条 `/pickup`,Claude 读后端推过来的包**+ 本地真实代码**,产出 `INTEGRATION.md` 草稿
-- **人工 review** `INTEGRATION.md` 后再让 Claude 落代码,接收端 Claude 默认**写完停下等 review,不直接改代码**
+- **跨团队交付**：后端 Agent 把接口变更、diff、swagger delta 和注意事项提交为 work package；前端 Agent 在自己的真实仓库中 pickup，生成集成计划或落地代码。
+- **内部任务分派**：产品、测试、运维或项目负责人通过 relay 项目和待办把工作指派给成员或 Agent 会话，并持续追踪状态。
+- **多 Agent 协作开发**：supervisor 观察多个会话，必要时读取屏幕、发消息、分配任务、汇总进度。
+- **Agent 能力沉淀**：会话胶囊把一次有效 Agent 会话冻结成可复用的 persona、seed 和技能包，发布到内部 Agent 库。
+- **安全运维**：管理员在 Web UI 创建 / 停用账号、重置密码、轮换机器 token，并通过自托管 relay 保留数据边界。
 
-跟纯人力贴说明 / 让一个共享 Claude session 来回切换的方案相比,优点:
+## 核心模块
 
-| | 群里贴 + 自己读 | 共享 Claude session | cc-handoff |
-|---|---|---|---|
-| 对接说明结构化 | ✗ | △(看本次 prompt) | ✓ (handoff package + schema) |
-| 接收端读真实代码 | ✗(靠后端记忆) | △(共享 session 不 ground 在前端真代码上) | ✓(接收端 Claude 在前端机器上读) |
-| 跨机器、跨时区 | △(异步靠群) | ✗(要同时在线) | ✓(SSE + 持久化 inbox) |
-| 上下文不被对方污染 | ✓ | ✗(共用一个会话) | ✓(各自的 Claude session) |
-| 历史可回查 | ✗ | ✗ | ✓(SQLite + comments + attachments) |
-| 紧急自动唤起对方 | ✗ | ✗ | ✓(可配,默认关) |
+**桌面 / 手机 App (`app/`)**
 
-设计原则:
+`app/` 是 Infinite Agent Platform 的主要工作台。桌面端聚焦研发执行：工作区 / 项目 / worktree 树、Claude / Codex 终端、git 面板、内置代码编辑器、任务队列、待办、会话总览、Agent 库和手机投屏。移动端聚焦远程查看、远程操作、状态提醒和轻量任务分派。
 
-- **手动可控,反对自动魔法**。MVP 没有 Stop hook 自动触发,没有自动重试,没有"悄悄帮你改文件"。每个动作都打印将做什么、用户回车确认。
-- **接收端 Claude 写,人工 review**。发送端不知道前端真实目录结构,只能给启发式建议;真正的对接决策由前端那边的 Claude(看到真代码)做,且默认停下等人。
-- **边界清晰胜于代码复用**。三个二进制(CLI / MCP / relay)各管各的,中间走 HTTP+SSE,不共享数据库。
+**企业 relay (`cc-relay`)**
 
-## 功能全景
+relay 是自托管控制面，提供 REST + SSE、SQLite 持久化、账号和 token、项目权限、在线状态、任务队列、评论、附件、待办、会话胶囊和 Web 管理 UI。生产部署应放在 TLS 反向代理后，只监听 loopback。
 
-cc-handoff 现在是两大块:
+**兼容 CLI / MCP (`cc-handoff`, `cc-handoff-mcp`)**
 
-**A. 跨机 handoff 协作(CLI / MCP / relay)** —— 后端一条 `/handoff` 把对接说明推到自有 VPS,前端一条 `/pickup` 在本地真实代码上接住;SSE 实时、SQLite 持久化、收件箱 + 系统通知 + 紧急任务自动开终端。这是本项目最早的形态,见下文「架构 / 快速部署 / 在 Claude Code 内使用」。
+CLI / MCP 是现有部署的兼容入口。`cc-handoff submit/list/pickup/watch/comment`、Claude `/handoff` `/pickup`、Codex skill 和 MCP 工具仍然可用。新的产品语义把这些动作视为“创建 / 接收 / 审计 Agent work package”。
 
-**B. 桌面 / 手机 workspace 驾驶舱 App(`app/`)** —— 一个 Flutter 应用(macOS / Windows 桌面 + iOS / Android),把「管项目 + 起 AI agent 会话 + git + 编辑代码 + 投屏到手机」收进一个界面。近几个版本的迭代主要在这里。
-
-## 桌面 / 手机 App(cockpit)
-
-`app/` 是一个 Flutter 驾驶舱:你在里面开多个项目、在任意项目里起 claude / codex 的会话终端,并顺手完成看 git、读改代码、跨会话协作、投屏到手机这些事。
+## 桌面 / 手机 App
 
 **核心功能**
 
-- **工作区 / 项目 / worktree 树** —— 一键在任意项目或分支 worktree 起 claude / codex 会话终端(terminal deck,基于 xterm)。终端**懒恢复**:恢复工作区时可见标签即时启动、隐藏标签延后到切过去时再启。支持从文件夹一键批量导入 git 仓库、项目按设备拖拽排序。
-- **git 面板** —— 改动 / 暂存 / 提交 / 分支 / log / stash / diff,JetBrains 风格逐文件右键菜单。
-- **内置代码编辑器(re_editor)** —— 语法高亮 + **跳转到定义**:全语言先用正则符号索引兜底,装了语言服务器的语言再走精确 LSP。触发:Cmd/Ctrl+点击、F12、Cmd/Ctrl+B。语言服务器**在「编辑器插件」面板里配置**(gopls / dart / jdtls / pyright / typescript-language-server / rust-analyzer / clangd —— 自动探测,找不到可手填路径),另有格式化插件(gofmt / prettier / clang-format / …)。
-- **本地会话总线** —— 同一台机器上多个 agent 会话点对点发消息、读对方屏幕(命令行入口 `cc-handoff msg`,见「命令行速查」)。这也是本仓库多 agent 协作开发依赖的机制。
-- **supervisor(总管)** —— 从总线生成并托管 agent 会话,项目 / 会话 / worktree 右键有「起总管」入口。
-- **投屏到手机** —— 把桌面 workspace 通过 relay 投到手机端;手机可查看 / 操作终端、双向文件传输,iOS 端用**灵动岛 / Live Activity** 显示会话状态。
-- 其它:文件树文件级复制 / 剪切 / 粘贴 + 与访达剪贴板互通、会话总览、token 用量、hook 活动、语音输入等。
+- **工作区 / 项目 / worktree 树**：一键在任意项目或分支 worktree 起 Claude / Codex 会话终端。终端懒恢复，支持从文件夹批量导入 git 仓库、项目按设备拖拽排序。
+- **git 面板**：改动 / 暂存 / 提交 / 分支 / log / stash / diff，提供 JetBrains 风格逐文件右键菜单。
+- **内置代码编辑器**：语法高亮、跳转到定义、可配置 LSP 和格式化插件。
+- **任务队列**：查看分配给自己的 work package、我发起的任务、接收历史，支持接收并启动 Agent、复制执行 Prompt、评论、撤回、转交。
+- **待办与项目管理**：relay 项目、成员、个人 / 团队待办、Linear 导入和 Agent 会话指派。
+- **Agent 库**：把会话打成胶囊，沉淀成内部可复用的 Agent persona / seed / skill pack。
+- **远程工作区**：把桌面 workspace 通过 relay 投到手机端，手机可查看 / 操作终端、传文件、看状态。
 
-**平台**:桌面(macOS / Windows)为主,移动端(iOS / Android)侧重投屏 / 查看。终端、git、格式化、LSP 等本地能力**仅桌面端生效**。
+**平台**：桌面(macOS / Windows)为主，移动端(iOS / Android)侧重投屏 / 查看。终端、git、格式化、LSP 等本地能力仅桌面端生效。
 
-**构建 / 运行**:`app/` 是标准 Flutter 工程,打包 / 签名脚本见 `scripts/`。桌面端功能需要宿主机装好对应命令行工具(git / 各语言服务器 / 格式化器),没装的会在插件面板显示「未检测到」并给安装提示。
+**构建 / 运行**：`app/` 是标准 Flutter 工程，打包 / 签名脚本见 `scripts/`。桌面端功能需要宿主机装好对应命令行工具(git / 各语言服务器 / 格式化器)，没装的会在插件面板显示「未检测到」并给安装提示。
 
 ## 架构
 
-三个 Go 二进制,跑在三台机器上:
+最小生产拓扑包含一个企业 relay 和若干员工客户端:
 
 ```
-后端开发者 Mac                      你的 VPS                    前端开发者 Mac
-────────────────                  ─────────                  ─────────────────
-Claude Code (后端)                                            Claude Code (前端)
-  ↓ /handoff                                                    ↑ /pickup
-cc-handoff-mcp ──HTTPS──►       caddy:443                  ──► cc-handoff-mcp
-                                   ↓                              ↑
-                                cc-relay:8080 ◄──SSE──── cc-handoff watch (launchd/systemd)
-                                   ↓
-                                /var/lib/cc-handoff/relay.db
-                                   + comments + attachments
+员工桌面 / 手机 / Web              企业 VPS / 内网主机             员工 Agent 会话
+──────────────────              ─────────────────             ───────────────
+Flutter App / Web UI  ──HTTPS──►  TLS reverse proxy  ◄──SSE──  cc-handoff watch
+Claude / Codex MCP    ──HTTPS──►        │                     cc-handoff-mcp
+cc-handoff CLI        ──HTTPS──►  cc-relay:8080
+                                        │
+                              /var/lib/cc-handoff/relay.db
+                              accounts + projects + queue + todos
 ```
 
-- `cc-relay`:VPS 上 systemd 服务,听 loopback,反代终结 TLS。HTTP REST + SSE,SQLite 持久化。
-- `cc-handoff` (CLI):两端各装一份。子命令:`init` / `submit` / `list` / `pickup` / `watch` / `comment`。
-- `cc-handoff-mcp`:Claude Code 通过 stdio 拉起的 MCP server,把上面的子命令全部暴露成 MCP 工具,共 15 个:`submit_handoff` / `submit_request` / `submit_bug` / `reassign_bug` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`(最后一个用于可选的 Linear 集成)。
-- **三角协作(可选)**:除了 `backend ↔ frontend` 的标准 2 方流(`/handoff` 交付 + `/request` 反向需求),还支持引入测试端做 bug 上报。tester 在 `.cc-handoff.toml` 配 `identity.partners = ["backend", "frontend"]`,用 `/submit-bug` 同时发给两端;接收端 prompt 内置归属判断决策树:是自己的就修,不是自己的用 `reassign_bug` 转给对端(同一 bug_group 内的评论自动同步给三方)。
-- `cc-handoff watch`:接收侧常驻进程,SSE 长连接拉服务端事件,落盘到 `.cc-handoff/inbox/<id>/`(老仓库已有 `.claude/handoff-inbox/` 时继续沿用),必要时弹通知或按当前 agent 开新终端(`claude -p` / `codex exec` / …)。
+- `cc-relay`:企业 relay systemd 服务,听 loopback,由反向代理终结 TLS。提供账号、项目、任务队列、待办、评论、附件、SSE、Web UI 和管理能力。
+- Flutter App:员工桌面 / 手机工作台,连接 relay,同时在桌面端操作本地 git、终端、编辑器和 Agent 会话。
+- `cc-handoff` (CLI):兼容入口。子命令:`init` / `submit` / `list` / `pickup` / `watch` / `comment` / `todo` / `workspace` 等。
+- `cc-handoff-mcp`:Claude Code / Codex 通过 stdio 拉起的兼容 MCP server,把协作任务和 relay 操作暴露给 Agent。
+- `cc-handoff watch`:接收侧常驻进程,SSE 长连接拉企业 relay 事件,落盘到 `.cc-handoff/inbox/<id>/`,必要时弹通知或按策略开新终端。
 
 完整数据流、SQLite schema、auth、failure mode 见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 状态
 
-四个里程碑全部完成,v0.1.0 已发布:
+v1.0.0 是 Infinite Agent Platform 的企业化重塑版本:
 
-- ✓ **M1** 手动 submit / list / pickup
-- ✓ **M2** SSE + watch 守护 + osascript 通知 + partner_mapping 规则引擎 + Swagger 增量
-- ✓ **M3** MCP server(Claude `/handoff` `/pickup`;Codex 稳定路径是 workflow skills + MCP tools)
-- ✓ **M4** 自动唤起新终端 + back-channel comments + 附件通道 + 结构化审计日志
+- ✓ 产品名、Flutter App、relay Web UI、文档和平台显示名切到 Infinite Agent Platform。
+- ✓ legacy `cc-handoff` / `cc-relay` / `cc-handoff-mcp` 兼容层保留,便于已部署环境滚动升级。
+- ✓ 企业 relay 支持账号、项目、机器 token、管理员、停用账号、关闭自助注册和任务队列。
+- ✓ 桌面 / 手机工作台继续支持工作区、Agent 会话、git、编辑器、任务队列、待办、Agent 库和远程工作区。
 
 ## 快速部署
 
@@ -350,7 +339,7 @@ cc-handoff pickup h_xxx --repo ~/work/frontend-project2
 | `pickup <id>` | 拉取 + 物化 + ack(`--worktree` 在独立分支 worktree 上接,`--direct` 直接落当前仓) |
 | `status` / `sent` / `history` / `open` / `retract` | 状态 / 我发过的 / 接收历史 / 重开 agent / 撤回 |
 | `comment <id> …` / `check-drift` | 评论 / 上次 handoff 后 swagger 是否漂移 |
-| `watch` | 接收侧常驻:SSE 入收件箱 + 通知 + 紧急自动开终端(`watch print-unit` 生成 launchd / systemd / Windows 任务单元) |
+| `watch` | 接收侧常驻:SSE 入任务队列 + 通知 + 紧急自动开终端(`watch print-unit` 生成 launchd / systemd / Windows 任务单元) |
 | `online` | 已注册身份 + 谁在 watching |
 
 **本地会话总线 / 会话编排**(桌面 App 内的多 agent 协作)
