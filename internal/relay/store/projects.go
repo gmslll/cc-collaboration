@@ -443,12 +443,20 @@ func (s *Store) MemberProjects(ctx context.Context, identity string) ([]ProjectR
 }
 
 // IdentitiesShareTeam reports whether two identities share an organization or
-// project. Legacy tokens.json deployments may have no team rows; in that case,
-// if neither side has any org/project membership, they remain mutually
-// reachable to preserve the pre-SaaS flat-roster behavior.
+// project. Legacy tokens.json deployments may have no users/team rows; in that
+// case, if neither side has a DB account nor org/project membership, they remain
+// mutually reachable to preserve the pre-SaaS flat-roster behavior.
 func (s *Store) IdentitiesShareTeam(ctx context.Context, a, b string) (bool, error) {
 	if a == b {
 		return true, nil
+	}
+	aHasUser, err := s.identityHasUserRow(ctx, a)
+	if err != nil {
+		return false, err
+	}
+	bHasUser, err := s.identityHasUserRow(ctx, b)
+	if err != nil {
+		return false, err
 	}
 	aOrgs, err := s.MemberOrganizations(ctx, a)
 	if err != nil {
@@ -466,7 +474,7 @@ func (s *Store) IdentitiesShareTeam(ctx context.Context, a, b string) (bool, err
 	if err != nil {
 		return false, err
 	}
-	if len(aOrgs) == 0 && len(bOrgs) == 0 && len(aProjects) == 0 && len(bProjects) == 0 {
+	if !aHasUser && !bHasUser && len(aOrgs) == 0 && len(bOrgs) == 0 && len(aProjects) == 0 && len(bProjects) == 0 {
 		return true, nil
 	}
 	orgs := make(map[string]struct{}, len(aOrgs))
@@ -488,6 +496,18 @@ func (s *Store) IdentitiesShareTeam(ctx context.Context, a, b string) (bool, err
 		}
 	}
 	return false, nil
+}
+
+func (s *Store) identityHasUserRow(ctx context.Context, identity string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE identity = ?`, identity).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) CountProjectOwners(ctx context.Context, projectID string) (int, error) {

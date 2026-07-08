@@ -107,10 +107,19 @@ func TestListOnlineUsersIncludesDBUsersAndFiltersDisabled(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	now := time.Now()
+	if err := st.CreateUser(context.Background(), store.User{Identity: "active@team"}, now); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.CreateUser(context.Background(), store.User{Identity: "db@team"}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateUser(context.Background(), store.User{Identity: "disabled@team", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(context.Background(), "org-active", "Active", "active@team", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(context.Background(), "org-active", "db@team", store.OrgRoleMember); err != nil {
 		t.Fatal(err)
 	}
 
@@ -304,8 +313,16 @@ func TestDisabledRecipientDoesNotReceiveCommentEventsAfterDisable(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
 	mkUser(t, st, "alice@backend", "alicepass1")
 	mkUser(t, st, "bob@frontend", "bobpass123")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
 
 	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
 	if err := os.WriteFile(tokensPath, []byte(`[

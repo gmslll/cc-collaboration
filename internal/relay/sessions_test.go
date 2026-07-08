@@ -210,6 +210,8 @@ func TestSessionRegistryRequiresSharedTeam(t *testing.T) {
 	mkUser(t, st, "alice@backend", "alicepass1")
 	mkUser(t, st, "bob@frontend", "bobpass123")
 	mkUser(t, st, "mallory@other", "mallorypass1")
+	mkUser(t, st, "solo-a@x", "soloapass1")
+	mkUser(t, st, "solo-b@x", "solobpass1")
 	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +226,9 @@ func TestSessionRegistryRequiresSharedTeam(t *testing.T) {
 	if err := os.WriteFile(tokensPath, []byte(`[
 		{"token":"tok-alice","identity":"alice@backend"},
 		{"token":"tok-bob",  "identity":"bob@frontend"},
-		{"token":"tok-mallory",  "identity":"mallory@other"}
+		{"token":"tok-mallory",  "identity":"mallory@other"},
+		{"token":"tok-solo-a",  "identity":"solo-a@x"},
+		{"token":"tok-solo-b",  "identity":"solo-b@x"}
 	]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +256,14 @@ func TestSessionRegistryRequiresSharedTeam(t *testing.T) {
 		"recipient": "alice@backend", "session_id": "ts0", "body": "cross tenant",
 	}); code != http.StatusForbidden {
 		t.Fatalf("cross-team message = %d, want 403", code)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", "tok-solo-a", map[string]any{
+		"sessions": []map[string]string{{"id": "solo", "label": "solo"}},
+	}); code != http.StatusOK {
+		t.Fatalf("solo publish sessions: status=%d body=%s", code, body)
+	}
+	if code, _ := getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("solo-a@x")+"/sessions", "tok-solo-b"); code != http.StatusForbidden {
+		t.Fatalf("registered users without teams get sessions = %d, want 403", code)
 	}
 }
 

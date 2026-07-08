@@ -247,6 +247,29 @@ func TestDisabledUsersHaveNoEffectiveTeamAccess(t *testing.T) {
 	}
 }
 
+func TestIdentitiesShareTeamLegacyFallbackOnlyForLegacyUsers(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateUser(ctx, User{Identity: "registered-a@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "registered-b@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if shared, err := st.IdentitiesShareTeam(ctx, "registered-a@x", "registered-b@x"); err != nil || shared {
+		t.Fatalf("registered users without teams should not share team: shared=%v err=%v", shared, err)
+	}
+	if shared, err := st.IdentitiesShareTeam(ctx, "registered-a@x", "legacy@x"); err != nil || shared {
+		t.Fatalf("registered user should not share legacy fallback: shared=%v err=%v", shared, err)
+	}
+	if shared, err := st.IdentitiesShareTeam(ctx, "legacy-a@x", "legacy-b@x"); err != nil || !shared {
+		t.Fatalf("legacy users without rows should retain flat-roster fallback: shared=%v err=%v", shared, err)
+	}
+}
+
 func TestProjectOwnerInvariant(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
