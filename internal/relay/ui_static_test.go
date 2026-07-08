@@ -34,3 +34,34 @@ func TestProjectManageUIActionsAreRoleGated(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectRolePrefersFreshProjectListRole(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	start := strings.Index(js, "function projectRole(id) {")
+	if start < 0 {
+		t.Fatal("could not locate projectRole function body")
+	}
+	end := strings.Index(js[start:], "\nfunction renderProjects()")
+	if end < 0 {
+		t.Fatal("could not locate projectRole function body")
+	}
+	body := js[start : start+end]
+	required := []string{
+		`const project = (state.projects || []).find((pr) => pr.id === id);`,
+		`if (project?.role) return project.role;`,
+		`const p = (state.me?.projects || []).find((pr) => pr.id === id);`,
+		`return state.me?.is_admin ? "admin" : "viewer";`,
+	}
+	for _, want := range required {
+		if !strings.Contains(body, want) {
+			t.Fatalf("projectRole is missing freshness/safe-fallback fragment %q", want)
+		}
+	}
+	if strings.Contains(body, `return state.me?.is_admin ? "admin" : "member";`) {
+		t.Fatal("projectRole still falls back to editable-looking member role for unknown projects")
+	}
+}

@@ -1230,9 +1230,11 @@ function renderProjectOrgOptions() {
 }
 
 function projectRole(id) {
+  const project = (state.projects || []).find((pr) => pr.id === id);
+  if (project?.role) return project.role;
   const p = (state.me?.projects || []).find((pr) => pr.id === id);
   if (p) return p.role;
-  return state.me?.is_admin ? "admin" : "member";
+  return state.me?.is_admin ? "admin" : "viewer";
 }
 
 function renderProjects() {
