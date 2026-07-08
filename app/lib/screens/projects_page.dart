@@ -18,6 +18,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
   List<Organization> _orgs = const [];
   Set<String> _manageableOrgIds = const <String>{};
   List<OnlineUser> _online = const [];
+  bool _isAdmin = false;
+  String _identity = '';
   String? _error;
   final _name = TextEditingController();
   final _orgName = TextEditingController();
@@ -60,6 +62,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
         setState(() {
           _orgs = orgs;
           _manageableOrgIds = manageableOrgIds;
+          _isAdmin = me?.isAdmin == true;
+          _identity = me?.identity ?? '';
           _projects = ps;
           _online = online;
           if (_selectedOrgId != null &&
@@ -206,6 +210,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
                         client: widget.client,
                         id: p.id,
                         teamName: _teamName(p.orgId),
+                        identity: _identity,
+                        isAdmin: _isAdmin,
                         online: _online,
                         onChanged: _load),
                   ),
@@ -241,12 +247,16 @@ class _ProjectSheet extends StatefulWidget {
   final RelayClient client;
   final String id;
   final String teamName;
+  final String identity;
+  final bool isAdmin;
   final List<OnlineUser> online;
   final VoidCallback onChanged;
   const _ProjectSheet(
       {required this.client,
       required this.id,
       required this.teamName,
+      required this.identity,
+      required this.isAdmin,
       required this.online,
       required this.onChanged});
 
@@ -342,9 +352,17 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   bool _isOnline(String identity) =>
       widget.online.any((u) => u.identity == identity && u.online);
 
+  bool _canManage(ProjectDetail d) {
+    if (widget.isAdmin) return true;
+    if (d.project.ownerIdentity == widget.identity) return true;
+    return d.members
+        .any((m) => m.identity == widget.identity && m.role == 'owner');
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = _d;
+    final canManage = d != null && _canManage(d);
     return Padding(
       padding: EdgeInsets.only(
           left: 16,
@@ -365,15 +383,17 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold)),
                     ),
-                    IconButton(
-                        icon: const Icon(Icons.edit_rounded, size: 18),
-                        tooltip: '重命名',
-                        onPressed: () => _rename(d.project.name)),
-                    IconButton(
-                        icon: const Icon(Icons.delete_rounded,
-                            size: 18, color: CcColors.danger),
-                        tooltip: '删除',
-                        onPressed: _delete),
+                    if (canManage) ...[
+                      IconButton(
+                          icon: const Icon(Icons.edit_rounded, size: 18),
+                          tooltip: '重命名',
+                          onPressed: () => _rename(d.project.name)),
+                      IconButton(
+                          icon: const Icon(Icons.delete_rounded,
+                              size: 18, color: CcColors.danger),
+                          tooltip: '删除',
+                          onPressed: _delete),
+                    ],
                   ]),
                   const SizedBox(height: 8),
                   Wrap(spacing: 8, runSpacing: 8, children: [
@@ -395,27 +415,30 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         : d.repos
                             .map((r) => Chip(
                                 label: Text(r),
-                                onDeleted: () =>
-                                    _do(() => widget.client.unmapRepo(widget.id, r))))
+                                onDeleted: canManage
+                                    ? () => _do(() =>
+                                        widget.client.unmapRepo(widget.id, r))
+                                    : null))
                             .toList(),
                   ),
-                  Row(children: [
-                    Expanded(
-                        child: TextField(
-                            controller: _repo,
-                            decoration: const InputDecoration(
-                                hintText: 'repo 名(如 kunlun-backend)',
-                                isDense: true))),
-                    TextButton(
-                        onPressed: () {
-                          final r = _repo.text.trim();
-                          if (r.isNotEmpty) {
-                            _repo.clear();
-                            _do(() => widget.client.mapRepo(widget.id, r));
-                          }
-                        },
-                        child: const Text('绑定')),
-                  ]),
+                  if (canManage)
+                    Row(children: [
+                      Expanded(
+                          child: TextField(
+                              controller: _repo,
+                              decoration: const InputDecoration(
+                                  hintText: 'repo 名(如 kunlun-backend)',
+                                  isDense: true))),
+                      TextButton(
+                          onPressed: () {
+                            final r = _repo.text.trim();
+                            if (r.isNotEmpty) {
+                              _repo.clear();
+                              _do(() => widget.client.mapRepo(widget.id, r));
+                            }
+                          },
+                          child: const Text('绑定')),
+                    ]),
                   const SizedBox(height: 16),
                   const Text('成员', style: TextStyle(fontWeight: FontWeight.bold)),
                   ...d.members.map((m) => ListTile(
@@ -430,39 +453,43 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                           Text(m.role,
                               style: const TextStyle(color: CcColors.muted)),
-                          IconButton(
-                              icon: const Icon(Icons.close_rounded, size: 18),
-                              onPressed: () => _do(() =>
-                                  widget.client.removeMember(widget.id, m.identity))),
+                          if (canManage)
+                            IconButton(
+                                icon: const Icon(Icons.close_rounded, size: 18),
+                                onPressed: () => _do(() => widget.client
+                                    .removeMember(widget.id, m.identity))),
                         ]),
                       )),
-                  Row(children: [
-                    Expanded(
-                        child: TextField(
-                            controller: _member,
-                            decoration: const InputDecoration(
-                                hintText: 'identity', isDense: true))),
-                    const SizedBox(width: 8),
-                    DropdownButton<String>(
-                      value: _role,
-                      items: const [
-                        DropdownMenuItem(value: 'member', child: Text('member')),
-                        DropdownMenuItem(value: 'viewer', child: Text('viewer')),
-                        DropdownMenuItem(value: 'owner', child: Text('owner')),
-                      ],
-                      onChanged: (v) => setState(() => _role = v ?? 'member'),
-                    ),
-                    TextButton(
-                        onPressed: () {
-                          final m = _member.text.trim();
-                          if (m.isNotEmpty) {
-                            _member.clear();
-                            _do(() =>
-                                widget.client.addMember(widget.id, m, _role));
-                          }
-                        },
-                        child: const Text('加成员')),
-                  ]),
+                  if (canManage)
+                    Row(children: [
+                      Expanded(
+                          child: TextField(
+                              controller: _member,
+                              decoration: const InputDecoration(
+                                  hintText: 'identity', isDense: true))),
+                      const SizedBox(width: 8),
+                      DropdownButton<String>(
+                        value: _role,
+                        items: const [
+                          DropdownMenuItem(
+                              value: 'member', child: Text('member')),
+                          DropdownMenuItem(
+                              value: 'viewer', child: Text('viewer')),
+                          DropdownMenuItem(value: 'owner', child: Text('owner')),
+                        ],
+                        onChanged: (v) => setState(() => _role = v ?? 'member'),
+                      ),
+                      TextButton(
+                          onPressed: () {
+                            final m = _member.text.trim();
+                            if (m.isNotEmpty) {
+                              _member.clear();
+                              _do(() =>
+                                  widget.client.addMember(widget.id, m, _role));
+                            }
+                          },
+                          child: const Text('加成员')),
+                    ]),
                 ]),
             ),
     );
