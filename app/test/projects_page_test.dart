@@ -34,4 +34,13 @@ void main() {
       isFalse,
     );
   });
+
+  test('organization role label reflects global admin fallback', () {
+    expect(organizationRoleLabel('', isAdmin: true), '系统管理员');
+    expect(organizationRoleLabel('', isAdmin: false), '成员');
+    expect(organizationRoleLabel('owner', isAdmin: true), '负责人');
+    expect(organizationRoleLabel('admin', isAdmin: true), '管理员');
+    expect(organizationRoleLabel('member', isAdmin: true), '成员');
+    expect(organizationRoleLabel('guest', isAdmin: true), '访客');
+  });
 }

@@ -8,6 +8,22 @@ import '../widgets.dart';
 bool canManageOrganization(Organization org, {required bool isAdmin}) =>
     isAdmin || org.role == 'owner' || org.role == 'admin';
 
+String organizationRoleLabel(String role, {required bool isAdmin}) {
+  if (role.isEmpty && isAdmin) return '系统管理员';
+  switch (role) {
+    case 'owner':
+      return '负责人';
+    case 'admin':
+      return '管理员';
+    case 'member':
+      return '成员';
+    case 'guest':
+      return '访客';
+    default:
+      return role.isEmpty ? '成员' : role;
+  }
+}
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -147,21 +163,6 @@ class _ProjectsPageState extends State<ProjectsPage> {
         return '只读';
       default:
         return role;
-    }
-  }
-
-  String _orgRoleLabel(String role) {
-    switch (role) {
-      case 'owner':
-        return '负责人';
-      case 'admin':
-        return '管理员';
-      case 'member':
-        return '成员';
-      case 'guest':
-        return '访客';
-      default:
-        return role.isEmpty ? '成员' : role;
     }
   }
 
@@ -353,7 +354,6 @@ class _ProjectsPageState extends State<ProjectsPage> {
         itemBuilder: (context, i) {
           final org = _orgs[i];
           final canManage = _manageableOrgIds.contains(org.id);
-          final role = org.role.isEmpty ? 'member' : org.role;
           return SizedBox(
             width: 286,
             child: Material(
@@ -400,7 +400,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       Row(
                         children: [
                           Text(
-                            _orgRoleLabel(role),
+                            organizationRoleLabel(org.role, isAdmin: _isAdmin),
                             style: CcType.code(
                               size: 11.5,
                               color: CcColors.accentBright,
@@ -499,21 +499,6 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   int _ownerCount(OrganizationDetail d) =>
       d.members.where((m) => m.role == 'owner').length;
 
-  String _roleLabel(String role) {
-    switch (role) {
-      case 'owner':
-        return '负责人';
-      case 'admin':
-        return '管理员';
-      case 'member':
-        return '成员';
-      case 'guest':
-        return '访客';
-      default:
-        return role;
-    }
-  }
-
   Future<void> _removeMember(String identity) async {
     final ok = await confirm(
       context,
@@ -580,7 +565,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                               ),
                             ),
                             Text(
-                              '${_roleLabel(d.organization.role)} · ${d.members.length} 成员 · ${d.projects.length} 项目',
+                              '${organizationRoleLabel(d.organization.role, isAdmin: widget.isAdmin)} · ${d.members.length} 成员 · ${d.projects.length} 项目',
                               style: CcType.code(
                                 size: 12,
                                 color: CcColors.muted,
@@ -675,7 +660,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                               ],
                             )
                           : Text(
-                              _roleLabel(m.role),
+                              organizationRoleLabel(m.role, isAdmin: false),
                               style: const TextStyle(color: CcColors.muted),
                             ),
                     );
