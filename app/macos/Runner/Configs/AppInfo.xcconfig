@@ -6,6 +6,9 @@
 
 // The application's name. By default this is also the title of the Flutter window.
 PRODUCT_NAME = Infinite Agent Platform
+// Keep the Swift module stable for MainMenu.xib custom classes
+// (AppDelegate/MainFlutterWindow use customModule="Runner").
+PRODUCT_MODULE_NAME = Runner
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = dev.cchandoff.app
