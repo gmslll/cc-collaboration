@@ -69,7 +69,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	u, err := s.Store.GetUser(r.Context(), req.Identity)
+	identity := strings.TrimSpace(req.Identity)
+	u, err := s.Store.GetUser(r.Context(), identity)
 	// Uniform failure — don't leak which of {no account, wrong password,
 	// disabled} occurred.
 	if err != nil || u.Disabled || u.PasswordHash == "" || !auth.CheckPassword(u.PasswordHash, req.Password) {
@@ -212,7 +213,8 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Identity) == "" {
+	identity := strings.TrimSpace(req.Identity)
+	if identity == "" {
 		http.Error(w, "identity required", http.StatusBadRequest)
 		return
 	}
@@ -231,7 +233,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.CreateUser(r.Context(), store.User{
-		Identity: req.Identity, PasswordHash: hash, DisplayName: req.DisplayName, IsAdmin: req.IsAdmin,
+		Identity: identity, PasswordHash: hash, DisplayName: req.DisplayName, IsAdmin: req.IsAdmin,
 	}, time.Now()); err != nil {
 		code := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -240,11 +242,11 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create user: "+err.Error(), code)
 		return
 	}
-	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), req.Identity, time.Now().UTC()); err != nil {
+	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), identity, time.Now().UTC()); err != nil {
 		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	resp := map[string]any{"identity": req.Identity, "is_admin": req.IsAdmin}
+	resp := map[string]any{"identity": identity, "is_admin": req.IsAdmin}
 	if generated {
 		resp["password"] = pw
 	}

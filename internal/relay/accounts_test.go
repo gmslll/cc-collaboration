@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -230,6 +231,61 @@ func TestDisabledUserRevokesExistingAuth(t *testing.T) {
 	if code, _ := postJSON(t, srv.URL+"/v1/login", "",
 		map[string]string{"identity": "user@demo", "password": "userpass1"}); code != http.StatusUnauthorized {
 		t.Fatalf("login disabled user = %d", code)
+	}
+}
+
+func TestAdminCreateUserTrimsIdentity(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "admin@demo", "adminpass1")
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	code, body := postJSON(t, srv.URL+"/v1/users", adminTok,
+		map[string]any{"identity": "  member@demo  ", "password": "memberpass1"})
+	if code != http.StatusCreated {
+		t.Fatalf("create trimmed user = %d %s", code, body)
+	}
+	var created struct {
+		Identity string `json:"identity"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Identity != "member@demo" {
+		t.Fatalf("created identity = %q, want trimmed", created.Identity)
+	}
+	if _, err := st.GetUser(context.Background(), "  member@demo  "); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("untrimmed account should not exist, got err=%v", err)
+	}
+
+	memberTok := loginToken(t, srv.URL, "  member@demo  ", "memberpass1")
+	code, body = getAuthed(t, srv.URL+"/v1/me", memberTok)
+	if code != http.StatusOK {
+		t.Fatalf("me for trimmed user = %d %s", code, body)
+	}
+	var me struct {
+		Identity      string `json:"identity"`
+		Organizations []struct {
+			Name string `json:"name"`
+		} `json:"organizations"`
+	}
+	if err := json.Unmarshal(body, &me); err != nil {
+		t.Fatal(err)
+	}
+	if me.Identity != "member@demo" {
+		t.Fatalf("me identity = %q, want trimmed", me.Identity)
+	}
+	if len(me.Organizations) != 1 || me.Organizations[0].Name != "member@demo's team" {
+		t.Fatalf("default organization should use trimmed identity: %+v", me.Organizations)
 	}
 }
 
