@@ -43,6 +43,30 @@ func TestPutSettingRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestSettingsRejectInvalidKeys(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "alice@x", "alicepass1")
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+	token := loginToken(t, srv.URL, "alice@x", "alicepass1")
+
+	if code, _ := getAuthed(t, srv.URL+"/v1/settings/%20", token); code != http.StatusBadRequest {
+		t.Fatalf("blank setting key GET = %d, want 400", code)
+	}
+	longKey := strings.Repeat("k", 129)
+	if code, _ := putRawJSON(t, srv.URL+"/v1/settings/"+longKey, token, `{"value":true}`); code != http.StatusBadRequest {
+		t.Fatalf("long setting key PUT = %d, want 400", code)
+	}
+	if _, found, err := st.GetSetting(context.Background(), "alice@x", longKey); err != nil || found {
+		t.Fatalf("invalid key was stored: found=%v err=%v", found, err)
+	}
+}
+
 func putRawJSON(t *testing.T, url, bearer, payload string) (int, []byte) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPut, url, strings.NewReader(payload))
