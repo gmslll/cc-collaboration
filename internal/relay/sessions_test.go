@@ -117,6 +117,62 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 	}
 }
 
+func TestSessionRegistryRequiresSharedTeam(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"},
+		{"token":"tok-bob",  "identity":"bob@frontend"},
+		{"token":"tok-mallory",  "identity":"mallory@other"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", "tok-alice", map[string]any{
+		"sessions": []map[string]string{{"id": "ts0", "label": "api"}},
+	}); code != http.StatusOK {
+		t.Fatalf("publish sessions: status=%d body=%s", code, body)
+	}
+
+	if code, _ := getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("alice@backend")+"/sessions", "tok-bob"); code != http.StatusOK {
+		t.Fatalf("shared teammate get sessions = %d", code)
+	}
+	if code, _ := getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("alice@backend")+"/sessions", "tok-mallory"); code != http.StatusForbidden {
+		t.Fatalf("cross-team get sessions = %d, want 403", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/messages", "tok-mallory", map[string]any{
+		"recipient": "alice@backend", "session_id": "ts0", "body": "cross tenant",
+	}); code != http.StatusForbidden {
+		t.Fatalf("cross-team message = %d, want 403", code)
+	}
+}
+
 func getAuth(t *testing.T, u, bearer string) (int, []byte) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, u, nil)

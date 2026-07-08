@@ -665,6 +665,21 @@ func (s *Server) listOnlineUsers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	known = activeKnown
+	caller := auth.Identity(r.Context())
+	if !s.isAdmin(r.Context(), caller) {
+		visible := known[:0]
+		for _, id := range known {
+			ok, err := s.canReachIdentity(r.Context(), caller, id)
+			if err != nil {
+				http.Error(w, "filter online users: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if ok {
+				visible = append(visible, id)
+			}
+		}
+		known = visible
+	}
 	users := make([]handoffschema.OnlineUser, 0, len(known))
 	for _, id := range known {
 		users = append(users, handoffschema.OnlineUser{Identity: id, Online: online[id]})

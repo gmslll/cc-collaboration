@@ -25,9 +25,11 @@ import (
 // State is in-memory and transient, exactly like the SSE Hub.
 
 type wsConn struct {
-	id   uint64
-	role string // "host" | "client"
-	send chan []byte
+	id     uint64
+	role   string // "host" | "client"
+	send   chan []byte
+	mu     sync.Mutex
+	closed bool
 }
 
 type wsBroker struct {
@@ -59,7 +61,12 @@ func (b *wsBroker) remove(identity string, c *wsConn) {
 		delete(b.conns, identity)
 	}
 	b.mu.Unlock()
-	close(c.send)
+	c.mu.Lock()
+	if !c.closed {
+		close(c.send)
+		c.closed = true
+	}
+	c.mu.Unlock()
 }
 
 // peers returns where a frame from `from` should go: the single connection with
@@ -99,6 +106,11 @@ func (b *wsBroker) rolePeers(identity, role string) []*wsConn {
 // deliver enqueues a frame for a peer, dropping it if the peer is hopelessly
 // behind rather than blocking the sender (one slow phone must not stall a host).
 func deliver(c *wsConn, frame []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
 	select {
 	case c.send <- frame:
 	default:

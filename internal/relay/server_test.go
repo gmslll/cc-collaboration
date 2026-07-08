@@ -138,6 +138,54 @@ func TestListOnlineUsersIncludesDBUsersAndFiltersDisabled(t *testing.T) {
 	}
 }
 
+func TestListOnlineUsersScopedBySharedTeam(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"},
+		{"token":"tok-bob",  "identity":"bob@frontend"},
+		{"token":"tok-mallory",  "identity":"mallory@other"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	got := fetchOnline(t, srv.URL, "tok-alice")
+	want := []handoffschema.OnlineUser{
+		{Identity: "alice@backend", Online: false},
+		{Identity: "bob@frontend", Online: false},
+	}
+	if !sameUsers(got, want) {
+		t.Fatalf("scoped online list = %+v, want %+v", got, want)
+	}
+}
+
 func TestListOnlineUsersUnauthorized(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "relay.db")
 	st, err := store.Open(dbPath)

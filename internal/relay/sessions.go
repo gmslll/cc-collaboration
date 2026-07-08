@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -90,11 +91,15 @@ func (s *Server) postSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// getUserSessions returns another user's currently-open sessions (empty if
-// offline / never published / expired). Any authenticated user may query — it's
-// presence-level info, like /v1/users/online.
+// getUserSessions returns a reachable user's currently-open sessions (empty if
+// offline / never published / expired). Reachable means self, admin, or shared
+// organization/project membership.
 func (s *Server) getUserSessions(w http.ResponseWriter, r *http.Request) {
-	sessions := s.Sessions.get(r.PathValue("identity"))
+	target := r.PathValue("identity")
+	if !s.requireReachableIdentity(w, r, target) {
+		return
+	}
+	sessions := s.Sessions.get(target)
 	if sessions == nil {
 		sessions = []handoffschema.SessionInfo{}
 	}
@@ -120,6 +125,9 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "body required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireReachableIdentity(w, r, msg.Recipient) {
+		return
+	}
 	if s.Hub != nil {
 		out := handoffschema.Message{From: sender, SessionID: msg.SessionID, Body: msg.Body}
 		if data, err := json.Marshal(out); err == nil {
@@ -127,4 +135,68 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func (s *Server) requireReachableIdentity(w http.ResponseWriter, r *http.Request, target string) bool {
+	caller := auth.Identity(r.Context())
+	ok, err := s.canReachIdentity(r.Context(), caller, target)
+	if err != nil {
+		http.Error(w, "check identity reachability: "+err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	if !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (s *Server) canReachIdentity(ctx context.Context, caller, target string) (bool, error) {
+	if caller == target || s.isAdmin(ctx, caller) {
+		return true, nil
+	}
+	return s.identitiesShareTeam(ctx, caller, target)
+}
+
+func (s *Server) identitiesShareTeam(ctx context.Context, a, b string) (bool, error) {
+	aOrgs, err := s.Store.MemberOrganizations(ctx, a)
+	if err != nil {
+		return false, err
+	}
+	bOrgs, err := s.Store.MemberOrganizations(ctx, b)
+	if err != nil {
+		return false, err
+	}
+	aProjects, err := s.Store.MemberProjects(ctx, a)
+	if err != nil {
+		return false, err
+	}
+	bProjects, err := s.Store.MemberProjects(ctx, b)
+	if err != nil {
+		return false, err
+	}
+	// Legacy tokens.json deployments may have no SaaS team rows at all. Keep
+	// that old flat-roster behavior only when neither side has team membership.
+	if len(aOrgs) == 0 && len(bOrgs) == 0 && len(aProjects) == 0 && len(bProjects) == 0 {
+		return true, nil
+	}
+	orgs := make(map[string]struct{}, len(aOrgs))
+	for _, org := range aOrgs {
+		orgs[org.ID] = struct{}{}
+	}
+	for _, org := range bOrgs {
+		if _, ok := orgs[org.ID]; ok {
+			return true, nil
+		}
+	}
+	projects := make(map[string]struct{}, len(aProjects))
+	for _, project := range aProjects {
+		projects[project.ID] = struct{}{}
+	}
+	for _, project := range bProjects {
+		if _, ok := projects[project.ID]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
