@@ -19,6 +19,7 @@ const state = {
   projects: [], // loaded in the Projects pane (GET /v1/projects)
   preferredProjectOrgID: "",
   projectID: "", // selected project for the scope=project handoff view
+  projectLabel: "",
   view: "recipient",
   items: [],
   selectedID: "",
@@ -455,7 +456,7 @@ function renderList() {
   const query = els.searchInput.value.trim().toLowerCase();
   const items = state.items.filter((item) => haystack(item).includes(query));
   els.listMeta.textContent = state.token
-    ? `${items.length} shown from ${state.items.length} loaded`
+    ? listMetaLabel(items.length, state.items.length)
     : "Connect to load handoffs.";
 
   if (!items.length) {
@@ -691,7 +692,28 @@ function toast(message) {
 }
 
 function viewTitle(view) {
-  return view === "sender" ? "Sent" : view === "history" ? "History" : "Inbox";
+  if (view === "sender") return "Sent";
+  if (view === "history") return "History";
+  if (view === "project") return state.projectID ? `Project · ${currentProjectLabel()}` : "Project handoffs";
+  if (view === "all") return "All handoffs";
+  return "Inbox";
+}
+
+function currentProjectLabel() {
+  const project = state.projects.find((p) => p.id === state.projectID)
+    || (state.me?.projects || []).find((p) => p.id === state.projectID);
+  return state.projectLabel || project?.name || state.projectID || "Project";
+}
+
+function listMetaLabel(shown, loaded) {
+  const base = `${shown} shown from ${loaded} loaded`;
+  if (state.view === "project") {
+    return state.projectID ? `${base} · ${currentProjectLabel()}` : `${base} · all visible projects`;
+  }
+  if (state.view === "all") {
+    return `${base} · admin scope`;
+  }
+  return base;
 }
 
 function haystack(item) {
@@ -857,6 +879,8 @@ async function onSignout() {
   state.organizations = [];
   state.projects = [];
   state.items = [];
+  state.projectID = "";
+  state.projectLabel = "";
   setupRoleTabs();
   setConnectedLabel();
   switchView("recipient");
@@ -1139,6 +1163,7 @@ async function renderOrganizationManage(id, body) {
     body.querySelectorAll("[data-jump-project]").forEach((button) => {
       button.addEventListener("click", () => {
         state.projectID = button.dataset.jumpProject;
+        state.projectLabel = button.querySelector("span")?.textContent || "";
         switchView("project");
       });
     });
@@ -1244,6 +1269,8 @@ async function onProjectsListClick(event) {
   try {
     if (action === "browse") {
       state.projectID = id;
+      const project = state.projects.find((p) => p.id === id);
+      state.projectLabel = project?.name || "";
       switchView("project");
       return;
     }
