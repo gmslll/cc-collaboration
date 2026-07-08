@@ -94,6 +94,8 @@ func submitHandoffTool() Tool {
   "properties": {
     "summary":      {"type": "string", "description": "Markdown summary of the change. Written to <inbox-dir>/.draft-summary.md before the package is built (inbox-dir defaults to .cc-handoff/inbox, falls back to legacy .claude/handoff-inbox in older repos). If omitted, the existing draft (if any) is used."},
     "to":           {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
+    "project":      {"type": "string", "description": "Project id to share this handoff with all actionable project members (owners/members). Mutually exclusive with to and org; excludes yourself and project viewers."},
+    "org":          {"type": "string", "description": "Organization id to share this handoff with all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "urgent":       {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
     "note":         {"type": "string", "description": "Markdown 写的「需求 / 跨端约束」段，例如错误码对照、字段大小写规则、分页约定、不可合并的请求等。会以「⚠️ 后端备注 / 需求 (必读)」醒目段渲染到接收端 prompt，并被强制要求 INTEGRATION.md 逐条响应。短到一两句也可以；没有就不传。"},
     "prd":          {"type": "string", "description": "产品需求 / 设计意图 markdown（背景参考）。会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt，作为背景阅读，不要求 INTEGRATION.md 逐条响应。和 note 区分：note 是必须兑现的硬约束（必读），prd 是 why（参考）。没有就不传。"},
@@ -115,6 +117,8 @@ func submitHandoffTool() Tool {
 type submitArgs struct {
 	Summary         string   `json:"summary"`
 	To              string   `json:"to"`
+	Project         string   `json:"project"`
+	Org             string   `json:"org"`
 	Urgent          bool     `json:"urgent"`
 	Note            string   `json:"note"`
 	Prd             string   `json:"prd"`
@@ -134,7 +138,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -147,12 +151,10 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		}
 	}
 
-	recipient := res.Partner
-	if a.To != "" {
-		recipient = a.To
-	}
-	if recipient == "" {
-		return ToolResult{}, fmt.Errorf("no recipient: pass `to` or set identity.partner in .cc-handoff.toml")
+	client := transport.New(res.RelayURL, res.Token)
+	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, a.Project, a.Org)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	urgency := handoffschema.UrgencyNormal
@@ -170,11 +172,16 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		return ToolResult{}, err
 	}
 
+	var fanout []string
+	if len(recipients) > 1 {
+		fanout = recipients
+	}
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
 		RepoRoot:         repoRoot,
 		RepoName:         res.RepoName,
 		Sender:           res.Me,
 		Recipient:        recipient,
+		Recipients:       fanout,
 		Urgency:          urgency,
 		Base:             res.Base,
 		Note:             a.Note,
@@ -192,14 +199,13 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		return ToolResult{}, err
 	}
 
-	client := transport.New(res.RelayURL, res.Token)
 	out, err := client.Submit(ctx, pkg, attachments)
 	if err != nil {
 		return ToolResult{}, err
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Submitted handoff `%s` to `%s`.\n\n", out.ID, recipient)
+	fmt.Fprintf(&sb, "Submitted handoff `%s` to %s.\n\n", out.ID, formatRecipientList(recipients))
 	if len(pkg.ModulePaths) > 0 {
 		fmt.Fprintf(&sb, "- mode: module-brief\n- modules: %s\n- branch: `%s`\n- head: `%s`\n",
 			strings.Join(pkg.ModulePaths, ", "), pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.HeadSHA))
@@ -266,6 +272,8 @@ func submitRequestTool() Tool {
   "properties": {
     "summary": {"type": "string", "description": "Markdown 描述需求：缺什么字段 / 没暴露什么能力 / 返回结构哪里有问题，写到具体 endpoint + field。包含 Why（前端要拿它做什么）和 Acceptance（怎样算 OK）。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
     "to":      {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
+    "project": {"type": "string", "description": "Project id to share this request with all actionable project members (owners/members). Mutually exclusive with to and org; excludes yourself and project viewers."},
+    "org":     {"type": "string", "description": "Organization id to share this request with all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
     "note":    {"type": "string", "description": "给后端的额外约束/备注，例如「不要破坏现有调用方」「字段命名跟 X 一致」「兼容现存数据」。会以「⚠️ 发起方备注 / 跨端约束 (必读)」段渲染到接收端 prompt，被要求逐条响应。没有就不传。"},
     "prd":     {"type": "string", "description": "前端从产品侧拿到的需求 / 设计意图 markdown（背景参考）。会以「📋 产品需求 / 设计意图 (背景参考)」段渲染到接收端 prompt，帮接收方理解这个 request 背后的业务目的。**作为背景阅读**，不要求逐条响应。和 note 区分：note 是必须兑现的硬约束（必读），prd 是 why（参考）。没有就不传。"},
@@ -284,6 +292,8 @@ func submitRequestTool() Tool {
 type submitRequestArgs struct {
 	Summary         string   `json:"summary"`
 	To              string   `json:"to"`
+	Project         string   `json:"project"`
+	Org             string   `json:"org"`
 	Urgent          bool     `json:"urgent"`
 	Note            string   `json:"note"`
 	Prd             string   `json:"prd"`
@@ -300,7 +310,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -313,12 +323,10 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		}
 	}
 
-	recipient := res.Partner
-	if a.To != "" {
-		recipient = a.To
-	}
-	if recipient == "" {
-		return ToolResult{}, fmt.Errorf("no recipient: pass `to` or set identity.partner in .cc-handoff.toml")
+	client := transport.New(res.RelayURL, res.Token)
+	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, a.Project, a.Org)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	urgency := handoffschema.UrgencyNormal
@@ -331,11 +339,16 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		return ToolResult{}, err
 	}
 
+	var fanout []string
+	if len(recipients) > 1 {
+		fanout = recipients
+	}
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
 		RepoRoot:         repoRoot,
 		RepoName:         res.RepoName,
 		Sender:           res.Me,
 		Recipient:        recipient,
+		Recipients:       fanout,
 		Urgency:          urgency,
 		Note:             a.Note,
 		Prd:              a.Prd,
@@ -347,14 +360,13 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		return ToolResult{}, err
 	}
 
-	client := transport.New(res.RelayURL, res.Token)
 	out, err := client.Submit(ctx, pkg, attachments)
 	if err != nil {
 		return ToolResult{}, err
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Submitted request `%s` to `%s`.\n\n", out.ID, recipient)
+	fmt.Fprintf(&sb, "Submitted request `%s` to %s.\n\n", out.ID, formatRecipientList(recipients))
 	sb.WriteString("- kind: request\n")
 	writeRepoMetaLines(&sb, pkg)
 	writeAttachmentSummary(&sb, pkg)
@@ -613,10 +625,43 @@ func formatRecipientList(rs []string) string {
 	return strings.Join(quoted, ", ")
 }
 
+func resolveToolRecipients(ctx context.Context, client *transport.Client, sender, defaultRecipient, to, projectID, orgID string) ([]string, string, error) {
+	if (projectID != "" || orgID != "") && to != "" {
+		return nil, "", fmt.Errorf("to cannot be combined with project or org")
+	}
+	if projectID != "" || orgID != "" {
+		recipients, err := client.ResolveTeamRecipients(ctx, projectID, orgID, sender)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(recipients) == 0 {
+			if projectID != "" {
+				return nil, "", fmt.Errorf("project %s has no actionable recipients (owners/members other than %s)", projectID, sender)
+			}
+			return nil, "", fmt.Errorf("organization %s has no actionable recipients (owners/admins/members other than %s)", orgID, sender)
+		}
+		return recipients, recipients[0], nil
+	}
+	recipient := defaultRecipient
+	if to != "" {
+		recipient = to
+	}
+	if recipient == "" {
+		return nil, "", fmt.Errorf("no recipient: pass `to`, `project`, `org`, or set identity.partner in .cc-handoff.toml")
+	}
+	if recipient == sender {
+		return nil, "", fmt.Errorf("cannot send to yourself (%s)", sender)
+	}
+	return []string{recipient}, recipient, nil
+}
+
 func listInboxTool() Tool {
 	schema := json.RawMessage(`{
   "type": "object",
   "properties": {
+    "project":      {"type": "string", "description": "Optional project id. When set, lists project-shared handoffs for that project instead of only your personal pending inbox."},
+    "all_projects": {"type": "boolean", "description": "When true, lists project-shared handoffs across every project you belong to."},
+    "limit":        {"type": "integer", "description": "Max items for project-shared listing. Defaults to 100."},
     "cwd": {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
 }`)
@@ -629,7 +674,10 @@ func listInboxTool() Tool {
 }
 
 type listArgs struct {
-	CWD string `json:"cwd"`
+	Project     string `json:"project"`
+	AllProjects bool   `json:"all_projects"`
+	Limit       int    `json:"limit"`
+	CWD         string `json:"cwd"`
 }
 
 func listInboxHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
@@ -641,20 +689,35 @@ func listInboxHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
 	client := transport.New(res.RelayURL, res.Token)
-	items, err := client.List(ctx, res.Me)
+	var items []handoffschema.ListItem
+	if a.Project != "" || a.AllProjects {
+		if a.Project != "" && a.AllProjects {
+			return ToolResult{}, fmt.Errorf("project and all_projects are mutually exclusive")
+		}
+		items, err = client.ListProjectHandoffs(ctx, a.Project, a.Limit)
+	} else {
+		items, err = client.List(ctx, res.Me)
+	}
 	if err != nil {
 		return ToolResult{}, err
 	}
 	if len(items) == 0 {
+		if a.Project != "" || a.AllProjects {
+			return textResult("No project-shared handoffs found."), nil
+		}
 		return textResult("Inbox is empty."), nil
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d pending item(s):\n\n", len(items))
+	if a.Project != "" || a.AllProjects {
+		fmt.Fprintf(&sb, "%d project-shared item(s):\n\n", len(items))
+	} else {
+		fmt.Fprintf(&sb, "%d pending item(s):\n\n", len(items))
+	}
 	for _, it := range items {
 		fmt.Fprintf(&sb, "- [%s] `%s` from `%s` urgency=%s repo=`%s` branch=`%s`\n  %s\n",
 			tagFor(it.Kind), it.ID, it.Sender, it.Urgency, it.RepoName, it.Branch, it.Headline)

@@ -44,6 +44,7 @@ This command is the **reverse** of `/handoff`. There's no diff to ship; the summ
 
 6. 调 `submit_request` MCP 工具：
    - `summary`: 第 2 步的 Markdown 总结
+   - 默认发给配置里的 partner；如果用户明确要求「发给项目/团队/所有相关成员」，传 `project`（cc-handoff 项目 id）或 `org`（组织 id），不要再传 `to`
    - `prd`: 第 3 步的产品需求（没有就不传）
    - `note`: 第 4 步的备注（没有就不传）
    - `attachment_paths`: 第 5 步的路径数组(没有就不传)

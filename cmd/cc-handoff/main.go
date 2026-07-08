@@ -103,7 +103,7 @@ Setup:
   cc-handoff init     [--agent claude|codex|manual] [--with-mcp] [--with-commands] [--with-instructions]
 
 Sender flow:
-  cc-handoff submit       [--to ID] [--urgent] [--note TEXT] [--base REF] [--amends ID]
+  cc-handoff submit       [--to ID | --project ID | --org ID] [--urgent] [--note TEXT] [--base REF] [--amends ID]
   cc-handoff sent         [--limit N] [--json]          list my recent sent handoffs
   cc-handoff status       <id> [--json]                 show state / picked_at / comments
   cc-handoff retract      <id> [--reason TEXT]          cancel a still-pending handoff
@@ -112,7 +112,8 @@ Sender flow:
                                                         freeze a session context (① transcript / ② distilled role) to the plaza — 个人 (default) or --public (公开, team-visible)
 
 Receiver flow:
-  cc-handoff list     [--json]                          inbox: pending handoffs on relay
+  cc-handoff list     [--json] [--project ID | --all-projects] [--limit N]
+                                                        inbox: pending handoffs, or project-shared handoffs
   cc-handoff pickup   <id> [--no-ack] [--direct] [--repo PATH] [--worktree [--open [--window]]]
                                                         fetch + materialize + ack (--worktree integrates on an isolated branch worktree)
   cc-handoff inbox    [--json]                          local: already-materialized handoffs

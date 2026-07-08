@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/handoff"
@@ -17,6 +18,8 @@ import (
 func runSubmit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient identity (default: partner from .cc-handoff.toml)")
+	projectID := fs.String("project", "", "send to all actionable members of project id (owners/members; excludes yourself and viewers)")
+	orgID := fs.String("org", "", "send to all actionable members of organization id (owners/admins/members; excludes yourself and guests)")
 	urgent := fs.Bool("urgent", false, "mark handoff as urgent (recipient may auto-launch)")
 	note := fs.String("note", "", "需求 / 跨端约束 (Markdown)；会以「⚠️ 必读」段渲染到接收端 prompt 并要求 INTEGRATION.md 逐条响应")
 	prd := fs.String("prd", "", "产品需求 / 设计意图 (Markdown)；以「📋 背景参考」段渲染到接收端 prompt，不强制逐条响应（区别于 --note）")
@@ -31,7 +34,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return err
 	}
@@ -40,9 +43,15 @@ func runSubmit(ctx context.Context, args []string) error {
 	if *to != "" {
 		recipient = *to
 	}
-	if recipient == "" {
-		return fmt.Errorf("no recipient: pass --to or set identity.partner in .cc-handoff.toml")
+	client := transport.New(res.RelayURL, res.Token)
+	recipients, err := resolveSubmitRecipients(ctx, client, res.Me, recipient, *projectID, *orgID)
+	if err != nil {
+		return err
 	}
+	if len(recipients) == 0 {
+		return fmt.Errorf("no recipient: pass --to, --project, --org, or set identity.partner in .cc-handoff.toml")
+	}
+	recipient = recipients[0]
 
 	base := res.Base
 	if *baseOverride != "" {
@@ -59,12 +68,17 @@ func runSubmit(ctx context.Context, args []string) error {
 		return err
 	}
 
+	var fanout []string
+	if len(recipients) > 1 {
+		fanout = recipients
+	}
 	repoRoot := config.RepoRoot(cwd)
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
 		RepoRoot:    repoRoot,
 		RepoName:    res.RepoName,
 		Sender:      res.Me,
 		Recipient:   recipient,
+		Recipients:  fanout,
 		Urgency:     urgency,
 		Base:        base,
 		Note:        *note,
@@ -78,12 +92,11 @@ func runSubmit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	client := transport.New(res.RelayURL, res.Token)
 	out, err := client.Submit(ctx, pkg, attachments)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✓ submitted handoff %s to %s\n", out.ID, recipient)
+	fmt.Printf("✓ submitted handoff %s to %s\n", out.ID, formatRecipientTarget(recipients))
 	fmt.Printf("  branch=%s base=%s head=%s\n",
 		pkg.Repo.Branch, handoff.ShortSHA(pkg.Repo.BaseSHA), handoff.ShortSHA(pkg.Repo.HeadSHA))
 	if pkg.Git != nil {
@@ -100,4 +113,37 @@ func runSubmit(ctx context.Context, args []string) error {
 		fmt.Printf("  amends=%s\n", pkg.AmendsHandoff)
 	}
 	return nil
+}
+
+func resolveSubmitRecipients(ctx context.Context, client *transport.Client, sender, recipient, projectID, orgID string) ([]string, error) {
+	if (projectID != "" || orgID != "") && recipient != "" {
+		return nil, fmt.Errorf("--to cannot be combined with --project or --org")
+	}
+	if projectID != "" || orgID != "" {
+		recipients, err := client.ResolveTeamRecipients(ctx, projectID, orgID, sender)
+		if err != nil {
+			return nil, err
+		}
+		if len(recipients) == 0 {
+			if projectID != "" {
+				return nil, fmt.Errorf("project %s has no actionable recipients (owners/members other than %s)", projectID, sender)
+			}
+			return nil, fmt.Errorf("organization %s has no actionable recipients (owners/admins/members other than %s)", orgID, sender)
+		}
+		return recipients, nil
+	}
+	if recipient == "" {
+		return nil, nil
+	}
+	if recipient == sender {
+		return nil, fmt.Errorf("cannot send a handoff to yourself (%s)", sender)
+	}
+	return []string{recipient}, nil
+}
+
+func formatRecipientTarget(recipients []string) string {
+	if len(recipients) == 1 {
+		return recipients[0]
+	}
+	return fmt.Sprintf("%d recipients (%s)", len(recipients), strings.Join(recipients, ", "))
 }
