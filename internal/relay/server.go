@@ -865,7 +865,7 @@ func (s *Server) listInboxComments(w http.ResponseWriter, r *http.Request) {
 
 	comments, maxID, err := s.Store.ListCommentsSince(r.Context(), identity, since, limit)
 	if err != nil {
-		http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
