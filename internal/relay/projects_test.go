@@ -127,6 +127,56 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	}
 }
 
+func TestProjectNamesAreTrimmed(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "owner@demo", "ownerpass1")
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	ownerTok := loginToken(t, srv.URL, "owner@demo", "ownerpass1")
+
+	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok,
+		map[string]string{"name": "  Trimmed Project  "})
+	if code != http.StatusCreated {
+		t.Fatalf("create project = %d %s", code, body)
+	}
+	var proj store.Project
+	if err := json.Unmarshal(body, &proj); err != nil {
+		t.Fatal(err)
+	}
+	if proj.Name != "Trimmed Project" {
+		t.Fatalf("created project name = %q, want trimmed", proj.Name)
+	}
+
+	code, body = patchJSON(t, srv.URL+"/v1/projects/"+proj.ID, ownerTok,
+		map[string]string{"name": "  Renamed Project  "})
+	if code != http.StatusOK {
+		t.Fatalf("rename project = %d %s", code, body)
+	}
+
+	code, body = getAuthed(t, srv.URL+"/v1/projects/"+proj.ID, ownerTok)
+	if code != http.StatusOK {
+		t.Fatalf("get project = %d %s", code, body)
+	}
+	var detail struct {
+		Project store.Project `json:"project"`
+	}
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Project.Name != "Renamed Project" {
+		t.Fatalf("renamed project name = %q, want trimmed", detail.Project.Name)
+	}
+}
+
 func assertProjectListRole(t *testing.T, base, token, projectID, wantRole string) {
 	t.Helper()
 	code, body := getAuthed(t, base+"/v1/projects", token)

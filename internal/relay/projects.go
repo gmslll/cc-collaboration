@@ -57,7 +57,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Name) == "" {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
@@ -66,7 +67,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var err error
 	orgID := strings.TrimSpace(req.OrgID)
 	if orgID == "" {
-		err = s.Store.CreateProject(r.Context(), id, req.Name, identity, now)
+		err = s.Store.CreateProject(r.Context(), id, name, identity, now)
 	} else {
 		if !s.requireOrgManager(w, r, orgID) {
 			return
@@ -84,7 +85,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		err = s.Store.CreateProjectInOrg(r.Context(), id, orgID, req.Name, identity, now)
+		err = s.Store.CreateProjectInOrg(r.Context(), id, orgID, name, identity, now)
 	}
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -148,11 +149,16 @@ func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.RenameProject(r.Context(), id, req.Name); err != nil {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.RenameProject(r.Context(), id, name); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
