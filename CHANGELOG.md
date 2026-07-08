@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.26] - 2026-07-08
+
+### Fixed
+
+- **Codex 颜色主题查询回归保护** — 主终端的 `ccTerminal()` 继续默认回答 Codex 的 OSC 10/11 前景/背景色查询,并新增测试固定返回 app 主题色;会话总览快速回复预览使用的影子 terminal 则关闭协议查询回复,避免回放快照里的颜色查询时二次响应。顺带给预览自动滚到底部的 post-frame 回调加 `mounted` 保护,防止弹窗关闭后访问已释放的滚动控制器。
+
 ## [0.9.25] - 2026-07-08
 
 ### Fixed

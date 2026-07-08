@@ -1,7 +1,32 @@
+import 'package:app/terminal_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/xterm.dart';
 
 void main() {
+  test(
+    'ccTerminal reports the app theme to Codex color queries by default',
+    () {
+      final output = StringBuffer();
+      final term = ccTerminal()..onOutput = output.write;
+
+      term.write('\x1b]10;?\x1b\\');
+      term.write('\x1b]11;?\x1b\\');
+
+      expect(output.toString(), contains('\x1b]10;rgb:e6e6/eaea/f2f2\x1b\\'));
+      expect(output.toString(), contains('\x1b]11;rgb:0a0a/0e0e/1a1a\x1b\\'));
+    },
+  );
+
+  test('snapshot shadow terminals do not answer replayed color queries', () {
+    final output = StringBuffer();
+    final term = ccTerminal(answerColorQueries: false)..onOutput = output.write;
+
+    term.write('\x1b]10;?\x1b\\');
+    term.write('\x1b]11;?\x1b\\');
+
+    expect(output.toString(), isEmpty);
+  });
+
   test('OSC 10 and 11 color queries report configured defaults', () {
     final output = StringBuffer();
     final term = Terminal(

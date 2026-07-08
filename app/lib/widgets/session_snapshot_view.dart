@@ -33,7 +33,7 @@ class _SessionSnapshotViewState extends State<SessionSnapshotView> {
   // Independent of the source session's Terminal so it never fights it for PTY
   // size; small buffer = cheap rewrites. Resized per-snapshot to the source
   // geometry so content lands at its native width (no reflow).
-  final Terminal _term = ccTerminal(maxLines: 200);
+  final Terminal _term = ccTerminal(maxLines: 200, answerColorQueries: false);
   final ScrollController _scroll = ScrollController();
 
   TerminalStyle get _style =>
@@ -82,7 +82,7 @@ class _SessionSnapshotViewState extends State<SessionSnapshotView> {
   // the box; a no-op when it all fits (maxScrollExtent == 0).
   void _scrollToBottomSoon() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
+      if (mounted && _scroll.hasClients) {
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
       }
     });
