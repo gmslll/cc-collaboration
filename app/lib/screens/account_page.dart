@@ -191,21 +191,21 @@ class _AccountPageState extends State<AccountPage> {
     final ok = agent == null
         ? (_hooks?.every((h) => h.ok) ?? false)
         : (_hooks?.any((h) {
-            if (h.name != agent) return false;
-            if (events == null) return h.ok;
-            final installed = h.installedEvents.toSet();
-            final selected = events.toSet();
-            return installed.length == selected.length &&
-                selected.every(installed.contains);
-          }) ??
-          false);
+                if (h.name != agent) return false;
+                if (events == null) return h.ok;
+                final installed = h.installedEvents.toSet();
+                final selected = events.toSet();
+                return installed.length == selected.length &&
+                    selected.every(installed.contains);
+              }) ??
+              false);
     snack(
       context,
       ok
           ? 'hook 已安装'
           : installError == null
-              ? 'hook 安装未成功,请检查 agent 是否已安装'
-              : errorText(installError),
+          ? 'hook 安装未成功,请检查 agent 是否已安装'
+          : errorText(installError),
     );
     return ok;
   }
@@ -394,13 +394,12 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ),
         const SizedBox(height: 4),
-        // Version + build marker (confirm this device is current) + manual update
-        // check. Apps ship via GitHub Releases, so update is in-app, not store.
+        // Apps ship via GitHub Releases, so update is in-app, not store.
         Row(
           children: [
             Expanded(
               child: Text(
-                '版本 $kAppVersion · 构建 $kBuildMarker',
+                '版本 $kAppVersion',
                 style: const TextStyle(color: CcColors.subtle, fontSize: 11),
               ),
             ),
@@ -659,10 +658,7 @@ class _AccountPageState extends State<AccountPage> {
   Future<void> _reinstallAllHooks() async {
     final ok = await _reinstallHooks();
     if (!ok) return;
-    Prefs.removeAll(const [
-      'busHook.events.claude',
-      'busHook.events.codex',
-    ]);
+    Prefs.removeAll(const ['busHook.events.claude', 'busHook.events.codex']);
   }
 
   Widget _hookRow(HookInstallStatus h) {
@@ -672,8 +668,8 @@ class _AccountPageState extends State<AccountPage> {
     final color = h.ok
         ? CcColors.ok
         : partial
-            ? CcColors.warning
-            : CcColors.danger;
+        ? CcColors.warning
+        : CcColors.danger;
     final installing = _reinstallingAgents.contains(h.name);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
@@ -683,8 +679,8 @@ class _AccountPageState extends State<AccountPage> {
             h.ok
                 ? Icons.check_circle_rounded
                 : partial
-                    ? Icons.adjust_rounded
-                    : Icons.cancel_rounded,
+                ? Icons.adjust_rounded
+                : Icons.cancel_rounded,
             size: 16,
             color: color,
           ),
@@ -713,10 +709,10 @@ class _AccountPageState extends State<AccountPage> {
             totalCount == 0
                 ? (h.ok ? '已安装' : '未安装')
                 : h.ok
-                    ? '已安装 $installedCount/$totalCount'
-                    : installedCount == 0
-                        ? '未安装'
-                        : '部分 $installedCount/$totalCount',
+                ? '已安装 $installedCount/$totalCount'
+                : installedCount == 0
+                ? '未安装'
+                : '部分 $installedCount/$totalCount',
             style: TextStyle(fontSize: 11, color: color),
           ),
           const SizedBox(width: 6),

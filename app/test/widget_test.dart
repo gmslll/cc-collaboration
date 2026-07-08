@@ -29,6 +29,13 @@ index 0000000..3333333
 ''';
 
 void main() {
+  test('account page does not expose internal build markers', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+
+    expect(source, isNot(contains('kBuildMarker')));
+    expect(source, isNot(contains('构建 \$kBuildMarker')));
+  });
+
   group('splitFileNameDir', () {
     test('splits POSIX paths', () {
       expect(splitFileNameDir('/tmp/project/lib/main.dart'), (
@@ -212,8 +219,8 @@ void main() {
       final c = RepoConfig(
         raw: const {
           'integrations': {
-            'other': {'enabled': true}
-          }
+            'other': {'enabled': true},
+          },
         },
         partner: 'alex@frontend',
         partners: 'a@x, b@y',
