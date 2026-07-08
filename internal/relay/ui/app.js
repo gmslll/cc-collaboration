@@ -948,6 +948,43 @@ function metricTile(label, value) {
   return `<div class="team-metric"><span>${escapeHTML(label)}</span><strong>${escapeHTML(String(value))}</strong></div>`;
 }
 
+function identityLabel(member) {
+  const name = (member.display_name || "").trim();
+  return name ? `${member.identity} · ${name}` : member.identity;
+}
+
+function memberCandidateOptions(candidates) {
+  if (!candidates.length) {
+    return `<option value="">无可选成员</option>`;
+  }
+  return [
+    `<option value="">选择成员</option>`,
+    ...candidates.map((m) => `<option value="${escapeAttr(m.identity)}">${escapeHTML(identityLabel(m))}</option>`),
+  ].join("");
+}
+
+function reachableUserCandidates(existingMembers = []) {
+  const existing = new Set(existingMembers.map((m) => m.identity));
+  return state.online
+    .filter((user) => user.identity && !existing.has(user.identity))
+    .map((user) => ({ identity: user.identity, display_name: user.online ? "在线" : "离线" }));
+}
+
+function memberCandidateForm(kind, candidates, roles) {
+  const roleOptions = roles.map((role) => `<option value="${escapeAttr(role)}">${escapeHTML(role)}</option>`).join("");
+  const emptyHint = candidates.length ? "" : `<span class="member-picker-hint">没有候选时仍可手动输入 identity。</span>`;
+  return `
+    <form class="inline-form member-invite-form member-picker" data-form="${escapeAttr(kind)}">
+      <select name="candidate" aria-label="选择成员">
+        ${memberCandidateOptions(candidates)}
+      </select>
+      <input type="text" name="identity" aria-label="成员 identity" placeholder="或手动输入 identity">
+      <select name="role" aria-label="成员角色">${roleOptions}</select>
+      <button type="submit" class="secondary">加成员</button>
+      ${emptyHint}
+    </form>`;
+}
+
 function renderMemberTable(members, options = {}) {
   if (!members.length) {
     return `<div class="empty-inline">还没有成员。</div>`;
@@ -1043,7 +1080,9 @@ async function onOrganizationsListSubmit(event) {
   const card = form.closest("[data-org]");
   if (!card || form.dataset.form !== "org-member") return;
   const id = card.dataset.org;
-  const identity = form.querySelector("[name=identity]").value.trim();
+  const candidate = form.querySelector("[name=candidate]")?.value.trim() || "";
+  const manual = form.querySelector("[name=identity]")?.value.trim() || "";
+  const identity = manual || candidate;
   const role = form.querySelector("[name=role]").value;
   if (!identity) return;
   try {
@@ -1095,11 +1134,7 @@ async function renderOrganizationManage(id, body) {
       <div class="manage-block">
         <h4>成员</h4>
         ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", label: "团队成员" })}
-        ${canManage ? `<form class="inline-form member-invite-form" data-form="org-member">
-          <input type="text" name="identity" aria-label="团队成员 identity" placeholder="identity">
-          <select name="role" aria-label="团队角色"><option value="member">member</option><option value="admin">admin</option><option value="guest">guest</option><option value="owner">owner</option></select>
-          <button type="submit" class="secondary">加成员</button>
-        </form>` : ""}
+        ${canManage ? memberCandidateForm("org-member", reachableUserCandidates(members), ["member", "admin", "guest", "owner"]) : ""}
       </div>`;
     body.querySelectorAll("[data-jump-project]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -1257,7 +1292,9 @@ async function onProjectsListSubmit(event) {
       await api(`/v1/projects/${encodeURIComponent(id)}/repos`, { method: "POST", body: JSON.stringify({ repo_name: name }) });
       toast("已绑定 repo");
     } else if (form.dataset.form === "member") {
-      const identity = form.querySelector("[name=identity]").value.trim();
+      const candidate = form.querySelector("[name=candidate]")?.value.trim() || "";
+      const manual = form.querySelector("[name=identity]")?.value.trim() || "";
+      const identity = manual || candidate;
       const role = form.querySelector("[name=role]").value;
       if (!identity) return;
       await api(`/v1/projects/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
@@ -1275,6 +1312,17 @@ async function renderProjectManage(id, body) {
     const repos = data.repos || [];
     const members = data.members || [];
     const project = data.project || {};
+    let orgMembers = [];
+    if (project.org_id) {
+      try {
+        const orgData = await api(`/v1/orgs/${encodeURIComponent(project.org_id)}`);
+        orgMembers = orgData.members || [];
+      } catch {
+        orgMembers = [];
+      }
+    }
+    const projectMemberIDs = new Set(members.map((m) => m.identity));
+    const memberCandidates = orgMembers.filter((m) => !projectMemberIDs.has(m.identity));
     const onlineCount = members.filter((m) => isOnlineIdentity(m.identity)).length;
     body.innerHTML = `
       <div class="team-summary-strip">
@@ -1300,11 +1348,7 @@ async function renderProjectManage(id, body) {
       <div class="manage-block">
         <h4>成员</h4>
         ${renderMemberTable(members, { canRemove: true, removeAttr: "data-remove-member", label: "项目成员" })}
-        <form class="inline-form member-invite-form" data-form="member">
-          <input type="text" name="identity" aria-label="成员 identity" placeholder="identity">
-          <select name="role" aria-label="成员角色"><option value="member">member</option><option value="viewer">viewer</option><option value="owner">owner</option></select>
-          <button type="submit" class="secondary">加成员</button>
-        </form>
+        ${memberCandidateForm("member", memberCandidates, ["member", "viewer", "owner"])}
       </div>`;
   } catch (err) {
     body.innerHTML = `<p class="muted">${escapeHTML(err.message)}</p>`;

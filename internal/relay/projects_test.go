@@ -206,6 +206,58 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	}
 }
 
+func TestProjectOwnerCannotInviteOutsideTeamAfterOrgDemotion(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	for _, id := range []string{"owner@demo", "coowner@demo", "outsider@demo"} {
+		mkUser(t, st, id, "pw-"+id+"-12345")
+	}
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	ownerTok := loginToken(t, srv.URL, "owner@demo", "pw-owner@demo-12345")
+	coownerTok := loginToken(t, srv.URL, "coowner@demo", "pw-coowner@demo-12345")
+
+	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Scoped Project"})
+	if code != http.StatusCreated {
+		t.Fatalf("create project = %d %s", code, body)
+	}
+	var proj store.Project
+	if err := json.Unmarshal(body, &proj); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := postJSON(t, srv.URL+"/v1/orgs/"+proj.OrgID+"/members", ownerTok,
+		map[string]string{"identity": "coowner@demo", "role": "owner"}); code != http.StatusOK {
+		t.Fatalf("add coowner = %d %s", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/orgs/"+proj.OrgID+"/members", coownerTok,
+		map[string]string{"identity": "owner@demo", "role": "member"}); code != http.StatusOK {
+		t.Fatalf("demote owner in org = %d %s", code, body)
+	}
+
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
+		map[string]string{"identity": "outsider@demo", "role": "viewer"}); code != http.StatusForbidden {
+		t.Fatalf("demoted project owner invited outside-team user = %d, want 403", code)
+	}
+
+	if code, body := postJSON(t, srv.URL+"/v1/orgs/"+proj.OrgID+"/members", coownerTok,
+		map[string]string{"identity": "outsider@demo", "role": "member"}); code != http.StatusOK {
+		t.Fatalf("org manager adds outsider to team = %d %s", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
+		map[string]string{"identity": "outsider@demo", "role": "viewer"}); code != http.StatusOK {
+		t.Fatalf("project owner adds existing team member = %d %s", code, body)
+	}
+}
+
 func mkUser(t *testing.T, st *store.Store, identity, pw string) {
 	t.Helper()
 	hash, err := auth.HashPassword(pw)

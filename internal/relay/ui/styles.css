@@ -1203,6 +1203,25 @@ textarea:focus {
 .member-invite-form {
   padding-top: var(--space-2);
 }
+.member-picker {
+  align-items: stretch;
+}
+.member-picker select[name="candidate"] {
+  flex: 1.15 1 220px;
+  max-width: none;
+}
+.member-picker input[name="identity"] {
+  flex: 1 1 210px;
+}
+.member-picker select[name="role"] {
+  flex: 0 0 120px;
+}
+.member-picker-hint {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 
 .link-danger {
   border: none;

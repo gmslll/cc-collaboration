@@ -214,6 +214,7 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 	if !s.requireProjectOwner(w, r, id) {
 		return
 	}
+	caller := auth.Identity(r.Context())
 	var req struct {
 		Identity string `json:"identity"`
 		Role     string `json:"role"`
@@ -245,6 +246,17 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	} else if !ok {
+		if !s.isAdmin(r.Context(), caller) {
+			role, callerInOrg, err := s.Store.OrganizationMemberRole(r.Context(), p.OrgID, caller)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !callerInOrg || !store.OrgRoleCanManage(role) {
+				http.Error(w, "target user must already belong to the team", http.StatusForbidden)
+				return
+			}
+		}
 		if err := s.Store.AddOrganizationMember(r.Context(), p.OrgID, identity, store.OrgRoleMember); err != nil {
 			s.writeStoreErr(w, err)
 			return
