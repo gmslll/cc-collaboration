@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.24] - 2026-07-08
+
+### Fixed
+
+- **会话总览快速回复预览不再排版错乱** — 预览原本把源会话在源宽度(常 80~120 列)抓取的彩色 ANSI 快照灌进一个更窄、会自动重排的一次性终端，导致 codex/claude 的分隔线、输入框、状态行等按源宽度绝对定位的 TUI 内容溢出折行、样式错乱。现在快照会一并携带源终端的 cols×rows，预览按源宽度渲染(不再 reflow)并用 FittedBox 整屏缩放进预览框：内容完整可见、绝不折行。桌面与手机/远程客户端共用同一渲染组件，远程协议同步下发终端几何(旧 host 缺省时回退默认几何、向后兼容)。
+
 ## [0.9.23] - 2026-07-08
 
 ### Fixed
