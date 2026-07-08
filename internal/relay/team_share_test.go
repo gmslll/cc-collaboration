@@ -113,3 +113,70 @@ func TestSubmitHandoffRequiresReachableRecipients(t *testing.T) {
 		t.Fatalf("cross-team submit = %d, want 403", code)
 	}
 }
+
+func TestReassignRequiresReachableRecipient(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	mkUser(t, st, "charlie@qa", "charliepass1")
+	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "charlie@qa", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-bob","identity":"bob@frontend"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	mkBug := func(id string) {
+		t.Helper()
+		if err := st.Insert(ctx, &handoffschema.Package{
+			ID:            id,
+			SchemaVersion: handoffschema.SchemaVersion,
+			Kind:          handoffschema.KindBug,
+			Sender:        "alice@backend",
+			Recipient:     "bob@frontend",
+			Urgency:       handoffschema.UrgencyNormal,
+			CreatedAt:     now,
+			Repo:          handoffschema.Repo{Name: "demo"},
+			SummaryMD:     "not mine",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkBug("bug-cross")
+	mkBug("bug-shared")
+
+	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/bug-cross/reassign", "tok-bob",
+		map[string]string{"to": "mallory@other", "reason": "wrong team"}); code != http.StatusForbidden {
+		t.Fatalf("cross-team reassign = %d, want 403", code)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/handoffs/bug-shared/reassign", "tok-bob",
+		map[string]string{"to": "charlie@qa", "reason": "qa owns this"}); code != http.StatusCreated {
+		t.Fatalf("same-team reassign = %d %s, want 201", code, body)
+	}
+}

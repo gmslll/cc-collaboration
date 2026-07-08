@@ -1004,12 +1004,16 @@ func (s *Server) reassign(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	req.To = strings.TrimSpace(req.To)
 	if req.To == "" {
 		http.Error(w, "to required", http.StatusBadRequest)
 		return
 	}
 	if req.To == identity {
 		http.Error(w, "cannot reassign to yourself", http.StatusBadRequest)
+		return
+	}
+	if !s.requireReachableIdentity(w, r, req.To) {
 		return
 	}
 
