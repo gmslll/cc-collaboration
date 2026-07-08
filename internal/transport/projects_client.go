@@ -107,8 +107,8 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		if err != nil {
 			return nil, err
 		}
-		if role, ok := memberRole(members, sender); ok && role == "viewer" && !orgCanManage(orgMembers, sender) {
-			return nil, errors.New("project viewers cannot send team-shared handoffs")
+		if !projectSenderCanShare(members, orgMembers, sender) {
+			return nil, errors.New("sender cannot send project-shared handoffs")
 		}
 		active, err := c.activeIdentities(ctx)
 		if err != nil {
@@ -142,7 +142,11 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		if err != nil {
 			return nil, err
 		}
-		if role, ok := orgMemberRole(members, sender); ok && role == "guest" {
+		role, ok := orgMemberRole(members, sender)
+		if !ok {
+			return nil, errors.New("sender is not a member of the organization")
+		}
+		if role == "guest" {
 			return nil, errors.New("organization guests cannot send team-shared handoffs")
 		}
 		active, err := c.activeIdentities(ctx)
@@ -265,6 +269,14 @@ func resolveOneProjectRecipient(members []ProjectMember, orgMembers []Organizati
 		return nil, fmt.Errorf("team member %s is disabled or inactive", member)
 	}
 	return []string{member}, nil
+}
+
+func projectSenderCanShare(members []ProjectMember, orgMembers []OrganizationMember, sender string) bool {
+	if orgCanManage(orgMembers, sender) {
+		return true
+	}
+	role, ok := memberRole(members, sender)
+	return ok && role != "viewer"
 }
 
 func (c *Client) projectOrgMembers(ctx context.Context, orgID string) ([]OrganizationMember, error) {
