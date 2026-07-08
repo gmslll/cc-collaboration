@@ -314,6 +314,16 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	if proj.OrgID != org.ID || proj.OwnerIdentity != "teammate@demo" || proj.Role != "owner" {
 		t.Fatalf("project = %+v", proj)
 	}
+	assertProjectListRole(t, srv.URL, ownerTok, proj.ID, "admin")
+	assertProjectDetailRole(t, srv.URL, ownerTok, proj.ID, "admin")
+	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", ownerTok,
+		map[string]string{"repo_name": "team/repo"}); code != http.StatusOK {
+		t.Fatalf("org owner map repo on team project = %d %s", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
+		map[string]string{"identity": "owner@demo", "role": "member"}); code != http.StatusOK {
+		t.Fatalf("org owner add project member = %d %s", code, body)
+	}
 
 	if code, _ := deleteAuthed(t, srv.URL+"/v1/orgs/"+org.ID+"/members/owner@demo", ownerTok); code != http.StatusOK {
 		t.Fatalf("remove owner with another owner/admin present = %d", code)

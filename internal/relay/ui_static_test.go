@@ -13,7 +13,7 @@ func TestProjectManageUIActionsAreRoleGated(t *testing.T) {
 	}
 	js := string(src)
 	required := []string{
-		`const canManage = role === "owner" || state.me?.is_admin;`,
+		`const canManage = role === "owner" || role === "admin" || state.me?.is_admin;`,
 		"${canManage ? `<button type=\"button\" data-unmap=",
 		"${canManage ? `<form class=\"inline-form\" data-form=\"repo\">",
 		`renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", label: "项目成员" })`,

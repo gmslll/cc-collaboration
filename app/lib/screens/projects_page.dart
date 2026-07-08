@@ -382,6 +382,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
 
   bool _canManage(ProjectDetail d) {
     if (widget.isAdmin) return true;
+    if (d.project.role == 'admin') return true;
     if (d.project.ownerIdentity == widget.identity) return true;
     return d.members
         .any((m) => m.identity == widget.identity && m.role == 'owner');

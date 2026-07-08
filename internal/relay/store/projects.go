@@ -11,11 +11,13 @@ import (
 )
 
 // Project roles. owner manages the project; member can view + comment; viewer
-// is read-only. Global admin (users.is_admin) supersedes all of these.
+// is read-only. RoleAdmin is an effective API role for global/team managers;
+// it is not stored in project_members.
 const (
 	RoleOwner  = "owner"
 	RoleMember = "member"
 	RoleViewer = "viewer"
+	RoleAdmin  = "admin"
 )
 
 // ValidRole reports whether r is one of the known project roles.
@@ -111,12 +113,22 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return s.queryProjects(ctx, `SELECT id, org_id, name, owner_identity, created_at FROM projects ORDER BY name`)
 }
 
-// ListProjectsForIdentity returns the projects an identity is a member of.
+// ListProjectsForIdentity returns projects the identity can access directly or
+// govern through team owner/admin rights.
 func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([]Project, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at, pm.role FROM projects p
-		   JOIN project_members pm ON pm.project_id = p.id
-		  WHERE pm.identity = ? ORDER BY p.name`, identity)
+		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at,
+		        CASE
+		          WHEN pm.role = ? THEN ?
+		          WHEN om.role IN (?, ?) THEN ?
+		          ELSE COALESCE(pm.role, '')
+		        END
+		   FROM projects p
+		   LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?
+		   LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+		  WHERE pm.identity IS NOT NULL OR om.role IN (?, ?)
+		  ORDER BY p.name`,
+		RoleOwner, RoleOwner, OrgRoleOwner, OrgRoleAdmin, RoleAdmin, identity, identity, OrgRoleOwner, OrgRoleAdmin)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +136,36 @@ func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([
 		p, err := scanProjectWithRole(r)
 		return p, err
 	})
+}
+
+// EffectiveProjectRole returns the caller's effective role for a project. Team
+// owner/admin can govern every project in the organization even when they are
+// not direct project members.
+func (s *Store) EffectiveProjectRole(ctx context.Context, projectID, identity string) (string, bool, error) {
+	var projectRole, orgRole string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(pm.role, ''), COALESCE(om.role, '')
+		   FROM projects p
+		   LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?
+		   LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+		  WHERE p.id = ?`,
+		identity, identity, projectID).Scan(&projectRole, &orgRole)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if projectRole == RoleOwner {
+		return RoleOwner, true, nil
+	}
+	if OrgRoleCanManage(orgRole) {
+		return RoleAdmin, true, nil
+	}
+	if projectRole != "" {
+		return projectRole, true, nil
+	}
+	return "", false, nil
 }
 
 // scanRows drains rows, scanning each with scan, and closes rows — centralizing

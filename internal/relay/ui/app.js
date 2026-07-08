@@ -1246,7 +1246,7 @@ function renderProjects() {
   }
   els.projectsList.innerHTML = state.projects.map((p) => {
     const role = projectRole(p.id);
-    const canManage = role === "owner" || state.me?.is_admin;
+    const canManage = role === "owner" || role === "admin" || state.me?.is_admin;
     return `
       <div class="aux-card" data-project="${escapeAttr(p.id)}">
         <div class="aux-card-head">
@@ -1344,7 +1344,7 @@ async function renderProjectManage(id, body) {
     const members = data.members || [];
     const project = data.project || {};
     const role = projectRole(id);
-    const canManage = role === "owner" || state.me?.is_admin;
+    const canManage = role === "owner" || role === "admin" || state.me?.is_admin;
     let orgMembers = [];
     if (project.org_id) {
       try {

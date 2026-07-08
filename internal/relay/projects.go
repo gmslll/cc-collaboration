@@ -28,16 +28,19 @@ func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, proj
 	if s.isAdmin(r.Context(), identity) {
 		return true
 	}
-	if role, found, err := s.Store.MemberRole(r.Context(), projectID, identity); err == nil && found && ok(role) {
+	if role, found, err := s.Store.EffectiveProjectRole(r.Context(), projectID, identity); err == nil && found && ok(role) {
 		return true
 	}
 	http.Error(w, "forbidden", http.StatusForbidden)
 	return false
 }
 
-// requireProjectOwner gates a handler to the project's owner or a global admin.
-func (s *Server) requireProjectOwner(w http.ResponseWriter, r *http.Request, projectID string) bool {
-	return s.requireProjectRole(w, r, projectID, func(role string) bool { return role == store.RoleOwner })
+// requireProjectManager gates a handler to a project owner, team owner/admin,
+// or global admin.
+func (s *Server) requireProjectManager(w http.ResponseWriter, r *http.Request, projectID string) bool {
+	return s.requireProjectRole(w, r, projectID, func(role string) bool {
+		return role == store.RoleOwner || role == store.RoleAdmin
+	})
 }
 
 // requireProjectMember gates a handler to any member of the project (or admin).
@@ -131,8 +134,8 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := auth.Identity(r.Context())
 	if s.isAdmin(r.Context(), identity) {
-		p.Role = "admin"
-	} else if role, ok, err := s.Store.MemberRole(r.Context(), id, identity); err != nil {
+		p.Role = store.RoleAdmin
+	} else if role, ok, err := s.Store.EffectiveProjectRole(r.Context(), id, identity); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	} else if ok {
@@ -153,7 +156,7 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.requireProjectOwner(w, r, id) {
+	if !s.requireProjectManager(w, r, id) {
 		return
 	}
 	var req struct {
@@ -177,7 +180,7 @@ func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.requireProjectOwner(w, r, id) {
+	if !s.requireProjectManager(w, r, id) {
 		return
 	}
 	if err := s.Store.DeleteProject(r.Context(), id); err != nil {
@@ -189,7 +192,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) mapRepo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.requireProjectOwner(w, r, id) {
+	if !s.requireProjectManager(w, r, id) {
 		return
 	}
 	var req struct {
@@ -210,7 +213,7 @@ func (s *Server) mapRepo(w http.ResponseWriter, r *http.Request) {
 // which would break a path segment).
 func (s *Server) unmapRepo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.requireProjectOwner(w, r, id) {
+	if !s.requireProjectManager(w, r, id) {
 		return
 	}
 	repo := r.URL.Query().Get("repo_name")
@@ -227,7 +230,7 @@ func (s *Server) unmapRepo(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.requireProjectOwner(w, r, id) {
+	if !s.requireProjectManager(w, r, id) {
 		return
 	}
 	caller := auth.Identity(r.Context())
@@ -287,7 +290,7 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.requireProjectOwner(w, r, id) {
+	if !s.requireProjectManager(w, r, id) {
 		return
 	}
 	if err := s.Store.RemoveMember(r.Context(), id, r.PathValue("identity")); err != nil {
