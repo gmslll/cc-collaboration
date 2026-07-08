@@ -1,6 +1,7 @@
 package relay_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,30 @@ func TestSelfServiceMachineTokens(t *testing.T) {
 	}
 	if c, _ := getAuthed(t, srv.URL+"/v1/me", ct.Token); c != http.StatusUnauthorized {
 		t.Fatalf("revoked token still works = %d", c)
+	}
+}
+
+func TestCreateMachineTokenRejectsInvalidJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "dev@t", "devpass12345")
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	devSession := loginToken(t, srv.URL, "dev@t", "devpass12345")
+	if code, body := postRawJSON(t, srv.URL+"/v1/tokens", devSession, "{"); code != http.StatusBadRequest {
+		t.Fatalf("invalid token json = %d %s", code, body)
+	}
+	toks, err := st.ListMachineTokens(context.Background(), "dev@t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toks) != 0 {
+		t.Fatalf("invalid token json created tokens: %+v", toks)
 	}
 }
 
