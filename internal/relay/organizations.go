@@ -48,7 +48,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	id := handoff.NewID(now)
 	if err := s.Store.CreateOrganization(r.Context(), id, name, identity, now); err != nil {
-		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
+		s.writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, store.Organization{ID: id, Name: name, OwnerIdentity: identity, CreatedAt: now, Role: store.OrgRoleOwner})
