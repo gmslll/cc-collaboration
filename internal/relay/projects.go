@@ -129,6 +129,15 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	identity := auth.Identity(r.Context())
+	if s.isAdmin(r.Context(), identity) {
+		p.Role = "admin"
+	} else if role, ok, err := s.Store.MemberRole(r.Context(), id, identity); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ok {
+		p.Role = role
+	}
 	repos, err := s.Store.ListProjectRepos(r.Context(), id)
 	if err != nil {
 		http.Error(w, "list project repos: "+err.Error(), http.StatusInternalServerError)

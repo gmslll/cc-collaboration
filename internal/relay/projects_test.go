@@ -91,6 +91,9 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	assertProjectListRole(t, srv.URL, devTok, proj.ID, "owner")
 	assertProjectListRole(t, srv.URL, qaTok, proj.ID, "viewer")
 	assertProjectListRole(t, srv.URL, aliceTok, proj.ID, "admin")
+	assertProjectDetailRole(t, srv.URL, devTok, proj.ID, "owner")
+	assertProjectDetailRole(t, srv.URL, qaTok, proj.ID, "viewer")
+	assertProjectDetailRole(t, srv.URL, aliceTok, proj.ID, "admin")
 
 	// A non-owner, non-member, non-admin can neither manage nor view the project.
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", malTok,
@@ -204,6 +207,25 @@ func assertProjectListRole(t *testing.T, base, token, projectID, wantRole string
 		}
 	}
 	t.Fatalf("project %s not found in list: %+v", projectID, resp.Projects)
+}
+
+func assertProjectDetailRole(t *testing.T, base, token, projectID, wantRole string) {
+	t.Helper()
+	code, body := getAuthed(t, base+"/v1/projects/"+projectID, token)
+	if code != http.StatusOK {
+		t.Fatalf("get project detail = %d %s", code, body)
+	}
+	var resp struct {
+		Project struct {
+			Role string `json:"role"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode project detail: %v", err)
+	}
+	if resp.Project.Role != wantRole {
+		t.Fatalf("project detail role = %q, want %q", resp.Project.Role, wantRole)
+	}
 }
 
 func assertOrganizationListRole(t *testing.T, base, token, orgID, wantRole string) {
