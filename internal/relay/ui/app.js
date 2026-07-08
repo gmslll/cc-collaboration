@@ -941,6 +941,8 @@ async function loadOrganizations() {
 }
 
 function organizationRole(id) {
+  const fresh = (state.organizations || []).find((o) => o.id === id);
+  if (fresh?.role) return fresh.role;
   const org = (state.me?.organizations || []).find((o) => o.id === id);
   if (org) return org.role;
   return state.me?.is_admin ? "admin" : "member";

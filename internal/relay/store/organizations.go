@@ -27,6 +27,7 @@ type Organization struct {
 	Name          string    `json:"name"`
 	OwnerIdentity string    `json:"owner_identity"`
 	CreatedAt     time.Time `json:"created_at"`
+	Role          string    `json:"role,omitempty"`
 }
 
 type OrganizationMember struct {
@@ -84,11 +85,17 @@ func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 }
 
 func (s *Store) ListOrganizationsForIdentity(ctx context.Context, identity string) ([]Organization, error) {
-	return s.queryOrganizations(ctx,
-		`SELECT o.id, o.name, o.owner_identity, o.created_at
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT o.id, o.name, o.owner_identity, o.created_at, om.role
 		   FROM organizations o
 		   JOIN organization_members om ON om.org_id = o.id
 		  WHERE om.identity = ? ORDER BY o.name`, identity)
+	if err != nil {
+		return nil, err
+	}
+	return scanRows(rows, func(r *sql.Rows) (Organization, error) {
+		return scanOrganizationWithRole(r)
+	})
 }
 
 func (s *Store) MemberOrganizations(ctx context.Context, identity string) ([]OrganizationRole, error) {
@@ -223,6 +230,21 @@ func scanOrganization(row scanner) (Organization, error) {
 		createdMS int64
 	)
 	if err := row.Scan(&org.ID, &org.Name, &org.OwnerIdentity, &createdMS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Organization{}, ErrNotFound
+		}
+		return Organization{}, err
+	}
+	org.CreatedAt = time.UnixMilli(createdMS).UTC()
+	return org, nil
+}
+
+func scanOrganizationWithRole(row scanner) (Organization, error) {
+	var (
+		org       Organization
+		createdMS int64
+	)
+	if err := row.Scan(&org.ID, &org.Name, &org.OwnerIdentity, &createdMS, &org.Role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Organization{}, ErrNotFound
 		}

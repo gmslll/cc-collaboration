@@ -62,6 +62,9 @@ func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
 	)
 	if s.isAdmin(r.Context(), identity) {
 		orgs, err = s.Store.ListOrganizations(r.Context())
+		for i := range orgs {
+			orgs[i].Role = "admin"
+		}
 	} else {
 		orgs, err = s.Store.ListOrganizationsForIdentity(r.Context(), identity)
 	}

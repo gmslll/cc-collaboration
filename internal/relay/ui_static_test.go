@@ -65,3 +65,33 @@ func TestProjectRolePrefersFreshProjectListRole(t *testing.T) {
 		t.Fatal("projectRole still falls back to editable-looking member role for unknown projects")
 	}
 }
+
+func TestOrganizationRolePrefersFreshOrganizationListRole(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	start := strings.Index(js, "function organizationRole(id) {")
+	if start < 0 {
+		t.Fatal("could not locate organizationRole function body")
+	}
+	end := strings.Index(js[start:], "\nfunction organizationName(id)")
+	if end < 0 {
+		t.Fatal("could not locate organizationRole function body")
+	}
+	body := js[start : start+end]
+	required := []string{
+		`const fresh = (state.organizations || []).find((o) => o.id === id);`,
+		`if (fresh?.role) return fresh.role;`,
+		`const org = (state.me?.organizations || []).find((o) => o.id === id);`,
+	}
+	for _, want := range required {
+		if !strings.Contains(body, want) {
+			t.Fatalf("organizationRole is missing freshness fragment %q", want)
+		}
+	}
+	if strings.Index(body, `state.me?.organizations`) < strings.Index(body, `state.organizations`) {
+		t.Fatal("organizationRole checks stale me.organizations before fresh state.organizations")
+	}
+}

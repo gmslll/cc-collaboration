@@ -70,6 +70,8 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	if len(meAfterCreate.Organizations) != 1 {
 		t.Fatalf("dev organizations = %+v", meAfterCreate.Organizations)
 	}
+	assertOrganizationListRole(t, srv.URL, devTok, proj.OrgID, "owner")
+	assertOrganizationListRole(t, srv.URL, aliceTok, proj.OrgID, "admin")
 
 	// Owner maps a repo + adds a member.
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", devTok,
@@ -203,6 +205,32 @@ func assertProjectListRole(t *testing.T, base, token, projectID, wantRole string
 	t.Fatalf("project %s not found in list: %+v", projectID, resp.Projects)
 }
 
+func assertOrganizationListRole(t *testing.T, base, token, orgID, wantRole string) {
+	t.Helper()
+	code, body := getAuthed(t, base+"/v1/orgs", token)
+	if code != http.StatusOK {
+		t.Fatalf("list organizations = %d %s", code, body)
+	}
+	var resp struct {
+		Organizations []struct {
+			ID   string `json:"id"`
+			Role string `json:"role"`
+		} `json:"organizations"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode organizations: %v", err)
+	}
+	for _, org := range resp.Organizations {
+		if org.ID == orgID {
+			if org.Role != wantRole {
+				t.Fatalf("organization %s role = %q, want %q; organizations=%+v", orgID, org.Role, wantRole, resp.Organizations)
+			}
+			return
+		}
+	}
+	t.Fatalf("organization %s not found in list: %+v", orgID, resp.Organizations)
+}
+
 func TestOrganizationSaaSFlow(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {
@@ -239,6 +267,8 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 		map[string]string{"identity": "teammate@demo", "role": "owner"}); code != http.StatusOK {
 		t.Fatalf("owner add org member = %d", code)
 	}
+	assertOrganizationListRole(t, srv.URL, ownerTok, org.ID, "owner")
+	assertOrganizationListRole(t, srv.URL, teamTok, org.ID, "owner")
 
 	code, body = postJSON(t, srv.URL+"/v1/projects", teamTok,
 		map[string]string{"name": "Team Project", "org_id": org.ID})
