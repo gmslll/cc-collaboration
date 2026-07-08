@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -13,6 +12,7 @@ import '../local/config.dart';
 import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
+import '../local/todo_assignment_candidates.dart';
 import '../local/todo_materialize.dart';
 import '../local/todo_store.dart';
 import '../remote/remote_client.dart';
@@ -2203,12 +2203,11 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
   }
 
-  // _loadMembers builds the candidate list for "指派给成员": self + the todo's
-  // project members (a personal todo — no project — is self-only). Display names
-  // come from the project-members payload (degrades to the raw identity on a
-  // relay that predates the display_name join). The online set is best-effort
-  // and drives ONLY the green dot — assignees must be project members, never
-  // arbitrary online strangers, so online users are not added to the pool.
+  // _loadMembers builds the candidate list for "指派给成员": self + the current
+  // assignee + direct project members + team owner/admin effective project
+  // managers. Display names come from project/team member payloads (degrades to
+  // raw identity). The online set is best-effort and drives ONLY the green dot;
+  // arbitrary online strangers are not added to the assignable pool.
   Future<void> _loadMembers() async {
     setState(() {
       _loadingMembers = true;
@@ -2217,27 +2216,24 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final self = _selfIdentity;
     final cur = (widget.todo.assigneeIdentity ?? '').trim();
     final online = <String>{};
-    final ids = <String>[];
     final names = <String, String>{};
-    final seen = <String>{};
-    void add(String raw, [String name = '']) {
+    void rememberName(String raw, [String name = '']) {
       final id = raw.trim();
-      if (id.isEmpty || !seen.add(id)) return;
-      ids.add(id);
+      if (id.isEmpty) return;
       if (name.trim().isNotEmpty) names[id] = name.trim();
     }
 
     final pid = widget.todo.projectId ?? '';
-    // onlineUsers is best-effort (dot only). project() is load-bearing — failure
-    // means "no members" and surfaces as _membersError.
+    // onlineUsers is best-effort (dot only). project() is load-bearing for team
+    // todos; organization() is best-effort so older relays still show direct
+    // project members.
     final onlineF = widget.client.onlineUsers().catchError((_) => <OnlineUser>[]);
-    final membersF = pid.isEmpty
-        ? Future.value(const <ProjectMember>[])
-        : widget.client.project(pid).then((d) => d.members);
+    final detailF =
+        pid.isEmpty ? Future.value(null) : widget.client.project(pid);
 
-    final List<ProjectMember> members;
+    final ProjectDetail? detail;
     try {
-      members = await membersF;
+      detail = await detailF;
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -2247,11 +2243,28 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
-    add(self);
-    add(cur); // keep the current assignee selectable even if they left the project
-    for (final m in members) {
-      add(m.identity, m.displayName);
+    final projectMembers = detail?.members ?? const <ProjectMember>[];
+    final orgMembers = detail?.project.orgId.isNotEmpty == true
+        ? await widget.client
+            .organization(detail!.project.orgId)
+            .then((d) => d.members)
+            .catchError((_) => <OrganizationMember>[])
+        : const <OrganizationMember>[];
+
+    rememberName(self);
+    rememberName(cur); // keep current assignee selectable even if they lost access
+    for (final m in projectMembers) {
+      rememberName(m.identity, m.displayName);
     }
+    for (final m in orgMembers) {
+      rememberName(m.identity, m.displayName);
+    }
+    final ids = assignableTodoMemberIds(
+      selfIdentity: self,
+      currentAssignee: cur,
+      projectMembers: projectMembers,
+      organizationMembers: orgMembers,
+    );
     for (final u in await onlineF) {
       if (u.online) online.add(u.identity);
     }
