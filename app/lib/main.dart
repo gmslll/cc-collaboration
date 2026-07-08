@@ -222,7 +222,24 @@ class _HomeShellState extends State<HomeShell> {
     cfg?.terminalApp ?? '',
     cfg?.claudeCommand ?? '',
     cfg?.codexCommand ?? '',
+    cfg?.publishSessions ?? false,
   );
+
+  Future<void> _reloadLocalConfig() async {
+    final cfg = await AppConfig.load();
+    if (!mounted || cfg == null) return;
+    final current = _cfg;
+    if (current == null || !_loggedIn) {
+      setState(() => _cfg = cfg);
+      return;
+    }
+    final session = Session(
+      relayUrl: current.relayUrl,
+      token: current.token,
+      identity: current.identity,
+    );
+    setState(() => _cfg = _configWithSession(cfg, session));
+  }
 
   @override
   void initState() {
@@ -412,6 +429,7 @@ class _HomeShellState extends State<HomeShell> {
               _cfg!.terminalApp,
               _cfg!.claudeCommand,
               _cfg!.codexCommand,
+              _cfg!.publishSessions,
             );
       setState(() {
         _client = null;
@@ -546,6 +564,8 @@ class _HomeShellState extends State<HomeShell> {
               client: _client!,
               identity: _cfg!.identity,
               onSwitchAccount: _switchAccount,
+              onConfigSaved: () =>
+                  unawaited(_reloadLocalConfig().catchError((_) {})),
             )
           : _loginRequiredPage('账号'),
       if (isAdmin) AdminPage(client: _client!),

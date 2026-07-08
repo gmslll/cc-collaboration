@@ -25,6 +25,7 @@ class Cli {
     String? linearToken,
     String? githubToken,
     String? terminalApp,
+    bool? publishSessions,
     String? claudeCommand,
     String? codexCommand,
   }) async {

@@ -286,6 +286,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   Timer? _overviewTicker;
   Timer? _hookActivityTicker;
   final Map<String, String> _hookActivityFingerprints = {};
+  Offset? _lastContextMenuPosition;
 
   // Parked ("稍后") cross-user messages: persisted across restarts, surfaced as a
   // toolbar badge, injected later (manually, or auto when the target session
@@ -927,25 +928,30 @@ class _WorkspacePageState extends State<WorkspacePage>
     final relayChanged =
         oldWidget.config.relayUrl != widget.config.relayUrl ||
         oldWidget.config.token != widget.config.token ||
+        oldWidget.config.identity != widget.config.identity ||
         (oldWidget.client == null) != (widget.client == null);
     if (!relayChanged && oldWidget.config == widget.config) return;
 
     _cfg = widget.config;
-    _remoteHost.removeListener(_onRemoteChange);
-    _remoteHost.dispose();
-    _remoteHost = _newRemoteHost();
-    _remoteHost.addListener(_onRemoteChange);
-    _relaySse?.cancel();
-    _relaySse = null;
-    _sessionHeartbeat?.cancel();
-    _sessionHeartbeat = null;
-    if (widget.client == null) {
-      _tasksByRepo = const {};
-      _detailItem = null;
-      _inboxSidebarSelected = null;
-      _todosSidebarSelected = null;
+    if (relayChanged) {
+      _remoteHost.removeListener(_onRemoteChange);
+      _remoteHost.dispose();
+      _remoteHost = _newRemoteHost();
+      _remoteHost.addListener(_onRemoteChange);
+      _relaySse?.cancel();
+      _relaySse = null;
+      _sessionHeartbeat?.cancel();
+      _sessionHeartbeat = null;
+      if (widget.client == null) {
+        _tasksByRepo = const {};
+        _detailItem = null;
+        _inboxSidebarSelected = null;
+        _todosSidebarSelected = null;
+      }
+      _connectRelayPresence();
+    } else {
+      _publishSessions();
     }
-    _connectRelayPresence();
     _loadTasks();
     _publishOverview();
   }
@@ -1045,20 +1051,30 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  // _publishSessions advertises our open sessions (with their project) so peers
-  // can pick a specific one. Fire-and-forget; best-effort presence.
+  // _publishSessions advertises our open sessions only when publish_sessions is
+  // enabled. Disabled still posts an empty list, clearing any older public list.
   void _publishSessions() {
     if (!_relayConfigured) return;
-    final list = [
-      for (final s in terms)
-        {
-          'id': s.id,
-          'label': s.label,
-          'project': _projectForFile(s.workdir)?.project.name ?? '',
-          'workdir': s.workdir,
-        },
-    ];
-    unawaited(widget.client!.publishSessions(list).catchError((_) {}));
+    unawaited(_publishSessionsNow().catchError((_) {}));
+  }
+
+  Future<void> _publishSessionsNow() async {
+    var publish = _cfg.publishSessions;
+    try {
+      publish = (await AppConfig.load())?.publishSessions ?? publish;
+    } catch (_) {}
+    final list = publish
+        ? [
+            for (final s in terms)
+              {
+                'id': s.id,
+                'label': s.label,
+                'project': _projectForFile(s.workdir)?.project.name ?? '',
+                'workdir': s.workdir,
+              },
+          ]
+        : const <Map<String, dynamic>>[];
+    await widget.client!.publishSessions(list);
   }
 
   // _onRelayEvent acts on the cross-user message.deliver event (other relay
@@ -1426,6 +1442,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     loaded.terminalApp,
     loaded.claudeCommand,
     loaded.codexCommand,
+    loaded.publishSessions,
   );
 
   Future<void> _loadTasks() async {
@@ -9917,10 +9934,12 @@ class _WorkspacePageState extends State<WorkspacePage>
         // Other live sessions this node can forward its selection to. This menu
         // lives in the tree (not the terminal surface), so a full-screen TUI
         // can't grab the click the way it intercepts an in-terminal right-click.
-        final peers = peersExcluding(e.s.id);
+        final sendGroups = _sendGroupsFor(e.s.workdir, excludeId: e.s.id);
+        final hasSendTargets =
+            sendGroups.same.isNotEmpty || sendGroups.others.isNotEmpty;
         final sessionMenu = PopupMenuButton<String>(
           tooltip: '会话操作',
-          onSelected: (v) {
+          onSelected: (v) async {
             if (v == 'supervisor') {
               if (project != null) {
                 unawaited(_supervisorFlow(project, dir, preLaunch));
@@ -9933,6 +9952,18 @@ class _WorkspacePageState extends State<WorkspacePage>
               _showSendToOnlineUser(
                 e.s.selectedText ?? e.s.renderSnapshot(_kForwardLines),
               );
+            } else if (v == 'send-session') {
+              final pick = await showGroupedSendMenu(
+                context,
+                _lastContextMenuPosition ?? _fallbackMenuPosition(),
+                same: sendGroups.same,
+                others: sendGroups.others,
+              );
+              if (pick == null || !mounted || !pick.startsWith('send:')) {
+                return;
+              }
+              final to = sessionById(pick.substring('send:'.length));
+              if (to != null) _forwardSelection(e.s, to);
             } else if (v.startsWith('send:')) {
               final to = sessionById(v.substring(5));
               if (to != null) _forwardSelection(e.s, to);
@@ -9958,17 +9989,16 @@ class _WorkspacePageState extends State<WorkspacePage>
                 icon: Icons.power_settings_new_rounded,
                 label: '结束会话',
               ),
-              if (peers.isNotEmpty) const PopupMenuDivider(),
+              const PopupMenuDivider(),
               // Always enabled — sends the selection if there is one, else this
               // session's recent output (renderSnapshot). No need to first make a
               // mouse selection inside a TUI.
-              for (final q in peers)
+              if (hasSendTargets)
                 ccMenuItem(
-                  value: 'send:${q.id}',
+                  value: 'send-session',
                   icon: Icons.send_rounded,
-                  label: '发送到「${q.label}」',
+                  label: '发送到会话…',
                 ),
-              const PopupMenuDivider(),
               ccMenuItem(
                 value: 'send-online',
                 icon: Icons.cloud_upload_rounded,
@@ -10777,6 +10807,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       GestureDetector(
         behavior: HitTestBehavior.translucent,
         onSecondaryTapDown: (d) async {
+          _lastContextMenuPosition = d.globalPosition;
           menu.onOpened?.call();
           final overlay =
               Overlay.of(context).context.findRenderObject() as RenderBox;
@@ -10792,6 +10823,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         },
         child: child,
       );
+
+  Offset _fallbackMenuPosition() {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    return overlay.localToGlobal(overlay.size.center(Offset.zero));
+  }
 }
 
 // _DialogHeader is the shared 42px title bar used by the workspace dialogs:

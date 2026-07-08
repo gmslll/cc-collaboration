@@ -35,6 +35,7 @@ func configUsage() {
                         [--claude-command CMD] [--codex-command CMD]
                         [--grade-command CMD] [--linear-token TOK]
                         [--github-token TOK]
+                        [--publish-sessions=true|false]
                         [--terminal-app terminal|iterm2|ghostty|windows-terminal|powershell]
         set one or more user-level fields; only the flags you pass are changed,
         the rest of the config (workspaces etc.) is preserved.
@@ -55,6 +56,7 @@ func runConfigSet(_ context.Context, args []string) error {
 	grade := fs.String("grade-command", "", "local AI severity grader command")
 	linear := fs.String("linear-token", "", "Linear personal API token")
 	github := fs.String("github-token", "", "GitHub personal access token (read PRs)")
+	publishSessions := fs.Bool("publish-sessions", false, "publish local desktop sessions to online users")
 	terminalApp := fs.String("terminal-app", "", "default external terminal app: terminal|iterm2|ghostty|windows-terminal|powershell")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -92,6 +94,8 @@ func runConfigSet(_ context.Context, args []string) error {
 			u.LinearPersonalToken = *linear
 		case "github-token":
 			u.GitHubToken = *github
+		case "publish-sessions":
+			u.PublishSessions = *publishSessions
 		case "terminal-app":
 			if !validTerminalApp(*terminalApp) {
 				setErr = fmt.Errorf("invalid terminal-app %q (terminal|iterm2|ghostty|windows-terminal|powershell)", *terminalApp)

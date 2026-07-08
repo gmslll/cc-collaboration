@@ -29,11 +29,13 @@ class AccountPage extends StatefulWidget {
   final RelayClient client;
   final String identity;
   final VoidCallback? onSwitchAccount;
+  final VoidCallback? onConfigSaved;
   const AccountPage({
     super.key,
     required this.client,
     required this.identity,
     this.onSwitchAccount,
+    this.onConfigSaved,
   });
 
   @override
@@ -53,6 +55,7 @@ class _AccountPageState extends State<AccountPage> {
   final _token = TextEditingController();
   String _agent = 'claude';
   String _terminalApp = ''; // '' = platform default
+  bool _publishSessions = false;
   final _wsRoot = TextEditingController();
   final _grade = TextEditingController();
   final _linear = TextEditingController();
@@ -116,6 +119,7 @@ class _AccountPageState extends State<AccountPage> {
       _token.text = c.token;
       _agent = c.agent.isEmpty ? 'claude' : c.agent;
       _terminalApp = c.terminalApp;
+      _publishSessions = c.publishSessions;
       _wsRoot.text = c.workspaceRoot;
       _grade.text = c.gradeCommand;
       _linear.text = c.linearToken;
@@ -299,8 +303,10 @@ class _AccountPageState extends State<AccountPage> {
         gradeCommand: _grade.text.trim(),
         linearToken: _linear.text.trim(),
         githubToken: _github.text.trim(),
+        publishSessions: _publishSessions,
       );
       await _loadLocalConfig();
+      widget.onConfigSaved?.call();
       if (mounted) snack(context, '已保存到 config.toml');
     } catch (e) {
       if (mounted) snack(context, errorText(e));
@@ -795,6 +801,17 @@ class _AccountPageState extends State<AccountPage> {
                   onChanged: (v) => setState(() => _terminalApp = v ?? ''),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _publishSessions,
+              onChanged: (v) => setState(() => _publishSessions = v),
+              title: const Text('公开在线会话'),
+              subtitle: const Text(
+                '关闭时其他在线用户只能看到你在线，不能看到或选择你的本机会话。',
+                style: TextStyle(color: CcColors.muted, fontSize: 12),
+              ),
             ),
             const SizedBox(height: 8),
             _cfgField(_wsRoot, 'workspace_root(工作区根目录)'),

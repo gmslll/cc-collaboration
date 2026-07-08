@@ -66,6 +66,10 @@ class AppConfig {
   /// used when a repo's .cc-handoff.toml doesn't set its own terminal_app.
   final String terminalApp;
 
+  /// Whether this desktop publishes its local session list to online users.
+  /// Default false: presence remains visible, session targets stay private.
+  final bool publishSessions;
+
   /// per-agent launch overrides (absolute path or full command/script); empty =
   /// auto-resolve. Read by AgentResolver so the PTY launcher works without a
   /// PATH-resolvable `claude`/`codex`.
@@ -86,6 +90,7 @@ class AppConfig {
     this.terminalApp = '',
     this.claudeCommand = '',
     this.codexCommand = '',
+    this.publishSessions = false,
   ]);
 
   String? repoPath(String name) => repos[name];
@@ -143,6 +148,7 @@ class AppConfig {
     final linear = (map['linear_personal_token'] ?? '').toString();
     final githubToken = (map['github_token'] ?? '').toString();
     final terminalApp = (map['terminal_app'] ?? '').toString();
+    final publishSessions = map['publish_sessions'] == true;
     final claudeCommand = (map['claude_command'] ?? '').toString();
     final codexCommand = (map['codex_command'] ?? '').toString();
     final repos = <String, String>{};
@@ -198,6 +204,7 @@ class AppConfig {
       terminalApp,
       claudeCommand,
       codexCommand,
+      publishSessions,
     );
   }
 }

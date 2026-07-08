@@ -42,6 +42,11 @@ type User struct {
 	// requests + their diffs for a project. User-level (kept out of git), read
 	// only by the app. Empty disables the in-app GitHub PR view.
 	GitHubToken string `toml:"github_token,omitempty"`
+	// PublishSessions controls whether the desktop app publishes its local
+	// terminal session list to the relay so other online users can target a
+	// specific session. Default false keeps online presence visible but the
+	// session list private.
+	PublishSessions bool `toml:"publish_sessions,omitempty"`
 	// WorkspaceRoot is the base directory under which `workspace create`/`add`
 	// carve a new workspace dir when no explicit path is given. Empty falls
 	// back to ~/cc-handoff-workspaces. Supports a leading ~ for the home dir.

@@ -244,6 +244,7 @@ class Cli {
     String? linearToken,
     String? githubToken,
     String? terminalApp,
+    bool? publishSessions,
   }) =>
       run([
         'config', 'set',
@@ -258,6 +259,8 @@ class Cli {
         if (linearToken != null) ...['--linear-token', linearToken],
         if (githubToken != null) ...['--github-token', githubToken],
         if (terminalApp != null) ...['--terminal-app', terminalApp],
+        if (publishSessions != null)
+          '--publish-sessions=${publishSessions ? 'true' : 'false'}',
       ]);
 
   static Future<void> workspaceSet(String name,
