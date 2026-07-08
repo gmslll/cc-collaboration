@@ -17,6 +17,7 @@ const state = {
   me: null, // { identity, is_admin, organizations: [{id,name,role}], projects: [{id,name,role}] }
   organizations: [], // loaded in the Teams pane (GET /v1/orgs)
   projects: [], // loaded in the Projects pane (GET /v1/projects)
+  preferredProjectOrgID: "",
   projectID: "", // selected project for the scope=project handoff view
   view: "recipient",
   items: [],
@@ -828,7 +829,7 @@ async function onRegister(event) {
     const data = await resp.json();
     setToken(data.token);
     els.loginPassword.value = "";
-    await onConnected();
+    await onConnected({ view: "organizations" });
   } catch (err) {
     toast(`注册失败：${err.message || err}`);
   }
@@ -865,7 +866,7 @@ async function onSignout() {
 
 // onConnected runs once a token is established (login or paste): learn who we
 // are, reveal role-appropriate tabs, then load the default view.
-async function onConnected() {
+async function onConnected(options = {}) {
   try {
     state.me = await api("/v1/me");
   } catch (err) {
@@ -878,6 +879,10 @@ async function onConnected() {
   els.authMessage.textContent = `已登录为 ${state.me.identity}`;
   setupRoleTabs();
   setConnectedLabel();
+  if (options.view) {
+    await switchView(options.view);
+    return;
+  }
   refreshAll();
 }
 
@@ -1112,11 +1117,19 @@ async function onCreateOrganization(event) {
   const name = els.newOrgName.value.trim();
   if (!name) return;
   try {
-    await api("/v1/orgs", { method: "POST", body: JSON.stringify({ name }) });
+    const org = await api("/v1/orgs", { method: "POST", body: JSON.stringify({ name }) });
+    if (org?.id) state.preferredProjectOrgID = org.id;
     els.newOrgName.value = "";
     toast("团队已创建");
     await refreshMe();
     await loadOrganizations();
+    if (org?.id) {
+      const body = organizationBody(org.id);
+      if (body) {
+        await renderOrganizationManage(org.id, body);
+        body.classList.remove("hidden");
+      }
+    }
   } catch (err) {
     toast(err.message);
   }
@@ -1144,6 +1157,7 @@ async function loadProjects() {
 function renderProjectOrgOptions() {
   const orgs = (state.organizations || []).filter((org) => canManageOrganization(organizationRole(org.id)));
   if (!els.newProjectOrg) return;
+  const selected = state.preferredProjectOrgID || els.newProjectOrg.value || "";
   if (!orgs.length) {
     els.newProjectOrg.innerHTML = `<option value="">我的默认团队</option>`;
     return;
@@ -1152,6 +1166,7 @@ function renderProjectOrgOptions() {
     `<option value="">我的默认团队</option>`,
     ...orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHTML(org.name)}</option>`),
   ].join("");
+  els.newProjectOrg.value = Array.from(els.newProjectOrg.options).some((option) => option.value === selected) ? selected : "";
 }
 
 function projectRole(id) {
@@ -1222,6 +1237,11 @@ async function onProjectsListClick(event) {
   } catch (err) {
     toast(err.message);
   }
+}
+
+function projectBody(id) {
+  const card = Array.from(els.projectsList.querySelectorAll("[data-project]")).find((el) => el.dataset.project === id);
+  return card?.querySelector("[data-body]") || null;
 }
 
 async function onProjectsListSubmit(event) {
@@ -1297,11 +1317,19 @@ async function onCreateProject(event) {
   const orgID = els.newProjectOrg.value;
   if (!name) return;
   try {
-    await api("/v1/projects", { method: "POST", body: JSON.stringify({ name, org_id: orgID }) });
+    const project = await api("/v1/projects", { method: "POST", body: JSON.stringify({ name, org_id: orgID }) });
+    state.preferredProjectOrgID = orgID;
     els.newProjectName.value = "";
     toast("项目已创建");
     await refreshMe();
     await loadProjects();
+    if (project?.id) {
+      const body = projectBody(project.id);
+      if (body) {
+        await renderProjectManage(project.id, body);
+        body.classList.remove("hidden");
+      }
+    }
   } catch (err) {
     toast(err.message);
   }
