@@ -217,13 +217,17 @@ func TestListTeamIdentitiesCanFilterOneMember(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/projects/p1":
-			w.Write([]byte(`{"members":[
-				{"identity":"owner@x","role":"owner"},
-				{"identity":"viewer@x","role":"viewer"}
-			]}`))
+			w.Write([]byte(`{
+				"project":{"id":"p1","org_id":"o1"},
+				"members":[
+					{"identity":"owner@x","role":"owner"},
+					{"identity":"viewer@x","role":"viewer"}
+				]}`))
 		case "/v1/orgs/o1":
 			w.Write([]byte(`{"members":[
 				{"identity":"admin@x","role":"admin"},
+				{"identity":"manager@x","role":"owner"},
+				{"identity":"member@x","role":"member"},
 				{"identity":"guest@x","role":"guest"}
 			]}`))
 		default:
@@ -240,12 +244,26 @@ func TestListTeamIdentitiesCanFilterOneMember(t *testing.T) {
 	if want := []string{"viewer@x"}; !slices.Equal(projectIDs, want) {
 		t.Fatalf("project ids = %v, want %v", projectIDs, want)
 	}
+	projectIDs, err = client.ListTeamIdentities(context.Background(), "p1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"owner@x", "viewer@x", "admin@x", "manager@x"}; !slices.Equal(projectIDs, want) {
+		t.Fatalf("project ids with team managers = %v, want %v", projectIDs, want)
+	}
+	projectIDs, err = client.ListTeamIdentities(context.Background(), "p1", "", "manager@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"manager@x"}; !slices.Equal(projectIDs, want) {
+		t.Fatalf("project manager ids = %v, want %v", projectIDs, want)
+	}
 
 	orgIDs, err := client.ListTeamIdentities(context.Background(), "", "o1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"admin@x", "guest@x"}; !slices.Equal(orgIDs, want) {
+	if want := []string{"admin@x", "manager@x", "member@x", "guest@x"}; !slices.Equal(orgIDs, want) {
 		t.Fatalf("org ids = %v, want %v", orgIDs, want)
 	}
 

@@ -142,8 +142,10 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 }
 
 // ListTeamIdentities returns identities in a project/org, including read-only
-// roles. It is intended for display/filtering commands such as online. When
-// member is set, it validates that identity belongs to the selected team.
+// roles. Project scope includes direct project members plus team owners/admins
+// with effective project access. It is intended for display/filtering commands
+// such as online. When member is set, it validates that identity belongs to the
+// selected team/effective project team.
 func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, member string) ([]string, error) {
 	if projectID != "" && orgID != "" {
 		return nil, errors.New("project and org are mutually exclusive")
@@ -151,7 +153,11 @@ func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, membe
 	member = strings.TrimSpace(member)
 	switch {
 	case projectID != "":
-		members, err := c.ListProjectMembers(ctx, projectID)
+		project, members, err := c.projectTeam(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		orgMembers, err := c.projectOrgMembers(ctx, project.OrgID)
 		if err != nil {
 			return nil, err
 		}
@@ -168,8 +174,20 @@ func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, membe
 			}
 			out = append(out, m.Identity)
 		}
+		for _, m := range orgMembers {
+			if m.Identity == "" || !orgRoleCanManage(m.Role) {
+				continue
+			}
+			if member != "" {
+				if m.Identity == member {
+					return []string{member}, nil
+				}
+				continue
+			}
+			out = append(out, m.Identity)
+		}
 		if member != "" {
-			return nil, fmt.Errorf("%s is not a member of project %s", member, projectID)
+			return nil, fmt.Errorf("%s is not a member or team manager of project %s", member, projectID)
 		}
 		return handoffschema.DedupeIdentities(out), nil
 	case orgID != "":

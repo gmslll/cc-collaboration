@@ -15,7 +15,7 @@ import (
 func runOnline(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("online", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON instead of a table")
-	projectID := fs.String("project", "", "show only identities in this project id")
+	projectID := fs.String("project", "", "show only identities with effective access to this project id")
 	orgID := fs.String("org", "", "show only identities in this organization id")
 	member := fs.String("member", "", "with --project/--org, show only this team member")
 	if err := fs.Parse(args); err != nil {

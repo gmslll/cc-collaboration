@@ -1375,7 +1375,7 @@ func listOnlineUsersTool() Tool {
 	schema := json.RawMessage(`{
   "type": "object",
   "properties": {
-    "project": {"type": "string", "description": "Optional project id. When set, only list identities that belong to this project."},
+    "project": {"type": "string", "description": "Optional project id. When set, only list identities with effective access to this project (direct members plus team owners/admins)."},
     "org":     {"type": "string", "description": "Optional organization id. When set, only list identities that belong to this organization."},
     "member":  {"type": "string", "description": "With project/org, only list this identity after validating they belong to that team."},
     "cwd": {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
