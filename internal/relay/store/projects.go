@@ -251,6 +251,18 @@ func (s *Store) UnmapRepo(ctx context.Context, repoName, projectID string) error
 	return s.execAffecting(ctx, `DELETE FROM project_repos WHERE repo_name = ? AND project_id = ?`, repoName, projectID)
 }
 
+func (s *Store) RepoProjectID(ctx context.Context, repoName string) (string, bool, error) {
+	var projectID string
+	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM project_repos WHERE repo_name = ?`, repoName).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return projectID, true, nil
+}
+
 func (s *Store) ListProjectRepos(ctx context.Context, projectID string) ([]string, error) {
 	return s.queryStrings(ctx, `SELECT repo_name FROM project_repos WHERE project_id = ? ORDER BY repo_name`, projectID)
 }

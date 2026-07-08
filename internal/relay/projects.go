@@ -202,7 +202,14 @@ func (s *Server) mapRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "repo_name required", http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.MapRepo(r.Context(), req.RepoName, id); err != nil {
+	repoName := strings.TrimSpace(req.RepoName)
+	if existingProjectID, ok, err := s.Store.RepoProjectID(r.Context(), repoName); err != nil {
+		http.Error(w, "lookup repo: "+err.Error(), http.StatusInternalServerError)
+		return
+	} else if ok && existingProjectID != id && !s.requireProjectManager(w, r, existingProjectID) {
+		return
+	}
+	if err := s.Store.MapRepo(r.Context(), repoName, id); err != nil {
 		http.Error(w, "map repo: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

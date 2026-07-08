@@ -99,6 +99,10 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 		map[string]string{"repo_name": "mallory-repo"}); code != http.StatusOK {
 		t.Fatalf("mallory map repo = %d", code)
 	}
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", devTok,
+		map[string]string{"repo_name": "mallory-repo"}); code != http.StatusForbidden {
+		t.Fatalf("owner remap other project repo = %d, want 403", code)
+	}
 	if code, _ := deleteAuthed(t, srv.URL+"/v1/projects/"+proj.ID+"/repos?repo_name=mallory-repo", devTok); code != http.StatusNotFound {
 		t.Fatalf("owner unmap other project repo = %d, want 404", code)
 	}
