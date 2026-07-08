@@ -794,6 +794,13 @@ func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body strin
 // no rows and the extra clause is a no-op — semantics match the legacy
 // (h.sender = ? OR h.recipient = ?) query.
 func (s *Store) ListCommentsSince(ctx context.Context, identity string, since int64, limit int) ([]handoffschema.Comment, int64, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !active {
+		return nil, 0, ErrForbidden
+	}
 	var maxID int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM comments`).Scan(&maxID); err != nil {
 		return nil, 0, err

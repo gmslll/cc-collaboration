@@ -81,6 +81,14 @@ func TestListCommentsSinceVisibility(t *testing.T) {
 	if got[1].HandoffID != "h2" || got[1].Body != "ping" {
 		t.Errorf("comment[1] = %+v", got[1])
 	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	mustInsertHandoff(t, st, "h4", "sender@x", "disabled@x")
+	mustInsertComment(t, st, "h4", "sender@x", "blocked")
+	if _, _, err := st.ListCommentsSince(ctx, "disabled@x", 0, 10); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled ListCommentsSince: want ErrForbidden, got %v", err)
+	}
 }
 
 // TestListCommentsSinceCursor verifies the since cutoff: only comments with
