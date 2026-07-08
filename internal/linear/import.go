@@ -99,16 +99,16 @@ func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID,
 
 	// Candidate identity pool for assignee-email matching (see
 	// matchAssigneeIdentity): always the caller's own identity, plus every
-	// member of the target project when importing into a team project.
+	// assignable identity in the target project when importing into a team
+	// project. That includes direct project members and team owner/admin users,
+	// mirroring the relay's AssignTodo gate.
 	candidates := []string{me}
 	if projectID != "" {
-		members, err := todoClient.ListProjectMembers(ctx, projectID)
+		ids, err := todoClient.ListProjectAssigneeIdentities(ctx, projectID)
 		if err != nil {
-			return ImportResult{}, fmt.Errorf("list project %s members: %w", projectID, err)
+			return ImportResult{}, fmt.Errorf("list project %s assignee identities: %w", projectID, err)
 		}
-		for _, m := range members {
-			candidates = append(candidates, m.Identity)
-		}
+		candidates = append(candidates, ids...)
 	}
 
 	issues, err := GetTeamIssues(ctx, gql, teamKey, linearProjectID)
@@ -529,7 +529,8 @@ func composeBodyMD(labels []string, description string) string {
 
 // matchAssigneeIdentity does a best-effort, case-insensitive match of a
 // Linear assignee's email against the candidate identity pool (the caller
-// plus, when importing into a team project, that project's members).
+// plus, when importing into a team project, that project's assignable
+// identities).
 // Returns "" (no error) when nothing matches — an unmatched assignee simply
 // leaves the todo unassigned, per the feature plan.
 func matchAssigneeIdentity(candidates []string, email string) string {

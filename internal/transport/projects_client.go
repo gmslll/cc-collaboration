@@ -30,12 +30,39 @@ type OrganizationMember struct {
 	Role     string `json:"role"`
 }
 
-// ListProjectMembers returns the members of project id. Used by the
-// todo-import flow (internal/linear/import.go) to build the candidate pool
-// for matching a Linear issue's assignee email to a cc-handoff identity.
+// ListProjectMembers returns the direct members of project id. Use
+// ListProjectAssigneeIdentities when callers need effective project assignees.
 func (c *Client) ListProjectMembers(ctx context.Context, projectID string) ([]ProjectMember, error) {
 	_, members, err := c.projectTeam(ctx, projectID)
 	return members, err
+}
+
+// ListProjectAssigneeIdentities returns identities that may be assigned a todo
+// in project id: direct project members plus organization owner/admin users who
+// have effective project access through the owning team.
+func (c *Client) ListProjectAssigneeIdentities(ctx context.Context, projectID string) ([]string, error) {
+	project, members, err := c.projectTeam(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	orgMembers, err := c.projectOrgMembers(ctx, project.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(members)+len(orgMembers))
+	for _, m := range members {
+		if m.Identity == "" {
+			continue
+		}
+		out = append(out, m.Identity)
+	}
+	for _, m := range orgMembers {
+		if m.Identity == "" || !orgRoleCanManage(m.Role) {
+			continue
+		}
+		out = append(out, m.Identity)
+	}
+	return handoffschema.DedupeIdentities(out), nil
 }
 
 func (c *Client) projectTeam(ctx context.Context, projectID string) (projectBrief, []ProjectMember, error) {

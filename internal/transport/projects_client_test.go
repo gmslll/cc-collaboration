@@ -213,6 +213,41 @@ func TestResolveTeamRecipientsCanTargetOneMember(t *testing.T) {
 	}
 }
 
+func TestListProjectAssigneeIdentitiesIncludesTeamManagers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects/p1":
+			w.Write([]byte(`{
+				"project":{"id":"p1","org_id":"o1"},
+				"members":[
+					{"identity":"owner@x","role":"owner"},
+					{"identity":"dev@x","role":"member"},
+					{"identity":"viewer@x","role":"viewer"},
+					{"identity":"org-admin@x","role":"member"}
+				]}`))
+		case "/v1/orgs/o1":
+			w.Write([]byte(`{"members":[
+				{"identity":"org-owner@x","role":"owner"},
+				{"identity":"org-admin@x","role":"admin"},
+				{"identity":"org-member@x","role":"member"},
+				{"identity":"guest@x","role":"guest"}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	ids, err := client.ListProjectAssigneeIdentities(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"owner@x", "dev@x", "viewer@x", "org-admin@x", "org-owner@x"}; !slices.Equal(ids, want) {
+		t.Fatalf("project assignee identities = %v, want %v", ids, want)
+	}
+}
+
 func TestListTeamIdentitiesCanFilterOneMember(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
