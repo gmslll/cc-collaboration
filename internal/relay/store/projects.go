@@ -25,6 +25,7 @@ func ValidRole(r string) bool {
 
 type Project struct {
 	ID            string    `json:"id"`
+	OrgID         string    `json:"org_id"`
 	Name          string    `json:"name"`
 	OwnerIdentity string    `json:"owner_identity"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -38,21 +39,39 @@ type ProjectMember struct {
 
 // ProjectRole is a project with the calling identity's role in it (for /v1/me).
 type ProjectRole struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Role string `json:"role"`
+	ID    string `json:"id"`
+	OrgID string `json:"org_id"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
 }
 
-// CreateProject inserts a project and seats its owner (role=owner) atomically.
+// CreateProject inserts a project in the owner's default organization.
 func (s *Store) CreateProject(ctx context.Context, id, name, owner string, now time.Time) error {
+	org, err := s.EnsureDefaultOrganization(ctx, owner, now)
+	if err != nil {
+		return err
+	}
+	return s.CreateProjectInOrg(ctx, id, org.ID, name, owner, now)
+}
+
+// CreateProjectInOrg inserts a project and seats its owner (role=owner)
+// atomically. The owner must already belong to the organization.
+func (s *Store) CreateProjectInOrg(ctx context.Context, id, orgID, name, owner string, now time.Time) error {
+	role, ok, err := s.OrganizationMemberRole(ctx, orgID, owner)
+	if err != nil {
+		return err
+	}
+	if !ok || !OrgRoleCanManage(role) {
+		return ErrForbidden
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO projects(id, name, owner_identity, created_at) VALUES(?, ?, ?, ?)`,
-		id, name, owner, now.UnixMilli()); err != nil {
+		`INSERT INTO projects(id, org_id, name, owner_identity, created_at) VALUES(?, ?, ?, ?, ?)`,
+		id, orgID, name, owner, now.UnixMilli()); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -70,7 +89,7 @@ func scanProject(row scanner) (Project, error) {
 		p         Project
 		createdMS int64
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.OwnerIdentity, &createdMS); err != nil {
+	if err := row.Scan(&p.ID, &p.OrgID, &p.Name, &p.OwnerIdentity, &createdMS); err != nil {
 		return Project{}, err
 	}
 	p.CreatedAt = time.UnixMilli(createdMS).UTC()
@@ -79,7 +98,7 @@ func scanProject(row scanner) (Project, error) {
 
 func (s *Store) GetProject(ctx context.Context, id string) (Project, error) {
 	p, err := scanProject(s.db.QueryRowContext(ctx,
-		`SELECT id, name, owner_identity, created_at FROM projects WHERE id = ?`, id))
+		`SELECT id, org_id, name, owner_identity, created_at FROM projects WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -88,13 +107,13 @@ func (s *Store) GetProject(ctx context.Context, id string) (Project, error) {
 
 // ListProjects returns every project (admin view).
 func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
-	return s.queryProjects(ctx, `SELECT id, name, owner_identity, created_at FROM projects ORDER BY name`)
+	return s.queryProjects(ctx, `SELECT id, org_id, name, owner_identity, created_at FROM projects ORDER BY name`)
 }
 
 // ListProjectsForIdentity returns the projects an identity is a member of.
 func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([]Project, error) {
 	return s.queryProjects(ctx,
-		`SELECT p.id, p.name, p.owner_identity, p.created_at FROM projects p
+		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at FROM projects p
 		   JOIN project_members pm ON pm.project_id = p.id
 		  WHERE pm.identity = ? ORDER BY p.name`, identity)
 }
@@ -150,15 +169,64 @@ func (s *Store) ListProjectRepos(ctx context.Context, projectID string) ([]strin
 
 // AddMember adds or updates a member's role (upsert).
 func (s *Store) AddMember(ctx context.Context, projectID, identity, role string) error {
-	_, err := s.db.ExecContext(ctx,
+	if err := s.guardLastProjectOwner(ctx, projectID, identity, role); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO project_members(project_id, identity, role) VALUES(?, ?, ?)
 		 ON CONFLICT(project_id, identity) DO UPDATE SET role = excluded.role`,
-		projectID, identity, role)
-	return err
+		projectID, identity, role); err != nil {
+		return err
+	}
+	if role != RoleOwner {
+		if err := replaceProjectOwnerIdentity(ctx, tx, projectID, identity); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) RemoveMember(ctx context.Context, projectID, identity string) error {
-	return s.execAffecting(ctx, `DELETE FROM project_members WHERE project_id = ? AND identity = ?`, projectID, identity)
+	role, ok, err := s.MemberRole(ctx, projectID, identity)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	if role == RoleOwner {
+		owners, err := s.CountProjectOwners(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		if owners <= 1 {
+			return ErrLastOwner
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if role == RoleOwner {
+		if err := replaceProjectOwnerIdentity(ctx, tx, projectID, identity); err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM project_members WHERE project_id = ? AND identity = ?`, projectID, identity)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListMembers(ctx context.Context, projectID string) ([]ProjectMember, error) {
@@ -197,7 +265,7 @@ func (s *Store) MemberRole(ctx context.Context, projectID, identity string) (str
 // MemberProjects returns the projects (with the caller's role) an identity is in.
 func (s *Store) MemberProjects(ctx context.Context, identity string) ([]ProjectRole, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT p.id, p.name, pm.role FROM project_members pm
+		`SELECT p.id, p.org_id, p.name, pm.role FROM project_members pm
 		   JOIN projects p ON p.id = pm.project_id
 		  WHERE pm.identity = ? ORDER BY p.name`, identity)
 	if err != nil {
@@ -205,9 +273,59 @@ func (s *Store) MemberProjects(ctx context.Context, identity string) ([]ProjectR
 	}
 	return scanRows(rows, func(r *sql.Rows) (ProjectRole, error) {
 		var pr ProjectRole
-		err := r.Scan(&pr.ID, &pr.Name, &pr.Role)
+		err := r.Scan(&pr.ID, &pr.OrgID, &pr.Name, &pr.Role)
 		return pr, err
 	})
+}
+
+func (s *Store) CountProjectOwners(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM project_members WHERE project_id = ? AND role = ?`, projectID, RoleOwner).Scan(&count)
+	return count, err
+}
+
+func (s *Store) guardLastProjectOwner(ctx context.Context, projectID, identity, nextRole string) error {
+	current, ok, err := s.MemberRole(ctx, projectID, identity)
+	if err != nil || !ok || current != RoleOwner || nextRole == RoleOwner {
+		return err
+	}
+	owners, err := s.CountProjectOwners(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if owners <= 1 {
+		return ErrLastOwner
+	}
+	return nil
+}
+
+func replaceProjectOwnerIdentity(ctx context.Context, tx *sql.Tx, projectID, removedOrDemotedOwner string) error {
+	var current string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT owner_identity FROM projects WHERE id = ?`, projectID).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current != removedOrDemotedOwner {
+		return nil
+	}
+	var replacement string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT identity FROM project_members
+		  WHERE project_id = ? AND role = ? AND identity != ?
+		  ORDER BY identity LIMIT 1`,
+		projectID, RoleOwner, removedOrDemotedOwner).Scan(&replacement); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrLastOwner
+		}
+		return err
+	}
+	_, err := tx.ExecContext(ctx,
+		`UPDATE projects SET owner_identity = ? WHERE id = ?`, replacement, projectID)
+	return err
 }
 
 // RepoVisibleTo returns the caller's role for the project owning repoName, or

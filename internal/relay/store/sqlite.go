@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,8 +111,24 @@ CREATE TABLE IF NOT EXISTS machine_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_machine_tokens_identity ON machine_tokens(identity);
 
+CREATE TABLE IF NOT EXISTS organizations (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  owner_identity TEXT NOT NULL,
+  created_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS organization_members (
+  org_id    TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  identity  TEXT NOT NULL,
+  role      TEXT NOT NULL,
+  PRIMARY KEY (org_id, identity)
+);
+CREATE INDEX IF NOT EXISTS idx_organization_members_identity ON organization_members(identity);
+
 CREATE TABLE IF NOT EXISTS projects (
   id             TEXT PRIMARY KEY,
+  org_id         TEXT NOT NULL DEFAULT '',
   name           TEXT NOT NULL,
   owner_identity TEXT NOT NULL,
   created_at     INTEGER NOT NULL
@@ -139,6 +157,7 @@ CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(ident
 		{"kind", `ALTER TABLE handoffs ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
 		{"recipients", `ALTER TABLE handoffs ADD COLUMN recipients TEXT NOT NULL DEFAULT ''`},
 		{"bug_group_id", `ALTER TABLE handoffs ADD COLUMN bug_group_id TEXT NOT NULL DEFAULT ''`},
+		{"project_org_id", `ALTER TABLE projects ADD COLUMN org_id TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := s.db.Exec(ddl.sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {
@@ -148,6 +167,9 @@ CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(ident
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_bug_group ON handoffs(bug_group_id)`); err != nil {
 		return fmt.Errorf("create bug_group index: %w", err)
+	}
+	if err := s.backfillOrganizations(); err != nil {
+		return err
 	}
 	// One-time backfill: for every legacy handoff with no handoff_recipients
 	// row, insert one mirroring its scalar (recipient, state, picked_at) so
@@ -311,7 +333,130 @@ CREATE TABLE IF NOT EXISTS user_settings (
 	return nil
 }
 
+func defaultOrganizationID(identity string) string {
+	sum := sha256.Sum256([]byte(identity))
+	return "org_" + hex.EncodeToString(sum[:])[:12]
+}
+
+func (s *Store) backfillOrganizations() error {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().UnixMilli()
+	rows, err := tx.QueryContext(ctx, `
+SELECT identity FROM users
+UNION
+SELECT owner_identity FROM projects WHERE owner_identity != ''
+UNION
+SELECT identity FROM project_members WHERE identity != ''`)
+	if err != nil {
+		return fmt.Errorf("scan organization owners: %w", err)
+	}
+	var identities []string
+	for rows.Next() {
+		var identity string
+		if err := rows.Scan(&identity); err != nil {
+			rows.Close()
+			return err
+		}
+		if strings.TrimSpace(identity) != "" {
+			identities = append(identities, identity)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, identity := range identities {
+		orgID := defaultOrganizationID(identity)
+		name := identity + "'s team"
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO organizations(id, name, owner_identity, created_at) VALUES(?, ?, ?, ?)`,
+			orgID, name, identity, now); err != nil {
+			return fmt.Errorf("backfill organization %s: %w", identity, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)`,
+			orgID, identity, OrgRoleOwner); err != nil {
+			return fmt.Errorf("backfill organization owner %s: %w", identity, err)
+		}
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT id, owner_identity FROM projects WHERE owner_identity != ''`)
+	if err != nil {
+		return err
+	}
+	type projectOwner struct {
+		projectID string
+		owner     string
+	}
+	var projects []projectOwner
+	for rows.Next() {
+		var po projectOwner
+		if err := rows.Scan(&po.projectID, &po.owner); err != nil {
+			rows.Close()
+			return err
+		}
+		projects = append(projects, po)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, po := range projects {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE projects SET org_id = ? WHERE id = ? AND org_id = ''`,
+			defaultOrganizationID(po.owner), po.projectID); err != nil {
+			return err
+		}
+	}
+	rows, err = tx.QueryContext(ctx, `
+SELECT DISTINCT p.org_id, pm.identity, pm.role
+  FROM projects p
+  JOIN project_members pm ON pm.project_id = p.id
+ WHERE p.org_id != '' AND pm.identity != ''`)
+	if err != nil {
+		return err
+	}
+	type member struct {
+		orgID, identity, role string
+	}
+	var members []member
+	for rows.Next() {
+		var m member
+		if err := rows.Scan(&m.orgID, &m.identity, &m.role); err != nil {
+			rows.Close()
+			return err
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, m := range members {
+		role := OrgRoleMember
+		if m.role == RoleOwner {
+			role = OrgRoleOwner
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
+			 ON CONFLICT(org_id, identity) DO UPDATE SET role =
+			   CASE WHEN organization_members.role = ? THEN organization_members.role ELSE excluded.role END`,
+			m.orgID, m.identity, role, OrgRoleOwner); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 var ErrNotFound = errors.New("handoff not found")
+var ErrLastOwner = errors.New("last owner cannot be removed")
 
 func (s *Store) Insert(ctx context.Context, p *handoffschema.Package) error {
 	tx, err := s.db.BeginTx(ctx, nil)

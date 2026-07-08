@@ -133,12 +133,18 @@ func TestRegisterFlow(t *testing.T) {
 		t.Fatalf("me status=%d", code)
 	}
 	var me struct {
-		Identity string `json:"identity"`
-		IsAdmin  bool   `json:"is_admin"`
+		Identity      string `json:"identity"`
+		IsAdmin       bool   `json:"is_admin"`
+		Organizations []struct {
+			Role string `json:"role"`
+		} `json:"organizations"`
 	}
 	_ = json.Unmarshal(body, &me)
 	if me.Identity != "carol@demo" || me.IsAdmin {
 		t.Fatalf("me=%+v", me)
+	}
+	if len(me.Organizations) != 1 || me.Organizations[0].Role != "owner" {
+		t.Fatalf("registered default organization = %+v", me.Organizations)
 	}
 
 	// Duplicate identity → 409.
@@ -190,6 +196,40 @@ func TestBackCompatFileToken(t *testing.T) {
 	_ = json.Unmarshal(body, &me)
 	if me.Identity != "bob@frontend" {
 		t.Fatalf("got identity %q", me.Identity)
+	}
+}
+
+func TestDisabledUserRevokesExistingAuth(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "user@demo", "userpass1")
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	userTok := loginToken(t, srv.URL, "user@demo", "userpass1")
+	if code, _ := getAuthed(t, srv.URL+"/v1/me", userTok); code != http.StatusOK {
+		t.Fatalf("me before disable = %d", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/users/user@demo/disable", adminTok,
+		map[string]bool{"disabled": true}); code != http.StatusOK {
+		t.Fatalf("disable user = %d", code)
+	}
+	if code, _ := getAuthed(t, srv.URL+"/v1/me", userTok); code != http.StatusUnauthorized {
+		t.Fatalf("me after disable = %d", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/login", "",
+		map[string]string{"identity": "user@demo", "password": "userpass1"}); code != http.StatusUnauthorized {
+		t.Fatalf("login disabled user = %d", code)
 	}
 }
 

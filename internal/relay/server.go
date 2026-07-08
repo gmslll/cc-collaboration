@@ -126,6 +126,13 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/users/{id}/admin", s.setUserAdmin)
 	api.HandleFunc("POST /v1/users/{id}/disable", s.setUserDisabled)
 	api.HandleFunc("POST /v1/users/{id}/reset-password", s.resetUserPassword)
+	// Organizations: SaaS teams/workspaces. Any authenticated user can create
+	// one; owners/admins manage membership.
+	api.HandleFunc("GET /v1/orgs", s.listOrganizations)
+	api.HandleFunc("POST /v1/orgs", s.createOrganization)
+	api.HandleFunc("GET /v1/orgs/{id}", s.getOrganization)
+	api.HandleFunc("POST /v1/orgs/{id}/members", s.addOrganizationMember)
+	api.HandleFunc("DELETE /v1/orgs/{id}/members/{identity}", s.removeOrganizationMember)
 	// Projects: self-service create + owner/admin management.
 	api.HandleFunc("GET /v1/projects", s.listProjects)
 	api.HandleFunc("POST /v1/projects", s.createProject)
@@ -633,7 +640,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 // listOnlineUsers exposes the relay roster so a caller can answer "is my
 // partner currently watching?" before sending an urgent handoff or comment.
-func (s *Server) listOnlineUsers(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) listOnlineUsers(w http.ResponseWriter, r *http.Request) {
 	if s.Hub == nil {
 		http.Error(w, "events not enabled", http.StatusNotImplemented)
 		return
@@ -643,6 +650,21 @@ func (s *Server) listOnlineUsers(w http.ResponseWriter, _ *http.Request) {
 		online[id] = true
 	}
 	known := s.Tokens.Identities()
+	if ids, err := s.Store.KnownIdentities(context.Background()); err == nil {
+		known = append(known, ids...)
+	}
+	for id := range online {
+		known = append(known, id)
+	}
+	slices.Sort(known)
+	known = slices.Compact(known)
+	activeKnown := known[:0]
+	for _, id := range known {
+		if active, err := s.Store.UserActive(r.Context(), id); err == nil && active {
+			activeKnown = append(activeKnown, id)
+		}
+	}
+	known = activeKnown
 	users := make([]handoffschema.OnlineUser, 0, len(known))
 	for _, id := range known {
 		users = append(users, handoffschema.OnlineUser{Identity: id, Online: online[id]})

@@ -27,13 +27,22 @@ type bearerResolver struct {
 func (b *bearerResolver) Resolve(ctx context.Context, raw string) (string, bool) {
 	h := auth.HashToken(raw)
 	if id, ok, err := b.store.SessionIdentity(ctx, h, time.Now()); err == nil && ok {
-		return id, true
+		return b.active(ctx, id)
 	}
 	if id, ok, err := b.store.MachineTokenIdentity(ctx, h); err == nil && ok {
-		return id, true
+		return b.active(ctx, id)
 	}
 	if b.seed != nil {
-		return b.seed.Resolve(ctx, raw)
+		if id, ok := b.seed.Resolve(ctx, raw); ok {
+			return b.active(ctx, id)
+		}
+	}
+	return "", false
+}
+
+func (b *bearerResolver) active(ctx context.Context, identity string) (string, bool) {
+	if ok, err := b.store.UserActive(ctx, identity); err == nil && ok {
+		return identity, true
 	}
 	return "", false
 }
@@ -108,6 +117,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), identity, time.Now().UTC()); err != nil {
+		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.issueSession(w, r, identity, http.StatusCreated)
 }
 
@@ -150,13 +163,22 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	organizations, err := s.Store.MemberOrganizations(r.Context(), identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if projects == nil {
 		projects = []store.ProjectRole{}
 	}
+	if organizations == nil {
+		organizations = []store.OrganizationRole{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"identity": identity,
-		"is_admin": s.isAdmin(r.Context(), identity),
-		"projects": projects,
+		"identity":      identity,
+		"is_admin":      s.isAdmin(r.Context(), identity),
+		"organizations": organizations,
+		"projects":      projects,
 	})
 }
 
@@ -216,6 +238,10 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 			code = http.StatusConflict
 		}
 		http.Error(w, "create user: "+err.Error(), code)
+		return
+	}
+	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), req.Identity, time.Now().UTC()); err != nil {
+		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	resp := map[string]any{"identity": req.Identity, "is_admin": req.IsAdmin}

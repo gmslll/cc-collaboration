@@ -95,6 +95,30 @@ func (s *Store) UserIsAdmin(ctx context.Context, identity string) (bool, error) 
 	return isAdmin != 0, nil
 }
 
+// UserActive reports whether an identity is allowed to authenticate. Missing
+// DB users are allowed so legacy file-token identities keep working.
+func (s *Store) UserActive(ctx context.Context, identity string) (bool, error) {
+	var disabled int
+	err := s.db.QueryRowContext(ctx, `SELECT disabled FROM users WHERE identity = ?`, identity).Scan(&disabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return disabled == 0, nil
+}
+
+func (s *Store) KnownIdentities(ctx context.Context) ([]string, error) {
+	return s.queryStrings(ctx, `
+SELECT identity FROM users WHERE disabled = 0
+UNION
+SELECT mt.identity FROM machine_tokens mt
+  LEFT JOIN users u ON u.identity = mt.identity
+ WHERE u.identity IS NULL OR u.disabled = 0
+ORDER BY identity`)
+}
+
 // execAffecting runs a write and maps "0 rows affected" to ErrNotFound, so
 // callers can distinguish "no such row" from a successful update.
 func (s *Store) execAffecting(ctx context.Context, query string, args ...any) error {
@@ -118,7 +142,28 @@ func (s *Store) SetAdmin(ctx context.Context, identity string, isAdmin bool) err
 }
 
 func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool) error {
-	return s.execAffecting(ctx, `UPDATE users SET disabled = ? WHERE identity = ?`, boolToInt(disabled), identity)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE users SET disabled = ? WHERE identity = ?`, boolToInt(disabled), identity)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	if disabled {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE identity = ?`, identity); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM machine_tokens WHERE identity = ?`, identity); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // --- sessions (UI login) ---

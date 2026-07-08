@@ -50,7 +50,8 @@ func (s *Server) requireProjectMember(w http.ResponseWriter, r *http.Request, pr
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	var req struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		OrgID string `json:"org_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
@@ -62,11 +63,35 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	id := handoff.NewID(now)
-	if err := s.Store.CreateProject(r.Context(), id, req.Name, identity, now); err != nil {
-		http.Error(w, "create project: "+err.Error(), http.StatusInternalServerError)
+	var err error
+	orgID := strings.TrimSpace(req.OrgID)
+	if orgID == "" {
+		err = s.Store.CreateProject(r.Context(), id, req.Name, identity, now)
+	} else {
+		if !s.requireOrgManager(w, r, orgID) {
+			return
+		}
+		if _, err := s.Store.GetOrganization(r.Context(), orgID); err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		if _, ok, err := s.Store.OrganizationMemberRole(r.Context(), orgID, identity); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		} else if !ok && s.isAdmin(r.Context(), identity) {
+			if err := s.Store.AddOrganizationMember(r.Context(), orgID, identity, store.OrgRoleAdmin); err != nil {
+				s.writeStoreErr(w, err)
+				return
+			}
+		}
+		err = s.Store.CreateProjectInOrg(r.Context(), id, orgID, req.Name, identity, now)
+	}
+	if err != nil {
+		s.writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, store.Project{ID: id, Name: req.Name, OwnerIdentity: identity, CreatedAt: now})
+	p, _ := s.Store.GetProject(r.Context(), id)
+	writeJSON(w, http.StatusCreated, p)
 }
 
 // listProjects returns all projects for an admin, else the caller's projects.
@@ -190,8 +215,32 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "identity and role (owner|member|viewer) required", http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.AddMember(r.Context(), id, req.Identity, req.Role); err != nil {
-		http.Error(w, "add member: "+err.Error(), http.StatusInternalServerError)
+	identity := strings.TrimSpace(req.Identity)
+	u, err := s.Store.GetUser(r.Context(), identity)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if u.Disabled {
+		http.Error(w, "user disabled", http.StatusBadRequest)
+		return
+	}
+	p, err := s.Store.GetProject(r.Context(), id)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if _, ok, err := s.Store.OrganizationMemberRole(r.Context(), p.OrgID, identity); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if !ok {
+		if err := s.Store.AddOrganizationMember(r.Context(), p.OrgID, identity, store.OrgRoleMember); err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+	}
+	if err := s.Store.AddMember(r.Context(), id, identity, req.Role); err != nil {
+		s.writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -213,6 +262,14 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, store.ErrForbidden) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if errors.Is(err, store.ErrLastOwner) {
+		http.Error(w, "last owner cannot be removed", http.StatusConflict)
 		return
 	}
 	http.Error(w, err.Error(), http.StatusInternalServerError)

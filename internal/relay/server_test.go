@@ -98,6 +98,46 @@ func TestListOnlineUsers(t *testing.T) {
 	}
 }
 
+func TestListOnlineUsersIncludesDBUsersAndFiltersDisabled(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Now()
+	if err := st.CreateUser(context.Background(), store.User{Identity: "db@team"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(context.Background(), store.User{Identity: "disabled@team", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-active","identity":"active@team"},
+		{"token":"tok-disabled","identity":"disabled@team"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	got := fetchOnline(t, srv.URL, "tok-active")
+	want := []handoffschema.OnlineUser{
+		{Identity: "active@team", Online: false},
+		{Identity: "db@team", Online: false},
+	}
+	if !sameUsers(got, want) {
+		t.Fatalf("online list = %+v, want %+v", got, want)
+	}
+}
+
 func TestListOnlineUsersUnauthorized(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "relay.db")
 	st, err := store.Open(dbPath)
