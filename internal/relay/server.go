@@ -243,7 +243,7 @@ func (s *Server) publishToActive(ctx context.Context, ev sse.Event) bool {
 func (s *Server) postAlert(w http.ResponseWriter, r *http.Request) {
 	sender := auth.Identity(r.Context())
 	var alert handoffschema.LogAlert
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&alert); err != nil {
+	if err := decodeJSONBody(w, r, 1<<20, &alert); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -296,7 +296,7 @@ func (s *Server) screenShareIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	var p handoffschema.Package
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&p); err != nil {
+	if err := decodeJSONBody(w, r, 32<<20, &p); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -384,7 +384,7 @@ func (s *Server) patchCapsule(w http.ResponseWriter, r *http.Request) {
 		Visibility *string `json:"visibility,omitempty"`
 		Summary    *string `json:"summary,omitempty"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &body); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -798,7 +798,7 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body string `json:"body"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1000,7 +1000,7 @@ func (s *Server) retract(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason,omitempty"`
 	}
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		if err := decodeJSONBody(w, r, 4<<10, &body); err != nil && !errors.Is(err, io.EOF) {
 			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1045,7 +1045,7 @@ func (s *Server) reassign(w http.ResponseWriter, r *http.Request) {
 		To     string `json:"to"`
 		Reason string `json:"reason"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

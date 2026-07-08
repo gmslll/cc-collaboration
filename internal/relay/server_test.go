@@ -379,6 +379,95 @@ func TestDisabledRecipientDoesNotReceiveCommentEventsAfterDisable(t *testing.T) 
 	}
 }
 
+func TestHandoffMutationsRejectTrailingJSON(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	mkUser(t, st, "charlie@qa", "charliepass1")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "charlie@qa", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+	aliceTok := loginToken(t, srv.URL, "alice@backend", "alicepass1")
+	bobTok := loginToken(t, srv.URL, "bob@frontend", "bobpass123")
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/handoffs", aliceTok,
+		`{"recipient":"bob@frontend","urgency":"normal","summary_md":"bad first"} {"recipient":"charlie@qa","summary_md":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("submit trailing json = %d %s", code, body)
+	}
+	if pending, err := st.ListPending(ctx, "bob@frontend", 100); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("trailing submit inserted pending handoff: %+v", pending)
+	}
+
+	code, body := postJSON(t, srv.URL+"/v1/handoffs", aliceTok, handoffschema.Package{
+		Recipient: "bob@frontend",
+		Urgency:   handoffschema.UrgencyNormal,
+		SummaryMD: "baseline",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("submit valid handoff = %d %s", code, body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" {
+		t.Fatalf("valid handoff response missing id: %s", body)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/handoffs/"+created.ID+"/comment", aliceTok,
+		`{"body":"bad comment"} {"body":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("comment trailing json = %d %s", code, body)
+	}
+	if comments, err := st.ListComments(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	} else if len(comments) != 0 {
+		t.Fatalf("trailing comment inserted comments: %+v", comments)
+	}
+
+	if err := st.Insert(ctx, &handoffschema.Package{
+		ID:            "bug-tail",
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindBug,
+		Sender:        "alice@backend",
+		Recipient:     "bob@frontend",
+		Urgency:       handoffschema.UrgencyNormal,
+		CreatedAt:     now,
+		Repo:          handoffschema.Repo{Name: "demo"},
+		SummaryMD:     "needs qa",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := postRawJSON(t, srv.URL+"/v1/handoffs/bug-tail/reassign", bobTok,
+		`{"to":"charlie@qa","reason":"wrong owner"} {"to":"alice@backend","reason":"second"}`); code != http.StatusBadRequest {
+		t.Fatalf("reassign trailing json = %d %s", code, body)
+	}
+	if pending, err := st.ListPending(ctx, "charlie@qa", 100); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("trailing reassign created pending handoff: %+v", pending)
+	}
+}
+
 func TestListOnlineUsersUnauthorized(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "relay.db")
 	st, err := store.Open(dbPath)
