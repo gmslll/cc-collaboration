@@ -219,8 +219,20 @@ func (s *Server) broadcastPresence(identity string, online bool) {
 		if err != nil || !ok {
 			continue
 		}
-		s.Hub.Publish(sse.Event{Type: eventType, Recipient: recipient, Data: data})
+		s.publishToActive(context.Background(), sse.Event{Type: eventType, Recipient: recipient, Data: data})
 	}
+}
+
+func (s *Server) publishToActive(ctx context.Context, ev sse.Event) bool {
+	if s.Hub == nil || ev.Recipient == "" {
+		return false
+	}
+	active, err := s.Store.UserActive(ctx, ev.Recipient)
+	if err != nil || !active {
+		return false
+	}
+	s.Hub.Publish(ev)
+	return true
 }
 
 // postAlert receives a server-side log alert and fans it out to the target
@@ -249,7 +261,7 @@ func (s *Server) postAlert(w http.ResponseWriter, r *http.Request) {
 	alert.Sender = sender
 	if s.Hub != nil {
 		if data, err := json.Marshal(alert); err == nil {
-			s.Hub.Publish(sse.Event{Type: sse.EventTypeLogAlert, Recipient: alert.Recipient, Data: data})
+			s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeLogAlert, Recipient: alert.Recipient, Data: data})
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
@@ -326,7 +338,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "insert: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.publishHandoffCreated(&p, p.EffectiveRecipients())
+	s.publishHandoffCreated(r.Context(), &p, p.EffectiveRecipients())
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         p.ID,
 		"created_at": p.CreatedAt,
@@ -387,7 +399,7 @@ func (s *Server) patchCapsule(w http.ResponseWriter, r *http.Request) {
 // targeted recipients. No-op when the Hub isn't configured (e.g. in tests
 // that don't wire one). Marshalling failure is silent — events are
 // best-effort; reconnect-with-Last-Event-Id is the recovery path.
-func (s *Server) publishHandoffCreated(p *handoffschema.Package, targets []string) {
+func (s *Server) publishHandoffCreated(ctx context.Context, p *handoffschema.Package, targets []string) {
 	if s.Hub == nil || len(targets) == 0 {
 		return
 	}
@@ -397,7 +409,7 @@ func (s *Server) publishHandoffCreated(p *handoffschema.Package, targets []strin
 		return
 	}
 	for _, rec := range targets {
-		s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffCreated, Recipient: rec, Data: data})
+		s.publishToActive(ctx, sse.Event{Type: sse.EventTypeHandoffCreated, Recipient: rec, Data: data})
 	}
 }
 
@@ -783,7 +795,7 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 				if t == identity {
 					continue
 				}
-				s.Hub.Publish(sse.Event{Type: sse.EventTypeCommentCreated, Recipient: t, Data: data})
+				s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeCommentCreated, Recipient: t, Data: data})
 			}
 		}
 	}
@@ -990,7 +1002,7 @@ func (s *Server) retract(w http.ResponseWriter, r *http.Request) {
 		ev := handoffschema.RetractEvent{ID: id, Sender: identity, Reason: body.Reason}
 		if data, err := json.Marshal(ev); err == nil {
 			for _, rec := range recipients {
-				s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffRetracted, Recipient: rec, Data: data})
+				s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeHandoffRetracted, Recipient: rec, Data: data})
 			}
 		}
 	}
@@ -1052,7 +1064,7 @@ func (s *Server) reassign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.publishHandoffCreated(newPkg, []string{req.To})
+	s.publishHandoffCreated(r.Context(), newPkg, []string{req.To})
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":              newPkg.ID,

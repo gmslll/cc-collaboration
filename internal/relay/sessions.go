@@ -190,7 +190,7 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	if s.Hub != nil {
 		out := handoffschema.Message{From: sender, SessionID: msg.SessionID, Body: msg.Body}
 		if data, err := json.Marshal(out); err == nil {
-			s.Hub.Publish(sse.Event{Type: sse.EventTypeMessageDeliver, Recipient: msg.Recipient, Data: data})
+			s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeMessageDeliver, Recipient: msg.Recipient, Data: data})
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})

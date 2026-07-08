@@ -297,6 +297,67 @@ func TestDisabledSeedAdminDoesNotReceivePresenceAfterDisable(t *testing.T) {
 	}
 }
 
+func TestDisabledRecipientDoesNotReceiveCommentEventsAfterDisable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"},
+		{"token":"tok-bob",  "identity":"bob@frontend"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	hub := sse.NewHub()
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: hub}).Handler())
+	t.Cleanup(srv.Close)
+
+	bobLines, closeBob := openEventLines(t, srv.URL, "tok-bob")
+	t.Cleanup(closeBob)
+	waitForHub(t, hub, func(ids []string) bool { return slices.Contains(ids, "bob@frontend") })
+
+	code, body := postJSON(t, srv.URL+"/v1/handoffs", "tok-alice", handoffschema.Package{
+		SchemaVersion: handoffschema.SchemaVersion,
+		Recipient:     "bob@frontend",
+		Urgency:       handoffschema.UrgencyNormal,
+		SummaryMD:     "please review",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("submit handoff = %d %s", code, body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" {
+		t.Fatalf("submit handoff response missing id: %s", body)
+	}
+
+	if err := st.SetDisabled(context.Background(), "bob@frontend", true); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/handoffs/"+created.ID+"/comment", "tok-alice",
+		map[string]string{"body": "follow-up after disable"}); code != http.StatusCreated {
+		t.Fatalf("post comment = %d %s", code, body)
+	}
+	if awaitEventType(t, bobLines, sse.EventTypeCommentCreated, 200*time.Millisecond) {
+		t.Fatal("disabled recipient received comment.created after disable")
+	}
+}
+
 func TestListOnlineUsersUnauthorized(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "relay.db")
 	st, err := store.Open(dbPath)
@@ -426,6 +487,24 @@ func awaitPresence(t *testing.T, lines <-chan string, identity string, online bo
 				}
 			case ln == "":
 				event = ""
+			}
+		case <-deadline:
+			return false
+		}
+	}
+}
+
+func awaitEventType(t *testing.T, lines <-chan string, eventType string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ln, ok := <-lines:
+			if !ok {
+				return false
+			}
+			if strings.TrimSpace(strings.TrimPrefix(ln, "event:")) == eventType && strings.HasPrefix(ln, "event:") {
+				return true
 			}
 		case <-deadline:
 			return false

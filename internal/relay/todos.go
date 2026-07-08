@@ -634,6 +634,6 @@ func (s *Server) publishTodoEvent(ctx context.Context, eventType string, t todos
 		return
 	}
 	for _, rec := range targets {
-		s.Hub.Publish(sse.Event{Type: eventType, Recipient: rec, Data: data})
+		s.publishToActive(ctx, sse.Event{Type: eventType, Recipient: rec, Data: data})
 	}
 }
