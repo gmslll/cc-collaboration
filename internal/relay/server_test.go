@@ -1,6 +1,7 @@
 package relay_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -186,6 +187,65 @@ func TestListOnlineUsersScopedBySharedTeam(t *testing.T) {
 	}
 }
 
+func TestPresenceEventsScopedBySharedTeam(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"},
+		{"token":"tok-bob",  "identity":"bob@frontend"},
+		{"token":"tok-mallory",  "identity":"mallory@other"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	hub := sse.NewHub()
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: hub}).Handler())
+	t.Cleanup(srv.Close)
+
+	bobLines, closeBob := openEventLines(t, srv.URL, "tok-bob")
+	t.Cleanup(closeBob)
+	malloryLines, closeMallory := openEventLines(t, srv.URL, "tok-mallory")
+	t.Cleanup(closeMallory)
+	waitForHub(t, hub, func(ids []string) bool {
+		return slices.Contains(ids, "bob@frontend") && slices.Contains(ids, "mallory@other")
+	})
+
+	_, closeAlice := openEventLines(t, srv.URL, "tok-alice")
+	t.Cleanup(closeAlice)
+	waitForHub(t, hub, func(ids []string) bool { return slices.Contains(ids, "alice@backend") })
+
+	if !awaitPresence(t, bobLines, "alice@backend", true, 2*time.Second) {
+		t.Fatal("shared teammate did not receive alice online presence")
+	}
+	if awaitPresence(t, malloryLines, "alice@backend", true, 200*time.Millisecond) {
+		t.Fatal("cross-team subscriber received alice online presence")
+	}
+}
+
 func TestListOnlineUsersUnauthorized(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "relay.db")
 	st, err := store.Open(dbPath)
@@ -257,6 +317,68 @@ func TestUIServing(t *testing.T) {
 	defer apiResp.Body.Close()
 	if apiResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("GET /v1/handoffs without token status=%d, want 401", apiResp.StatusCode)
+	}
+}
+
+func openEventLines(t *testing.T, baseURL, token string) (<-chan string, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/events", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		_ = resp.Body.Close()
+		t.Fatalf("GET /v1/events status=%d", resp.StatusCode)
+	}
+	lines := make(chan string, 64)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+	return lines, func() {
+		cancel()
+		_ = resp.Body.Close()
+	}
+}
+
+func awaitPresence(t *testing.T, lines <-chan string, identity string, online bool, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.After(timeout)
+	event := ""
+	for {
+		select {
+		case ln, ok := <-lines:
+			if !ok {
+				return false
+			}
+			switch {
+			case strings.HasPrefix(ln, "event: "):
+				event = strings.TrimPrefix(ln, "event: ")
+			case strings.HasPrefix(ln, "data: "):
+				if event != sse.EventTypeUserOnline && event != sse.EventTypeUserOffline {
+					continue
+				}
+				var user handoffschema.OnlineUser
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(ln, "data: ")), &user); err != nil {
+					t.Fatalf("decode presence event: %v", err)
+				}
+				if user.Identity == identity && user.Online == online {
+					return true
+				}
+			case ln == "":
+				event = ""
+			}
+		case <-deadline:
+			return false
+		}
 	}
 }
 

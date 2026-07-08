@@ -197,7 +197,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 // broadcastPresence is wired as Hub.OnPresenceChange. Fans a user.online /
-// user.offline event out to every OTHER subscribed identity.
+// user.offline event out to every reachable subscribed identity.
 func (s *Server) broadcastPresence(identity string, online bool) {
 	// A user that just went fully offline has no live sessions to target.
 	if !online && s.Sessions != nil {
@@ -211,7 +211,16 @@ func (s *Server) broadcastPresence(identity string, online bool) {
 	if err != nil {
 		return
 	}
-	s.Hub.PublishExcept(identity, sse.Event{Type: eventType, Data: data})
+	for _, recipient := range s.Hub.OnlineRecipients() {
+		if recipient == identity {
+			continue
+		}
+		ok, err := s.canReachIdentity(context.Background(), recipient, identity)
+		if err != nil || !ok {
+			continue
+		}
+		s.Hub.Publish(sse.Event{Type: eventType, Recipient: recipient, Data: data})
+	}
 }
 
 // postAlert receives a server-side log alert and fans it out to the target
