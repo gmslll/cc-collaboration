@@ -18,9 +18,11 @@ import (
 var screenShareRoomRE = regexp.MustCompile(`^[A-Za-z0-9_-]{4,64}$`)
 
 type screenShareConn struct {
-	id   uint64
-	role string // "host" | "viewer"
-	send chan []byte
+	id     uint64
+	role   string // "host" | "viewer"
+	send   chan []byte
+	mu     sync.Mutex
+	closed bool
 }
 
 type screenShareRoom struct {
@@ -61,7 +63,12 @@ func (b *screenShareBroker) remove(identity, room string, c *screenShareConn) {
 		delete(b.conns, key)
 	}
 	b.mu.Unlock()
-	close(c.send)
+	c.mu.Lock()
+	if !c.closed {
+		close(c.send)
+		c.closed = true
+	}
+	c.mu.Unlock()
 }
 
 func (b *screenShareBroker) peers(identity, room string, from *screenShareConn, to uint64) []*screenShareConn {
@@ -100,6 +107,11 @@ func (b *screenShareBroker) rolePeers(identity, room, role string) []*screenShar
 }
 
 func deliverScreenShare(c *screenShareConn, frame []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
 	select {
 	case c.send <- frame:
 	default:
