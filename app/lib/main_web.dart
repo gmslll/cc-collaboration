@@ -1,7 +1,8 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import 'brand.dart';
-import 'ghostty_runtime.dart';
 import 'local/prefs.dart';
 import 'local/session.dart';
 import 'notifications.dart';
@@ -19,10 +20,32 @@ import 'theme.dart';
 // compiled for web.)
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await GhosttyRuntime.ensureInitialized();
   await Prefs.load();
   Notifications.init(); // graceful no-op on web
-  runApp(const CcWebApp());
+  final view =
+      ui.PlatformDispatcher.instance.implicitView ??
+      (ui.PlatformDispatcher.instance.views.isNotEmpty
+          ? ui.PlatformDispatcher.instance.views.first
+          : null);
+  if (view == null) {
+    runApp(const _NoFlutterViewApp());
+    return;
+  }
+  runWidget(View(view: view, child: const CcWebApp()));
+}
+
+class _NoFlutterViewApp extends StatelessWidget {
+  const _NoFlutterViewApp();
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: '${AppBrand.productName} Web',
+    debugShowCheckedModeBanner: false,
+    theme: ccTheme(),
+    home: const Scaffold(
+      body: Center(child: Text('Flutter view is not available.')),
+    ),
+  );
 }
 
 class CcWebApp extends StatelessWidget {

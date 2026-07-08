@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-08
+
+### Fixed
+
+- **Web client no longer opens to a blank page** — the browser entrypoint skips eager Ghostty WASM initialization, binds explicitly to the available Flutter view on newer Flutter web runtimes, and keeps an enterprise fallback shell in `index.html` so `/app/` always presents a usable relay-console path while the Flutter remote workspace loads.
+
 ## [1.0.0] - 2026-07-08
 
 ### Changed

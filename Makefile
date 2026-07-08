@@ -24,7 +24,7 @@ cli:
 # targets depend on it so the embedded client is always current — for a fast
 # Go-only relay build that skips this, run `go build ./cmd/relay` directly.
 web:
-	cd app && flutter build web -t lib/main_web.dart --base-href /app/
+	cd app && flutter build web -t lib/main_web.dart --base-href /app/ --dart-define=APP_VERSION=$(VERSION)
 	rm -rf internal/relay/app
 	mkdir -p internal/relay/app
 	cp -R app/build/web/. internal/relay/app/

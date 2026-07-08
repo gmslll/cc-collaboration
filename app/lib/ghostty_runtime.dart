@@ -11,9 +11,17 @@ class GhosttyRuntime {
 
   static bool get initialized => _initialized;
 
-  static Future<bool> ensureInitialized({Uri? wasmUri}) async {
+  static Future<bool> ensureInitialized({
+    Uri? wasmUri,
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
     final future = _initializing ??= _initialize(wasmUri);
-    await future;
+    try {
+      await future.timeout(timeout);
+    } catch (_) {
+      _initialized = false;
+      _initializing = null;
+    }
     return _initialized;
   }
 
