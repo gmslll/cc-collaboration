@@ -32,8 +32,9 @@ func TestProjectVisibility(t *testing.T) {
 		mkUser(t, st, id, "pw-"+id+"-12345")
 	}
 
+	hub := sse.NewHub()
 	srv := httptest.NewServer((&relay.Server{
-		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		Store: st, Tokens: auth.NewTokens(), Hub: hub,
 		SeedAdmins: []string{"admin@hq"},
 	}).Handler())
 	t.Cleanup(srv.Close)
@@ -94,9 +95,15 @@ func TestProjectVisibility(t *testing.T) {
 		t.Errorf("status as stranger = %d, want 403", code)
 	}
 
+	viewerSub, cancelViewerSub := hub.Subscribe("viewer@t")
+	defer cancelViewerSub()
+
 	// comment: member can, viewer cannot (read-only), stranger cannot.
 	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/h_x/comment", member, map[string]string{"body": "triaging"}); code != http.StatusCreated {
 		t.Errorf("comment as member = %d, want 201", code)
+	}
+	if ev := waitForEventType(t, viewerSub, sse.EventTypeCommentCreated, 2*time.Second); len(ev.Data) == 0 {
+		t.Fatal("viewer should receive project handoff comment event")
 	}
 	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/h_x/comment", orgAdmin, map[string]string{"body": "coordinating"}); code != http.StatusCreated {
 		t.Errorf("comment as team admin = %d, want 201", code)
@@ -107,9 +114,13 @@ func TestProjectVisibility(t *testing.T) {
 	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/h_x/comment", stranger, map[string]string{"body": "nope"}); code != http.StatusForbidden {
 		t.Errorf("comment as stranger = %d, want 403", code)
 	}
+	code, lb := getAuthed(t, srv.URL+"/v1/comments?since=0", orgAdmin)
+	if code != http.StatusOK || !strings.Contains(string(lb), "triaging") || strings.Contains(string(lb), "coordinating") {
+		t.Errorf("project comment catch-up as team admin: code=%d body=%s", code, lb)
+	}
 
 	// scope=project: member sees the handoff they aren't a party to.
-	code, lb := getAuthed(t, srv.URL+"/v1/handoffs?scope=project&project="+proj.ID, member)
+	code, lb = getAuthed(t, srv.URL+"/v1/handoffs?scope=project&project="+proj.ID, member)
 	if code != http.StatusOK || !strings.Contains(string(lb), `"h_x"`) {
 		t.Errorf("scope=project as member: code=%d body=%s", code, lb)
 	}

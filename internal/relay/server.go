@@ -579,6 +579,30 @@ func (s *Server) packageParticipants(ctx context.Context, pkg *handoffschema.Pac
 	return out
 }
 
+func (s *Server) commentTargets(ctx context.Context, pkg *handoffschema.Package) []string {
+	seen := map[string]struct{}{}
+	add := func(id string) {
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+	}
+	for _, id := range s.packageParticipants(ctx, pkg) {
+		add(id)
+	}
+	if repo := pkg.Repo.Name; repo != "" {
+		if targets, err := s.Store.ListRepoHandoffEventTargets(ctx, repo); err == nil {
+			for _, id := range targets {
+				add(id)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out
+}
+
 func (s *Server) callerCanView(ctx context.Context, pkg *handoffschema.Package, identity string) bool {
 	for _, p := range s.packageParticipants(ctx, pkg) {
 		if p == identity {
@@ -791,7 +815,7 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 
 	if s.Hub != nil {
 		if data, err := json.Marshal(c); err == nil {
-			for _, t := range participants {
+			for _, t := range s.commentTargets(r.Context(), pkg) {
 				if t == identity {
 					continue
 				}

@@ -782,10 +782,11 @@ func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body strin
 }
 
 // ListCommentsSince returns comments visible to identity (caller is sender,
-// per-recipient slot owner, or any participant in the same bug_group_id) with
-// id > since, excluding comments the caller posted themselves. Also returns
-// the global max comment id for cursor bootstrap. limit <= 0 means "max_id
-// only, no rows"; limit is capped at 500.
+// per-recipient slot owner, any participant in the same bug_group_id, or a
+// member/manager of the project owning the handoff's repo) with id > since,
+// excluding comments the caller posted themselves. Also returns the global max
+// comment id for cursor bootstrap. limit <= 0 means "max_id only, no rows";
+// limit is capped at 500.
 //
 // Bug-group broadcast: the CTE `my_groups` collects every bug_group_id the
 // caller participates in (as sender or current/historical recipient). For
@@ -816,10 +817,19 @@ func (s *Store) ListCommentsSince(ctx context.Context, identity string, since in
 		  WHERE c.id > ?2 AND c.sender != ?1
 		    AND (h.sender = ?1
 		         OR r.recipient = ?1
-		         OR (h.bug_group_id != '' AND h.bug_group_id IN (SELECT bug_group_id FROM my_groups)))
+		         OR (h.bug_group_id != '' AND h.bug_group_id IN (SELECT bug_group_id FROM my_groups))
+		         OR EXISTS (
+		            SELECT 1
+		              FROM project_repos pr
+		              JOIN projects p ON p.id = pr.project_id
+		              LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?1
+		              LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?1
+		             WHERE pr.repo_name = h.repo_name
+		               AND (pm.identity IS NOT NULL OR om.role IN (?4, ?5))
+		         ))
 		  GROUP BY c.id
 		  ORDER BY c.id ASC LIMIT ?3`,
-		identity, since, limit,
+		identity, since, limit, OrgRoleOwner, OrgRoleAdmin,
 	)
 	if err != nil {
 		return nil, 0, err

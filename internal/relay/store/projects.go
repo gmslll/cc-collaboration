@@ -365,6 +365,29 @@ func (s *Store) ListProjectTodoTargets(ctx context.Context, projectID string) ([
 		projectID, projectID, OrgRoleOwner, OrgRoleAdmin)
 }
 
+// ListRepoHandoffEventTargets returns identities that can see realtime handoff
+// updates for the project owning repoName: direct project members plus team
+// owners/admins. Disabled DB users are excluded; legacy identities without a
+// users row are preserved.
+func (s *Store) ListRepoHandoffEventTargets(ctx context.Context, repoName string) ([]string, error) {
+	return s.queryStrings(ctx,
+		`SELECT identity FROM (
+		    SELECT pm.identity
+		      FROM project_repos pr
+		      JOIN project_members pm ON pm.project_id = pr.project_id
+		      LEFT JOIN users u ON u.identity = pm.identity
+		     WHERE pr.repo_name = ? AND (u.identity IS NULL OR u.disabled = 0)
+		    UNION
+		    SELECT om.identity
+		      FROM project_repos pr
+		      JOIN projects p ON p.id = pr.project_id
+		      JOIN organization_members om ON om.org_id = p.org_id
+		      LEFT JOIN users u ON u.identity = om.identity
+		     WHERE pr.repo_name = ? AND om.role IN (?, ?) AND (u.identity IS NULL OR u.disabled = 0)
+		  ) ORDER BY identity`,
+		repoName, repoName, OrgRoleOwner, OrgRoleAdmin)
+}
+
 // MemberRole returns identity's role in a project, or ok=false if not a member.
 func (s *Store) MemberRole(ctx context.Context, projectID, identity string) (string, bool, error) {
 	var role string
