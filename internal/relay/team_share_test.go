@@ -2,10 +2,12 @@ package relay_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cc-collaboration/internal/relay"
 	"github.com/cc-collaboration/internal/relay/auth"
@@ -58,5 +60,56 @@ func TestDeliveryHandoffCanFanOutToTeamRecipients(t *testing.T) {
 		if len(items) != 1 || len(items[0].Recipients) != 2 {
 			t.Fatalf("%s items = %+v", identity, items)
 		}
+	}
+}
+
+func TestSubmitHandoffRequiresReachableRecipients(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"},
+		{"token":"tok-bob",  "identity":"bob@frontend"},
+		{"token":"tok-mallory",  "identity":"mallory@other"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	pkg := handoffschema.Package{
+		Kind:      handoffschema.KindDelivery,
+		Recipient: "alice@backend",
+		Urgency:   handoffschema.UrgencyNormal,
+		Repo:      handoffschema.Repo{Name: "demo"},
+		SummaryMD: "direct submit",
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/handoffs", "tok-bob", pkg); code != http.StatusCreated {
+		t.Fatalf("shared teammate submit = %d %s, want 201", code, body)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/handoffs", "tok-mallory", pkg); code != http.StatusForbidden {
+		t.Fatalf("cross-team submit = %d, want 403", code)
 	}
 }

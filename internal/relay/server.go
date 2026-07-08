@@ -285,6 +285,22 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "recipient required", http.StatusBadRequest)
 		return
 	}
+	for _, recipient := range p.EffectiveRecipients() {
+		recipient = strings.TrimSpace(recipient)
+		if recipient == "" {
+			http.Error(w, "recipient required", http.StatusBadRequest)
+			return
+		}
+		ok, err := s.canReachIdentity(r.Context(), identity, recipient)
+		if err != nil {
+			http.Error(w, "check recipient reachability: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	// Server overrides sender + id + created_at + schema_version to prevent spoofing.
 	p.Sender = identity
 	if p.SchemaVersion == 0 {
