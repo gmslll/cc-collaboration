@@ -87,6 +87,13 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 		map[string]string{"identity": "qa@backend", "role": "viewer"}); code != http.StatusOK {
 		t.Fatalf("add member = %d", code)
 	}
+	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", devTok,
+		map[string]string{"identity": "z@y", "role": " member "}); code != http.StatusOK {
+		t.Fatalf("add member with padded role = %d %s", code, body)
+	}
+	if role, ok, err := st.MemberRole(context.Background(), proj.ID, "z@y"); err != nil || !ok || role != store.RoleMember {
+		t.Fatalf("padded project member role = role:%q ok:%v err:%v", role, ok, err)
+	}
 	code, body = postJSON(t, srv.URL+"/v1/projects", malTok, map[string]string{"name": "Mallory Project"})
 	if code != http.StatusCreated {
 		t.Fatalf("mallory create project = %d %s", code, body)

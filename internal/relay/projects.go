@@ -249,7 +249,8 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Identity) == "" || !store.ValidRole(req.Role) {
+	role := strings.TrimSpace(req.Role)
+	if strings.TrimSpace(req.Identity) == "" || !store.ValidRole(role) {
 		http.Error(w, "identity and role (owner|member|viewer) required", http.StatusBadRequest)
 		return
 	}
@@ -288,7 +289,7 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.Store.AddMember(r.Context(), id, identity, req.Role); err != nil {
+	if err := s.Store.AddMember(r.Context(), id, identity, role); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
