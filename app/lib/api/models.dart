@@ -159,8 +159,17 @@ class Comment {
 // --- multi-tenant (F3) ---
 
 class ProjectRole {
-  final String id, name, role;
+  final String id, orgId, name, role;
   ProjectRole.fromJson(Map<String, dynamic> j)
+      : id = _s(j['id']),
+        orgId = _s(j['org_id']),
+        name = _s(j['name']),
+        role = _s(j['role']);
+}
+
+class OrganizationRole {
+  final String id, name, role;
+  OrganizationRole.fromJson(Map<String, dynamic> j)
       : id = _s(j['id']),
         name = _s(j['name']),
         role = _s(j['role']);
@@ -169,10 +178,15 @@ class ProjectRole {
 class Me {
   final String identity;
   final bool isAdmin;
+  final List<OrganizationRole> organizations;
   final List<ProjectRole> projects;
   Me.fromJson(Map<String, dynamic> j)
       : identity = _s(j['identity']),
         isAdmin = j['is_admin'] == true,
+        organizations = (j['organizations'] as List?)
+                ?.map((e) => OrganizationRole.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
         projects = (j['projects'] as List?)
                 ?.map((e) => ProjectRole.fromJson(e as Map<String, dynamic>))
                 .toList() ??
@@ -183,13 +197,23 @@ class Me {
   // launch) so consumers always get a legal Me instead of null.
   const Me.member(this.identity)
       : isAdmin = false,
+        organizations = const [],
         projects = const [];
 }
 
-class Project {
+class Organization {
   final String id, name, ownerIdentity;
+  Organization.fromJson(Map<String, dynamic> j)
+      : id = _s(j['id']),
+        name = _s(j['name']),
+        ownerIdentity = _s(j['owner_identity']);
+}
+
+class Project {
+  final String id, orgId, name, ownerIdentity;
   Project.fromJson(Map<String, dynamic> j)
       : id = _s(j['id']),
+        orgId = _s(j['org_id']),
         name = _s(j['name']),
         ownerIdentity = _s(j['owner_identity']);
 }

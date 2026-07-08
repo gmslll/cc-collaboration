@@ -477,6 +477,11 @@ textarea:focus {
   text-transform: uppercase;
   white-space: nowrap;
 }
+.badge.soft {
+  background: var(--panel-soft);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
 
 /* State badges — color encodes whether the row needs attention. */
 .badge.pending {
@@ -980,14 +985,81 @@ textarea:focus {
   margin-top: var(--space-2);
 }
 .inline-form input[type="text"],
-.inline-form input[type="password"] {
+.inline-form input[type="password"],
+.inline-form select {
   flex: 1 1 160px;
   min-width: 0;
+}
+.inline-form select {
+  max-width: 240px;
+}
+
+.org-title,
+.org-meta {
+  min-width: 0;
+}
+.org-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.org-title strong,
+.org-meta {
+  overflow-wrap: anywhere;
+}
+.org-card .aux-card-body {
+  background: color-mix(in oklab, var(--panel-soft) 55%, transparent);
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-sm);
 }
 
 .manage-block h4 {
   margin: 0 0 var(--space-2);
   font-size: 13px;
+}
+.project-context {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-soft);
+}
+.team-project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2);
+}
+.team-project-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.team-project-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.team-project-card span,
+.team-project-card small {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.team-project-card small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .chip-row {
@@ -1024,10 +1096,12 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex-wrap: wrap;
 }
-.member-row span:first-child {
+.member-row .member-identity {
   flex: 1 1 auto;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .link-danger {

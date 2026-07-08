@@ -290,6 +290,18 @@ class RelayClient {
         .toList();
   }
 
+  Future<List<Organization>> organizations() async {
+    final r = await _dio.get('/v1/orgs');
+    return _asList(r.data, 'organizations')
+        .map((e) => Organization.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Organization> createOrganization(String name) async {
+    final r = await _dio.post('/v1/orgs', data: {'name': name});
+    return Organization.fromJson(r.data as Map<String, dynamic>);
+  }
+
   // --- per-identity synced settings (see internal/relay/settings.go) ---
 
   // getSetting returns the caller's synced setting blob for [key], or null when
@@ -337,8 +349,11 @@ class RelayClient {
         .toList();
   }
 
-  Future<Project> createProject(String name) async {
-    final r = await _dio.post('/v1/projects', data: {'name': name});
+  Future<Project> createProject(String name, {String? orgId}) async {
+    final r = await _dio.post('/v1/projects', data: {
+      'name': name,
+      if (orgId != null && orgId.isNotEmpty) 'org_id': orgId,
+    });
     return Project.fromJson(r.data as Map<String, dynamic>);
   }
 

@@ -14,7 +14,8 @@ if (typeof window.ccHandoffPickup === "function") {
 const state = {
   token: localStorage.getItem("cc-handoff-token") || "",
   defaultRepo: localStorage.getItem("cc-handoff-default-repo") || "",
-  me: null, // { identity, is_admin, projects: [{id,name,role}] }
+  me: null, // { identity, is_admin, organizations: [{id,name,role}], projects: [{id,name,role}] }
+  organizations: [], // loaded in the Teams pane (GET /v1/orgs)
   projects: [], // loaded in the Projects pane (GET /v1/projects)
   projectID: "", // selected project for the scope=project handoff view
   view: "recipient",
@@ -48,13 +49,19 @@ const els = {
   tokenInput: document.querySelector("#token-input"),
   authMessage: document.querySelector("#auth-message"),
   sessionLabel: document.querySelector("#session-label"),
+  tabOrgs: document.querySelector("#tab-orgs"),
   tabProjects: document.querySelector("#tab-projects"),
   tabAccount: document.querySelector("#tab-account"),
   tabAdmin: document.querySelector("#tab-admin"),
+  orgsPane: document.querySelector("#orgs-pane"),
+  orgsList: document.querySelector("#orgs-list"),
+  newOrgForm: document.querySelector("#new-org-form"),
+  newOrgName: document.querySelector("#new-org-name"),
   projectsPane: document.querySelector("#projects-pane"),
   projectsList: document.querySelector("#projects-list"),
   newProjectForm: document.querySelector("#new-project-form"),
   newProjectName: document.querySelector("#new-project-name"),
+  newProjectOrg: document.querySelector("#new-project-org"),
   accountPane: document.querySelector("#account-pane"),
   passwordForm: document.querySelector("#password-form"),
   passwordOld: document.querySelector("#password-old"),
@@ -139,12 +146,15 @@ function wireEvents() {
   els.registerButton.addEventListener("click", onRegister);
   els.tokenConnect.addEventListener("click", onUseToken);
   els.signoutButton.addEventListener("click", onSignout);
+  els.newOrgForm.addEventListener("submit", onCreateOrganization);
   els.newProjectForm.addEventListener("submit", onCreateProject);
   els.passwordForm.addEventListener("submit", onChangePassword);
   els.newTokenForm.addEventListener("submit", onCreateToken);
   els.newUserForm.addEventListener("submit", onCreateUser);
   els.projectsList.addEventListener("click", onProjectsListClick);
   els.projectsList.addEventListener("submit", onProjectsListSubmit);
+  els.orgsList.addEventListener("click", onOrganizationsListClick);
+  els.orgsList.addEventListener("submit", onOrganizationsListSubmit);
   els.tokensList.addEventListener("click", onTokensListClick);
   els.usersList.addEventListener("click", onUsersListClick);
 
@@ -326,6 +336,17 @@ async function refreshAll() {
     renderOnline([]);
     return;
   }
+  if (state.view === "organizations") {
+    await Promise.allSettled([loadOnline(), loadOrganizations()]);
+    return;
+  }
+  if (state.view === "projects") {
+    await Promise.allSettled([loadOnline(), loadProjects()]);
+    return;
+  }
+  if (state.view === "account") return loadAccount();
+  if (state.view === "admin") return loadAdmin();
+  if (state.view === "workspaces") return renderWorkspaces();
   await Promise.allSettled([loadOnline(), loadList()]);
 }
 
@@ -494,6 +515,7 @@ function switchView(view) {
   els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
   applyMainView(view);
   if (view === "workspaces") return renderWorkspaces();
+  if (view === "organizations") return loadOrganizations();
   if (view === "projects") return loadProjects();
   if (view === "account") return loadAccount();
   if (view === "admin") return loadAdmin();
@@ -506,6 +528,7 @@ function applyMainView(view) {
   els.listPane.classList.toggle("hidden", !handoff);
   els.detailPane.classList.toggle("hidden", !handoff);
   els.workspacesPane.classList.toggle("hidden", view !== "workspaces");
+  els.orgsPane.classList.toggle("hidden", view !== "organizations");
   els.projectsPane.classList.toggle("hidden", view !== "projects");
   els.accountPane.classList.toggle("hidden", view !== "account");
   els.adminPane.classList.toggle("hidden", view !== "admin");
@@ -830,6 +853,8 @@ async function onSignout() {
   }
   setToken("");
   state.me = null;
+  state.organizations = [];
+  state.projects = [];
   state.items = [];
   setupRoleTabs();
   setConnectedLabel();
@@ -856,13 +881,201 @@ async function onConnected() {
   refreshAll();
 }
 
-// setupRoleTabs reveals Projects (members or admins), Admin (admins), and
-// Account (anyone signed in) based on /v1/me; hides them again when signed out.
+async function refreshMe() {
+  state.me = await api("/v1/me");
+  setupRoleTabs();
+  setConnectedLabel();
+}
+
+// setupRoleTabs reveals Teams/Projects/Account to every signed-in user so a
+// freshly registered account can bootstrap its first team and project.
 function setupRoleTabs() {
   const me = state.me;
-  els.tabProjects.classList.toggle("hidden", !(me && (me.is_admin || (me.projects && me.projects.length))));
+  els.tabOrgs.classList.toggle("hidden", !me);
+  els.tabProjects.classList.toggle("hidden", !me);
   els.tabAdmin.classList.toggle("hidden", !(me && me.is_admin));
   els.tabAccount.classList.toggle("hidden", !me);
+}
+
+// --- organizations / teams pane ---
+
+async function loadOrganizations() {
+  if (!state.token) return;
+  try {
+    const data = await api("/v1/orgs");
+    state.organizations = data.organizations || [];
+    renderOrganizations();
+    renderProjectOrgOptions();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function organizationRole(id) {
+  const org = (state.me?.organizations || []).find((o) => o.id === id);
+  if (org) return org.role;
+  return state.me?.is_admin ? "admin" : "member";
+}
+
+function organizationName(id) {
+  const org = state.organizations.find((o) => o.id === id) || (state.me?.organizations || []).find((o) => o.id === id);
+  return org?.name || id || "Default team";
+}
+
+function canManageOrganization(role) {
+  return state.me?.is_admin || role === "owner" || role === "admin";
+}
+
+function isOnlineIdentity(identity) {
+  return state.online.some((user) => user.identity === identity && user.online);
+}
+
+function memberPresence(identity) {
+  const online = isOnlineIdentity(identity);
+  return `<span class="presence ${online ? "online" : ""}" title="${online ? "Online" : "Offline"}"></span>`;
+}
+
+function renderOrganizations() {
+  if (!state.organizations.length) {
+    els.orgsList.innerHTML = `<div class="empty-list">还没有团队。新建一个团队，然后在 Projects 里创建项目。</div>`;
+    return;
+  }
+  els.orgsList.innerHTML = state.organizations.map((org) => {
+    const role = organizationRole(org.id);
+    const canManage = canManageOrganization(role);
+    return `
+      <div class="aux-card org-card" data-org="${escapeAttr(org.id)}">
+        <div class="aux-card-head">
+          <div class="org-title">
+            <strong>${escapeHTML(org.name)}</strong>
+            <span class="badge">${escapeHTML(role)}</span>
+          </div>
+          <div class="aux-card-actions">
+            ${canManage ? `<button class="secondary" type="button" data-action="manage-org">管理</button>` : ""}
+          </div>
+        </div>
+        <div class="muted org-meta">owner · ${escapeHTML(org.owner_identity || "-")} · ${escapeHTML(org.id)}</div>
+        <div class="aux-card-body hidden" data-body></div>
+      </div>`;
+  }).join("");
+}
+
+async function onOrganizationsListClick(event) {
+  const card = event.target.closest("[data-org]");
+  if (!card) return;
+  const id = card.dataset.org;
+  const body = card.querySelector("[data-body]");
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  try {
+    if (action === "manage-org") {
+      if (!body.classList.contains("hidden")) {
+        body.classList.add("hidden");
+        return;
+      }
+      await renderOrganizationManage(id, body);
+      body.classList.remove("hidden");
+      return;
+    }
+    const member = event.target.closest("[data-remove-org-member]")?.dataset.removeOrgMember;
+    if (member !== undefined) {
+      await api(`/v1/orgs/${encodeURIComponent(id)}/members/${encodeURIComponent(member)}`, { method: "DELETE" });
+      toast("已移除团队成员");
+      await refreshMe();
+      await loadOrganizations();
+      const next = organizationBody(id);
+      if (next) {
+        await renderOrganizationManage(id, next);
+        next.classList.remove("hidden");
+      }
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function onOrganizationsListSubmit(event) {
+  event.preventDefault();
+  const form = event.target;
+  const card = form.closest("[data-org]");
+  if (!card || form.dataset.form !== "org-member") return;
+  const id = card.dataset.org;
+  const identity = form.querySelector("[name=identity]").value.trim();
+  const role = form.querySelector("[name=role]").value;
+  if (!identity) return;
+  try {
+    await api(`/v1/orgs/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
+    toast("已添加团队成员");
+    form.reset();
+    await refreshMe();
+    await loadOrganizations();
+    const next = organizationBody(id);
+    if (next) {
+      await renderOrganizationManage(id, next);
+      next.classList.remove("hidden");
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function organizationBody(id) {
+  const card = Array.from(els.orgsList.querySelectorAll("[data-org]")).find((el) => el.dataset.org === id);
+  return card?.querySelector("[data-body]") || null;
+}
+
+async function renderOrganizationManage(id, body) {
+  try {
+    const data = await api(`/v1/orgs/${encodeURIComponent(id)}`);
+    const members = data.members || [];
+    const projects = data.projects || [];
+    const role = organizationRole(id);
+    const canManage = canManageOrganization(role);
+    body.innerHTML = `
+      <div class="manage-block">
+        <h4>项目</h4>
+        <div class="team-project-grid">
+          ${projects.length ? projects.map((p) => `
+            <button class="team-project-card" type="button" data-jump-project="${escapeAttr(p.id)}">
+              <span>${escapeHTML(p.name)}</span>
+              <small>${escapeHTML(p.owner_identity || "")}</small>
+            </button>`).join("") : `<span class="muted">这个团队下还没有项目。</span>`}
+        </div>
+      </div>
+      <div class="manage-block">
+        <h4>成员</h4>
+        <div class="member-rows">
+          ${members.map((m) => `<div class="member-row">${memberPresence(m.identity)}<span class="member-identity">${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span>${canManage ? `<button type="button" class="link-danger" data-remove-org-member="${escapeAttr(m.identity)}" aria-label="移除团队成员 ${escapeAttr(m.identity)}">移除</button>` : ""}</div>`).join("")}
+        </div>
+        ${canManage ? `<form class="inline-form" data-form="org-member">
+          <input type="text" name="identity" aria-label="团队成员 identity" placeholder="identity">
+          <select name="role" aria-label="团队角色"><option value="member">member</option><option value="admin">admin</option><option value="guest">guest</option><option value="owner">owner</option></select>
+          <button type="submit" class="secondary">加成员</button>
+        </form>` : ""}
+      </div>`;
+    body.querySelectorAll("[data-jump-project]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.projectID = button.dataset.jumpProject;
+        switchView("project");
+      });
+    });
+  } catch (err) {
+    body.innerHTML = `<p class="muted">${escapeHTML(err.message)}</p>`;
+  }
+}
+
+async function onCreateOrganization(event) {
+  event.preventDefault();
+  const name = els.newOrgName.value.trim();
+  if (!name) return;
+  try {
+    await api("/v1/orgs", { method: "POST", body: JSON.stringify({ name }) });
+    els.newOrgName.value = "";
+    toast("团队已创建");
+    await refreshMe();
+    await loadOrganizations();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 // --- projects pane ---
@@ -870,12 +1083,28 @@ function setupRoleTabs() {
 async function loadProjects() {
   if (!state.token) return;
   try {
-    const data = await api("/v1/projects");
+    const [projectsData, orgsData] = await Promise.all([
+      api("/v1/projects"),
+      api("/v1/orgs").catch(() => ({ organizations: state.organizations || [] })),
+    ]);
+    state.organizations = orgsData.organizations || [];
+    renderProjectOrgOptions();
+    const data = projectsData;
     state.projects = data.projects || [];
     renderProjects();
   } catch (err) {
     toast(err.message);
   }
+}
+
+function renderProjectOrgOptions() {
+  const orgs = state.organizations || [];
+  if (!els.newProjectOrg) return;
+  if (!orgs.length) {
+    els.newProjectOrg.innerHTML = `<option value="">默认团队</option>`;
+    return;
+  }
+  els.newProjectOrg.innerHTML = orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHTML(org.name)}</option>`).join("");
 }
 
 function projectRole(id) {
@@ -895,7 +1124,10 @@ function renderProjects() {
     return `
       <div class="aux-card" data-project="${escapeAttr(p.id)}">
         <div class="aux-card-head">
-          <div><strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(role)}</span></div>
+          <div>
+            <strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(role)}</span>
+            ${p.org_id ? `<span class="badge soft">${escapeHTML(organizationName(p.org_id))}</span>` : ""}
+          </div>
           <div class="aux-card-actions">
             <button class="secondary" type="button" data-action="browse">查看 handoff</button>
             ${canManage ? `<button class="secondary" type="button" data-action="manage">管理</button>` : ""}
@@ -975,7 +1207,12 @@ async function renderProjectManage(id, body) {
     const data = await api(`/v1/projects/${encodeURIComponent(id)}`);
     const repos = data.repos || [];
     const members = data.members || [];
+    const project = data.project || {};
     body.innerHTML = `
+      <div class="manage-block project-context">
+        <span class="muted">团队</span>
+        <strong>${escapeHTML(organizationName(project.org_id))}</strong>
+      </div>
       <div class="manage-block">
         <h4>Repos</h4>
         <div class="chip-row">
@@ -989,7 +1226,7 @@ async function renderProjectManage(id, body) {
       <div class="manage-block">
         <h4>成员</h4>
         <div class="member-rows">
-          ${members.map((m) => `<div class="member-row"><span>${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span><button type="button" class="link-danger" data-remove-member="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button></div>`).join("")}
+          ${members.map((m) => `<div class="member-row">${memberPresence(m.identity)}<span class="member-identity">${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span><button type="button" class="link-danger" data-remove-member="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button></div>`).join("")}
         </div>
         <form class="inline-form" data-form="member">
           <input type="text" name="identity" aria-label="成员 identity" placeholder="identity">
@@ -1005,13 +1242,13 @@ async function renderProjectManage(id, body) {
 async function onCreateProject(event) {
   event.preventDefault();
   const name = els.newProjectName.value.trim();
+  const orgID = els.newProjectOrg.value;
   if (!name) return;
   try {
-    await api("/v1/projects", { method: "POST", body: JSON.stringify({ name }) });
+    await api("/v1/projects", { method: "POST", body: JSON.stringify({ name, org_id: orgID }) });
     els.newProjectName.value = "";
     toast("项目已创建");
-    state.me = await api("/v1/me");
-    setupRoleTabs();
+    await refreshMe();
     await loadProjects();
   } catch (err) {
     toast(err.message);

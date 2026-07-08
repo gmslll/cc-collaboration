@@ -15,8 +15,12 @@ class ProjectsPage extends StatefulWidget {
 
 class _ProjectsPageState extends State<ProjectsPage> {
   List<Project>? _projects;
+  List<Organization> _orgs = const [];
+  List<OnlineUser> _online = const [];
   String? _error;
   final _name = TextEditingController();
+  final _orgName = TextEditingController();
+  String? _selectedOrgId;
 
   @override
   void initState() {
@@ -27,15 +31,26 @@ class _ProjectsPageState extends State<ProjectsPage> {
   @override
   void dispose() {
     _name.dispose();
+    _orgName.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     try {
+      final orgs = await widget.client
+          .organizations()
+          .catchError((_) => <Organization>[]);
       final ps = await widget.client.projects();
+      final online =
+          await widget.client.onlineUsers().catchError((_) => <OnlineUser>[]);
       if (mounted) {
         setState(() {
+          _orgs = orgs;
           _projects = ps;
+          _online = online;
+          if (_selectedOrgId == null && orgs.isNotEmpty) {
+            _selectedOrgId = orgs.first.id;
+          }
           _error = null;
         });
       }
@@ -48,7 +63,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
     final name = _name.text.trim();
     if (name.isEmpty) return;
     try {
-      await widget.client.createProject(name);
+      await widget.client.createProject(name, orgId: _selectedOrgId);
       _name.clear();
       await _load();
     } catch (e) {
@@ -56,28 +71,84 @@ class _ProjectsPageState extends State<ProjectsPage> {
     }
   }
 
+  Future<void> _createOrg() async {
+    final name = _orgName.text.trim();
+    if (name.isEmpty) return;
+    try {
+      final org = await widget.client.createOrganization(name);
+      _orgName.clear();
+      setState(() => _selectedOrgId = org.id);
+      await _load();
+    } catch (e) {
+      if (mounted) snack(context, '创建团队失败: ${errorText(e)}');
+    }
+  }
+
+  String _teamName(String id) {
+    if (id.isEmpty) return '默认团队';
+    for (final org in _orgs) {
+      if (org.id == id) return org.name;
+    }
+    return id;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Expanded(
+        Wrap(runSpacing: 8, spacing: 8, children: [
+          SizedBox(
+            width: 320,
             child: TextField(
-              controller: _name,
-              decoration: const InputDecoration(
-                  hintText: '新项目名称',
-                  isDense: true,
-                  prefixIcon: Icon(Icons.create_new_folder_rounded)),
-              onSubmitted: (_) => _create(),
-            ),
+                controller: _orgName,
+                decoration: const InputDecoration(
+                    hintText: '新团队名称',
+                    isDense: true,
+                    prefixIcon: Icon(Icons.groups_rounded)),
+                onSubmitted: (_) => _createOrg()),
           ),
-          const SizedBox(width: 8),
           FilledButton.icon(
-              onPressed: _create,
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('新建项目')),
+              onPressed: _createOrg,
+              icon: const Icon(Icons.group_add_rounded, size: 18),
+              label: const Text('新建团队')),
         ]),
+        const SizedBox(height: 10),
+        Wrap(
+          runSpacing: 8,
+          spacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SizedBox(
+              width: 320,
+              child: TextField(
+                controller: _name,
+                decoration: const InputDecoration(
+                    hintText: '新项目名称',
+                    isDense: true,
+                    prefixIcon: Icon(Icons.create_new_folder_rounded)),
+                onSubmitted: (_) => _create(),
+              ),
+            ),
+            if (_orgs.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 260),
+                child: DropdownButton<String>(
+                  value: _selectedOrgId,
+                  isExpanded: true,
+                  items: _orgs
+                      .map((o) =>
+                          DropdownMenuItem(value: o.id, child: Text(o.name)))
+                      .toList(),
+                  onChanged: (v) => setState(() => _selectedOrgId = v),
+                ),
+              ),
+            FilledButton.icon(
+                onPressed: _create,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('新建项目')),
+          ],
+        ),
         const SizedBox(height: 16),
         Expanded(child: _body()),
       ]),
@@ -106,7 +177,11 @@ class _ProjectsPageState extends State<ProjectsPage> {
                     context: context,
                     isScrollControlled: true,
                     builder: (_) => _ProjectSheet(
-                        client: widget.client, id: p.id, onChanged: _load),
+                        client: widget.client,
+                        id: p.id,
+                        teamName: _teamName(p.orgId),
+                        online: _online,
+                        onChanged: _load),
                   ),
                   child: Row(children: [
                     const Icon(Icons.folder_rounded,
@@ -120,7 +195,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w700, fontSize: 15)),
                             const SizedBox(height: 2),
-                            Text('owner · ${p.ownerIdentity}',
+                            Text('${_teamName(p.orgId)} · owner · ${p.ownerIdentity}',
                                 style: const TextStyle(
                                     fontFamily: CcType.mono,
                                     color: CcColors.muted,
@@ -139,9 +214,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
 class _ProjectSheet extends StatefulWidget {
   final RelayClient client;
   final String id;
+  final String teamName;
+  final List<OnlineUser> online;
   final VoidCallback onChanged;
   const _ProjectSheet(
-      {required this.client, required this.id, required this.onChanged});
+      {required this.client,
+      required this.id,
+      required this.teamName,
+      required this.online,
+      required this.onChanged});
 
   @override
   State<_ProjectSheet> createState() => _ProjectSheetState();
@@ -232,6 +313,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     }
   }
 
+  bool _isOnline(String identity) =>
+      widget.online.any((u) => u.identity == identity && u.online);
+
   @override
   Widget build(BuildContext context) {
     final d = _d;
@@ -266,6 +350,15 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         onPressed: _delete),
                   ]),
                   const SizedBox(height: 8),
+                  Wrap(spacing: 8, runSpacing: 8, children: [
+                    Chip(
+                        avatar: const Icon(Icons.groups_rounded, size: 16),
+                        label: Text(widget.teamName)),
+                    Chip(
+                        avatar: const Icon(Icons.person_rounded, size: 16),
+                        label: Text('owner · ${d.project.ownerIdentity}')),
+                  ]),
+                  const SizedBox(height: 12),
                   const Text('Repos', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Wrap(
@@ -302,7 +395,12 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                   ...d.members.map((m) => ListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
+                        leading: statusDot(
+                            _isOnline(m.identity) ? CcColors.ok : CcColors.subtle,
+                            size: 9,
+                            glow: _isOnline(m.identity)),
                         title: Text(m.identity),
+                        subtitle: m.displayName.isEmpty ? null : Text(m.displayName),
                         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                           Text(m.role,
                               style: const TextStyle(color: CcColors.muted)),
