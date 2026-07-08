@@ -144,8 +144,35 @@ class _ProjectsPageState extends State<ProjectsPage> {
     }
   }
 
+  String _orgRoleLabel(String role) {
+    switch (role) {
+      case 'owner':
+        return '负责人';
+      case 'admin':
+        return '管理员';
+      case 'member':
+        return '成员';
+      case 'guest':
+        return '访客';
+      default:
+        return role.isEmpty ? '成员' : role;
+    }
+  }
+
   List<Organization> get _manageableOrgs =>
       _orgs.where((org) => _manageableOrgIds.contains(org.id)).toList();
+
+  int _orgProjectCount(String orgId) =>
+      (_projects ?? const <Project>[]).where((p) => p.orgId == orgId).length;
+
+  Future<void> _showOrganizationSheet(Organization org) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _OrganizationSheet(
+          client: widget.client, id: org.id, onChanged: _load),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -169,6 +196,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
               label: const Text('新建团队')),
         ]),
         const SizedBox(height: 10),
+        _teamPanel(),
+        const SizedBox(height: 12),
         Wrap(
           runSpacing: 8,
           spacing: 8,
@@ -267,6 +296,326 @@ class _ProjectsPageState extends State<ProjectsPage> {
                 ),
               ))
           .toList(),
+    );
+  }
+
+  Widget _teamPanel() {
+    if (_orgs.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 104,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _orgs.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, i) {
+          final org = _orgs[i];
+          final canManage = _manageableOrgIds.contains(org.id);
+          final role = org.role.isEmpty ? 'member' : org.role;
+          return SizedBox(
+            width: 286,
+            child: Material(
+              color: CcColors.panel,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(CcRadius.md),
+                side: BorderSide(
+                    color: canManage ? CcColors.accent : CcColors.borderSoft),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(CcRadius.md),
+                onTap: () => _showOrganizationSheet(org),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Icon(
+                            canManage
+                                ? Icons.admin_panel_settings_rounded
+                                : Icons.groups_rounded,
+                            size: 18,
+                            color: canManage
+                                ? CcColors.accentBright
+                                : CcColors.muted),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(org.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700)),
+                        ),
+                      ]),
+                      const Spacer(),
+                      Row(children: [
+                        Text(_orgRoleLabel(role),
+                            style: CcType.code(
+                                size: 11.5, color: CcColors.accentBright)),
+                        Text('  ·  ',
+                            style: CcType.code(
+                                size: 11.5, color: CcColors.subtle)),
+                        Text('${_orgProjectCount(org.id)} 项目',
+                            style: CcType.code(
+                                size: 11.5, color: CcColors.muted)),
+                        const Spacer(),
+                        const Icon(Icons.chevron_right_rounded,
+                            color: CcColors.subtle, size: 20),
+                      ]),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _OrganizationSheet extends StatefulWidget {
+  final RelayClient client;
+  final String id;
+  final VoidCallback onChanged;
+
+  const _OrganizationSheet({
+    required this.client,
+    required this.id,
+    required this.onChanged,
+  });
+
+  @override
+  State<_OrganizationSheet> createState() => _OrganizationSheetState();
+}
+
+class _OrganizationSheetState extends State<_OrganizationSheet> {
+  OrganizationDetail? _detail;
+  final _identity = TextEditingController();
+  String _role = 'member';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _identity.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final detail = await widget.client.organization(widget.id);
+      if (mounted) setState(() => _detail = detail);
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
+  }
+
+  Future<void> _do(Future<void> Function() action) async {
+    try {
+      await action();
+      await _load();
+      widget.onChanged();
+    } catch (e) {
+      if (mounted) snack(context, errorText(e));
+    }
+  }
+
+  bool _canManage(OrganizationDetail d) =>
+      d.organization.role == 'owner' || d.organization.role == 'admin';
+
+  int _ownerCount(OrganizationDetail d) =>
+      d.members.where((m) => m.role == 'owner').length;
+
+  String _roleLabel(String role) {
+    switch (role) {
+      case 'owner':
+        return '负责人';
+      case 'admin':
+        return '管理员';
+      case 'member':
+        return '成员';
+      case 'guest':
+        return '访客';
+      default:
+        return role;
+    }
+  }
+
+  Future<void> _removeMember(String identity) async {
+    final ok = await confirm(
+      context,
+      '从团队移除 $identity ? 该用户将失去这个团队下项目的继承访问权。',
+      title: '移除团队成员',
+      okLabel: '移除',
+    );
+    if (!ok) return;
+    await _do(() => widget.client.removeOrganizationMember(widget.id, identity));
+  }
+
+  Future<void> _addMember() async {
+    final identity = _identity.text.trim();
+    if (identity.isEmpty) return;
+    _identity.clear();
+    await _do(
+        () => widget.client.addOrganizationMember(widget.id, identity, _role));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = _detail;
+    final canManage = d != null && _canManage(d);
+    final ownerCount = d == null ? 0 : _ownerCount(d);
+    return Padding(
+      padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16),
+      child: d == null
+          ? const SizedBox(
+              height: 180, child: Center(child: CircularProgressIndicator()))
+          : SingleChildScrollView(
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  Row(children: [
+                    const Icon(Icons.groups_rounded,
+                        color: CcColors.accentBright, size: 22),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(d.organization.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.bold)),
+                            Text(
+                                '${_roleLabel(d.organization.role)} · ${d.members.length} 成员 · ${d.projects.length} 项目',
+                                style: CcType.code(
+                                    size: 12, color: CcColors.muted)),
+                          ]),
+                    ),
+                  ]),
+                  const SizedBox(height: 16),
+                  const Text('成员', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  ...d.members.map((m) {
+                    final isLastOwner = m.role == 'owner' && ownerCount <= 1;
+                    return ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.person_rounded, size: 18),
+                      title: Text(m.displayName.isEmpty ? m.identity : m.displayName,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: m.displayName.isEmpty
+                          ? null
+                          : Text(m.identity,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                      trailing: canManage
+                          ? Row(mainAxisSize: MainAxisSize.min, children: [
+                              DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  value: m.role,
+                                  isDense: true,
+                                  items: const [
+                                    DropdownMenuItem(
+                                        value: 'owner', child: Text('owner')),
+                                    DropdownMenuItem(
+                                        value: 'admin', child: Text('admin')),
+                                    DropdownMenuItem(
+                                        value: 'member', child: Text('member')),
+                                    DropdownMenuItem(
+                                        value: 'guest', child: Text('guest')),
+                                  ],
+                                  onChanged: isLastOwner
+                                      ? null
+                                      : (role) {
+                                          if (role == null || role == m.role) {
+                                            return;
+                                          }
+                                          _do(() => widget.client
+                                              .addOrganizationMember(
+                                                  widget.id, m.identity, role));
+                                        },
+                                ),
+                              ),
+                              IconButton(
+                                  tooltip: isLastOwner ? '至少保留一个负责人' : '移除',
+                                  icon: Icon(Icons.close_rounded,
+                                      size: 18,
+                                      color: isLastOwner
+                                          ? CcColors.subtle
+                                          : CcColors.muted),
+                                  onPressed: isLastOwner
+                                      ? null
+                                      : () => _removeMember(m.identity)),
+                            ])
+                          : Text(_roleLabel(m.role),
+                              style: const TextStyle(color: CcColors.muted)),
+                    );
+                  }),
+                  if (canManage) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 280,
+                          child: TextField(
+                              controller: _identity,
+                              decoration: const InputDecoration(
+                                  hintText: '成员 identity',
+                                  isDense: true,
+                                  prefixIcon:
+                                      Icon(Icons.alternate_email_rounded)),
+                              onSubmitted: (_) => _addMember()),
+                        ),
+                        DropdownButton<String>(
+                          value: _role,
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'member', child: Text('member')),
+                            DropdownMenuItem(value: 'admin', child: Text('admin')),
+                            DropdownMenuItem(value: 'guest', child: Text('guest')),
+                            DropdownMenuItem(value: 'owner', child: Text('owner')),
+                          ],
+                          onChanged: (v) => setState(() => _role = v ?? 'member'),
+                        ),
+                        FilledButton.icon(
+                            onPressed: _addMember,
+                            icon: const Icon(Icons.person_add_alt_1_rounded,
+                                size: 18),
+                            label: const Text('加入团队')),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  const Text('项目', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  if (d.projects.isEmpty)
+                    const Text('还没有项目',
+                        style: TextStyle(color: CcColors.muted, fontSize: 13))
+                  else
+                    ...d.projects.map((p) => ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.folder_rounded, size: 18),
+                          title: Text(p.name,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text(p.ownerIdentity,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                        )),
+                ]),
+            ),
     );
   }
 }

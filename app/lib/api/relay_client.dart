@@ -307,6 +307,13 @@ class RelayClient {
     return Organization.fromJson(r.data as Map<String, dynamic>);
   }
 
+  Future<void> addOrganizationMember(String id, String identity, String role) =>
+      _dio.post('/v1/orgs/$id/members',
+          data: {'identity': identity, 'role': role});
+
+  Future<void> removeOrganizationMember(String id, String identity) => _dio
+      .delete('/v1/orgs/$id/members/${Uri.encodeComponent(identity)}');
+
   // --- per-identity synced settings (see internal/relay/settings.go) ---
 
   // getSetting returns the caller's synced setting blob for [key], or null when

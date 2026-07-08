@@ -51,4 +51,34 @@ void main() {
     expect(org.members.last.displayName, '');
     expect(org.projects.single.name, 'Backend');
   });
+
+  test('updates organization members', () async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final seen = <String>[];
+    server.listen((req) async {
+      seen.add('${req.method} ${req.uri.path}');
+      req.response.headers.contentType = ContentType.json;
+      if (req.method == 'POST') {
+        expect(req.uri.path, '/v1/orgs/org1/members');
+        final body =
+            jsonDecode(await utf8.decoder.bind(req).join())
+                as Map<String, dynamic>;
+        expect(body, {'identity': 'dev@x', 'role': 'admin'});
+      } else {
+        expect(req.method, 'DELETE');
+        expect(req.uri.path, '/v1/orgs/org1/members/dev%40x');
+      }
+      req.response.write(jsonEncode({'ok': true}));
+      await req.response.close();
+    });
+
+    final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
+    await client.addOrganizationMember('org1', 'dev@x', 'admin');
+    await client.removeOrganizationMember('org1', 'dev@x');
+
+    expect(seen, [
+      'POST /v1/orgs/org1/members',
+      'DELETE /v1/orgs/org1/members/dev%40x',
+    ]);
+  });
 }
