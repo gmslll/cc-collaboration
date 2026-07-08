@@ -226,15 +226,35 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 			}
 		}
 	}
+	t.AssigneeIdentity = strings.TrimSpace(t.AssigneeIdentity)
+	t.AssigneeSessionID = strings.TrimSpace(t.AssigneeSessionID)
+	t.AssigneeSessionLabel = strings.TrimSpace(t.AssigneeSessionLabel)
+	t.AssigneeAgentSessionID = strings.TrimSpace(t.AssigneeAgentSessionID)
+	t.AssigneeWorkdir = strings.TrimSpace(t.AssigneeWorkdir)
+	t.AssigneeAgentKind = strings.TrimSpace(t.AssigneeAgentKind)
+	if t.AssigneeIdentity == "" {
+		t.AssigneeSessionID = ""
+		t.AssigneeSessionLabel = ""
+		t.AssigneeAgentSessionID = ""
+		t.AssigneeWorkdir = ""
+		t.AssigneeAgentKind = ""
+	}
+	if err := s.requireTodoAssignableTo(ctx, *t, t.AssigneeIdentity); err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
-			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence, group_name,
+			assignee_identity, assignee_session_id, assignee_session_label,
+			assignee_agent_session_id, assignee_workdir, assignee_agent_kind,
+			workspace_name, repo_name, recurrence, group_name,
 			due_at, next_occurrence_at, created_at, updated_at, completed_at,
 			source_ref, source_url, source_provider, source_team_key, source_project_id,
 			source_updated_at, source_assignee_name, source_assignee_avatar_url)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, nullableString(t.ProjectID), t.OwnerIdentity, t.Title, t.BodyMD, string(t.Status), string(t.Priority),
-		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, t.WorkspaceName, t.RepoName, string(t.Recurrence), t.GroupName,
+		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel,
+		t.AssigneeAgentSessionID, t.AssigneeWorkdir, t.AssigneeAgentKind,
+		t.WorkspaceName, t.RepoName, string(t.Recurrence), t.GroupName,
 		timeToNullMS(t.DueAt), timeToNullMS(t.NextOccurrenceAt), t.CreatedAt.UnixMilli(), t.UpdatedAt.UnixMilli(), timeToNullMS(t.CompletedAt),
 		t.SourceRef, t.SourceURL, t.SourceProvider, t.SourceTeamKey, t.SourceProjectID,
 		t.SourceUpdatedAt, t.SourceAssigneeName, t.SourceAssigneeAvatarURL,

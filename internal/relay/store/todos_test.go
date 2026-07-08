@@ -208,7 +208,44 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if err := st.AddOrganizationMember(ctx, p.OrgID, "org-admin@x", OrgRoleAdmin); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.CreateTodo(ctx, &todoschema.Todo{ID: "bad-team-assignee", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "bad", AssigneeIdentity: "stranger@x"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("create team todo assigned to non-member: want ErrForbidden, got %v", err)
+	}
+	if err := st.CreateTodo(ctx, &todoschema.Todo{ID: "bad-personal-assignee", OwnerIdentity: "owner@x", Title: "bad", AssigneeIdentity: "member@x"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("create personal todo assigned to another identity: want ErrForbidden, got %v", err)
+	}
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "team", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "team task"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "team-admin", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "admin task", AssigneeIdentity: " org-admin@x "})
+	createdAdmin, err := st.GetTodo(ctx, "team-admin", "owner@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdAdmin.AssigneeIdentity != "org-admin@x" {
+		t.Fatalf("created team todo assignee = %q, want trimmed org-admin@x", createdAdmin.AssigneeIdentity)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{
+		ID:                     "created-resume",
+		OwnerIdentity:          "owner@x",
+		Title:                  "resume",
+		AssigneeIdentity:       " owner@x ",
+		AssigneeSessionID:      " sess-1 ",
+		AssigneeSessionLabel:   " laptop ",
+		AssigneeAgentSessionID: " transcript-1 ",
+		AssigneeWorkdir:        " /tmp/work ",
+		AssigneeAgentKind:      " codex ",
+	})
+	createdResume, err := st.GetTodo(ctx, "created-resume", "owner@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdResume.AssigneeIdentity != "owner@x" ||
+		createdResume.AssigneeSessionID != "sess-1" ||
+		createdResume.AssigneeSessionLabel != "laptop" ||
+		createdResume.AssigneeAgentSessionID != "transcript-1" ||
+		createdResume.AssigneeWorkdir != "/tmp/work" ||
+		createdResume.AssigneeAgentKind != "codex" {
+		t.Fatalf("created resume assignee fields not normalized/persisted: %+v", createdResume)
+	}
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "personal", OwnerIdentity: "owner@x", Title: "private task"})
 
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "member@x", "", "", "", "", ""); err != nil {
@@ -226,6 +263,9 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if err := st.SetDisabled(ctx, "disabled@x", true); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.CreateTodo(ctx, &todoschema.Todo{ID: "bad-disabled-assignee", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "bad", AssigneeIdentity: "disabled@x"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("create team todo assigned to disabled member: want ErrForbidden, got %v", err)
+	}
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "disabled@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("assign team todo to disabled member: want ErrForbidden, got %v", err)
 	}
@@ -236,7 +276,11 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(assignedAdmin) != 1 || assignedAdmin[0].ID != "team" {
+	adminAssignedIDs := map[string]bool{}
+	for _, t := range assignedAdmin {
+		adminAssignedIDs[t.ID] = true
+	}
+	if len(assignedAdmin) != 2 || !adminAssignedIDs["team"] || !adminAssignedIDs["team-admin"] {
 		t.Fatalf("assigned scope should show org admin's team todo: %+v", assignedAdmin)
 	}
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "member@x", "", "", "", "", ""); err != nil {
