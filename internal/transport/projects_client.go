@@ -3,8 +3,10 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
@@ -47,13 +49,16 @@ func (c *Client) ListOrganizationMembers(ctx context.Context, orgID string) ([]O
 }
 
 // ResolveTeamRecipients expands a project or organization target into concrete
-// recipient identities. It excludes the sender and read-only roles: project
-// viewers and organization guests can discover/read shared work via project/org
-// views, but they should not get actionable pickup slots.
-func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, sender string) ([]string, error) {
+// recipient identities. When member is set, it must be an identity inside that
+// team and the result is limited to that one identity. It excludes the sender
+// and read-only roles: project viewers and organization guests can discover/read
+// shared work via project/org views, but they should not get actionable pickup
+// slots.
+func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, sender, member string) ([]string, error) {
 	if projectID != "" && orgID != "" {
 		return nil, errors.New("project and org are mutually exclusive")
 	}
+	member = strings.TrimSpace(member)
 	switch {
 	case projectID != "":
 		members, err := c.ListProjectMembers(ctx, projectID)
@@ -66,6 +71,9 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		active, err := c.activeIdentities(ctx)
 		if err != nil {
 			return nil, err
+		}
+		if member != "" {
+			return resolveOneProjectRecipient(members, active, sender, member)
 		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
@@ -90,6 +98,9 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		if err != nil {
 			return nil, err
 		}
+		if member != "" {
+			return resolveOneOrgRecipient(members, active, sender, member)
+		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
 			if m.Identity == "" || m.Identity == sender || m.Role == "guest" {
@@ -104,6 +115,101 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 	default:
 		return nil, nil
 	}
+}
+
+// ListTeamIdentities returns identities in a project/org, including read-only
+// roles. It is intended for display/filtering commands such as online. When
+// member is set, it validates that identity belongs to the selected team.
+func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, member string) ([]string, error) {
+	if projectID != "" && orgID != "" {
+		return nil, errors.New("project and org are mutually exclusive")
+	}
+	member = strings.TrimSpace(member)
+	switch {
+	case projectID != "":
+		members, err := c.ListProjectMembers(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(members))
+		for _, m := range members {
+			if m.Identity == "" {
+				continue
+			}
+			if member != "" {
+				if m.Identity == member {
+					return []string{member}, nil
+				}
+				continue
+			}
+			out = append(out, m.Identity)
+		}
+		if member != "" {
+			return nil, fmt.Errorf("%s is not a member of project %s", member, projectID)
+		}
+		return handoffschema.DedupeIdentities(out), nil
+	case orgID != "":
+		members, err := c.ListOrganizationMembers(ctx, orgID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(members))
+		for _, m := range members {
+			if m.Identity == "" {
+				continue
+			}
+			if member != "" {
+				if m.Identity == member {
+					return []string{member}, nil
+				}
+				continue
+			}
+			out = append(out, m.Identity)
+		}
+		if member != "" {
+			return nil, fmt.Errorf("%s is not a member of organization %s", member, orgID)
+		}
+		return handoffschema.DedupeIdentities(out), nil
+	default:
+		if member != "" {
+			return nil, errors.New("member requires project or org")
+		}
+		return nil, nil
+	}
+}
+
+func resolveOneProjectRecipient(members []ProjectMember, active map[string]bool, sender, member string) ([]string, error) {
+	role, ok := memberRole(members, member)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a member of the project", member)
+	}
+	if member == sender {
+		return nil, fmt.Errorf("cannot send to yourself (%s)", sender)
+	}
+	if role == "viewer" {
+		return nil, fmt.Errorf("project viewer %s cannot receive actionable team handoffs", member)
+	}
+	if active != nil && !active[member] {
+		return nil, fmt.Errorf("team member %s is disabled or inactive", member)
+	}
+	return []string{member}, nil
+}
+
+func resolveOneOrgRecipient(members []OrganizationMember, active map[string]bool, sender, member string) ([]string, error) {
+	role, ok := orgMemberRole(members, member)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a member of the organization", member)
+	}
+	if member == sender {
+		return nil, fmt.Errorf("cannot send to yourself (%s)", sender)
+	}
+	if role == "guest" {
+		return nil, fmt.Errorf("organization guest %s cannot receive actionable team handoffs", member)
+	}
+	if active != nil && !active[member] {
+		return nil, fmt.Errorf("team member %s is disabled or inactive", member)
+	}
+	return []string{member}, nil
 }
 
 func (c *Client) activeIdentities(ctx context.Context) (map[string]bool, error) {

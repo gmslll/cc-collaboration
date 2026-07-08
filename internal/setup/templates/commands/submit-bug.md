@@ -26,6 +26,8 @@ This command is different from `/handoff` (sender just finished work) and `/requ
 
    调 `submit_bug` 时优先传真实 identity 数组;如果用户回"用默认"或"both",省略 `to` 参数(MCP 工具会自动用 `identity.partners`,没有则 fallback 到 `identity.partner`)。不要把 `frontend` / `backend` 当作最终收件人,除非配置里的真实 identity 就叫这个。
 
+   如果用户明确要求「发给某个项目/组织/团队」,传 `project`（cc-handoff 项目 id）或 `org`（组织 id）,不要再传 `to`。如果用户明确指定团队里的某个人,同时传 `member`（真实 identity）；MCP 工具会校验这个人确实属于该团队且不是只读角色。
+
 4. **询问验收标准 / 测试备注**。在调 `submit_bug` 之前问一次:
    > 有要给开发的验收标准或硬约束吗?例如「修完后这个 case 必须通过自动化用例」「不要顺手改 X 模块」「字段不能改名(影响别的调用方)」。没有就回 `没有` 或 `n`。
 
@@ -51,6 +53,7 @@ This command is different from `/handoff` (sender just finished work) and `/requ
 7. 调 `submit_bug` MCP 工具:
    - `summary`: 第 2 步的 Markdown 总结
    - `to`: 第 3 步的数组(没指定就省略,用默认)
+   - `project` / `org` / `member`: 仅当第 3 步选择团队或团队内某人时传；传了这些就不要传 `to`
    - `note`: 第 4 步的备注(没有就不传)
    - `prd`: 第 5 步的产品需求(没有就不传)
    - `attachment_paths`: 第 6 步的路径数组(没有就不传)

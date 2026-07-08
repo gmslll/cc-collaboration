@@ -20,6 +20,7 @@ func runSubmit(ctx context.Context, args []string) error {
 	to := fs.String("to", "", "recipient identity (default: partner from .cc-handoff.toml)")
 	projectID := fs.String("project", "", "send to all actionable members of project id (owners/members; excludes yourself and viewers)")
 	orgID := fs.String("org", "", "send to all actionable members of organization id (owners/admins/members; excludes yourself and guests)")
+	member := fs.String("member", "", "limit --project/--org delivery to this identity after validating team membership")
 	urgent := fs.Bool("urgent", false, "mark handoff as urgent (recipient may auto-launch)")
 	note := fs.String("note", "", "需求 / 跨端约束 (Markdown)；会以「⚠️ 必读」段渲染到接收端 prompt 并要求 INTEGRATION.md 逐条响应")
 	prd := fs.String("prd", "", "产品需求 / 设计意图 (Markdown)；以「📋 背景参考」段渲染到接收端 prompt，不强制逐条响应（区别于 --note）")
@@ -43,8 +44,12 @@ func runSubmit(ctx context.Context, args []string) error {
 	if *to != "" {
 		recipient = *to
 	}
+	resolvedRecipient := recipient
+	if *to == "" && (*projectID != "" || *orgID != "") {
+		resolvedRecipient = ""
+	}
 	client := transport.New(res.RelayURL, res.Token)
-	recipients, err := resolveSubmitRecipients(ctx, client, res.Me, recipient, *projectID, *orgID)
+	recipients, err := resolveSubmitRecipients(ctx, client, res.Me, resolvedRecipient, *projectID, *orgID, *member)
 	if err != nil {
 		return err
 	}
@@ -115,12 +120,12 @@ func runSubmit(ctx context.Context, args []string) error {
 	return nil
 }
 
-func resolveSubmitRecipients(ctx context.Context, client *transport.Client, sender, recipient, projectID, orgID string) ([]string, error) {
+func resolveSubmitRecipients(ctx context.Context, client *transport.Client, sender, recipient, projectID, orgID, member string) ([]string, error) {
 	if (projectID != "" || orgID != "") && recipient != "" {
 		return nil, fmt.Errorf("--to cannot be combined with --project or --org")
 	}
 	if projectID != "" || orgID != "" {
-		recipients, err := client.ResolveTeamRecipients(ctx, projectID, orgID, sender)
+		recipients, err := client.ResolveTeamRecipients(ctx, projectID, orgID, sender, member)
 		if err != nil {
 			return nil, err
 		}
@@ -131,6 +136,9 @@ func resolveSubmitRecipients(ctx context.Context, client *transport.Client, send
 			return nil, fmt.Errorf("organization %s has no actionable recipients (owners/admins/members other than %s)", orgID, sender)
 		}
 		return recipients, nil
+	}
+	if member != "" {
+		return nil, fmt.Errorf("--member requires --project or --org")
 	}
 	if recipient == "" {
 		return nil, nil

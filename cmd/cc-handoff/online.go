@@ -9,11 +9,15 @@ import (
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/transport"
+	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
 func runOnline(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("online", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON instead of a table")
+	projectID := fs.String("project", "", "show only identities in this project id")
+	orgID := fs.String("org", "", "show only identities in this organization id")
+	member := fs.String("member", "", "with --project/--org, show only this team member")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -22,7 +26,7 @@ func runOnline(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return err
 	}
@@ -30,6 +34,13 @@ func runOnline(ctx context.Context, args []string) error {
 	users, err := client.ListOnlineUsers(ctx)
 	if err != nil {
 		return relayCompatError(err, "online users listing")
+	}
+	if *projectID != "" || *orgID != "" || *member != "" {
+		ids, err := client.ListTeamIdentities(ctx, *projectID, *orgID, *member)
+		if err != nil {
+			return err
+		}
+		users = filterOnlineUsers(users, ids)
 	}
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(users)
@@ -62,4 +73,18 @@ func runOnline(ctx context.Context, args []string) error {
 		fmt.Printf("%-7s  %s%s\n", status, u.Identity, marker)
 	}
 	return nil
+}
+
+func filterOnlineUsers(users []handoffschema.OnlineUser, identities []string) []handoffschema.OnlineUser {
+	allowed := map[string]bool{}
+	for _, id := range identities {
+		allowed[id] = true
+	}
+	out := make([]handoffschema.OnlineUser, 0, len(users))
+	for _, u := range users {
+		if allowed[u.Identity] {
+			out = append(out, u)
+		}
+	}
+	return out
 }
