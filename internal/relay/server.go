@@ -580,7 +580,8 @@ func (s *Server) canViewPackage(ctx context.Context, pkg *handoffschema.Package,
 	}
 	// Capsules follow the plaza's visibility rule, not the recipient one.
 	if pkg.EffectiveKind() == handoffschema.KindCapsule {
-		return pkg.CapsuleVisibleTo(identity)
+		ok, err := s.Store.CapsuleVisibleTo(ctx, pkg, identity)
+		return err == nil && ok
 	}
 	if s.callerCanView(ctx, pkg, identity) {
 		return true

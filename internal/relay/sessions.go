@@ -208,44 +208,5 @@ func (s *Server) canReachIdentity(ctx context.Context, caller, target string) (b
 }
 
 func (s *Server) identitiesShareTeam(ctx context.Context, a, b string) (bool, error) {
-	aOrgs, err := s.Store.MemberOrganizations(ctx, a)
-	if err != nil {
-		return false, err
-	}
-	bOrgs, err := s.Store.MemberOrganizations(ctx, b)
-	if err != nil {
-		return false, err
-	}
-	aProjects, err := s.Store.MemberProjects(ctx, a)
-	if err != nil {
-		return false, err
-	}
-	bProjects, err := s.Store.MemberProjects(ctx, b)
-	if err != nil {
-		return false, err
-	}
-	// Legacy tokens.json deployments may have no SaaS team rows at all. Keep
-	// that old flat-roster behavior only when neither side has team membership.
-	if len(aOrgs) == 0 && len(bOrgs) == 0 && len(aProjects) == 0 && len(bProjects) == 0 {
-		return true, nil
-	}
-	orgs := make(map[string]struct{}, len(aOrgs))
-	for _, org := range aOrgs {
-		orgs[org.ID] = struct{}{}
-	}
-	for _, org := range bOrgs {
-		if _, ok := orgs[org.ID]; ok {
-			return true, nil
-		}
-	}
-	projects := make(map[string]struct{}, len(aProjects))
-	for _, project := range aProjects {
-		projects[project.ID] = struct{}{}
-	}
-	for _, project := range bProjects {
-		if _, ok := projects[project.ID]; ok {
-			return true, nil
-		}
-	}
-	return false, nil
+	return s.Store.IdentitiesShareTeam(ctx, a, b)
 }

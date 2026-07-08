@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS handoffs (
 );
 CREATE INDEX IF NOT EXISTS idx_handoffs_recipient_state_created
   ON handoffs(recipient, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_handoffs_kind_created
+  ON handoffs(kind, created_at);
 
 CREATE TABLE IF NOT EXISTS comments (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +169,9 @@ CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(ident
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_bug_group ON handoffs(bug_group_id)`); err != nil {
 		return fmt.Errorf("create bug_group index: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_kind_created ON handoffs(kind, created_at)`); err != nil {
+		return fmt.Errorf("create handoff kind index: %w", err)
 	}
 	if err := s.backfillOrganizations(); err != nil {
 		return err
@@ -603,17 +608,18 @@ func (s *Store) ListHistory(ctx context.Context, recipient string, limit int) ([
 	return out, rows.Err()
 }
 
-// ListCapsules returns the plaza rows visible to [identity]: every public
-// capsule plus the caller's own (any visibility), newest first. Visibility
-// lives in the JSON payload, so this loads capsule rows and filters in Go —
-// fine for the plaza's modest scale; [limit] bounds the scan.
+// ListCapsules returns the plaza rows visible to [identity]: the caller's own
+// capsules plus public capsules from identities they can reach via shared
+// org/project membership. Visibility lives in the JSON payload, so this loads
+// capsule rows and filters in Go — fine for the plaza's modest scale; [limit]
+// bounds the returned visible rows.
 func (s *Store) ListCapsules(ctx context.Context, identity string, limit int) ([]handoffschema.CapsuleListItem, error) {
 	if limit <= 0 {
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT payload FROM handoffs WHERE kind = ? ORDER BY created_at DESC LIMIT ?`,
-		string(handoffschema.KindCapsule), limit,
+		`SELECT payload FROM handoffs WHERE kind = ? ORDER BY created_at DESC`,
+		string(handoffschema.KindCapsule),
 	)
 	if err != nil {
 		return nil, err
@@ -629,13 +635,29 @@ func (s *Store) ListCapsules(ctx context.Context, identity string, limit int) ([
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
 			continue // skip a corrupt row rather than fail the whole plaza
 		}
-		// Public capsules to anyone, private ones only to their owner.
-		if !p.CapsuleVisibleTo(identity) {
+		visible, err := s.CapsuleVisibleTo(ctx, &p, identity)
+		if err != nil {
+			return nil, err
+		}
+		if !visible {
 			continue
 		}
 		out = append(out, handoffschema.NewCapsuleListItem(&p))
+		if len(out) >= limit {
+			break
+		}
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) CapsuleVisibleTo(ctx context.Context, p *handoffschema.Package, viewer string) (bool, error) {
+	if p.Sender == viewer {
+		return true, nil
+	}
+	if p.CapsuleOrEmpty().EffectiveVisibility() != handoffschema.CapsulePublic {
+		return false, nil
+	}
+	return s.IdentitiesShareTeam(ctx, p.Sender, viewer)
 }
 
 // capsuleOwnerRow fetches (sender, kind) for id, enforcing "exists + is a

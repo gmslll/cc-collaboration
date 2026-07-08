@@ -25,8 +25,17 @@ func TestCapsuleViewVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	for _, id := range []string{"owner@t", "mate@t"} {
+	for _, id := range []string{"owner@t", "mate@t", "outsider@t"} {
 		mkUser(t, st, id, "pw-"+id+"-12345")
+	}
+	if err := st.CreateOrganization(context.Background(), "org-shared", "Shared", "owner@t", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(context.Background(), "org-shared", "mate@t", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(context.Background(), "org-other", "Other", "outsider@t", time.Now().UTC()); err != nil {
+		t.Fatal(err)
 	}
 	srv := httptest.NewServer((&relay.Server{
 		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
@@ -49,6 +58,7 @@ func TestCapsuleViewVisibility(t *testing.T) {
 
 	mate := loginToken(t, srv.URL, "mate@t", "pw-mate@t-12345")
 	owner := loginToken(t, srv.URL, "owner@t", "pw-owner@t-12345")
+	outsider := loginToken(t, srv.URL, "outsider@t", "pw-outsider@t-12345")
 
 	getStatus := func(id, token string) int {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/handoffs/"+id, nil)
@@ -63,6 +73,9 @@ func TestCapsuleViewVisibility(t *testing.T) {
 
 	if got := getStatus("cap-pub", mate); got != http.StatusOK {
 		t.Errorf("public capsule GET by teammate = %d, want 200", got)
+	}
+	if got := getStatus("cap-pub", outsider); got != http.StatusForbidden {
+		t.Errorf("public capsule GET by cross-team user = %d, want 403", got)
 	}
 	if got := getStatus("cap-priv", mate); got != http.StatusForbidden {
 		t.Errorf("private capsule GET by teammate = %d, want 403", got)

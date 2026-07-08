@@ -11,13 +11,18 @@ import (
 
 func mustInsertCapsule(t *testing.T, st *Store, id, owner string, vis handoffschema.CapsuleVisibility) {
 	t.Helper()
+	mustInsertCapsuleAt(t, st, id, owner, vis, time.Now().UTC())
+}
+
+func mustInsertCapsuleAt(t *testing.T, st *Store, id, owner string, vis handoffschema.CapsuleVisibility, createdAt time.Time) {
+	t.Helper()
 	pkg := &handoffschema.Package{
 		ID:            id,
 		SchemaVersion: handoffschema.SchemaVersion,
 		Kind:          handoffschema.KindCapsule,
 		Sender:        owner,
 		Urgency:       handoffschema.UrgencyNormal,
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     createdAt,
 		Repo:          handoffschema.Repo{Name: "demo"},
 		SummaryMD:     "capsule " + id,
 		Capsule: &handoffschema.Capsule{
@@ -59,6 +64,66 @@ func TestListCapsules_VisibilityScoping(t *testing.T) {
 	// Projection carries the fields the plaza renders.
 	if it := got["c-ap"]; it.Owner != "alice" || it.Visibility != handoffschema.CapsulePublic || it.SourceAgent != "claude" || !it.HasPersona {
 		t.Errorf("capsule list item projection wrong: %+v", it)
+	}
+}
+
+func TestListCapsules_PublicScopedToSharedTeam(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory", now); err != nil {
+		t.Fatal(err)
+	}
+
+	mustInsertCapsule(t, st, "c-public", "alice", handoffschema.CapsulePublic)
+	mustInsertCapsule(t, st, "c-private", "alice", handoffschema.CapsulePrivate)
+
+	bob, err := st.ListCapsules(ctx, "bob", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bob) != 1 || bob[0].ID != "c-public" {
+		t.Fatalf("shared teammate capsules = %+v, want only c-public", bob)
+	}
+	mallory, err := st.ListCapsules(ctx, "mallory", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mallory) != 0 {
+		t.Fatalf("cross-team public capsule leaked: %+v", mallory)
+	}
+}
+
+func TestListCapsules_LimitAppliesAfterVisibility(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory", now); err != nil {
+		t.Fatal(err)
+	}
+
+	mustInsertCapsuleAt(t, st, "visible-old", "alice", handoffschema.CapsulePublic, now.Add(-3*time.Minute))
+	mustInsertCapsuleAt(t, st, "hidden-new-1", "mallory", handoffschema.CapsulePublic, now.Add(-2*time.Minute))
+	mustInsertCapsuleAt(t, st, "hidden-new-2", "mallory", handoffschema.CapsulePublic, now.Add(-1*time.Minute))
+
+	items, err := st.ListCapsules(ctx, "bob", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "visible-old" {
+		t.Fatalf("limit should apply after visibility filtering, got %+v", items)
 	}
 }
 

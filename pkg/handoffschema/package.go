@@ -129,10 +129,9 @@ func (p *Package) RequiresRecipient() bool {
 	return p.EffectiveKind() != KindCapsule
 }
 
-// CapsuleVisibleTo reports whether this capsule is visible to viewer: a public
-// capsule to anyone, a private one only to its owner. The single source of the
-// plaza's visibility rule — shared by the plaza list (store.ListCapsules) and
-// the per-capsule read authz (server.canViewPackage) so they never drift.
+// CapsuleVisibleTo reports the package-local visibility rule: public capsules
+// pass, private capsules are owner-only. Relay/store code layers team
+// reachability on top; use Store.CapsuleVisibleTo for tenant-scoped checks.
 func (p *Package) CapsuleVisibleTo(viewer string) bool {
 	return p.CapsuleOrEmpty().EffectiveVisibility() == CapsulePublic || p.Sender == viewer
 }
