@@ -5,6 +5,7 @@ import 'package:app/api/models.dart';
 import 'package:app/local/diff_parse.dart';
 import 'package:app/local/remote_prefs.dart';
 import 'package:app/local/repo_config.dart';
+import 'package:app/voice/stt.dart';
 import 'package:app/widgets.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -54,6 +55,10 @@ void main() {
       remote,
       isNot(contains('kRemoteShowSessionContentPref,\n          def: true')),
     );
+  });
+
+  test('speech recognizer debug logging is off by default', () {
+    expect(kSpeechDebugLogging, isFalse);
   });
 
   group('splitFileNameDir', () {

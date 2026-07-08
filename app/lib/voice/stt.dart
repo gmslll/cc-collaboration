@@ -4,6 +4,8 @@ import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+const bool kSpeechDebugLogging = false;
+
 // SpeechInput is the web-safe speech-to-text capability shared by the desktop
 // (VoiceService) and the phone/web remote workspace. It depends ONLY on
 // speech_to_text (which has a web implementation via the Web Speech API) — no
@@ -64,13 +66,12 @@ class SpeechInput {
     try {
       // Guard initialize with a timeout: on some devices the recognizer binding
       // hangs (e.g. no on-device service), which would otherwise leave the
-      // caller awaiting forever — i.e. "the button does nothing". debugLogging
-      // surfaces the plugin internals in `adb logcat`.
+      // caller awaiting forever — i.e. "the button does nothing".
       _ready = await _stt
           .initialize(
             onError: _onError,
             onStatus: _onStatus,
-            debugLogging: true,
+            debugLogging: kSpeechDebugLogging,
             finalTimeout: const Duration(seconds: 2),
           )
           .timeout(
