@@ -119,7 +119,8 @@ func (s *Store) ListOrganizationMembers(ctx context.Context, orgID string) ([]Or
 		`SELECT om.identity, om.role, COALESCE(u.display_name, '')
 		   FROM organization_members om
 		   LEFT JOIN users u ON u.identity = om.identity
-		  WHERE om.org_id = ? ORDER BY om.identity`, orgID)
+		  WHERE om.org_id = ? AND (u.identity IS NULL OR u.disabled = 0)
+		  ORDER BY om.identity`, orgID)
 	if err != nil {
 		return nil, err
 	}

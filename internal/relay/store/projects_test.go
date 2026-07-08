@@ -103,6 +103,44 @@ func TestProjectsAndMembers(t *testing.T) {
 	}
 }
 
+func TestListMembersHidesDisabledUsers(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "active@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range []string{"active@x", "disabled@x", "legacy@x"} {
+		if err := st.AddMember(ctx, "p1", identity, RoleMember); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	members, err := st.ListMembers(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, m := range members {
+		got[m.Identity] = true
+	}
+	for _, want := range []string{"owner@x", "active@x", "legacy@x"} {
+		if !got[want] {
+			t.Fatalf("project member %q missing from %+v", want, members)
+		}
+	}
+	if got["disabled@x"] {
+		t.Fatalf("disabled project member leaked into list: %+v", members)
+	}
+}
+
 func TestProjectOwnerInvariant(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

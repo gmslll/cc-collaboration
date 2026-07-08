@@ -39,6 +39,44 @@ func TestOrganizationsAndOwnerInvariant(t *testing.T) {
 	}
 }
 
+func TestListOrganizationMembersHidesDisabledUsers(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "active@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range []string{"active@x", "disabled@x", "legacy@x"} {
+		if err := st.AddOrganizationMember(ctx, "org1", identity, OrgRoleMember); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	members, err := st.ListOrganizationMembers(ctx, "org1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, m := range members {
+		got[m.Identity] = true
+	}
+	for _, want := range []string{"owner@x", "active@x", "legacy@x"} {
+		if !got[want] {
+			t.Fatalf("organization member %q missing from %+v", want, members)
+		}
+	}
+	if got["disabled@x"] {
+		t.Fatalf("disabled organization member leaked into list: %+v", members)
+	}
+}
+
 func TestRemoveOrganizationMemberRevokesProjectMemberships(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

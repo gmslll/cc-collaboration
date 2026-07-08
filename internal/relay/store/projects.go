@@ -304,7 +304,8 @@ func (s *Store) ListMembers(ctx context.Context, projectID string) ([]ProjectMem
 		`SELECT pm.identity, pm.role, COALESCE(u.display_name, '')
 		   FROM project_members pm
 		   LEFT JOIN users u ON u.identity = pm.identity
-		  WHERE pm.project_id = ? ORDER BY pm.identity`, projectID)
+		  WHERE pm.project_id = ? AND (u.identity IS NULL OR u.disabled = 0)
+		  ORDER BY pm.identity`, projectID)
 	if err != nil {
 		return nil, err
 	}
