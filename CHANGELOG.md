@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.23] - 2026-07-08
+
+### Fixed
+
+- **后台蒸馏不再无限转圈** — headless Claude/Codex 蒸馏现在每次 one-shot 都有硬超时,超时会终止子进程;persona / seed 改为串行生成,避免两个本地 CLI 进程同时抢状态。persona 未产出时会停止卡片 spinner 并提示失败,不再卡在「蒸馏中」或进入空角色复查。
+
 ## [0.9.22] - 2026-07-07
 
 ### Fixed

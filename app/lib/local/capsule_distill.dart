@@ -50,6 +50,7 @@ typedef ProcRunner =
       String exe,
       List<String> args, {
       String? stdin,
+      Duration? timeout,
     });
 
 /// systemProcRunner is the real ProcRunner (used by the wiring layer). Spawns
@@ -58,6 +59,7 @@ Future<ProcOutcome> systemProcRunner(
   String exe,
   List<String> args, {
   String? stdin,
+  Duration? timeout,
 }) async {
   // Inject a login-shell PATH so a node-shim agent (codex is `#!/usr/bin/env
   // node`) can find `node` — a GUI app's minimal PATH omits nvm/etc, which made
@@ -72,16 +74,47 @@ Future<ProcOutcome> systemProcRunner(
     runInShell: Platform.isWindows,
     environment: pathEnv.isEmpty ? null : {'PATH': pathEnv},
   );
+  var exited = false;
+  var timedOut = false;
+  Timer? killTimer;
+  Timer? forceKillTimer;
+  if (timeout != null) {
+    killTimer = Timer(timeout, () {
+      timedOut = true;
+      p.kill(ProcessSignal.sigterm);
+      forceKillTimer = Timer(const Duration(seconds: 2), () {
+        if (!exited) p.kill(ProcessSignal.sigkill);
+      });
+    });
+  }
   // Always close stdin (with EOF): `codex exec` peeks stdin and would otherwise
   // block waiting for it. Guarded — a fast-exiting proc may already be gone.
   try {
     if (stdin != null) p.stdin.write(stdin);
     await p.stdin.close();
   } catch (_) {}
-  final out = await p.stdout.transform(utf8.decoder).join();
-  final err = await p.stderr.transform(utf8.decoder).join();
-  final code = await p.exitCode;
-  return ProcOutcome(code, out, err);
+  final outFuture = p.stdout.transform(utf8.decoder).join();
+  final errFuture = p.stderr.transform(utf8.decoder).join();
+  try {
+    final results = await Future.wait<Object>([
+      outFuture,
+      errFuture,
+      p.exitCode,
+    ]);
+    exited = true;
+    killTimer?.cancel();
+    forceKillTimer?.cancel();
+    final out = results[0] as String;
+    final err = results[1] as String;
+    final code = results[2] as int;
+    if (!timedOut) return ProcOutcome(code, out, err);
+    final suffix = 'timed out after ${timeout?.inSeconds ?? 0}s';
+    return ProcOutcome(-1, out, err.isEmpty ? suffix : '$err\n$suffix');
+  } finally {
+    exited = true;
+    killTimer?.cancel();
+    forceKillTimer?.cancel();
+  }
 }
 
 /// DistillOutcome reports what happened so the caller can tell the user which
@@ -164,6 +197,7 @@ Future<DistillOutcome> distillCapsule({
   required ProcRunner runProc,
   Duration selfTimeout = const Duration(minutes: 3),
   Duration selfPoll = const Duration(seconds: 2),
+  Duration offlineOneShotTimeout = const Duration(minutes: 2),
 }) async {
   await Directory(draftDir).create(recursive: true);
   final personaFile = File('$draftDir/$_personaFileName');
@@ -206,6 +240,7 @@ Future<DistillOutcome> distillCapsule({
     draftDir: draftDir,
     transcriptText: transcriptText,
     runProc: runProc,
+    oneShotTimeout: offlineOneShotTimeout,
   );
   return DistillOutcome(
     strategy: DistillStrategy.offline,
@@ -273,9 +308,10 @@ Future<void> _runSkillList({
 
 /// runOfflineDistill produces the drafts with two headless one-shot calls (one
 /// per artifact, so each output stays clean and bounded) over the neutral
-/// transcript. The two calls are independent, so they run concurrently — the
-/// interactive path's biggest wall-clock cost is these LLM round-trips. persona
-/// is required; seed is best-effort. [headlessExe] is the resolved agent
+/// transcript. The calls run sequentially: a background Codex/Claude one-shot
+/// can contend with another one-shot for the same local CLI state, and any hang
+/// must be bounded so the capsule UI does not spin forever. persona is
+/// required; seed is best-effort. [headlessExe] is the resolved agent
 /// executable (see AgentResolver — a bare name is unreliable under a GUI's
 /// minimal PATH). Returns true when at least the persona was written.
 Future<bool> runOfflineDistill({
@@ -284,30 +320,29 @@ Future<bool> runOfflineDistill({
   required String draftDir,
   required String transcriptText,
   required ProcRunner runProc,
+  Duration oneShotTimeout = const Duration(minutes: 2),
 }) async {
-  final results = await Future.wait([
-    _oneShot(
-      headlessExe,
-      agentKind,
-      offlinePersonaPrompt(transcriptText),
-      runProc,
-    ),
-    _oneShot(
-      headlessExe,
-      agentKind,
-      offlineSeedPrompt(transcriptText),
-      runProc,
-    ),
-  ]);
-  final persona = results[0];
-  final seed = results[1];
-  if (persona != null) {
-    await File('$draftDir/$_personaFileName').writeAsString(persona);
-  }
+  final persona = await _oneShot(
+    headlessExe,
+    agentKind,
+    offlinePersonaPrompt(transcriptText),
+    runProc,
+    timeout: oneShotTimeout,
+  );
+  if (persona == null) return false;
+
+  final seed = await _oneShot(
+    headlessExe,
+    agentKind,
+    offlineSeedPrompt(transcriptText),
+    runProc,
+    timeout: oneShotTimeout,
+  );
+  await File('$draftDir/$_personaFileName').writeAsString(persona);
   if (seed != null) {
     await File('$draftDir/$_seedFileName').writeAsString(seed);
   }
-  return persona != null;
+  return true;
 }
 
 // _oneShot runs a single headless prompt and returns trimmed stdout, or null on
@@ -318,9 +353,20 @@ Future<String?> _oneShot(
   String exe,
   String agentKind,
   String prompt,
-  ProcRunner runProc,
-) async {
-  final r = await runProc(exe, _headlessArgs(agentKind), stdin: prompt);
+  ProcRunner runProc, {
+  required Duration timeout,
+}) async {
+  late final ProcOutcome r;
+  try {
+    r = await runProc(
+      exe,
+      _headlessArgs(agentKind),
+      stdin: prompt,
+      timeout: timeout,
+    ).timeout(timeout + const Duration(milliseconds: 100));
+  } on TimeoutException {
+    return null;
+  }
   if (r.exitCode != 0) return null;
   final out = r.stdout.trim();
   return out.isEmpty ? null : out;

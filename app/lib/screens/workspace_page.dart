@@ -1868,6 +1868,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       },
       runProc: systemProcRunner,
     );
+    if (!outcome.personaWritten) {
+      try {
+        await Directory(draftDir).delete(recursive: true);
+      } catch (_) {}
+      return (null, '后台蒸馏未产出角色 persona.md,请稍后重试或改用「让它自己蒸馏」');
+    }
 
     return (
       CapsuleDraft(
