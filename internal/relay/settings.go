@@ -7,6 +7,8 @@ import (
 	"github.com/cc-collaboration/internal/relay/auth"
 )
 
+const maxSettingBodyBytes = 64 << 10
+
 // Per-identity synced settings: a tiny key -> opaque-JSON store scoped to the
 // caller's identity. Used so a user's own devices (same identity) show an
 // identical view — the Todo board's scope / team source / Linear team key —
@@ -49,8 +51,8 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Value json.RawMessage `json:"value"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingBodyBytes)).Decode(&body); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(body.Value) == 0 {
