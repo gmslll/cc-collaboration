@@ -45,6 +45,9 @@ String organizationMemberPickerLabel(OrganizationMember member) {
   return '${member.displayName} · ${member.identity} · $role';
 }
 
+String projectOwnerLabel(String identity) =>
+    '${projectRoleLabel('owner')} · $identity';
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -330,7 +333,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '${_teamName(p.orgId)} · ${_projectRoleLabel(p)} · 负责人 ${p.ownerIdentity}',
+                            '${_teamName(p.orgId)} · ${_projectRoleLabel(p)} · ${projectOwnerLabel(p.ownerIdentity)}',
                             style: const TextStyle(
                               fontFamily: CcType.mono,
                               color: CcColors.muted,
@@ -748,7 +751,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         subtitle: Text(
-                          p.ownerIdentity,
+                          projectOwnerLabel(p.ownerIdentity),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),

@@ -67,4 +67,8 @@ void main() {
     expect(organizationMemberPickerLabel(named), 'Dev · dev@x · 管理员');
     expect(organizationMemberPickerLabel(unnamed), 'ops@x · 访客');
   });
+
+  test('project owner label uses localized owner text', () {
+    expect(projectOwnerLabel('owner@x'), '负责人 · owner@x');
+  });
 }
