@@ -191,6 +191,9 @@ func (s *Store) RemoveOrganizationMember(ctx context.Context, orgID, identity st
 			return err
 		}
 	}
+	if err := removeOrganizationProjectMemberships(ctx, tx, orgID, identity); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM organization_members WHERE org_id = ? AND identity = ?`, orgID, identity)
 	if err != nil {
 		return err
@@ -277,5 +280,61 @@ func replaceOrganizationOwnerIdentity(ctx context.Context, tx *sql.Tx, orgID, re
 	}
 	_, err := tx.ExecContext(ctx,
 		`UPDATE organizations SET owner_identity = ? WHERE id = ?`, replacement, orgID)
+	return err
+}
+
+func removeOrganizationProjectMemberships(ctx context.Context, tx *sql.Tx, orgID, identity string) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT p.id, pm.role
+		   FROM projects p
+		   JOIN project_members pm ON pm.project_id = p.id
+		  WHERE p.org_id = ? AND pm.identity = ?`,
+		orgID, identity)
+	if err != nil {
+		return err
+	}
+	var memberships []struct {
+		projectID string
+		role      string
+	}
+	for rows.Next() {
+		var m struct {
+			projectID string
+			role      string
+		}
+		if err := rows.Scan(&m.projectID, &m.role); err != nil {
+			rows.Close()
+			return err
+		}
+		memberships = append(memberships, m)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, m := range memberships {
+		if m.role != RoleOwner {
+			continue
+		}
+		var owners int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM project_members WHERE project_id = ? AND role = ?`,
+			m.projectID, RoleOwner).Scan(&owners); err != nil {
+			return err
+		}
+		if owners <= 1 {
+			return ErrLastOwner
+		}
+		if err := replaceProjectOwnerIdentity(ctx, tx, m.projectID, identity); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM project_members
+		  WHERE identity = ?
+		    AND project_id IN (SELECT id FROM projects WHERE org_id = ?)`,
+		identity, orgID)
 	return err
 }
