@@ -74,10 +74,16 @@ func TestSubmitHandoffRequiresReachableRecipients(t *testing.T) {
 	mkUser(t, st, "alice@backend", "alicepass1")
 	mkUser(t, st, "bob@frontend", "bobpass123")
 	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateUser(ctx, store.User{Identity: "disabled@frontend", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "disabled@frontend", store.OrgRoleMember); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
@@ -112,6 +118,10 @@ func TestSubmitHandoffRequiresReachableRecipients(t *testing.T) {
 	if code, _ := postJSON(t, srv.URL+"/v1/handoffs", "tok-mallory", pkg); code != http.StatusForbidden {
 		t.Fatalf("cross-team submit = %d, want 403", code)
 	}
+	pkg.Recipient = "disabled@frontend"
+	if code, _ := postJSON(t, srv.URL+"/v1/handoffs", "tok-bob", pkg); code != http.StatusForbidden {
+		t.Fatalf("disabled teammate submit = %d, want 403", code)
+	}
 }
 
 func TestReassignRequiresReachableRecipient(t *testing.T) {
@@ -126,6 +136,9 @@ func TestReassignRequiresReachableRecipient(t *testing.T) {
 	mkUser(t, st, "bob@frontend", "bobpass123")
 	mkUser(t, st, "charlie@qa", "charliepass1")
 	mkUser(t, st, "mallory@other", "mallorypass1")
+	if err := st.CreateUser(ctx, store.User{Identity: "disabled@frontend", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +146,9 @@ func TestReassignRequiresReachableRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.AddOrganizationMember(ctx, "org-shared", "charlie@qa", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "disabled@frontend", store.OrgRoleMember); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory@other", now); err != nil {
@@ -170,10 +186,15 @@ func TestReassignRequiresReachableRecipient(t *testing.T) {
 	}
 	mkBug("bug-cross")
 	mkBug("bug-shared")
+	mkBug("bug-disabled")
 
 	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/bug-cross/reassign", "tok-bob",
 		map[string]string{"to": "mallory@other", "reason": "wrong team"}); code != http.StatusForbidden {
 		t.Fatalf("cross-team reassign = %d, want 403", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/bug-disabled/reassign", "tok-bob",
+		map[string]string{"to": "disabled@frontend", "reason": "disabled"}); code != http.StatusForbidden {
+		t.Fatalf("disabled teammate reassign = %d, want 403", code)
 	}
 	if code, body := postJSON(t, srv.URL+"/v1/handoffs/bug-shared/reassign", "tok-bob",
 		map[string]string{"to": "charlie@qa", "reason": "qa owns this"}); code != http.StatusCreated {

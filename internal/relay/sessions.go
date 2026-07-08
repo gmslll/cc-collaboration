@@ -220,6 +220,13 @@ func (s *Server) requireReachableIdentity(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) canReachIdentity(ctx context.Context, caller, target string) (bool, error) {
+	active, err := s.Store.UserActive(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	if !active {
+		return false, nil
+	}
 	if caller == target || s.isAdmin(ctx, caller) {
 		return true, nil
 	}
