@@ -155,8 +155,10 @@ function wireEvents() {
   els.newUserForm.addEventListener("submit", onCreateUser);
   els.projectsList.addEventListener("click", onProjectsListClick);
   els.projectsList.addEventListener("submit", onProjectsListSubmit);
+  els.projectsList.addEventListener("change", onProjectsListChange);
   els.orgsList.addEventListener("click", onOrganizationsListClick);
   els.orgsList.addEventListener("submit", onOrganizationsListSubmit);
+  els.orgsList.addEventListener("change", onOrganizationsListChange);
   els.tokensList.addEventListener("click", onTokensListClick);
   els.usersList.addEventListener("click", onUsersListClick);
 
@@ -970,6 +972,10 @@ function roleTone(role) {
   return ["owner", "admin", "member", "viewer", "guest"].includes(role) ? `role-${role}` : "role-member";
 }
 
+function roleSelectOptions(roles, currentRole) {
+  return roles.map((role) => `<option value="${escapeAttr(role)}" ${role === currentRole ? "selected" : ""}>${escapeHTML(role)}</option>`).join("");
+}
+
 function metricTile(label, value) {
   return `<div class="team-metric"><span>${escapeHTML(label)}</span><strong>${escapeHTML(String(value))}</strong></div>`;
 }
@@ -1017,6 +1023,9 @@ function renderMemberTable(members, options = {}) {
   }
   const removeAttr = options.removeAttr || "";
   const canRemove = Boolean(options.canRemove && removeAttr);
+  const roleAttr = options.roleAttr || "";
+  const roleOptions = options.roles || [];
+  const canChangeRole = Boolean(options.canChangeRole && roleAttr && roleOptions.length);
   const ownerCount = members.filter((m) => m.role === "owner").length;
   return `
     <div class="member-table ${canRemove ? "has-actions" : ""}" role="table" aria-label="${escapeAttr(options.label || "成员")}">
@@ -1030,6 +1039,9 @@ function renderMemberTable(members, options = {}) {
         const displayName = (m.display_name || "").trim();
         const online = isOnlineIdentity(m.identity);
         const isLastOwner = m.role === "owner" && ownerCount <= 1;
+        const roleControl = canChangeRole
+          ? `<select class="member-role-select" ${roleAttr}="${escapeAttr(m.identity)}" aria-label="更新成员 ${escapeAttr(m.identity)} 的角色" ${isLastOwner ? `disabled title="至少保留一个 owner"` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`
+          : `<span class="role-pill ${roleTone(m.role)}">${escapeHTML(m.role)}</span>`;
         const removeButton = isLastOwner
           ? `<button type="button" class="link-danger" disabled title="至少保留一个 owner" aria-label="不能移除最后 owner ${escapeAttr(m.identity)}">保留</button>`
           : `<button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button>`;
@@ -1039,7 +1051,7 @@ function renderMemberTable(members, options = {}) {
               <span class="member-identity">${escapeHTML(m.identity)}</span>
               ${displayName ? `<small>${escapeHTML(displayName)}</small>` : ""}
             </span>
-            <span role="cell"><span class="role-pill ${roleTone(m.role)}">${escapeHTML(m.role)}</span></span>
+            <span role="cell">${roleControl}</span>
             <span class="member-state" role="cell">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>
             ${canRemove ? `<span class="member-actions" role="cell">${removeButton}</span>` : ""}
           </div>`;
@@ -1132,6 +1144,31 @@ async function onOrganizationsListSubmit(event) {
   }
 }
 
+async function onOrganizationsListChange(event) {
+  const select = event.target.closest("[data-org-member-role]");
+  if (!select) return;
+  const card = select.closest("[data-org]");
+  if (!card) return;
+  const id = card.dataset.org;
+  const identity = select.dataset.orgMemberRole;
+  const role = select.value;
+  try {
+    await api(`/v1/orgs/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
+    toast("已更新团队成员角色");
+    await refreshMe();
+    await loadOrganizations();
+    const next = organizationBody(id);
+    if (next) {
+      await renderOrganizationManage(id, next);
+      next.classList.remove("hidden");
+    }
+  } catch (err) {
+    toast(err.message);
+    const next = organizationBody(id);
+    if (next) await renderOrganizationManage(id, next);
+  }
+}
+
 function organizationBody(id) {
   const card = Array.from(els.orgsList.querySelectorAll("[data-org]")).find((el) => el.dataset.org === id);
   return card?.querySelector("[data-body]") || null;
@@ -1164,7 +1201,7 @@ async function renderOrganizationManage(id, body) {
       </div>
       <div class="manage-block">
         <h4>成员</h4>
-        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", label: "团队成员" })}
+        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", canChangeRole: canManage, roleAttr: "data-org-member-role", roles: ["member", "admin", "guest", "owner"], label: "团队成员" })}
         ${canManage ? memberCandidateForm("org-member", reachableUserCandidates(members), ["member", "admin", "guest", "owner"]) : ""}
       </div>`;
     body.querySelectorAll("[data-jump-project]").forEach((button) => {
@@ -1342,6 +1379,31 @@ async function onProjectsListSubmit(event) {
   }
 }
 
+async function onProjectsListChange(event) {
+  const select = event.target.closest("[data-member-role]");
+  if (!select) return;
+  const card = select.closest("[data-project]");
+  if (!card) return;
+  const id = card.dataset.project;
+  const identity = select.dataset.memberRole;
+  const role = select.value;
+  try {
+    await api(`/v1/projects/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
+    toast("已更新成员角色");
+    await refreshMe();
+    await loadProjects();
+    const next = projectBody(id);
+    if (next) {
+      await renderProjectManage(id, next);
+      next.classList.remove("hidden");
+    }
+  } catch (err) {
+    toast(err.message);
+    const next = projectBody(id);
+    if (next) await renderProjectManage(id, next);
+  }
+}
+
 async function renderProjectManage(id, body) {
   try {
     const data = await api(`/v1/projects/${encodeURIComponent(id)}`);
@@ -1385,7 +1447,7 @@ async function renderProjectManage(id, body) {
       </div>
       <div class="manage-block">
         <h4>成员</h4>
-        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", label: "项目成员" })}
+        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", canChangeRole: canManage, roleAttr: "data-member-role", roles: ["member", "viewer", "owner"], label: "项目成员" })}
         ${canManage ? memberCandidateForm("member", memberCandidates, ["member", "viewer", "owner"]) : ""}
       </div>`;
   } catch (err) {

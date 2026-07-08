@@ -16,7 +16,7 @@ func TestProjectManageUIActionsAreRoleGated(t *testing.T) {
 		`const canManage = role === "owner" || role === "admin" || state.me?.is_admin;`,
 		"${canManage ? `<button type=\"button\" data-unmap=",
 		"${canManage ? `<form class=\"inline-form\" data-form=\"repo\">",
-		`renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", label: "项目成员" })`,
+		`renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", canChangeRole: canManage, roleAttr: "data-member-role", roles: ["member", "viewer", "owner"], label: "项目成员" })`,
 		`${canManage ? memberCandidateForm("member", memberCandidates, ["member", "viewer", "owner"]) : ""}`,
 	}
 	for _, want := range required {
@@ -26,6 +26,7 @@ func TestProjectManageUIActionsAreRoleGated(t *testing.T) {
 	}
 	forbidden := []string{
 		`renderMemberTable(members, { canRemove: true, removeAttr: "data-remove-member", label: "项目成员" })`,
+		`renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", canChangeRole: true`,
 		`${memberCandidateForm("member", memberCandidates, ["member", "viewer", "owner"])}`,
 	}
 	for _, bad := range forbidden {
@@ -53,6 +54,7 @@ func TestMemberTableDoesNotRenderLastOwnerAsRemovable(t *testing.T) {
 	required := []string{
 		`const ownerCount = members.filter((m) => m.role === "owner").length;`,
 		`const isLastOwner = m.role === "owner" && ownerCount <= 1;`,
+		`${isLastOwner ? ` + "`disabled title=\"至少保留一个 owner\"`" + ` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`,
 		`disabled title="至少保留一个 owner"`,
 		`aria-label="不能移除最后 owner ${escapeAttr(m.identity)}"`,
 		": `<button type=\"button\" class=\"link-danger\" ${removeAttr}=\"${escapeAttr(m.identity)}\" aria-label=\"移除成员 ${escapeAttr(m.identity)}\">移除</button>`;",
@@ -60,6 +62,31 @@ func TestMemberTableDoesNotRenderLastOwnerAsRemovable(t *testing.T) {
 	for _, want := range required {
 		if !strings.Contains(body, want) {
 			t.Fatalf("member table is missing last-owner guard fragment %q", want)
+		}
+	}
+}
+
+func TestMemberRoleControlsAreRoleGated(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	required := []string{
+		`els.projectsList.addEventListener("change", onProjectsListChange);`,
+		`els.orgsList.addEventListener("change", onOrganizationsListChange);`,
+		`const canChangeRole = Boolean(options.canChangeRole && roleAttr && roleOptions.length);`,
+		"? `<select class=\"member-role-select\" ${roleAttr}=\"${escapeAttr(m.identity)}\" aria-label=\"更新成员 ${escapeAttr(m.identity)} 的角色\"",
+		`const select = event.target.closest("[data-member-role]");`,
+		`const select = event.target.closest("[data-org-member-role]");`,
+		"await api(`/v1/projects/${encodeURIComponent(id)}/members`, { method: \"POST\", body: JSON.stringify({ identity, role }) });",
+		"await api(`/v1/orgs/${encodeURIComponent(id)}/members`, { method: \"POST\", body: JSON.stringify({ identity, role }) });",
+		`renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", canChangeRole: canManage, roleAttr: "data-org-member-role", roles: ["member", "admin", "guest", "owner"], label: "团队成员" })`,
+		`renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", canChangeRole: canManage, roleAttr: "data-member-role", roles: ["member", "viewer", "owner"], label: "项目成员" })`,
+	}
+	for _, want := range required {
+		if !strings.Contains(js, want) {
+			t.Fatalf("member role controls are missing gated fragment %q", want)
 		}
 	}
 }
