@@ -1098,13 +1098,16 @@ async function loadProjects() {
 }
 
 function renderProjectOrgOptions() {
-  const orgs = state.organizations || [];
+  const orgs = (state.organizations || []).filter((org) => canManageOrganization(organizationRole(org.id)));
   if (!els.newProjectOrg) return;
   if (!orgs.length) {
-    els.newProjectOrg.innerHTML = `<option value="">默认团队</option>`;
+    els.newProjectOrg.innerHTML = `<option value="">我的默认团队</option>`;
     return;
   }
-  els.newProjectOrg.innerHTML = orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHTML(org.name)}</option>`).join("");
+  els.newProjectOrg.innerHTML = [
+    `<option value="">我的默认团队</option>`,
+    ...orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHTML(org.name)}</option>`),
+  ].join("");
 }
 
 function projectRole(id) {

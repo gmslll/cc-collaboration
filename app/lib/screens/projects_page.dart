@@ -16,6 +16,7 @@ class ProjectsPage extends StatefulWidget {
 class _ProjectsPageState extends State<ProjectsPage> {
   List<Project>? _projects;
   List<Organization> _orgs = const [];
+  Set<String> _manageableOrgIds = const <String>{};
   List<OnlineUser> _online = const [];
   String? _error;
   final _name = TextEditingController();
@@ -40,16 +41,31 @@ class _ProjectsPageState extends State<ProjectsPage> {
       final orgs = await widget.client
           .organizations()
           .catchError((_) => <Organization>[]);
+      Me? me;
+      try {
+        me = await widget.client.me();
+      } catch (_) {
+        me = null;
+      }
       final ps = await widget.client.projects();
       final online =
           await widget.client.onlineUsers().catchError((_) => <OnlineUser>[]);
+      final manageableOrgIds = me?.isAdmin == true
+          ? orgs.map((org) => org.id).toSet()
+          : (me?.organizations ?? const <OrganizationRole>[])
+              .where((org) => org.role == 'owner' || org.role == 'admin')
+              .map((org) => org.id)
+              .toSet();
       if (mounted) {
         setState(() {
           _orgs = orgs;
+          _manageableOrgIds = manageableOrgIds;
           _projects = ps;
           _online = online;
-          if (_selectedOrgId == null && orgs.isNotEmpty) {
-            _selectedOrgId = orgs.first.id;
+          if (_selectedOrgId != null &&
+              _selectedOrgId!.isNotEmpty &&
+              !manageableOrgIds.contains(_selectedOrgId)) {
+            _selectedOrgId = '';
           }
           _error = null;
         });
@@ -76,8 +92,13 @@ class _ProjectsPageState extends State<ProjectsPage> {
     if (name.isEmpty) return;
     try {
       final org = await widget.client.createOrganization(name);
+      if (!mounted) return;
       _orgName.clear();
-      setState(() => _selectedOrgId = org.id);
+      setState(() {
+        _orgs = [..._orgs, org];
+        _manageableOrgIds = {..._manageableOrgIds, org.id};
+        _selectedOrgId = org.id;
+      });
       await _load();
     } catch (e) {
       if (mounted) snack(context, '创建团队失败: ${errorText(e)}');
@@ -91,6 +112,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
     }
     return id;
   }
+
+  List<Organization> get _manageableOrgs =>
+      _orgs.where((org) => _manageableOrgIds.contains(org.id)).toList();
 
   @override
   Widget build(BuildContext context) {
@@ -130,16 +154,18 @@ class _ProjectsPageState extends State<ProjectsPage> {
                 onSubmitted: (_) => _create(),
               ),
             ),
-            if (_orgs.isNotEmpty)
+            if (_manageableOrgs.isNotEmpty)
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 260),
                 child: DropdownButton<String>(
-                  value: _selectedOrgId,
+                  value: _selectedOrgId ?? '',
                   isExpanded: true,
-                  items: _orgs
-                      .map((o) =>
-                          DropdownMenuItem(value: o.id, child: Text(o.name)))
-                      .toList(),
+                  items: [
+                    const DropdownMenuItem(
+                        value: '', child: Text('我的默认团队')),
+                    ..._manageableOrgs.map((o) =>
+                        DropdownMenuItem(value: o.id, child: Text(o.name))),
+                  ],
                   onChanged: (v) => setState(() => _selectedOrgId = v),
                 ),
               ),
