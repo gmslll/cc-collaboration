@@ -70,6 +70,13 @@ func (s *Store) CreateProject(ctx context.Context, id, name, owner string, now t
 // CreateProjectInOrg inserts a project and seats its owner (role=owner)
 // atomically. The owner must already belong to the organization.
 func (s *Store) CreateProjectInOrg(ctx context.Context, id, orgID, name, owner string, now time.Time) error {
+	active, err := s.UserActive(ctx, owner)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return ErrForbidden
+	}
 	role, ok, err := s.OrganizationMemberRole(ctx, orgID, owner)
 	if err != nil {
 		return err
@@ -250,6 +257,13 @@ func (s *Store) ListProjectRepos(ctx context.Context, projectID string) ([]strin
 
 // AddMember adds or updates a member's role (upsert).
 func (s *Store) AddMember(ctx context.Context, projectID, identity, role string) error {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return ErrForbidden
+	}
 	if err := s.guardLastProjectOwner(ctx, projectID, identity, role); err != nil {
 		return err
 	}

@@ -117,10 +117,19 @@ func TestListMembersHidesDisabledUsers(t *testing.T) {
 	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
 		t.Fatal(err)
 	}
-	for _, identity := range []string{"active@x", "disabled@x", "legacy@x"} {
+	for _, identity := range []string{"active@x", "legacy@x"} {
 		if err := st.AddMember(ctx, "p1", identity, RoleMember); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := st.CreateUser(ctx, User{Identity: "will-disable@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "will-disable@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(ctx, "will-disable@x", true); err != nil {
+		t.Fatal(err)
 	}
 
 	members, err := st.ListMembers(ctx, "p1")
@@ -136,8 +145,36 @@ func TestListMembersHidesDisabledUsers(t *testing.T) {
 			t.Fatalf("project member %q missing from %+v", want, members)
 		}
 	}
-	if got["disabled@x"] {
+	if got["disabled@x"] || got["will-disable@x"] {
 		t.Fatalf("disabled project member leaked into list: %+v", members)
+	}
+}
+
+func TestProjectWriteRejectsDisabledUsers(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProject(ctx, "disabled-project", "Blocked", "disabled@x", now); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner create project: want ErrForbidden, got %v", err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p-disabled", "org1", "Blocked", "disabled@x", now); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner create project in org: want ErrForbidden, got %v", err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "App", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "disabled@x", RoleMember); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("add disabled project member: want ErrForbidden, got %v", err)
+	}
+	if err := st.AddMember(ctx, "p1", "legacy@x", RoleMember); err != nil {
+		t.Fatalf("legacy project member should remain allowed: %v", err)
 	}
 }
 
@@ -156,13 +193,16 @@ func TestDisabledUsersHaveNoEffectiveTeamAccess(t *testing.T) {
 	if err := st.MapRepo(ctx, "kunlun-backend", "p1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x"}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AddOrganizationMember(ctx, p.OrgID, "disabled@x", OrgRoleAdmin); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AddMember(ctx, "p1", "disabled@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(ctx, "disabled@x", true); err != nil {
 		t.Fatal(err)
 	}
 

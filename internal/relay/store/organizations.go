@@ -43,6 +43,13 @@ type OrganizationRole struct {
 }
 
 func (s *Store) CreateOrganization(ctx context.Context, id, name, owner string, now time.Time) error {
+	active, err := s.UserActive(ctx, owner)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return ErrForbidden
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -159,6 +166,13 @@ func (s *Store) OrganizationMemberRole(ctx context.Context, orgID, identity stri
 }
 
 func (s *Store) AddOrganizationMember(ctx context.Context, orgID, identity, role string) error {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return ErrForbidden
+	}
 	if err := s.guardLastOrgOwner(ctx, orgID, identity, role); err != nil {
 		return err
 	}

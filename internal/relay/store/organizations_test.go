@@ -53,10 +53,19 @@ func TestListOrganizationMembersHidesDisabledUsers(t *testing.T) {
 	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
 		t.Fatal(err)
 	}
-	for _, identity := range []string{"active@x", "disabled@x", "legacy@x"} {
+	for _, identity := range []string{"active@x", "legacy@x"} {
 		if err := st.AddOrganizationMember(ctx, "org1", identity, OrgRoleMember); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := st.CreateUser(ctx, User{Identity: "will-disable@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "will-disable@x", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(ctx, "will-disable@x", true); err != nil {
+		t.Fatal(err)
 	}
 
 	members, err := st.ListOrganizationMembers(ctx, "org1")
@@ -72,8 +81,30 @@ func TestListOrganizationMembersHidesDisabledUsers(t *testing.T) {
 			t.Fatalf("organization member %q missing from %+v", want, members)
 		}
 	}
-	if got["disabled@x"] {
+	if got["disabled@x"] || got["will-disable@x"] {
 		t.Fatalf("disabled organization member leaked into list: %+v", members)
+	}
+}
+
+func TestOrganizationWriteRejectsDisabledUsers(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "disabled-org", "Disabled", "disabled@x", now); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner create organization: want ErrForbidden, got %v", err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "disabled@x", OrgRoleMember); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("add disabled organization member: want ErrForbidden, got %v", err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "legacy@x", OrgRoleMember); err != nil {
+		t.Fatalf("legacy organization member should remain allowed: %v", err)
 	}
 }
 

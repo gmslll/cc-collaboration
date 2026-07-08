@@ -217,10 +217,13 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "stranger@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("assign team todo to non-member: want ErrForbidden, got %v", err)
 	}
-	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x"}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AddMember(ctx, "p1", "disabled@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(ctx, "disabled@x", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "disabled@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {

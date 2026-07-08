@@ -272,6 +272,9 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 
 	mkUser(t, st, "owner@demo", "ownerpass1")
 	mkUser(t, st, "teammate@demo", "teampass1")
+	if err := st.CreateUser(context.Background(), store.User{Identity: "disabled@demo", Disabled: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 
 	srv := httptest.NewServer((&relay.Server{
 		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
@@ -294,6 +297,10 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	if code, _ := postJSON(t, srv.URL+"/v1/orgs/"+org.ID+"/members", teamTok,
 		map[string]string{"identity": "owner@demo", "role": "member"}); code != http.StatusForbidden {
 		t.Fatalf("non-manager add org member = %d", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/orgs/"+org.ID+"/members", ownerTok,
+		map[string]string{"identity": "disabled@demo", "role": "member"}); code != http.StatusBadRequest {
+		t.Fatalf("owner add disabled org member = %d", code)
 	}
 	if code, _ := postJSON(t, srv.URL+"/v1/orgs/"+org.ID+"/members", ownerTok,
 		map[string]string{"identity": "teammate@demo", "role": "owner"}); code != http.StatusOK {
@@ -343,6 +350,10 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
 		map[string]string{"identity": "owner@demo", "role": "member"}); code != http.StatusOK {
 		t.Fatalf("org owner add project member = %d %s", code, body)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
+		map[string]string{"identity": "disabled@demo", "role": "member"}); code != http.StatusBadRequest {
+		t.Fatalf("org owner add disabled project member = %d", code)
 	}
 
 	if code, _ := deleteAuthed(t, srv.URL+"/v1/orgs/"+org.ID+"/members/owner@demo", ownerTok); code != http.StatusOK {
