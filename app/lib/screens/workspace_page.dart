@@ -373,9 +373,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       preview: s.overviewPreview ?? '',
       agentSessionId: s.agentSessionId,
       workdir: s.workdir,
-      recentActivity: [
-        for (final a in activities) a.overviewSummary(),
-      ],
+      recentActivity: [for (final a in activities) a.overviewSummary()],
       isSupervisor: s.supervisor,
     );
   }
@@ -385,10 +383,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     return _latestHookActivityFrom(_recentHookActivities(s, limit: 8));
   }
 
-  List<HookActivity> _recentHookActivities(
-    TerminalSession s, {
-    int limit = 8,
-  }) {
+  List<HookActivity> _recentHookActivities(TerminalSession s, {int limit = 8}) {
     if (!s.isAgent) return const [];
     return localBusHookActivities(s.id, limit: limit);
   }
@@ -1647,7 +1642,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   // out on; a 'todo:*' session gets the 待办助手 persona injected and
   // 'supervisor:*' the supervisor one (see TerminalSession).
   String? _agentForPrefixedKind(String kind, String prefix) {
-    if (kind == prefix || kind == '$prefix:claude' || kind == '$prefix-claude') {
+    if (kind == prefix ||
+        kind == '$prefix:claude' ||
+        kind == '$prefix-claude') {
       return 'claude';
     }
     if (kind == '$prefix:codex' || kind == '$prefix-codex') return 'codex';
@@ -1777,8 +1774,9 @@ class _WorkspacePageState extends State<WorkspacePage>
       fallbackTodo: fallback,
       workdir: card?.workdir ?? '',
     );
-    final dispatchErr =
-        deliverLocalMessage(LocalMsg('', sid, prep.taskText, true));
+    final dispatchErr = deliverLocalMessage(
+      LocalMsg('', sid, prep.taskText, true),
+    );
     if (dispatchErr != null) return '投递失败: $dispatchErr';
 
     // Bind assignee + resume trio, best-effort (mirrors _syncAssignVisibility).
@@ -1800,8 +1798,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         assigneeAgentKind: card == null || card.agentKind.isEmpty
             ? null
             : (card.isSupervisor
-                ? 'supervisor:${card.agentKind}'
-                : card.agentKind),
+                  ? 'supervisor:${card.agentKind}'
+                  : card.agentKind),
       );
       await widget.client.updateTodo(
         todoId,
@@ -1810,8 +1808,11 @@ class _WorkspacePageState extends State<WorkspacePage>
       );
     } catch (_) {}
     // 指派 = 开始处理: bump an unstarted todo to 进行中.
-    if (const {TodoStatus.triage, TodoStatus.backlog, TodoStatus.todo}
-        .contains(prep.full.status)) {
+    if (const {
+      TodoStatus.triage,
+      TodoStatus.backlog,
+      TodoStatus.todo,
+    }.contains(prep.full.status)) {
       try {
         await widget.client.setTodoStatus(todoId, TodoStatus.inProgress);
       } catch (_) {}
@@ -1839,13 +1840,16 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (card.agentKind.isEmpty) return (null, '只有 agent 会话能打成胶囊');
     if (workdir == null || workdir.isEmpty) return (null, '会话没有工作目录');
 
-    final draftDir = (await Directory.systemTemp.createTemp('cc-capsule-')).path;
+    final draftDir = (await Directory.systemTemp.createTemp(
+      'cc-capsule-',
+    )).path;
     final cap = await captureCapsuleTranscript(
       agentKind: card.agentKind,
       agentSessionId: card.agentSessionId,
       workdir: workdir,
       destDir: draftDir,
-      maxTextChars: 200000, // cap the neutral render fed to the headless distill
+      maxTextChars:
+          200000, // cap the neutral render fed to the headless distill
     );
     if (cap == null) {
       return (null, '会话日志还没落盘,等它写一轮后再试');
@@ -1894,7 +1898,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     List<String> skillZips = const [],
   }) async {
     final d = draft.draftDir;
-    final args = <String>['capsule', 'submit', '--source-agent', draft.sourceAgent];
+    final args = <String>[
+      'capsule',
+      'submit',
+      '--source-agent',
+      draft.sourceAgent,
+    ];
     Future<void> addIfExists(String flag, String name) async {
       if (await File('$d/$name').exists()) {
         args
@@ -4000,17 +4009,15 @@ class _WorkspacePageState extends State<WorkspacePage>
           const VerticalDivider(width: 14),
           _toolButton(
             icon: Icons.inbox_rounded,
-            tooltip: '收件箱',
+            tooltip: '任务队列',
             selected: !_inboxSidebarCollapsed,
-            onPressed: () =>
-                _setInboxSidebarCollapsed(!_inboxSidebarCollapsed),
+            onPressed: () => _setInboxSidebarCollapsed(!_inboxSidebarCollapsed),
           ),
           _toolButton(
             icon: Icons.checklist_rounded,
             tooltip: '待办',
             selected: !_todosSidebarCollapsed,
-            onPressed: () =>
-                _setTodosSidebarCollapsed(!_todosSidebarCollapsed),
+            onPressed: () => _setTodosSidebarCollapsed(!_todosSidebarCollapsed),
           ),
         ],
         pinnedTrailing: [
@@ -4674,7 +4681,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                     ] else
                       _toolStripe(
                         icon: Icons.description_outlined,
-                        label: 'Handoff',
+                        label: '协作任务',
                         right: true,
                         onTap: () => _setDetailCollapsed(false),
                       ),
@@ -4797,9 +4804,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   _leftToolButton(
                     icon: Icons.description_outlined,
-                    tooltip: _detailItem == null
-                        ? 'Handoff · 选择任务后可用'
-                        : 'Handoff',
+                    tooltip: _detailItem == null ? '协作任务 · 选择任务后可用' : '协作任务',
                     selected: _detailItem != null && !_detailCollapsed,
                     enabled: _detailItem != null,
                     onTap: () => _setDetailCollapsed(!_detailCollapsed),
@@ -5447,78 +5452,78 @@ class _WorkspacePageState extends State<WorkspacePage>
         : const <int>[];
     final pos = scope.indexOf(index);
     return [
-    ccMenuItem(
-      value: 'copyPath',
-      icon: Icons.content_copy_rounded,
-      label: 'Copy Path',
-    ),
-    ccMenuItem(
-      value: 'reveal',
-      icon: Icons.my_location_rounded,
-      label: 'Reveal in Project',
-    ),
-    const PopupMenuDivider(),
-    ccMenuItem(
-      value: 'workingDiff',
-      icon: Icons.difference_rounded,
-      label: 'Open File Working Tree Diff',
-    ),
-    ccMenuItem(
-      value: 'fileLog',
-      icon: Icons.list_alt_rounded,
-      label: 'Open File Git Log',
-    ),
-    ccMenuItem(
-      value: 'history',
-      icon: Icons.history_rounded,
-      label: 'File History',
-    ),
-    ccMenuItem(
-      value: 'annotate',
-      icon: Icons.format_align_left_rounded,
-      label: 'Annotate / Blame',
-    ),
-    const PopupMenuDivider(),
-    ccMenuItem(
-      value: 'splitRight',
-      icon: Icons.vertical_split_rounded,
-      label: '向右分屏',
-    ),
-    ccMenuItem(
-      value: 'splitDown',
-      icon: Icons.horizontal_split_rounded,
-      label: '向下分屏',
-    ),
-    const PopupMenuDivider(),
-    ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
-    ccMenuItem(
-      value: 'closeOthers',
-      icon: Icons.clear_rounded,
-      label: 'Close Others',
-      enabled: scope.length > 1,
-    ),
-    if (pos > 0)
       ccMenuItem(
-        value: 'closeLeft',
-        icon: Icons.first_page_rounded,
-        label: 'Close Tabs to the Left',
+        value: 'copyPath',
+        icon: Icons.content_copy_rounded,
+        label: 'Copy Path',
       ),
-    if (pos >= 0 && pos < scope.length - 1)
       ccMenuItem(
-        value: 'closeRight',
-        icon: Icons.keyboard_tab_rounded,
-        label: 'Close Tabs to the Right',
+        value: 'reveal',
+        icon: Icons.my_location_rounded,
+        label: 'Reveal in Project',
       ),
-    ccMenuItem(
-      value: 'closeUnmodified',
-      icon: Icons.cleaning_services_rounded,
-      label: 'Close Unmodified',
-    ),
-    ccMenuItem(
-      value: 'closeAll',
-      icon: Icons.clear_all_rounded,
-      label: 'Close All',
-    ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'workingDiff',
+        icon: Icons.difference_rounded,
+        label: 'Open File Working Tree Diff',
+      ),
+      ccMenuItem(
+        value: 'fileLog',
+        icon: Icons.list_alt_rounded,
+        label: 'Open File Git Log',
+      ),
+      ccMenuItem(
+        value: 'history',
+        icon: Icons.history_rounded,
+        label: 'File History',
+      ),
+      ccMenuItem(
+        value: 'annotate',
+        icon: Icons.format_align_left_rounded,
+        label: 'Annotate / Blame',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'splitRight',
+        icon: Icons.vertical_split_rounded,
+        label: '向右分屏',
+      ),
+      ccMenuItem(
+        value: 'splitDown',
+        icon: Icons.horizontal_split_rounded,
+        label: '向下分屏',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
+      ccMenuItem(
+        value: 'closeOthers',
+        icon: Icons.clear_rounded,
+        label: 'Close Others',
+        enabled: scope.length > 1,
+      ),
+      if (pos > 0)
+        ccMenuItem(
+          value: 'closeLeft',
+          icon: Icons.first_page_rounded,
+          label: 'Close Tabs to the Left',
+        ),
+      if (pos >= 0 && pos < scope.length - 1)
+        ccMenuItem(
+          value: 'closeRight',
+          icon: Icons.keyboard_tab_rounded,
+          label: 'Close Tabs to the Right',
+        ),
+      ccMenuItem(
+        value: 'closeUnmodified',
+        icon: Icons.cleaning_services_rounded,
+        label: 'Close Unmodified',
+      ),
+      ccMenuItem(
+        value: 'closeAll',
+        icon: Icons.clear_all_rounded,
+        label: 'Close All',
+      ),
     ];
   }
 
@@ -5731,7 +5736,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                                   ),
                                 ),
                                 Text(
-                                  'Project tool window · Terminal · Handoff',
+                                  'Project tool window · Terminal · Queue',
                                   style: CcType.code(
                                     size: 12,
                                     color: CcColors.subtle,
@@ -6145,7 +6150,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     child: scrollableBar(scrolling: leading, pinnedTrailing: trailing),
   );
 
-  // _detailPanel hosts a task's 对接文档 inside the right tool window.
+  // _detailPanel hosts a task's delivery document inside the right tool window.
   Widget _detailPanel(ListItem it) => Column(
     children: [
       _panelHeader(
@@ -6154,7 +6159,7 @@ class _WorkspacePageState extends State<WorkspacePage>
           Icon(Icons.description_outlined, size: 16, color: CcColors.muted),
           SizedBox(width: 8),
           Text(
-            'Handoff',
+            '协作任务',
             style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
           ),
         ],
@@ -6320,9 +6325,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     },
   );
 
-  // _inboxSidebarPanel hosts a flattened Handoff inbox (list ↔ detail swap in
+  // _inboxSidebarPanel hosts a flattened coordination queue (list ↔ detail swap in
   // place via _inboxSidebarSelected, no Navigator) inside the right tool
-  // window — lets the user triage handoffs without leaving the workspace.
+  // window — lets the user triage work packages without leaving the workspace.
   // Mutually exclusive with _detailPanel/_todosSidebarPanel (see
   // _setInboxSidebarCollapsed/_setDetailCollapsed/_setTodosSidebarCollapsed).
   Widget _inboxSidebarPanel() {
@@ -6344,7 +6349,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               const Icon(Icons.inbox_rounded, size: 16, color: CcColors.muted),
             const SizedBox(width: 8),
             Text(
-              sel == null ? '收件箱' : 'Handoff',
+              sel == null ? '任务队列' : '协作任务',
               style: const TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,
@@ -6378,7 +6383,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Widget _inboxSidebarList() {
     final items = _inboxSidebarItems;
-    if (items.isEmpty) return centerMsg('收件箱为空');
+    if (items.isEmpty) return centerMsg('任务队列为空');
     return ListView.separated(
       padding: const EdgeInsets.all(10),
       itemCount: items.length,
@@ -6896,7 +6901,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         collapsed: collapsed,
         onToggleCollapse: onToggleCollapse,
       ),
-      if (!collapsed) for (final c in items) _changeTile(p, c),
+      if (!collapsed)
+        for (final c in items) _changeTile(p, c),
     ];
   }
 

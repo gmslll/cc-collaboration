@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../brand.dart';
 import '../api/relay_client.dart';
 import '../local/session.dart';
 import '../theme.dart';
@@ -56,7 +57,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final url = _relay.text.trim();
     final id = _identity.text.trim();
     if (url.isEmpty || id.isEmpty || _password.text.isEmpty) {
-      setState(() => _error = '请填写 relay 地址、identity、密码');
+      setState(() => _error = '请填写企业 relay 地址、identity、密码');
       return;
     }
     setState(() {
@@ -67,12 +68,14 @@ class _LoginScreenState extends State<LoginScreen> {
       final res = _isRegisterMode
           ? await register(url, id, _password.text)
           : await login(url, id, _password.text);
-      await widget.onLoggedIn(Session(
-        relayUrl: url,
-        token: res.token,
-        identity: res.identity,
-        isAdmin: res.isAdmin,
-      ));
+      await widget.onLoggedIn(
+        Session(
+          relayUrl: url,
+          token: res.token,
+          identity: res.identity,
+          isAdmin: res.isAdmin,
+        ),
+      );
     } catch (e) {
       setState(() {
         _busy = false;
@@ -104,150 +107,174 @@ class _LoginScreenState extends State<LoginScreen> {
       body: DecoratedBox(
         decoration: appGradient,
         child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(26),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: CcColors.accent,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: [
-                          BoxShadow(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 380),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(26),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: CcColors.accent,
+                          borderRadius: BorderRadius.circular(14),
+                          boxShadow: [
+                            BoxShadow(
                               color: CcColors.accent.withValues(alpha: 0.5),
-                              blurRadius: 18)
-                        ],
+                              blurRadius: 18,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.sync_alt_rounded,
+                          size: 26,
+                          color: CcColors.bg,
+                        ),
                       ),
-                      child: const Icon(Icons.sync_alt_rounded,
-                          size: 26, color: CcColors.bg),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('cc-handoff',
+                    const SizedBox(height: 16),
+                    const Text(
+                      AppBrand.productName,
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                          color: CcColors.text)),
-                  const SizedBox(height: 4),
-                  Text(_isRegisterMode ? '注册新账号' : '登录',
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0,
+                        color: CcColors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _isRegisterMode ? '注册内部协作账号' : AppBrand.chineseTagline,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: CcColors.muted)),
-                  if (_accounts.isNotEmpty && !_isRegisterMode) ...[
-                    const SizedBox(height: 16),
-                    for (final account in _accounts.take(4))
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: OutlinedButton.icon(
-                          onPressed: _busy ? null : () => _useSaved(account),
-                          icon: const Icon(Icons.account_circle_rounded, size: 18),
-                          label: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              '${account.identity} · ${_hostOf(account.relayUrl)}',
-                              overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: CcColors.muted),
+                    ),
+                    if (_accounts.isNotEmpty && !_isRegisterMode) ...[
+                      const SizedBox(height: 16),
+                      for (final account in _accounts.take(4))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: OutlinedButton.icon(
+                            onPressed: _busy ? null : () => _useSaved(account),
+                            icon: const Icon(
+                              Icons.account_circle_rounded,
+                              size: 18,
+                            ),
+                            label: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                '${account.identity} · ${_hostOf(account.relayUrl)}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    const SizedBox(height: 4),
-                    const Divider(),
-                  ],
-                  const SizedBox(height: 20),
-                  TextField(
-                    controller: _relay,
-                    autocorrect: false,
-                    keyboardType: TextInputType.url,
-                    decoration: const InputDecoration(
-                        labelText: 'relay 地址',
-                        hintText: 'https://relay.example.com',
+                      const SizedBox(height: 4),
+                      const Divider(),
+                    ],
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: _relay,
+                      autocorrect: false,
+                      keyboardType: TextInputType.url,
+                      decoration: const InputDecoration(
+                        labelText: '企业 relay 地址',
+                        hintText: 'https://agents.company.example',
                         prefixIcon: Icon(Icons.dns_rounded),
-                        isDense: true),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _identity,
-                    autocorrect: false,
-                    decoration: const InputDecoration(
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _identity,
+                      autocorrect: false,
+                      decoration: const InputDecoration(
                         labelText: 'identity',
                         hintText: 'you@backend',
                         prefixIcon: Icon(Icons.badge_rounded),
-                        isDense: true),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _password,
-                    obscureText: true,
-                    onSubmitted: (_) => _busy ? null : _submit(),
-                    decoration: const InputDecoration(
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _password,
+                      obscureText: true,
+                      onSubmitted: (_) => _busy ? null : _submit(),
+                      decoration: const InputDecoration(
                         labelText: '密码',
                         prefixIcon: Icon(Icons.lock_rounded),
-                        isDense: true),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: CcColors.danger.withValues(alpha: 0.10),
-                        border: Border.all(
-                            color: CcColors.danger.withValues(alpha: 0.28)),
-                        borderRadius: BorderRadius.circular(8),
+                        isDense: true,
                       ),
-                      child: Text(_error!,
-                          style: const TextStyle(
-                              color: CcColors.danger, fontSize: 13)),
                     ),
-                  ],
-                  const SizedBox(height: 20),
-                  FilledButton.icon(
-                    onPressed: _busy ? null : _submit,
-                    icon: _busy
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : Icon(
-                            _isRegisterMode
-                                ? Icons.person_add_alt_1_rounded
-                                : Icons.arrow_forward_rounded,
-                            size: 18),
-                    label: Text(_busy
-                        ? (_isRegisterMode ? '注册中' : '登录中')
-                        : (_isRegisterMode ? '注册' : '登录')),
-                  ),
-                  const SizedBox(height: 4),
-                  TextButton(
-                    onPressed: _busy
-                        ? null
-                        : () => setState(() {
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: CcColors.danger.withValues(alpha: 0.10),
+                          border: Border.all(
+                            color: CcColors.danger.withValues(alpha: 0.28),
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(
+                            color: CcColors.danger,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: _busy ? null : _submit,
+                      icon: _busy
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              _isRegisterMode
+                                  ? Icons.person_add_alt_1_rounded
+                                  : Icons.arrow_forward_rounded,
+                              size: 18,
+                            ),
+                      label: Text(
+                        _busy
+                            ? (_isRegisterMode ? '注册中' : '登录中')
+                            : (_isRegisterMode ? '注册' : '登录'),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() {
                               _isRegisterMode = !_isRegisterMode;
                               _error = null;
                             }),
-                    child: Text(_isRegisterMode ? '已有账号?去登录' : '没有账号?去注册'),
-                  ),
-                  if (widget.showCancel) ...[
-                    const SizedBox(height: 2),
-                    TextButton(
-                      onPressed: _busy ? null : () => Navigator.pop(context),
-                      child: const Text('取消'),
+                      child: Text(_isRegisterMode ? '已有账号?去登录' : '没有账号?申请注册'),
                     ),
+                    if (widget.showCancel) ...[
+                      const SizedBox(height: 2),
+                      TextButton(
+                        onPressed: _busy ? null : () => Navigator.pop(context),
+                        child: const Text('取消'),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
   }

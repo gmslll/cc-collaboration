@@ -72,7 +72,7 @@ ThemeData ccTheme() {
       fontSize: 22,
       fontWeight: FontWeight.w700,
       height: 1.25,
-      letterSpacing: -0.3,
+      letterSpacing: 0,
     ),
     titleMedium: TextStyle(
       fontSize: 16.5,

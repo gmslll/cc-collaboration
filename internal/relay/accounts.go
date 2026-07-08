@@ -27,15 +27,25 @@ type bearerResolver struct {
 func (b *bearerResolver) Resolve(ctx context.Context, raw string) (string, bool) {
 	h := auth.HashToken(raw)
 	if id, ok, err := b.store.SessionIdentity(ctx, h, time.Now()); err == nil && ok {
-		return id, true
+		return b.resolveActive(ctx, id)
 	}
 	if id, ok, err := b.store.MachineTokenIdentity(ctx, h); err == nil && ok {
-		return id, true
+		return b.resolveActive(ctx, id)
 	}
 	if b.seed != nil {
-		return b.seed.Resolve(ctx, raw)
+		if id, ok := b.seed.Resolve(ctx, raw); ok {
+			return b.resolveActive(ctx, id)
+		}
 	}
 	return "", false
+}
+
+func (b *bearerResolver) resolveActive(ctx context.Context, identity string) (string, bool) {
+	disabled, err := b.store.UserIsDisabled(ctx, identity)
+	if err != nil || disabled {
+		return "", false
+	}
+	return identity, true
 }
 
 // isAdmin reports whether identity is an effective admin: an operator-seeded
@@ -72,10 +82,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 // register provisions a normal (non-admin, enabled) account from {identity,
 // password} and immediately issues a session, so the new user is signed in
-// without a separate login. Open self-registration: no admin, no invite, no
-// approval. Like login, it's registered on the outer mux (bypasses the auth
-// middleware) since the caller has no token yet.
+// without a separate login. It can be disabled for enterprise deployments via
+// Server.DisableRegistration. Like login, it's registered on the outer mux
+// (bypasses the auth middleware) since the caller has no token yet.
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if s.DisableRegistration {
+		http.Error(w, "self-registration disabled", http.StatusForbidden)
+		return
+	}
 	var req struct {
 		Identity string `json:"identity"`
 		Password string `json:"password"`

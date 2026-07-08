@@ -92,6 +92,14 @@ build_macos() {
   # ditto preserves the .app bundle (symlinks, resource forks) — `zip` does not.
   (cd "$(dirname "$appdir")" && ditto -c -k --keepParent "$(basename "$appdir")" "$zip")
   echo "  ✓ $zip"
+  if [ "$name" != "app" ]; then
+    # Legacy updater compatibility: installed pre-rebrand builds look for the
+    # old app-macos-vX.Y.Z.zip asset name. The zip still contains the renamed
+    # .app bundle; only the GitHub release asset has the compatibility alias.
+    local legacy_zip="$DIST/app-macos-v${VERSION}.zip"
+    cp "$zip" "$legacy_zip"
+    echo "  ✓ $legacy_zip (legacy updater alias)"
+  fi
   echo "  note: the .app is ad-hoc signed (not notarized). For distribution to"
   echo "        other Macs, codesign + notarize with a Developer ID, or recipients run:"
   echo "        xattr -dr com.apple.quarantine /path/to/${name}.app"

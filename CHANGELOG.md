@@ -6,6 +6,19 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-08
+
+### Changed
+
+- **企业级产品重塑为 Infinite Agent Platform** — Flutter 客户端、relay Web UI、平台显示名、README、App README、部署文档和架构文档统一改为 Infinite State Inc 内部 Agent 开发平台定位。`cc-handoff`、`cc-relay`、`cc-handoff-mcp` 继续作为 CLI / MCP / 服务兼容层保留。
+- **任务队列与 Agent 工作包语言替代旧 handoff 品牌** — 登录、导航、空态、详情页、Web 管理 UI、工作区侧栏和提示文案改为 coordination queue / work package / delivery brief / Agent execution prompt 等企业协作语义。
+- **macOS / Android / iOS / Windows 显示名更新** — 原生 App 显示为 Infinite Agent Platform / Infinite Agents；macOS 打包脚本同时产出新名称 zip 和 legacy `app-macos-v*.zip` alias，保证旧更新器仍能拿到新版。
+
+### Added
+
+- **企业 relay 可关闭公开注册** — `cc-relay -disable-register` 或 `RELAY_DISABLE_REGISTER=1` 会让 `/v1/register` 返回 403；Web UI 对关闭注册给出明确管理员提示。
+- **停用账号立即让所有 bearer 来源失效** — 每次认证都会检查 DB 账号状态；被停用后，已有 UI session、DB machine token、legacy `tokens.json` file token 都会被拒绝。
+
 ## [0.9.21] - 2026-07-07
 
 ### Fixed

@@ -160,7 +160,7 @@ function wireEvents() {
     const button = event.target.closest("[data-launch]");
     if (!button) return;
     const ws = state.workspaces[Number(button.dataset.launch)];
-    if (ws) copyToClipboard(ws.command, "启动命令已复制，去终端粘贴执行");
+    if (ws) copyToClipboard(ws.command, "工作区启动命令已复制，去终端粘贴执行");
   });
 
   els.handoffList.addEventListener("click", (event) => {
@@ -210,7 +210,7 @@ function wireEvents() {
 
   els.copyPickupCmdButton.addEventListener("click", () => {
     if (!state.selectedID) return;
-    copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "CLI 命令已复制，去终端粘贴执行");
+    copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "兼容 CLI 命令已复制，去终端粘贴执行");
   });
 
   els.reloadCommentsButton.addEventListener("click", loadComments);
@@ -235,7 +235,7 @@ async function onPickup() {
   // Desktop fork-exec via Lorca Bind; browser mode falls back to clipboard.
   if (typeof window.ccHandoffPickup === "function") {
     els.pickupButton.disabled = true;
-    toast("正在 pickup…");
+    toast("正在接收并启动 Agent…");
     try {
       const out = await window.ccHandoffPickup(state.selectedID, state.defaultRepo || "");
       toast(`接收完成\n${out.split("\n")[0]}`);
@@ -248,7 +248,7 @@ async function onPickup() {
     }
     return;
   }
-  copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "已复制 CLI 命令到剪贴板，去终端粘贴执行");
+  copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "已复制兼容 CLI 命令到剪贴板，去终端粘贴执行");
 }
 
 async function openReassignDialog() {
@@ -256,7 +256,7 @@ async function openReassignDialog() {
   const pkg = state.selectedPackage;
   if (!pkg) return;
 
-  els.reassignContext.textContent = `当前 handoff：${pkg.id}　·　bug group：${pkg.bug_group_id || "-"}`;
+  els.reassignContext.textContent = `当前协作任务：${pkg.id}　·　bug group：${pkg.bug_group_id || "-"}`;
 
   let onlineUsers = state.online;
   if (!onlineUsers.length) {
@@ -400,7 +400,7 @@ async function loadComments() {
 
 async function api(path, options = {}) {
   if (!state.token) {
-    throw new Error("Missing relay token.");
+    throw new Error("Missing enterprise relay token.");
   }
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${state.token}`);
@@ -434,16 +434,16 @@ function renderList() {
   const items = state.items.filter((item) => haystack(item).includes(query));
   els.listMeta.textContent = state.token
     ? `${items.length} shown from ${state.items.length} loaded`
-    : "Connect to load handoffs.";
+    : "Connect to load agent work packages.";
 
   if (!items.length) {
-    els.handoffList.innerHTML = `<div class="empty-list">${escapeHTML(state.token ? "No handoffs match this view." : "No token configured.")}</div>`;
+    els.handoffList.innerHTML = `<div class="empty-list">${escapeHTML(state.token ? "No work packages match this view." : "No session token configured.")}</div>`;
     return;
   }
 
   els.handoffList.innerHTML = items.map((item) => {
     const active = item.id === state.selectedID ? " active" : "";
-    const headline = item.headline || "(no summary headline)";
+    const headline = item.headline || "(no delivery brief)";
     const people = recipientsLabel(item) || item.sender || "";
     return `
       <button class="handoff-row${active}" type="button" data-id="${escapeAttr(item.id)}">
@@ -468,7 +468,7 @@ function renderOnline(users) {
   const online = users.filter((user) => user.online).length;
   els.onlineCount.textContent = `${online} online`;
   if (!users.length) {
-    els.onlineList.innerHTML = `<p class="muted">No known users.</p>`;
+    els.onlineList.innerHTML = `<p class="muted">No known team members.</p>`;
     return;
   }
   els.onlineList.innerHTML = users.map((user) => `
@@ -515,9 +515,9 @@ function renderWorkspaces() {
   const items = state.workspaces;
   els.workspacesMeta.textContent = items.length
     ? `${items.length} 个项目 · 点击「复制启动命令」到终端粘贴执行。`
-    : "未配置 workspace。用 `cc-handoff workspace add <name> <github-url|path>` 添加。";
+    : "未配置 workspace。用兼容命令 `cc-handoff workspace add <name> <github-url|path>` 添加。";
   if (!items.length) {
-    els.workspaceList.innerHTML = `<div class="empty-list">${escapeHTML("No workspaces configured.")}</div>`;
+    els.workspaceList.innerHTML = `<div class="empty-list">${escapeHTML("No developer workspaces configured.")}</div>`;
     return;
   }
   els.workspaceList.innerHTML = items.map((ws, i) => `
@@ -561,7 +561,7 @@ function renderDetail() {
   els.summaryContent.textContent = pkg.summary_md || "";
   renderMetadata(pkg);
   renderAPIDelta(pkg.api_delta);
-  els.promptContent.textContent = state.promptText || "(prompt 加载中…)";
+  els.promptContent.textContent = state.promptText || "(Agent prompt 加载中…)";
   renderComments();
 
   const pending = status?.state === "pending";
@@ -654,7 +654,7 @@ function setConnectedLabel() {
 function authError(err) {
   const msg = err.message || String(err);
   if (msg.includes("401") || msg.includes("invalid token") || msg.includes("missing bearer")) {
-    els.authMessage.textContent = "Token rejected by relay.";
+    els.authMessage.textContent = "Token rejected by enterprise relay.";
   }
   toast(msg);
 }
@@ -667,7 +667,7 @@ function toast(message) {
 }
 
 function viewTitle(view) {
-  return view === "sender" ? "Sent" : view === "history" ? "History" : "Inbox";
+  return view === "sender" ? "Initiated" : view === "history" ? "Audit History" : "Coordination Queue";
 }
 
 function haystack(item) {
@@ -797,7 +797,9 @@ async function onRegister(event) {
       body: JSON.stringify({ identity, password }),
     });
     if (!resp.ok) {
-      const msg = resp.status === 409 ? "该账号已注册" : "注册失败，请重试。";
+      const msg = resp.status === 403
+        ? "自助注册已关闭，请联系管理员创建账号。"
+        : resp.status === 409 ? "该账号已注册" : "注册失败，请重试。";
       els.authMessage.textContent = msg;
       toast(msg);
       return;
@@ -814,7 +816,7 @@ async function onRegister(event) {
 function onUseToken() {
   const tok = els.tokenInput.value.trim();
   if (!tok) {
-    toast("请粘贴机器 token");
+      toast("请粘贴机器 token");
     return;
   }
   setToken(tok);
@@ -886,7 +888,7 @@ function projectRole(id) {
 
 function renderProjects() {
   if (!state.projects.length) {
-    els.projectsList.innerHTML = `<div class="empty-list">还没有项目。用上面的表单新建一个。</div>`;
+    els.projectsList.innerHTML = `<div class="empty-list">还没有企业项目。用上面的表单新建一个。</div>`;
     return;
   }
   els.projectsList.innerHTML = state.projects.map((p) => {
@@ -897,7 +899,7 @@ function renderProjects() {
         <div class="aux-card-head">
           <div><strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(role)}</span></div>
           <div class="aux-card-actions">
-            <button class="secondary" type="button" data-action="browse">查看 handoff</button>
+            <button class="secondary" type="button" data-action="browse">查看协作任务</button>
             ${canManage ? `<button class="secondary" type="button" data-action="manage">管理</button>` : ""}
           </div>
         </div>
@@ -1062,7 +1064,7 @@ async function onCreateToken(event) {
   try {
     const data = await api("/v1/tokens", { method: "POST", body: JSON.stringify({ label: els.newTokenLabel.value.trim() }) });
     els.newTokenLabel.value = "";
-    await copyToClipboard(data.token, "token 已复制（只显示这一次！粘进 cc-handoff init）");
+    await copyToClipboard(data.token, "token 已复制（只显示这一次！粘进兼容命令 cc-handoff init）");
     await loadAccount();
   } catch (err) {
     toast(err.message);

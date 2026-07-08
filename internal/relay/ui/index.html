@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>cc-handoff</title>
+  <title>Infinite Agent Platform</title>
   <link rel="stylesheet" href="/ui/styles.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div>
-          <h1>cc-handoff</h1>
+          <h1>Infinite Agent Platform</h1>
           <p id="session-label">Not connected</p>
         </div>
         <button id="refresh-button" class="icon-button" type="button" title="Refresh" aria-label="Refresh">
@@ -20,12 +20,12 @@
       </div>
 
       <form id="login-form" class="auth-panel">
-        <label>Sign in</label>
-        <input id="login-identity" type="text" autocomplete="username" aria-label="Login identity" placeholder="identity (e.g. you@backend)">
+        <label>Enterprise sign in</label>
+        <input id="login-identity" type="text" autocomplete="username" aria-label="Login identity" placeholder="identity (e.g. you@platform)">
         <input id="login-password" type="password" autocomplete="current-password" aria-label="Password" placeholder="password">
         <button type="submit">Sign in</button>
-        <button id="register-button" type="button" class="secondary">没有账号?注册</button>
-        <p id="auth-message" class="muted" aria-live="polite">Stored locally in this browser.</p>
+        <button id="register-button" type="button" class="secondary">申请内部账号</button>
+        <p id="auth-message" class="muted" aria-live="polite">Session stored locally in this browser.</p>
         <details class="token-advanced">
           <summary>Use a machine token instead</summary>
           <div class="token-row">
@@ -36,10 +36,10 @@
         <button id="signout-button" type="button" class="secondary hidden">Sign out</button>
       </form>
 
-      <nav class="view-tabs" aria-label="Handoff views">
-        <button class="tab-button active" type="button" data-view="recipient">Inbox</button>
-        <button class="tab-button" type="button" data-view="sender">Sent</button>
-        <button class="tab-button" type="button" data-view="history">History</button>
+      <nav class="view-tabs" aria-label="Coordination views">
+        <button class="tab-button active" type="button" data-view="recipient">Queue</button>
+        <button class="tab-button" type="button" data-view="sender">Initiated</button>
+        <button class="tab-button" type="button" data-view="history">Audit</button>
         <button id="tab-projects" class="tab-button hidden" type="button" data-view="projects">Projects</button>
         <button id="tab-account" class="tab-button hidden" type="button" data-view="account">Account</button>
         <button id="tab-admin" class="tab-button hidden" type="button" data-view="admin">Admin</button>
@@ -48,12 +48,12 @@
 
       <label class="search-box" for="search-input">
         <span>Search</span>
-        <input id="search-input" type="search" placeholder="id, sender, repo, headline">
+        <input id="search-input" type="search" placeholder="id, owner, repo, headline">
       </label>
 
       <section class="online-panel" aria-labelledby="online-title">
         <div class="section-title">
-          <h2 id="online-title">Users</h2>
+            <h2 id="online-title">Team Presence</h2>
           <span id="online-count">0 online</span>
         </div>
         <div id="online-list" class="online-list"></div>
@@ -64,8 +64,8 @@
       <section class="list-pane" aria-labelledby="list-title">
         <div class="pane-header">
           <div>
-            <h2 id="list-title">Inbox</h2>
-            <p id="list-meta">Connect to load handoffs.</p>
+            <h2 id="list-title">Queue</h2>
+            <p id="list-meta">Connect to load agent work packages.</p>
           </div>
           <select id="limit-select" aria-label="Limit">
             <option value="25">25</option>
@@ -79,8 +79,8 @@
 
       <section class="detail-pane" aria-live="polite">
         <div id="empty-state" class="empty-state">
-          <h2>Select a handoff</h2>
-          <p>Choose a row to inspect the package, status, comments, and available actions.</p>
+          <h2>Select a work package</h2>
+          <p>Choose a row to inspect delivery context, status, comments, and available actions.</p>
         </div>
 
         <article id="detail-view" class="detail-view hidden">
@@ -91,7 +91,7 @@
               <p id="detail-subtitle"></p>
             </div>
             <div class="detail-actions">
-              <button id="pickup-button" type="button">接收并物化</button>
+              <button id="pickup-button" type="button">接收并启动 Agent</button>
               <button id="ack-button" type="button" class="secondary">仅标记已接收</button>
               <button id="reassign-button" type="button" class="secondary hidden">转交</button>
               <button id="retract-button" type="button" class="danger">撤回</button>
@@ -112,7 +112,7 @@
               <strong id="status-comments">-</strong>
             </div>
             <div>
-              <span>Picked</span>
+              <span>Accepted</span>
               <strong id="status-picked">-</strong>
             </div>
           </div>
@@ -122,7 +122,7 @@
           <div class="content-columns">
             <section class="summary-panel" aria-labelledby="summary-title">
               <div class="section-title">
-                <h3 id="summary-title">Summary</h3>
+              <h3 id="summary-title">Delivery Brief</h3>
                 <button id="copy-summary-button" class="secondary" type="button">Copy</button>
               </div>
               <pre id="summary-content"></pre>
@@ -140,13 +140,13 @@
 
           <section id="prompt-panel" class="prompt-panel" aria-labelledby="prompt-title">
             <div class="section-title">
-              <h3 id="prompt-title">Pickup Prompt</h3>
+              <h3 id="prompt-title">Agent Execution Prompt</h3>
               <div class="prompt-actions">
                 <button id="copy-prompt-button" class="secondary" type="button">复制 Prompt</button>
                 <button id="copy-pickup-cmd-button" class="secondary" type="button">复制 CLI 命令</button>
               </div>
             </div>
-            <p class="muted prompt-hint">把内容粘贴到 Claude / Codex 即可走完 pickup 流程；或在终端运行 CLI 命令。</p>
+            <p class="muted prompt-hint">把内容粘贴到 Claude / Codex 即可启动接收侧 Agent；或在终端运行兼容 CLI 命令。</p>
             <pre id="prompt-content"></pre>
           </section>
 
@@ -167,7 +167,7 @@
       <section id="workspaces-pane" class="workspaces-pane hidden" aria-labelledby="workspaces-title">
         <div class="pane-header">
           <div>
-            <h2 id="workspaces-title">Workspaces</h2>
+            <h2 id="workspaces-title">Developer Workspaces</h2>
             <p id="workspaces-meta" class="muted">点击「复制启动命令」到终端粘贴执行。</p>
           </div>
         </div>
@@ -178,7 +178,7 @@
         <div class="pane-header">
           <div>
             <h2 id="projects-title">Projects</h2>
-            <p class="muted">创建并管理你的项目；选一个项目查看它的所有 handoff。</p>
+            <p class="muted">创建并管理企业项目；选一个项目查看它的协作任务与交付历史。</p>
           </div>
         </div>
         <form id="new-project-form" class="inline-form">
@@ -192,7 +192,7 @@
         <div class="pane-header">
           <div>
             <h2 id="account-title">Account</h2>
-            <p class="muted">改密码、生成 / 吊销机器 token（给 CLI / watch / MCP 用）。</p>
+            <p class="muted">改密码、生成 / 吊销机器 token（给 CLI / watch / MCP 兼容客户端用）。</p>
           </div>
         </div>
         <form id="password-form" class="inline-form">
@@ -200,7 +200,7 @@
           <input id="password-new" type="password" autocomplete="new-password" aria-label="新密码（至少 8 位）" placeholder="新密码（≥8 位）">
           <button type="submit">改密码</button>
         </form>
-        <div class="section-title"><h3>机器 token</h3></div>
+        <div class="section-title"><h3>Machine Tokens</h3></div>
         <form id="new-token-form" class="inline-form">
           <input id="new-token-label" type="text" aria-label="token 标签" placeholder="标签（如 laptop）">
           <button type="submit">生成 token</button>
@@ -211,8 +211,8 @@
       <section id="admin-pane" class="aux-pane hidden" aria-labelledby="admin-title">
         <div class="pane-header">
           <div>
-            <h2 id="admin-title">Admin · Accounts</h2>
-            <p class="muted">创建账号、设管理员 / 停用、重置密码。</p>
+            <h2 id="admin-title">Admin · Identity & Access</h2>
+            <p class="muted">创建内部账号、设置管理员、停用成员、重置密码。</p>
           </div>
         </div>
         <form id="new-user-form" class="inline-form">
@@ -228,7 +228,7 @@
 
   <dialog id="reassign-dialog" class="reassign-dialog">
     <form id="reassign-form" method="dialog">
-      <h3>转交 bug handoff</h3>
+      <h3>转交缺陷协作任务</h3>
       <p class="muted" id="reassign-context"></p>
       <label>
         转交给

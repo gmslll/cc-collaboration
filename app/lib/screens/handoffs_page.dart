@@ -14,8 +14,8 @@ import '../widgets.dart';
 import 'handoff_detail_view.dart';
 import 'terminal_deck.dart';
 
-// HandoffsPage is the inbox cockpit: list (inbox/sent/history) → 对接文档
-// (HandoffDetailView) → pickup → embedded agent terminals (TerminalDeck).
+// HandoffsPage is the coordination queue: list (assigned/sent/audit) → delivery
+// package detail (HandoffDetailView) → pickup → embedded agent terminals.
 // Desktop-focused; on mobile the terminal column simply isn't shown.
 class HandoffsPage extends StatefulWidget {
   final RelayClient client;
@@ -55,16 +55,23 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     super.initState();
     _refresh();
     _loadOnline();
-    _sse = subscribeEvents(_cfg.relayUrl, _cfg.token, _cfg.identity)
-        .listen(_onSse, onError: (_) {});
+    _sse = subscribeEvents(
+      _cfg.relayUrl,
+      _cfg.token,
+      _cfg.identity,
+    ).listen(_onSse, onError: (_) {});
   }
 
   Future<void> _loadOnline() async {
     try {
       final users = await _client.onlineUsers();
       if (mounted) {
-        setState(() => _online =
-            users.where((u) => u.online).map((u) => u.identity).toSet());
+        setState(
+          () => _online = users
+              .where((u) => u.online)
+              .map((u) => u.identity)
+              .toSet(),
+        );
       }
     } catch (_) {}
   }
@@ -89,8 +96,10 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       case 'handoff.created':
         _refresh();
         final d = data();
-        Notifications.show('新 handoff · ${d['sender'] ?? ''}',
-            (d['headline'] ?? d['repo_name'] ?? '').toString());
+        Notifications.show(
+          '新协作任务 · ${d['sender'] ?? ''}',
+          (d['headline'] ?? d['repo_name'] ?? '').toString(),
+        );
       case 'handoff.retracted':
         _refresh();
       case 'comment.created':
@@ -100,7 +109,9 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
           _detailKey.currentState?.reloadComments();
         } else {
           Notifications.show(
-              '新评论 · ${d['sender'] ?? ''}', (d['body'] ?? '').toString());
+            '新评论 · ${d['sender'] ?? ''}',
+            (d['body'] ?? '').toString(),
+          );
         }
       case 'user.online':
         final id = (data()['identity'] ?? '').toString();
@@ -110,8 +121,10 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         setState(() => _online.remove(id));
       case 'log.alert':
         final d = data();
-        Notifications.show('日志告警 · ${d['project'] ?? ''}',
-            (d['message'] ?? '').toString());
+        Notifications.show(
+          '日志告警 · ${d['project'] ?? ''}',
+          (d['message'] ?? '').toString(),
+        );
     }
   }
 
@@ -140,48 +153,55 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       return centerMsg(_error!, onRetry: _refresh);
     }
     final termOpen = widget.showTerminal && terms.isNotEmpty && !_termCollapsed;
-    return Row(children: [
-      if (!_listCollapsed)
-        SizedBox(width: _listWidth, child: _leftPane())
-      else
-        collapseRail(
+    return Row(
+      children: [
+        if (!_listCollapsed)
+          SizedBox(width: _listWidth, child: _leftPane())
+        else
+          collapseRail(
             icon: Icons.chevron_right_rounded,
             tooltip: '展开列表',
-            label: '收件箱',
-            onExpand: () => _setListCollapsed(false)),
-      if (!_listCollapsed)
-        resizeHandle(
+            label: '任务队列',
+            onExpand: () => _setListCollapsed(false),
+          ),
+        if (!_listCollapsed)
+          resizeHandle(
             prefKey: 'inbox.listWidth',
             get: () => _listWidth,
             set: (v) => setState(() => _listWidth = v),
             min: 260,
-            max: 520)
-      else
-        const VerticalDivider(width: 1),
-      Expanded(child: _buildDetail()),
-      if (widget.showTerminal && terms.isNotEmpty) ...[
-        if (termOpen) ...[
-          // terminal is on the right: dragging left widens it (invert).
-          resizeHandle(
+            max: 520,
+          )
+        else
+          const VerticalDivider(width: 1),
+        Expanded(child: _buildDetail()),
+        if (widget.showTerminal && terms.isNotEmpty) ...[
+          if (termOpen) ...[
+            // terminal is on the right: dragging left widens it (invert).
+            resizeHandle(
               prefKey: 'inbox.termWidth',
               get: () => _termWidth,
               set: (v) => setState(() => _termWidth = v),
               min: 360,
               max: 920,
-              invert: true),
-          SizedBox(
+              invert: true,
+            ),
+            SizedBox(
               width: _termWidth,
-              child: terminalDeck(onCollapse: () => _setTermCollapsed(true))),
-        ] else ...[
-          const VerticalDivider(width: 1),
-          collapseRail(
+              child: terminalDeck(onCollapse: () => _setTermCollapsed(true)),
+            ),
+          ] else ...[
+            const VerticalDivider(width: 1),
+            collapseRail(
               icon: Icons.chevron_left_rounded,
               tooltip: '展开终端',
               label: '终端',
-              onExpand: () => _setTermCollapsed(false)),
+              onExpand: () => _setTermCollapsed(false),
+            ),
+          ],
         ],
       ],
-    ]);
+    );
   }
 
   void _setListCollapsed(bool v) {
@@ -197,7 +217,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   Widget _buildDetail() {
     final sel = _selected;
     if (sel == null) {
-      return centerMsg('从左侧选择一个 handoff,查看对接文档');
+      return centerMsg('从左侧选择一个协作任务,查看交付文档与执行入口');
     }
     return HandoffDetailView(
       key: _detailKey,
@@ -210,28 +230,32 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     );
   }
 
-  Widget _leftPane() => Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(2, 6, 8, 0),
-          child: Row(children: [
+  Widget _leftPane() => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(2, 6, 8, 0),
+        child: Row(
+          children: [
             IconButton(
-                icon: const Icon(Icons.chevron_left_rounded, size: 18),
-                tooltip: '收起列表',
-                visualDensity: VisualDensity.compact,
-                onPressed: () => _setListCollapsed(true)),
+              icon: const Icon(Icons.chevron_left_rounded, size: 18),
+              tooltip: '收起列表',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _setListCollapsed(true),
+            ),
             const SizedBox(width: 2),
             Expanded(
               child: SegmentedButton<String>(
                 segments: const [
-                  ButtonSegment(value: 'recipient', label: Text('收件箱')),
-                  ButtonSegment(value: 'sender', label: Text('已发')),
-                  ButtonSegment(value: 'history', label: Text('历史')),
+                  ButtonSegment(value: 'recipient', label: Text('待处理')),
+                  ButtonSegment(value: 'sender', label: Text('我发起')),
+                  ButtonSegment(value: 'history', label: Text('审计历史')),
                 ],
                 selected: {_view},
                 showSelectedIcon: false,
                 style: const ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
                 onSelectionChanged: (s) {
                   setState(() {
                     _view = s.first;
@@ -241,68 +265,85 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
                 },
               ),
             ),
-          ]),
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-          child: TextField(
-            decoration: const InputDecoration(
-                hintText: '搜索 发送人 / repo / 标题',
-                isDense: true,
-                prefixIcon: Icon(Icons.search_rounded, size: 18)),
-            onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        child: TextField(
+          decoration: const InputDecoration(
+            hintText: '搜索 发起人 / repo / 标题',
+            isDense: true,
+            prefixIcon: Icon(Icons.search_rounded, size: 18),
           ),
+          onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
         ),
-        const Divider(height: 1),
-        Expanded(child: _buildList()),
-        if (_online.isNotEmpty) _onlineRoster(),
-      ]);
+      ),
+      const Divider(height: 1),
+      Expanded(child: _buildList()),
+      if (_online.isNotEmpty) _onlineRoster(),
+    ],
+  );
 
   Widget _onlineRoster() => Container(
-        constraints: const BoxConstraints(maxHeight: 130),
-        margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-        decoration: BoxDecoration(
-          color: CcColors.panelHigh.withValues(alpha: 0.45),
-          border: Border.all(color: CcColors.border),
-          borderRadius: BorderRadius.circular(8),
+    constraints: const BoxConstraints(maxHeight: 130),
+    margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+    decoration: BoxDecoration(
+      color: CcColors.panelHigh.withValues(alpha: 0.45),
+      border: Border.all(color: CcColors.border),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Text(
+            '在线 (${_online.length})',
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: CcColors.muted,
+            ),
+          ),
         ),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                child: Text('在线 (${_online.length})',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: CcColors.muted)),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: _online
-                      .map((u) => Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 3),
-                            child: Row(children: [
-                              statusDot(CcColors.ok, size: 8, glow: true),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: Text(u,
-                                      style: const TextStyle(
-                                          fontFamily: CcType.mono,
-                                          fontSize: 11.5,
-                                          color: CcColors.muted),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis)),
-                            ]),
-                          ))
-                      .toList(),
-                ),
-              ),
-            ]),
-      );
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            children: _online
+                .map(
+                  (u) => Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 3,
+                    ),
+                    child: Row(
+                      children: [
+                        statusDot(CcColors.ok, size: 8, glow: true),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            u,
+                            style: const TextStyle(
+                              fontFamily: CcType.mono,
+                              fontSize: 11.5,
+                              color: CcColors.muted,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildList() {
     if (_loading && _inbox.isEmpty) {
@@ -311,10 +352,12 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     final items = _query.isEmpty
         ? _inbox
         : _inbox
-            .where((it) => '${it.sender} ${it.repoName} ${it.headline}'
-                .toLowerCase()
-                .contains(_query))
-            .toList();
+              .where(
+                (it) => '${it.sender} ${it.repoName} ${it.headline}'
+                    .toLowerCase()
+                    .contains(_query),
+              )
+              .toList();
     if (items.isEmpty) {
       return centerMsg(_inbox.isEmpty ? '空' : '无匹配', onRetry: _refresh);
     }
@@ -331,18 +374,23 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
             decoration: BoxDecoration(
               color: sel ? CcColors.accent.withValues(alpha: 0.07) : null,
               border: Border(
-                  left: BorderSide(
-                      color: sel ? CcColors.accent : Colors.transparent,
-                      width: 2.5)),
+                left: BorderSide(
+                  color: sel ? CcColors.accent : Colors.transparent,
+                  width: 2.5,
+                ),
+              ),
             ),
             child: ListTile(
               selected: sel,
               leading: statusDot(
-                  urgent ? CcColors.danger : _kindColor(it.kind),
-                  size: 9,
-                  glow: urgent),
-              title: Text(it.sender,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
+                urgent ? CcColors.danger : _kindColor(it.kind),
+                size: 9,
+                glow: urgent,
+              ),
+              title: Text(
+                it.sender,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
               subtitle: Text(
                 it.headline.isNotEmpty ? it.headline : it.repoName,
                 maxLines: 1,
@@ -353,11 +401,14 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(relativeTime(it.createdAt),
-                      style: const TextStyle(
-                          fontFamily: CcType.mono,
-                          color: CcColors.subtle,
-                          fontSize: 11)),
+                  Text(
+                    relativeTime(it.createdAt),
+                    style: const TextStyle(
+                      fontFamily: CcType.mono,
+                      color: CcColors.subtle,
+                      fontSize: 11,
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   kindBadge(it.kind),
                 ],

@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = app
+PRODUCT_NAME = Infinite Agent Platform
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = dev.cchandoff.app
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 dev.cchandoff. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Infinite State Inc. All rights reserved.

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'brand.dart';
 import 'api/models.dart';
 import 'api/relay_client.dart';
 import 'local/config.dart';
@@ -69,14 +70,20 @@ class _ErrorPanel extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.error_outline,
-                    color: CcColors.danger, size: 40),
+                const Icon(
+                  Icons.error_outline,
+                  color: CcColors.danger,
+                  size: 40,
+                ),
                 const SizedBox(height: 12),
-                const Text('出错了',
-                    style: TextStyle(
-                        color: CcColors.text,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600)),
+                const Text(
+                  '出错了',
+                  style: TextStyle(
+                    color: CcColors.text,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Text(
                   details.exceptionAsString(),
@@ -108,7 +115,7 @@ class CcApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'cc-handoff',
+      title: AppBrand.productName,
       debugShowCheckedModeBanner: false,
       theme: ccTheme(),
       shortcuts: <ShortcutActivator, Intent>{
@@ -179,7 +186,7 @@ class _HomeShellState extends State<HomeShell> {
   bool _meDegraded = false;
   String? _relayHint;
   int _index = 0;
-  // Top-level nav rail (工作区/收件箱/项目/账号) starts hidden for more canvas
+  // Top-level nav rail (工作区/任务队列/项目/账号) starts hidden for more canvas
   // width; toggled from the AppBar, remembered across launches.
   bool _navRailHidden = Prefs.getBool('nav.railHidden', def: true);
   // Shared 会话总览 projection: WorkspacePage produces into it, SessionOverviewPage
@@ -300,7 +307,9 @@ class _HomeShellState extends State<HomeShell> {
                         ? Icons.check_circle_rounded
                         : Icons.account_circle_rounded,
                     size: 20,
-                    color: a.identity == currentIdentity && a.relayUrl == currentRelay
+                    color:
+                        a.identity == currentIdentity &&
+                            a.relayUrl == currentRelay
                         ? CcColors.accent
                         : CcColors.muted,
                   ),
@@ -416,13 +425,17 @@ class _HomeShellState extends State<HomeShell> {
         const _Dest('会话总览', Icons.grid_view_rounded, Icons.grid_view_rounded),
       if (!_isDesktop)
         const _Dest('远程', Icons.cast_rounded, Icons.cast_connected_rounded),
-      const _Dest('收件箱', Icons.inbox_rounded, Icons.inbox_rounded),
-      const _Dest('广场', Icons.storefront_rounded, Icons.storefront_rounded),
+      const _Dest('任务队列', Icons.inbox_rounded, Icons.inbox_rounded),
+      const _Dest(
+        'Agent 库',
+        Icons.storefront_rounded,
+        Icons.storefront_rounded,
+      ),
       const _Dest('待办', Icons.checklist_rounded, Icons.checklist_rounded),
       const _Dest('项目', Icons.folder_rounded, Icons.folder_rounded),
       const _Dest('账号', Icons.person_rounded, Icons.person_rounded),
       if (isAdmin)
-        const _Dest('Admin', Icons.shield_rounded, Icons.shield_rounded),
+        const _Dest('管理员', Icons.shield_rounded, Icons.shield_rounded),
     ];
     if (_index >= dests.length) _index = 0;
 
@@ -476,7 +489,12 @@ class _HomeShellState extends State<HomeShell> {
     // When /v1/me failed at launch (_meDegraded), sit a reconnect banner above
     // the pages so the user knows relay-backed views are empty on purpose.
     if (_meDegraded) {
-      body = Column(children: [_degradedBar(), Expanded(child: body)]);
+      body = Column(
+        children: [
+          _degradedBar(),
+          Expanded(child: body),
+        ],
+      );
     }
 
     if (_isDesktop) {
@@ -557,7 +575,7 @@ class _HomeShellState extends State<HomeShell> {
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '未连接 relay,部分功能暂不可用(本地工作区正常)',
+                  '未连接企业 relay,团队协作功能暂不可用(本地工作区正常)',
                   style: TextStyle(color: CcColors.warning, fontSize: 12),
                 ),
               ),
@@ -656,7 +674,7 @@ class _HomeShellState extends State<HomeShell> {
         ),
         const SizedBox(width: 10),
         const Text(
-          'cc-handoff',
+          AppBrand.shortName,
           style: TextStyle(
             color: CcColors.text,
             fontWeight: FontWeight.w700,
@@ -692,11 +710,7 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icons.switch_account_rounded,
             label: '切换账号',
           ),
-          ccMenuItem(
-            value: 'logout',
-            icon: Icons.logout_rounded,
-            label: '登出',
-          ),
+          ccMenuItem(value: 'logout', icon: Icons.logout_rounded, label: '登出'),
         ],
       ),
       const SizedBox(width: 4),

@@ -95,6 +95,21 @@ func (s *Store) UserIsAdmin(ctx context.Context, identity string) (bool, error) 
 	return isAdmin != 0, nil
 }
 
+// UserIsDisabled reports whether identity has a DB account that is disabled.
+// A missing account is treated as enabled so legacy tokens.json-only identities
+// continue to work until an operator creates and disables a matching account.
+func (s *Store) UserIsDisabled(ctx context.Context, identity string) (bool, error) {
+	var disabled int
+	err := s.db.QueryRowContext(ctx, `SELECT disabled FROM users WHERE identity = ?`, identity).Scan(&disabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return disabled != 0, nil
+}
+
 // execAffecting runs a write and maps "0 rows affected" to ErrNotFound, so
 // callers can distinguish "no such row" from a successful update.
 func (s *Store) execAffecting(ctx context.Context, query string, args ...any) error {
