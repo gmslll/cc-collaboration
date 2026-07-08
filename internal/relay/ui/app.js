@@ -1339,6 +1339,8 @@ async function renderProjectManage(id, body) {
     const repos = data.repos || [];
     const members = data.members || [];
     const project = data.project || {};
+    const role = projectRole(id);
+    const canManage = role === "owner" || state.me?.is_admin;
     let orgMembers = [];
     if (project.org_id) {
       try {
@@ -1365,17 +1367,17 @@ async function renderProjectManage(id, body) {
       <div class="manage-block">
         <h4>Repos</h4>
         <div class="chip-row">
-          ${repos.length ? repos.map((r) => `<span class="chip">${escapeHTML(r)}<button type="button" data-unmap="${escapeAttr(r)}" aria-label="移除 repo ${escapeAttr(r)}" title="移除">×</button></span>`).join("") : `<span class="muted">无</span>`}
+          ${repos.length ? repos.map((r) => `<span class="chip">${escapeHTML(r)}${canManage ? `<button type="button" data-unmap="${escapeAttr(r)}" aria-label="移除 repo ${escapeAttr(r)}" title="移除">×</button>` : ""}</span>`).join("") : `<span class="muted">无</span>`}
         </div>
-        <form class="inline-form" data-form="repo">
+        ${canManage ? `<form class="inline-form" data-form="repo">
           <input type="text" aria-label="要绑定的 repo 名" placeholder="repo 名（如 kunlun-backend）">
           <button type="submit" class="secondary">绑定 repo</button>
-        </form>
+        </form>` : ""}
       </div>
       <div class="manage-block">
         <h4>成员</h4>
-        ${renderMemberTable(members, { canRemove: true, removeAttr: "data-remove-member", label: "项目成员" })}
-        ${memberCandidateForm("member", memberCandidates, ["member", "viewer", "owner"])}
+        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", label: "项目成员" })}
+        ${canManage ? memberCandidateForm("member", memberCandidates, ["member", "viewer", "owner"]) : ""}
       </div>`;
   } catch (err) {
     body.innerHTML = `<p class="muted">${escapeHTML(err.message)}</p>`;
