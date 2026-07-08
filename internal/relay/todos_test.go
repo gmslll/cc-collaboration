@@ -179,13 +179,15 @@ func TestTodoTeamViewerReadOnly(t *testing.T) {
 	}
 }
 
-// --- SSE fan-out: team todo events reach every project member; personal
-// todo events reach only the owner ---
+// --- SSE fan-out: team todo events reach project members plus team managers;
+// personal todo events reach only the owner ---
 
 func TestTodoSSEFanOut(t *testing.T) {
 	srv, st, hub := todoTestRig(t)
 	mkUser(t, st, "owner@x", "ownerpass1")
 	mkUser(t, st, "member@x", "memberpass1")
+	mkUser(t, st, "org-admin@x", "adminpass1")
+	mkUser(t, st, "disabled-admin@x", "disabledpass1")
 	mkUser(t, st, "outsider@x", "outsiderpass1")
 	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
 
@@ -201,30 +203,49 @@ func TestTodoSSEFanOut(t *testing.T) {
 		map[string]string{"identity": "member@x", "role": "member"}); code != http.StatusOK {
 		t.Fatalf("add member: %d", code)
 	}
+	p, err := st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(t.Context(), p.OrgID, "org-admin@x", store.OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(t.Context(), p.OrgID, "disabled-admin@x", store.OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(t.Context(), "disabled-admin@x", true); err != nil {
+		t.Fatal(err)
+	}
 
 	ownerSub, cancelOwner := hub.Subscribe("owner@x")
 	defer cancelOwner()
 	memberSub, cancelMember := hub.Subscribe("member@x")
 	defer cancelMember()
+	orgAdminSub, cancelOrgAdmin := hub.Subscribe("org-admin@x")
+	defer cancelOrgAdmin()
+	disabledAdminSub, cancelDisabledAdmin := hub.Subscribe("disabled-admin@x")
+	defer cancelDisabledAdmin()
 	outsiderSub, cancelOutsider := hub.Subscribe("outsider@x")
 	defer cancelOutsider()
 
 	td := createTodoHTTP(t, srv.URL, ownerTok, map[string]any{"title": "ship the release", "project_id": proj.ID})
 
-	for name, sub := range map[string]*sse.Subscriber{"owner": ownerSub, "member": memberSub} {
+	for name, sub := range map[string]*sse.Subscriber{"owner": ownerSub, "member": memberSub, "team admin": orgAdminSub} {
 		ev := waitForEventType(t, sub, sse.EventTypeTodoCreated, 2*time.Second)
 		got := decodeTodo(t, ev.Data)
 		if got.ID != td.ID {
 			t.Errorf("%s got todo id %q, want %q", name, got.ID, td.ID)
 		}
 	}
-	select {
-	case ev := <-outsiderSub.C():
-		if ev.Type == sse.EventTypeTodoCreated {
-			t.Errorf("outsider unexpectedly received %q", ev.Type)
+	for name, sub := range map[string]*sse.Subscriber{"outsider": outsiderSub, "disabled team admin": disabledAdminSub} {
+		select {
+		case ev := <-sub.C():
+			if ev.Type == sse.EventTypeTodoCreated {
+				t.Errorf("%s unexpectedly received %q", name, ev.Type)
+			}
+		case <-time.After(100 * time.Millisecond):
+			// expected: no event for inaccessible identities
 		}
-	case <-time.After(100 * time.Millisecond):
-		// expected: no event for a non-member
 	}
 
 	// Personal todo: only its owner is targeted.

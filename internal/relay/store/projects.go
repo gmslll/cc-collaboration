@@ -344,6 +344,27 @@ func (s *Store) ListMembers(ctx context.Context, projectID string) ([]ProjectMem
 	})
 }
 
+// ListProjectTodoTargets returns everyone who should receive realtime todo
+// events for a project: direct project members plus team owners/admins who have
+// effective access through the owning organization. Disabled DB users are
+// excluded; legacy identities without a users row are preserved.
+func (s *Store) ListProjectTodoTargets(ctx context.Context, projectID string) ([]string, error) {
+	return s.queryStrings(ctx,
+		`SELECT identity FROM (
+		    SELECT pm.identity
+		      FROM project_members pm
+		      LEFT JOIN users u ON u.identity = pm.identity
+		     WHERE pm.project_id = ? AND (u.identity IS NULL OR u.disabled = 0)
+		    UNION
+		    SELECT om.identity
+		      FROM projects p
+		      JOIN organization_members om ON om.org_id = p.org_id
+		      LEFT JOIN users u ON u.identity = om.identity
+		     WHERE p.id = ? AND om.role IN (?, ?) AND (u.identity IS NULL OR u.disabled = 0)
+		  ) ORDER BY identity`,
+		projectID, projectID, OrgRoleOwner, OrgRoleAdmin)
+}
+
 // MemberRole returns identity's role in a project, or ok=false if not a member.
 func (s *Store) MemberRole(ctx context.Context, projectID, identity string) (string, bool, error) {
 	var role string

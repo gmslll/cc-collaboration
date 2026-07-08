@@ -595,10 +595,10 @@ func (s *Server) getTodoAttachment(w http.ResponseWriter, r *http.Request) {
 }
 
 // todoTargets returns who a Todo event should fan out to: just the owner for
-// a personal todo, or every member of its project for a team todo (sourced
-// live from Store.ListMembers, since project membership can change
-// independently of any one todo — unlike handoff fan-out, which targets a
-// fixed recipient list captured at send time).
+// a personal todo, or every effective realtime target for a team todo (direct
+// project members plus team owners/admins). Targets are sourced live because
+// membership can change independently of any one todo — unlike handoff fan-out,
+// which targets a fixed recipient list captured at send time.
 func (s *Server) todoTargets(ctx context.Context, t todoschema.Todo) []string {
 	if t.IsPersonal() {
 		if t.OwnerIdentity == "" {
@@ -606,13 +606,9 @@ func (s *Server) todoTargets(ctx context.Context, t todoschema.Todo) []string {
 		}
 		return []string{t.OwnerIdentity}
 	}
-	members, err := s.Store.ListMembers(ctx, t.ProjectID)
+	targets, err := s.Store.ListProjectTodoTargets(ctx, t.ProjectID)
 	if err != nil {
 		return nil
-	}
-	targets := make([]string, 0, len(members))
-	for _, m := range members {
-		targets = append(targets, m.Identity)
 	}
 	return targets
 }
