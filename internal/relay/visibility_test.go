@@ -111,3 +111,67 @@ func TestProjectVisibility(t *testing.T) {
 		t.Errorf("scope=all as member = %d, want 403", code)
 	}
 }
+
+func TestProjectHandoffListExcludesCapsules(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	for _, id := range []string{"owner@t", "member@t", "recipient@t"} {
+		mkUser(t, st, id, "pw-"+id+"-12345")
+	}
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	owner := loginToken(t, srv.URL, "owner@t", "pw-owner@t-12345")
+	member := loginToken(t, srv.URL, "member@t", "pw-member@t-12345")
+
+	code, body := postJSON(t, srv.URL+"/v1/projects", owner, map[string]string{"name": "K"})
+	if code != http.StatusCreated {
+		t.Fatalf("create project = %d %s", code, body)
+	}
+	var proj struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &proj); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend"}); code != http.StatusOK {
+		t.Fatalf("map repo = %d", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", owner, map[string]string{"identity": "member@t", "role": "member"}); code != http.StatusOK {
+		t.Fatalf("add member = %d", code)
+	}
+
+	if err := st.Insert(context.Background(), &handoffschema.Package{
+		ID: "h_project", SchemaVersion: handoffschema.SchemaVersion, Sender: "owner@t",
+		Recipient: "recipient@t", Urgency: handoffschema.UrgencyNormal,
+		CreatedAt: time.Now().UTC(), Repo: handoffschema.Repo{Name: "kunlun-backend"},
+		SummaryMD: "ordinary handoff",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Insert(context.Background(), &handoffschema.Package{
+		ID: "c_private", SchemaVersion: handoffschema.SchemaVersion, Kind: handoffschema.KindCapsule, Sender: "owner@t",
+		Urgency: handoffschema.UrgencyNormal, CreatedAt: time.Now().UTC(), Repo: handoffschema.Repo{Name: "kunlun-backend"},
+		SummaryMD: "private capsule", Capsule: &handoffschema.Capsule{Visibility: handoffschema.CapsulePrivate},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body = getAuthed(t, srv.URL+"/v1/handoffs?scope=project&project="+proj.ID, member)
+	if code != http.StatusOK {
+		t.Fatalf("project list = %d %s", code, body)
+	}
+	if !strings.Contains(string(body), `"h_project"`) {
+		t.Fatalf("project list missing ordinary handoff: %s", body)
+	}
+	if strings.Contains(string(body), `"c_private"`) || strings.Contains(string(body), "private capsule") {
+		t.Fatalf("project list leaked capsule: %s", body)
+	}
+}

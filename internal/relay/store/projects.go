@@ -423,8 +423,8 @@ func (s *Store) VisibleRepoNames(ctx context.Context, identity string) ([]string
 		  WHERE pm.identity = ?`, identity)
 }
 
-// ListByRepos returns compact list items for handoffs whose repo is in
-// repoNames, newest-first — the project-scoped view. Empty repoNames returns
+// ListByRepos returns compact list items for non-capsule handoffs whose repo is
+// in repoNames, newest-first — the project-scoped view. Empty repoNames returns
 // nil early (avoids an `IN ()` syntax error).
 func (s *Store) ListByRepos(ctx context.Context, repoNames []string, limit int) ([]handoffschema.ListItem, error) {
 	if len(repoNames) == 0 {
@@ -434,16 +434,18 @@ func (s *Store) ListByRepos(ctx context.Context, repoNames []string, limit int) 
 		limit = 100
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(repoNames)), ",")
-	args := make([]any, 0, len(repoNames)+1)
+	args := make([]any, 0, len(repoNames)+2)
 	for _, r := range repoNames {
 		args = append(args, r)
 	}
+	args = append(args, string(handoffschema.KindCapsule))
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT h.id, h.sender, h.recipients, h.urgency, h.state, h.created_at,
 		        h.repo_name, h.branch, h.headline, h.kind, h.bug_group_id
 		   FROM handoffs h
 		  WHERE h.repo_name IN (`+placeholders+`)
+		    AND h.kind != ?
 		  ORDER BY h.created_at DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -451,7 +453,8 @@ func (s *Store) ListByRepos(ctx context.Context, repoNames []string, limit int) 
 	return scanRows(rows, scanListItem)
 }
 
-// ListAll returns compact list items for every handoff, newest-first (admin scope).
+// ListAll returns compact list items for every non-capsule handoff, newest-first
+// (admin scope). Capsules live behind the plaza listing and its visibility rule.
 func (s *Store) ListAll(ctx context.Context, limit int) ([]handoffschema.ListItem, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -460,7 +463,9 @@ func (s *Store) ListAll(ctx context.Context, limit int) ([]handoffschema.ListIte
 		`SELECT h.id, h.sender, h.recipients, h.urgency, h.state, h.created_at,
 		        h.repo_name, h.branch, h.headline, h.kind, h.bug_group_id
 		   FROM handoffs h
-		  ORDER BY h.created_at DESC LIMIT ?`, limit)
+		  WHERE h.kind != ?
+		  ORDER BY h.created_at DESC LIMIT ?`,
+		string(handoffschema.KindCapsule), limit)
 	if err != nil {
 		return nil, err
 	}

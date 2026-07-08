@@ -143,6 +143,37 @@ func TestListCapsules_IgnoresNonCapsules(t *testing.T) {
 	}
 }
 
+func TestHandoffListsExcludeCapsules(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	mustInsertHandoff(t, st, "h1", "alice", "bob")
+	mustInsertCapsule(t, st, "c-private", "alice", handoffschema.CapsulePrivate)
+
+	byRepo, err := st.ListByRepos(ctx, []string{"demo"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byRepo) != 1 || byRepo[0].ID != "h1" {
+		t.Fatalf("project handoff list leaked capsules: %+v", byRepo)
+	}
+
+	sent, err := st.ListSent(ctx, "alice", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 1 || sent[0].ID != "h1" {
+		t.Fatalf("sent handoff list leaked capsules: %+v", sent)
+	}
+
+	all, err := st.ListAll(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].ID != "h1" {
+		t.Fatalf("admin handoff list leaked capsules: %+v", all)
+	}
+}
+
 // TestDeleteCapsule_OwnerOnly pins owner-only delete: a teammate can't delete it,
 // a non-capsule id isn't reachable, and the owner's delete removes it.
 func TestDeleteCapsule_OwnerOnly(t *testing.T) {

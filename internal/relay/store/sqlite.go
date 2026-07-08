@@ -1180,20 +1180,21 @@ func (s *Store) Retract(ctx context.Context, id, byIdentity string) ([]string, e
 	return targets, nil
 }
 
-// ListSent returns the caller's most recent sent handoffs (any state),
-// newest-first. Mirrors ListPending for the sender side; senders can use this
-// to see "did the recipient pick it up yet?" without polling status one-by-one.
-// For multi-recipient bug handoffs Recipients is populated; Recipient remains
-// the first recipient for back-compat with old clients reading the scalar.
+// ListSent returns the caller's most recent sent non-capsule handoffs (any
+// state), newest-first. Mirrors ListPending for the sender side; senders can
+// use this to see "did the recipient pick it up yet?" without polling status
+// one-by-one. Capsules live behind the plaza listing instead. For
+// multi-recipient bug handoffs Recipients is populated; Recipient remains the
+// first recipient for back-compat with old clients reading the scalar.
 func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]handoffschema.ListItem, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, sender, recipient, recipients, urgency, state, created_at, repo_name, branch, headline, kind, bug_group_id FROM handoffs
-		 WHERE sender = ?
+		 WHERE sender = ? AND kind != ?
 		 ORDER BY created_at DESC LIMIT ?`,
-		sender, limit,
+		sender, string(handoffschema.KindCapsule), limit,
 	)
 	if err != nil {
 		return nil, err
