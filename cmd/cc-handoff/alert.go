@@ -67,6 +67,9 @@ func runAlert(ctx context.Context, args []string) error {
 	if u.RelayURL == "" || u.Token == "" {
 		return fmt.Errorf("relay_url/token missing in user config; run `cc-handoff init`")
 	}
+	if (*teamProjectID != "" || *orgID != "") && u.Identity == "" {
+		return fmt.Errorf("identity missing in user config; run `cc-handoff config set --identity <you>` before using team alert targets")
+	}
 
 	lvl := *level
 	if *grade && lvl == "" {
