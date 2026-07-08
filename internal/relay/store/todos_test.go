@@ -164,6 +164,64 @@ func TestTodoTeamVisibilityByRole(t *testing.T) {
 	}
 }
 
+func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "member@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "team", ProjectID: "p1", OwnerIdentity: "owner@x", Title: "team task"})
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "personal", OwnerIdentity: "owner@x", Title: "private task"})
+
+	if _, err := st.AssignTodo(ctx, "team", "owner@x", "member@x", "", "", "", "", ""); err != nil {
+		t.Fatalf("assign team todo to project member: %v", err)
+	}
+	if _, err := st.AssignTodo(ctx, "team", "owner@x", "stranger@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("assign team todo to non-member: want ErrForbidden, got %v", err)
+	}
+	if _, err := st.AssignTodo(ctx, "personal", "owner@x", "owner@x", "", "", "", "", ""); err != nil {
+		t.Fatalf("assign personal todo to owner: %v", err)
+	}
+	if _, err := st.AssignTodo(ctx, "personal", "owner@x", "member@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("assign personal todo to another identity: want ErrForbidden, got %v", err)
+	}
+	assigned, err := st.ListTodos(ctx, "member@x", TodoListFilter{Scope: "assigned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assigned) != 1 || assigned[0].ID != "team" {
+		t.Fatalf("assigned scope should show member's team todo: %+v", assigned)
+	}
+
+	// Defense in depth for old rows written before assignee validation:
+	// assigned scope must still enforce the todo's visibility boundary.
+	if _, err := st.db.ExecContext(ctx, `UPDATE todos SET assignee_identity = ? WHERE id = ?`, "member@x", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE todos SET assignee_identity = ? WHERE id = ?`, "stranger@x", "team"); err != nil {
+		t.Fatal(err)
+	}
+	assigned, err = st.ListTodos(ctx, "member@x", TodoListFilter{Scope: "assigned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assigned) != 0 {
+		t.Fatalf("assigned scope leaked inaccessible todos to member: %+v", assigned)
+	}
+	assigned, err = st.ListTodos(ctx, "stranger@x", TodoListFilter{Scope: "assigned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assigned) != 0 {
+		t.Fatalf("assigned scope leaked team todo to stranger: %+v", assigned)
+	}
+}
+
 // --- admin scope=all sees everything regardless of ownership/membership ---
 
 func TestTodoAdminScopeAll(t *testing.T) {
@@ -299,11 +357,11 @@ func TestTodoAssignDoesNotChangeStatus(t *testing.T) {
 	td := &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "delegate this"}
 	mustCreateTodo(t, st, td)
 
-	got, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "", "", "", "", "")
+	got, err := st.AssignTodo(ctx, "td1", "alice@x", "alice@x", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != todoschema.StatusTodo || got.AssigneeIdentity != "bob@x" {
+	if got.Status != todoschema.StatusTodo || got.AssigneeIdentity != "alice@x" {
 		t.Fatalf("assigning must leave status untouched: %+v", got)
 	}
 
@@ -319,7 +377,7 @@ func TestTodoAssignDoesNotChangeStatus(t *testing.T) {
 	if _, err := st.SetTodoStatus(ctx, "td1", "alice@x", todoschema.StatusInProgress); err != nil {
 		t.Fatal(err)
 	}
-	got, err = st.AssignTodo(ctx, "td1", "alice@x", "carol@x", "", "", "", "", "")
+	got, err = st.AssignTodo(ctx, "td1", "alice@x", "alice@x", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,13 +460,13 @@ func TestAssignTodoResumeFields(t *testing.T) {
 
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "delegate this"})
 
-	got, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "sess-1", "bob's laptop",
-		"11111111-1111-1111-1111-111111111111", "/Users/bob/repo", "claude")
+	got, err := st.AssignTodo(ctx, "td1", "alice@x", "alice@x", "sess-1", "alice laptop",
+		"11111111-1111-1111-1111-111111111111", "/Users/alice/repo", "claude")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.AssigneeAgentSessionID != "11111111-1111-1111-1111-111111111111" ||
-		got.AssigneeWorkdir != "/Users/bob/repo" || got.AssigneeAgentKind != "claude" {
+		got.AssigneeWorkdir != "/Users/alice/repo" || got.AssigneeAgentKind != "claude" {
 		t.Fatalf("AssignTodo did not return resume fields: %+v", got)
 	}
 	if got.Status != todoschema.StatusTodo {
@@ -422,7 +480,7 @@ func TestAssignTodoResumeFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	if reloaded.AssigneeAgentSessionID != "11111111-1111-1111-1111-111111111111" ||
-		reloaded.AssigneeWorkdir != "/Users/bob/repo" || reloaded.AssigneeAgentKind != "claude" {
+		reloaded.AssigneeWorkdir != "/Users/alice/repo" || reloaded.AssigneeAgentKind != "claude" {
 		t.Fatalf("GetTodo did not persist resume fields: %+v", reloaded)
 	}
 }
@@ -609,7 +667,7 @@ func TestTodoMutatorsReturnAttachments(t *testing.T) {
 		t.Fatalf("SetTodoStatus should return Attachments: %+v", statused.Attachments)
 	}
 
-	assigned, err := st.AssignTodo(ctx, "td1", "alice@x", "bob@x", "", "", "", "", "")
+	assigned, err := st.AssignTodo(ctx, "td1", "alice@x", "alice@x", "", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

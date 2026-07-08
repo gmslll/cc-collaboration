@@ -353,8 +353,11 @@ func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoList
 			args = append(args, callerIdentity)
 		}
 	case "assigned":
-		query = `SELECT ` + todoColumns + ` FROM todos t WHERE t.assignee_identity = ?`
-		args = append(args, callerIdentity)
+		query = `SELECT ` + todoColumns + ` FROM todos t
+		           LEFT JOIN project_members pm ON pm.project_id = t.project_id AND pm.identity = ?
+		          WHERE t.assignee_identity = ?
+		            AND ((t.project_id IS NULL AND t.owner_identity = ?) OR pm.identity IS NOT NULL)`
+		args = append(args, callerIdentity, callerIdentity, callerIdentity)
 	case "all":
 		isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
 		if err != nil {
@@ -566,6 +569,19 @@ func (s *Store) SetTodoStatus(ctx context.Context, id, callerIdentity string, st
 // own to nudge toward — matching Linear's own model, where assignee and
 // state are unrelated fields.
 func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIdentity, assigneeSessionID, assigneeSessionLabel, assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind string) (todoschema.Todo, error) {
+	assigneeIdentity = strings.TrimSpace(assigneeIdentity)
+	assigneeSessionID = strings.TrimSpace(assigneeSessionID)
+	assigneeSessionLabel = strings.TrimSpace(assigneeSessionLabel)
+	assigneeAgentSessionID = strings.TrimSpace(assigneeAgentSessionID)
+	assigneeWorkdir = strings.TrimSpace(assigneeWorkdir)
+	assigneeAgentKind = strings.TrimSpace(assigneeAgentKind)
+	if assigneeIdentity == "" {
+		assigneeSessionID = ""
+		assigneeSessionLabel = ""
+		assigneeAgentSessionID = ""
+		assigneeWorkdir = ""
+		assigneeAgentKind = ""
+	}
 	t, err := s.getTodoRow(ctx, id)
 	if err != nil {
 		return todoschema.Todo{}, err
@@ -576,6 +592,9 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 	}
 	if !perm.edit {
 		return todoschema.Todo{}, forbidTodo("assign", callerIdentity, id)
+	}
+	if err := s.requireTodoAssignableTo(ctx, t, assigneeIdentity); err != nil {
+		return todoschema.Todo{}, err
 	}
 	now := time.Now().UTC()
 	if _, err := s.db.ExecContext(ctx,
@@ -593,6 +612,24 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 		return todoschema.Todo{}, err
 	}
 	return s.withAttachments(ctx, updated)
+}
+
+func (s *Store) requireTodoAssignableTo(ctx context.Context, t todoschema.Todo, assigneeIdentity string) error {
+	if assigneeIdentity == "" {
+		return nil
+	}
+	if t.ProjectID == "" {
+		if assigneeIdentity == t.OwnerIdentity {
+			return nil
+		}
+		return forbidTodo("assign personal todo to", assigneeIdentity, t.ID)
+	}
+	if _, ok, err := s.MemberRole(ctx, t.ProjectID, assigneeIdentity); err != nil {
+		return err
+	} else if ok {
+		return nil
+	}
+	return forbidTodo("assign project todo to", assigneeIdentity, t.ProjectID)
 }
 
 // DeleteTodo removes todo id, requiring delete access (stricter than edit
