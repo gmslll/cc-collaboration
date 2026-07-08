@@ -627,6 +627,13 @@ func (s *Store) requireTodoAssignableTo(ctx context.Context, t todoschema.Todo, 
 	if assigneeIdentity == "" {
 		return nil
 	}
+	active, err := s.UserActive(ctx, assigneeIdentity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return forbidTodo("assign todo to disabled identity", assigneeIdentity, t.ID)
+	}
 	if t.ProjectID == "" {
 		if assigneeIdentity == t.OwnerIdentity {
 			return nil

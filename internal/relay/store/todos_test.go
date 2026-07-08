@@ -217,6 +217,15 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "stranger@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("assign team todo to non-member: want ErrForbidden, got %v", err)
 	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "disabled@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AssignTodo(ctx, "team", "owner@x", "disabled@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("assign team todo to disabled member: want ErrForbidden, got %v", err)
+	}
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "org-admin@x", "", "", "", "", ""); err != nil {
 		t.Fatalf("assign team todo to org admin: %v", err)
 	}
@@ -232,6 +241,13 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	}
 	if _, err := st.AssignTodo(ctx, "personal", "owner@x", "owner@x", "", "", "", "", ""); err != nil {
 		t.Fatalf("assign personal todo to owner: %v", err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled-owner@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "disabled-personal", OwnerIdentity: "disabled-owner@x", Title: "disabled private task"})
+	if _, err := st.AssignTodo(ctx, "disabled-personal", "disabled-owner@x", "disabled-owner@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("assign personal todo to disabled owner: want ErrForbidden, got %v", err)
 	}
 	if _, err := st.AssignTodo(ctx, "personal", "owner@x", "member@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("assign personal todo to another identity: want ErrForbidden, got %v", err)
