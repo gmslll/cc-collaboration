@@ -11,13 +11,17 @@ void main() {
   SendTarget target(int i) => (id: 'ts$i', label: 'session $i');
 
   test('short same-project send targets stay inline', () {
-    final entries = sendMenuEntries([target(1), target(2)], const []);
+    final entries = sendMenuEntries([
+      target(1),
+      target(2),
+      target(3),
+    ], const []);
 
-    expect(values(entries), ['send:ts1', 'send:ts2']);
+    expect(values(entries), ['send:ts1', 'send:ts2', 'send:ts3']);
   });
 
   test('long same-project send targets collapse behind one submenu row', () {
-    final same = [for (var i = 0; i < 7; i++) target(i)];
+    final same = [for (var i = 0; i < 4; i++) target(i)];
     final entries = sendMenuEntries(same, const []);
 
     expect(values(entries), ['send-same']);

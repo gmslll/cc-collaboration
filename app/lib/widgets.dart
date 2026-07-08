@@ -1679,7 +1679,7 @@ List<PopupMenuEntry<String>> sendMenuEntries(
   List<SendTarget> same,
   List<SendTarget> others, {
   bool enabled = true,
-  int inlineLimit = 6,
+  int inlineLimit = 3,
 }) => [
   if (same.length > inlineLimit)
     ccMenuItem(
