@@ -292,7 +292,10 @@ func (s *Server) setUserAdmin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IsAdmin bool `json:"is_admin"`
 	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := s.Store.SetAdmin(r.Context(), r.PathValue("id"), req.IsAdmin); err != nil {
 		s.writeStoreErr(w, err)
 		return
@@ -307,7 +310,10 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Disabled bool `json:"disabled"`
 	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := s.Store.SetDisabled(r.Context(), r.PathValue("id"), req.Disabled); err != nil {
 		s.writeStoreErr(w, err)
 		return

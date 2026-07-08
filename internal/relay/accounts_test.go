@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -270,6 +271,49 @@ func TestDisabledUserRevokesExistingAuth(t *testing.T) {
 	}
 }
 
+func TestUserBooleanMutationsRejectInvalidJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "admin-target@demo", "targetpass1")
+	mkUser(t, st, "disabled-target@demo", "targetpass2")
+	if err := st.SetAdmin(context.Background(), "admin-target@demo", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(context.Background(), "disabled-target@demo", true); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	if code, body := postRawJSON(t, srv.URL+"/v1/users/admin-target@demo/admin", adminTok, "{"); code != http.StatusBadRequest {
+		t.Fatalf("invalid admin json = %d %s", code, body)
+	}
+	if ok, err := st.UserIsAdmin(context.Background(), "admin-target@demo"); err != nil || !ok {
+		t.Fatalf("invalid admin json changed admin state: ok=%v err=%v", ok, err)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/users/disabled-target@demo/disable", adminTok, "{"); code != http.StatusBadRequest {
+		t.Fatalf("invalid disable json = %d %s", code, body)
+	}
+	u, err := st.GetUser(context.Background(), "disabled-target@demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.Disabled {
+		t.Fatal("invalid disable json changed disabled state")
+	}
+}
+
 func TestAdminCreateUserTrimsIdentity(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {
@@ -333,6 +377,16 @@ func postJSON(t *testing.T, url, bearer string, payload any) (int, []byte) {
 		body = bytes.NewReader(b)
 	}
 	req, _ := http.NewRequest(http.MethodPost, url, body)
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	return do(t, req)
+}
+
+func postRawJSON(t *testing.T, url, bearer, payload string) (int, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
