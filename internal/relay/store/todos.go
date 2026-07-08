@@ -121,6 +121,13 @@ func (s *Store) todoPermission(ctx context.Context, t todoschema.Todo, identity 
 	if identity == "" {
 		return todoPerm{}, nil
 	}
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return todoPerm{}, err
+	}
+	if !active {
+		return todoPerm{}, nil
+	}
 	isAdmin, err := s.UserIsAdmin(ctx, identity)
 	if err != nil {
 		return todoPerm{}, err
@@ -165,9 +172,8 @@ func forbidTodo(action, identity, id string) error {
 // triplicating that logic). t.OwnerIdentity is treated as the creator: for
 // a team todo (ProjectID set) they must already be able to edit that project
 // (project owner/member or team owner/admin; not viewer, matching
-// todoPermission's edit tier); personal
-// todos (ProjectID empty) have no such check since owner_identity IS the
-// access boundary.
+// todoPermission's edit tier). Disabled owners cannot create either personal
+// or team todos; missing DB users remain allowed for legacy tokens.json users.
 func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 	if t.ID == "" {
 		return fmt.Errorf("create todo: id required")
@@ -177,6 +183,13 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 	}
 	if t.Title == "" {
 		return fmt.Errorf("create todo: title required")
+	}
+	active, err := s.UserActive(ctx, t.OwnerIdentity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return forbidTodo("create todos for disabled identity", t.OwnerIdentity, t.ID)
 	}
 	if t.Status == "" {
 		t.Status = todoschema.StatusTodo
@@ -213,7 +226,7 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 			}
 		}
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
 			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence, group_name,
 			due_at, next_occurrence_at, created_at, updated_at, completed_at,
@@ -322,6 +335,13 @@ type TodoListFilter struct {
 // (each branch only ever selects rows callerIdentity is entitled to), not
 // by a per-row permission check, so it stays a single query.
 func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoListFilter) ([]todoschema.Todo, error) {
+	active, err := s.UserActive(ctx, callerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, forbidTodo("list", callerIdentity, "disabled identity")
+	}
 	limit := f.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 200

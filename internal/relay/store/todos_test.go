@@ -242,10 +242,13 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if _, err := st.AssignTodo(ctx, "personal", "owner@x", "owner@x", "", "", "", "", ""); err != nil {
 		t.Fatalf("assign personal todo to owner: %v", err)
 	}
-	if err := st.CreateUser(ctx, User{Identity: "disabled-owner@x", Disabled: true}, now); err != nil {
+	if err := st.CreateUser(ctx, User{Identity: "disabled-owner@x"}, now); err != nil {
 		t.Fatal(err)
 	}
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "disabled-personal", OwnerIdentity: "disabled-owner@x", Title: "disabled private task"})
+	if err := st.SetDisabled(ctx, "disabled-owner@x", true); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.AssignTodo(ctx, "disabled-personal", "disabled-owner@x", "disabled-owner@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("assign personal todo to disabled owner: want ErrForbidden, got %v", err)
 	}
@@ -281,6 +284,40 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	}
 	if len(assigned) != 0 {
 		t.Fatalf("assigned scope leaked team todo to stranger: %+v", assigned)
+	}
+}
+
+func TestDisabledUsersCannotUseTodoAccess(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateTodo(ctx, &todoschema.Todo{ID: "new-disabled", OwnerIdentity: "disabled@x", Title: "blocked"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner create: want ErrForbidden, got %v", err)
+	}
+
+	if err := st.CreateUser(ctx, User{Identity: "owner@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "old-personal", OwnerIdentity: "owner@x", Title: "old"})
+	if err := st.SetDisabled(ctx, "owner@x", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetTodo(ctx, "old-personal", "owner@x"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner get old personal todo: want ErrForbidden, got %v", err)
+	}
+	if _, err := st.ListTodos(ctx, "owner@x", TodoListFilter{Scope: "personal"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner list personal todos: want ErrForbidden, got %v", err)
+	}
+
+	if err := st.CreateUser(ctx, User{Identity: "disabled-admin@x", IsAdmin: true, Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListTodos(ctx, "disabled-admin@x", TodoListFilter{Scope: "all"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled admin list all todos: want ErrForbidden, got %v", err)
 	}
 }
 

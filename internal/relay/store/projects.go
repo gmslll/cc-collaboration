@@ -126,6 +126,13 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 // ListProjectsForIdentity returns projects the identity can access directly or
 // govern through team owner/admin rights.
 func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([]Project, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, nil
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at, `+effectiveProjectRoleExpr+`
 		   FROM projects p
@@ -147,8 +154,15 @@ func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([
 // owner/admin can govern every project in the organization even when they are
 // not direct project members.
 func (s *Store) EffectiveProjectRole(ctx context.Context, projectID, identity string) (string, bool, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return "", false, err
+	}
+	if !active {
+		return "", false, nil
+	}
 	var projectRole, orgRole string
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(pm.role, ''), COALESCE(om.role, '')
 		   FROM projects p
 		   LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?
@@ -333,6 +347,13 @@ func (s *Store) MemberRole(ctx context.Context, projectID, identity string) (str
 // MemberProjects returns the projects (with the caller's effective role) for
 // /v1/me. Team owner/admin see the projects they can govern as role=admin.
 func (s *Store) MemberProjects(ctx context.Context, identity string) ([]ProjectRole, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, nil
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT p.id, p.org_id, p.name, `+effectiveProjectRoleExpr+`
 		   FROM projects p
@@ -453,9 +474,16 @@ func replaceProjectOwnerIdentity(ctx context.Context, tx *sql.Tx, projectID, rem
 // repoName, or ok=false when the repo is unmapped or the caller cannot access
 // that project. Used by the read-authz check (view + comment gating).
 func (s *Store) RepoVisibleTo(ctx context.Context, repoName, identity string) (string, bool, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return "", false, err
+	}
+	if !active {
+		return "", false, nil
+	}
 	var role string
 	args := append(effectiveProjectRoleArgs(identity), repoName)
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT `+effectiveProjectRoleExpr+`
 		   FROM project_repos pr
 		   JOIN projects p ON p.id = pr.project_id
@@ -475,6 +503,13 @@ func (s *Store) RepoVisibleTo(ctx context.Context, repoName, identity string) (s
 // VisibleRepoNames returns every repo across the caller's directly visible or
 // team-managed projects (the project-scoped list filter set).
 func (s *Store) VisibleRepoNames(ctx context.Context, identity string) ([]string, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, nil
+	}
 	return s.queryStrings(ctx,
 		`SELECT pr.repo_name FROM project_repos pr
 		   JOIN projects p ON p.id = pr.project_id

@@ -46,6 +46,12 @@ func TestUsersCRUD(t *testing.T) {
 	if ok, _ := st.UserIsAdmin(ctx, "a@x"); ok {
 		t.Error("expected not admin after SetAdmin(false)")
 	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled-admin@x", IsAdmin: true, Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.UserIsAdmin(ctx, "disabled-admin@x"); ok {
+		t.Error("disabled user should not be an effective admin")
+	}
 	if ok, _ := st.UserIsAdmin(ctx, "ghost"); ok {
 		t.Error("missing user should not be admin")
 	}

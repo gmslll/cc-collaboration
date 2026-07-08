@@ -85,6 +85,13 @@ func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 }
 
 func (s *Store) ListOrganizationsForIdentity(ctx context.Context, identity string) ([]Organization, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, nil
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT o.id, o.name, o.owner_identity, o.created_at, om.role
 		   FROM organizations o
@@ -99,6 +106,13 @@ func (s *Store) ListOrganizationsForIdentity(ctx context.Context, identity strin
 }
 
 func (s *Store) MemberOrganizations(ctx context.Context, identity string) ([]OrganizationRole, error) {
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, nil
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT o.id, o.name, om.role
 		   FROM organization_members om

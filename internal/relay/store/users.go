@@ -84,15 +84,15 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 // UserIsAdmin reports whether identity is a DB-flagged admin. A missing account
 // is not an admin (false, nil) — seed admins are layered on at the server level.
 func (s *Store) UserIsAdmin(ctx context.Context, identity string) (bool, error) {
-	var isAdmin int
-	err := s.db.QueryRowContext(ctx, `SELECT is_admin FROM users WHERE identity = ?`, identity).Scan(&isAdmin)
+	var isAdmin, disabled int
+	err := s.db.QueryRowContext(ctx, `SELECT is_admin, disabled FROM users WHERE identity = ?`, identity).Scan(&isAdmin, &disabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return isAdmin != 0, nil
+	return isAdmin != 0 && disabled == 0, nil
 }
 
 // UserActive reports whether an identity is allowed to authenticate. Missing

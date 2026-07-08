@@ -141,6 +141,57 @@ func TestListMembersHidesDisabledUsers(t *testing.T) {
 	}
 }
 
+func TestDisabledUsersHaveNoEffectiveTeamAccess(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MapRepo(ctx, "kunlun-backend", "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "disabled@x", Disabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, p.OrgID, "disabled@x", OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "disabled@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+
+	if orgs, err := st.MemberOrganizations(ctx, "disabled@x"); err != nil || len(orgs) != 0 {
+		t.Fatalf("disabled member organizations = %+v err=%v", orgs, err)
+	}
+	if orgs, err := st.ListOrganizationsForIdentity(ctx, "disabled@x"); err != nil || len(orgs) != 0 {
+		t.Fatalf("disabled organizations = %+v err=%v", orgs, err)
+	}
+	if projects, err := st.MemberProjects(ctx, "disabled@x"); err != nil || len(projects) != 0 {
+		t.Fatalf("disabled member projects = %+v err=%v", projects, err)
+	}
+	if projects, err := st.ListProjectsForIdentity(ctx, "disabled@x"); err != nil || len(projects) != 0 {
+		t.Fatalf("disabled projects = %+v err=%v", projects, err)
+	}
+	if role, ok, err := st.EffectiveProjectRole(ctx, "p1", "disabled@x"); err != nil || ok {
+		t.Fatalf("disabled effective project role = %q ok=%v err=%v", role, ok, err)
+	}
+	if role, ok, err := st.RepoVisibleTo(ctx, "kunlun-backend", "disabled@x"); err != nil || ok {
+		t.Fatalf("disabled repo visibility = %q ok=%v err=%v", role, ok, err)
+	}
+	if repos, err := st.VisibleRepoNames(ctx, "disabled@x"); err != nil || len(repos) != 0 {
+		t.Fatalf("disabled visible repos = %+v err=%v", repos, err)
+	}
+	if shared, err := st.IdentitiesShareTeam(ctx, "owner@x", "disabled@x"); err != nil || shared {
+		t.Fatalf("disabled identity should not share team: shared=%v err=%v", shared, err)
+	}
+}
+
 func TestProjectOwnerInvariant(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
