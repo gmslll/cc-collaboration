@@ -54,6 +54,21 @@ func TestProjectsAndMembers(t *testing.T) {
 	if _, ok, _ := st.RepoVisibleTo(ctx, "unmapped-repo", "owner@x"); ok {
 		t.Error("unmapped repo should not be visible")
 	}
+	if err := st.CreateProject(ctx, "p2", "Other", "other@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MapRepo(ctx, "other-repo", "p2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UnmapRepo(ctx, "other-repo", "p1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong-project unmap: want ErrNotFound, got %v", err)
+	}
+	if repos, _ := st.ListProjectRepos(ctx, "p2"); len(repos) != 1 || repos[0] != "other-repo" {
+		t.Fatalf("wrong-project unmap removed repo: %v", repos)
+	}
+	if err := st.UnmapRepo(ctx, "other-repo", "p2"); err != nil {
+		t.Fatalf("own-project unmap: %v", err)
+	}
 
 	// MemberProjects (for /v1/me).
 	if prs, _ := st.MemberProjects(ctx, "dev@x"); len(prs) != 1 || prs[0].ID != "p1" || prs[0].Role != RoleViewer {
@@ -71,7 +86,7 @@ func TestProjectsAndMembers(t *testing.T) {
 	}
 
 	// List scope: all vs per-identity.
-	if all, _ := st.ListProjects(ctx); len(all) != 1 {
+	if all, _ := st.ListProjects(ctx); len(all) != 2 {
 		t.Fatalf("all projects = %d", len(all))
 	}
 	if mine, _ := st.ListProjectsForIdentity(ctx, "dev@x"); len(mine) != 1 {

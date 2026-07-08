@@ -247,8 +247,8 @@ func (s *Store) MapRepo(ctx context.Context, repoName, projectID string) error {
 	return err
 }
 
-func (s *Store) UnmapRepo(ctx context.Context, repoName string) error {
-	return s.execAffecting(ctx, `DELETE FROM project_repos WHERE repo_name = ?`, repoName)
+func (s *Store) UnmapRepo(ctx context.Context, repoName, projectID string) error {
+	return s.execAffecting(ctx, `DELETE FROM project_repos WHERE repo_name = ? AND project_id = ?`, repoName, projectID)
 }
 
 func (s *Store) ListProjectRepos(ctx context.Context, projectID string) ([]string, error) {

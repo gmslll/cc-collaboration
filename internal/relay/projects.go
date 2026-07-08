@@ -221,7 +221,7 @@ func (s *Server) unmapRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "repo_name query param required", http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.UnmapRepo(r.Context(), repo); err != nil {
+	if err := s.Store.UnmapRepo(r.Context(), repo, id); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}

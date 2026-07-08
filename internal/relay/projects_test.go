@@ -87,6 +87,32 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 		map[string]string{"identity": "qa@backend", "role": "viewer"}); code != http.StatusOK {
 		t.Fatalf("add member = %d", code)
 	}
+	code, body = postJSON(t, srv.URL+"/v1/projects", malTok, map[string]string{"name": "Mallory Project"})
+	if code != http.StatusCreated {
+		t.Fatalf("mallory create project = %d %s", code, body)
+	}
+	var otherProj struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &otherProj)
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+otherProj.ID+"/repos", malTok,
+		map[string]string{"repo_name": "mallory-repo"}); code != http.StatusOK {
+		t.Fatalf("mallory map repo = %d", code)
+	}
+	if code, _ := deleteAuthed(t, srv.URL+"/v1/projects/"+proj.ID+"/repos?repo_name=mallory-repo", devTok); code != http.StatusNotFound {
+		t.Fatalf("owner unmap other project repo = %d, want 404", code)
+	}
+	code, body = getAuthed(t, srv.URL+"/v1/projects/"+otherProj.ID, malTok)
+	if code != http.StatusOK {
+		t.Fatalf("mallory get project = %d %s", code, body)
+	}
+	var otherDetail struct {
+		Repos []string `json:"repos"`
+	}
+	_ = json.Unmarshal(body, &otherDetail)
+	if len(otherDetail.Repos) != 1 || otherDetail.Repos[0] != "mallory-repo" {
+		t.Fatalf("cross-project unmap removed repo: %+v", otherDetail.Repos)
+	}
 
 	assertProjectListRole(t, srv.URL, devTok, proj.ID, "owner")
 	assertProjectListRole(t, srv.URL, qaTok, proj.ID, "viewer")
