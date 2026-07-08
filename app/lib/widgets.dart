@@ -861,11 +861,7 @@ Widget _sessionActivityPanel(
       children: [
         Row(
           children: [
-            const Icon(
-              Icons.bolt_rounded,
-              size: 12,
-              color: CcColors.subtle,
-            ),
+            const Icon(Icons.bolt_rounded, size: 12, color: CcColors.subtle),
             const SizedBox(width: 5),
             Text(
               '执行记录 $total',
@@ -1040,7 +1036,9 @@ class _SessionActivityAvatarState extends State<SessionActivityAvatar>
   @override
   Widget build(BuildContext context) {
     final st = sessionStatusStyle(widget.status);
-    final active = sessionStatusIsActive(widget.status); // working / running / …
+    final active = sessionStatusIsActive(
+      widget.status,
+    ); // working / running / …
     final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final animate = active && !reduce;
     // Start/stop the repeat in build (same pattern as BreathingGlow) so the pulse
@@ -1458,8 +1456,7 @@ class _DragHandleState extends State<DragHandle> {
   Widget build(BuildContext context) {
     final noMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final line = AnimatedContainer(
-      duration:
-          noMotion ? Duration.zero : const Duration(milliseconds: 120),
+      duration: noMotion ? Duration.zero : const Duration(milliseconds: 120),
       width: widget.vertical ? null : (_active ? 2 : 1),
       height: widget.vertical ? (_active ? 2 : 1) : null,
       color: _active ? CcColors.accent : CcColors.border,
@@ -1472,14 +1469,16 @@ class _DragHandleState extends State<DragHandle> {
       onExit: (_) => setState(() => _active = false),
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onHorizontalDragUpdate:
-            widget.vertical ? null : (d) => widget.onDelta(d.delta.dx),
-        onHorizontalDragEnd:
-            widget.vertical ? null : (_) => widget.onEnd?.call(),
-        onVerticalDragUpdate:
-            widget.vertical ? (d) => widget.onDelta(d.delta.dy) : null,
-        onVerticalDragEnd:
-            widget.vertical ? (_) => widget.onEnd?.call() : null,
+        onHorizontalDragUpdate: widget.vertical
+            ? null
+            : (d) => widget.onDelta(d.delta.dx),
+        onHorizontalDragEnd: widget.vertical
+            ? null
+            : (_) => widget.onEnd?.call(),
+        onVerticalDragUpdate: widget.vertical
+            ? (d) => widget.onDelta(d.delta.dy)
+            : null,
+        onVerticalDragEnd: widget.vertical ? (_) => widget.onEnd?.call() : null,
         child: widget.vertical
             ? SizedBox(height: 8, child: Center(child: line))
             : SizedBox(width: 8, child: Center(child: line)),
@@ -1672,35 +1671,46 @@ PopupMenuItem<String> ccMenuItem({
 typedef SendTarget = ({String id, String label});
 
 // sendMenuEntries builds the first-level "发送到会话" rows: same-project targets
-// inline, then a "其他会话 ▸" row (value 'send-others') when there are
-// other-project targets. Each target is value 'send:<id>'.
+// inline while the list is short. Long same-project lists collapse behind
+// "当前项目会话 ▸" (value 'send-same'), then a "其他会话 ▸" row (value
+// 'send-others') when there are other-project targets. Each inline target is
+// value 'send:<id>'.
 List<PopupMenuEntry<String>> sendMenuEntries(
   List<SendTarget> same,
   List<SendTarget> others, {
   bool enabled = true,
+  int inlineLimit = 6,
 }) => [
-  for (final t in same)
+  if (same.length > inlineLimit)
     ccMenuItem(
-      value: 'send:${t.id}',
-      icon: Icons.send_rounded,
-      label: '发送到「${t.label}」',
+      value: 'send-same',
+      icon: Icons.folder_rounded,
+      label: '当前项目会话 (${same.length}) ▸',
       enabled: enabled,
-    ),
+    )
+  else
+    for (final t in same)
+      ccMenuItem(
+        value: 'send:${t.id}',
+        icon: Icons.send_rounded,
+        label: '发送到「${t.label}」',
+        enabled: enabled,
+      ),
   if (others.isNotEmpty)
     ccMenuItem(
       value: 'send-others',
       icon: Icons.more_horiz_rounded,
-      label: '其他会话 ▸',
+      label: '其他会话 (${others.length}) ▸',
       enabled: enabled,
     ),
 ];
 
 // showGroupedSendMenu shows the grouped send picker at [globalPos] and returns
 // the chosen session id as 'send:<id>' (or one of [extraTop]'s values, or null).
-// Same-project targets are inline; picking "其他会话" cascades a second menu of
-// other-project targets — Flutter's showMenu has no native submenu. [extraTop]
-// rows (e.g. the terminal's copy/paste/全选) render above a divider; [extraBottom]
-// rows (e.g. "发送到在线用户…") render below the local targets.
+// Same-project targets are inline while short; long lists and "其他会话" cascade a
+// second menu — Flutter's showMenu has no native submenu. [extraTop] rows (e.g.
+// the terminal's copy/paste/全选) render above a divider; [extraBottom] rows
+// (e.g. "发送到在线用户…") render below the local targets.
 Future<String?> showGroupedSendMenu(
   BuildContext context,
   Offset globalPos, {
@@ -1724,6 +1734,10 @@ Future<String?> showGroupedSendMenu(
       ...extraBottom,
     ],
   );
+  if (v == 'send-same') {
+    if (!context.mounted) return null;
+    return showPeerPicker(context, globalPos, same, 'send');
+  }
   if (v != 'send-others') return v; // 'send:<id>', an extraTop value, or null
   if (!context.mounted) return null;
   return showPeerPicker(context, globalPos, others, 'send');
