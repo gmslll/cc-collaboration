@@ -43,6 +43,34 @@ func TestPutSettingRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestPutSettingRejectsTrailingJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "alice@x", "alicepass1")
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+	token := loginToken(t, srv.URL, "alice@x", "alicepass1")
+
+	if code, body := putRawJSON(t, srv.URL+"/v1/settings/todo.view", token, `{"value":{"scope":"team"}}`); code != http.StatusOK {
+		t.Fatalf("put setting = %d %s", code, body)
+	}
+	if code, _ := putRawJSON(t, srv.URL+"/v1/settings/todo.view", token, `{"value":{"scope":"project"}} {"value":{"scope":"all"}}`); code != http.StatusBadRequest {
+		t.Fatalf("trailing json put setting = %d, want 400", code)
+	}
+
+	value, found, err := st.GetSetting(context.Background(), "alice@x", "todo.view")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || value != `{"scope":"team"}` {
+		t.Fatalf("trailing json request changed setting: found=%v value=%s", found, value)
+	}
+}
+
 func TestSettingsRejectInvalidKeys(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {

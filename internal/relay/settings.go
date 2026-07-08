@@ -2,6 +2,8 @@ package relay
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -51,7 +53,12 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Value json.RawMessage `json:"value"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingBodyBytes)).Decode(&body); err != nil {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingBodyBytes))
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := rejectTrailingJSON(dec); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -64,6 +71,19 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+var errUnexpectedTrailingJSON = errors.New("unexpected trailing json")
+
+func rejectTrailingJSON(dec *json.Decoder) error {
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errUnexpectedTrailingJSON
+		}
+		return err
+	}
+	return nil
 }
 
 func validSettingKey(w http.ResponseWriter, key string) bool {
