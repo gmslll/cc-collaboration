@@ -37,6 +37,7 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	devTok := loginToken(t, srv.URL, "dev@backend", "devpass1234")
 	aliceTok := loginToken(t, srv.URL, "alice@backend", "alicepass1")
 	malTok := loginToken(t, srv.URL, "mallory@x", "mallorypass1")
+	qaTok := loginToken(t, srv.URL, "qa@backend", "qapass1234")
 
 	// Admin gate: non-admin 403, admin 200.
 	if code, _ := getAuthed(t, srv.URL+"/v1/users", devTok); code != http.StatusForbidden {
@@ -84,6 +85,10 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 		t.Fatalf("add member = %d", code)
 	}
 
+	assertProjectListRole(t, srv.URL, devTok, proj.ID, "owner")
+	assertProjectListRole(t, srv.URL, qaTok, proj.ID, "viewer")
+	assertProjectListRole(t, srv.URL, aliceTok, proj.ID, "admin")
+
 	// A non-owner, non-member, non-admin can neither manage nor view the project.
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", malTok,
 		map[string]string{"identity": "x@y", "role": "member"}); code != http.StatusForbidden {
@@ -120,6 +125,32 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	if code, _ := getAuthed(t, srv.URL+"/v1/projects/"+proj.ID, devTok); code != http.StatusOK {
 		t.Fatalf("owner GET project = %d", code)
 	}
+}
+
+func assertProjectListRole(t *testing.T, base, token, projectID, wantRole string) {
+	t.Helper()
+	code, body := getAuthed(t, base+"/v1/projects", token)
+	if code != http.StatusOK {
+		t.Fatalf("list projects = %d %s", code, body)
+	}
+	var resp struct {
+		Projects []struct {
+			ID   string `json:"id"`
+			Role string `json:"role"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode projects: %v", err)
+	}
+	for _, p := range resp.Projects {
+		if p.ID == projectID {
+			if p.Role != wantRole {
+				t.Fatalf("project %s role = %q, want %q; projects=%+v", projectID, p.Role, wantRole, resp.Projects)
+			}
+			return
+		}
+	}
+	t.Fatalf("project %s not found in list: %+v", projectID, resp.Projects)
 }
 
 func TestOrganizationSaaSFlow(t *testing.T) {

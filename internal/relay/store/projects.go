@@ -29,6 +29,7 @@ type Project struct {
 	Name          string    `json:"name"`
 	OwnerIdentity string    `json:"owner_identity"`
 	CreatedAt     time.Time `json:"created_at"`
+	Role          string    `json:"role,omitempty"`
 }
 
 type ProjectMember struct {
@@ -112,10 +113,17 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 
 // ListProjectsForIdentity returns the projects an identity is a member of.
 func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([]Project, error) {
-	return s.queryProjects(ctx,
-		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at FROM projects p
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at, pm.role FROM projects p
 		   JOIN project_members pm ON pm.project_id = p.id
 		  WHERE pm.identity = ? ORDER BY p.name`, identity)
+	if err != nil {
+		return nil, err
+	}
+	return scanRows(rows, func(r *sql.Rows) (Project, error) {
+		p, err := scanProjectWithRole(r)
+		return p, err
+	})
 }
 
 // scanRows drains rows, scanning each with scan, and closes rows — centralizing
@@ -139,6 +147,18 @@ func (s *Store) queryProjects(ctx context.Context, query string, args ...any) ([
 		return nil, err
 	}
 	return scanRows(rows, func(r *sql.Rows) (Project, error) { return scanProject(r) })
+}
+
+func scanProjectWithRole(row scanner) (Project, error) {
+	var (
+		p         Project
+		createdMS int64
+	)
+	if err := row.Scan(&p.ID, &p.OrgID, &p.Name, &p.OwnerIdentity, &createdMS, &p.Role); err != nil {
+		return Project{}, err
+	}
+	p.CreatedAt = time.UnixMilli(createdMS).UTC()
+	return p, nil
 }
 
 func (s *Store) RenameProject(ctx context.Context, id, name string) error {

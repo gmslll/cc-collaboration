@@ -117,6 +117,26 @@ class _ProjectsPageState extends State<ProjectsPage> {
     return id;
   }
 
+  String _projectRoleLabel(Project p) {
+    final role = p.role.isEmpty
+        ? (_isAdmin
+            ? 'admin'
+            : (p.ownerIdentity == _identity ? 'owner' : 'member'))
+        : p.role;
+    switch (role) {
+      case 'admin':
+        return '管理员';
+      case 'owner':
+        return '负责人';
+      case 'member':
+        return '成员';
+      case 'viewer':
+        return '只读';
+      default:
+        return role;
+    }
+  }
+
   List<Organization> get _manageableOrgs =>
       _orgs.where((org) => _manageableOrgIds.contains(org.id)).toList();
 
@@ -227,7 +247,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w700, fontSize: 15)),
                             const SizedBox(height: 2),
-                            Text('${_teamName(p.orgId)} · owner · ${p.ownerIdentity}',
+                            Text(
+                                '${_teamName(p.orgId)} · ${_projectRoleLabel(p)} · 负责人 ${p.ownerIdentity}',
                                 style: const TextStyle(
                                     fontFamily: CcType.mono,
                                     color: CcColors.muted,

@@ -103,6 +103,9 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	)
 	if s.isAdmin(r.Context(), identity) {
 		ps, err = s.Store.ListProjects(r.Context())
+		for i := range ps {
+			ps[i].Role = "admin"
+		}
 	} else {
 		ps, err = s.Store.ListProjectsForIdentity(r.Context(), identity)
 	}
