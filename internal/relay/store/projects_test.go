@@ -59,6 +59,16 @@ func TestProjectsAndMembers(t *testing.T) {
 	if prs, _ := st.MemberProjects(ctx, "dev@x"); len(prs) != 1 || prs[0].ID != "p1" || prs[0].Role != RoleViewer {
 		t.Fatalf("member projects = %+v", prs)
 	}
+	p1, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, p1.OrgID, "org-admin@x", OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if prs, _ := st.MemberProjects(ctx, "org-admin@x"); len(prs) != 1 || prs[0].ID != "p1" || prs[0].Role != RoleAdmin {
+		t.Fatalf("org admin member projects = %+v", prs)
+	}
 
 	// List scope: all vs per-identity.
 	if all, _ := st.ListProjects(ctx); len(all) != 1 {

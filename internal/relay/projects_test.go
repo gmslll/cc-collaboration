@@ -109,12 +109,17 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 		map[string]string{"identity": "z@y", "role": "member"}); code != http.StatusOK {
 		t.Fatalf("admin manage = %d", code)
 	}
-	if code, body := postJSON(t, srv.URL+"/v1/projects", aliceTok,
-		map[string]string{"name": "Admin Project", "org_id": proj.OrgID}); code != http.StatusCreated {
+	code, body = postJSON(t, srv.URL+"/v1/projects", aliceTok,
+		map[string]string{"name": "Admin Project", "org_id": proj.OrgID})
+	if code != http.StatusCreated {
 		t.Fatalf("admin create org project = %d %s", code, body)
 	}
+	var adminProj struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &adminProj)
 
-	// /v1/me reflects dev's ownership.
+	// /v1/me reflects direct ownership and team-manager project access.
 	_, meBody := getAuthed(t, srv.URL+"/v1/me", devTok)
 	var me struct {
 		Projects []struct {
@@ -123,7 +128,11 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 		} `json:"projects"`
 	}
 	_ = json.Unmarshal(meBody, &me)
-	if len(me.Projects) != 1 || me.Projects[0].Role != "owner" {
+	meRoles := map[string]string{}
+	for _, p := range me.Projects {
+		meRoles[p.ID] = p.Role
+	}
+	if meRoles[proj.ID] != "owner" || meRoles[adminProj.ID] != "admin" {
 		t.Fatalf("me.projects = %+v", me.Projects)
 	}
 
@@ -316,6 +325,17 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	}
 	assertProjectListRole(t, srv.URL, ownerTok, proj.ID, "admin")
 	assertProjectDetailRole(t, srv.URL, ownerTok, proj.ID, "admin")
+	_, body = getAuthed(t, srv.URL+"/v1/me", ownerTok)
+	var ownerMe struct {
+		Projects []struct {
+			ID   string `json:"id"`
+			Role string `json:"role"`
+		} `json:"projects"`
+	}
+	_ = json.Unmarshal(body, &ownerMe)
+	if len(ownerMe.Projects) != 1 || ownerMe.Projects[0].ID != proj.ID || ownerMe.Projects[0].Role != "admin" {
+		t.Fatalf("org owner me.projects = %+v", ownerMe.Projects)
+	}
 	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", ownerTok,
 		map[string]string{"repo_name": "team/repo"}); code != http.StatusOK {
 		t.Fatalf("org owner map repo on team project = %d %s", code, body)

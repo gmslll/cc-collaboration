@@ -48,6 +48,16 @@ type ProjectRole struct {
 	Role  string `json:"role"`
 }
 
+const effectiveProjectRoleExpr = `CASE
+		          WHEN pm.role = ? THEN ?
+		          WHEN om.role IN (?, ?) THEN ?
+		          ELSE COALESCE(pm.role, '')
+		        END`
+
+func effectiveProjectRoleArgs(identity string) []any {
+	return []any{RoleOwner, RoleOwner, OrgRoleOwner, OrgRoleAdmin, RoleAdmin, identity, identity, OrgRoleOwner, OrgRoleAdmin}
+}
+
 // CreateProject inserts a project in the owner's default organization.
 func (s *Store) CreateProject(ctx context.Context, id, name, owner string, now time.Time) error {
 	org, err := s.EnsureDefaultOrganization(ctx, owner, now)
@@ -117,18 +127,13 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 // govern through team owner/admin rights.
 func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([]Project, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at,
-		        CASE
-		          WHEN pm.role = ? THEN ?
-		          WHEN om.role IN (?, ?) THEN ?
-		          ELSE COALESCE(pm.role, '')
-		        END
+		`SELECT p.id, p.org_id, p.name, p.owner_identity, p.created_at, `+effectiveProjectRoleExpr+`
 		   FROM projects p
 		   LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?
 		   LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
 		  WHERE pm.identity IS NOT NULL OR om.role IN (?, ?)
 		  ORDER BY p.name`,
-		RoleOwner, RoleOwner, OrgRoleOwner, OrgRoleAdmin, RoleAdmin, identity, identity, OrgRoleOwner, OrgRoleAdmin)
+		effectiveProjectRoleArgs(identity)...)
 	if err != nil {
 		return nil, err
 	}
@@ -324,12 +329,17 @@ func (s *Store) MemberRole(ctx context.Context, projectID, identity string) (str
 	return role, true, nil
 }
 
-// MemberProjects returns the projects (with the caller's role) an identity is in.
+// MemberProjects returns the projects (with the caller's effective role) for
+// /v1/me. Team owner/admin see the projects they can govern as role=admin.
 func (s *Store) MemberProjects(ctx context.Context, identity string) ([]ProjectRole, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT p.id, p.org_id, p.name, pm.role FROM project_members pm
-		   JOIN projects p ON p.id = pm.project_id
-		  WHERE pm.identity = ? ORDER BY p.name`, identity)
+		`SELECT p.id, p.org_id, p.name, `+effectiveProjectRoleExpr+`
+		   FROM projects p
+		   LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?
+		   LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+		  WHERE pm.identity IS NOT NULL OR om.role IN (?, ?)
+		  ORDER BY p.name`,
+		effectiveProjectRoleArgs(identity)...)
 	if err != nil {
 		return nil, err
 	}
