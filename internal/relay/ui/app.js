@@ -515,8 +515,8 @@ function switchView(view) {
   els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
   applyMainView(view);
   if (view === "workspaces") return renderWorkspaces();
-  if (view === "organizations") return loadOrganizations();
-  if (view === "projects") return loadProjects();
+  if (view === "organizations") return Promise.allSettled([loadOnline(), loadOrganizations()]);
+  if (view === "projects") return Promise.allSettled([loadOnline(), loadProjects()]);
   if (view === "account") return loadAccount();
   if (view === "admin") return loadAdmin();
   renderDetail();
@@ -935,6 +935,45 @@ function memberPresence(identity) {
   return `<span class="presence ${online ? "online" : ""}" title="${online ? "Online" : "Offline"}"></span>`;
 }
 
+function roleTone(role) {
+  return ["owner", "admin", "member", "viewer", "guest"].includes(role) ? `role-${role}` : "role-member";
+}
+
+function metricTile(label, value) {
+  return `<div class="team-metric"><span>${escapeHTML(label)}</span><strong>${escapeHTML(String(value))}</strong></div>`;
+}
+
+function renderMemberTable(members, options = {}) {
+  if (!members.length) {
+    return `<div class="empty-inline">还没有成员。</div>`;
+  }
+  const removeAttr = options.removeAttr || "";
+  const canRemove = Boolean(options.canRemove && removeAttr);
+  return `
+    <div class="member-table ${canRemove ? "has-actions" : ""}" role="table" aria-label="${escapeAttr(options.label || "成员")}">
+      <div class="member-table-row member-table-head" role="row">
+        <span role="columnheader">成员</span>
+        <span role="columnheader">角色</span>
+        <span role="columnheader">状态</span>
+        ${canRemove ? `<span role="columnheader">操作</span>` : ""}
+      </div>
+      ${members.map((m) => {
+        const displayName = (m.display_name || "").trim();
+        const online = isOnlineIdentity(m.identity);
+        return `
+          <div class="member-table-row" role="row">
+            <span class="member-person" role="cell">
+              <span class="member-identity">${escapeHTML(m.identity)}</span>
+              ${displayName ? `<small>${escapeHTML(displayName)}</small>` : ""}
+            </span>
+            <span role="cell"><span class="role-pill ${roleTone(m.role)}">${escapeHTML(m.role)}</span></span>
+            <span class="member-state" role="cell">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>
+            ${canRemove ? `<span class="member-actions" role="cell"><button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button></span>` : ""}
+          </div>`;
+      }).join("")}
+    </div>`;
+}
+
 function renderOrganizations() {
   if (!state.organizations.length) {
     els.orgsList.innerHTML = `<div class="empty-list">还没有团队。新建一个团队，然后在 Projects 里创建项目。</div>`;
@@ -1030,7 +1069,14 @@ async function renderOrganizationManage(id, body) {
     const projects = data.projects || [];
     const role = organizationRole(id);
     const canManage = canManageOrganization(role);
+    const onlineCount = members.filter((m) => isOnlineIdentity(m.identity)).length;
     body.innerHTML = `
+      <div class="team-summary-strip">
+        ${metricTile("项目", projects.length)}
+        ${metricTile("成员", members.length)}
+        ${metricTile("在线", onlineCount)}
+        ${metricTile("你的角色", role)}
+      </div>
       <div class="manage-block">
         <h4>项目</h4>
         <div class="team-project-grid">
@@ -1043,10 +1089,8 @@ async function renderOrganizationManage(id, body) {
       </div>
       <div class="manage-block">
         <h4>成员</h4>
-        <div class="member-rows">
-          ${members.map((m) => `<div class="member-row">${memberPresence(m.identity)}<span class="member-identity">${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span>${canManage ? `<button type="button" class="link-danger" data-remove-org-member="${escapeAttr(m.identity)}" aria-label="移除团队成员 ${escapeAttr(m.identity)}">移除</button>` : ""}</div>`).join("")}
-        </div>
-        ${canManage ? `<form class="inline-form" data-form="org-member">
+        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", label: "团队成员" })}
+        ${canManage ? `<form class="inline-form member-invite-form" data-form="org-member">
           <input type="text" name="identity" aria-label="团队成员 identity" placeholder="identity">
           <select name="role" aria-label="团队角色"><option value="member">member</option><option value="admin">admin</option><option value="guest">guest</option><option value="owner">owner</option></select>
           <button type="submit" class="secondary">加成员</button>
@@ -1211,7 +1255,14 @@ async function renderProjectManage(id, body) {
     const repos = data.repos || [];
     const members = data.members || [];
     const project = data.project || {};
+    const onlineCount = members.filter((m) => isOnlineIdentity(m.identity)).length;
     body.innerHTML = `
+      <div class="team-summary-strip">
+        ${metricTile("成员", members.length)}
+        ${metricTile("在线", onlineCount)}
+        ${metricTile("Repos", repos.length)}
+        ${metricTile("团队", organizationName(project.org_id))}
+      </div>
       <div class="manage-block project-context">
         <span class="muted">团队</span>
         <strong>${escapeHTML(organizationName(project.org_id))}</strong>
@@ -1228,10 +1279,8 @@ async function renderProjectManage(id, body) {
       </div>
       <div class="manage-block">
         <h4>成员</h4>
-        <div class="member-rows">
-          ${members.map((m) => `<div class="member-row">${memberPresence(m.identity)}<span class="member-identity">${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span><button type="button" class="link-danger" data-remove-member="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button></div>`).join("")}
-        </div>
-        <form class="inline-form" data-form="member">
+        ${renderMemberTable(members, { canRemove: true, removeAttr: "data-remove-member", label: "项目成员" })}
+        <form class="inline-form member-invite-form" data-form="member">
           <input type="text" name="identity" aria-label="成员 identity" placeholder="identity">
           <select name="role" aria-label="成员角色"><option value="member">member</option><option value="viewer">viewer</option><option value="owner">owner</option></select>
           <button type="submit" class="secondary">加成员</button>

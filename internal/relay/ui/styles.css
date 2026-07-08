@@ -1019,6 +1019,31 @@ textarea:focus {
   margin: 0 0 var(--space-2);
   font-size: 13px;
 }
+.team-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.team-metric {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: var(--space-3);
+}
+.team-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+.team-metric strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
 .project-context {
   display: flex;
   align-items: center;
@@ -1087,21 +1112,96 @@ textarea:focus {
   padding: 0;
 }
 
-.member-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.member-table {
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--border);
 }
-.member-row {
-  display: flex;
+.member-table-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(96px, 0.45fr) minmax(86px, 0.35fr);
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  min-width: 0;
+  background: var(--panel);
+  padding: 9px var(--space-3);
 }
-.member-row .member-identity {
-  flex: 1 1 auto;
+.member-table.has-actions .member-table-row {
+  grid-template-columns: minmax(180px, 1fr) minmax(96px, 0.45fr) minmax(86px, 0.35fr) auto;
+}
+.member-table-head {
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.member-person,
+.member-state,
+.member-actions {
+  min-width: 0;
+}
+.member-person {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.member-person small {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.member-identity {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.member-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+.member-actions {
+  justify-self: end;
+}
+.role-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--panel-soft);
+  color: var(--text-soft);
+}
+.role-owner,
+.role-admin {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+  color: var(--accent-strong);
+}
+.role-guest,
+.role-viewer {
+  background: var(--warning-soft);
+  border-color: color-mix(in oklab, var(--warning) 32%, var(--border));
+  color: var(--warning);
+}
+.empty-inline {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  padding: var(--space-3);
+}
+.member-invite-form {
+  padding-top: var(--space-2);
 }
 
 .link-danger {
@@ -1110,6 +1210,7 @@ textarea:focus {
   color: var(--danger);
   cursor: pointer;
   font-size: 12.5px;
+  min-height: 0;
   padding: 0;
 }
 
@@ -1119,6 +1220,26 @@ textarea:focus {
   gap: 4px;
   font-size: 13px;
   color: var(--text-soft);
+}
+
+@media (max-width: 720px) {
+  .team-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .member-table-row,
+  .member-table.has-actions .member-table-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .member-table-head {
+    display: none;
+  }
+
+  .member-actions {
+    justify-self: start;
+  }
 }
 
 /* Respect users who prefer reduced motion: near-instant transitions/animations. */
