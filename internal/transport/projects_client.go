@@ -20,6 +20,11 @@ type ProjectMember struct {
 	Role     string `json:"role"`
 }
 
+type projectBrief struct {
+	ID    string `json:"id"`
+	OrgID string `json:"org_id"`
+}
+
 type OrganizationMember struct {
 	Identity string `json:"identity"`
 	Role     string `json:"role"`
@@ -29,13 +34,19 @@ type OrganizationMember struct {
 // todo-import flow (internal/linear/import.go) to build the candidate pool
 // for matching a Linear issue's assignee email to a cc-handoff identity.
 func (c *Client) ListProjectMembers(ctx context.Context, projectID string) ([]ProjectMember, error) {
+	_, members, err := c.projectTeam(ctx, projectID)
+	return members, err
+}
+
+func (c *Client) projectTeam(ctx context.Context, projectID string) (projectBrief, []ProjectMember, error) {
 	var out struct {
+		Project projectBrief    `json:"project"`
 		Members []ProjectMember `json:"members"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+projectID, nil, &out); err != nil {
-		return nil, err
+		return projectBrief{}, nil, err
 	}
-	return out.Members, nil
+	return out.Project, out.Members, nil
 }
 
 func (c *Client) ListOrganizationMembers(ctx context.Context, orgID string) ([]OrganizationMember, error) {
@@ -61,11 +72,15 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 	member = strings.TrimSpace(member)
 	switch {
 	case projectID != "":
-		members, err := c.ListProjectMembers(ctx, projectID)
+		project, members, err := c.projectTeam(ctx, projectID)
 		if err != nil {
 			return nil, err
 		}
-		if role, ok := memberRole(members, sender); ok && role == "viewer" {
+		orgMembers, err := c.projectOrgMembers(ctx, project.OrgID)
+		if err != nil {
+			return nil, err
+		}
+		if role, ok := memberRole(members, sender); ok && role == "viewer" && !orgCanManage(orgMembers, sender) {
 			return nil, errors.New("project viewers cannot send team-shared handoffs")
 		}
 		active, err := c.activeIdentities(ctx)
@@ -73,11 +88,20 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 			return nil, err
 		}
 		if member != "" {
-			return resolveOneProjectRecipient(members, active, sender, member)
+			return resolveOneProjectRecipient(members, orgMembers, active, sender, member)
 		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
 			if m.Identity == "" || m.Identity == sender || m.Role == "viewer" {
+				continue
+			}
+			if active != nil && !active[m.Identity] {
+				continue
+			}
+			out = append(out, m.Identity)
+		}
+		for _, m := range orgMembers {
+			if m.Identity == "" || m.Identity == sender || !orgRoleCanManage(m.Role) {
 				continue
 			}
 			if active != nil && !active[m.Identity] {
@@ -178,8 +202,11 @@ func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, membe
 	}
 }
 
-func resolveOneProjectRecipient(members []ProjectMember, active map[string]bool, sender, member string) ([]string, error) {
+func resolveOneProjectRecipient(members []ProjectMember, orgMembers []OrganizationMember, active map[string]bool, sender, member string) ([]string, error) {
 	role, ok := memberRole(members, member)
+	if !ok && orgCanManage(orgMembers, member) {
+		role, ok = "admin", true
+	}
 	if !ok {
 		return nil, fmt.Errorf("%s is not a member of the project", member)
 	}
@@ -193,6 +220,13 @@ func resolveOneProjectRecipient(members []ProjectMember, active map[string]bool,
 		return nil, fmt.Errorf("team member %s is disabled or inactive", member)
 	}
 	return []string{member}, nil
+}
+
+func (c *Client) projectOrgMembers(ctx context.Context, orgID string) ([]OrganizationMember, error) {
+	if strings.TrimSpace(orgID) == "" {
+		return nil, nil
+	}
+	return c.ListOrganizationMembers(ctx, orgID)
 }
 
 func resolveOneOrgRecipient(members []OrganizationMember, active map[string]bool, sender, member string) ([]string, error) {
@@ -243,6 +277,15 @@ func orgMemberRole(members []OrganizationMember, identity string) (string, bool)
 		}
 	}
 	return "", false
+}
+
+func orgCanManage(members []OrganizationMember, identity string) bool {
+	role, ok := orgMemberRole(members, identity)
+	return ok && orgRoleCanManage(role)
+}
+
+func orgRoleCanManage(role string) bool {
+	return role == "owner" || role == "admin"
 }
 
 func (c *Client) ListProjectHandoffs(ctx context.Context, projectID string, limit int) ([]handoffschema.ListItem, error) {

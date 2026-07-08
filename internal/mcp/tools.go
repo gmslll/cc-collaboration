@@ -94,7 +94,7 @@ func submitHandoffTool() Tool {
   "properties": {
     "summary":      {"type": "string", "description": "Markdown summary of the change. Written to <inbox-dir>/.draft-summary.md before the package is built (inbox-dir defaults to .cc-handoff/inbox, falls back to legacy .claude/handoff-inbox in older repos). If omitted, the existing draft (if any) is used."},
     "to":           {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
-    "project":      {"type": "string", "description": "Project id to share this handoff with all actionable project members (owners/members). Mutually exclusive with to and org; excludes yourself and project viewers."},
+    "project":      {"type": "string", "description": "Project id to share this handoff with all actionable project recipients (direct owners/members plus team owners/admins). Mutually exclusive with to and org; excludes yourself and project viewers."},
     "org":          {"type": "string", "description": "Organization id to share this handoff with all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "member":       {"type": "string", "description": "With project/org, send only to this identity after validating they are an actionable member of that team."},
     "urgent":       {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
@@ -274,7 +274,7 @@ func submitRequestTool() Tool {
   "properties": {
     "summary": {"type": "string", "description": "Markdown 描述需求：缺什么字段 / 没暴露什么能力 / 返回结构哪里有问题，写到具体 endpoint + field。包含 Why（前端要拿它做什么）和 Acceptance（怎样算 OK）。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
     "to":      {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
-    "project": {"type": "string", "description": "Project id to share this request with all actionable project members (owners/members). Mutually exclusive with to and org; excludes yourself and project viewers."},
+    "project": {"type": "string", "description": "Project id to share this request with all actionable project recipients (direct owners/members plus team owners/admins). Mutually exclusive with to and org; excludes yourself and project viewers."},
     "org":     {"type": "string", "description": "Organization id to share this request with all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "member":  {"type": "string", "description": "With project/org, send only to this identity after validating they are an actionable member of that team."},
     "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal."},
@@ -388,7 +388,7 @@ func submitBugTool() Tool {
   "properties": {
     "summary": {"type": "string", "description": "Markdown 描述 bug：症状 / 复现步骤 / 期望 / 实际 / 怀疑归属(可选)。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
     "to":      {"type": "array", "items": {"type": "string"}, "description": "Recipient identities（一个或多个真实 identity,例如 [\"user@backend\", \"alex@frontend\"]）。Omit to use identity.partners from .cc-handoff.toml; falls back to [identity.partner] if partners 没配。Role aliases \"backend\" / \"frontend\" / \"both\" are accepted only as convenience and will be resolved against configured identities."},
-    "project": {"type": "string", "description": "Project id to report this bug to all actionable project members (owners/members). Mutually exclusive with to and org; excludes yourself and viewers."},
+    "project": {"type": "string", "description": "Project id to report this bug to all actionable project recipients (direct owners/members plus team owners/admins). Mutually exclusive with to and org; excludes yourself and viewers."},
     "org":     {"type": "string", "description": "Organization id to report this bug to all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "member":  {"type": "string", "description": "With project/org, report only to this identity after validating they are an actionable member of that team."},
     "urgent":  {"type": "boolean", "description": "Mark as urgent. Recipients with auto_launch=true will spawn a new terminal each."},
@@ -657,7 +657,7 @@ func resolveToolRecipients(ctx context.Context, client *transport.Client, sender
 		}
 		if len(recipients) == 0 {
 			if projectID != "" {
-				return nil, "", fmt.Errorf("project %s has no actionable recipients (owners/members other than %s)", projectID, sender)
+				return nil, "", fmt.Errorf("project %s has no actionable recipients (direct owners/members or team owners/admins other than %s)", projectID, sender)
 			}
 			return nil, "", fmt.Errorf("organization %s has no actionable recipients (owners/admins/members other than %s)", orgID, sender)
 		}

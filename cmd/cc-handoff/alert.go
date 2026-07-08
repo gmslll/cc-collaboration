@@ -20,7 +20,7 @@ func runAlert(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("alert", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient identity whose watch should surface this alert")
 	project := fs.String("project", "", "workspace project name the receiver launches the agent in")
-	teamProjectID := fs.String("team-project", "", "cc-handoff project id whose actionable members should receive this alert")
+	teamProjectID := fs.String("team-project", "", "cc-handoff project id whose direct owners/members plus team owners/admins should receive this alert")
 	orgID := fs.String("org", "", "cc-handoff organization id whose actionable members should receive this alert")
 	member := fs.String("member", "", "with --team-project/--org, alert only this team member")
 	level := fs.String("level", "", "severity tag for the notification subtitle (e.g. error, fatal)")
@@ -88,7 +88,7 @@ func runAlert(ctx context.Context, args []string) error {
 		}
 		if len(recipients) == 0 {
 			if *teamProjectID != "" {
-				return fmt.Errorf("project %s has no actionable alert recipients", *teamProjectID)
+				return fmt.Errorf("project %s has no actionable alert recipients (direct owners/members or team owners/admins)", *teamProjectID)
 			}
 			return fmt.Errorf("organization %s has no actionable alert recipients", *orgID)
 		}

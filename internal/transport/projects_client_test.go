@@ -58,6 +58,69 @@ func TestResolveTeamRecipientsFiltersReadOnlyRoles(t *testing.T) {
 	}
 }
 
+func TestResolveTeamRecipientsIncludesProjectTeamManagers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects/p1":
+			w.Write([]byte(`{
+				"project":{"id":"p1","org_id":"o1"},
+				"members":[
+					{"identity":"owner@x","role":"owner"},
+					{"identity":"dev@x","role":"member"},
+					{"identity":"viewer@x","role":"viewer"}
+				]}`))
+		case "/v1/orgs/o1":
+			w.Write([]byte(`{"members":[
+				{"identity":"owner@x","role":"owner"},
+				{"identity":"org-admin@x","role":"admin"},
+				{"identity":"org-member@x","role":"member"},
+				{"identity":"guest@x","role":"guest"}
+			]}`))
+		case "/v1/users/online":
+			w.Write([]byte(`{"users":[
+				{"identity":"owner@x","online":false},
+				{"identity":"dev@x","online":false},
+				{"identity":"viewer@x","online":false},
+				{"identity":"org-admin@x","online":false},
+				{"identity":"org-member@x","online":false},
+				{"identity":"guest@x","online":false}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	recipients, err := client.ResolveTeamRecipients(context.Background(), "p1", "", "owner@x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"dev@x", "org-admin@x"}; !slices.Equal(recipients, want) {
+		t.Fatalf("project recipients = %v, want %v", recipients, want)
+	}
+
+	recipients, err = client.ResolveTeamRecipients(context.Background(), "p1", "", "owner@x", "org-admin@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"org-admin@x"}; !slices.Equal(recipients, want) {
+		t.Fatalf("project manager recipient = %v, want %v", recipients, want)
+	}
+
+	recipients, err = client.ResolveTeamRecipients(context.Background(), "p1", "", "org-admin@x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"owner@x", "dev@x"}; !slices.Equal(recipients, want) {
+		t.Fatalf("project recipients from team manager = %v, want %v", recipients, want)
+	}
+
+	if _, err := client.ResolveTeamRecipients(context.Background(), "p1", "", "owner@x", "org-member@x"); err == nil {
+		t.Fatal("plain organization member should not receive project-targeted handoffs without project membership")
+	}
+}
+
 func TestResolveTeamRecipientsRejectsReadOnlySender(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

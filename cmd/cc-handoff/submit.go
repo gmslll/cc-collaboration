@@ -18,7 +18,7 @@ import (
 func runSubmit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient identity (default: partner from .cc-handoff.toml)")
-	projectID := fs.String("project", "", "send to all actionable members of project id (owners/members; excludes yourself and viewers)")
+	projectID := fs.String("project", "", "send to all actionable project recipients (direct owners/members plus team owners/admins; excludes yourself and viewers)")
 	orgID := fs.String("org", "", "send to all actionable members of organization id (owners/admins/members; excludes yourself and guests)")
 	member := fs.String("member", "", "limit --project/--org delivery to this identity after validating team membership")
 	urgent := fs.Bool("urgent", false, "mark handoff as urgent (recipient may auto-launch)")
@@ -131,7 +131,7 @@ func resolveSubmitRecipients(ctx context.Context, client *transport.Client, send
 		}
 		if len(recipients) == 0 {
 			if projectID != "" {
-				return nil, fmt.Errorf("project %s has no actionable recipients (owners/members other than %s)", projectID, sender)
+				return nil, fmt.Errorf("project %s has no actionable recipients (direct owners/members or team owners/admins other than %s)", projectID, sender)
 			}
 			return nil, fmt.Errorf("organization %s has no actionable recipients (owners/admins/members other than %s)", orgID, sender)
 		}

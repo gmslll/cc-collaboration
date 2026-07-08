@@ -145,7 +145,7 @@ Both sides:
                                                         pull the project's log source, extract + grade the latest error (deduped), optionally launch the agent to triage
   cc-handoff logs config  <project> [--workspace NAME]  interactively set up (or edit) the project's log source
   cc-handoff alert        [--to ID | --team-project ID | --org ID] [--member ID] --project <name> [--message TEXT | --file PATH] [--level LVL] [--grade]
-                                                        forward a server log alert to a teammate's watch (server-side hook entry point)
+                                                        forward a server log alert to project/team managers or teammates (server-side hook entry point)
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
   cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications
