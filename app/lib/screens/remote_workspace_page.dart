@@ -512,7 +512,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       builder: (context, _) {
         final showSessionContent = Prefs.getBool(
           kRemoteShowSessionContentPref,
-          def: true,
+          def: kRemoteShowSessionContentDefault,
         );
         return Scaffold(
           appBar: AppBar(

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:app/api/github_client.dart';
 import 'package:app/api/models.dart';
 import 'package:app/local/diff_parse.dart';
+import 'package:app/local/remote_prefs.dart';
 import 'package:app/local/repo_config.dart';
 import 'package:app/widgets.dart';
 import 'package:dio/dio.dart';
@@ -34,6 +35,25 @@ void main() {
 
     expect(source, isNot(contains('kBuildMarker')));
     expect(source, isNot(contains('构建 \$kBuildMarker')));
+  });
+
+  test('remote session content previews default to hidden', () {
+    expect(kRemoteShowSessionContentDefault, isFalse);
+
+    final account = File('lib/screens/account_page.dart').readAsStringSync();
+    final remote = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    expect(account, contains('def: kRemoteShowSessionContentDefault'));
+    expect(remote, contains('def: kRemoteShowSessionContentDefault'));
+    expect(
+      account,
+      isNot(contains('kRemoteShowSessionContentPref,\n    def: true')),
+    );
+    expect(
+      remote,
+      isNot(contains('kRemoteShowSessionContentPref,\n          def: true')),
+    );
   });
 
   group('splitFileNameDir', () {

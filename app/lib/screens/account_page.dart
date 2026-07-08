@@ -69,7 +69,7 @@ class _AccountPageState extends State<AccountPage> {
   bool _tapPreview = Prefs.getBool('remote.tapPreview');
   bool _showRemoteSessionContent = Prefs.getBool(
     kRemoteShowSessionContentPref,
-    def: true,
+    def: kRemoteShowSessionContentDefault,
   );
 
   // Local-bus / session-id hooks self-check (desktop only). The app auto-installs
