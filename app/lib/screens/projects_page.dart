@@ -39,6 +39,12 @@ String projectRoleLabel(String role) {
   }
 }
 
+String organizationMemberPickerLabel(OrganizationMember member) {
+  final role = organizationRoleLabel(member.role, isAdmin: false);
+  if (member.displayName.isEmpty) return '${member.identity} · $role';
+  return '${member.displayName} · ${member.identity} · $role';
+}
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -908,8 +914,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   }
 
   String _memberLabel(OrganizationMember m) {
-    if (m.displayName.isEmpty) return '${m.identity} · ${m.role}';
-    return '${m.displayName} · ${m.identity} · ${m.role}';
+    return organizationMemberPickerLabel(m);
   }
 
   @override
@@ -976,7 +981,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                       ),
                       Chip(
                         avatar: const Icon(Icons.person_rounded, size: 16),
-                        label: Text('owner · ${d.project.ownerIdentity}'),
+                        label: Text(
+                          '${projectRoleLabel('owner')} · ${d.project.ownerIdentity}',
+                        ),
                       ),
                     ],
                   ),
@@ -1058,7 +1065,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            m.role,
+                            projectRoleLabel(m.role),
                             style: const TextStyle(color: CcColors.muted),
                           ),
                           if (canManage)

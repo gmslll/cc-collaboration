@@ -52,4 +52,19 @@ void main() {
     expect(projectRoleLabel('viewer'), '只读');
     expect(projectRoleLabel('custom'), 'custom');
   });
+
+  test('organization member picker label localizes roles', () {
+    final named = OrganizationMember.fromJson({
+      'identity': 'dev@x',
+      'role': 'admin',
+      'display_name': 'Dev',
+    });
+    final unnamed = OrganizationMember.fromJson({
+      'identity': 'ops@x',
+      'role': 'guest',
+    });
+
+    expect(organizationMemberPickerLabel(named), 'Dev · dev@x · 管理员');
+    expect(organizationMemberPickerLabel(unnamed), 'ops@x · 访客');
+  });
 }
