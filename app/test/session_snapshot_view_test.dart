@@ -5,11 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/xterm.dart';
 
 // SessionSnapshotView renders the quick-reply preview at the SOURCE terminal's
-// width (no reflow) and scales the whole grid to fit via FittedBox. These guard:
-//  - the FittedBox-over-a-Scrollable(TerminalView) layout never throws (the one
-//    runtime risk the analyzer can't catch), and
+// width (no reflow) inside a parent-owned box. These guard:
+//  - the scrollable TerminalView layout never throws (the runtime risk the
+//    analyzer can't catch), and
 //  - the throwaway terminal is resized to the source geometry rather than the
-//    popup's narrow width — which is exactly what used to shatter the box art /
+//    popup's narrow width, which is exactly what used to shatter the box art /
 //    separators / agent prompt into a wrapped mess.
 void main() {
   Future<void> pump(WidgetTester tester, ScreenSnapshot? snap) async {
@@ -19,11 +19,8 @@ void main() {
           body: Center(
             child: SizedBox(
               width: 300, // narrower than a 120-col source on purpose
-              child: SessionSnapshotView(
-                snapshot: snap,
-                height: 280,
-                fontSize: 12,
-              ),
+              height: 280,
+              child: SessionSnapshotView(snapshot: snap, fontSize: 12),
             ),
           ),
         ),

@@ -4263,10 +4263,12 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
               ),
             ],
             const SizedBox(height: 10),
-            SessionSnapshotView(
-              snapshot: widget.client.screens[_sid],
+            SizedBox(
               height: 220,
-              fontSize: 11,
+              child: SessionSnapshotView(
+                snapshot: widget.client.screens[_sid],
+                fontSize: 11,
+              ),
             ),
             const SizedBox(height: 10),
             Wrap(

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 import '../local/local_bus.dart';
+import '../local/prefs.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../local/skill_pack.dart';
@@ -364,16 +365,45 @@ class _QuickReplyDialog extends StatefulWidget {
   State<_QuickReplyDialog> createState() => _QuickReplyDialogState();
 }
 
+// Preview zoom + popup-size prefs — persisted so a size/zoom set on one session's
+// popup carries to every other session's popup (and across app restarts), per the
+// user's "set once, applies everywhere".
+const _kPrevFontKey = 'overviewPreview.fontSize';
+const _kPrevWidthKey = 'overviewPreview.width';
+const _kPrevHeightKey = 'overviewPreview.previewH';
+const _kPrevFontMin = 6.0;
+const _kPrevFontMax = 28.0;
+const _kPrevWidthMin = 380.0;
+const _kPrevWidthMax = 1400.0;
+const _kPrevHeightMin = 140.0;
+const _kPrevHeightMax = 900.0;
+
 class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
   // Latest coloured screen snapshot (ansi + source geometry); rendered by
   // SessionSnapshotView at the source width so TUI chrome doesn't reflow.
   ScreenSnapshot? _snap;
   Timer? _timer;
+  // Persisted preview zoom + popup dimensions (shared across all popups).
+  late double _fontSize;
+  late double _dialogW;
+  late double _previewH;
 
   @override
   void initState() {
     super.initState();
+    _fontSize = Prefs.getDouble(
+      _kPrevFontKey,
+      def: 12,
+    ).clamp(_kPrevFontMin, _kPrevFontMax);
+    _dialogW = Prefs.getDouble(
+      _kPrevWidthKey,
+      def: 560,
+    ).clamp(_kPrevWidthMin, _kPrevWidthMax);
+    _previewH = Prefs.getDouble(
+      _kPrevHeightKey,
+      def: 280,
+    ).clamp(_kPrevHeightMin, _kPrevHeightMax);
     // Opening the preview = the user is looking at this session → clear its
     // 待 review flag (mirrors local foregrounding / a phone watching it), so a
     // reviewed-from-here session stops showing as "完成待查看".
@@ -430,12 +460,31 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     child: Text(label, style: CcType.code(size: 12.5)),
   );
 
+  void _zoom(double delta) {
+    setState(
+      () => _fontSize = (_fontSize + delta).clamp(_kPrevFontMin, _kPrevFontMax),
+    );
+    Prefs.setDouble(_kPrevFontKey, _fontSize);
+  }
+
+  void _resizeBy(Offset delta) {
+    setState(() {
+      _dialogW = (_dialogW + delta.dx).clamp(_kPrevWidthMin, _kPrevWidthMax);
+      _previewH = (_previewH + delta.dy).clamp(
+        _kPrevHeightMin,
+        _kPrevHeightMax,
+      );
+    });
+    Prefs.setDouble(_kPrevWidthKey, _dialogW);
+    Prefs.setDouble(_kPrevHeightKey, _previewH);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.card;
     return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
+      child: SizedBox(
+        width: _dialogW,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -463,6 +512,16 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                     ),
                   ),
                   IconButton(
+                    tooltip: '缩小字体',
+                    icon: const Icon(Icons.text_decrease_rounded, size: 18),
+                    onPressed: () => _zoom(-1),
+                  ),
+                  IconButton(
+                    tooltip: '放大字体',
+                    icon: const Icon(Icons.text_increase_rounded, size: 18),
+                    onPressed: () => _zoom(1),
+                  ),
+                  IconButton(
                     tooltip: '刷新',
                     icon: const Icon(Icons.refresh_rounded, size: 18),
                     onPressed: _refresh,
@@ -481,10 +540,12 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                 statusDetail: c.statusDetail,
               ),
               const SizedBox(height: 10),
-              SessionSnapshotView(
-                snapshot: _snap,
-                height: 280,
-                fontSize: 12,
+              SizedBox(
+                height: _previewH,
+                child: SessionSnapshotView(
+                  snapshot: _snap,
+                  fontSize: _fontSize,
+                ),
               ),
               const SizedBox(height: 10),
               Wrap(
@@ -533,10 +594,13 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                   // capsule (a shell session has no transcript to distill).
                   if (c.isAgent && (c.workdir?.isNotEmpty ?? false))
                     TextButton.icon(
-                      onPressed: () => startCapsuleFlow(context, widget.store, c),
+                      onPressed: () =>
+                          startCapsuleFlow(context, widget.store, c),
                       icon: const Icon(Icons.science_rounded, size: 16),
                       label: const Text('打成胶囊'),
                     ),
+                  const SizedBox(width: 4),
+                  _resizeHandle(),
                 ],
               ),
             ],
@@ -545,6 +609,21 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
       ),
     );
   }
+
+  // Drag grip at the footer's right edge — resizes the popup width + preview
+  // height (persisted). Placed inline (not a corner overlay) so it never blocks
+  // the footer buttons.
+  Widget _resizeHandle() => MouseRegion(
+    cursor: SystemMouseCursors.resizeUpLeftDownRight,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: (d) => _resizeBy(d.delta),
+      child: const Padding(
+        padding: EdgeInsets.all(4),
+        child: Icon(Icons.south_east_rounded, size: 15, color: CcColors.subtle),
+      ),
+    ),
+  );
 }
 
 // startCapsuleFlow runs the whole "打成胶囊" UX from either entry point (the
@@ -565,9 +644,7 @@ Future<void> startCapsuleFlow(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('怎么蒸馏这个会话?'),
-        content: const Text(
-          '「让它自己蒸馏」更懂上下文,但会占用该会话一会儿;「后台蒸馏」不打扰它,读转录来做。',
-        ),
+        content: const Text('「让它自己蒸馏」更懂上下文,但会占用该会话一会儿;「后台蒸馏」不打扰它,读转录来做。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -592,17 +669,20 @@ Future<void> startCapsuleFlow(
   store.markCapsuleInFlight(card.sid);
   snack(
     context,
-    preferSelf
-        ? '已让会话 ${card.sid} 自己蒸馏胶囊,完成后自动弹出复查'
-        : '正在后台蒸馏胶囊,完成后自动弹出复查',
+    preferSelf ? '已让会话 ${card.sid} 自己蒸馏胶囊,完成后自动弹出复查' : '正在后台蒸馏胶囊,完成后自动弹出复查',
   );
 
   CapsuleDraft? draft;
   String? err;
   try {
-    (draft, err) = await store.captureCapsule(card, preferSelfDistill: preferSelf);
+    (draft, err) = await store.captureCapsule(
+      card,
+      preferSelfDistill: preferSelf,
+    );
   } finally {
-    store.clearCapsuleInFlight(card.sid); // distill done → stop the card spinner
+    store.clearCapsuleInFlight(
+      card.sid,
+    ); // distill done → stop the card spinner
   }
   if (!context.mounted) return;
   final ready = draft;
@@ -686,7 +766,9 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
     setState(() => _submitting = true);
     // Persist the user's edits back to the draft before shipping.
     if (_persona.text.trim().isNotEmpty) {
-      await File('${widget.draft.draftDir}/persona.md').writeAsString(_persona.text);
+      await File(
+        '${widget.draft.draftDir}/persona.md',
+      ).writeAsString(_persona.text);
     }
     if (_seed.text.trim().isNotEmpty) {
       await File('${widget.draft.draftDir}/seed.md').writeAsString(_seed.text);
@@ -812,20 +894,28 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                       ),
                       const SizedBox(height: 12),
                       if (_skillDirs.isNotEmpty) ...[
-                        const Text('带上技能 / 脚本(勾选随胶囊发;缺技能的队友也能用。蒸馏检测到的已勾选)',
-                            style: TextStyle(fontWeight: FontWeight.w600)),
+                        const Text(
+                          '带上技能 / 脚本(勾选随胶囊发;缺技能的队友也能用。蒸馏检测到的已勾选)',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
                         for (final dir in _skillDirs.keys)
                           CheckboxListTile(
                             value: _skillDirs[dir],
                             onChanged: (v) =>
                                 setState(() => _skillDirs[dir] = v ?? false),
-                            title: Text(dir.split('/').last,
-                                style: CcType.code(size: 12)),
-                            subtitle: Text(dir,
-                                style: CcType.code(
-                                    size: 10.5, color: CcColors.subtle),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
+                            title: Text(
+                              dir.split('/').last,
+                              style: CcType.code(size: 12),
+                            ),
+                            subtitle: Text(
+                              dir,
+                              style: CcType.code(
+                                size: 10.5,
+                                color: CcColors.subtle,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             controlAffinity: ListTileControlAffinity.leading,
                             dense: true,
                             contentPadding: EdgeInsets.zero,
@@ -839,7 +929,10 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                               ButtonSegment(
                                 value: false,
                                 label: Text('个人'),
-                                icon: Icon(Icons.lock_outline_rounded, size: 16),
+                                icon: Icon(
+                                  Icons.lock_outline_rounded,
+                                  size: 16,
+                                ),
                               ),
                               ButtonSegment(
                                 value: true,
@@ -854,10 +947,11 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              _public
-                                  ? '团队所有人能在广场看到'
-                                  : '只有你自己能在广场看到',
-                              style: CcType.code(size: 11.5, color: CcColors.subtle),
+                              _public ? '团队所有人能在广场看到' : '只有你自己能在广场看到',
+                              style: CcType.code(
+                                size: 11.5,
+                                color: CcColors.subtle,
+                              ),
                             ),
                           ),
                         ],
