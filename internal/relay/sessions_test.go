@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -114,6 +115,73 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 	}
 	if msg.SessionID != "ts3" || msg.Body != "看下这段" {
 		t.Errorf("payload mismatch: %+v", msg)
+	}
+}
+
+func TestSessionRegistryNormalizesPublishedSessions(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	sessions := []map[string]string{
+		{"id": "   ", "label": "drop me"},
+		{"id": " ts0 ", "label": "   ", "project": " Team ", "workdir": " /tmp/work "},
+		{
+			"id":      strings.Repeat("x", 120),
+			"label":   strings.Repeat("l", 200),
+			"project": strings.Repeat("p", 200),
+			"workdir": strings.Repeat("w", 700),
+		},
+	}
+	for i := 0; i < 80; i++ {
+		sessions = append(sessions, map[string]string{
+			"id":    fmt.Sprintf("bulk-%02d", i),
+			"label": fmt.Sprintf("bulk %02d", i),
+		})
+	}
+
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", "tok-alice", map[string]any{
+		"sessions": sessions,
+	}); code != http.StatusOK {
+		t.Fatalf("publish sessions: status=%d body=%s", code, body)
+	}
+
+	code, body := getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("alice@backend")+"/sessions", "tok-alice")
+	if code != http.StatusOK {
+		t.Fatalf("get sessions: status=%d", code)
+	}
+	var got struct {
+		Sessions []handoffschema.SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 64 {
+		t.Fatalf("session count = %d, want 64", len(got.Sessions))
+	}
+	if got.Sessions[0].ID != "ts0" || got.Sessions[0].Label != "Session ts0" ||
+		got.Sessions[0].Project != "Team" || got.Sessions[0].Workdir != "/tmp/work" {
+		t.Fatalf("trim/default mismatch: %+v", got.Sessions[0])
+	}
+	if len(got.Sessions[1].ID) != 96 || len(got.Sessions[1].Label) != 160 ||
+		len(got.Sessions[1].Project) != 160 || len(got.Sessions[1].Workdir) != 512 {
+		t.Fatalf("truncate mismatch: %+v", got.Sessions[1])
 	}
 }
 

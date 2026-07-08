@@ -19,6 +19,15 @@ import (
 // presence-offline hook misses the transition.
 const publishedSessionTTL = 90 * time.Second
 
+const (
+	maxPublishedSessions      = 64
+	maxSessionIDLen           = 96
+	maxSessionLabelLen        = 160
+	maxSessionProjectLen      = 160
+	maxSessionWorkdirLen      = 512
+	defaultSessionLabelPrefix = "Session "
+)
+
 // sessionRegistry holds each identity's currently-open terminal sessions so a
 // peer can target a specific remote session. In-memory + transient (like the
 // SSE hub): an identity's entry is refreshed on publish, dropped on presence
@@ -87,8 +96,48 @@ func (s *Server) postSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.Sessions.set(identity, body.Sessions)
+	s.Sessions.set(identity, normalizePublishedSessions(body.Sessions))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func normalizePublishedSessions(in []handoffschema.SessionInfo) []handoffschema.SessionInfo {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]handoffschema.SessionInfo, 0, min(len(in), maxPublishedSessions))
+	for _, s := range in {
+		if len(out) >= maxPublishedSessions {
+			break
+		}
+		id := truncateRunes(strings.TrimSpace(s.ID), maxSessionIDLen)
+		if id == "" {
+			continue
+		}
+		label := truncateRunes(strings.TrimSpace(s.Label), maxSessionLabelLen)
+		if label == "" {
+			label = defaultSessionLabelPrefix + id
+		}
+		out = append(out, handoffschema.SessionInfo{
+			ID:      id,
+			Label:   label,
+			Project: truncateRunes(strings.TrimSpace(s.Project), maxSessionProjectLen),
+			Workdir: truncateRunes(strings.TrimSpace(s.Workdir), maxSessionWorkdirLen),
+		})
+	}
+	return out
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	for i := range s {
+		if max == 0 {
+			return s[:i]
+		}
+		max--
+	}
+	return s
 }
 
 // getUserSessions returns a reachable user's currently-open sessions (empty if
