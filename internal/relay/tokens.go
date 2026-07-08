@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -35,7 +34,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Label string `json:"label"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

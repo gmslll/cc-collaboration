@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -72,7 +71,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		Identity string `json:"identity"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -97,7 +96,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		Identity string `json:"identity"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -241,7 +240,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName string `json:"display_name"`
 		IsAdmin     bool   `json:"is_admin"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
@@ -292,7 +291,7 @@ func (s *Server) setUserAdmin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IsAdmin bool `json:"is_admin"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -310,7 +309,7 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Disabled bool `json:"disabled"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -350,7 +349,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		Old string `json:"old"`
 		New string `json:"new"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

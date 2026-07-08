@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -56,7 +55,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Name  string `json:"name"`
 		OrgID string `json:"org_id"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -162,7 +161,7 @@ func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
@@ -198,7 +197,7 @@ func (s *Server) mapRepo(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RepoName string `json:"repo_name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || strings.TrimSpace(req.RepoName) == "" {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil || strings.TrimSpace(req.RepoName) == "" {
 		http.Error(w, "repo_name required", http.StatusBadRequest)
 		return
 	}
@@ -245,7 +244,7 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
 		Identity string `json:"identity"`
 		Role     string `json:"role"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}

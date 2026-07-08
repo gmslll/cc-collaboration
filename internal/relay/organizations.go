@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -36,7 +35,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -124,7 +123,7 @@ func (s *Server) addOrganizationMember(w http.ResponseWriter, r *http.Request) {
 		Identity string `json:"identity"`
 		Role     string `json:"role"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}

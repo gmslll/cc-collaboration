@@ -398,6 +398,57 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	}
 }
 
+func TestTeamAndProjectMembersRejectTrailingJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	for _, id := range []string{"owner@demo", "team@demo", "project@demo"} {
+		mkUser(t, st, id, "pw-"+id+"-12345")
+	}
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	ownerTok := loginToken(t, srv.URL, "owner@demo", "pw-owner@demo-12345")
+	code, body := postJSON(t, srv.URL+"/v1/orgs", ownerTok, map[string]string{"name": "Acme"})
+	if code != http.StatusCreated {
+		t.Fatalf("create org = %d %s", code, body)
+	}
+	var org store.Organization
+	if err := json.Unmarshal(body, &org); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/orgs/"+org.ID+"/members", ownerTok,
+		`{"identity":"team@demo","role":"member"} {"identity":"project@demo","role":"owner"}`); code != http.StatusBadRequest {
+		t.Fatalf("add org member trailing json = %d %s", code, body)
+	}
+	if role, found, err := st.OrganizationMemberRole(context.Background(), org.ID, "team@demo"); err != nil || found {
+		t.Fatalf("trailing org member request added member: role=%q found=%v err=%v", role, found, err)
+	}
+
+	code, body = postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Scoped", "org_id": org.ID})
+	if code != http.StatusCreated {
+		t.Fatalf("create project = %d %s", code, body)
+	}
+	var proj store.Project
+	if err := json.Unmarshal(body, &proj); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := postRawJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
+		`{"identity":"project@demo","role":"viewer"} {"identity":"team@demo","role":"member"}`); code != http.StatusBadRequest {
+		t.Fatalf("add project member trailing json = %d %s", code, body)
+	}
+	if role, found, err := st.MemberRole(context.Background(), proj.ID, "project@demo"); err != nil || found {
+		t.Fatalf("trailing project member request added member: role=%q found=%v err=%v", role, found, err)
+	}
+}
+
 func TestProjectOwnerCannotInviteOutsideTeamAfterOrgDemotion(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {

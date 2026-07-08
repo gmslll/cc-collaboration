@@ -204,6 +204,30 @@ func TestRegisterRejectsReservedTokenIdentities(t *testing.T) {
 	}
 }
 
+func TestRegisterRejectsTrailingJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/register", "",
+		`{"identity":"tail@demo","password":"secret pass"} {"identity":"tail2@demo","password":"secret pass"}`); code != http.StatusBadRequest {
+		t.Fatalf("register trailing json = %d %s", code, body)
+	}
+	if _, err := st.GetUser(context.Background(), "tail@demo"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("trailing register created first account: err=%v", err)
+	}
+	if _, err := st.GetUser(context.Background(), "tail2@demo"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("trailing register created second account: err=%v", err)
+	}
+}
+
 // TestBackCompatFileToken pins that a legacy tokens.json bearer still
 // authenticates via the seed resolver after the multi-source refactor.
 func TestBackCompatFileToken(t *testing.T) {
