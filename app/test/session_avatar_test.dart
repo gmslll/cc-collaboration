@@ -117,5 +117,23 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pumpWidget(const SizedBox());
     });
+
+    testWidgets('session overview header has no temporary debug controls', (
+      tester,
+    ) async {
+      final store = SessionOverviewStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SessionOverviewPage(store: store, onOpenSession: (_) {}),
+          ),
+        ),
+      );
+
+      expect(find.text('会话总览'), findsOneWidget);
+      expect(find.text('capsule ✦'), findsNothing);
+      expect(find.byIcon(Icons.bug_report_outlined), findsNothing);
+      expect(find.byIcon(Icons.add_box_outlined), findsNothing);
+    });
   });
 }
