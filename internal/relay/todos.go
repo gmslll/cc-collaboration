@@ -70,7 +70,7 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		// pkg/todoschema.Todo.GroupName) — empty means ungrouped.
 		GroupName string `json:"group_name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -203,7 +203,7 @@ func (s *Server) renameTodoGroup(w http.ResponseWriter, r *http.Request) {
 		OldName   string `json:"old_name"`
 		NewName   string `json:"new_name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -227,7 +227,7 @@ func (s *Server) clearTodoGroup(w http.ResponseWriter, r *http.Request) {
 		ProjectID string `json:"project_id"`
 		Name      string `json:"name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -251,7 +251,7 @@ func (s *Server) patchTodo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	raw := map[string]json.RawMessage{}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&raw); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &raw); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -399,7 +399,7 @@ func (s *Server) setTodoStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Status string `json:"status"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -431,7 +431,7 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 		AssigneeAgentKind      string `json:"assignee_agent_kind"`
 	}
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		if err := decodeJSONBody(w, r, 4<<10, &req); err != nil && !errors.Is(err, io.EOF) {
 			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -506,7 +506,7 @@ func (s *Server) postTodoComment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body string `json:"body"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

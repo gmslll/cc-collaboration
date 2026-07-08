@@ -44,6 +44,16 @@ func patchJSON(t *testing.T, url, bearer string, payload any) (int, []byte) {
 	return do(t, req)
 }
 
+func patchRawJSON(t *testing.T, url, bearer, payload string) (int, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPatch, url, bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	return do(t, req)
+}
+
 // waitForEventType reads from sub until it sees an event of type wantType,
 // skipping anything else — subscribing itself fans out user.online/offline
 // presence events to every other subscriber (see Hub.OnPresenceChange), so a
@@ -176,6 +186,49 @@ func TestTodoTeamViewerReadOnly(t *testing.T) {
 	}
 	if code, _ := deleteAuthed(t, srv.URL+"/v1/todos/"+td.ID, ownerTok); code != http.StatusOK {
 		t.Errorf("owner DELETE = %d, want 200", code)
+	}
+}
+
+func TestTodoMutationsRejectTrailingJSON(t *testing.T) {
+	srv, st, _ := todoTestRig(t)
+	mkUser(t, st, "alice@x", "alicepass1")
+	aliceTok := loginToken(t, srv.URL, "alice@x", "alicepass1")
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/todos", aliceTok,
+		`{"title":"bad first"} {"title":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("create todo trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos", aliceTok); code != http.StatusOK || bytes.Contains(body, []byte("bad first")) {
+		t.Fatalf("trailing create mutated list: code=%d body=%s", code, body)
+	}
+
+	td := createTodoHTTP(t, srv.URL, aliceTok, map[string]any{"title": "baseline"})
+	if code, body := patchRawJSON(t, srv.URL+"/v1/todos/"+td.ID, aliceTok,
+		`{"title":"bad patch"} {"title":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("patch todo trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID, aliceTok); code != http.StatusOK {
+		t.Fatalf("get todo after trailing patch = %d %s", code, body)
+	} else if got := decodeTodo(t, body); got.Title != "baseline" {
+		t.Fatalf("trailing patch changed title: %+v", got)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/todos/"+td.ID+"/status", aliceTok,
+		`{"status":"done"} {"status":"todo"}`); code != http.StatusBadRequest {
+		t.Fatalf("status trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID, aliceTok); code != http.StatusOK {
+		t.Fatalf("get todo after trailing status = %d %s", code, body)
+	} else if got := decodeTodo(t, body); got.Status != todoschema.StatusTodo {
+		t.Fatalf("trailing status changed todo: %+v", got)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/todos/"+td.ID+"/comment", aliceTok,
+		`{"body":"bad comment"} {"body":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("comment trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID+"/comments", aliceTok); code != http.StatusOK || bytes.Contains(body, []byte("bad comment")) {
+		t.Fatalf("trailing comment inserted comment: code=%d body=%s", code, body)
 	}
 }
 
