@@ -264,11 +264,15 @@ func TestDisabledSeedAdminDoesNotReceivePresenceAfterDisable(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	now := time.Now()
 	mkUser(t, st, "seed@ops", "seedpass1")
+	mkUser(t, st, "backup@ops", "backuppass1")
 	mkUser(t, st, "alice@team", "alicepass1")
 	if err := st.CreateOrganization(context.Background(), "org-alice", "Alice", "alice@team", now); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateOrganization(context.Background(), "org-seed", "Seed", "seed@ops", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(context.Background(), "org-seed", "backup@ops", store.OrgRoleOwner); err != nil {
 		t.Fatal(err)
 	}
 

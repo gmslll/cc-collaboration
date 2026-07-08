@@ -156,6 +156,9 @@ func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool)
 		return ErrNotFound
 	}
 	if disabled {
+		if err := prepareDisableOwnerIdentity(ctx, tx, identity); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE identity = ?`, identity); err != nil {
 			return err
 		}
@@ -164,6 +167,103 @@ func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool)
 		}
 	}
 	return tx.Commit()
+}
+
+func prepareDisableOwnerIdentity(ctx context.Context, tx *sql.Tx, identity string) error {
+	orgRows, err := tx.QueryContext(ctx,
+		`SELECT org_id FROM organization_members WHERE identity = ? AND role = ?`,
+		identity, OrgRoleOwner)
+	if err != nil {
+		return err
+	}
+	var orgIDs []string
+	for orgRows.Next() {
+		var id string
+		if err := orgRows.Scan(&id); err != nil {
+			orgRows.Close()
+			return err
+		}
+		orgIDs = append(orgIDs, id)
+	}
+	if err := orgRows.Close(); err != nil {
+		return err
+	}
+	if err := orgRows.Err(); err != nil {
+		return err
+	}
+	for _, orgID := range orgIDs {
+		if err := requireOtherActiveOrgOwner(ctx, tx, orgID, identity); err != nil {
+			return err
+		}
+		if err := replaceOrganizationOwnerIdentity(ctx, tx, orgID, identity); err != nil {
+			return err
+		}
+	}
+
+	projectRows, err := tx.QueryContext(ctx,
+		`SELECT project_id FROM project_members WHERE identity = ? AND role = ?`,
+		identity, RoleOwner)
+	if err != nil {
+		return err
+	}
+	var projectIDs []string
+	for projectRows.Next() {
+		var id string
+		if err := projectRows.Scan(&id); err != nil {
+			projectRows.Close()
+			return err
+		}
+		projectIDs = append(projectIDs, id)
+	}
+	if err := projectRows.Close(); err != nil {
+		return err
+	}
+	if err := projectRows.Err(); err != nil {
+		return err
+	}
+	for _, projectID := range projectIDs {
+		if err := requireOtherActiveProjectOwner(ctx, tx, projectID, identity); err != nil {
+			return err
+		}
+		if err := replaceProjectOwnerIdentity(ctx, tx, projectID, identity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requireOtherActiveOrgOwner(ctx context.Context, tx *sql.Tx, orgID, disabledOwner string) error {
+	var owners int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		   FROM organization_members om
+		   LEFT JOIN users u ON u.identity = om.identity
+		  WHERE om.org_id = ? AND om.role = ? AND om.identity != ?
+		    AND (u.identity IS NULL OR u.disabled = 0)`,
+		orgID, OrgRoleOwner, disabledOwner).Scan(&owners); err != nil {
+		return err
+	}
+	if owners == 0 {
+		return ErrLastOwner
+	}
+	return nil
+}
+
+func requireOtherActiveProjectOwner(ctx context.Context, tx *sql.Tx, projectID, disabledOwner string) error {
+	var owners int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		   FROM project_members pm
+		   LEFT JOIN users u ON u.identity = pm.identity
+		  WHERE pm.project_id = ? AND pm.role = ? AND pm.identity != ?
+		    AND (u.identity IS NULL OR u.disabled = 0)`,
+		projectID, RoleOwner, disabledOwner).Scan(&owners); err != nil {
+		return err
+	}
+	if owners == 0 {
+		return ErrLastOwner
+	}
+	return nil
 }
 
 // --- sessions (UI login) ---

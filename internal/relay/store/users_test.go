@@ -57,6 +57,77 @@ func TestUsersCRUD(t *testing.T) {
 	}
 }
 
+func TestSetDisabledProtectsOwnerInvariants(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateUser(ctx, User{Identity: "owner@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "other@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "other@x", OrgRoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "App", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSession(ctx, "session-owner", "owner@x", now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateMachineToken(ctx, "machine-owner", "owner@x", "laptop", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.SetDisabled(ctx, "owner@x", true); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("disable project last owner: want ErrLastOwner, got %v", err)
+	}
+	if active, err := st.UserActive(ctx, "owner@x"); err != nil || !active {
+		t.Fatalf("failed disable should keep owner active: active=%v err=%v", active, err)
+	}
+	if _, ok, err := st.SessionIdentity(ctx, "session-owner", now); err != nil || !ok {
+		t.Fatalf("failed disable should keep session: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := st.MachineTokenIdentity(ctx, "machine-owner"); err != nil || !ok {
+		t.Fatalf("failed disable should keep machine token: ok=%v err=%v", ok, err)
+	}
+
+	if err := st.AddMember(ctx, "p1", "other@x", RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(ctx, "owner@x", true); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := st.UserActive(ctx, "owner@x"); err != nil || active {
+		t.Fatalf("disable should mark owner inactive: active=%v err=%v", active, err)
+	}
+	org, err := st.GetOrganization(ctx, "org1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.OwnerIdentity != "other@x" {
+		t.Fatalf("organization owner_identity = %q, want other@x", org.OwnerIdentity)
+	}
+	p, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.OwnerIdentity != "other@x" {
+		t.Fatalf("project owner_identity = %q, want other@x", p.OwnerIdentity)
+	}
+	if _, ok, err := st.SessionIdentity(ctx, "session-owner", now); err != nil || ok {
+		t.Fatalf("disabled owner session should be removed: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := st.MachineTokenIdentity(ctx, "machine-owner"); err != nil || ok {
+		t.Fatalf("disabled owner machine token should be removed: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestSessions(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
