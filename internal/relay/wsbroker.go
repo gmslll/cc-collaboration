@@ -175,6 +175,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
+		active, err := s.Store.UserActive(ctx, identity)
+		if err != nil || !active {
+			return
+		}
 		if typ != websocket.MessageText {
 			continue
 		}

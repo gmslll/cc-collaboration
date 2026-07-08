@@ -72,6 +72,61 @@ func TestWSUpgradeAndBroker(t *testing.T) {
 	}
 }
 
+func TestWSStopsForwardingAfterUserDisabled(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.CreateUser(context.Background(), store.User{Identity: "a@x"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[{"token":"tok-a","identity":"a@x"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	wsURL := "ws" + srv.URL[len("http"):]
+	opts := &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer tok-a"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	host, _, err := websocket.Dial(ctx, wsURL+"/v1/ws?role=host", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.CloseNow()
+	client, _, err := websocket.Dial(ctx, wsURL+"/v1/ws?role=client", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseNow()
+	if !waitForText(ctx, host, `"event":"connect"`) {
+		t.Fatal("host never saw client connect")
+	}
+
+	if err := st.SetDisabled(context.Background(), "a@x", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Write(ctx, websocket.MessageText, []byte(`{"t":"after-disable"}`)); err != nil {
+		t.Fatal(err)
+	}
+	shortCtx, cancelShort := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancelShort()
+	if waitForText(shortCtx, host, `"t":"after-disable"`) {
+		t.Fatal("disabled user's ws frame was forwarded")
+	}
+}
+
 func waitForText(ctx context.Context, c *websocket.Conn, want string) bool {
 	for i := 0; i < 10; i++ {
 		_, data, err := c.Read(ctx)
