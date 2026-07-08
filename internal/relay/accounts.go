@@ -48,8 +48,14 @@ func (b *bearerResolver) active(ctx context.Context, identity string) (string, b
 }
 
 // isAdmin reports whether identity is an effective admin: an operator-seeded
-// admin (SeedAdmins) or a DB-flagged one (users.is_admin).
+// admin (SeedAdmins) or a DB-flagged one (users.is_admin). A disabled DB user
+// is never effective, even if it also appears in SeedAdmins; missing DB users
+// remain allowed so operator seed admins cannot be locked out accidentally.
 func (s *Server) isAdmin(ctx context.Context, identity string) bool {
+	active, err := s.Store.UserActive(ctx, identity)
+	if err != nil || !active {
+		return false
+	}
 	if slices.Contains(s.SeedAdmins, identity) {
 		return true
 	}

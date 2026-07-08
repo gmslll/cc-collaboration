@@ -246,6 +246,57 @@ func TestPresenceEventsScopedBySharedTeam(t *testing.T) {
 	}
 }
 
+func TestDisabledSeedAdminDoesNotReceivePresenceAfterDisable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Now()
+	mkUser(t, st, "seed@ops", "seedpass1")
+	mkUser(t, st, "alice@team", "alicepass1")
+	if err := st.CreateOrganization(context.Background(), "org-alice", "Alice", "alice@team", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(context.Background(), "org-seed", "Seed", "seed@ops", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-seed","identity":"seed@ops"},
+		{"token":"tok-alice","identity":"alice@team"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+
+	hub := sse.NewHub()
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: tokens, Hub: hub, SeedAdmins: []string{"seed@ops"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	seedLines, closeSeed := openEventLines(t, srv.URL, "tok-seed")
+	t.Cleanup(closeSeed)
+	waitForHub(t, hub, func(ids []string) bool { return slices.Contains(ids, "seed@ops") })
+	if err := st.SetDisabled(context.Background(), "seed@ops", true); err != nil {
+		t.Fatal(err)
+	}
+
+	_, closeAlice := openEventLines(t, srv.URL, "tok-alice")
+	t.Cleanup(closeAlice)
+	waitForHub(t, hub, func(ids []string) bool { return slices.Contains(ids, "alice@team") })
+
+	if awaitPresence(t, seedLines, "alice@team", true, 200*time.Millisecond) {
+		t.Fatal("disabled seed admin received cross-team presence after disable")
+	}
+}
+
 func TestListOnlineUsersUnauthorized(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "relay.db")
 	st, err := store.Open(dbPath)
