@@ -856,6 +856,38 @@ func TestListTodoGroupsPersonalScope(t *testing.T) {
 	}
 }
 
+func TestTodoGroupsRejectDisabledPersonalOwner(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateUser(ctx, User{Identity: "alice@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateTodo(t, st, &todoschema.Todo{ID: "td1", OwnerIdentity: "alice@x", Title: "a", GroupName: "old"})
+	if err := st.SetDisabled(ctx, "alice@x", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.ListTodoGroups(ctx, "alice@x", ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner ListTodoGroups: want ErrForbidden, got %v", err)
+	}
+	if err := st.RenameTodoGroup(ctx, "alice@x", "", "old", "new"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner RenameTodoGroup: want ErrForbidden, got %v", err)
+	}
+	if err := st.ClearTodoGroup(ctx, "alice@x", "", "old"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("disabled owner ClearTodoGroup: want ErrForbidden, got %v", err)
+	}
+
+	td1, err := st.getTodoRow(ctx, "td1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if td1.GroupName != "old" {
+		t.Fatalf("disabled owner changed personal group despite rejection: %q", td1.GroupName)
+	}
+}
+
 func TestListTodoGroupsProjectScope(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

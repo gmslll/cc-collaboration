@@ -778,6 +778,17 @@ func (s *Store) requireTodoProjectEditor(ctx context.Context, callerIdentity, pr
 	return nil
 }
 
+func (s *Store) requireTodoPersonalOwnerActive(ctx context.Context, callerIdentity string) error {
+	active, err := s.UserActive(ctx, callerIdentity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return forbidTodo("use personal todo groups as", callerIdentity, "disabled identity")
+	}
+	return nil
+}
+
 // ListTodoGroups returns the distinct, non-empty group names currently in
 // use (see pkg/todoschema.Todo.GroupName), scoped to callerIdentity's own
 // personal todos (projectID == "") or to one team project (any member role,
@@ -788,6 +799,9 @@ func (s *Store) ListTodoGroups(ctx context.Context, callerIdentity, projectID st
 	var rows *sql.Rows
 	var err error
 	if projectID == "" {
+		if err := s.requireTodoPersonalOwnerActive(ctx, callerIdentity); err != nil {
+			return nil, err
+		}
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT DISTINCT group_name FROM todos WHERE project_id IS NULL AND owner_identity = ? AND group_name != '' ORDER BY group_name`,
 			callerIdentity)
@@ -818,6 +832,9 @@ func (s *Store) ListTodoGroups(ctx context.Context, callerIdentity, projectID st
 // already has todos in it.
 func (s *Store) RenameTodoGroup(ctx context.Context, callerIdentity, projectID, oldName, newName string) error {
 	if projectID == "" {
+		if err := s.requireTodoPersonalOwnerActive(ctx, callerIdentity); err != nil {
+			return err
+		}
 		_, err := s.db.ExecContext(ctx,
 			`UPDATE todos SET group_name = ? WHERE project_id IS NULL AND owner_identity = ? AND group_name = ?`,
 			newName, callerIdentity, oldName)
@@ -837,6 +854,9 @@ func (s *Store) RenameTodoGroup(ctx context.Context, callerIdentity, projectID, 
 // scoping/permission tier as RenameTodoGroup.
 func (s *Store) ClearTodoGroup(ctx context.Context, callerIdentity, projectID, name string) error {
 	if projectID == "" {
+		if err := s.requireTodoPersonalOwnerActive(ctx, callerIdentity); err != nil {
+			return err
+		}
 		_, err := s.db.ExecContext(ctx,
 			`UPDATE todos SET group_name = '' WHERE project_id IS NULL AND owner_identity = ? AND group_name = ?`,
 			callerIdentity, name)
