@@ -166,8 +166,14 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(msg.Recipient) == "" {
+	msg.Recipient = strings.TrimSpace(msg.Recipient)
+	msg.SessionID = strings.TrimSpace(msg.SessionID)
+	if msg.Recipient == "" {
 		http.Error(w, "recipient required", http.StatusBadRequest)
+		return
+	}
+	if msg.SessionID == "" {
+		http.Error(w, "session_id required", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(msg.Body) == "" {
@@ -177,6 +183,10 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	if !s.requireReachableIdentity(w, r, msg.Recipient) {
 		return
 	}
+	if !publishedSessionExists(s.Sessions.get(msg.Recipient), msg.SessionID) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
 	if s.Hub != nil {
 		out := handoffschema.Message{From: sender, SessionID: msg.SessionID, Body: msg.Body}
 		if data, err := json.Marshal(out); err == nil {
@@ -184,6 +194,15 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func publishedSessionExists(sessions []handoffschema.SessionInfo, id string) bool {
+	for _, s := range sessions {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) requireReachableIdentity(w http.ResponseWriter, r *http.Request, target string) bool {

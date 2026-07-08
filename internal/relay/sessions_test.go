@@ -73,7 +73,15 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 		t.Fatalf("alice sessions mismatch: %+v", got.Sessions)
 	}
 
-	// bob opens an SSE stream to receive the message.
+	// bob publishes the session alice will target, then opens an SSE stream to receive it.
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", "tok-bob", map[string]any{
+		"sessions": []map[string]string{
+			{"id": "ts3", "label": "review", "project": "frontend"},
+		},
+	}); code != http.StatusOK {
+		t.Fatalf("publish bob sessions: status=%d body=%s", code, body)
+	}
+
 	streamCtx, cancelStream := context.WithCancel(context.Background())
 	t.Cleanup(cancelStream)
 	streamReq, _ := http.NewRequestWithContext(streamCtx, http.MethodGet, srv.URL+"/v1/events", nil)
@@ -98,6 +106,12 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 		}
 		close(lines)
 	}()
+
+	if code, _ := postJSON(t, srv.URL+"/v1/messages", "tok-alice", map[string]any{
+		"recipient": "bob@frontend", "session_id": "missing", "body": "wrong target",
+	}); code != http.StatusNotFound {
+		t.Fatalf("post message to unknown session: status=%d, want 404", code)
+	}
 
 	// alice sends a message targeting bob's session ts3.
 	if code, body := postJSON(t, srv.URL+"/v1/messages", "tok-alice", map[string]any{
