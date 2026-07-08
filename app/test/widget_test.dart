@@ -199,12 +199,26 @@ void main() {
     final me = Me.fromJson({
       'identity': 'a',
       'is_admin': true,
+      'organizations': [
+        {'id': 'o1', 'name': 'Org', 'role': 'admin'},
+      ],
       'projects': [
         {'id': 'p1', 'name': 'P', 'role': 'owner'},
       ],
     });
     expect(me.isAdmin, isTrue);
+    expect(me.organizations.single.role, 'admin');
     expect(me.projects.single.role, 'owner');
+  });
+
+  test('Organization.fromJson carries fresh caller role', () {
+    final org = Organization.fromJson({
+      'id': 'o1',
+      'name': 'Org',
+      'owner_identity': 'alice',
+      'role': 'owner',
+    });
+    expect(org.role, 'owner');
   });
 
   test('Status.fromJson handles null picked_at', () {

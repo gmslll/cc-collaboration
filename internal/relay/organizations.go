@@ -51,7 +51,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, store.Organization{ID: id, Name: name, OwnerIdentity: identity, CreatedAt: now})
+	writeJSON(w, http.StatusCreated, store.Organization{ID: id, Name: name, OwnerIdentity: identity, CreatedAt: now, Role: store.OrgRoleOwner})
 }
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {

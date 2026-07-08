@@ -255,7 +255,7 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	}
 	var org store.Organization
 	_ = json.Unmarshal(body, &org)
-	if org.ID == "" || org.OwnerIdentity != "owner@demo" {
+	if org.ID == "" || org.OwnerIdentity != "owner@demo" || org.Role != "owner" {
 		t.Fatalf("org = %+v", org)
 	}
 

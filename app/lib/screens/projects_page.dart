@@ -52,10 +52,17 @@ class _ProjectsPageState extends State<ProjectsPage> {
       final ps = await widget.client.projects();
       final online =
           await widget.client.onlineUsers().catchError((_) => <OnlineUser>[]);
+      final meOrgRoles = {
+        for (final org in me?.organizations ?? const <OrganizationRole>[])
+          org.id: org.role,
+      };
       final manageableOrgIds = me?.isAdmin == true
           ? orgs.map((org) => org.id).toSet()
-          : (me?.organizations ?? const <OrganizationRole>[])
-              .where((org) => org.role == 'owner' || org.role == 'admin')
+          : orgs
+              .where((org) {
+                final role = org.role.isNotEmpty ? org.role : meOrgRoles[org.id] ?? '';
+                return role == 'owner' || role == 'admin';
+              })
               .map((org) => org.id)
               .toSet();
       if (mounted) {

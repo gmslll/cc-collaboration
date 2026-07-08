@@ -202,11 +202,12 @@ class Me {
 }
 
 class Organization {
-  final String id, name, ownerIdentity;
+  final String id, name, ownerIdentity, role;
   Organization.fromJson(Map<String, dynamic> j)
       : id = _s(j['id']),
         name = _s(j['name']),
-        ownerIdentity = _s(j['owner_identity']);
+        ownerIdentity = _s(j['owner_identity']),
+        role = _s(j['role']);
 }
 
 class Project {
