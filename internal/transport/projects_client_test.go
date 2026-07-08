@@ -121,6 +121,66 @@ func TestResolveTeamRecipientsIncludesProjectTeamManagers(t *testing.T) {
 	}
 }
 
+func TestResolveTeamRecipientsAllowsGlobalAdminSender(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects/p1":
+			w.Write([]byte(`{
+				"project":{"id":"p1","org_id":"o1"},
+				"members":[
+					{"identity":"dev@x","role":"member"},
+					{"identity":"viewer@x","role":"viewer"}
+				]}`))
+		case "/v1/orgs/o1":
+			w.Write([]byte(`{"members":[
+				{"identity":"owner@x","role":"owner"},
+				{"identity":"admin@x","role":"admin"},
+				{"identity":"member@x","role":"member"},
+				{"identity":"guest@x","role":"guest"}
+			]}`))
+		case "/v1/me":
+			w.Write([]byte(`{"identity":"sysadmin@x","is_admin":true}`))
+		case "/v1/users/online":
+			w.Write([]byte(`{"users":[
+				{"identity":"owner@x","online":false},
+				{"identity":"admin@x","online":false},
+				{"identity":"member@x","online":false},
+				{"identity":"dev@x","online":false},
+				{"identity":"viewer@x","online":false},
+				{"identity":"guest@x","online":false}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	projectRecipients, err := client.ResolveTeamRecipients(context.Background(), "p1", "", "sysadmin@x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"dev@x", "owner@x", "admin@x"}; !slices.Equal(projectRecipients, want) {
+		t.Fatalf("admin project recipients = %v, want %v", projectRecipients, want)
+	}
+
+	projectMember, err := client.ResolveTeamRecipients(context.Background(), "p1", "", "sysadmin@x", "admin@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"admin@x"}; !slices.Equal(projectMember, want) {
+		t.Fatalf("admin project member recipient = %v, want %v", projectMember, want)
+	}
+
+	orgRecipients, err := client.ResolveTeamRecipients(context.Background(), "", "o1", "sysadmin@x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"owner@x", "admin@x", "member@x"}; !slices.Equal(orgRecipients, want) {
+		t.Fatalf("admin org recipients = %v, want %v", orgRecipients, want)
+	}
+}
+
 func TestResolveTeamRecipientsRejectsReadOnlySender(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

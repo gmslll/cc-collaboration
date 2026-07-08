@@ -53,6 +53,19 @@ type SubmitResult struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type CurrentUser struct {
+	Identity string `json:"identity"`
+	IsAdmin  bool   `json:"is_admin"`
+}
+
+func (c *Client) Me(ctx context.Context) (*CurrentUser, error) {
+	var out CurrentUser
+	if err := c.do(ctx, http.MethodGet, "/v1/me", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Submit posts a Package and uploads any attachments (keyed by name). On
 // upload failure the package is already on the relay; the caller can decide
 // to retry attachments later. Returned ID always reflects the relay-assigned id.

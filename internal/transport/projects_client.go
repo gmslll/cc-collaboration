@@ -108,7 +108,13 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 			return nil, err
 		}
 		if !projectSenderCanShare(members, orgMembers, sender) {
-			return nil, errors.New("sender cannot send project-shared handoffs")
+			isAdmin, err := c.currentIdentityIsAdmin(ctx, sender)
+			if err != nil {
+				return nil, err
+			}
+			if !isAdmin {
+				return nil, errors.New("sender cannot send project-shared handoffs")
+			}
 		}
 		active, err := c.activeIdentities(ctx)
 		if err != nil {
@@ -143,11 +149,17 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 			return nil, err
 		}
 		role, ok := orgMemberRole(members, sender)
-		if !ok {
-			return nil, errors.New("sender is not a member of the organization")
-		}
-		if role == "guest" {
-			return nil, errors.New("organization guests cannot send team-shared handoffs")
+		if !ok || role == "guest" {
+			isAdmin, err := c.currentIdentityIsAdmin(ctx, sender)
+			if err != nil {
+				return nil, err
+			}
+			if !ok && !isAdmin {
+				return nil, errors.New("sender is not a member of the organization")
+			}
+			if role == "guest" && !isAdmin {
+				return nil, errors.New("organization guests cannot send team-shared handoffs")
+			}
 		}
 		active, err := c.activeIdentities(ctx)
 		if err != nil {
@@ -301,6 +313,20 @@ func resolveOneOrgRecipient(members []OrganizationMember, active map[string]bool
 		return nil, fmt.Errorf("team member %s is disabled or inactive", member)
 	}
 	return []string{member}, nil
+}
+
+func (c *Client) currentIdentityIsAdmin(ctx context.Context, sender string) (bool, error) {
+	if strings.TrimSpace(sender) == "" {
+		return false, nil
+	}
+	me, err := c.Me(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotImplemented) {
+			return false, nil
+		}
+		return false, err
+	}
+	return me.Identity == sender && me.IsAdmin, nil
 }
 
 func (c *Client) activeIdentities(ctx context.Context) (map[string]bool, error) {
