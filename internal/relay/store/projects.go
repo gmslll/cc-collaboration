@@ -448,15 +448,20 @@ func replaceProjectOwnerIdentity(ctx context.Context, tx *sql.Tx, projectID, rem
 	return err
 }
 
-// RepoVisibleTo returns the caller's role for the project owning repoName, or
-// ok=false when the repo is unmapped or the caller isn't a member. Used by the
-// read-authz check (view + comment gating).
+// RepoVisibleTo returns the caller's effective role for the project owning
+// repoName, or ok=false when the repo is unmapped or the caller cannot access
+// that project. Used by the read-authz check (view + comment gating).
 func (s *Store) RepoVisibleTo(ctx context.Context, repoName, identity string) (string, bool, error) {
 	var role string
+	args := append(effectiveProjectRoleArgs(identity), repoName)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT pm.role FROM project_repos pr
-		   JOIN project_members pm ON pm.project_id = pr.project_id
-		  WHERE pr.repo_name = ? AND pm.identity = ?`, repoName, identity).Scan(&role)
+		`SELECT `+effectiveProjectRoleExpr+`
+		   FROM project_repos pr
+		   JOIN projects p ON p.id = pr.project_id
+		   LEFT JOIN project_members pm ON pm.project_id = pr.project_id AND pm.identity = ?
+		   LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+		  WHERE (pm.identity IS NOT NULL OR om.role IN (?, ?)) AND pr.repo_name = ?`,
+		args...).Scan(&role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -466,13 +471,17 @@ func (s *Store) RepoVisibleTo(ctx context.Context, repoName, identity string) (s
 	return role, true, nil
 }
 
-// VisibleRepoNames returns every repo across the caller's projects (the
-// project-scoped list filter set).
+// VisibleRepoNames returns every repo across the caller's directly visible or
+// team-managed projects (the project-scoped list filter set).
 func (s *Store) VisibleRepoNames(ctx context.Context, identity string) ([]string, error) {
 	return s.queryStrings(ctx,
 		`SELECT pr.repo_name FROM project_repos pr
-		   JOIN project_members pm ON pm.project_id = pr.project_id
-		  WHERE pm.identity = ?`, identity)
+		   JOIN projects p ON p.id = pr.project_id
+		   LEFT JOIN project_members pm ON pm.project_id = pr.project_id AND pm.identity = ?
+		   LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+		  WHERE pm.identity IS NOT NULL OR om.role IN (?, ?)
+		  ORDER BY pr.repo_name`,
+		identity, identity, OrgRoleOwner, OrgRoleAdmin)
 }
 
 // ListByRepos returns compact list items for non-capsule handoffs whose repo is

@@ -425,7 +425,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		)
 		if pid := r.URL.Query().Get("project"); pid != "" {
 			if !s.isAdmin(r.Context(), identity) {
-				if _, ok, _ := s.Store.MemberRole(r.Context(), pid, identity); !ok {
+				if _, ok, _ := s.Store.EffectiveProjectRole(r.Context(), pid, identity); !ok {
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}

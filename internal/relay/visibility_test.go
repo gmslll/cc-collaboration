@@ -28,7 +28,7 @@ func TestProjectVisibility(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	for _, id := range []string{"admin@hq", "owner@t", "member@t", "viewer@t", "recipient@t", "stranger@t"} {
+	for _, id := range []string{"admin@hq", "owner@t", "org-admin@t", "member@t", "viewer@t", "recipient@t", "stranger@t"} {
 		mkUser(t, st, id, "pw-"+id+"-12345")
 	}
 
@@ -39,8 +39,8 @@ func TestProjectVisibility(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	tok := func(id string) string { return loginToken(t, srv.URL, id, "pw-"+id+"-12345") }
-	owner, member, viewer, recipient, stranger, admin :=
-		tok("owner@t"), tok("member@t"), tok("viewer@t"), tok("recipient@t"), tok("stranger@t"), tok("admin@hq")
+	owner, orgAdmin, member, viewer, recipient, stranger, admin :=
+		tok("owner@t"), tok("org-admin@t"), tok("member@t"), tok("viewer@t"), tok("recipient@t"), tok("stranger@t"), tok("admin@hq")
 
 	// A handoff in repo "kunlun-backend" between two parties; recipient@t is the
 	// only project-outsider who is a participant.
@@ -58,6 +58,13 @@ func TestProjectVisibility(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(body, &proj)
+	p, err := st.GetProject(context.Background(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(context.Background(), p.OrgID, "org-admin@t", store.OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend"}); code != http.StatusOK {
 		t.Fatalf("map repo = %d", code)
 	}
@@ -70,7 +77,7 @@ func TestProjectVisibility(t *testing.T) {
 
 	get := func(tk string) int { c, _ := getAuthed(t, srv.URL+"/v1/handoffs/h_x", tk); return c }
 	// GET: project members + admin + the participant recipient all 200; stranger 403.
-	for name, tk := range map[string]string{"owner": owner, "member": member, "viewer": viewer, "admin": admin, "recipient(participant)": recipient} {
+	for name, tk := range map[string]string{"owner": owner, "team admin": orgAdmin, "member": member, "viewer": viewer, "admin": admin, "recipient(participant)": recipient} {
 		if code := get(tk); code != http.StatusOK {
 			t.Errorf("GET handoff as %s = %d, want 200", name, code)
 		}
@@ -91,6 +98,9 @@ func TestProjectVisibility(t *testing.T) {
 	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/h_x/comment", member, map[string]string{"body": "triaging"}); code != http.StatusCreated {
 		t.Errorf("comment as member = %d, want 201", code)
 	}
+	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/h_x/comment", orgAdmin, map[string]string{"body": "coordinating"}); code != http.StatusCreated {
+		t.Errorf("comment as team admin = %d, want 201", code)
+	}
 	if code, _ := postJSON(t, srv.URL+"/v1/handoffs/h_x/comment", viewer, map[string]string{"body": "nope"}); code != http.StatusForbidden {
 		t.Errorf("comment as viewer = %d, want 403", code)
 	}
@@ -102,6 +112,14 @@ func TestProjectVisibility(t *testing.T) {
 	code, lb := getAuthed(t, srv.URL+"/v1/handoffs?scope=project&project="+proj.ID, member)
 	if code != http.StatusOK || !strings.Contains(string(lb), `"h_x"`) {
 		t.Errorf("scope=project as member: code=%d body=%s", code, lb)
+	}
+	code, lb = getAuthed(t, srv.URL+"/v1/handoffs?scope=project&project="+proj.ID, orgAdmin)
+	if code != http.StatusOK || !strings.Contains(string(lb), `"h_x"`) {
+		t.Errorf("scope=project as team admin: code=%d body=%s", code, lb)
+	}
+	code, lb = getAuthed(t, srv.URL+"/v1/handoffs?scope=project", orgAdmin)
+	if code != http.StatusOK || !strings.Contains(string(lb), `"h_x"`) {
+		t.Errorf("scope=project union as team admin: code=%d body=%s", code, lb)
 	}
 	// scope=all: admin yes, member no.
 	if code, _ := getAuthed(t, srv.URL+"/v1/handoffs?scope=all", admin); code != http.StatusOK {
