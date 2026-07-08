@@ -82,8 +82,16 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	members, _ := s.Store.ListOrganizationMembers(r.Context(), orgID)
-	projects, _ := s.Store.ListProjectsForOrganization(r.Context(), orgID)
+	members, err := s.Store.ListOrganizationMembers(r.Context(), orgID)
+	if err != nil {
+		http.Error(w, "list organization members: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	projects, err := s.Store.ListProjectsForOrganization(r.Context(), orgID)
+	if err != nil {
+		http.Error(w, "list organization projects: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"organization": org,
 		"members":      members,

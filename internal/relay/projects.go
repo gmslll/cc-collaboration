@@ -124,8 +124,16 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	repos, _ := s.Store.ListProjectRepos(r.Context(), id)
-	members, _ := s.Store.ListMembers(r.Context(), id)
+	repos, err := s.Store.ListProjectRepos(r.Context(), id)
+	if err != nil {
+		http.Error(w, "list project repos: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	members, err := s.Store.ListMembers(r.Context(), id)
+	if err != nil {
+		http.Error(w, "list project members: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": p, "repos": repos, "members": members})
 }
 
