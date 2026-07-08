@@ -58,6 +58,10 @@ func (r *sessionRegistry) now() time.Time {
 func (r *sessionRegistry) set(identity string, sessions []handoffschema.SessionInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(sessions) == 0 {
+		delete(r.byID, identity)
+		return
+	}
 	r.byID[identity] = sessionEntry{sessions: sessions, expires: r.now().Add(publishedSessionTTL)}
 }
 

@@ -36,3 +36,17 @@ func TestSessionRegistryTTLAndClear(t *testing.T) {
 		t.Fatalf("clear should drop sessions: %+v", got)
 	}
 }
+
+func TestSessionRegistryEmptySetDeletesEntry(t *testing.T) {
+	r := newSessionRegistry()
+
+	r.set("alice", []handoffschema.SessionInfo{{ID: "ts0"}})
+	r.set("alice", nil)
+
+	if got := r.get("alice"); got != nil {
+		t.Fatalf("empty set should clear sessions: %+v", got)
+	}
+	if _, ok := r.byID["alice"]; ok {
+		t.Fatal("empty set should delete registry entry")
+	}
+}
