@@ -1017,6 +1017,7 @@ function renderMemberTable(members, options = {}) {
   }
   const removeAttr = options.removeAttr || "";
   const canRemove = Boolean(options.canRemove && removeAttr);
+  const ownerCount = members.filter((m) => m.role === "owner").length;
   return `
     <div class="member-table ${canRemove ? "has-actions" : ""}" role="table" aria-label="${escapeAttr(options.label || "成员")}">
       <div class="member-table-row member-table-head" role="row">
@@ -1028,6 +1029,10 @@ function renderMemberTable(members, options = {}) {
       ${members.map((m) => {
         const displayName = (m.display_name || "").trim();
         const online = isOnlineIdentity(m.identity);
+        const isLastOwner = m.role === "owner" && ownerCount <= 1;
+        const removeButton = isLastOwner
+          ? `<button type="button" class="link-danger" disabled title="至少保留一个 owner" aria-label="不能移除最后 owner ${escapeAttr(m.identity)}">保留</button>`
+          : `<button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button>`;
         return `
           <div class="member-table-row" role="row">
             <span class="member-person" role="cell">
@@ -1036,7 +1041,7 @@ function renderMemberTable(members, options = {}) {
             </span>
             <span role="cell"><span class="role-pill ${roleTone(m.role)}">${escapeHTML(m.role)}</span></span>
             <span class="member-state" role="cell">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>
-            ${canRemove ? `<span class="member-actions" role="cell"><button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button></span>` : ""}
+            ${canRemove ? `<span class="member-actions" role="cell">${removeButton}</span>` : ""}
           </div>`;
       }).join("")}
     </div>`;

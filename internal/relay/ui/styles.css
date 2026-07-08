@@ -1236,6 +1236,11 @@ textarea:focus {
   min-height: 0;
   padding: 0;
 }
+.link-danger:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
 
 .check {
   display: inline-flex;

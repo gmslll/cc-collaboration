@@ -35,6 +35,35 @@ func TestProjectManageUIActionsAreRoleGated(t *testing.T) {
 	}
 }
 
+func TestMemberTableDoesNotRenderLastOwnerAsRemovable(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	start := strings.Index(js, "function renderMemberTable(members, options = {}) {")
+	if start < 0 {
+		t.Fatal("could not locate renderMemberTable function body")
+	}
+	end := strings.Index(js[start:], "\nfunction renderOrganizations()")
+	if end < 0 {
+		t.Fatal("could not locate renderMemberTable function body")
+	}
+	body := js[start : start+end]
+	required := []string{
+		`const ownerCount = members.filter((m) => m.role === "owner").length;`,
+		`const isLastOwner = m.role === "owner" && ownerCount <= 1;`,
+		`disabled title="至少保留一个 owner"`,
+		`aria-label="不能移除最后 owner ${escapeAttr(m.identity)}"`,
+		": `<button type=\"button\" class=\"link-danger\" ${removeAttr}=\"${escapeAttr(m.identity)}\" aria-label=\"移除成员 ${escapeAttr(m.identity)}\">移除</button>`;",
+	}
+	for _, want := range required {
+		if !strings.Contains(body, want) {
+			t.Fatalf("member table is missing last-owner guard fragment %q", want)
+		}
+	}
+}
+
 func TestProjectRolePrefersFreshProjectListRole(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {
