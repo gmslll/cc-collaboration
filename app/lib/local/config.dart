@@ -24,8 +24,14 @@ class WorkspaceCfg {
   final String editor;
   final String preLaunch;
   final List<ProjectCfg> projects;
-  const WorkspaceCfg(this.name, this.path, this.agent, this.editor,
-      this.preLaunch, this.projects);
+  const WorkspaceCfg(
+    this.name,
+    this.path,
+    this.agent,
+    this.editor,
+    this.preLaunch,
+    this.projects,
+  );
 }
 
 // projectsOf returns [workspace]'s projects (empty when the workspace is null /
@@ -35,9 +41,9 @@ List<ProjectCfg> projectsOf(AppConfig cfg, String? workspace) {
   return m.isEmpty ? const [] : m.first.projects;
 }
 
-// AppConfig reads the same ~/.config/cc-handoff/config.toml the CLI uses, so the
-// desktop app is auto-authenticated and can resolve a handoff's repo name to a
-// local clone for pickup, and render the Workspace→Project tree.
+// AppConfig reads the same ~/.config/cc-handoff/config.toml the CLI uses. Auth
+// keys may be empty in local-only mode; workspace/project config still loads so
+// the desktop cockpit can start without a relay login.
 class AppConfig {
   final String relayUrl;
   final String token;
@@ -66,16 +72,21 @@ class AppConfig {
   final String claudeCommand;
   final String codexCommand;
 
-  AppConfig(this.relayUrl, this.token, this.identity, this.repos,
-      [this.workspaces = const [],
-      this.agent = '',
-      this.workspaceRoot = '',
-      this.gradeCommand = '',
-      this.linearToken = '',
-      this.githubToken = '',
-      this.terminalApp = '',
-      this.claudeCommand = '',
-      this.codexCommand = '']);
+  AppConfig(
+    this.relayUrl,
+    this.token,
+    this.identity,
+    this.repos, [
+    this.workspaces = const [],
+    this.agent = '',
+    this.workspaceRoot = '',
+    this.gradeCommand = '',
+    this.linearToken = '',
+    this.githubToken = '',
+    this.terminalApp = '',
+    this.claudeCommand = '',
+    this.codexCommand = '',
+  ]);
 
   String? repoPath(String name) => repos[name];
 
@@ -89,13 +100,17 @@ class AppConfig {
   // are preserved; only the three auth keys are (re)written (also refreshes an
   // expired token on re-login). Mirrors the Go side's config.SaveUser.
   static Future<void> saveAuth(
-      String relayUrl, String token, String identity) async {
+    String relayUrl,
+    String token,
+    String identity,
+  ) async {
     final f = File(configPath());
     Map<String, dynamic> map = {};
     if (await f.exists()) {
       try {
         map = Map<String, dynamic>.from(
-            TomlDocument.parse(await f.readAsString()).toMap());
+          TomlDocument.parse(await f.readAsString()).toMap(),
+        );
       } catch (_) {
         map = {}; // unparseable — rebuild rather than block login
       }
@@ -121,7 +136,6 @@ class AppConfig {
     final relay = (map['relay_url'] ?? '').toString();
     final token = (map['token'] ?? '').toString();
     final identity = (map['identity'] ?? '').toString();
-    if (relay.isEmpty || token.isEmpty) return null;
 
     final userAgent = (map['agent'] ?? '').toString();
     final wsRoot = (map['workspace_root'] ?? '').toString();
@@ -166,11 +180,25 @@ class AppConfig {
         projCfgs.add(ProjectCfg(name, path, github));
       }
       wsList.add(
-          WorkspaceCfg(wsName, wsPath, agent, editor, preLaunch, projCfgs));
+        WorkspaceCfg(wsName, wsPath, agent, editor, preLaunch, projCfgs),
+      );
     }
 
-    return AppConfig(relay, token, identity, repos, wsList, userAgent, wsRoot,
-        grade, linear, githubToken, terminalApp, claudeCommand, codexCommand);
+    return AppConfig(
+      relay,
+      token,
+      identity,
+      repos,
+      wsList,
+      userAgent,
+      wsRoot,
+      grade,
+      linear,
+      githubToken,
+      terminalApp,
+      claudeCommand,
+      codexCommand,
+    );
   }
 }
 

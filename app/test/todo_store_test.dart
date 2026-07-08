@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -91,6 +92,68 @@ void main() {
       expect(store.all, isEmpty);
       expect(store.loading, isFalse);
     });
+
+    test('stop clears data and detaches the client', () async {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requests = 0;
+      server.listen((req) async {
+        requests++;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode({
+            'items': [_todoJson(id: 'p1')],
+          }),
+        );
+        await req.response.close();
+      });
+
+      final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
+      final store = TodoStore()..debugSetClient(client);
+      await store.refresh();
+      expect(store.all.map((t) => t.id), ['p1', 'p1']);
+
+      await store.stop();
+      expect(store.all, isEmpty);
+      expect(store.loading, isFalse);
+      expect(store.error, isNull);
+
+      await store.refresh();
+      expect(requests, 2);
+      expect(store.all, isEmpty);
+    });
+
+    test('stop ignores an in-flight refresh result', () async {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final release = Completer<void>();
+      var requests = 0;
+      server.listen((req) async {
+        requests++;
+        await release.future;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode({
+            'items': [_todoJson(id: 'late')],
+          }),
+        );
+        await req.response.close();
+      });
+
+      final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
+      final store = TodoStore()..debugSetClient(client);
+      final refresh = store.refresh();
+      while (requests < 2) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(store.loading, isTrue);
+
+      await store.stop();
+      release.complete();
+      await refresh;
+
+      expect(store.all, isEmpty);
+      expect(store.loading, isFalse);
+      expect(store.error, isNull);
+    });
   });
 
   group('SSE upsert', () {
@@ -127,17 +190,20 @@ void main() {
       expect(store.all.single.status, TodoStatus.done);
     });
 
-    test('todo.assigned upserts the assignee fields (status is independent)', () {
-      final store = TodoStore();
-      // Assignee and status are unrelated dimensions (see AssignTodo's doc in
-      // internal/relay/store/todos.go) — a todo.assigned event can carry any
-      // status at all, not a dedicated "assigned" one.
-      final json = _todoJson(id: 'x1', status: 'in_progress')
-        ..['assignee_identity'] = 'bob';
-      store.onSseEvent(SseEvent('todo.assigned', jsonEncode(json)));
-      expect(store.all.single.assigneeIdentity, 'bob');
-      expect(store.all.single.status, TodoStatus.inProgress);
-    });
+    test(
+      'todo.assigned upserts the assignee fields (status is independent)',
+      () {
+        final store = TodoStore();
+        // Assignee and status are unrelated dimensions (see AssignTodo's doc in
+        // internal/relay/store/todos.go) — a todo.assigned event can carry any
+        // status at all, not a dedicated "assigned" one.
+        final json = _todoJson(id: 'x1', status: 'in_progress')
+          ..['assignee_identity'] = 'bob';
+        store.onSseEvent(SseEvent('todo.assigned', jsonEncode(json)));
+        expect(store.all.single.assigneeIdentity, 'bob');
+        expect(store.all.single.status, TodoStatus.inProgress);
+      },
+    );
 
     test('todo.deleted removes the row by id', () {
       final store = TodoStore();

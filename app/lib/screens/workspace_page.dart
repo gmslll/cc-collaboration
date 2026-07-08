@@ -199,7 +199,7 @@ class _ParkedMessage {
 // 对接文档; create/remove workspaces, projects and worktrees (shells the CLI).
 // Open agent sessions persist and reopen next launch (TerminalHost.persistKey).
 class WorkspacePage extends StatefulWidget {
-  final RelayClient client;
+  final RelayClient? client;
   final AppConfig config;
   // overviewStore is the shared 会话总览 projection: WorkspacePage produces into
   // it, the top-level SessionOverviewPage renders from it (created + injected by
@@ -208,7 +208,7 @@ class WorkspacePage extends StatefulWidget {
   // me + store back the 待办 sidebar (_todosSidebarPanel) — same TodoStore
   // instance HomeShell hands the top-level TodosPage, so both stay in sync
   // off one SSE subscription.
-  final Me me;
+  final Me? me;
   final TodoStore store;
   const WorkspacePage({
     super.key,
@@ -239,7 +239,14 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // Shares this workspace (terminals + project files) to the user's phone via
   // the relay. Opt-in — off until the toolbar "cast" toggle. See lib/remote.
-  late final RemoteHost _remoteHost = RemoteHost(
+  late RemoteHost _remoteHost = _newRemoteHost();
+  bool _remoteWasConnected = false;
+  int _remoteLastClients = 0;
+  String? _remoteShownErr;
+  // The most recent desktop→phone send batch, shown live in the progress dialog.
+  List<FileXfer> _sendBatch = const [];
+
+  RemoteHost _newRemoteHost() => RemoteHost(
     relayUrl: _cfg.relayUrl,
     token: _cfg.token,
     sessions: () => terms,
@@ -256,11 +263,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     onConfigAction: _remoteConfigAction,
     onAssignTodo: _remoteAssignTodo,
   );
-  bool _remoteWasConnected = false;
-  int _remoteLastClients = 0;
-  String? _remoteShownErr;
-  // The most recent desktop→phone send batch, shown live in the progress dialog.
-  List<FileXfer> _sendBatch = const [];
 
   // Local session message bus: lets sibling sessions (and the agents inside
   // them) forward point-to-point messages to each other without the relay. The
@@ -373,9 +375,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       preview: s.overviewPreview ?? '',
       agentSessionId: s.agentSessionId,
       workdir: s.workdir,
-      recentActivity: [
-        for (final a in activities) a.overviewSummary(),
-      ],
+      recentActivity: [for (final a in activities) a.overviewSummary()],
       isSupervisor: s.supervisor,
     );
   }
@@ -385,10 +385,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     return _latestHookActivityFrom(_recentHookActivities(s, limit: 8));
   }
 
-  List<HookActivity> _recentHookActivities(
-    TerminalSession s, {
-    int limit = 8,
-  }) {
+  List<HookActivity> _recentHookActivities(TerminalSession s, {int limit = 8}) {
     if (!s.isAgent) return const [];
     return localBusHookActivities(s.id, limit: limit);
   }
@@ -836,7 +833,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     };
     widget.overviewStore.previewHandler = (sid) async => sessionById(
       sid,
-    )?.snapshotAnsi(60); // coloured live screen (incl. prompt)
+    )?.snapshotSized(); // coloured live screen + geometry (incl. prompt)
     // Opening a session's quick-reply preview in the overview = viewing it → clear
     // its 待 review (the overview can't reach `terms`, so it routes through here).
     widget.overviewStore.reviewedHandler = markSessionReviewed;
@@ -924,6 +921,35 @@ class _WorkspacePageState extends State<WorkspacePage>
   ExpansibleController _ctlFor(String path) =>
       _proj.putIfAbsent(path, ExpansibleController.new);
 
+  @override
+  void didUpdateWidget(covariant WorkspacePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final relayChanged =
+        oldWidget.config.relayUrl != widget.config.relayUrl ||
+        oldWidget.config.token != widget.config.token ||
+        (oldWidget.client == null) != (widget.client == null);
+    if (!relayChanged && oldWidget.config == widget.config) return;
+
+    _cfg = widget.config;
+    _remoteHost.removeListener(_onRemoteChange);
+    _remoteHost.dispose();
+    _remoteHost = _newRemoteHost();
+    _remoteHost.addListener(_onRemoteChange);
+    _relaySse?.cancel();
+    _relaySse = null;
+    _sessionHeartbeat?.cancel();
+    _sessionHeartbeat = null;
+    if (widget.client == null) {
+      _tasksByRepo = const {};
+      _detailItem = null;
+      _inboxSidebarSelected = null;
+      _todosSidebarSelected = null;
+    }
+    _connectRelayPresence();
+    _loadTasks();
+    _publishOverview();
+  }
+
   // Format-plugin availability/enable changes (detection finishing, toggles in
   // the plugins dialog) repaint the editor toolbar's 格式化 / 预览 affordances.
   void _onPluginsChanged() {
@@ -994,15 +1020,24 @@ class _WorkspacePageState extends State<WorkspacePage>
   // peer can target a specific one. No-op when the relay isn't configured.
   // _relayConfigured is true when we have a relay URL + token to talk to.
   bool get _relayConfigured =>
-      _cfg.relayUrl.isNotEmpty && _cfg.token.isNotEmpty;
+      widget.client != null &&
+      _cfg.relayUrl.isNotEmpty &&
+      _cfg.token.isNotEmpty;
 
   void _connectRelayPresence() {
     if (!_relayConfigured || _cfg.identity.isEmpty) return;
-    _relaySse = subscribeEvents(
-      _cfg.relayUrl,
-      _cfg.token,
-      _cfg.identity,
-    ).listen(_onRelayEvent, onError: (_) {});
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    _relaySse = subscribeEvents(relayUrl, token, identity).listen((ev) {
+      if (!_relayConfigured ||
+          _cfg.relayUrl != relayUrl ||
+          _cfg.token != token ||
+          _cfg.identity != identity) {
+        return;
+      }
+      _onRelayEvent(ev);
+    }, onError: (_) {});
     _publishSessions();
     _sessionHeartbeat = Timer.periodic(
       const Duration(seconds: 30),
@@ -1023,7 +1058,7 @@ class _WorkspacePageState extends State<WorkspacePage>
           'workdir': s.workdir,
         },
     ];
-    unawaited(widget.client.publishSessions(list).catchError((_) {}));
+    unawaited(widget.client!.publishSessions(list).catchError((_) {}));
   }
 
   // _onRelayEvent acts on the cross-user message.deliver event (other relay
@@ -1258,9 +1293,10 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('未配置 relay,无法发给在线用户');
       return;
     }
+    final client = widget.client!;
     List<OnlineUser> users;
     try {
-      users = (await widget.client.onlineUsers())
+      users = (await client.onlineUsers())
           .where((u) => u.online && u.identity != _cfg.identity)
           .toList();
     } catch (e) {
@@ -1287,7 +1323,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                 loading = true;
               });
               try {
-                sessions = await widget.client.userSessions(identity);
+                sessions = await client.userSessions(identity);
               } catch (_) {
                 sessions = const [];
               } finally {
@@ -1298,7 +1334,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             Future<void> send(RemoteSession s) async {
               Navigator.pop(ctx);
               try {
-                await widget.client.sendMessage(selected!, s.id, text);
+                await client.sendMessage(selected!, s.id, text);
                 _snack('已发送到 $selected · ${s.label},等待对方确认');
               } catch (e) {
                 _snack('发送失败:${errorText(e)}');
@@ -1376,11 +1412,32 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // ---------------------------------------------------------------- data ----
 
+  AppConfig _mergeReloadedLocalConfig(AppConfig loaded) => AppConfig(
+    _cfg.relayUrl,
+    _cfg.token,
+    _cfg.identity,
+    loaded.repos,
+    loaded.workspaces,
+    loaded.agent,
+    loaded.workspaceRoot,
+    loaded.gradeCommand,
+    loaded.linearToken,
+    loaded.githubToken,
+    loaded.terminalApp,
+    loaded.claudeCommand,
+    loaded.codexCommand,
+  );
+
   Future<void> _loadTasks() async {
+    final client = widget.client;
+    if (client == null) {
+      if (mounted) setState(() => _tasksByRepo = const {});
+      return;
+    }
     try {
       final lists = await Future.wait([
-        widget.client.handoffs(as: 'recipient'),
-        widget.client.handoffs(as: 'sender'),
+        client.handoffs(as: 'recipient'),
+        client.handoffs(as: 'sender'),
       ]);
       final byId = <String, ListItem>{};
       for (final it in [...lists[0], ...lists[1]]) {
@@ -1404,7 +1461,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _reloadConfig() async {
     final cfg = await AppConfig.load();
     if (cfg != null && mounted) {
-      setState(() => _cfg = cfg);
+      setState(() => _cfg = _mergeReloadedLocalConfig(cfg));
       // Desktop-initiated workspace/project/worktree changes must reach connected
       // phones too — otherwise they only see config edits the phone itself made.
       _remoteHost.broadcastRoots();
@@ -1647,7 +1704,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   // out on; a 'todo:*' session gets the 待办助手 persona injected and
   // 'supervisor:*' the supervisor one (see TerminalSession).
   String? _agentForPrefixedKind(String kind, String prefix) {
-    if (kind == prefix || kind == '$prefix:claude' || kind == '$prefix-claude') {
+    if (kind == prefix ||
+        kind == '$prefix:claude' ||
+        kind == '$prefix-claude') {
       return 'claude';
     }
     if (kind == '$prefix:codex' || kind == '$prefix-codex') return 'codex';
@@ -1737,11 +1796,13 @@ class _WorkspacePageState extends State<WorkspacePage>
   // spawned session), then bind the todo's assignee + resume trio. Returns null
   // on success or a user-facing error the phone shows.
   Future<String?> _remoteAssignTodo(Map<String, dynamic> req) async {
+    final client = widget.client;
+    if (client == null) return '需要登录 relay';
     final todoId = (req['todoId'] as String?)?.trim() ?? '';
     if (todoId.isEmpty) return '缺少 todoId';
     final Todo fallback;
     try {
-      fallback = await widget.client.todo(todoId);
+      fallback = await client.todo(todoId);
     } catch (e) {
       return '读取待办失败: ${errorText(e)}';
     }
@@ -1772,13 +1833,14 @@ class _WorkspacePageState extends State<WorkspacePage>
       card = _remoteCard(sid);
     }
     final prep = await prepareTodoAssignmentText(
-      client: widget.client,
+      client: client,
       todoId: todoId,
       fallbackTodo: fallback,
       workdir: card?.workdir ?? '',
     );
-    final dispatchErr =
-        deliverLocalMessage(LocalMsg('', sid, prep.taskText, true));
+    final dispatchErr = deliverLocalMessage(
+      LocalMsg('', sid, prep.taskText, true),
+    );
     if (dispatchErr != null) return '投递失败: $dispatchErr';
 
     // Bind assignee + resume trio, best-effort (mirrors _syncAssignVisibility).
@@ -1790,7 +1852,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       }
     }
     try {
-      await widget.client.assignTodo(
+      await client.assignTodo(
         todoId,
         assigneeIdentity: _cfg.identity,
         assigneeSessionId: sid,
@@ -1800,20 +1862,23 @@ class _WorkspacePageState extends State<WorkspacePage>
         assigneeAgentKind: card == null || card.agentKind.isEmpty
             ? null
             : (card.isSupervisor
-                ? 'supervisor:${card.agentKind}'
-                : card.agentKind),
+                  ? 'supervisor:${card.agentKind}'
+                  : card.agentKind),
       );
-      await widget.client.updateTodo(
+      await client.updateTodo(
         todoId,
         workspaceName: card?.workspace ?? '',
         repoName: card?.project ?? '',
       );
     } catch (_) {}
     // 指派 = 开始处理: bump an unstarted todo to 进行中.
-    if (const {TodoStatus.triage, TodoStatus.backlog, TodoStatus.todo}
-        .contains(prep.full.status)) {
+    if (const {
+      TodoStatus.triage,
+      TodoStatus.backlog,
+      TodoStatus.todo,
+    }.contains(prep.full.status)) {
       try {
-        await widget.client.setTodoStatus(todoId, TodoStatus.inProgress);
+        await client.setTodoStatus(todoId, TodoStatus.inProgress);
       } catch (_) {}
     }
     return null;
@@ -1835,17 +1900,21 @@ class _WorkspacePageState extends State<WorkspacePage>
     SessionCard card, {
     required bool preferSelfDistill,
   }) async {
+    if (widget.client == null) return (null, '请先登录 relay 后再发布胶囊');
     final workdir = card.workdir;
     if (card.agentKind.isEmpty) return (null, '只有 agent 会话能打成胶囊');
     if (workdir == null || workdir.isEmpty) return (null, '会话没有工作目录');
 
-    final draftDir = (await Directory.systemTemp.createTemp('cc-capsule-')).path;
+    final draftDir = (await Directory.systemTemp.createTemp(
+      'cc-capsule-',
+    )).path;
     final cap = await captureCapsuleTranscript(
       agentKind: card.agentKind,
       agentSessionId: card.agentSessionId,
       workdir: workdir,
       destDir: draftDir,
-      maxTextChars: 200000, // cap the neutral render fed to the headless distill
+      maxTextChars:
+          200000, // cap the neutral render fed to the headless distill
     );
     if (cap == null) {
       return (null, '会话日志还没落盘,等它写一轮后再试');
@@ -1900,7 +1969,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     List<String> skillZips = const [],
   }) async {
     final d = draft.draftDir;
-    final args = <String>['capsule', 'submit', '--source-agent', draft.sourceAgent];
+    final args = <String>[
+      'capsule',
+      'submit',
+      '--source-agent',
+      draft.sourceAgent,
+    ];
     Future<void> addIfExists(String flag, String name) async {
       if (await File('$d/$name').exists()) {
         args
@@ -2136,15 +2210,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     final cfg = await AppConfig.load();
     if (cfg != null && mounted) {
-      setState(
-        () => _cfg = AppConfig(
-          _cfg.relayUrl,
-          _cfg.token,
-          _cfg.identity,
-          cfg.repos,
-          cfg.workspaces,
-        ),
-      );
+      setState(() => _cfg = _mergeReloadedLocalConfig(cfg));
     }
     _remoteHost.broadcastRoots();
   }
@@ -3984,6 +4050,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               if (_remoteHost.sharing) {
                 _remoteHost.disable();
                 _remoteSnack('已停止共享');
+              } else if (!_relayConfigured) {
+                _remoteSnack('请先登录 relay 后再共享给手机', error: true);
               } else {
                 _remoteHost.enable();
                 _remoteSnack('已开启共享 · 正在连接 relay…');
@@ -4008,15 +4076,13 @@ class _WorkspacePageState extends State<WorkspacePage>
             icon: Icons.inbox_rounded,
             tooltip: '收件箱',
             selected: !_inboxSidebarCollapsed,
-            onPressed: () =>
-                _setInboxSidebarCollapsed(!_inboxSidebarCollapsed),
+            onPressed: () => _setInboxSidebarCollapsed(!_inboxSidebarCollapsed),
           ),
           _toolButton(
             icon: Icons.checklist_rounded,
             tooltip: '待办',
             selected: !_todosSidebarCollapsed,
-            onPressed: () =>
-                _setTodosSidebarCollapsed(!_todosSidebarCollapsed),
+            onPressed: () => _setTodosSidebarCollapsed(!_todosSidebarCollapsed),
           ),
         ],
         pinnedTrailing: [
@@ -5453,78 +5519,78 @@ class _WorkspacePageState extends State<WorkspacePage>
         : const <int>[];
     final pos = scope.indexOf(index);
     return [
-    ccMenuItem(
-      value: 'copyPath',
-      icon: Icons.content_copy_rounded,
-      label: 'Copy Path',
-    ),
-    ccMenuItem(
-      value: 'reveal',
-      icon: Icons.my_location_rounded,
-      label: 'Reveal in Project',
-    ),
-    const PopupMenuDivider(),
-    ccMenuItem(
-      value: 'workingDiff',
-      icon: Icons.difference_rounded,
-      label: 'Open File Working Tree Diff',
-    ),
-    ccMenuItem(
-      value: 'fileLog',
-      icon: Icons.list_alt_rounded,
-      label: 'Open File Git Log',
-    ),
-    ccMenuItem(
-      value: 'history',
-      icon: Icons.history_rounded,
-      label: 'File History',
-    ),
-    ccMenuItem(
-      value: 'annotate',
-      icon: Icons.format_align_left_rounded,
-      label: 'Annotate / Blame',
-    ),
-    const PopupMenuDivider(),
-    ccMenuItem(
-      value: 'splitRight',
-      icon: Icons.vertical_split_rounded,
-      label: '向右分屏',
-    ),
-    ccMenuItem(
-      value: 'splitDown',
-      icon: Icons.horizontal_split_rounded,
-      label: '向下分屏',
-    ),
-    const PopupMenuDivider(),
-    ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
-    ccMenuItem(
-      value: 'closeOthers',
-      icon: Icons.clear_rounded,
-      label: 'Close Others',
-      enabled: scope.length > 1,
-    ),
-    if (pos > 0)
       ccMenuItem(
-        value: 'closeLeft',
-        icon: Icons.first_page_rounded,
-        label: 'Close Tabs to the Left',
+        value: 'copyPath',
+        icon: Icons.content_copy_rounded,
+        label: 'Copy Path',
       ),
-    if (pos >= 0 && pos < scope.length - 1)
       ccMenuItem(
-        value: 'closeRight',
-        icon: Icons.keyboard_tab_rounded,
-        label: 'Close Tabs to the Right',
+        value: 'reveal',
+        icon: Icons.my_location_rounded,
+        label: 'Reveal in Project',
       ),
-    ccMenuItem(
-      value: 'closeUnmodified',
-      icon: Icons.cleaning_services_rounded,
-      label: 'Close Unmodified',
-    ),
-    ccMenuItem(
-      value: 'closeAll',
-      icon: Icons.clear_all_rounded,
-      label: 'Close All',
-    ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'workingDiff',
+        icon: Icons.difference_rounded,
+        label: 'Open File Working Tree Diff',
+      ),
+      ccMenuItem(
+        value: 'fileLog',
+        icon: Icons.list_alt_rounded,
+        label: 'Open File Git Log',
+      ),
+      ccMenuItem(
+        value: 'history',
+        icon: Icons.history_rounded,
+        label: 'File History',
+      ),
+      ccMenuItem(
+        value: 'annotate',
+        icon: Icons.format_align_left_rounded,
+        label: 'Annotate / Blame',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'splitRight',
+        icon: Icons.vertical_split_rounded,
+        label: '向右分屏',
+      ),
+      ccMenuItem(
+        value: 'splitDown',
+        icon: Icons.horizontal_split_rounded,
+        label: '向下分屏',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
+      ccMenuItem(
+        value: 'closeOthers',
+        icon: Icons.clear_rounded,
+        label: 'Close Others',
+        enabled: scope.length > 1,
+      ),
+      if (pos > 0)
+        ccMenuItem(
+          value: 'closeLeft',
+          icon: Icons.first_page_rounded,
+          label: 'Close Tabs to the Left',
+        ),
+      if (pos >= 0 && pos < scope.length - 1)
+        ccMenuItem(
+          value: 'closeRight',
+          icon: Icons.keyboard_tab_rounded,
+          label: 'Close Tabs to the Right',
+        ),
+      ccMenuItem(
+        value: 'closeUnmodified',
+        icon: Icons.cleaning_services_rounded,
+        label: 'Close Unmodified',
+      ),
+      ccMenuItem(
+        value: 'closeAll',
+        icon: Icons.clear_all_rounded,
+        label: 'Close All',
+      ),
     ];
   }
 
@@ -6181,7 +6247,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
       Expanded(
         child: HandoffDetailView(
-          client: widget.client,
+          client: widget.client!,
           config: _cfg,
           item: it,
           onOpenTerminal: (wt, cmd) {
@@ -6250,6 +6316,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   // relay project id via Me.projects) — the sidebar has no room for the
   // top-level 待办 page's scope/project filter UI.
   List<Todo> get _todosSidebarItems {
+    if (widget.client == null || widget.me == null) return const [];
     final projectId = _currentTodosSidebarProjectId;
     final items = widget.store.all.where((t) {
       if (t.isPersonal) return true;
@@ -6262,7 +6329,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   String? get _currentTodosSidebarProjectId {
     final name = _currentGitProject?.name;
     if (name == null) return null;
-    for (final p in widget.me.projects) {
+    for (final p in widget.me?.projects ?? const []) {
       if (p.name == name) return p.id;
     }
     return null;
@@ -6270,7 +6337,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   String? _todoProjectName(Todo t) {
     if (t.projectId == null) return null;
-    for (final p in widget.me.projects) {
+    for (final p in widget.me?.projects ?? const []) {
       if (p.id == t.projectId) return p.name;
     }
     return null;
@@ -6286,6 +6353,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         onRetry: store.refresh,
         child: () {
           final items = _todosSidebarItems;
+          if (widget.client == null || widget.me == null) {
+            return centerMsg('登录后使用待办');
+          }
           if (items.isEmpty) return centerMsg('暂无待办');
           return RefreshIndicator(
             onRefresh: store.refresh,
@@ -6309,7 +6379,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 
   Widget _todosSidebarDetail(Todo t) => TodoDetailView(
-    client: widget.client,
+    client: widget.client!,
     todo: t,
     overviewStore: widget.overviewStore,
     config: _cfg,
@@ -6400,7 +6470,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Widget _inboxSidebarDetail(ListItem it) => HandoffDetailView(
-    client: widget.client,
+    client: widget.client!,
     config: _cfg,
     item: it,
     onOpenTerminal: (wt, cmd) {
@@ -6902,7 +6972,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         collapsed: collapsed,
         onToggleCollapse: onToggleCollapse,
       ),
-      if (!collapsed) for (final c in items) _changeTile(p, c),
+      if (!collapsed)
+        for (final c in items) _changeTile(p, c),
     ];
   }
 
