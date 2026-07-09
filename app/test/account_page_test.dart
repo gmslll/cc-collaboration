@@ -25,6 +25,11 @@ void main() {
 
     expect(saveLocalConfig, contains('if (_savingCfg) return;'));
     expect(saveLocalConfig, contains('setState(() => _savingCfg = true);'));
+    expect(saveLocalConfig, contains('if (!mounted) return;'));
+    expect(
+      saveLocalConfig.indexOf('if (!mounted) return;'),
+      lessThan(saveLocalConfig.indexOf('widget.onConfigSaved?.call();')),
+    );
   });
 
   testWidgets('password change completion after unmount is ignored', (

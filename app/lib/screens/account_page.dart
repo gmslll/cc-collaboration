@@ -354,8 +354,9 @@ class _AccountPageState extends State<AccountPage> {
         publishSessions: _publishSessions,
       );
       await _loadLocalConfig();
+      if (!mounted) return;
       widget.onConfigSaved?.call();
-      if (mounted) snack(context, '已保存到 config.toml');
+      snack(context, '已保存到 config.toml');
     } catch (e) {
       if (mounted) snack(context, errorText(e));
     } finally {

@@ -315,6 +315,41 @@ void main() {
     expect(find.text('New Account User'), findsOneWidget);
     expect(find.text('Old Account User'), findsNothing);
   });
+
+  testWidgets('admin reset password after account switch is ignored', (
+    tester,
+  ) async {
+    final oldClient = _DelayedResetAdminPageFakeClient();
+    final newClient = _AdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: oldClient)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重置密码'));
+    await tester.pump();
+    expect(oldClient.resetCount, 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: newClient)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    oldClient.completeReset('old-secret');
+    await tester.pumpAndSettle();
+
+    expect(find.text('old-secret'), findsNothing);
+    expect(find.text('$_longAdminIdentity 的新密码'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _AdminPageFakeClient extends RelayClient {
@@ -386,6 +421,23 @@ class _DelayedUsersAdminPageFakeClient extends _AdminPageFakeClient {
   void completeLatestUsers(List<User> users) {
     final request = _usersRequests.lastWhere((c) => !c.isCompleted);
     request.complete(users);
+  }
+}
+
+class _DelayedResetAdminPageFakeClient extends _AdminPageFakeClient {
+  final _resetCompleter = Completer<String>();
+  int resetCount = 0;
+
+  @override
+  Future<String> resetPassword(String identity) {
+    resetCount++;
+    return _resetCompleter.future;
+  }
+
+  void completeReset(String password) {
+    if (!_resetCompleter.isCompleted) {
+      _resetCompleter.complete(password);
+    }
   }
 }
 
