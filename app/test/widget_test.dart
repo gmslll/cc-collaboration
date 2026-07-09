@@ -84,6 +84,73 @@ void main() {
     expect(remote, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('remote shared workspace dynamic labels are width constrained', () {
+    final remote = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+
+    String between(String start, String end) {
+      final startIndex = remote.indexOf(start);
+      final endIndex = remote.indexOf(end, startIndex);
+      expect(startIndex, isNonNegative);
+      expect(endIndex, isNonNegative);
+      return remote.substring(startIndex, endIndex);
+    }
+
+    final fileHub = between('// _xferTile renders', '// _sendFileToMac');
+    expect(fileHub, contains('x.name,\n        maxLines: 1'));
+    expect(fileHub, contains('name,\n      maxLines: 1'));
+
+    final screenShare = between(
+      'void _showScreenShare()',
+      'Future<void> _openScreenShare',
+    );
+    expect(
+      screenShare,
+      contains('source.name,\n                        maxLines: 1'),
+    );
+
+    final branchSheet = between(
+      'Future<void> _branchSheet()',
+      'Future<void> _newBranchDialog()',
+    );
+    expect(
+      branchSheet,
+      contains('b.name,\n                          maxLines: 1'),
+    );
+
+    final manageTab = between('Widget _manageTab()', 'void _openWorktrees');
+    expect(
+      manageTab,
+      contains(
+        'title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis)',
+      ),
+    );
+
+    final worktreeScreen = between(
+      'class _WorktreeScreenState',
+      'class _QuickReplyDialog',
+    );
+    expect(
+      worktreeScreen,
+      contains(
+        "'\${widget.project.name} · Worktrees',\n              maxLines: 1",
+      ),
+    );
+    expect(
+      worktreeScreen,
+      contains(
+        'w.branch.isEmpty ? w.name : w.branch,\n                          maxLines: 1',
+      ),
+    );
+
+    final keyEditor = between('void _openKeyBarEditor()', '// Common special');
+    expect(
+      keyEditor,
+      contains('kb.label,\n                              maxLines: 1'),
+    );
+  });
+
   test('workspace session rows paint selected backgrounds on Material', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final sessionMenu = source.substring(source.indexOf('final sessionMenu ='));

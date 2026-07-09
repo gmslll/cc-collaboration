@@ -180,10 +180,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                       ),
                       title: Text(
                         n.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.text),
                       ),
                       subtitle: Text(
                         '${n.body} · ${relativeTime(n.at)}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.muted),
                       ),
                     ),
@@ -367,10 +371,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                       ),
                       title: Text(
                         source.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.text),
                       ),
                       subtitle: Text(
                         source.type,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.muted),
                       ),
                       onTap: () {
@@ -411,7 +419,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         sending ? Icons.upload_rounded : Icons.download_rounded,
         color: CcColors.accentBright,
       ),
-      title: Text(x.name, style: const TextStyle(color: CcColors.text)),
+      title: Text(
+        x.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: CcColors.text),
+      ),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 6),
         child: Column(
@@ -475,9 +488,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       Icons.insert_drive_file_outlined,
       color: CcColors.muted,
     ),
-    title: Text(name, style: const TextStyle(color: CcColors.text)),
+    title: Text(
+      name,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(color: CcColors.text),
+    ),
     subtitle: Text(
       relativeTime(at),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
       style: const TextStyle(color: CcColors.muted),
     ),
     trailing: Row(
@@ -1754,7 +1774,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                           size: 18,
                           color: b.current ? CcColors.ok : CcColors.muted,
                         ),
-                        title: Text(b.name),
+                        title: Text(
+                          b.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         onTap: b.current
                             ? null
                             : () {
@@ -1812,7 +1836,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 size: 18,
                 color: CcColors.accentBright,
               ),
-              title: Text(p.name),
+              title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               trailing: PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert_rounded, size: 18),
                 onSelected: (v) {
@@ -1924,7 +1948,11 @@ class _ScreenShareViewerPageState extends State<ScreenShareViewerPage> {
       listenable: _c,
       builder: (context, _) => Scaffold(
         appBar: AppBar(
-          title: Text(widget.source.name),
+          title: Text(
+            widget.source.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           actions: [
             IconButton(
               tooltip: '停止共享',
@@ -3332,9 +3360,15 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                             key: ObjectKey(kb),
                             dense: true,
                             leading: const Icon(Icons.drag_handle, size: 20),
-                            title: Text(kb.label),
+                            title: Text(
+                              kb.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             subtitle: Text(
                               _encodeSeq(kb.data),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontFamily: 'JetBrainsMono',
                                 fontSize: 11,
@@ -3965,9 +3999,16 @@ class _SupervisorKnowledgeDialogState
     return ListTile(
       leading: Icon(icon, size: 20, color: CcColors.muted),
       minLeadingWidth: 24,
-      title: Text(name, style: const TextStyle(fontSize: 14)),
+      title: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 14),
+      ),
       subtitle: Text(
         desc,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 12, color: CcColors.muted),
       ),
       trailing: exists
@@ -4227,7 +4268,11 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
         final wts = widget.client.worktrees;
         return Scaffold(
           appBar: AppBar(
-            title: Text('${widget.project.name} · Worktrees'),
+            title: Text(
+              '${widget.project.name} · Worktrees',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             actions: [
               IconButton(
                 icon: const Icon(Icons.add),
@@ -4249,6 +4294,8 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
                         ),
                         title: Text(
                           w.branch.isEmpty ? w.name : w.branch,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: CcType.code(size: 13),
                         ),
                         subtitle: Text(
