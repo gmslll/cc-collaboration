@@ -943,6 +943,7 @@ class _ReassignDialog extends StatefulWidget {
 class _ReassignDialogState extends State<_ReassignDialog> {
   final _to = TextEditingController();
   final _reason = TextEditingController();
+  String? _error;
 
   @override
   void dispose() {
@@ -951,10 +952,19 @@ class _ReassignDialogState extends State<_ReassignDialog> {
     super.dispose();
   }
 
-  void _submit() => Navigator.pop(
-    context,
-    _ReassignInput(to: _to.text, reason: _reason.text),
-  );
+  void _submit() {
+    final to = _to.text.trim();
+    final reason = _reason.text.trim();
+    if (to.isEmpty || reason.isEmpty) {
+      setState(() => _error = '需填转交对象和原因');
+      return;
+    }
+    Navigator.pop(context, _ReassignInput(to: to, reason: reason));
+  }
+
+  void _clearError() {
+    if (_error != null) setState(() => _error = null);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -966,14 +976,26 @@ class _ReassignDialogState extends State<_ReassignDialog> {
           TextField(
             controller: _to,
             decoration: const InputDecoration(labelText: '转交给(identity)'),
+            onChanged: (_) => _clearError(),
             onSubmitted: (_) => _submit(),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: _reason,
             decoration: const InputDecoration(labelText: '原因'),
+            onChanged: (_) => _clearError(),
             onSubmitted: (_) => _submit(),
           ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _error!,
+                style: const TextStyle(color: CcColors.danger, fontSize: 12),
+              ),
+            ),
+          ],
         ],
       ),
       actions: [

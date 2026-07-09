@@ -139,6 +139,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('handoff reassign dialog keeps input when fields are missing', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package('bug1', 'qa@x', 'bug handoff', kind: 'bug'),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('bug1', 'qa@x', 'bug handoff'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '转交'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, '转交给(identity)'),
+      '  dev@x  ',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '转交'));
+    await tester.pumpAndSettle();
+
+    expect(client.reassignedTo, isNull);
+    expect(find.text('需填转交对象和原因'), findsOneWidget);
+    expect(find.widgetWithText(TextField, '转交给(identity)'), findsOneWidget);
+
+    await tester.enterText(find.widgetWithText(TextField, '原因'), '  fix it  ');
+    await tester.tap(find.widgetWithText(FilledButton, '转交'));
+    await tester.pumpAndSettle();
+
+    expect(client.reassignedTo, 'dev@x');
+    expect(client.reassignedReason, 'fix it');
+    expect(find.byType(TextField), findsNothing);
+    await tester.pump(const Duration(seconds: 5));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('team handoff detail shows fanout recipients and pickup slots', (
     tester,
   ) async {
