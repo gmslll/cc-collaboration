@@ -43,6 +43,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   ListItem? _selected;
   StreamSubscription<SseEvent>? _sse;
   Set<String> _online = {};
+  int _refreshGeneration = 0;
   bool _listCollapsed = Prefs.getBool('inbox.list');
   bool _termCollapsed = Prefs.getBool('inbox.term');
   double _listWidth = Prefs.getDouble('inbox.listWidth', def: 340);
@@ -134,25 +135,30 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   }
 
   Future<void> _refresh() async {
+    final generation = ++_refreshGeneration;
+    final view = _view;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final items = await _client.handoffs(as: _view);
-      if (!mounted) return;
+      final items = await _client.handoffs(as: view);
+      if (!_isCurrentRefresh(generation, view)) return;
       setState(() {
         _inbox = items;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentRefresh(generation, view)) return;
       setState(() {
         _loading = false;
         _error = '加载失败: ${errorText(e)}';
       });
     }
   }
+
+  bool _isCurrentRefresh(int generation, String view) =>
+      mounted && generation == _refreshGeneration && view == _view;
 
   @override
   Widget build(BuildContext context) {

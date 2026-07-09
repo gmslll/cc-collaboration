@@ -62,6 +62,46 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Review the workspace handoff'), findsWidgets);
   });
+
+  testWidgets('stale handoff list refresh cannot overwrite selected view', (
+    tester,
+  ) async {
+    final client = _ViewDelayedHandoffsClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: HandoffsPage(
+            client: client,
+            config: AppConfig('http://127.0.0.1:1', 'tok', 'dev@x', const {}),
+            showTerminal: false,
+            enableEvents: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(client.startedViews, contains('recipient'));
+
+    await tester.tap(find.text('已发'));
+    await tester.pump();
+    expect(client.startedViews, contains('sender'));
+
+    client.complete('sender', [
+      _handoff('sent', sender: 'me@x', headline: 'Sent handoff'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('me@x'), findsOneWidget);
+    expect(find.text('old@x'), findsNothing);
+
+    client.complete('recipient', [
+      _handoff('old', sender: 'old@x', headline: 'Old inbox handoff'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('me@x'), findsOneWidget);
+    expect(find.text('old@x'), findsNothing);
+  });
 }
 
 class _DelayedHandoffsClient extends RelayClient {
@@ -122,14 +162,41 @@ class _ImmediateHandoffsClient extends RelayClient {
   Future<List<Comment>> comments(String id) async => const [];
 }
 
-ListItem _handoff(String id) => ListItem.fromJson({
+class _ViewDelayedHandoffsClient extends RelayClient {
+  final _requests = <String, Completer<List<ListItem>>>{};
+  final startedViews = <String>[];
+
+  _ViewDelayedHandoffsClient() : super('http://127.0.0.1', 'tok');
+
+  @override
+  Future<List<ListItem>> handoffs({String as = 'recipient'}) {
+    startedViews.add(as);
+    final completer = Completer<List<ListItem>>();
+    _requests[as] = completer;
+    return completer.future;
+  }
+
+  @override
+  Future<List<OnlineUser>> onlineUsers() async => const [];
+
+  void complete(String view, List<ListItem> items) {
+    final request = _requests[view];
+    if (request != null && !request.isCompleted) request.complete(items);
+  }
+}
+
+ListItem _handoff(
+  String id, {
+  String sender = 'sender@x',
+  String headline = 'Review the workspace handoff',
+}) => ListItem.fromJson({
   'id': id,
   'kind': 'delivery',
-  'sender': 'sender@x',
+  'sender': sender,
   'recipient': 'dev@x',
   'urgency': 'normal',
   'state': 'pending',
   'repo_name': 'cc-collaboration',
-  'headline': 'Review the workspace handoff',
+  'headline': headline,
   'created_at': '2026-01-01T00:00:00Z',
 });
