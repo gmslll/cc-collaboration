@@ -1731,31 +1731,42 @@ class _WorkspacePageState extends State<WorkspacePage>
                   children: [
                     const Text('在线用户:'),
                     const SizedBox(height: 6),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final chipWidth = onlineSendUserChipWidth(constraints);
-                        return Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            for (final u in users)
-                              ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  maxWidth: chipWidth,
-                                ),
-                                child: ChoiceChip(
-                                  label: Text(
-                                    u.identity,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: onlineSendUserListMaxHeight(
+                          MediaQuery.sizeOf(ctx),
+                        ),
+                      ),
+                      child: SingleChildScrollView(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final chipWidth = onlineSendUserChipWidth(
+                              constraints,
+                            );
+                            return Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final u in users)
+                                  ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: chipWidth,
+                                    ),
+                                    child: ChoiceChip(
+                                      label: Text(
+                                        u.identity,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      selected: selected == u.identity,
+                                      onSelected: (_) => pickUser(u.identity),
+                                    ),
                                   ),
-                                  selected: selected == u.identity,
-                                  onSelected: (_) => pickUser(u.identity),
-                                ),
-                              ),
-                          ],
-                        );
-                      },
+                              ],
+                            );
+                          },
+                        ),
+                      ),
                     ),
                     const Divider(),
                     if (selected == null)

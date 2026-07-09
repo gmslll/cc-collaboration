@@ -25,4 +25,13 @@ void main() {
       120,
     );
   });
+
+  test('online send user list height is capped for many users', () {
+    expect(onlineSendUserListMaxHeight(const Size(390, 844)), 132);
+    expect(
+      onlineSendUserListMaxHeight(const Size(320, 320)),
+      closeTo(102.4, 0.001),
+    );
+    expect(onlineSendUserListMaxHeight(const Size(320, 120)), 72);
+  });
 }
