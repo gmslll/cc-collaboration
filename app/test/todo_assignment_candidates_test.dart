@@ -280,6 +280,45 @@ void main() {
     );
   });
 
+  test('todo assign new-session selection must match current projects', () {
+    expect(
+      todoAssignNewSelectionValid(
+        workspace: 'Team',
+        project: 'Backend',
+        workspaceNames: const ['Team'],
+        projectNames: const ['Backend'],
+      ),
+      isTrue,
+    );
+    expect(
+      todoAssignNewSelectionValid(
+        workspace: 'OldTeam',
+        project: 'Backend',
+        workspaceNames: const ['Team'],
+        projectNames: const ['Backend'],
+      ),
+      isFalse,
+    );
+    expect(
+      todoAssignNewSelectionValid(
+        workspace: 'Team',
+        project: 'OldBackend',
+        workspaceNames: const ['Team'],
+        projectNames: const ['Backend'],
+      ),
+      isFalse,
+    );
+    expect(
+      todoAssignNewSelectionValid(
+        workspace: null,
+        project: 'Backend',
+        workspaceNames: const ['Team'],
+        projectNames: const ['Backend'],
+      ),
+      isFalse,
+    );
+  });
+
   test('todo dropdown menus are capped for many projects and groups', () {
     expect(todoMenuMaxHeight(const Size(1024, 900)), 320);
     expect(todoMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));

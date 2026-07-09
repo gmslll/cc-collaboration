@@ -120,6 +120,17 @@ String initialTodoAssignMode({
   return 'member';
 }
 
+bool todoAssignNewSelectionValid({
+  required String? workspace,
+  required String? project,
+  required Iterable<String> workspaceNames,
+  required Iterable<String> projectNames,
+}) =>
+    workspace != null &&
+    project != null &&
+    workspaceNames.contains(workspace) &&
+    projectNames.contains(project);
+
 // _BoardColumnDef drives both the kanban board's columns and the mobile
 // card stream's collapsible groups, so they always agree on column meaning.
 // One status = one column now (the real Linear layout this board was always
@@ -2847,15 +2858,22 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   Future<void> _assignToNew() async {
     if (_submitting) return;
     final ws = _workspace, proj = _project;
-    if (ws == null || proj == null) {
+    if (!todoAssignNewSelectionValid(
+      workspace: ws,
+      project: proj,
+      workspaceNames: _workspaceNames,
+      projectNames: _projectNamesFor(ws),
+    )) {
       snack(context, '请选择 workspace / project');
       return;
     }
+    final validWorkspace = ws!;
+    final validProject = proj!;
     setState(() => _submitting = true);
     final branch = _branchCtl.text.trim();
     final (sid, err) = await widget.overviewStore.spawn(
-      workspace: ws,
-      project: proj,
+      workspace: validWorkspace,
+      project: validProject,
       kind: _kind,
       newWorktreeBranch: branch.isEmpty ? null : branch,
     );
@@ -2881,9 +2899,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
     await _syncAssignVisibility(
       sid,
-      proj,
-      workspaceName: ws,
-      repoName: proj,
+      validProject,
+      workspaceName: validWorkspace,
+      repoName: validProject,
       waitForAgentId: true,
     );
     if (!mounted) return;
@@ -2922,17 +2940,25 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     if (_submitting) return;
     final r = _remote;
     final ws = _workspace, proj = _project;
-    if (r == null || ws == null || proj == null) {
+    if (r == null ||
+        !todoAssignNewSelectionValid(
+          workspace: ws,
+          project: proj,
+          workspaceNames: _workspaceNames,
+          projectNames: _projectNamesFor(ws),
+        )) {
       snack(context, '请选择 workspace / project');
       return;
     }
+    final validWorkspace = ws!;
+    final validProject = proj!;
     setState(() => _submitting = true);
     final branch = _branchCtl.text.trim();
     final err = await r.requestAssign(
       todoId: widget.todo.id,
       mode: 'new',
-      workspace: ws,
-      project: proj,
+      workspace: validWorkspace,
+      project: validProject,
       kind: _kind,
       branch: branch.isEmpty ? null : branch,
     );
@@ -2966,12 +2992,20 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     // on mobile the desktop can go offline mid-dialog.
     final mode = _showSessionModes ? _mode : 'member';
     if (mode == 'member') _requestMembers();
+    final newSelectionValid = todoAssignNewSelectionValid(
+      workspace: _workspace,
+      project: _project,
+      workspaceNames: _workspaceNames,
+      projectNames: _projectNamesFor(_workspace),
+    );
     final VoidCallback? primaryAction = _submitting
         ? null
         : mode == 'existing'
         ? (_remote != null ? _remoteAssignExisting : _assignToExisting)
         : mode == 'new'
-        ? (_remote != null ? _remoteAssignNew : _assignToNew)
+        ? (newSelectionValid
+              ? (_remote != null ? _remoteAssignNew : _assignToNew)
+              : null)
         : (_loadingMembers || _pickedIdentity == null)
         ? null
         : _assignToMember;
