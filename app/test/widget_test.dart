@@ -1323,6 +1323,14 @@ void main() {
       '_c.renameSession',
     );
     expectGuardBefore(
+      between(
+        'Future<void> _newSessionDialog()',
+        '// Open the supervisor knowledge-base editor',
+      ),
+      'showDialog<RemoteSessionDraft>',
+      '_c.newSession',
+    );
+    expectGuardBefore(
       between('Future<void> _confirmThen(', 'Future<void> _commitDialog()'),
       'final ok = await confirm(context, msg);',
       'if (ok) action();',

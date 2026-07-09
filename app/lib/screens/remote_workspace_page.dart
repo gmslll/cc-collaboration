@@ -1207,7 +1207,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     var supervisorAgent = 'claude';
     var workdir = project.path; // '主仓' by default; a worktree path otherwise
     _c.loadWorktrees(project.path); // populate the worktree dropdown
-    await showDialog<void>(
+    final draft = await showDialog<RemoteSessionDraft>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
@@ -1332,8 +1332,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 final selectedAgent = agent == 'supervisor'
                     ? 'supervisor:$supervisorAgent'
                     : agent;
-                _c.newSession(project.path, selectedAgent, workdir: workdir);
-                Navigator.pop(ctx);
+                Navigator.pop(
+                  ctx,
+                  RemoteSessionDraft(
+                    projectPath: project.path,
+                    agent: selectedAgent,
+                    workdir: workdir,
+                  ),
+                );
               },
               child: const Text('启动'),
             ),
@@ -1341,6 +1347,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         ),
       ),
     );
+    if (!mounted) return;
+    if (draft != null) {
+      _c.newSession(draft.projectPath, draft.agent, workdir: draft.workdir);
+    }
   }
 
   // Open the supervisor knowledge-base editor scoped to a workdir. Targets
@@ -2022,6 +2032,18 @@ class RemoteCommitDraft {
   final bool push;
 
   const RemoteCommitDraft({required this.message, required this.push});
+}
+
+class RemoteSessionDraft {
+  final String projectPath;
+  final String agent;
+  final String workdir;
+
+  const RemoteSessionDraft({
+    required this.projectPath,
+    required this.agent,
+    required this.workdir,
+  });
 }
 
 class RemoteCommitDialog extends StatefulWidget {
