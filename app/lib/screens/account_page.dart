@@ -282,6 +282,7 @@ class _AccountPageState extends State<AccountPage> {
       ),
     );
     if (picked == null || picked.isEmpty) return;
+    if (!mounted) return;
     final ok = await _reinstallHooks(agent: h.name, events: picked);
     if (ok) {
       Prefs.setString('busHook.events.${h.name}', jsonEncode(picked));

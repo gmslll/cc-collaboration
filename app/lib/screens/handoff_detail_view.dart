@@ -212,6 +212,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       ),
     );
     if (ok != true) return false;
+    if (!mounted) return false;
     try {
       await RepoConfig(
         raw: {},
@@ -231,6 +232,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       builder: (_) => const _RetractDialog(),
     );
     if (reason == null) return;
+    if (!mounted) return;
     try {
       await _client.retract(p.id, reason.trim());
       _snack('已撤回');
@@ -247,6 +249,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       builder: (_) => const _ReassignDialog(),
     );
     if (result == null) return;
+    if (!mounted) return;
     final to = result.to.trim();
     final reason = result.reason.trim();
     if (to.isEmpty || reason.isEmpty) {

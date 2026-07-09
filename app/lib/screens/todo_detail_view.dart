@@ -512,6 +512,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     try {
       await _client.deleteTodo(_id);
       widget.onDeleted?.call();

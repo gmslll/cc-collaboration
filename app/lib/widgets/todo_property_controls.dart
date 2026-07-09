@@ -409,6 +409,7 @@ class _GroupControlState extends State<GroupControl> {
         existing: widget.existingGroups,
       ),
     );
+    if (!mounted) return;
     if (result != null && result.isNotEmpty) widget.onSelect(result);
   }
 

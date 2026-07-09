@@ -541,6 +541,83 @@ void main() {
     expect(addButtonGuard, lessThan(addButtonApply));
   });
 
+  test('team task dialogs guard mounted before side effects', () {
+    String between(String path, String start, String end) {
+      final source = File(path).readAsStringSync();
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
+
+    void expectGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return', afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    expectGuardBefore(
+      between(
+        'lib/screens/account_page.dart',
+        'Future<void> _chooseHookEvents(',
+        'Future<void> _saveLocalConfig()',
+      ),
+      'if (picked == null || picked.isEmpty) return;',
+      '_reinstallHooks',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
+        'Future<bool> _confirmInit(',
+        'Future<void> _retract(',
+      ),
+      'if (ok != true) return false;',
+      'RepoConfig(',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
+        'Future<void> _retract(',
+        'Future<void> _reassign(',
+      ),
+      'if (reason == null) return;',
+      '_client.retract',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
+        'Future<void> _reassign(',
+        'Widget _header(',
+      ),
+      'if (result == null) return;',
+      '_client.reassign',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/todo_detail_view.dart',
+        'Future<void> _delete()',
+        'Future<void> _postComment()',
+      ),
+      'if (ok != true) return;',
+      '_client.deleteTodo',
+    );
+    expectGuardBefore(
+      between(
+        'lib/widgets/todo_property_controls.dart',
+        'class _GroupControlState',
+        '@override\n  Widget build',
+      ),
+      'showDialog<String>',
+      'widget.onSelect(result)',
+    );
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
