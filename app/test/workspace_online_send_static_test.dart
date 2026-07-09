@@ -1,10 +1,13 @@
 import 'dart:io';
 
 import 'package:app/api/models.dart';
+import 'package:app/screens/terminal_pane.dart';
 import 'package:app/screens/workspace_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   final source = File('lib/screens/workspace_page.dart').readAsStringSync();
 
   test('online send selectable users exclude self by normalized identity', () {
@@ -38,6 +41,16 @@ void main() {
     expect(onlineSendIdentitySelected(' Dev@X ', 'dev@x'), isTrue);
     expect(onlineSendIdentitySelected(null, 'dev@x'), isFalse);
     expect(onlineSendIdentitySelected('dev@x', 'ops@x'), isFalse);
+  });
+
+  test('incoming peer message target check uses the live session list', () {
+    final open = TerminalSession('/repo', 'codex', agent: 'codex');
+    final closed = TerminalSession('/repo', 'claude', agent: 'claude');
+    addTearDown(open.dispose);
+    addTearDown(closed.dispose);
+
+    expect(incomingMessageTargetIsOpen([open], open), isTrue);
+    expect(incomingMessageTargetIsOpen([open], closed), isFalse);
   });
 
   test('online send action is synchronized with relay availability', () {
@@ -89,6 +102,8 @@ void main() {
     expect(source, contains('preferred: 460'));
     expect(source, contains('onlineSendSessionMenuMaxHeight'));
     expect(source, contains('menuMaxHeight:'));
+    expect(source, contains('incomingMessageTargetIsOpen'));
+    expect(source, contains("message: '目标会话已关闭,已挂起'"));
     expect(source, isNot(contains("title: Text('\$from 发来内容')")));
     expect(source, contains("'\$from 发来内容',\n              maxLines: 1"));
     expect(source, contains('overflow: TextOverflow.ellipsis'));

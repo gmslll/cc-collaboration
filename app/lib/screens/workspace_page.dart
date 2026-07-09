@@ -116,6 +116,11 @@ List<OnlineUser> onlineSendSelectableUsers(
 bool onlineSendIdentitySelected(String? selected, String identity) =>
     selected != null && sameIdentity(selected, identity);
 
+bool incomingMessageTargetIsOpen(
+  Iterable<TerminalSession> sessions,
+  TerminalSession target,
+) => sessions.any((session) => session.id == target.id);
+
 const _searchSkipDirs = {
   '.git',
   'node_modules',
@@ -1537,17 +1542,23 @@ class _WorkspacePageState extends State<WorkspacePage>
     _msgDialogOpen = false;
     switch (result) {
       case 'inject':
-        target.pasteText('[来自 $from · 远程] $body', submit: false);
-        _snack('已注入到 ${target.label}');
+        final liveTarget = sessionById(target.id);
+        if (liveTarget == null ||
+            !incomingMessageTargetIsOpen(terms, liveTarget)) {
+          _park(from, sid, body, message: '目标会话已关闭,已挂起');
+          return;
+        }
+        liveTarget.pasteText('[来自 $from · 远程] $body', submit: false);
+        _snack('已注入到 ${liveTarget.label}');
       case 'park':
         _park(from, sid, body);
     }
   }
 
   // _park stashes a cross-user message for later; surfaced via the toolbar badge.
-  void _park(String from, String sid, String body) {
+  void _park(String from, String sid, String body, {String? message}) {
     _mutateParked(() => _parked.add(_ParkedMessage(from, sid, body)));
-    _snack('已挂起,稍后处理');
+    _snack(message ?? '已挂起,稍后处理');
   }
 
   // _mutateParked applies [fn] to the parked list (rebuilds the toolbar badge)
