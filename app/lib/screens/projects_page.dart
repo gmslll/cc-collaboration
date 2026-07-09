@@ -104,6 +104,27 @@ bool canUpsertProjectMemberRole(
   return true;
 }
 
+Map<String, List<String>> soleProjectOwnerNamesByIdentity(
+  Iterable<ProjectDetail> details,
+) {
+  final out = <String, List<String>>{};
+  for (final detail in details) {
+    final owners = detail.members
+        .where((m) => m.role == 'owner')
+        .map((m) => m.identity.trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (owners.length != 1) continue;
+    final owner = owners.single;
+    out.update(
+      owner,
+      (names) => [...names, detail.project.name],
+      ifAbsent: () => [detail.project.name],
+    );
+  }
+  return out;
+}
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -528,6 +549,7 @@ class _OrganizationSheet extends StatefulWidget {
 
 class _OrganizationSheetState extends State<_OrganizationSheet> {
   OrganizationDetail? _detail;
+  Map<String, List<String>> _soleProjectOwnerNames = const {};
   final _identity = TextEditingController();
   String _role = 'member';
 
@@ -552,7 +574,25 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   Future<void> _load() async {
     try {
       final detail = await widget.client.organization(widget.id);
-      if (mounted) setState(() => _detail = detail);
+      var soleProjectOwnerNames = const <String, List<String>>{};
+      if (_canManageDetail(detail)) {
+        final projectDetails = <ProjectDetail>[];
+        for (final project in detail.projects) {
+          try {
+            projectDetails.add(await widget.client.project(project.id));
+          } catch (_) {
+            // Best effort: if a project detail fails to load, leave removal to
+            // the relay's authoritative guard for that project.
+          }
+        }
+        soleProjectOwnerNames = soleProjectOwnerNamesByIdentity(projectDetails);
+      }
+      if (mounted) {
+        setState(() {
+          _detail = detail;
+          _soleProjectOwnerNames = soleProjectOwnerNames;
+        });
+      }
     } catch (e) {
       if (mounted) snack(context, errorText(e));
     }
@@ -568,7 +608,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     }
   }
 
-  bool _canManage(OrganizationDetail d) =>
+  bool _canManage(OrganizationDetail d) => _canManageDetail(d);
+
+  bool _canManageDetail(OrganizationDetail d) =>
       canManageOrganization(d.organization, isAdmin: widget.isAdmin);
 
   Future<void> _removeMember(String identity) async {
@@ -658,10 +700,18 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                   ),
                   const SizedBox(height: 6),
                   ...d.members.map((m) {
-                    final canRemoveMember = canRemoveOrganizationMember(
-                      m,
-                      d.members,
-                    );
+                    final soleOwnedProjects =
+                        _soleProjectOwnerNames[m.identity.trim()] ??
+                        const <String>[];
+                    final canRemoveMember =
+                        canRemoveOrganizationMember(m, d.members) &&
+                        soleOwnedProjects.isEmpty;
+                    final removeBlockReason =
+                        !canRemoveOrganizationMember(m, d.members)
+                        ? '至少保留一个负责人'
+                        : (soleOwnedProjects.isEmpty
+                              ? ''
+                              : '先转移项目负责人: ${soleOwnedProjects.join(', ')}');
                     return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -723,7 +773,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                   ),
                                 ),
                                 IconButton(
-                                  tooltip: canRemoveMember ? '移除' : '至少保留一个负责人',
+                                  tooltip: canRemoveMember
+                                      ? '移除'
+                                      : removeBlockReason,
                                   icon: Icon(
                                     Icons.close_rounded,
                                     size: 18,

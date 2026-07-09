@@ -224,4 +224,47 @@ void main() {
       isTrue,
     );
   });
+
+  test('sole project owner map only includes projects with one owner', () {
+    ProjectDetail detail({
+      required String name,
+      required List<Map<String, Object?>> members,
+    }) => ProjectDetail.fromJson({
+      'project': {
+        'id': name.toLowerCase(),
+        'name': name,
+        'owner_identity': 'owner@x',
+      },
+      'repos': const [],
+      'members': members,
+    });
+
+    final got = soleProjectOwnerNamesByIdentity([
+      detail(
+        name: 'Solo',
+        members: [
+          {'identity': ' owner@x ', 'role': 'owner'},
+          {'identity': 'member@x', 'role': 'member'},
+        ],
+      ),
+      detail(
+        name: 'Shared',
+        members: [
+          {'identity': 'owner@x', 'role': 'owner'},
+          {'identity': 'owner2@x', 'role': 'owner'},
+        ],
+      ),
+      detail(
+        name: 'Ops',
+        members: [
+          {'identity': 'ops@x', 'role': 'owner'},
+        ],
+      ),
+    ]);
+
+    expect(got, {
+      'owner@x': ['Solo'],
+      'ops@x': ['Ops'],
+    });
+  });
 }
