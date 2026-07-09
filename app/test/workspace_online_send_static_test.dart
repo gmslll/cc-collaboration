@@ -1,9 +1,27 @@
 import 'dart:io';
 
+import 'package:app/api/models.dart';
+import 'package:app/screens/workspace_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+
+  test('online send selectable users exclude self by normalized identity', () {
+    final users = onlineSendSelectableUsers([
+      OnlineUser.fromJson({'identity': ' Me@X ', 'online': true}),
+      OnlineUser.fromJson({'identity': 'teammate@x', 'online': true}),
+      OnlineUser.fromJson({'identity': 'offline@x', 'online': false}),
+    ], 'me@x');
+
+    expect([for (final user in users) user.identity], ['teammate@x']);
+  });
+
+  test('online send selected user comparison is identity-normalized', () {
+    expect(onlineSendIdentitySelected(' Dev@X ', 'dev@x'), isTrue);
+    expect(onlineSendIdentitySelected(null, 'dev@x'), isFalse);
+    expect(onlineSendIdentitySelected('dev@x', 'ops@x'), isFalse);
+  });
 
   test('online send action is synchronized with relay availability', () {
     expect(source, contains('void _syncOnlineSendAction()'));
@@ -47,7 +65,7 @@ void main() {
     expect(dialog, contains('var loadSeq = 0;'));
     expect(dialog, contains('final seq = ++loadSeq;'));
     expect(dialog, contains('seq != loadSeq'));
-    expect(dialog, contains('selected != identity'));
+    expect(dialog, contains('!onlineSendIdentitySelected(selected, identity)'));
   });
 
   test('incoming peer message dialog uses responsive session labels', () {

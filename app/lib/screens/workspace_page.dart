@@ -22,6 +22,7 @@ import '../local/config.dart';
 import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/hook_activity.dart';
+import '../local/identity.dart';
 import '../local/local_bus.dart';
 import '../local/online_send_layout.dart';
 import '../local/lsp/lsp_client.dart';
@@ -93,6 +94,17 @@ bool workspaceCommitActionEnabled({
   required String message,
   required bool loading,
 }) => !loading && hasCommitTarget && message.trim().isNotEmpty;
+
+List<OnlineUser> onlineSendSelectableUsers(
+  Iterable<OnlineUser> users,
+  String selfIdentity,
+) => [
+  for (final user in users)
+    if (user.online && !sameIdentity(user.identity, selfIdentity)) user,
+];
+
+bool onlineSendIdentitySelected(String? selected, String identity) =>
+    selected != null && sameIdentity(selected, identity);
 
 const _searchSkipDirs = {
   '.git',
@@ -1690,9 +1702,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     final client = widget.client!;
     List<OnlineUser> users;
     try {
-      users = (await client.onlineUsers())
-          .where((u) => u.online && u.identity != _cfg.identity)
-          .toList();
+      users = onlineSendSelectableUsers(
+        await client.onlineUsers(),
+        _cfg.identity,
+      );
     } catch (e) {
       _snack('获取在线用户失败:${errorText(e)}');
       return;
@@ -1727,7 +1740,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               if (!mounted ||
                   !ctx.mounted ||
                   seq != loadSeq ||
-                  selected != identity) {
+                  !onlineSendIdentitySelected(selected, identity)) {
                 return;
               }
               setSt(() {
@@ -1788,7 +1801,10 @@ class _WorkspacePageState extends State<WorkspacePage>
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                       ),
-                                      selected: selected == u.identity,
+                                      selected: onlineSendIdentitySelected(
+                                        selected,
+                                        u.identity,
+                                      ),
                                       onSelected: (_) => pickUser(u.identity),
                                     ),
                                   ),
