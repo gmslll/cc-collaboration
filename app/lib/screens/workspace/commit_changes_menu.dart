@@ -14,6 +14,12 @@ part of '../workspace_page.dart';
 /// 与 `_GitMixin`/`_SearchMixin` 同构:`on _GitMixin` 拿到 git 状态/操作,主类里的
 /// 视图方法(`_openCodeFile` 等)按桥接模式声明为 abstract,由 `_WorkspacePageState`
 /// 提供。
+double workspaceCommitFileDialogWidth(Size size, {double preferred = 440}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
   // ---- 主类 (_WorkspacePageState) 提供的视图桥接 ----
   // (_openCodeFile 已由 _SearchMixin 声明,这里 on _SearchMixin 直接复用。)
@@ -332,36 +338,62 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     final ctl = TextEditingController(text: _commitCtl.text);
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Commit File'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('只提交此文件:', style: TextStyle(color: CcColors.muted)),
-            const SizedBox(height: 4),
-            Text(path, style: CcType.code(size: 12)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              minLines: 2,
-              maxLines: 5,
-              decoration: const InputDecoration(labelText: 'Commit message'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: const Text(
+            'Commit File',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          content: SizedBox(
+            width: workspaceCommitFileDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '只提交此文件:',
+                    style: TextStyle(color: CcColors.muted),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    path,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 12),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: ctl,
+                    autofocus: true,
+                    minLines: 2,
+                    maxLines: 5,
+                    decoration: const InputDecoration(
+                      labelText: 'Commit message',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Commit'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Commit'),
-          ),
-        ],
-      ),
+        );
+      },
     );
     final text = ctl.text.trim();
     ctl.dispose();

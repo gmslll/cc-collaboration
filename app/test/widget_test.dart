@@ -474,6 +474,9 @@ void main() {
     final commitMenu = File(
       'lib/screens/workspace/git_log_commit_menu.dart',
     ).readAsStringSync();
+    final commitChangesMenu = File(
+      'lib/screens/workspace/commit_changes_menu.dart',
+    ).readAsStringSync();
 
     final stashDialog = gitMixin.substring(
       gitMixin.indexOf(
@@ -483,6 +486,9 @@ void main() {
     );
     final rewordDialog = commitMenu.substring(
       commitMenu.indexOf('Future<String?> _promptRewordMessage({'),
+    );
+    final commitFileDialog = commitChangesMenu.substring(
+      commitChangesMenu.indexOf('Future<String?> _promptCommitMessage('),
     );
 
     expect(stashDialog, isNot(contains('title: Text(title),')));
@@ -495,6 +501,15 @@ void main() {
       rewordDialog,
       contains('title, maxLines: 1, overflow: TextOverflow.ellipsis'),
     );
+    expect(commitFileDialog, contains('workspaceCommitFileDialogWidth'));
+    expect(commitFileDialog, contains('SingleChildScrollView'));
+    expect(
+      commitFileDialog,
+      contains('insetPadding: const EdgeInsets.symmetric'),
+    );
+    expect(commitFileDialog, contains('maxLines: 2'));
+    expect(commitFileDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(commitFileDialog, isNot(contains('content: Column(')));
   });
 
   test('terminal paste guards mounted before writing to the pty', () {
