@@ -173,8 +173,14 @@ void main() {
         [owner, member],
         const [],
         projectOwnerGuardComplete: false,
+        uncheckedProjectNames: const ['Solo'],
       ),
-      '项目负责人状态未确认',
+      '项目负责人状态未确认: Solo',
+    );
+    expect(projectOwnerGuardMessage(const []), '项目负责人状态未确认');
+    expect(
+      projectOwnerGuardMessage(const [' Solo ', 'Ops']),
+      '项目负责人状态未确认: Solo, Ops',
     );
     expect(
       organizationMemberRemovalBlockReason(

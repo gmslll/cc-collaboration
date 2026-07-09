@@ -80,16 +80,28 @@ String? organizationMemberRemovalBlockReason(
   Iterable<OrganizationMember> members,
   Iterable<String> soleOwnedProjectNames, {
   required bool projectOwnerGuardComplete,
+  Iterable<String> uncheckedProjectNames = const [],
 }) {
   final roleReason = organizationMemberRoleChangeBlockReason(member, members);
   if (roleReason != null) return roleReason;
-  if (!projectOwnerGuardComplete) return '项目负责人状态未确认';
+  if (!projectOwnerGuardComplete) {
+    return projectOwnerGuardMessage(uncheckedProjectNames);
+  }
   final names = [
     for (final name in soleOwnedProjectNames)
       if (name.trim().isNotEmpty) name.trim(),
   ];
   if (names.isEmpty) return null;
   return '先转移项目负责人: ${names.join(', ')}';
+}
+
+String projectOwnerGuardMessage(Iterable<String> uncheckedProjectNames) {
+  final names = [
+    for (final name in uncheckedProjectNames)
+      if (name.trim().isNotEmpty) name.trim(),
+  ];
+  if (names.isEmpty) return '项目负责人状态未确认';
+  return '项目负责人状态未确认: ${names.join(', ')}';
 }
 
 String projectOwnerLabel(String identity) =>
@@ -573,6 +585,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   OrganizationDetail? _detail;
   Map<String, List<String>> _soleProjectOwnerNames = const {};
   bool _projectOwnerGuardComplete = true;
+  List<String> _uncheckedProjectOwnerNames = const [];
   final _identity = TextEditingController();
   String _role = 'member';
 
@@ -599,6 +612,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
       final detail = await widget.client.organization(widget.id);
       var soleProjectOwnerNames = const <String, List<String>>{};
       var projectOwnerGuardComplete = true;
+      final uncheckedProjectOwnerNames = <String>[];
       if (_canManageDetail(detail)) {
         final projectDetails = <ProjectDetail>[];
         for (final project in detail.projects) {
@@ -606,6 +620,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
             projectDetails.add(await widget.client.project(project.id));
           } catch (_) {
             projectOwnerGuardComplete = false;
+            uncheckedProjectOwnerNames.add(project.name);
           }
         }
         soleProjectOwnerNames = soleProjectOwnerNamesByIdentity(projectDetails);
@@ -615,6 +630,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
           _detail = detail;
           _soleProjectOwnerNames = soleProjectOwnerNames;
           _projectOwnerGuardComplete = projectOwnerGuardComplete;
+          _uncheckedProjectOwnerNames = uncheckedProjectOwnerNames;
         });
       }
     } catch (e) {
@@ -667,6 +683,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     final canSubmitMember =
         d != null &&
         canUpsertOrganizationMemberRole(memberInput, _role, d.members);
+    final projectOwnerGuardWarning = _projectOwnerGuardComplete
+        ? null
+        : projectOwnerGuardMessage(_uncheckedProjectOwnerNames);
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -722,6 +741,10 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                     '成员',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
+                  if (projectOwnerGuardWarning != null) ...[
+                    const SizedBox(height: 6),
+                    _InlineWarning(projectOwnerGuardWarning),
+                  ],
                   const SizedBox(height: 6),
                   ...d.members.map((m) {
                     final soleOwnedProjects =
@@ -735,6 +758,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                           d.members,
                           soleOwnedProjects,
                           projectOwnerGuardComplete: _projectOwnerGuardComplete,
+                          uncheckedProjectNames: _uncheckedProjectOwnerNames,
                         );
                     return ListTile(
                       dense: true,
@@ -906,6 +930,43 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                 ],
               ),
             ),
+    );
+  }
+}
+
+class _InlineWarning extends StatelessWidget {
+  final String text;
+
+  const _InlineWarning(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: CcColors.warning.withValues(alpha: 0.10),
+        border: Border.all(color: CcColors.warning.withValues(alpha: 0.36)),
+        borderRadius: BorderRadius.circular(CcRadius.md),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.warning_amber_rounded,
+            size: 16,
+            color: CcColors.warning,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: CcColors.warning, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
