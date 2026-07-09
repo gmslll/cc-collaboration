@@ -224,6 +224,12 @@ void main() {
     );
   });
 
+  test('todo dropdown menus are capped for many projects and groups', () {
+    expect(todoMenuMaxHeight(const Size(1024, 900)), 320);
+    expect(todoMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));
+    expect(todoMenuMaxHeight(const Size(320, 220)), 160);
+  });
+
   test('custom project roles keep explainable labels for capped pills', () {
     final members = assignableTodoMembers(
       selfIdentity: '',

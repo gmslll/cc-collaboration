@@ -98,6 +98,18 @@ double todoDialogWidth(
   return available < preferred ? available : preferred;
 }
 
+double todoMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.58,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  final capped = available < preferred ? available : preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 // _BoardColumnDef drives both the kanban board's columns and the mobile
 // card stream's collapsible groups, so they always agree on column meaning.
 // One status = one column now (the real Linear layout this board was always
@@ -1117,12 +1129,19 @@ class _TodosPageState extends State<TodosPage> {
         DropdownButton<String?>(
           value: _projectFilter,
           hint: const Text('全部项目'),
+          menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(context)),
           underline: const SizedBox(),
           items: [
             const DropdownMenuItem<String?>(value: null, child: Text('全部项目')),
             ..._myProjects.map(
-              (p) =>
-                  DropdownMenuItem<String?>(value: p.id, child: Text(p.name)),
+              (p) => DropdownMenuItem<String?>(
+                value: p.id,
+                child: Text(
+                  p.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
           ],
           onChanged: (v) {
@@ -1224,11 +1243,15 @@ class _TodosPageState extends State<TodosPage> {
     final dropdown = DropdownButton<String?>(
       value: _groupFilter,
       hint: const Text('全部分组'),
+      menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(context)),
       underline: const SizedBox(),
       items: [
         const DropdownMenuItem<String?>(value: null, child: Text('全部分组')),
         ..._groups.map(
-          (g) => DropdownMenuItem<String?>(value: g, child: Text(g)),
+          (g) => DropdownMenuItem<String?>(
+            value: g,
+            child: Text(g, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
         ),
       ],
       onChanged: (v) => setState(() => _groupFilter = v),
@@ -2077,12 +2100,19 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
                     DropdownButton<String>(
                       isDense: true,
                       underline: const SizedBox(),
+                      menuMaxHeight: todoMenuMaxHeight(
+                        MediaQuery.sizeOf(context),
+                      ),
                       value: _projectId,
                       items: widget.projects
                           .map(
                             (p) => DropdownMenuItem(
                               value: p.id,
-                              child: Text(p.name),
+                              child: Text(
+                                p.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           )
                           .toList(),
