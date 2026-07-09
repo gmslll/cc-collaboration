@@ -1286,8 +1286,12 @@ class RemoteClient extends RemoteChannel {
   void loadBranches(String repo) => send({'t': 'git.branches', 'path': repo});
   void gitCheckout(String repo, String branch) =>
       send({'t': 'git.checkout', 'path': repo, 'branch': branch});
-  void gitCreateBranch(String repo, String branch) =>
-      send({'t': 'git.createBranch', 'path': repo, 'branch': branch});
+  void gitCreateBranch(String repo, String branch, {String? start}) => send({
+    't': 'git.createBranch',
+    'path': repo,
+    'branch': branch,
+    if (_trimOrNull(start) != null) 'start': _trimOrNull(start),
+  });
   void gitStash(String repo, String message) =>
       send({'t': 'git.stash', 'path': repo, 'message': message});
   void gitStashPop(String repo, String ref) =>

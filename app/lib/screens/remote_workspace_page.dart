@@ -61,6 +61,76 @@ bool remoteGitHasAnyChanges(Iterable<RemoteGitChange> changes) {
   return changes.isNotEmpty;
 }
 
+class _RemoteBranchCreateDraft {
+  final String branch;
+  final String startRef;
+
+  const _RemoteBranchCreateDraft({
+    required this.branch,
+    required this.startRef,
+  });
+}
+
+class _RemoteBranchCreateDialog extends StatefulWidget {
+  final String initialStartRef;
+
+  const _RemoteBranchCreateDialog({this.initialStartRef = ''});
+
+  @override
+  State<_RemoteBranchCreateDialog> createState() =>
+      _RemoteBranchCreateDialogState();
+}
+
+class _RemoteBranchCreateDialogState extends State<_RemoteBranchCreateDialog> {
+  late final TextEditingController _branchCtl = TextEditingController();
+  late final TextEditingController _startCtl = TextEditingController(
+    text: widget.initialStartRef,
+  );
+
+  @override
+  void dispose() {
+    _branchCtl.dispose();
+    _startCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    _RemoteBranchCreateDraft(branch: _branchCtl.text, startRef: _startCtl.text),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新建分支'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _branchCtl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '分支名'),
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _startCtl,
+            decoration: const InputDecoration(labelText: '起点 ref(可选)'),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建并切换')),
+      ],
+    );
+  }
+}
+
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
 // desktop must have "cast to phone" enabled (workspace toolbar).
@@ -1871,14 +1941,26 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   }
 
   Future<void> _newBranchDialog() async {
-    final b = await textPrompt(
-      context,
-      title: '新建分支',
-      hint: '分支名',
-      okLabel: '创建',
+    final current = _c.branches
+        .where((b) => b.current)
+        .map((b) => b.name)
+        .firstOrNull;
+    final draft = await showDialog<_RemoteBranchCreateDraft>(
+      context: context,
+      builder: (_) => _RemoteBranchCreateDialog(initialStartRef: current ?? ''),
     );
     if (!mounted) return;
-    if (b != null) _c.gitCreateBranch(_gitRepo!, b);
+    if (draft == null) return;
+    final branch = draft.branch.trim();
+    if (branch.isEmpty) {
+      snack(context, '分支名不能为空');
+      return;
+    }
+    _c.gitCreateBranch(
+      _gitRepo!,
+      branch,
+      start: draft.startRef.trim().isEmpty ? null : draft.startRef.trim(),
+    );
   }
 
   // --- 管理 (workspace / project / worktree) ---

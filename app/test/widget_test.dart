@@ -656,6 +656,21 @@ void main() {
     expect(renameHelper, isNot(contains('showDialog<bool>')));
   });
 
+  test('remote workspace branch creation supports an explicit start ref', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final helper = source.substring(
+      source.indexOf('Future<void> _newBranchDialog() async {'),
+      source.indexOf('// --- 管理 (workspace / project / worktree) ---'),
+    );
+
+    expect(helper, contains('showDialog<_RemoteBranchCreateDraft>'));
+    expect(helper, contains('_RemoteBranchCreateDialog('));
+    expect(helper, contains('start: draft.startRef.trim().isEmpty'));
+    expect(helper, isNot(contains('textPrompt(')));
+  });
+
   test('todo assign member loader guards mounted before setState', () {
     final source = File('lib/screens/todos_page.dart').readAsStringSync();
     final loader = source.substring(
@@ -1502,7 +1517,7 @@ void main() {
     );
     expectGuardBefore(
       between('Future<void> _newBranchDialog()', '// --- 管理'),
-      'okLabel: \'创建\',',
+      'showDialog<_RemoteBranchCreateDraft>',
       '_c.gitCreateBranch',
     );
     expectGuardBefore(

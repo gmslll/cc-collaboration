@@ -17,6 +17,33 @@ class _TestRemoteClient extends RemoteClient {
 }
 
 void main() {
+  test('remote git create branch includes optional start ref', () {
+    final client = _TestRemoteClient();
+    addTearDown(client.dispose);
+
+    client.gitCreateBranch('/repo', 'feat/team', start: ' origin/main ');
+
+    expect(client.sent, [
+      {
+        't': 'git.createBranch',
+        'path': '/repo',
+        'branch': 'feat/team',
+        'start': 'origin/main',
+      },
+    ]);
+  });
+
+  test('remote git create branch omits blank start ref', () {
+    final client = _TestRemoteClient();
+    addTearDown(client.dispose);
+
+    client.gitCreateBranch('/repo', 'feat/team', start: '   ');
+
+    expect(client.sent, [
+      {'t': 'git.createBranch', 'path': '/repo', 'branch': 'feat/team'},
+    ]);
+  });
+
   testWidgets('remote assign fails immediately when the host is offline', (
     tester,
   ) async {
