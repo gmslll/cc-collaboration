@@ -887,6 +887,12 @@ void main() {
       tester.widget<TextField>(find.byType(TextField).at(1)).enabled,
       isFalse,
     );
+    expect(
+      tester
+          .widget<DropdownButton<String>>(find.byType(DropdownButton<String>))
+          .onChanged,
+      isNull,
+    );
 
     client.completeCreateProject();
     await tester.pumpAndSettle();

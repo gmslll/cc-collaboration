@@ -725,12 +725,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
                               ),
                             ),
                           ],
-                          onChanged: (v) => setState(
-                            () => _selectedOrgId = createProjectTeamId(
-                              v,
-                              _manageableOrgs,
-                            ),
-                          ),
+                          onChanged: _creatingProject || _creatingOrg
+                              ? null
+                              : (v) => setState(
+                                  () => _selectedOrgId = createProjectTeamId(
+                                    v,
+                                    _manageableOrgs,
+                                  ),
+                                ),
                         ),
                       ),
                     FilledButton.icon(
