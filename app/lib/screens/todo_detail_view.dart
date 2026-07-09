@@ -13,6 +13,7 @@ import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
+import '../local/todo_permissions.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_lite_editor.dart';
@@ -51,6 +52,7 @@ class TodoDetailView extends StatefulWidget {
   // _groups field doc). Typing a name not in this list still works; it's
   // created on first use like everywhere else GroupControl appears.
   final List<String> groups;
+  final TodoAccess access;
   // onOpenSession additionally switches the host's own top-level nav to the
   // 工作区 tab before focusing the session (mirrors main.dart's
   // _openSessionInWorkspace, used by SessionOverviewPage) — pass this when
@@ -69,6 +71,7 @@ class TodoDetailView extends StatefulWidget {
     this.overviewStore,
     this.config,
     this.groups = const [],
+    this.access = TodoAccess.full,
     this.onOpenSession,
   });
 
@@ -110,6 +113,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
 
   RelayClient get _client => widget.client;
   String get _id => widget.todo.id;
+  TodoAccess get _access => widget.access;
 
   @override
   void initState() {
@@ -247,6 +251,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _saveTextEdits() async {
+    if (!_access.canEdit) {
+      setState(() => _textDirty = false);
+      return;
+    }
     _bodyDebounce?.cancel();
     setState(() => _saving = true);
     final sentTitle = _titleCtl.text.trim();
@@ -282,6 +290,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _setStatus(TodoStatus s) async {
+    if (!_access.canEdit) {
+      snack(context, '你对这条待办只有只读权限');
+      return;
+    }
     try {
       final updated = await _client.setTodoStatus(_id, s);
       _applyUpdated(updated);
@@ -299,6 +311,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
     String? repoName,
     String? groupName,
   }) async {
+    if (!_access.canEdit) {
+      snack(context, '你对这条待办只有只读权限');
+      return;
+    }
     try {
       final updated = await _client.updateTodo(
         _id,
@@ -457,6 +473,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _delete() async {
+    if (!_access.canDelete) {
+      snack(context, '你对这条待办没有删除权限');
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -484,6 +504,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _postComment() async {
+    if (!_access.canComment) {
+      snack(context, '你对这条待办没有评论权限');
+      return;
+    }
     final body = _commentCtl.text.trim();
     if (body.isEmpty) return;
     try {
@@ -496,6 +520,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _pickAndUploadAttachments() async {
+    if (!_access.canUploadAttachment) {
+      snack(context, '你对这条待办没有上传附件权限');
+      return;
+    }
     final res = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       withData: true,
@@ -588,6 +616,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
               child: TextField(
                 controller: _titleCtl,
                 focusNode: _titleFocus,
+                readOnly: !_access.canEdit,
                 style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
@@ -600,8 +629,8 @@ class TodoDetailViewState extends State<TodoDetailView> {
                   contentPadding: EdgeInsets.zero,
                   hintText: '标题',
                 ),
-                onChanged: (_) => _markTextDirty(),
-                onSubmitted: (_) => _saveTextEdits(),
+                onChanged: _access.canEdit ? (_) => _markTextDirty() : null,
+                onSubmitted: _access.canEdit ? (_) => _saveTextEdits() : null,
               ),
             ),
             if (_saving)
@@ -613,12 +642,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
               ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline_rounded, size: 19),
-              tooltip: '删除待办',
-              visualDensity: VisualDensity.compact,
-              onPressed: _delete,
-            ),
+            if (_access.canDelete)
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded, size: 19),
+                tooltip: '删除待办',
+                visualDensity: VisualDensity.compact,
+                onPressed: _delete,
+              ),
           ],
         ),
         const SizedBox(height: 10),
@@ -627,46 +657,91 @@ class TodoDetailViewState extends State<TodoDetailView> {
           runSpacing: 4,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            StatusControl(
-              status: _current.status,
-              colorOf: _statusColor,
-              onChanged: _setStatus,
-            ),
+            if (_access.canEdit)
+              StatusControl(
+                status: _current.status,
+                colorOf: _statusColor,
+                onChanged: _setStatus,
+              )
+            else
+              _readOnlyPill(
+                icon: Icons.adjust_rounded,
+                label: todoStatusLabel(_current.status),
+                color: _statusColor(_current.status),
+              ),
             _dot(),
-            PriorityControl(
-              priority: priorityLabels.containsKey(_current.priority)
-                  ? _current.priority
-                  : 'normal',
-              onChanged: (v) => _patch(priority: v),
-            ),
+            if (_access.canEdit)
+              PriorityControl(
+                priority: priorityLabels.containsKey(_current.priority)
+                    ? _current.priority
+                    : 'normal',
+                onChanged: (v) => _patch(priority: v),
+              )
+            else
+              _readOnlyPill(
+                icon: Icons.signal_cellular_alt_rounded,
+                label: priorityLabels[_current.priority] ?? '普通',
+              ),
             _dot(),
-            RecurrenceControl(
-              recurrence: recurrenceLabels.containsKey(_current.recurrence)
-                  ? _current.recurrence
-                  : '',
-              onChanged: (v) => _patch(recurrence: v),
-            ),
+            if (_access.canEdit)
+              RecurrenceControl(
+                recurrence: recurrenceLabels.containsKey(_current.recurrence)
+                    ? _current.recurrence
+                    : '',
+                onChanged: (v) => _patch(recurrence: v),
+              )
+            else
+              _readOnlyPill(
+                icon: Icons.repeat_rounded,
+                label: recurrenceLabels[_current.recurrence] ?? '不重复',
+              ),
             _dot(),
-            DueDatePill(
-              dueAt: _current.dueAt,
-              onTap: _pickDueDate,
-              onClear: () => _patch(clearDueAt: true),
-            ),
+            if (_access.canEdit)
+              DueDatePill(
+                dueAt: _current.dueAt,
+                onTap: _pickDueDate,
+                onClear: () => _patch(clearDueAt: true),
+              )
+            else
+              _readOnlyPill(
+                icon: Icons.calendar_today_rounded,
+                label: _current.dueAt == null
+                    ? '截止日期'
+                    : commitDate(_current.dueAt!),
+              ),
             _dot(),
-            WorkspaceRepoControl(
-              workspaceName: _current.workspaceName,
-              repoName: _current.repoName,
-              workspaces: widget.config?.workspaces ?? const [],
-              onBind: _bindRepo,
-              onClear: _clearRepo,
-            ),
+            if (_access.canEdit)
+              WorkspaceRepoControl(
+                workspaceName: _current.workspaceName,
+                repoName: _current.repoName,
+                workspaces: widget.config?.workspaces ?? const [],
+                onBind: _bindRepo,
+                onClear: _clearRepo,
+              )
+            else
+              _readOnlyPill(
+                icon: Icons.dns_rounded,
+                label:
+                    (_current.workspaceName ?? '').isNotEmpty &&
+                        (_current.repoName ?? '').isNotEmpty
+                    ? '${_current.workspaceName} / ${_current.repoName}'
+                    : '未绑定库',
+              ),
             _dot(),
-            GroupControl(
-              groupName: _current.groupName,
-              existingGroups: widget.groups,
-              onSelect: _setGroup,
-              onClear: _clearGroup,
-            ),
+            if (_access.canEdit)
+              GroupControl(
+                groupName: _current.groupName,
+                existingGroups: widget.groups,
+                onSelect: _setGroup,
+                onClear: _clearGroup,
+              )
+            else
+              _readOnlyPill(
+                icon: Icons.folder_outlined,
+                label: (_current.groupName ?? '').isEmpty
+                    ? '未分组'
+                    : _current.groupName!,
+              ),
           ],
         ),
         if ((_current.assigneeIdentity ?? '').isNotEmpty ||
@@ -744,7 +819,9 @@ class TodoDetailViewState extends State<TodoDetailView> {
           )
         : GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => setState(() => _bodyEditing = true),
+            onTap: _access.canEdit
+                ? () => setState(() => _bodyEditing = true)
+                : null,
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 88),
               child: Align(
@@ -767,6 +844,22 @@ class TodoDetailViewState extends State<TodoDetailView> {
     decoration: const BoxDecoration(
       color: CcColors.border,
       shape: BoxShape.circle,
+    ),
+  );
+
+  Widget _readOnlyPill({
+    required IconData icon,
+    required String label,
+    Color color = CcColors.muted,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(fontSize: 12.5, color: color)),
+      ],
     ),
   );
 
@@ -823,17 +916,18 @@ class TodoDetailViewState extends State<TodoDetailView> {
             Expanded(
               child: TextField(
                 controller: _commentCtl,
+                readOnly: !_access.canComment,
                 minLines: 1,
                 maxLines: 4,
                 decoration: const InputDecoration(
                   hintText: '写评论…',
                   isDense: true,
                 ),
-                onSubmitted: (_) => _postComment(),
+                onSubmitted: _access.canComment ? (_) => _postComment() : null,
               ),
             ),
             IconButton(
-              onPressed: _postComment,
+              onPressed: _access.canComment ? _postComment : null,
               icon: const Icon(Icons.send_rounded, size: 20),
             ),
           ],
@@ -854,17 +948,18 @@ class TodoDetailViewState extends State<TodoDetailView> {
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
             ),
             const Spacer(),
-            OutlinedButton.icon(
-              onPressed: _uploading ? null : _pickAndUploadAttachments,
-              icon: _uploading
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.add_rounded, size: 16),
-              label: Text(_uploading ? '上传中…' : '添加附件'),
-            ),
+            if (_access.canUploadAttachment)
+              OutlinedButton.icon(
+                onPressed: _uploading ? null : _pickAndUploadAttachments,
+                icon: _uploading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_rounded, size: 16),
+                label: Text(_uploading ? '上传中…' : '添加附件'),
+              ),
           ],
         ),
         const SizedBox(height: 12),

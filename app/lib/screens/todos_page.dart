@@ -14,6 +14,7 @@ import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../local/todo_assignment_candidates.dart';
 import '../local/todo_materialize.dart';
+import '../local/todo_permissions.dart';
 import '../local/todo_store.dart';
 import '../remote/remote_client.dart';
 import '../theme.dart';
@@ -652,8 +653,18 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   bool get _selectingTodos => _selectedTodoIds.isNotEmpty;
+  List<ProjectRole> get _editableProjects =>
+      _myProjects.where((p) => canCreateProjectTodo(p, _me)).toList();
+
+  TodoAccess _accessFor(Todo t) => todoAccessFor(t, _me);
+  bool get _hasDeletableFilteredTodo =>
+      _filtered.any((t) => _accessFor(t).canDelete);
 
   void _toggleTodoSelection(Todo t) {
+    if (!_accessFor(t).canDelete) {
+      snack(context, '你对这条待办没有删除权限');
+      return;
+    }
     setState(() {
       if (!_selectedTodoIds.add(t.id)) {
         _selectedTodoIds.remove(t.id);
@@ -662,7 +673,10 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   Future<void> _deleteSelectedTodos() async {
-    final ids = _selectedTodoIds.toList();
+    final ids = _selectedTodoIds.where((id) {
+      final matches = _store.all.where((t) => t.id == id);
+      return matches.isNotEmpty && _accessFor(matches.first).canDelete;
+    }).toList();
     if (ids.isEmpty) return;
     final ok = await confirm(
       context,
@@ -753,17 +767,24 @@ class _TodosPageState extends State<TodosPage> {
   Color _statusColor(TodoStatus s) => todoStatusColor(s);
 
   Future<void> _createDialog() async {
+    final editableProjects = _editableProjects;
+    final initialProjectId = editableProjects.any((p) => p.id == _projectFilter)
+        ? _projectFilter
+        : null;
     final created = await showDialog<bool>(
       context: context,
       builder: (_) => _QuickCreateDialog(
         client: _client,
         me: _me,
-        projects: _myProjects,
-        initialScope: _scope == 'team' && _teamSource == 'relay'
+        projects: editableProjects,
+        initialScope:
+            _scope == 'team' &&
+                _teamSource == 'relay' &&
+                editableProjects.isNotEmpty
             ? 'team'
             : 'personal',
         initialProjectId: _scope == 'team' && _teamSource == 'relay'
-            ? _projectFilter
+            ? initialProjectId
             : null,
         groups: _groups,
       ),
@@ -780,6 +801,10 @@ class _TodosPageState extends State<TodosPage> {
   // surfacing a failure.
   Future<void> _dropStatus(Todo t, TodoStatus status) async {
     if (t.status == status) return;
+    if (!_accessFor(t).canEdit) {
+      snack(context, '你对这条待办只有只读权限');
+      return;
+    }
     try {
       await _client.setTodoStatus(t.id, status);
     } catch (e) {
@@ -788,6 +813,10 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   Future<void> _assignDialog(Todo t) async {
+    if (!_accessFor(t).canAssign) {
+      snack(context, '你对这条待办没有指派权限');
+      return;
+    }
     final changed = await showDialog<bool>(
       context: context,
       builder: (_) => _AssignTodoDialog(
@@ -875,11 +904,14 @@ class _TodosPageState extends State<TodosPage> {
               IconButton(
                 icon: const Icon(Icons.checklist_rtl_rounded, size: 18),
                 tooltip: '选择当前筛选结果',
-                onPressed: _filtered.isEmpty
+                onPressed: !_hasDeletableFilteredTodo
                     ? null
                     : () => setState(
-                        () =>
-                            _selectedTodoIds.addAll(_filtered.map((t) => t.id)),
+                        () => _selectedTodoIds.addAll(
+                          _filtered
+                              .where((t) => _accessFor(t).canDelete)
+                              .map((t) => t.id),
+                        ),
                       ),
               ),
             if (wide)
@@ -1312,11 +1344,12 @@ class _TodosPageState extends State<TodosPage> {
                 style: const TextStyle(color: CcColors.muted, fontSize: 12),
               ),
               const Spacer(),
-              OutlinedButton.icon(
-                onPressed: () => _assignDialog(sel),
-                icon: const Icon(Icons.send_rounded, size: 16),
-                label: const Text('指派'),
-              ),
+              if (_accessFor(sel).canAssign)
+                OutlinedButton.icon(
+                  onPressed: () => _assignDialog(sel),
+                  icon: const Icon(Icons.send_rounded, size: 16),
+                  label: const Text('指派'),
+                ),
               // The board view only shows this panel when something's selected
               // (columns reflow to use the freed width otherwise), so it needs
               // its own way to deselect — list view just shows the placeholder
@@ -1338,6 +1371,7 @@ class _TodosPageState extends State<TodosPage> {
             config: _cfg,
             groups: _groups,
             onOpenSession: widget.onOpenSession,
+            access: _accessFor(sel),
             onChanged: (updated) {
               if (mounted) setState(() => _selected = updated);
               _loadGroups();
@@ -1402,7 +1436,8 @@ class _TodosPageState extends State<TodosPage> {
         Expanded(
           child: DragTarget<Todo>(
             onWillAcceptWithDetails: (details) =>
-                details.data.status != def.dropStatus,
+                details.data.status != def.dropStatus &&
+                _accessFor(details.data).canEdit,
             onAcceptWithDetails: (details) =>
                 _dropStatus(details.data, def.dropStatus),
             builder: (context, candidate, rejected) {
@@ -1489,6 +1524,7 @@ class _TodosPageState extends State<TodosPage> {
       onOpen: () => setState(() => _selected = t),
     );
     if (_selectingTodos) return card;
+    if (!_accessFor(t).canEdit) return card;
     return Draggable<Todo>(
       data: t,
       feedback: Opacity(
@@ -1687,11 +1723,12 @@ class _TodosPageState extends State<TodosPage> {
           appBar: AppBar(
             title: const Text('待办详情'),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.send_rounded),
-                tooltip: '指派',
-                onPressed: () => _assignDialog(t),
-              ),
+              if (_accessFor(t).canAssign)
+                IconButton(
+                  icon: const Icon(Icons.send_rounded),
+                  tooltip: '指派',
+                  onPressed: () => _assignDialog(t),
+                ),
             ],
           ),
           body: TodoDetailView(
@@ -1701,6 +1738,7 @@ class _TodosPageState extends State<TodosPage> {
             config: _cfg,
             groups: _groups,
             onOpenSession: widget.onOpenSession,
+            access: _accessFor(t),
             onChanged: (_) => _loadGroups(),
             onDeleted: () {
               if (Navigator.of(context).canPop()) Navigator.of(context).pop();

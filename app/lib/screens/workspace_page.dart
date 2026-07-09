@@ -29,6 +29,7 @@ import '../local/prefs.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
+import '../local/todo_permissions.dart';
 import '../local/todo_store.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
@@ -6400,6 +6401,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     todo: t,
     overviewStore: widget.overviewStore,
     config: _cfg,
+    access: widget.me == null ? TodoAccess.none : todoAccessFor(t, widget.me!),
     // No onOpenSession: this panel lives inside WorkspacePage itself, so
     // overviewStore.requestOpen (TodoDetailView's fallback) is already
     // enough — there's no separate top-level tab to switch away from.
