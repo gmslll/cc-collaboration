@@ -610,6 +610,22 @@ void main() {
     );
   });
 
+  test('member action width leaves room for identity text', () {
+    expect(
+      memberActionWidth(const BoxConstraints(maxWidth: 220)),
+      closeTo(105.6, 0.001),
+    );
+    expect(memberActionWidth(const BoxConstraints(maxWidth: 640)), 156);
+    expect(
+      memberActionWidth(
+        const BoxConstraints(maxWidth: 300),
+        preferred: 180,
+        maxFraction: 0.4,
+      ),
+      120,
+    );
+  });
+
   test('sole project owner map only includes projects with one owner', () {
     ProjectDetail detail({
       required String name,
@@ -935,6 +951,52 @@ void main() {
     expect(tester.getSize(teamPicker), isNotNull);
     expect(tester.getSize(teamPicker).width, lessThanOrEqualTo(208));
     expect(tester.getSize(memberField).width, lessThanOrEqualTo(208));
+  });
+
+  testWidgets('organization sheet member actions fit compact widths', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.widgetWithIcon(IconButton, Icons.close_rounded), findsWidgets);
+  });
+
+  testWidgets('project sheet member actions fit compact widths', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.widgetWithIcon(IconButton, Icons.close_rounded), findsWidgets);
   });
 
   testWidgets('project list clamps long project names and metadata', (

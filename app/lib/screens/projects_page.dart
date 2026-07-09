@@ -262,6 +262,17 @@ double responsiveControlWidth(BoxConstraints constraints, double preferred) {
   return maxWidth < preferred ? maxWidth : preferred;
 }
 
+double memberActionWidth(
+  BoxConstraints constraints, {
+  double preferred = 156,
+  double maxFraction = 0.48,
+}) {
+  final maxWidth = constraints.maxWidth;
+  if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
+  final available = maxWidth * maxFraction.clamp(0, 1);
+  return available < preferred ? available : preferred;
+}
+
 Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   Iterable<ProjectDetail> details,
 ) {
@@ -1116,87 +1127,125 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                           projectOwnerGuardComplete: _projectOwnerGuardComplete,
                           uncheckedProjectNames: _uncheckedProjectOwnerNames,
                         );
-                    return ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.person_rounded, size: 18),
-                      title: Text(
-                        m.displayName.isEmpty ? m.identity : m.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: m.displayName.isEmpty
-                          ? null
-                          : Text(
-                              m.identity,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                      trailing: canManage
-                          ? Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                DropdownButtonHideUnderline(
-                                  child: DropdownButton<String>(
-                                    value: organizationEditableRoleValue(
-                                      m.role,
-                                    ),
-                                    isDense: true,
-                                    items: const [
-                                      DropdownMenuItem(
-                                        value: 'owner',
-                                        child: Text('负责人'),
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final actionWidth = memberActionWidth(constraints);
+                        return ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.person_rounded, size: 18),
+                          title: Text(
+                            m.displayName.isEmpty ? m.identity : m.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: m.displayName.isEmpty
+                              ? null
+                              : Text(
+                                  m.identity,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                          trailing: canManage
+                              ? SizedBox(
+                                  width: actionWidth,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      Expanded(
+                                        child: DropdownButtonHideUnderline(
+                                          child: DropdownButton<String>(
+                                            value:
+                                                organizationEditableRoleValue(
+                                                  m.role,
+                                                ),
+                                            isDense: true,
+                                            isExpanded: true,
+                                            selectedItemBuilder: (_) => const [
+                                              _RoleMenuText('负责人'),
+                                              _RoleMenuText('管理员'),
+                                              _RoleMenuText('成员'),
+                                              _RoleMenuText('访客'),
+                                            ],
+                                            items: const [
+                                              DropdownMenuItem(
+                                                value: 'owner',
+                                                child: Text('负责人'),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: 'admin',
+                                                child: Text('管理员'),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: 'member',
+                                                child: Text('成员'),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: 'guest',
+                                                child: Text('访客'),
+                                              ),
+                                            ],
+                                            onChanged:
+                                                roleChangeBlockReason == null
+                                                ? (role) {
+                                                    if (role == null ||
+                                                        roleMatches(
+                                                          role,
+                                                          m.role,
+                                                        )) {
+                                                      return;
+                                                    }
+                                                    _do(
+                                                      () => widget.client
+                                                          .addOrganizationMember(
+                                                            widget.id,
+                                                            m.identity,
+                                                            role,
+                                                          ),
+                                                    );
+                                                  }
+                                                : null,
+                                          ),
+                                        ),
                                       ),
-                                      DropdownMenuItem(
-                                        value: 'admin',
-                                        child: Text('管理员'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 'member',
-                                        child: Text('成员'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 'guest',
-                                        child: Text('访客'),
+                                      SizedBox(
+                                        width: 36,
+                                        height: 36,
+                                        child: IconButton(
+                                          padding: EdgeInsets.zero,
+                                          tooltip: removeBlockReason ?? '移除',
+                                          icon: Icon(
+                                            Icons.close_rounded,
+                                            size: 18,
+                                            color: removeBlockReason == null
+                                                ? CcColors.muted
+                                                : CcColors.subtle,
+                                          ),
+                                          onPressed: removeBlockReason == null
+                                              ? () => _removeMember(m.identity)
+                                              : null,
+                                        ),
                                       ),
                                     ],
-                                    onChanged: roleChangeBlockReason == null
-                                        ? (role) {
-                                            if (role == null ||
-                                                roleMatches(role, m.role)) {
-                                              return;
-                                            }
-                                            _do(
-                                              () => widget.client
-                                                  .addOrganizationMember(
-                                                    widget.id,
-                                                    m.identity,
-                                                    role,
-                                                  ),
-                                            );
-                                          }
-                                        : null,
+                                  ),
+                                )
+                              : SizedBox(
+                                  width: actionWidth,
+                                  child: Text(
+                                    organizationRoleLabel(
+                                      m.role,
+                                      isAdmin: false,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      color: CcColors.muted,
+                                    ),
                                   ),
                                 ),
-                                IconButton(
-                                  tooltip: removeBlockReason ?? '移除',
-                                  icon: Icon(
-                                    Icons.close_rounded,
-                                    size: 18,
-                                    color: removeBlockReason == null
-                                        ? CcColors.muted
-                                        : CcColors.subtle,
-                                  ),
-                                  onPressed: removeBlockReason == null
-                                      ? () => _removeMember(m.identity)
-                                      : null,
-                                ),
-                              ],
-                            )
-                          : Text(
-                              organizationRoleLabel(m.role, isAdmin: false),
-                              style: const TextStyle(color: CcColors.muted),
-                            ),
+                        );
+                      },
                     );
                   }),
                   if (canManage) ...[
@@ -1340,6 +1389,17 @@ class _InlineWarning extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _RoleMenuText extends StatelessWidget {
+  final String text;
+
+  const _RoleMenuText(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
   }
 }
 
@@ -1645,88 +1705,127 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                     );
                     final roleChangeBlockReason =
                         projectMemberRoleChangeBlockReason(m, d.members);
-                    return ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: statusDot(
-                        _isOnline(m.identity) ? CcColors.ok : CcColors.subtle,
-                        size: 9,
-                        glow: _isOnline(m.identity),
-                      ),
-                      title: Text(
-                        projectMemberTitle(m),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: subtitle == null
-                          ? null
-                          : Text(
-                              subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (canManage)
-                            DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: projectEditableRoleValue(m.role),
-                                isDense: true,
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 'owner',
-                                    child: Text('负责人'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'member',
-                                    child: Text('成员'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'viewer',
-                                    child: Text('只读'),
-                                  ),
-                                ],
-                                onChanged: roleChangeBlockReason == null
-                                    ? (role) {
-                                        if (role == null ||
-                                            roleMatches(role, m.role)) {
-                                          return;
-                                        }
-                                        _do(
-                                          () => widget.client.addMember(
-                                            widget.id,
-                                            m.identity,
-                                            role,
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final actionWidth = memberActionWidth(constraints);
+                        return ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: statusDot(
+                            _isOnline(m.identity)
+                                ? CcColors.ok
+                                : CcColors.subtle,
+                            size: 9,
+                            glow: _isOnline(m.identity),
+                          ),
+                          title: Text(
+                            projectMemberTitle(m),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: subtitle == null
+                              ? null
+                              : Text(
+                                  subtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                          trailing: SizedBox(
+                            width: actionWidth,
+                            child: canManage
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      Expanded(
+                                        child: DropdownButtonHideUnderline(
+                                          child: DropdownButton<String>(
+                                            value: projectEditableRoleValue(
+                                              m.role,
+                                            ),
+                                            isDense: true,
+                                            isExpanded: true,
+                                            selectedItemBuilder: (_) => const [
+                                              _RoleMenuText('负责人'),
+                                              _RoleMenuText('成员'),
+                                              _RoleMenuText('只读'),
+                                            ],
+                                            items: const [
+                                              DropdownMenuItem(
+                                                value: 'owner',
+                                                child: Text('负责人'),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: 'member',
+                                                child: Text('成员'),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: 'viewer',
+                                                child: Text('只读'),
+                                              ),
+                                            ],
+                                            onChanged:
+                                                roleChangeBlockReason == null
+                                                ? (role) {
+                                                    if (role == null ||
+                                                        roleMatches(
+                                                          role,
+                                                          m.role,
+                                                        )) {
+                                                      return;
+                                                    }
+                                                    _do(
+                                                      () => widget.client
+                                                          .addMember(
+                                                            widget.id,
+                                                            m.identity,
+                                                            role,
+                                                          ),
+                                                    );
+                                                  }
+                                                : null,
                                           ),
-                                        );
-                                      }
-                                    : null,
-                              ),
-                            )
-                          else
-                            Text(
-                              projectRoleLabel(m.role),
-                              style: const TextStyle(color: CcColors.muted),
-                            ),
-                          if (canManage)
-                            IconButton(
-                              tooltip: canRemoveMember ? '移除' : '至少保留一个项目负责人',
-                              icon: const Icon(Icons.close_rounded, size: 18),
-                              color: canRemoveMember
-                                  ? CcColors.muted
-                                  : CcColors.subtle,
-                              onPressed: canRemoveMember
-                                  ? () => _do(
-                                      () => widget.client.removeMember(
-                                        widget.id,
-                                        m.identity,
+                                        ),
                                       ),
-                                    )
-                                  : null,
-                            ),
-                        ],
-                      ),
+                                      SizedBox(
+                                        width: 36,
+                                        height: 36,
+                                        child: IconButton(
+                                          padding: EdgeInsets.zero,
+                                          tooltip: canRemoveMember
+                                              ? '移除'
+                                              : '至少保留一个项目负责人',
+                                          icon: const Icon(
+                                            Icons.close_rounded,
+                                            size: 18,
+                                          ),
+                                          color: canRemoveMember
+                                              ? CcColors.muted
+                                              : CcColors.subtle,
+                                          onPressed: canRemoveMember
+                                              ? () => _do(
+                                                  () => widget.client
+                                                      .removeMember(
+                                                        widget.id,
+                                                        m.identity,
+                                                      ),
+                                                )
+                                              : null,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    projectRoleLabel(m.role),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      color: CcColors.muted,
+                                    ),
+                                  ),
+                          ),
+                        );
+                      },
                     );
                   }),
                   if (canManage)
