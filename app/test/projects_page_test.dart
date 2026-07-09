@@ -1393,6 +1393,51 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'project sheet mutation after account switch closes stale sheet',
+    (tester) async {
+      final oldClient = _CountingProjectMemberProjectsPageFakeClient();
+      final newClient = _CountingLoadProjectsPageFakeClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: oldClient)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Backend'));
+      await tester.pumpAndSettle();
+
+      final memberField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'identity',
+      );
+      await tester.enterText(memberField, 'dev@x');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, '加成员'));
+      await tester.pump();
+      expect(oldClient.addMemberCalls, 1);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: newClient)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      final newLoadCount = newClient.projectsCalls;
+
+      oldClient.completeAddMember();
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(FilledButton, '加成员'), findsNothing);
+      expect(newClient.projectsCalls, newLoadCount);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('project sheet locks delete while request is pending', (
     tester,
   ) async {
@@ -1542,6 +1587,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'organization sheet mutation after account switch closes stale sheet',
+    (tester) async {
+      final oldClient = _CountingOrgMemberProjectsPageFakeClient();
+      final newClient = _CountingLoadProjectsPageFakeClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: oldClient)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Kunlun').last);
+      await tester.pumpAndSettle();
+
+      final memberField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == '成员 identity',
+      );
+      await tester.enterText(memberField, 'qa@x');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, '加入团队'));
+      await tester.pump();
+      expect(oldClient.addOrganizationMemberCalls, 1);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: newClient)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      final newLoadCount = newClient.projectsCalls;
+
+      oldClient.completeAddOrganizationMember();
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(FilledButton, '加入团队'), findsNothing);
+      expect(newClient.projectsCalls, newLoadCount);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('organization sheet member input shrinks on compact widths', (
     tester,
@@ -2187,6 +2277,16 @@ class _CountingProjectMemberProjectsPageFakeClient
 
   void completeAddMember() {
     if (!_addMemberCompleter.isCompleted) _addMemberCompleter.complete();
+  }
+}
+
+class _CountingLoadProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  int projectsCalls = 0;
+
+  @override
+  Future<List<Project>> projects() {
+    projectsCalls++;
+    return super.projects();
   }
 }
 

@@ -530,6 +530,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
       generation == _loadGeneration &&
       identical(client, widget.client);
 
+  bool _isCurrentClient(RelayClient client) =>
+      mounted && identical(client, widget.client);
+
   Future<void> _create() async {
     final name = _name.text.trim();
     if (name.isEmpty || _creatingProject) return;
@@ -626,13 +629,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   Future<void> _showOrganizationSheet(Organization org) async {
+    final client = widget.client;
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (_) => _OrganizationSheet(
-        client: widget.client,
+        client: client,
         id: org.id,
         isAdmin: _isAdmin,
+        isCurrentContext: () => _isCurrentClient(client),
         onChanged: _load,
       ),
     );
@@ -902,19 +907,23 @@ class _ProjectsPageState extends State<ProjectsPage> {
             (p) => Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: HoverLift(
-                onTap: () => showModalBottomSheet(
-                  context: context,
-                  isScrollControlled: true,
-                  builder: (_) => _ProjectSheet(
-                    client: widget.client,
-                    id: p.id,
-                    teamName: _teamName(p.orgId),
-                    identity: _identity,
-                    isAdmin: _isAdmin,
-                    online: _online,
-                    onChanged: _load,
-                  ),
-                ),
+                onTap: () {
+                  final client = widget.client;
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => _ProjectSheet(
+                      client: client,
+                      id: p.id,
+                      teamName: _teamName(p.orgId),
+                      identity: _identity,
+                      isAdmin: _isAdmin,
+                      online: _online,
+                      isCurrentContext: () => _isCurrentClient(client),
+                      onChanged: _load,
+                    ),
+                  );
+                },
                 child: Row(
                   children: [
                     const Icon(
@@ -1167,12 +1176,14 @@ class _OrganizationSheet extends StatefulWidget {
   final RelayClient client;
   final String id;
   final bool isAdmin;
+  final bool Function() isCurrentContext;
   final VoidCallback onChanged;
 
   const _OrganizationSheet({
     required this.client,
     required this.id,
     required this.isAdmin,
+    required this.isCurrentContext,
     required this.onChanged,
   });
 
@@ -1214,6 +1225,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     final generation = ++_loadGeneration;
     try {
       final detail = await widget.client.organization(widget.id);
+      if (!_isCurrentLoad(generation)) return;
       var soleProjectOwnerNames = const <String, List<String>>{};
       var projectOwnerGuardComplete = true;
       final uncheckedProjectOwnerNames = <String>[];
@@ -1222,7 +1234,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
         for (final project in detail.projects) {
           try {
             projectDetails.add(await widget.client.project(project.id));
+            if (!_isCurrentLoad(generation)) return;
           } catch (_) {
+            if (!_isCurrentLoad(generation)) return;
             projectOwnerGuardComplete = false;
             uncheckedProjectOwnerNames.add(project.name);
           }
@@ -1238,13 +1252,20 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
         });
       }
     } catch (e) {
-      if (!mounted || generation != _loadGeneration) return;
+      if (!mounted) return;
+      if (generation != _loadGeneration || !widget.isCurrentContext()) return;
       snack(context, errorText(e));
     }
   }
 
   bool _isCurrentLoad(int generation) =>
-      mounted && generation == _loadGeneration;
+      mounted && generation == _loadGeneration && widget.isCurrentContext();
+
+  bool _closeIfStaleContext() {
+    if (widget.isCurrentContext()) return false;
+    Navigator.pop(context);
+    return true;
+  }
 
   Future<bool> _do(
     Future<void> Function() action, {
@@ -1252,17 +1273,26 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   }) async {
     if (!mounted) return false;
     if (_mutating) return false;
+    if (_closeIfStaleContext()) return false;
     if (mounted) setState(() => _mutationAction = actionKey);
     try {
       await action();
+      if (!mounted) return false;
+      if (_closeIfStaleContext()) return false;
       await _load();
+      if (!mounted) return false;
+      if (_closeIfStaleContext()) return false;
       widget.onChanged();
       return true;
     } catch (e) {
+      if (!mounted) return false;
+      if (_closeIfStaleContext()) return false;
       if (mounted) snack(context, errorText(e));
       return false;
     } finally {
-      if (mounted) setState(() => _mutationAction = null);
+      if (mounted && widget.isCurrentContext()) {
+        setState(() => _mutationAction = null);
+      }
     }
   }
 
@@ -1688,6 +1718,7 @@ class _ProjectSheet extends StatefulWidget {
   final String identity;
   final bool isAdmin;
   final List<OnlineUser> online;
+  final bool Function() isCurrentContext;
   final VoidCallback onChanged;
   const _ProjectSheet({
     required this.client,
@@ -1696,6 +1727,7 @@ class _ProjectSheet extends StatefulWidget {
     required this.identity,
     required this.isAdmin,
     required this.online,
+    required this.isCurrentContext,
     required this.onChanged,
   });
 
@@ -1745,12 +1777,15 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     final generation = ++_loadGeneration;
     try {
       final d = await widget.client.project(widget.id);
+      if (!_isCurrentLoad(generation)) return;
       var orgMembers = const <OrganizationMember>[];
       if (d.project.orgId.isNotEmpty) {
         try {
           final org = await widget.client.organization(d.project.orgId);
+          if (!_isCurrentLoad(generation)) return;
           orgMembers = org.members;
         } catch (_) {
+          if (!_isCurrentLoad(generation)) return;
           orgMembers = const [];
         }
       }
@@ -1761,13 +1796,20 @@ class _ProjectSheetState extends State<_ProjectSheet> {
         });
       }
     } catch (e) {
-      if (!mounted || generation != _loadGeneration) return;
+      if (!mounted) return;
+      if (generation != _loadGeneration || !widget.isCurrentContext()) return;
       snack(context, errorText(e));
     }
   }
 
   bool _isCurrentLoad(int generation) =>
-      mounted && generation == _loadGeneration;
+      mounted && generation == _loadGeneration && widget.isCurrentContext();
+
+  bool _closeIfStaleContext() {
+    if (widget.isCurrentContext()) return false;
+    Navigator.pop(context);
+    return true;
+  }
 
   Future<bool> _do(
     Future<void> Function() action, {
@@ -1775,17 +1817,26 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   }) async {
     if (!mounted) return false;
     if (_mutating) return false;
+    if (_closeIfStaleContext()) return false;
     if (mounted) setState(() => _mutationAction = actionKey);
     try {
       await action();
+      if (!mounted) return false;
+      if (_closeIfStaleContext()) return false;
       await _load();
+      if (!mounted) return false;
+      if (_closeIfStaleContext()) return false;
       widget.onChanged();
       return true;
     } catch (e) {
+      if (!mounted) return false;
+      if (_closeIfStaleContext()) return false;
       if (mounted) snack(context, errorText(e));
       return false;
     } finally {
-      if (mounted) setState(() => _mutationAction = null);
+      if (mounted && widget.isCurrentContext()) {
+        setState(() => _mutationAction = null);
+      }
     }
   }
 
@@ -1859,12 +1910,18 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     if (mounted) setState(() => _mutationAction = 'deleteProject');
     try {
       await widget.client.deleteProject(widget.id);
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       widget.onChanged();
       if (mounted) Navigator.pop(context);
     } catch (e) {
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       if (mounted) snack(context, errorText(e));
     } finally {
-      if (mounted) setState(() => _mutationAction = null);
+      if (mounted && widget.isCurrentContext()) {
+        setState(() => _mutationAction = null);
+      }
     }
   }
 
