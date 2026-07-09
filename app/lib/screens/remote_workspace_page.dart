@@ -381,8 +381,8 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Future<void> _openScreenShare(ShareSource source) async {
     await _c.shareViewer.init();
-    _c.startShare(source);
     if (!mounted) return;
+    _c.startShare(source);
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ScreenShareViewerPage(client: _c, source: source),
@@ -2640,6 +2640,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 
   Future<void> _paste() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
     final text = data?.text;
     // term.paste routes through term.onOutput → term.input, so it reaches the host.
     if (text != null && text.isNotEmpty) _term.paste(text);

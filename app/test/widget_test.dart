@@ -877,6 +877,11 @@ void main() {
       'if (ok) action();',
     );
     expectGuardBefore(
+      between('Future<void> _openScreenShare(', '// _xferTile renders'),
+      'await _c.shareViewer.init();',
+      '_c.startShare(source)',
+    );
+    expectGuardBefore(
       between('Future<void> _commitDialog()', 'Future<void> _stashDialog()'),
       'showDialog<RemoteCommitDraft>',
       '_c.gitCommit',
@@ -923,6 +928,11 @@ void main() {
       between('Future<void> _remove(', '@override\n  Widget build'),
       'final ok = await confirm',
       'widget.client.removeWorktree',
+    );
+    expectGuardBefore(
+      between('Future<void> _paste()', '// _sendImage picks'),
+      'Clipboard.getData',
+      '_term.paste(text)',
     );
 
     final keyEditor = between(
