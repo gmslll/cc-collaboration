@@ -1627,11 +1627,11 @@ function renderUsers(users) {
       <div class="aux-card-head">
         <div>
           <strong>${escapeHTML(u.identity)}</strong>
-          ${u.is_admin ? `<span class="badge">admin</span>` : ""}
-          ${u.disabled ? `<span class="badge expired">disabled</span>` : ""}
+          ${u.is_admin ? `<span class="badge">系统管理员</span>` : ""}
+          ${u.disabled ? `<span class="badge expired">已停用</span>` : ""}
         </div>
         <div class="aux-card-actions">
-          <button class="secondary" type="button" data-uaction="admin">${u.is_admin ? "取消 admin" : "设为 admin"}</button>
+          <button class="secondary" type="button" data-uaction="admin">${u.is_admin ? "取消管理员" : "授予管理员"}</button>
           <button class="secondary" type="button" data-uaction="disable">${u.disabled ? "启用" : "停用"}</button>
           <button class="secondary" type="button" data-uaction="reset">重置密码</button>
         </div>

@@ -171,6 +171,30 @@ func TestRelayUIChromeUsesLocalizedTeamCopy(t *testing.T) {
 	}
 }
 
+func TestAdminAccountsUIUsesLocalizedStatusCopy(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	required := []string{
+		`${u.is_admin ? ` + "`<span class=\"badge\">系统管理员</span>`" + ` : ""}`,
+		`${u.disabled ? ` + "`<span class=\"badge expired\">已停用</span>`" + ` : ""}`,
+		`${u.is_admin ? "取消管理员" : "授予管理员"}`,
+	}
+	for _, want := range required {
+		if !strings.Contains(js, want) {
+			t.Fatalf("admin account UI is missing localized status copy %q", want)
+		}
+	}
+	if strings.Contains(js, `<span class="badge">admin</span>`) {
+		t.Fatal("admin account UI still renders raw admin badge text")
+	}
+	if strings.Contains(js, `<span class="badge expired">disabled</span>`) {
+		t.Fatal("admin account UI still renders raw disabled badge text")
+	}
+}
+
 func TestOrganizationManageUIProtectsProjectSoleOwners(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {
