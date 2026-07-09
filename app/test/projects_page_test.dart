@@ -122,6 +122,71 @@ void main() {
     expect(canUpsertOrganizationMemberRole('', 'member', [owner]), isFalse);
   });
 
+  test('organization removal block reasons are stricter than role changes', () {
+    final owner = OrganizationMember.fromJson({
+      'identity': 'owner@x',
+      'role': 'owner',
+    });
+    final member = OrganizationMember.fromJson({
+      'identity': 'member@x',
+      'role': 'member',
+    });
+    final secondOwner = OrganizationMember.fromJson({
+      'identity': 'owner2@x',
+      'role': 'owner',
+    });
+
+    expect(
+      organizationMemberRoleChangeBlockReason(owner, [owner, member]),
+      '至少保留一个负责人',
+    );
+    expect(
+      organizationMemberRemovalBlockReason(
+        owner,
+        [owner, member],
+        const [],
+        projectOwnerGuardComplete: true,
+      ),
+      '至少保留一个负责人',
+    );
+
+    expect(
+      organizationMemberRoleChangeBlockReason(owner, [
+        owner,
+        secondOwner,
+        member,
+      ]),
+      isNull,
+    );
+    expect(
+      organizationMemberRemovalBlockReason(
+        owner,
+        [owner, secondOwner, member],
+        const ['Solo'],
+        projectOwnerGuardComplete: true,
+      ),
+      '先转移项目负责人: Solo',
+    );
+    expect(
+      organizationMemberRemovalBlockReason(
+        member,
+        [owner, member],
+        const [],
+        projectOwnerGuardComplete: false,
+      ),
+      '项目负责人状态未确认',
+    );
+    expect(
+      organizationMemberRemovalBlockReason(
+        member,
+        [owner, member],
+        const [],
+        projectOwnerGuardComplete: true,
+      ),
+      isNull,
+    );
+  });
+
   test('project owner label uses localized owner text', () {
     expect(projectOwnerLabel('owner@x'), '负责人 · owner@x');
   });

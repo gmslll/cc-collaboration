@@ -70,6 +70,28 @@ bool canUpsertOrganizationMemberRole(
   return true;
 }
 
+String? organizationMemberRoleChangeBlockReason(
+  OrganizationMember member,
+  Iterable<OrganizationMember> members,
+) => canRemoveOrganizationMember(member, members) ? null : '至少保留一个负责人';
+
+String? organizationMemberRemovalBlockReason(
+  OrganizationMember member,
+  Iterable<OrganizationMember> members,
+  Iterable<String> soleOwnedProjectNames, {
+  required bool projectOwnerGuardComplete,
+}) {
+  final roleReason = organizationMemberRoleChangeBlockReason(member, members);
+  if (roleReason != null) return roleReason;
+  if (!projectOwnerGuardComplete) return '项目负责人状态未确认';
+  final names = [
+    for (final name in soleOwnedProjectNames)
+      if (name.trim().isNotEmpty) name.trim(),
+  ];
+  if (names.isEmpty) return null;
+  return '先转移项目负责人: ${names.join(', ')}';
+}
+
 String projectOwnerLabel(String identity) =>
     '${projectRoleLabel('owner')} · $identity';
 
@@ -550,6 +572,7 @@ class _OrganizationSheet extends StatefulWidget {
 class _OrganizationSheetState extends State<_OrganizationSheet> {
   OrganizationDetail? _detail;
   Map<String, List<String>> _soleProjectOwnerNames = const {};
+  bool _projectOwnerGuardComplete = true;
   final _identity = TextEditingController();
   String _role = 'member';
 
@@ -575,14 +598,14 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     try {
       final detail = await widget.client.organization(widget.id);
       var soleProjectOwnerNames = const <String, List<String>>{};
+      var projectOwnerGuardComplete = true;
       if (_canManageDetail(detail)) {
         final projectDetails = <ProjectDetail>[];
         for (final project in detail.projects) {
           try {
             projectDetails.add(await widget.client.project(project.id));
           } catch (_) {
-            // Best effort: if a project detail fails to load, leave removal to
-            // the relay's authoritative guard for that project.
+            projectOwnerGuardComplete = false;
           }
         }
         soleProjectOwnerNames = soleProjectOwnerNamesByIdentity(projectDetails);
@@ -591,6 +614,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
         setState(() {
           _detail = detail;
           _soleProjectOwnerNames = soleProjectOwnerNames;
+          _projectOwnerGuardComplete = projectOwnerGuardComplete;
         });
       }
     } catch (e) {
@@ -703,15 +727,15 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                     final soleOwnedProjects =
                         _soleProjectOwnerNames[m.identity.trim()] ??
                         const <String>[];
-                    final canRemoveMember =
-                        canRemoveOrganizationMember(m, d.members) &&
-                        soleOwnedProjects.isEmpty;
+                    final roleChangeBlockReason =
+                        organizationMemberRoleChangeBlockReason(m, d.members);
                     final removeBlockReason =
-                        !canRemoveOrganizationMember(m, d.members)
-                        ? '至少保留一个负责人'
-                        : (soleOwnedProjects.isEmpty
-                              ? ''
-                              : '先转移项目负责人: ${soleOwnedProjects.join(', ')}');
+                        organizationMemberRemovalBlockReason(
+                          m,
+                          d.members,
+                          soleOwnedProjects,
+                          projectOwnerGuardComplete: _projectOwnerGuardComplete,
+                        );
                     return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -754,7 +778,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                         child: Text('访客'),
                                       ),
                                     ],
-                                    onChanged: canRemoveMember
+                                    onChanged: roleChangeBlockReason == null
                                         ? (role) {
                                             if (role == null ||
                                                 role == m.role) {
@@ -773,17 +797,15 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                   ),
                                 ),
                                 IconButton(
-                                  tooltip: canRemoveMember
-                                      ? '移除'
-                                      : removeBlockReason,
+                                  tooltip: removeBlockReason ?? '移除',
                                   icon: Icon(
                                     Icons.close_rounded,
                                     size: 18,
-                                    color: canRemoveMember
+                                    color: removeBlockReason == null
                                         ? CcColors.muted
                                         : CcColors.subtle,
                                   ),
-                                  onPressed: canRemoveMember
+                                  onPressed: removeBlockReason == null
                                       ? () => _removeMember(m.identity)
                                       : null,
                                 ),
