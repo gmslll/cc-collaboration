@@ -54,6 +54,14 @@ String projectMemberTitle(ProjectMember member) =>
 String? projectMemberSubtitle(ProjectMember member) =>
     member.displayName.isEmpty ? null : member.identity;
 
+int projectOwnerCount(Iterable<ProjectMember> members) =>
+    members.where((m) => m.role == 'owner').length;
+
+bool canRemoveProjectMember(
+  ProjectMember member,
+  Iterable<ProjectMember> members,
+) => member.role != 'owner' || projectOwnerCount(members) > 1;
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -1059,6 +1067,10 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                   ),
                   ...d.members.map((m) {
                     final subtitle = projectMemberSubtitle(m);
+                    final canRemoveMember = canRemoveProjectMember(
+                      m,
+                      d.members,
+                    );
                     return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -1078,13 +1090,19 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           ),
                           if (canManage)
                             IconButton(
+                              tooltip: canRemoveMember ? '移除' : '至少保留一个项目负责人',
                               icon: const Icon(Icons.close_rounded, size: 18),
-                              onPressed: () => _do(
-                                () => widget.client.removeMember(
-                                  widget.id,
-                                  m.identity,
-                                ),
-                              ),
+                              color: canRemoveMember
+                                  ? CcColors.muted
+                                  : CcColors.subtle,
+                              onPressed: canRemoveMember
+                                  ? () => _do(
+                                      () => widget.client.removeMember(
+                                        widget.id,
+                                        m.identity,
+                                      ),
+                                    )
+                                  : null,
                             ),
                         ],
                       ),

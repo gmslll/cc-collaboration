@@ -119,4 +119,24 @@ void main() {
     expect(projectMemberTitle(blank), 'ops@x');
     expect(projectMemberSubtitle(blank), isNull);
   });
+
+  test('project member removal protects the last project owner', () {
+    final owner = ProjectMember.fromJson({
+      'identity': 'owner@x',
+      'role': 'owner',
+    });
+    final member = ProjectMember.fromJson({
+      'identity': 'member@x',
+      'role': 'member',
+    });
+    final secondOwner = ProjectMember.fromJson({
+      'identity': 'owner2@x',
+      'role': 'owner',
+    });
+
+    expect(projectOwnerCount([owner, member]), 1);
+    expect(canRemoveProjectMember(owner, [owner, member]), isFalse);
+    expect(canRemoveProjectMember(member, [owner, member]), isTrue);
+    expect(canRemoveProjectMember(owner, [owner, secondOwner, member]), isTrue);
+  });
 }
