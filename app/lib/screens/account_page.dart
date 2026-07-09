@@ -386,6 +386,24 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  Future<void> _deleteToken(MachineToken token) async {
+    final label = token.label.trim().isEmpty ? token.id : token.label.trim();
+    final ok = await confirm(
+      context,
+      '删除机器 token $label？已部署到 CLI / watch / MCP 的机器会失去访问权限。',
+      title: '删除机器 token',
+      okLabel: '删除',
+    );
+    if (!ok) return;
+    if (!mounted) return;
+    try {
+      await widget.client.deleteToken(token.id);
+      await _loadTokens();
+    } catch (e) {
+      if (mounted) snack(context, '$e');
+    }
+  }
+
   void _showToken(String raw) {
     showDialog(
       context: context,
@@ -585,14 +603,8 @@ class _AccountPageState extends State<AccountPage> {
                       ),
                       trailing: IconButton(
                         icon: const Icon(Icons.delete_rounded, size: 20),
-                        onPressed: () async {
-                          try {
-                            await widget.client.deleteToken(t.id);
-                            await _loadTokens();
-                          } catch (e) {
-                            if (context.mounted) snack(context, '$e');
-                          }
-                        },
+                        tooltip: '删除机器 token',
+                        onPressed: () => _deleteToken(t),
                       ),
                     ),
                   ),
