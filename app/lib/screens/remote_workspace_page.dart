@@ -1324,6 +1324,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       initial: s.title,
       allowEmpty: true,
     );
+    if (!mounted) return;
     if (name != null) _c.renameSession(s.sid, name);
   }
 
@@ -1671,7 +1672,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   );
 
   Future<void> _confirmThen(String msg, VoidCallback action) async {
-    if (await confirm(context, msg)) action();
+    final ok = await confirm(context, msg);
+    if (!mounted) return;
+    if (ok) action();
   }
 
   Future<void> _commitDialog() async {
@@ -1679,6 +1682,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       context: context,
       builder: (_) => const RemoteCommitDialog(),
     );
+    if (!mounted) return;
     if (draft != null) {
       _c.gitCommit(_gitRepo!, draft.message, push: draft.push);
     }
@@ -1692,6 +1696,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       okLabel: 'Stash',
       allowEmpty: true,
     );
+    if (!mounted) return;
     if (msg != null) _c.gitStash(_gitRepo!, msg);
   }
 
@@ -1756,6 +1761,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       hint: '分支名',
       okLabel: '创建',
     );
+    if (!mounted) return;
     if (b != null) _c.gitCreateBranch(_gitRepo!, b);
   }
 
@@ -1853,6 +1859,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       context: context,
       builder: (_) => const RemoteWorkspaceCreateDialog(),
     );
+    if (!mounted) return;
     if (draft != null) {
       _c.newWorkspace(draft.name, draft.path);
     }
@@ -1865,6 +1872,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       hint: 'GitHub URL 或本地路径',
       okLabel: '添加',
     );
+    if (!mounted) return;
     if (src != null) _c.addProject(ws, src);
   }
 }
@@ -3315,6 +3323,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                             ),
                             onTap: () async {
                               final r = await _editKeyDialog(kb);
+                              if (!mounted || !sheetCtx.mounted) return;
                               if (r != null) {
                                 apply(() {
                                   kb.label = r.label;
@@ -3335,6 +3344,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   FilledButton.icon(
                     onPressed: () async {
                       final r = await _editKeyDialog(null);
+                      if (!mounted || !sheetCtx.mounted) return;
                       if (r != null) apply(() => _keys.add(r));
                     },
                     icon: const Icon(Icons.add),
@@ -3776,12 +3786,14 @@ class _SupervisorKnowledgeDialogState
         ),
       ),
     );
+    if (!mounted) return;
     // Refresh so "已存在" reflects files just created/saved.
     widget.client.openDir(_cwd);
   }
 
   Future<void> _newFile() async {
     final name = await textPrompt(context, title: '新建文件', hint: '文件名.md');
+    if (!mounted) return;
     if (name == null || name.trim().isEmpty) return;
     final n = name.trim();
     _openFile(n.endsWith('.md') ? n : '$n.md', initial: '');
@@ -4164,6 +4176,7 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
       context: context,
       builder: (_) => const RemoteWorktreeCreateDialog(),
     );
+    if (!mounted) return;
     if (draft != null) {
       widget.client.addWorktree(
         widget.project.workspace,
@@ -4176,7 +4189,9 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
 
   Future<void> _remove(RemoteWorktree w) async {
     final label = w.branch.isEmpty ? w.name : w.branch;
-    if (await confirm(context, '删除 worktree $label？', okLabel: '删除')) {
+    final ok = await confirm(context, '删除 worktree $label？', okLabel: '删除');
+    if (!mounted) return;
+    if (ok) {
       widget.client.removeWorktree(
         widget.project.workspace,
         widget.project.name,

@@ -303,8 +303,13 @@ void main() {
   test('workspace async dialogs guard mounted before state changes', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
 
-    String between(String start, String end) =>
-        source.substring(source.indexOf(start), source.indexOf(end));
+    String between(String start, String end) {
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
 
     void expectGuardBefore(String body, String after, String before) {
       final afterIndex = body.indexOf(after);
@@ -422,6 +427,118 @@ void main() {
     expect(guardIndex, isNonNegative);
     expect(loadingIndex, isNonNegative);
     expect(guardIndex, lessThan(loadingIndex));
+  });
+
+  test('remote workspace dialogs guard mounted before remote commands', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+
+    String between(String start, String end) {
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
+
+    void expectGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return;', afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    expectGuardBefore(
+      between('Future<void> _renameSessionDialog(', 'Widget _codeTab()'),
+      'allowEmpty: true,',
+      '_c.renameSession',
+    );
+    expectGuardBefore(
+      between('Future<void> _confirmThen(', 'Future<void> _commitDialog()'),
+      'final ok = await confirm(context, msg);',
+      'if (ok) action();',
+    );
+    expectGuardBefore(
+      between('Future<void> _commitDialog()', 'Future<void> _stashDialog()'),
+      'showDialog<RemoteCommitDraft>',
+      '_c.gitCommit',
+    );
+    expectGuardBefore(
+      between('Future<void> _stashDialog()', 'Future<void> _branchSheet()'),
+      'allowEmpty: true,',
+      '_c.gitStash',
+    );
+    expectGuardBefore(
+      between('Future<void> _newBranchDialog()', '// --- 管理'),
+      'okLabel: \'创建\',',
+      '_c.gitCreateBranch',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _newWorkspaceDialog()',
+        'Future<void> _addProjectDialog(',
+      ),
+      'showDialog<RemoteWorkspaceDraft>',
+      '_c.newWorkspace',
+    );
+    expectGuardBefore(
+      between('Future<void> _addProjectDialog(', 'class ScreenShareViewerPage'),
+      'okLabel: \'添加\',',
+      '_c.addProject',
+    );
+    expectGuardBefore(
+      between('Future<void> _openFile(', 'Future<void> _newFile()'),
+      'await Navigator.of(context).push',
+      'widget.client.openDir(_cwd)',
+    );
+    expectGuardBefore(
+      between('Future<void> _newFile()', 'void _descend('),
+      'title: \'新建文件\'',
+      '_openFile(',
+    );
+    expectGuardBefore(
+      between('Future<void> _addDialog()', 'Future<void> _remove('),
+      'showDialog<RemoteWorktreeDraft>',
+      'widget.client.addWorktree',
+    );
+    expectGuardBefore(
+      between('Future<void> _remove(', '@override\n  Widget build'),
+      'final ok = await confirm',
+      'widget.client.removeWorktree',
+    );
+
+    final keyEditor = between(
+      'void _openKeyBarEditor()',
+      '// Common special keys',
+    );
+    final editExisting = keyEditor.indexOf(
+      'final r = await _editKeyDialog(kb);',
+    );
+    final editExistingGuard = keyEditor.indexOf(
+      'if (!mounted || !sheetCtx.mounted) return;',
+      editExisting,
+    );
+    final editExistingApply = keyEditor.indexOf('apply(() {', editExisting);
+    expect(editExistingGuard, isNonNegative);
+    expect(editExistingApply, isNonNegative);
+    expect(editExistingGuard, lessThan(editExistingApply));
+
+    final addButton = keyEditor.indexOf(
+      'final r = await _editKeyDialog(null);',
+    );
+    final addButtonGuard = keyEditor.indexOf(
+      'if (!mounted || !sheetCtx.mounted) return;',
+      addButton,
+    );
+    final addButtonApply = keyEditor.indexOf('if (r != null) apply', addButton);
+    expect(addButtonGuard, isNonNegative);
+    expect(addButtonApply, isNonNegative);
+    expect(addButtonGuard, lessThan(addButtonApply));
   });
 
   test('speech recognizer debug logging is off by default', () {
