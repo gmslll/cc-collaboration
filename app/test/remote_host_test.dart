@@ -156,6 +156,26 @@ void main() {
     ]);
   });
 
+  test('todo assign trims todo id before handler and reply', () async {
+    Map<String, dynamic>? seen;
+    final host = _TestRemoteHost(
+      sessions: const [],
+      onAssignTodo: (req) async {
+        seen = Map<String, dynamic>.from(req);
+        return null;
+      },
+    );
+    addTearDown(host.dispose);
+
+    host.onFrame({'t': 'todo.assign', 'from': 7, 'todoId': ' todo-1 '});
+    await Future<void>.delayed(Duration.zero);
+
+    expect(seen?['todoId'], 'todo-1');
+    expect(host.sent, [
+      {'t': 'todo.assign.ok', 'to': 7, 'todoId': 'todo-1'},
+    ]);
+  });
+
   test(
     'todo assign handler exceptions reply err instead of timing out',
     () async {

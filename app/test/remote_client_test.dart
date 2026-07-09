@@ -91,16 +91,27 @@ void main() {
     addTearDown(client.dispose);
 
     final result = client.requestAssign(
-      todoId: 'todo-1',
-      mode: 'new',
-      workspace: 'Team',
-      project: 'Backend',
-      projectId: 'relay-project',
-      kind: 'claude',
+      todoId: ' todo-1 ',
+      mode: ' new ',
+      sid: ' ',
+      workspace: ' Team ',
+      project: ' Backend ',
+      projectId: ' relay-project ',
+      kind: ' claude ',
+      branch: ' feat/team ',
     );
     await tester.pump();
 
-    expect(client.sent.single, containsPair('projectId', 'relay-project'));
+    expect(client.sent.single, {
+      't': 'todo.assign',
+      'todoId': 'todo-1',
+      'mode': 'new',
+      'workspace': 'Team',
+      'project': 'Backend',
+      'projectId': 'relay-project',
+      'kind': 'claude',
+      'branch': 'feat/team',
+    });
     client.onFrame({'t': 'todo.assign.ok', 'todoId': 'todo-1'});
     await tester.pump();
     expect(await result, isNull);

@@ -1152,27 +1152,35 @@ class RemoteClient extends RemoteChannel {
     String? kind,
     String? branch,
   }) {
+    final cleanTodoId = todoId.trim();
+    final cleanMode = mode.trim();
+    final cleanSid = _trimOrNull(sid);
+    final cleanWorkspace = _trimOrNull(workspace);
+    final cleanProject = _trimOrNull(project);
+    final cleanProjectId = _trimOrNull(projectId);
+    final cleanKind = _trimOrNull(kind);
+    final cleanBranch = _trimOrNull(branch);
     if (!_hostOnline) {
       return Future.value('电脑端未在线，请先在电脑端开启「共享工作区」');
     }
     // Supersede any in-flight request for the same todo.
-    _assignTimeouts.remove(todoId)?.cancel();
-    _assignWaiters.remove(todoId)?.complete('已被新的指派请求取代');
+    _assignTimeouts.remove(cleanTodoId)?.cancel();
+    _assignWaiters.remove(cleanTodoId)?.complete('已被新的指派请求取代');
     final c = Completer<String?>();
-    _assignWaiters[todoId] = c;
+    _assignWaiters[cleanTodoId] = c;
     send({
       't': 'todo.assign',
-      'todoId': todoId,
-      'mode': mode,
-      'sid': ?sid,
-      'workspace': ?workspace,
-      'project': ?project,
-      'projectId': ?projectId,
-      'kind': ?kind,
-      if (branch != null && branch.isNotEmpty) 'branch': branch,
+      'todoId': cleanTodoId,
+      'mode': cleanMode,
+      'sid': ?cleanSid,
+      'workspace': ?cleanWorkspace,
+      'project': ?cleanProject,
+      'projectId': ?cleanProjectId,
+      'kind': ?cleanKind,
+      'branch': ?cleanBranch,
     });
-    _assignTimeouts[todoId] = Timer(const Duration(seconds: 30), () {
-      _completeAssign(todoId, '桌面无响应(请确认桌面 App 在线)');
+    _assignTimeouts[cleanTodoId] = Timer(const Duration(seconds: 30), () {
+      _completeAssign(cleanTodoId, '桌面无响应(请确认桌面 App 在线)');
     });
     return c.future;
   }
@@ -1314,4 +1322,10 @@ class RemoteClient extends RemoteChannel {
     'branch': branch,
     'force': true,
   });
+}
+
+String? _trimOrNull(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return trimmed;
 }

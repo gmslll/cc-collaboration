@@ -425,8 +425,14 @@ class RemoteHost extends RemoteChannel {
         // onAssignTodo and reply ok/err directed back to the requesting client.
         final from = (f['from'] as num?)?.toInt();
         if (from != null) {
-          final todoId = (f['todoId'] as String?) ?? '';
-          unawaited(_replyTodoAssign(f, from: from, todoId: todoId));
+          final todoId = ((f['todoId'] as String?) ?? '').trim();
+          unawaited(
+            _replyTodoAssign(
+              {...f, 'todoId': todoId},
+              from: from,
+              todoId: todoId,
+            ),
+          );
         }
       case 'session.close':
         final sid = f['sid'] as String?;
