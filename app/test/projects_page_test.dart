@@ -1023,6 +1023,41 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   });
 
+  testWidgets('project sheet ignores duplicate repo binding taps', (
+    tester,
+  ) async {
+    final client = _CountingMapRepoProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    final repoField = find.byWidgetPredicate(
+      (w) =>
+          w is TextField &&
+          w.decoration?.hintText == 'repo 名(如 kunlun-backend)',
+    );
+    await tester.enterText(repoField, 'kunlun/backend');
+    await tester.pump();
+
+    final bindButton = find.widgetWithText(TextButton, '绑定');
+    await tester.tap(bindButton);
+    await tester.tap(bindButton);
+
+    expect(client.mapRepoCalls, 1);
+
+    client.completeMapRepo();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('organization sheet keeps member input when adding fails', (
     tester,
   ) async {
@@ -1480,6 +1515,21 @@ class _FailingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
   @override
   Future<void> mapRepo(String id, String repoName) async {
     throw Exception('map failed');
+  }
+}
+
+class _CountingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  final _mapRepoCompleter = Completer<void>();
+  int mapRepoCalls = 0;
+
+  @override
+  Future<void> mapRepo(String id, String repoName) {
+    mapRepoCalls++;
+    return _mapRepoCompleter.future;
+  }
+
+  void completeMapRepo() {
+    if (!_mapRepoCompleter.isCompleted) _mapRepoCompleter.complete();
   }
 }
 

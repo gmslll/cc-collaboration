@@ -1101,6 +1101,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   OrganizationDetail? _detail;
   Map<String, List<String>> _soleProjectOwnerNames = const {};
   bool _projectOwnerGuardComplete = true;
+  bool _mutating = false;
   List<String> _uncheckedProjectOwnerNames = const [];
   final _identity = TextEditingController();
   String _role = 'member';
@@ -1155,6 +1156,8 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   }
 
   Future<bool> _do(Future<void> Function() action) async {
+    if (_mutating) return false;
+    if (mounted) setState(() => _mutating = true);
     try {
       await action();
       await _load();
@@ -1163,6 +1166,8 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     } catch (e) {
       if (mounted) snack(context, errorText(e));
       return false;
+    } finally {
+      if (mounted) setState(() => _mutating = false);
     }
   }
 
@@ -1200,6 +1205,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     final memberInput = _identity.text.trim();
     final canSubmitMember =
         d != null &&
+        !_mutating &&
         canUpsertOrganizationMemberRole(memberInput, _role, d.members);
     final projectOwnerGuardWarning = _projectOwnerGuardComplete
         ? null
@@ -1339,7 +1345,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                               ),
                                             ],
                                             onChanged:
-                                                roleChangeBlockReason == null
+                                                !_mutating &&
+                                                    roleChangeBlockReason ==
+                                                        null
                                                 ? (role) {
                                                     if (role == null ||
                                                         roleMatches(
@@ -1374,7 +1382,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                                 ? CcColors.muted
                                                 : CcColors.subtle,
                                           ),
-                                          onPressed: removeBlockReason == null
+                                          onPressed:
+                                              !_mutating &&
+                                                  removeBlockReason == null
                                               ? () => _removeMember(m.identity)
                                               : null,
                                         ),
@@ -1450,8 +1460,10 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                   child: Text('负责人'),
                                 ),
                               ],
-                              onChanged: (v) =>
-                                  setState(() => _role = v ?? 'member'),
+                              onChanged: _mutating
+                                  ? null
+                                  : (v) =>
+                                        setState(() => _role = v ?? 'member'),
                             ),
                             Tooltip(
                               message:
@@ -1581,6 +1593,7 @@ class _ProjectSheet extends StatefulWidget {
 class _ProjectSheetState extends State<_ProjectSheet> {
   ProjectDetail? _d;
   List<OrganizationMember> _orgMembers = const [];
+  bool _mutating = false;
   final _repo = TextEditingController();
   final _member = TextEditingController();
   String _role = 'member';
@@ -1636,6 +1649,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   }
 
   Future<bool> _do(Future<void> Function() action) async {
+    if (_mutating) return false;
+    if (mounted) setState(() => _mutating = true);
     try {
       await action();
       await _load();
@@ -1644,6 +1659,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     } catch (e) {
       if (mounted) snack(context, errorText(e));
       return false;
+    } finally {
+      if (mounted) setState(() => _mutating = false);
     }
   }
 
@@ -1723,7 +1740,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
         : _memberCandidates(d);
     final memberInput = _member.text.trim();
     final canSubmitMember =
-        d != null && canUpsertProjectMemberRole(memberInput, _role, d.members);
+        d != null &&
+        !_mutating &&
+        canUpsertProjectMemberRole(memberInput, _role, d.members);
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -1758,7 +1777,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         IconButton(
                           icon: const Icon(Icons.edit_rounded, size: 18),
                           tooltip: '重命名',
-                          onPressed: () => _rename(d.project.name),
+                          onPressed: _mutating
+                              ? null
+                              : () => _rename(d.project.name),
                         ),
                         IconButton(
                           icon: const Icon(
@@ -1767,7 +1788,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                             color: CcColors.danger,
                           ),
                           tooltip: '删除',
-                          onPressed: _delete,
+                          onPressed: _mutating ? null : _delete,
                         ),
                       ],
                     ],
@@ -1807,7 +1828,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                               .map(
                                 (r) => _CompactProjectChip(
                                   label: r,
-                                  onDeleted: canManage
+                                  onDeleted: canManage && !_mutating
                                       ? () => _do(
                                           () => widget.client.unmapRepo(
                                             widget.id,
@@ -1832,7 +1853,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           ),
                         ),
                         TextButton(
-                          onPressed: _canMapRepo
+                          onPressed: _canMapRepo && !_mutating
                               ? () async {
                                   final r = _repo.text.trim();
                                   final ok = await _do(
@@ -1917,7 +1938,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                               ),
                                             ],
                                             onChanged:
-                                                roleChangeBlockReason == null
+                                                !_mutating &&
+                                                    roleChangeBlockReason ==
+                                                        null
                                                 ? (role) {
                                                     if (role == null ||
                                                         roleMatches(
@@ -1954,7 +1977,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                           color: canRemoveMember
                                               ? CcColors.muted
                                               : CcColors.subtle,
-                                          onPressed: canRemoveMember
+                                          onPressed:
+                                              !_mutating && canRemoveMember
                                               ? () => _do(
                                                   () => widget.client
                                                       .removeMember(
@@ -2018,9 +2042,11 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                         ),
                                       )
                                       .toList(),
-                                  onChanged: (v) {
-                                    if (v != null) _member.text = v;
-                                  },
+                                  onChanged: _mutating
+                                      ? null
+                                      : (v) {
+                                          if (v != null) _member.text = v;
+                                        },
                                 ),
                               ),
                             SizedBox(
@@ -2049,8 +2075,10 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                   child: Text('负责人'),
                                 ),
                               ],
-                              onChanged: (v) =>
-                                  setState(() => _role = v ?? 'member'),
+                              onChanged: _mutating
+                                  ? null
+                                  : (v) =>
+                                        setState(() => _role = v ?? 'member'),
                             ),
                             Tooltip(
                               message:
