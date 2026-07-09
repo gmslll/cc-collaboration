@@ -100,10 +100,20 @@ bool remoteConfigMutationAllowed(String? action, Map<String, dynamic> frame) {
     case 'ws.remove':
       return _remoteConfigTextAllowed(frame['name'], maxLength: 256);
     case 'proj.add':
-      return _remoteConfigTextAllowed(frame['workspace'], maxLength: 256) &&
+      return _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+            maxLength: 256,
+          ) &&
           _remoteConfigTextAllowed(frame['source'], maxLength: 4096);
     case 'proj.remove':
-      return _remoteConfigTextAllowed(frame['workspace'], maxLength: 256) &&
+      return _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+            maxLength: 256,
+          ) &&
           _remoteConfigTextAllowed(frame['project'], maxLength: 256);
     default:
       return false;
@@ -119,7 +129,7 @@ bool _remoteConfigTextAllowed(
   if (value == null) return optional;
   if (value is! String) return false;
   final text = value.trim();
-  if (text.isEmpty) return optional && allowBlank;
+  if (text.isEmpty) return optional && allowBlank && value.isEmpty;
   if (text.length > maxLength) return false;
   return !RegExp(r'[\x00-\x1f\x7f]').hasMatch(text);
 }

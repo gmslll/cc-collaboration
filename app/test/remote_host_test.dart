@@ -109,6 +109,14 @@ void main() {
     expect(
       remoteConfigMutationAllowed('wt.add', {
         'project': 'backend',
+        'workspace': '   ',
+        'branch': 'feature/team-1',
+      }),
+      isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('wt.add', {
+        'project': 'backend',
         'workspace': 'team',
         'branch': 'feature..bad',
       }),
@@ -155,10 +163,31 @@ void main() {
     );
     expect(
       remoteConfigMutationAllowed('proj.add', {
+        'workspace': '',
+        'source': 'https://github.com/org/repo.git',
+      }),
+      isTrue,
+    );
+    expect(
+      remoteConfigMutationAllowed('proj.add', {
+        'workspace': '   ',
+        'source': 'https://github.com/org/repo.git',
+      }),
+      isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('proj.add', {
         'workspace': 'team',
         'source': '   ',
       }),
       isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('proj.remove', {
+        'workspace': '',
+        'project': 'backend',
+      }),
+      isTrue,
     );
     expect(remoteConfigMutationAllowed('unknown', {}), isFalse);
   });
@@ -326,6 +355,37 @@ void main() {
       ]);
     },
   );
+
+  test('remote config op allows default workspace project add', () async {
+    var called = false;
+    String? actionSeen;
+    final host = _TestRemoteHost(
+      sessions: const [],
+      onConfigAction: (action, args) async {
+        called = true;
+        actionSeen = action;
+        expect(args['workspace'], '');
+        expect(args['source'], 'https://github.com/org/repo.git');
+      },
+    );
+    addTearDown(host.dispose);
+
+    host.onFrame({
+      't': 'proj.add',
+      'from': 8,
+      'workspace': '',
+      'source': 'https://github.com/org/repo.git',
+    });
+    for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(called, isTrue);
+    expect(actionSeen, 'proj.add');
+    expect(host.sent, [
+      {'t': 'cfg.ok', 'to': 8, 'op': 'proj.add'},
+    ]);
+  });
 
   test('remote term.open wakes a deferred restored session', () {
     final session = TerminalSession('', '')..deferred = true;
