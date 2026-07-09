@@ -149,6 +149,7 @@ func truncateRunes(s string, max int) string {
 // offline / never published / expired). Reachable means self, admin, or shared
 // organization/project membership.
 func (s *Server) getUserSessions(w http.ResponseWriter, r *http.Request) {
+	caller := auth.Identity(r.Context())
 	target := r.PathValue("identity")
 	if !s.requireReachableIdentity(w, r, target) {
 		return
@@ -156,6 +157,12 @@ func (s *Server) getUserSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := s.Sessions.get(target)
 	if sessions == nil {
 		sessions = []handoffschema.SessionInfo{}
+	}
+	var err error
+	sessions, err = s.sessionsVisibleTo(r.Context(), caller, target, sessions)
+	if err != nil {
+		http.Error(w, "filter sessions: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
@@ -195,6 +202,15 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
+	visible, err := s.sessionVisibleTo(r.Context(), sender, msg.Recipient, targetSession)
+	if err != nil {
+		http.Error(w, "check session scope: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !visible {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if s.Hub != nil {
 		out := handoffschema.Message{
 			From:      sender,
@@ -217,6 +233,55 @@ func publishedSession(sessions []handoffschema.SessionInfo, id string) (handoffs
 		}
 	}
 	return handoffschema.SessionInfo{}, false
+}
+
+func (s *Server) sessionsVisibleTo(ctx context.Context, caller, target string, sessions []handoffschema.SessionInfo) ([]handoffschema.SessionInfo, error) {
+	if len(sessions) == 0 {
+		return sessions, nil
+	}
+	out := make([]handoffschema.SessionInfo, 0, len(sessions))
+	for _, session := range sessions {
+		ok, err := s.sessionVisibleTo(ctx, caller, target, session)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, session)
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) sessionVisibleTo(ctx context.Context, caller, target string, session handoffschema.SessionInfo) (bool, error) {
+	projectID := strings.TrimSpace(session.ProjectID)
+	if projectID == "" {
+		return true, nil
+	}
+	targetCanAccess, err := s.identityCanAccessProject(ctx, target, projectID)
+	if err != nil {
+		return false, err
+	}
+	if !targetCanAccess {
+		return false, nil
+	}
+	if caller == target || s.isAdmin(ctx, caller) {
+		return true, nil
+	}
+	return s.identityCanAccessProject(ctx, caller, projectID)
+}
+
+func (s *Server) identityCanAccessProject(ctx context.Context, identity, projectID string) (bool, error) {
+	if identity == "" || projectID == "" {
+		return false, nil
+	}
+	if s.isAdmin(ctx, identity) {
+		return true, nil
+	}
+	_, ok, err := s.Store.EffectiveProjectRole(ctx, projectID, identity)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 func (s *Server) requireReachableIdentity(w http.ResponseWriter, r *http.Request, target string) bool {

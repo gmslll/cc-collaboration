@@ -560,6 +560,6 @@ type Message struct {
 	SessionID string `json:"session_id,omitempty"` // target session id on the recipient
 	Body      string `json:"body"`                 // the text to deliver
 	From      string `json:"from,omitempty"`       // sender identity (server-set)
-	Project   string `json:"project,omitempty"`    // sender-side project name context
-	ProjectID string `json:"project_id,omitempty"` // relay project id for exact scoping
+	Project   string `json:"project,omitempty"`    // target session's project name context
+	ProjectID string `json:"project_id,omitempty"` // target session's relay project id
 }

@@ -32,6 +32,19 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	if err := st.CreateOrganization(ctx, "org-msg", "Message Org", "bob@frontend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "project-frontend", "org-msg", "Frontend", "bob@frontend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "project-frontend", "alice@backend", store.RoleMember); err != nil {
+		t.Fatal(err)
+	}
 
 	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
 	if err := os.WriteFile(tokensPath, []byte(`[
@@ -145,6 +158,15 @@ func TestSessionRegistryNormalizesPublishedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	if err := st.CreateOrganization(ctx, "org-normalize", "Normalize Org", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "relay-team", "org-normalize", "Team", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
 
 	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
 	if err := os.WriteFile(tokensPath, []byte(`[
@@ -332,6 +354,91 @@ func TestSessionRegistryRequiresSharedTeam(t *testing.T) {
 	}
 	if code, _ := getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("solo-a@x")+"/sessions", "tok-solo-b"); code != http.StatusForbidden {
 		t.Fatalf("registered users without teams get sessions = %d, want 403", code)
+	}
+}
+
+func TestProjectScopedSessionsAreFilteredServerSide(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p-shared", "org-shared", "Shared Project", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p-shared", "bob@frontend", store.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p-secret", "org-shared", "Secret Project", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-alice","identity":"alice@backend"},
+		{"token":"tok-bob",  "identity":"bob@frontend"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", "tok-alice", map[string]any{
+		"sessions": []map[string]string{
+			{"id": "legacy", "label": "legacy"},
+			{"id": "shared", "label": "shared", "project": "Shared Project", "project_id": "p-shared"},
+			{"id": "secret", "label": "secret", "project": "Secret Project", "project_id": "p-secret"},
+			{"id": "forged", "label": "forged", "project": "Fake Project", "project_id": "p-missing"},
+		},
+	}); code != http.StatusOK {
+		t.Fatalf("publish sessions: status=%d body=%s", code, body)
+	}
+
+	code, body := getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("alice@backend")+"/sessions", "tok-bob")
+	if code != http.StatusOK {
+		t.Fatalf("get sessions: status=%d body=%s", code, body)
+	}
+	var got struct {
+		Sessions []handoffschema.SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(got.Sessions))
+	for _, session := range got.Sessions {
+		ids = append(ids, session.ID)
+	}
+	if strings.Join(ids, ",") != "legacy,shared" {
+		t.Fatalf("visible sessions = %v, want [legacy shared]", ids)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/messages", "tok-bob", map[string]any{
+		"recipient": "alice@backend", "session_id": "shared", "body": "allowed",
+	}); code != http.StatusAccepted {
+		t.Fatalf("message to shared session: status=%d body=%s", code, body)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/messages", "tok-bob", map[string]any{
+		"recipient": "alice@backend", "session_id": "secret", "body": "blocked",
+	}); code != http.StatusForbidden {
+		t.Fatalf("message to hidden project session = %d, want 403", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/messages", "tok-bob", map[string]any{
+		"recipient": "alice@backend", "session_id": "forged", "body": "blocked",
+	}); code != http.StatusForbidden {
+		t.Fatalf("message to forged project session = %d, want 403", code)
 	}
 }
 
