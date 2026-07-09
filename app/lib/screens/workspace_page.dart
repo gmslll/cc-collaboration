@@ -2846,31 +2846,17 @@ class _WorkspacePageState extends State<WorkspacePage>
     String initial = '',
     String hint = '',
   }) async {
-    final ctl = TextEditingController(text: initial);
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: InputDecoration(labelText: label, hintText: hint),
-          onSubmitted: (_) => Navigator.pop(ctx, true),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确定'),
-          ),
-        ],
+      builder: (_) => FileNameDialog(
+        title: title,
+        label: label,
+        initial: initial,
+        hint: hint,
       ),
     );
-    if (ok != true) return null;
-    final name = ctl.text.trim();
+    if (raw == null) return null;
+    final name = raw.trim();
     if (!_validEntryName(name)) {
       _snack('$label 不能为空，也不能包含路径分隔符');
       return null;

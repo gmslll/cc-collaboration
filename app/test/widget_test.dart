@@ -102,6 +102,19 @@ void main() {
     );
   });
 
+  test('workspace name dialog uses owned controller widget', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<String?> _nameDialog('),
+      source.indexOf('void _refreshFileTrees'),
+    );
+
+    expect(dialog, contains('showDialog<String>'));
+    expect(dialog, contains('FileNameDialog('));
+    expect(dialog, isNot(contains('TextEditingController')));
+    expect(dialog, isNot(contains('showDialog<bool>')));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
