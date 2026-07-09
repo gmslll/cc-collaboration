@@ -1427,11 +1427,12 @@ class _TerminalPaneState extends State<TerminalPane> {
       case 'interject':
         // Flutter showMenu has no submenu: reopen a target picker, then route
         // the selection submit:true so a busy peer receives it via its Stop hook.
-        final pick = await showPeerPicker(
+        final pick = await showGroupedPeerMenu(
           context,
           globalPos,
-          [...widget.same, ...widget.others],
-          'interject',
+          same: widget.same,
+          others: widget.others,
+          prefix: 'interject',
           icon: Icons.bolt_rounded,
           label: (t) => '插话到「${t.label}」',
         );

@@ -28,4 +28,18 @@ void main() {
 
     expect(values(entries), ['send:ts1', 'send-others']);
   });
+
+  test('interject targets use the same grouped peer menu shape', () {
+    final same = [for (var i = 0; i < 3; i++) target(i)];
+    final others = [target(4), target(5)];
+    final entries = groupedPeerMenuEntries(
+      same,
+      others,
+      prefix: 'interject',
+      icon: Icons.bolt_rounded,
+      label: (t) => '插话到「${t.label}」',
+    );
+
+    expect(values(entries), ['interject-same', 'interject-others']);
+  });
 }

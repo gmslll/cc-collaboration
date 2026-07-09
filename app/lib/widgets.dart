@@ -1670,6 +1670,39 @@ PopupMenuItem<String> ccMenuItem({
 // SendTarget is one "send to session" menu target: a session id + its label.
 typedef SendTarget = ({String id, String label});
 
+List<PopupMenuEntry<String>> groupedPeerMenuEntries(
+  List<SendTarget> same,
+  List<SendTarget> others, {
+  required String prefix,
+  required IconData icon,
+  required String Function(SendTarget t) label,
+  bool enabled = true,
+  int inlineLimit = 2,
+}) => [
+  if (same.length > inlineLimit)
+    ccMenuItem(
+      value: '$prefix-same',
+      icon: Icons.folder_rounded,
+      label: '当前项目会话 (${same.length}) ▸',
+      enabled: enabled,
+    )
+  else
+    for (final t in same)
+      ccMenuItem(
+        value: '$prefix:${t.id}',
+        icon: icon,
+        label: label(t),
+        enabled: enabled,
+      ),
+  if (others.isNotEmpty)
+    ccMenuItem(
+      value: '$prefix-others',
+      icon: Icons.more_horiz_rounded,
+      label: '其他会话 (${others.length}) ▸',
+      enabled: enabled,
+    ),
+];
+
 // sendMenuEntries builds the first-level "发送到会话" rows: same-project targets
 // inline while the list is short. Long same-project lists collapse behind
 // "当前项目会话 ▸" (value 'send-same'), then a "其他会话 ▸" row (value
@@ -1680,30 +1713,15 @@ List<PopupMenuEntry<String>> sendMenuEntries(
   List<SendTarget> others, {
   bool enabled = true,
   int inlineLimit = 2,
-}) => [
-  if (same.length > inlineLimit)
-    ccMenuItem(
-      value: 'send-same',
-      icon: Icons.folder_rounded,
-      label: '当前项目会话 (${same.length}) ▸',
-      enabled: enabled,
-    )
-  else
-    for (final t in same)
-      ccMenuItem(
-        value: 'send:${t.id}',
-        icon: Icons.send_rounded,
-        label: '发送到「${t.label}」',
-        enabled: enabled,
-      ),
-  if (others.isNotEmpty)
-    ccMenuItem(
-      value: 'send-others',
-      icon: Icons.more_horiz_rounded,
-      label: '其他会话 (${others.length}) ▸',
-      enabled: enabled,
-    ),
-];
+}) => groupedPeerMenuEntries(
+  same,
+  others,
+  prefix: 'send',
+  icon: Icons.send_rounded,
+  label: (t) => '发送到「${t.label}」',
+  enabled: enabled,
+  inlineLimit: inlineLimit,
+);
 
 // showGroupedSendMenu shows the grouped send picker at [globalPos] and returns
 // the chosen session id as 'send:<id>' (or one of [extraTop]'s values, or null).
@@ -1778,6 +1796,51 @@ Future<String?> showPeerPicker(
         ),
     ],
   );
+}
+
+Future<String?> showGroupedPeerMenu(
+  BuildContext context,
+  Offset globalPos, {
+  required List<SendTarget> same,
+  required List<SendTarget> others,
+  required String prefix,
+  required IconData icon,
+  required String Function(SendTarget t) label,
+}) async {
+  final v = await showMenu<String>(
+    context: context,
+    position: menuPosAt(context, globalPos),
+    items: groupedPeerMenuEntries(
+      same,
+      others,
+      prefix: prefix,
+      icon: icon,
+      label: label,
+    ),
+  );
+  if (v == '$prefix-same') {
+    if (!context.mounted) return null;
+    return showPeerPicker(
+      context,
+      globalPos,
+      same,
+      prefix,
+      icon: icon,
+      label: label,
+    );
+  }
+  if (v == '$prefix-others') {
+    if (!context.mounted) return null;
+    return showPeerPicker(
+      context,
+      globalPos,
+      others,
+      prefix,
+      icon: icon,
+      label: label,
+    );
+  }
+  return v;
 }
 
 // fileNameDirLabel renders a path as filename (left) + small gray directory —
