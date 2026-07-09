@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
 import 'package:app/screens/projects_page.dart';
@@ -858,6 +860,39 @@ void main() {
     expect(client.createdOrgId, isNull);
   });
 
+  testWidgets('project creation refresh ignores stale initial project load', (
+    tester,
+  ) async {
+    final client = _StaleProjectsLoadFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await client.waitForProjectRequests(1);
+
+    await tester.enterText(find.byType(TextField).at(1), 'Fresh Project');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
+    await client.waitForProjectRequests(2);
+
+    client.completeProjects(1, [_project(id: 'fresh', name: 'Fresh Project')]);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Fresh Project'), findsOneWidget);
+
+    client.completeProjects(0, [_project(id: 'stale', name: 'Stale Project')]);
+    await tester.pump();
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Fresh Project'), findsOneWidget);
+    expect(find.text('Stale Project'), findsNothing);
+  });
+
   testWidgets('team workspace creation controls shrink on compact widths', (
     tester,
   ) async {
@@ -1405,6 +1440,40 @@ class _CaptureCreateProjectFakeClient extends _ProjectsPageFakeClient {
       'role': 'owner',
     });
   }
+}
+
+Project _project({required String id, required String name}) =>
+    Project.fromJson({
+      'id': id,
+      'org_id': 'org-a',
+      'name': name,
+      'owner_identity': 'owner@x',
+      'role': 'owner',
+    });
+
+class _StaleProjectsLoadFakeClient extends _ProjectsPageFakeClient {
+  final _projectRequests = <Completer<List<Project>>>[];
+
+  @override
+  Future<List<Project>> projects() {
+    final completer = Completer<List<Project>>();
+    _projectRequests.add(completer);
+    return completer.future;
+  }
+
+  Future<void> waitForProjectRequests(int count) async {
+    while (_projectRequests.length < count) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  void completeProjects(int index, List<Project> projects) {
+    _projectRequests[index].complete(projects);
+  }
+
+  @override
+  Future<Project> createProject(String name, {String? orgId}) async =>
+      _project(id: 'created', name: name);
 }
 
 class _FailingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {

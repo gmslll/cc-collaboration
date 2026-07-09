@@ -401,6 +401,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
   final _orgName = TextEditingController();
   final _search = TextEditingController();
   String? _selectedOrgId;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -434,6 +435,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     try {
       final orgs = await widget.client.organizations().catchError(
         (_) => <Organization>[],
@@ -463,7 +465,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                 })
                 .map((org) => org.id)
                 .toSet();
-      if (mounted) {
+      if (_isCurrentLoad(generation)) {
         setState(() {
           _orgs = orgs;
           _manageableOrgIds = manageableOrgIds;
@@ -476,9 +478,12 @@ class _ProjectsPageState extends State<ProjectsPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (_isCurrentLoad(generation)) setState(() => _error = '$e');
     }
   }
+
+  bool _isCurrentLoad(int generation) =>
+      mounted && generation == _loadGeneration;
 
   Future<void> _create() async {
     final name = _name.text.trim();
