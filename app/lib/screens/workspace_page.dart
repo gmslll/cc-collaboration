@@ -39,6 +39,7 @@ import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../voice/voice.dart';
 import '../widgets.dart';
+import '../widgets/history_commit_tile.dart';
 import '../widgets/inbox_item_card.dart';
 import '../widgets/split_pane.dart';
 import '../widgets/todo_card.dart';

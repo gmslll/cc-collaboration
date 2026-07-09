@@ -298,47 +298,11 @@ class _FileHistoryDialogState extends State<_FileHistoryDialog> {
       itemBuilder: (_, i) {
         final c = _commits[i];
         final sel = c.hash == _selectedHash;
-        final age = c.date.millisecondsSinceEpoch == 0
-            ? ''
-            : relativeTime(c.date);
-        return Container(
-          color: sel
-              ? CcColors.accent.withValues(alpha: 0.10)
-              : Colors.transparent,
-          child: ListTile(
-            dense: true,
-            selected: sel,
-            leading: Icon(
-              Icons.commit_rounded,
-              size: 17,
-              color: sel ? CcColors.accentBright : CcColors.muted,
-            ),
-            title: Text(
-              c.subject,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13),
-            ),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: Text(
-                [c.shortHash, c.author, if (age.isNotEmpty) age].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: CcType.code(size: 11, color: CcColors.subtle),
-              ),
-            ),
-            trailing: c.refs.isEmpty
-                ? null
-                : ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 86),
-                    child: tag(
-                      c.refs.replaceAll('HEAD -> ', '').split(',').first.trim(),
-                      CcColors.accent,
-                    ),
-                  ),
-            onTap: _diffLoading && sel ? null : () => _selectCommit(c),
-          ),
+        return HistoryCommitTile(
+          commit: c,
+          selected: sel,
+          disabled: _diffLoading && sel,
+          onTap: () => _selectCommit(c),
         );
       },
     );
