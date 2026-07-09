@@ -642,6 +642,32 @@ void main() {
     expect(candidates.map((m) => m.identity).toList(), ['ann@x', 'zed@x']);
   });
 
+  test('project member candidates sort labels case-insensitively', () {
+    final candidates = projectMemberCandidates([
+      OrganizationMember.fromJson({
+        'identity': 'zed@x',
+        'role': 'member',
+        'display_name': 'zed',
+      }),
+      OrganizationMember.fromJson({
+        'identity': 'alpha@x',
+        'role': 'member',
+        'display_name': 'Alpha',
+      }),
+      OrganizationMember.fromJson({
+        'identity': 'bravo@x',
+        'role': 'member',
+        'display_name': '   ',
+      }),
+    ], const []);
+
+    expect(candidates.map((m) => m.identity).toList(), [
+      'alpha@x',
+      'bravo@x',
+      'zed@x',
+    ]);
+  });
+
   test('project creation team id ignores default and stale selections', () {
     final orgs = [
       Organization.fromJson({

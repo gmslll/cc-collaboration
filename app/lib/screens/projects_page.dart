@@ -258,6 +258,13 @@ String? projectMemberRoleChangeBlockReason(
   Iterable<ProjectMember> members,
 ) => canRemoveProjectMember(member, members) ? null : '至少保留一个项目负责人';
 
+String projectMemberCandidateSortLabel(OrganizationMember member) {
+  final label = member.displayName.isEmpty
+      ? member.identity
+      : member.displayName;
+  return label.trim().toLowerCase();
+}
+
 bool canUpsertProjectMemberRole(
   String identity,
   String nextRole,
@@ -291,9 +298,11 @@ List<OrganizationMember> projectMemberCandidates(
         seen.add(identity);
   }).toList();
   candidates.sort((a, b) {
-    final an = a.displayName.isEmpty ? a.identity : a.displayName;
-    final bn = b.displayName.isEmpty ? b.identity : b.displayName;
-    return an.compareTo(bn);
+    final byLabel = projectMemberCandidateSortLabel(
+      a,
+    ).compareTo(projectMemberCandidateSortLabel(b));
+    if (byLabel != 0) return byLabel;
+    return a.identity.compareTo(b.identity);
   });
   return candidates;
 }
