@@ -78,6 +78,7 @@ class _AdminPageState extends State<AdminPage> {
         password: _password.text.trim(),
         isAdmin: _newAdmin,
       );
+      if (!mounted) return;
       _identity.clear();
       _password.clear();
       setState(() => _newAdmin = false);

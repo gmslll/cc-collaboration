@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
 import 'package:app/screens/admin_page.dart';
@@ -112,6 +114,30 @@ void main() {
 
     expect(createButton().onPressed, isNotNull);
   });
+
+  testWidgets('admin create completion after unmount is ignored', (
+    tester,
+  ) async {
+    final client = _DelayedCreateAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'new@x');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+    await tester.pump();
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    client.completeCreate(null);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _AdminPageFakeClient extends RelayClient {
@@ -126,4 +152,21 @@ class _AdminPageFakeClient extends RelayClient {
       'disabled': true,
     }),
   ];
+}
+
+class _DelayedCreateAdminPageFakeClient extends _AdminPageFakeClient {
+  final _createCompleter = Completer<String?>();
+
+  @override
+  Future<String?> createUser(
+    String identity, {
+    String? password,
+    bool isAdmin = false,
+  }) => _createCompleter.future;
+
+  void completeCreate(String? password) {
+    if (!_createCompleter.isCompleted) {
+      _createCompleter.complete(password);
+    }
+  }
 }
