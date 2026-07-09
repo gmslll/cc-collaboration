@@ -673,7 +673,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     sessions: () => terms,
     roots: () => [
       for (final ws in _cfg.workspaces)
-        for (final p in ws.projects) RemoteRoot(p.name, p.path, ws.name),
+        for (final p in ws.projects)
+          RemoteRoot(p.name, p.path, ws.name, p.projectId),
     ],
     // All workspace names (incl. empty ones) so the phone can see + add projects
     // to a workspace that has no projects yet.
@@ -790,6 +791,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       isAgent: s.isAgent,
       workspace: workspace,
       project: project,
+      projectId: hit?.project.projectId ?? '',
       worktree: worktree,
       status: status,
       statusDetail: detail,

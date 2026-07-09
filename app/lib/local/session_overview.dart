@@ -85,6 +85,7 @@ class SessionCard {
   final bool isAgent;
   final String workspace; // workspace name ('' if unmapped/orphan)
   final String project; // project name ('' if unmapped/orphan)
+  final String projectId; // relay project id ('' if unmapped/legacy)
   final String? worktree; // worktree name (null at project root)
   final SessionStatus status;
   final String
@@ -119,6 +120,7 @@ class SessionCard {
     required this.isAgent,
     required this.workspace,
     required this.project,
+    this.projectId = '',
     required this.worktree,
     required this.status,
     this.statusDetail = '',
@@ -137,6 +139,7 @@ class SessionCard {
     'isAgent': isAgent,
     'ws': workspace,
     'proj': project,
+    'projectId': projectId,
     'wt': worktree,
     'status': status.name,
     'statusDetail': statusDetail,
@@ -158,6 +161,7 @@ class SessionCard {
       isAgent: m['isAgent'] == true,
       workspace: (m['ws'] ?? '').toString(),
       project: (m['proj'] ?? '').toString(),
+      projectId: (m['projectId'] ?? '').toString().trim(),
       worktree: m['wt']?.toString(),
       status: sessionStatusFromName(m['status'] as String?),
       statusDetail: (m['statusDetail'] ?? '').toString(),
@@ -339,8 +343,12 @@ class SessionOverviewStore extends ChangeNotifier {
     List<String> skillZips = const [],
   }) async {
     if (submitCapsuleHandler == null) return (false, '会话总览未就绪');
-    return submitCapsuleHandler!(draft,
-        visibility: visibility, summary: summary, skillZips: skillZips);
+    return submitCapsuleHandler!(
+      draft,
+      visibility: visibility,
+      summary: summary,
+      skillZips: skillZips,
+    );
   }
 }
 

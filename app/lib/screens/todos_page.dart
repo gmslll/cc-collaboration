@@ -2522,6 +2522,49 @@ class _MemberRolePill extends StatelessWidget {
 // the possibly-stale widget.todo.status from the list row.
 typedef _AssignPrep = ({String taskText, TodoStatus statusAtPrep});
 
+String? todoProjectNameForAssignment({
+  required String? todoProjectId,
+  required Iterable<ProjectCfg> localProjects,
+  Iterable<RemoteRootInfo> remoteRoots = const [],
+}) {
+  final pid = (todoProjectId ?? '').trim();
+  if (pid.isEmpty) return null;
+  for (final root in remoteRoots) {
+    if (root.projectId.trim() == pid) return root.name;
+  }
+  for (final project in localProjects) {
+    if (project.projectId.trim() == pid) return project.name;
+  }
+  return null;
+}
+
+bool sessionCardMatchesTodoProject(
+  SessionCard card, {
+  required String? todoProjectId,
+  required String? todoProjectName,
+}) {
+  final pid = (todoProjectId ?? '').trim();
+  if (pid.isEmpty) return true;
+  final cardProjectId = card.projectId.trim();
+  if (cardProjectId.isNotEmpty) return cardProjectId == pid;
+  final name = (todoProjectName ?? '').trim();
+  return name.isNotEmpty && card.project.trim() == name;
+}
+
+List<SessionCard> assignableSessionCardsForTodoProject(
+  Iterable<SessionCard> cards, {
+  required String? todoProjectId,
+  required String? todoProjectName,
+}) => [
+  for (final card in cards)
+    if (sessionCardMatchesTodoProject(
+      card,
+      todoProjectId: todoProjectId,
+      todoProjectName: todoProjectName,
+    ))
+      card,
+];
+
 // _AssignTodoDialog is the "一键指派" flow: dispatch to an existing local
 // session, or spawn a brand-new one first (optionally in a fresh worktree
 // branch) and then dispatch. Both branches deliver through
@@ -2596,15 +2639,48 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   bool get _showSessionModes =>
       widget.overviewStore.cards.isNotEmpty || _remoteReady;
 
+  Iterable<ProjectCfg> get _localProjects sync* {
+    for (final workspace in widget.config.workspaces) {
+      yield* workspace.projects;
+    }
+  }
+
+  String? get _todoProjectId {
+    final id = widget.todo.projectId?.trim() ?? '';
+    return id.isEmpty ? null : id;
+  }
+
+  String? get _todoProjectName => todoProjectNameForAssignment(
+    todoProjectId: _todoProjectId,
+    localProjects: _localProjects,
+    remoteRoots: _remote?.roots ?? const [],
+  );
+
+  bool _projectAllowedForTodo({
+    required String projectId,
+    required String projectName,
+  }) {
+    final pid = _todoProjectId;
+    if (pid == null) return true;
+    final candidateId = projectId.trim();
+    if (candidateId.isNotEmpty) return candidateId == pid;
+    final name = _todoProjectName?.trim() ?? '';
+    return name.isNotEmpty && projectName.trim() == name;
+  }
+
   bool _closeIfStaleContext() {
     if (widget.isCurrentContext()) return false;
     Navigator.pop(context, false);
     return true;
   }
 
-  List<SessionCard> get _cards => widget.overviewStore.cards.isNotEmpty
-      ? widget.overviewStore.cards
-      : (_remote?.overview.values.toList() ?? const []);
+  List<SessionCard> get _cards => assignableSessionCardsForTodoProject(
+    widget.overviewStore.cards.isNotEmpty
+        ? widget.overviewStore.cards
+        : (_remote?.overview.values.toList() ?? const []),
+    todoProjectId: _todoProjectId,
+    todoProjectName: _todoProjectName,
+  );
 
   // workspace / project NAME lists for the 新建会话 form — from the paired
   // desktop's pushed roots when remote, else the local config.
@@ -2614,10 +2690,24 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       final seen = <String>{};
       return [
         for (final root in r.roots)
-          if (seen.add(root.workspace)) root.workspace,
+          if (_projectAllowedForTodo(
+                projectId: root.projectId,
+                projectName: root.name,
+              ) &&
+              seen.add(root.workspace))
+            root.workspace,
       ];
     }
-    return [for (final w in widget.config.workspaces) w.name];
+    return [
+      for (final w in widget.config.workspaces)
+        if (w.projects.any(
+          (project) => _projectAllowedForTodo(
+            projectId: project.projectId,
+            projectName: project.name,
+          ),
+        ))
+          w.name,
+    ];
   }
 
   List<String> _projectNamesFor(String? ws) {
@@ -2625,10 +2715,19 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     if (r != null) {
       return [
         for (final root in r.roots)
-          if (root.workspace == ws) root.name,
+          if (root.workspace == ws &&
+              _projectAllowedForTodo(
+                projectId: root.projectId,
+                projectName: root.name,
+              ))
+            root.name,
       ];
     }
-    return [for (final p in projectsOf(widget.config, ws)) p.name];
+    return [
+      for (final p in projectsOf(widget.config, ws))
+        if (_projectAllowedForTodo(projectId: p.projectId, projectName: p.name))
+          p.name,
+    ];
   }
 
   // _prepareAssignment resolves the terminal text to paste for a dispatch to

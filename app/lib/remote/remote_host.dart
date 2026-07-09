@@ -20,7 +20,8 @@ class RemoteRoot {
   final String name;
   final String path;
   final String workspace;
-  const RemoteRoot(this.name, this.path, this.workspace);
+  final String projectId;
+  const RemoteRoot(this.name, this.path, this.workspace, [this.projectId = '']);
 }
 
 // _isHighSurrogate reports whether [u] is the leading half of a UTF-16 surrogate
@@ -546,19 +547,39 @@ class RemoteHost extends RemoteChannel {
     return msg;
   }
 
-  List<Map<String, dynamic>> _sessionItems() => sessions()
-      .map(
-        (s) => {
-          'sid': s.id,
-          'title': s.label,
-          'workdir': s.workdir,
-          'agent': s.agentKind,
-        },
-      )
-      .toList();
+  RemoteRoot? _rootForWorkdir(String workdir) {
+    RemoteRoot? best;
+    for (final root in roots()) {
+      if (!pathWithin(workdir, root.path)) continue;
+      if (best == null || root.path.length > best.path.length) best = root;
+    }
+    return best;
+  }
+
+  List<Map<String, dynamic>> _sessionItems() => sessions().map((s) {
+    final root = _rootForWorkdir(s.workdir);
+    return {
+      'sid': s.id,
+      'title': s.label,
+      'workdir': s.workdir,
+      'agent': s.agentKind,
+      if (root != null) ...{
+        'project': root.name,
+        'workspace': root.workspace,
+        'project_id': root.projectId,
+      },
+    };
+  }).toList();
 
   List<Map<String, dynamic>> _rootItems() => roots()
-      .map((r) => {'name': r.name, 'path': r.path, 'workspace': r.workspace})
+      .map(
+        (r) => {
+          'name': r.name,
+          'path': r.path,
+          'workspace': r.workspace,
+          'project_id': r.projectId,
+        },
+      )
       .toList();
 
   // _rootsPayload is the `roots` frame body: the project list plus ALL workspace

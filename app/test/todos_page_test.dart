@@ -6,12 +6,56 @@ import 'package:app/api/todo_models.dart';
 import 'package:app/local/config.dart';
 import 'package:app/local/session_overview.dart';
 import 'package:app/local/todo_store.dart';
+import 'package:app/remote/remote_client.dart';
 import 'package:app/screens/todos_page.dart';
 import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('todo assignment session cards are scoped to team project', () {
+    final cards = [
+      _sessionCard('s1', project: 'Backend', projectId: 'p-backend'),
+      _sessionCard('s2', project: 'Backend'),
+      _sessionCard('s3', project: 'Frontend', projectId: 'p-frontend'),
+      _sessionCard('s4', project: 'Other'),
+    ];
+
+    expect(
+      [
+        for (final c in assignableSessionCardsForTodoProject(
+          cards,
+          todoProjectId: 'p-backend',
+          todoProjectName: 'Backend',
+        ))
+          c.sid,
+      ],
+      ['s1', 's2'],
+    );
+    expect(
+      [
+        for (final c in assignableSessionCardsForTodoProject(
+          cards,
+          todoProjectId: null,
+          todoProjectName: null,
+        ))
+          c.sid,
+      ],
+      ['s1', 's2', 's3', 's4'],
+    );
+  });
+
+  test('todo assignment project name resolves from remote roots first', () {
+    expect(
+      todoProjectNameForAssignment(
+        todoProjectId: 'p1',
+        localProjects: const [ProjectCfg('Local', '/repo/local', '', 'p1')],
+        remoteRoots: [RemoteRootInfo('Remote', '/repo/remote', 'ws', 'p1')],
+      ),
+      'Remote',
+    );
+  });
+
   testWidgets('bulk todo deletion locks while request is pending', (
     tester,
   ) async {
@@ -540,6 +584,24 @@ void main() {
     expect(find.text('Old Project'), findsNothing);
   });
 }
+
+SessionCard _sessionCard(
+  String sid, {
+  String project = '',
+  String projectId = '',
+}) => SessionCard(
+  sid: sid,
+  label: sid,
+  agentKind: 'claude',
+  isAgent: true,
+  workspace: 'ws',
+  project: project,
+  projectId: projectId,
+  worktree: null,
+  status: SessionStatus.idle,
+  usageLabel: null,
+  preview: '',
+);
 
 AppConfig _config({String token = 'tok', String identity = 'alice@x'}) =>
     AppConfig('http://127.0.0.1', token, identity, const {});

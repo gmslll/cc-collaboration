@@ -42,7 +42,18 @@ class RemoteSession {
   final String title;
   final String workdir;
   final String agent;
-  RemoteSession(this.sid, this.title, this.workdir, this.agent);
+  final String workspace;
+  final String project;
+  final String projectId;
+  RemoteSession(
+    this.sid,
+    this.title,
+    this.workdir,
+    this.agent, {
+    this.workspace = '',
+    this.project = '',
+    this.projectId = '',
+  });
 }
 
 // phoneRemoteClient is the phone's single live RemoteClient (its WS connection to
@@ -57,7 +68,8 @@ class RemoteRootInfo {
   final String name;
   final String path;
   final String workspace;
-  RemoteRootInfo(this.name, this.path, this.workspace);
+  final String projectId;
+  RemoteRootInfo(this.name, this.path, this.workspace, [this.projectId = '']);
 }
 
 class RemoteWorktree {
@@ -588,6 +600,9 @@ class RemoteClient extends RemoteChannel {
               (s['title'] as String?) ?? '',
               (s['workdir'] as String?) ?? '',
               (s['agent'] as String?) ?? 'claude',
+              workspace: (s['workspace'] as String?) ?? '',
+              project: (s['project'] as String?) ?? '',
+              projectId: (s['project_id'] as String?)?.trim() ?? '',
             ),
         ];
         for (final entry in _terminals.entries) {
@@ -631,6 +646,7 @@ class RemoteClient extends RemoteChannel {
               r['name'] as String,
               r['path'] as String,
               (r['workspace'] as String?) ?? '',
+              (r['project_id'] as String?)?.trim() ?? '',
             ),
         ];
         workspaceNames = [

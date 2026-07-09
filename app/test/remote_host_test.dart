@@ -3,14 +3,17 @@ import 'package:app/screens/terminal_pane.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _TestRemoteHost extends RemoteHost {
-  _TestRemoteHost({required List<TerminalSession> sessions, super.onAssignTodo})
-    : _sessions = sessions,
-      super(
-        relayUrl: 'http://relay.test',
-        token: 'token',
-        sessions: (() => sessions),
-        roots: (() => const <RemoteRoot>[]),
-      );
+  _TestRemoteHost({
+    required List<TerminalSession> sessions,
+    List<RemoteRoot> roots = const [],
+    super.onAssignTodo,
+  }) : _sessions = sessions,
+       super(
+         relayUrl: 'http://relay.test',
+         token: 'token',
+         sessions: (() => sessions),
+         roots: (() => roots),
+       );
 
   final List<TerminalSession> _sessions;
   final sent = <Map<String, dynamic>>[];
@@ -29,6 +32,23 @@ class _TestRemoteHost extends RemoteHost {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('remote sessions and roots include relay project id', () {
+    final session = TerminalSession('/repo/backend', 'claude');
+    final host = _TestRemoteHost(
+      sessions: [session],
+      roots: const [RemoteRoot('backend', '/repo', 'team', 'relay-project')],
+    );
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+
+    host.onFrame({'t': 'list', 'from': 3});
+
+    final sessions = host.sent.firstWhere((f) => f['t'] == 'sessions');
+    final roots = host.sent.firstWhere((f) => f['t'] == 'roots');
+    expect(sessions['items'], [containsPair('project_id', 'relay-project')]);
+    expect(roots['items'], [containsPair('project_id', 'relay-project')]);
+  });
 
   test('remote term.open wakes a deferred restored session', () {
     final session = TerminalSession('', '')..deferred = true;
