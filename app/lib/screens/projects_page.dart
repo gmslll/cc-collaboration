@@ -139,6 +139,14 @@ String projectOwnerGuardMessage(Iterable<String> uncheckedProjectNames) {
 String projectOwnerLabel(String identity) =>
     '${projectRoleLabel('owner')} · $identity';
 
+String projectListSubtitle(
+  Project project, {
+  required String teamName,
+  required bool isAdmin,
+  required String identity,
+}) =>
+    '$teamName · ${projectListRoleLabel(project, isAdmin: isAdmin, identity: identity)} · ${projectOwnerLabel(project.ownerIdentity)}';
+
 String projectMemberTitle(ProjectMember member) =>
     member.displayName.isEmpty ? member.identity : member.displayName;
 
@@ -623,6 +631,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
                         children: [
                           Text(
                             p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 15,
@@ -630,7 +640,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '${_teamName(p.orgId)} · ${projectListRoleLabel(p, isAdmin: _isAdmin, identity: _identity)} · ${projectOwnerLabel(p.ownerIdentity)}',
+                            projectListSubtitle(
+                              p,
+                              teamName: _teamName(p.orgId),
+                              isAdmin: _isAdmin,
+                              identity: _identity,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontFamily: CcType.mono,
                               color: CcColors.muted,
@@ -709,11 +726,18 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       const Spacer(),
                       Row(
                         children: [
-                          Text(
-                            organizationRoleLabel(org.role, isAdmin: _isAdmin),
-                            style: CcType.code(
-                              size: 11.5,
-                              color: CcColors.accentBright,
+                          Flexible(
+                            child: Text(
+                              organizationRoleLabel(
+                                org.role,
+                                isAdmin: _isAdmin,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: CcType.code(
+                                size: 11.5,
+                                color: CcColors.accentBright,
+                              ),
                             ),
                           ),
                           Text(
@@ -723,11 +747,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
                               color: CcColors.subtle,
                             ),
                           ),
-                          Text(
-                            '${_orgProjectCount(org.id)} 项目',
-                            style: CcType.code(
-                              size: 11.5,
-                              color: CcColors.muted,
+                          Flexible(
+                            child: Text(
+                              '${_orgProjectCount(org.id)} 项目',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: CcType.code(
+                                size: 11.5,
+                                color: CcColors.muted,
+                              ),
                             ),
                           ),
                           const Spacer(),

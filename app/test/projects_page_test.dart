@@ -5,6 +5,13 @@ import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _longTeamName =
+    'Kunlun International Collaboration Operations Team With A Very Long Name';
+const _longProjectName =
+    'Backend Freight Control Surface For Multi Team Dispatch Coordination';
+const _longOwnerIdentity =
+    'owner.with.a.very.long.identity.for.layout.regression@kunlun.example.com';
+
 void main() {
   test('global admin can manage organizations without an org role', () {
     final org = Organization.fromJson({
@@ -249,6 +256,26 @@ void main() {
 
   test('project owner label uses localized owner text', () {
     expect(projectOwnerLabel('owner@x'), '负责人 · owner@x');
+  });
+
+  test('project list subtitle includes team role and owner', () {
+    final project = Project.fromJson({
+      'id': 'p1',
+      'org_id': 'org-a',
+      'name': 'Backend',
+      'owner_identity': 'owner@x',
+      'role': '',
+    });
+
+    expect(
+      projectListSubtitle(
+        project,
+        teamName: 'Kunlun',
+        isAdmin: false,
+        identity: 'owner@x',
+      ),
+      'Kunlun · 负责人 · 负责人 · owner@x',
+    );
   });
 
   test(
@@ -591,6 +618,36 @@ void main() {
     expect(tester.widget<TextField>(memberField).controller?.text, 'qa@x');
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('project list clamps long project names and metadata', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: ProjectsPage(client: _LongNameProjectsPageFakeClient()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final title = tester.widget<Text>(find.text(_longProjectName));
+    final subtitleText =
+        '$_longTeamName · 负责人 · ${projectOwnerLabel(_longOwnerIdentity)}';
+    final subtitle = tester.widget<Text>(find.text(subtitleText));
+
+    expect(tester.takeException(), isNull);
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+    expect(subtitle.maxLines, 1);
+    expect(subtitle.overflow, TextOverflow.ellipsis);
+  });
 }
 
 class _ProjectsPageFakeClient extends RelayClient {
@@ -699,4 +756,42 @@ class _FailingOrgMemberProjectsPageFakeClient extends _ProjectsPageFakeClient {
   ) async {
     throw Exception('add member failed');
   }
+}
+
+class _LongNameProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<List<Organization>> organizations() async => [
+    Organization.fromJson({
+      'id': 'org-a',
+      'name': _longTeamName,
+      'owner_identity': _longOwnerIdentity,
+      'role': 'owner',
+    }),
+  ];
+
+  @override
+  Future<Me> me() async => Me.fromJson({
+    'identity': _longOwnerIdentity,
+    'is_admin': false,
+    'organizations': [
+      {'id': 'org-a', 'name': _longTeamName, 'role': 'owner'},
+    ],
+    'projects': [],
+  });
+
+  @override
+  Future<List<Project>> projects() async => [
+    Project.fromJson({
+      'id': 'p-long',
+      'org_id': 'org-a',
+      'name': _longProjectName,
+      'owner_identity': _longOwnerIdentity,
+      'role': 'owner',
+    }),
+  ];
+
+  @override
+  Future<List<OnlineUser>> onlineUsers() async => [
+    OnlineUser.fromJson({'identity': _longOwnerIdentity, 'online': true}),
+  ];
 }
