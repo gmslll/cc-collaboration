@@ -329,6 +329,54 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('capsule edit ignores duplicate save taps', (tester) async {
+    final client = _DelayedCapsulesClient();
+    final overviewStore = SessionOverviewStore();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: client,
+            identity: 'me@x',
+            overviewStore: overviewStore,
+            config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    client.completeNext([
+      _capsule('cap-edit', headline: 'Edit capsule', owner: 'me@x'),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, '编辑'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Edited once');
+
+    final save = find.widgetWithText(FilledButton, '保存');
+    await tester.tap(save);
+    await tester.tap(save);
+    await tester.pump();
+
+    expect(client.patchCalls, 1);
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+
+    client.completePatch();
+    await tester.pump();
+    client.completeLatest([
+      _capsule('cap-edit', headline: 'Edited once', owner: 'me@x'),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(client.patchCalls, 1);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
   testWidgets(
     'capsule load keeps dialog open when opening prompt dispatch fails',
     (tester) async {
@@ -408,6 +456,89 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
     },
   );
+
+  testWidgets('capsule load ignores duplicate submit taps', (tester) async {
+    final client = _DelayedCapsulesClient();
+    final overview = SessionOverviewStore();
+    final spawn = Completer<(String?, String?)>();
+    var spawnCalls = 0;
+    var dispatchCalls = 0;
+    overview.spawnHandler =
+        ({
+          required workspace,
+          required project,
+          required kind,
+          projectId,
+          newWorktreeBranch,
+          worktreeStart,
+          resumeAgentSessionId,
+          workdir,
+        }) {
+          spawnCalls++;
+          return spawn.future;
+        };
+    overview.dispatchHandler = (_) {
+      dispatchCalls++;
+      return null;
+    };
+    final config = AppConfig(
+      'http://127.0.0.1:1',
+      'tok',
+      'me@x',
+      const {},
+      const [
+        WorkspaceCfg('ws', '/tmp', 'codex', '', '', [
+          ProjectCfg('proj', '/tmp/project', '', 'relay-proj-1'),
+        ]),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: client,
+            identity: 'me@x',
+            overviewStore: overview,
+            config: config,
+            isDesktop: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    client.completeNext([
+      _capsule(
+        'cap-load-once',
+        headline: 'Load once',
+        hasTranscript: false,
+        hasPersona: true,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '载入'));
+    await tester.pumpAndSettle();
+
+    final submit = find.widgetWithText(FilledButton, '起会话');
+    await tester.tap(submit);
+    await tester.tap(submit);
+    for (var i = 0; i < 10 && spawnCalls == 0; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(spawnCalls, 1);
+
+    spawn.complete(('sid-new', null));
+    await tester.pumpAndSettle();
+
+    expect(spawnCalls, 1);
+    expect(dispatchCalls, 1);
+    expect(find.text('载入胶囊'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
 
 class _DelayedCapsulesClient extends RelayClient {

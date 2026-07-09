@@ -500,6 +500,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   }
 
   Future<void> _submit() async {
+    if (_submitting) return;
     final ws = _workspace, proj = _project;
     final projPath = _projectPath;
     if (ws == null || proj == null || projPath == null) {
@@ -962,6 +963,7 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     setState(() => _saving = true);
     try {
       await widget.client.patchCapsule(
