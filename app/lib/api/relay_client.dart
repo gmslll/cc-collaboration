@@ -30,6 +30,24 @@ class RelayClient {
     ).map((e) => ListItem.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  Future<List<ListItem>> projectHandoffs({
+    String? project,
+    int limit = 100,
+  }) async {
+    final r = await _dio.get(
+      '/v1/handoffs',
+      queryParameters: {
+        'scope': 'project',
+        'project': ?project,
+        'limit': limit,
+      },
+    );
+    return _asList(
+      r.data,
+      'items',
+    ).map((e) => ListItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
   Future<Package> get(String id) async {
     final r = await _dio.get('/v1/handoffs/${_pathSegment(id)}');
     return Package.fromJson(r.data as Map<String, dynamic>);

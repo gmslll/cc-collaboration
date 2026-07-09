@@ -116,6 +116,46 @@ void main() {
     expect(find.text('old@x'), findsNothing);
   });
 
+  testWidgets('team handoff view lists project-shared handoffs', (
+    tester,
+  ) async {
+    final client = _ViewDelayedHandoffsClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: HandoffsPage(
+            client: client,
+            config: AppConfig('http://127.0.0.1:1', 'tok', 'dev@x', const {}),
+            showTerminal: false,
+            enableEvents: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(client.startedViews, contains('recipient'));
+
+    await tester.tap(find.text('团队'));
+    await tester.pump();
+    expect(client.startedViews, contains('project'));
+
+    client.complete('project', [
+      _handoff('team', sender: 'lead@x', headline: 'Team project handoff'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('lead@x'), findsOneWidget);
+    expect(find.text('Team project handoff'), findsOneWidget);
+
+    client.complete('recipient', [
+      _handoff('old', sender: 'old@x', headline: 'Old inbox handoff'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('lead@x'), findsOneWidget);
+    expect(find.text('old@x'), findsNothing);
+  });
+
   testWidgets('handoff account switch ignores stale list and online users', (
     tester,
   ) async {
@@ -279,6 +319,14 @@ class _ViewDelayedHandoffsClient extends RelayClient {
     startedViews.add(as);
     final completer = Completer<List<ListItem>>();
     _requests[as] = completer;
+    return completer.future;
+  }
+
+  @override
+  Future<List<ListItem>> projectHandoffs({String? project, int limit = 100}) {
+    startedViews.add('project');
+    final completer = Completer<List<ListItem>>();
+    _requests['project'] = completer;
     return completer.future;
   }
 

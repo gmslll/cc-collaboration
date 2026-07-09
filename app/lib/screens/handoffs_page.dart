@@ -48,7 +48,7 @@ ListItem? refreshedSelectedHandoff(
 class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   String? _error;
   bool _loading = true;
-  String _view = 'recipient'; // recipient | sender | history
+  String _view = 'recipient'; // recipient | project | sender | history
   String _query = '';
   List<ListItem> _inbox = const [];
   ListItem? _selected;
@@ -227,7 +227,9 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       _error = null;
     });
     try {
-      final items = await _client.handoffs(as: view);
+      final items = view == 'project'
+          ? await _client.projectHandoffs()
+          : await _client.handoffs(as: view);
       if (!_isCurrentRefresh(generation, view)) return;
       setState(() {
         _inbox = items;
@@ -355,7 +357,8 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
             Expanded(
               child: SegmentedButton<String>(
                 segments: const [
-                  ButtonSegment(value: 'recipient', label: Text('收件箱')),
+                  ButtonSegment(value: 'recipient', label: Text('收件')),
+                  ButtonSegment(value: 'project', label: Text('团队')),
                   ButtonSegment(value: 'sender', label: Text('已发')),
                   ButtonSegment(value: 'history', label: Text('历史')),
                 ],
