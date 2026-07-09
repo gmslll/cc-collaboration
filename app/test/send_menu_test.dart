@@ -50,6 +50,32 @@ void main() {
     expect(labels(entries), ['发送到「session 1」', '其他会话 (2) ▸']);
   });
 
+  test('short peer picker targets stay selectable directly', () {
+    final entries = peerPickerMenuEntries([target(1), target(2)], 'send');
+
+    expect(values(entries), ['send:ts1', 'send:ts2']);
+    expect(labels(entries), ['发送到「session 1」', '发送到「session 2」']);
+  });
+
+  test('long peer picker targets collapse into range rows', () {
+    final entries = peerPickerMenuEntries([
+      for (var i = 1; i <= 25; i++) target(i),
+    ], 'send');
+
+    expect(values(entries), ['send-page:0', 'send-page:12', 'send-page:24']);
+    expect(labels(entries), ['会话 1-12 ▸', '会话 13-24 ▸', '会话 25 ▸']);
+  });
+
+  test('peer picker rejects invalid inline limits without looping', () {
+    final entries = peerPickerMenuEntries(
+      [for (var i = 1; i <= 13; i++) target(i)],
+      'send',
+      inlineLimit: 0,
+    );
+
+    expect(values(entries), ['send-page:0', 'send-page:12']);
+  });
+
   test('interject targets use the same grouped peer menu shape', () {
     final same = [for (var i = 0; i < 3; i++) target(i)];
     final others = [target(4), target(5)];

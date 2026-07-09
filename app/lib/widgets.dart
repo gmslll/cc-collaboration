@@ -1670,6 +1670,11 @@ PopupMenuItem<String> ccMenuItem({
 // SendTarget is one "send to session" menu target: a session id + its label.
 typedef SendTarget = ({String id, String label});
 
+const int peerPickerInlineLimit = 12;
+
+String peerPickerRangeLabel(int start, int end) =>
+    start == end ? '会话 $start ▸' : '会话 $start-$end ▸';
+
 List<PopupMenuEntry<String>> groupedPeerMenuEntries(
   List<SendTarget> same,
   List<SendTarget> others, {
@@ -1772,10 +1777,39 @@ RelativeRect menuPosAt(BuildContext context, Offset globalPos) {
   );
 }
 
-// showPeerPicker shows a flat menu of [peers] at [globalPos], each returning
-// '<prefix>:<id>' (or null). Backs both the "其他会话" send cascade and the
-// "插话到会话" cascade — Flutter's showMenu has no native submenu, so a chosen
-// parent row reopens a menu of targets here.
+List<PopupMenuEntry<String>> peerPickerMenuEntries(
+  List<SendTarget> peers,
+  String prefix, {
+  IconData icon = Icons.send_rounded,
+  String Function(SendTarget t)? label,
+  int inlineLimit = peerPickerInlineLimit,
+}) {
+  final limit = inlineLimit < 1 ? peerPickerInlineLimit : inlineLimit;
+  if (peers.length <= limit) {
+    return [
+      for (final t in peers)
+        ccMenuItem(
+          value: '$prefix:${t.id}',
+          icon: icon,
+          label: label?.call(t) ?? '发送到「${t.label}」',
+        ),
+    ];
+  }
+  return [
+    for (var start = 0; start < peers.length; start += limit)
+      ccMenuItem(
+        value: '$prefix-page:$start',
+        icon: Icons.view_list_rounded,
+        label: peerPickerRangeLabel(
+          start + 1,
+          (start + limit).clamp(0, peers.length).toInt(),
+        ),
+      ),
+  ];
+}
+
+// showPeerPicker opens either a direct peer list or, for long lists, a compact
+// range picker first. The selected peer always returns '<prefix>:<id>'.
 Future<String?> showPeerPicker(
   BuildContext context,
   Offset globalPos,
@@ -1783,18 +1817,33 @@ Future<String?> showPeerPicker(
   String prefix, {
   IconData icon = Icons.send_rounded,
   String Function(SendTarget t)? label,
-}) {
-  return showMenu<String>(
+  int inlineLimit = peerPickerInlineLimit,
+}) async {
+  final limit = inlineLimit < 1 ? peerPickerInlineLimit : inlineLimit;
+  final v = await showMenu<String>(
     context: context,
     position: menuPosAt(context, globalPos),
-    items: [
-      for (final t in peers)
-        ccMenuItem(
-          value: '$prefix:${t.id}',
-          icon: icon,
-          label: label?.call(t) ?? '发送到「${t.label}」',
-        ),
-    ],
+    items: peerPickerMenuEntries(
+      peers,
+      prefix,
+      icon: icon,
+      label: label,
+      inlineLimit: limit,
+    ),
+  );
+  if (v == null || !v.startsWith('$prefix-page:')) return v;
+  if (!context.mounted) return null;
+  final start = int.tryParse(v.substring('$prefix-page:'.length));
+  if (start == null || start < 0 || start >= peers.length) return null;
+  final end = (start + limit).clamp(0, peers.length).toInt();
+  return showPeerPicker(
+    context,
+    globalPos,
+    peers.sublist(start, end),
+    prefix,
+    icon: icon,
+    label: label,
+    inlineLimit: limit,
   );
 }
 
