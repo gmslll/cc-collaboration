@@ -14,20 +14,36 @@ List<AssignableTodoMember> assignableTodoMembers({
 }) {
   final members = <AssignableTodoMember>[];
   final seen = <String>{};
-  void add(String raw, String roleLabel) {
+  final ranks = <String, int>{};
+  void add(String raw, String roleLabel, int rank) {
     final id = raw.trim();
-    if (id.isEmpty || !seen.add(id)) return;
-    members.add((identity: id, roleLabel: roleLabel));
+    if (id.isEmpty) return;
+    if (seen.add(id)) {
+      ranks[id] = rank;
+      members.add((identity: id, roleLabel: roleLabel));
+      return;
+    }
+    if (rank <= (ranks[id] ?? 0)) return;
+    ranks[id] = rank;
+    final index = members.indexWhere((m) => m.identity == id);
+    if (index >= 0) {
+      members[index] = (identity: id, roleLabel: roleLabel);
+    }
   }
 
-  if (includeSelf) add(selfIdentity, '个人');
+  if (includeSelf) add(selfIdentity, '个人', 100);
   for (final m in projectMembers) {
-    add(m.identity, _projectAssignmentRoleLabel(m.role));
+    final role = m.role.trim();
+    add(m.identity, _projectAssignmentRoleLabel(role), _projectRoleRank(role));
   }
   for (final m in organizationMembers) {
     final role = m.role.trim();
     if (role == 'owner' || role == 'admin') {
-      add(m.identity, _teamManagerAssignmentRoleLabel(role));
+      add(
+        m.identity,
+        _teamManagerAssignmentRoleLabel(role),
+        _teamRoleRank(role),
+      );
     }
   }
   return members;
@@ -72,5 +88,31 @@ String _teamManagerAssignmentRoleLabel(String role) {
       return '团队管理员';
     default:
       return '团队成员';
+  }
+}
+
+int _projectRoleRank(String role) {
+  switch (role) {
+    case 'owner':
+      return 90;
+    case 'admin':
+      return 80;
+    case 'member':
+      return 30;
+    case 'viewer':
+      return 20;
+    default:
+      return 10;
+  }
+}
+
+int _teamRoleRank(String role) {
+  switch (role) {
+    case 'owner':
+      return 85;
+    case 'admin':
+      return 80;
+    default:
+      return 10;
   }
 }

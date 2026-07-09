@@ -81,27 +81,33 @@ void main() {
     expect(ids, isNot(contains('global-admin@x')));
   });
 
-  test('member labels explain assignment source and preserve precedence', () {
-    final members = assignableTodoMembers(
-      selfIdentity: 'self@x',
-      includeSelf: true,
-      projectMembers: [
-        _projectMember('owner@x', 'owner'),
-        _projectMember('viewer@x', 'viewer'),
-        _projectMember('org-admin@x', 'member'),
-      ],
-      organizationMembers: [
-        _orgMember('org-admin@x', 'admin'),
-        _orgMember('org-owner@x', 'owner'),
-      ],
-    );
+  test(
+    'member labels explain strongest assignment source without reordering',
+    () {
+      final members = assignableTodoMembers(
+        selfIdentity: 'self@x',
+        includeSelf: true,
+        projectMembers: [
+          _projectMember('owner@x', 'owner'),
+          _projectMember('viewer@x', 'viewer'),
+          _projectMember('org-admin@x', 'member'),
+          _projectMember('project-owner-admin@x', 'owner'),
+        ],
+        organizationMembers: [
+          _orgMember('org-admin@x', 'admin'),
+          _orgMember('org-owner@x', 'owner'),
+          _orgMember('project-owner-admin@x', 'admin'),
+        ],
+      );
 
-    expect(members, [
-      (identity: 'self@x', roleLabel: '个人'),
-      (identity: 'owner@x', roleLabel: '项目负责人'),
-      (identity: 'viewer@x', roleLabel: '项目只读'),
-      (identity: 'org-admin@x', roleLabel: '项目成员'),
-      (identity: 'org-owner@x', roleLabel: '团队负责人'),
-    ]);
-  });
+      expect(members, [
+        (identity: 'self@x', roleLabel: '个人'),
+        (identity: 'owner@x', roleLabel: '项目负责人'),
+        (identity: 'viewer@x', roleLabel: '项目只读'),
+        (identity: 'org-admin@x', roleLabel: '团队管理员'),
+        (identity: 'project-owner-admin@x', roleLabel: '项目负责人'),
+        (identity: 'org-owner@x', roleLabel: '团队负责人'),
+      ]);
+    },
+  );
 }
