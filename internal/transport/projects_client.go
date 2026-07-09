@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -372,17 +373,18 @@ func orgRoleCanManage(role string) bool {
 }
 
 func (c *Client) ListProjectHandoffs(ctx context.Context, projectID string, limit int) ([]handoffschema.ListItem, error) {
-	q := "?scope=project"
+	q := url.Values{}
+	q.Set("scope", "project")
 	if projectID != "" {
-		q += "&project=" + projectID
+		q.Set("project", projectID)
 	}
 	if limit > 0 {
-		q += "&limit=" + strconv.Itoa(limit)
+		q.Set("limit", strconv.Itoa(limit))
 	}
 	var out struct {
 		Items []handoffschema.ListItem `json:"items"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/handoffs"+q, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/handoffs?"+q.Encode(), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Items, nil

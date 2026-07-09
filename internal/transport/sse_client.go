@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -79,8 +80,10 @@ func (c *Client) streamingClient() *http.Client {
 }
 
 func (c *Client) subscribeOnce(ctx context.Context, stream *http.Client, recipient string, lastID *uint64, onEvent func(SSEEvent) error) error {
-	url := c.BaseURL + "/v1/events?recipient=" + recipient
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	q := url.Values{}
+	q.Set("recipient", recipient)
+	endpoint := c.BaseURL + "/v1/events?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}

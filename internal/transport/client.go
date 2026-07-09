@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -89,8 +90,8 @@ func (c *Client) Submit(ctx context.Context, p *handoffschema.Package, attachmen
 // UploadAttachment posts raw bytes for a previously-submitted handoff. The
 // SHA256 is sent in X-Content-Sha256 so the relay can reject corruption.
 func (c *Client) UploadAttachment(ctx context.Context, handoffID, name string, content []byte) error {
-	url := c.BaseURL + "/v1/handoffs/" + handoffID + "/attachments/" + name
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(content))
+	endpoint := c.BaseURL + "/v1/handoffs/" + handoffID + "/attachments/" + url.PathEscape(name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(content))
 	if err != nil {
 		return err
 	}
@@ -113,8 +114,8 @@ func (c *Client) UploadAttachment(ctx context.Context, handoffID, name string, c
 // FetchAttachment returns the raw bytes for a handoff attachment, verifying
 // the relay-supplied SHA256 if present.
 func (c *Client) FetchAttachment(ctx context.Context, handoffID, name string) ([]byte, error) {
-	url := c.BaseURL + "/v1/handoffs/" + handoffID + "/attachments/" + name
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := c.BaseURL + "/v1/handoffs/" + handoffID + "/attachments/" + url.PathEscape(name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -145,14 +146,18 @@ func (c *Client) FetchAttachment(ctx context.Context, handoffID, name string) ([
 }
 
 func (c *Client) List(ctx context.Context, recipient string) ([]handoffschema.ListItem, error) {
-	q := ""
+	q := url.Values{}
 	if recipient != "" {
-		q = "?recipient=" + recipient
+		q.Set("recipient", recipient)
 	}
 	var out struct {
 		Items []handoffschema.ListItem `json:"items"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/handoffs"+q, nil, &out); err != nil {
+	path := "/v1/handoffs"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Items, nil
