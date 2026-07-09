@@ -1063,6 +1063,8 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                             ),
                             Text(
                               '${organizationRoleLabel(d.organization.role, isAdmin: widget.isAdmin)} · ${d.members.length} 成员 · ${d.projects.length} 项目',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: CcType.code(
                                 size: 12,
                                 color: CcColors.muted,

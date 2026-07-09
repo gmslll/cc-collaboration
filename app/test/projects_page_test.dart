@@ -13,6 +13,8 @@ const _longOwnerIdentity =
     'owner.with.a.very.long.identity.for.layout.regression@kunlun.example.com';
 const _longRepoName =
     'kunlun/dispatch-coordination-platform-with-very-long-repository-name';
+const _longCustomOrgRole =
+    'custom-organization-access-controller-with-a-very-long-label';
 
 void main() {
   test('global admin can manage organizations without an org role', () {
@@ -952,6 +954,38 @@ void main() {
     expect(teamOption.overflow, TextOverflow.ellipsis);
   });
 
+  testWidgets('organization sheet clamps long title and summary text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: ProjectsPage(client: _LongRoleOrganizationFakeClient()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(_longTeamName).last);
+    await tester.pumpAndSettle();
+
+    final title = tester.widget<Text>(find.text(_longTeamName).last);
+    final summaryText = '$_longCustomOrgRole · 2 成员 · 1 项目';
+    final summary = tester.widget<Text>(find.text(summaryText));
+
+    expect(tester.takeException(), isNull);
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+    expect(summary.maxLines, 1);
+    expect(summary.overflow, TextOverflow.ellipsis);
+  });
+
   testWidgets('project sheet clamps long title chips and repo labels', (
     tester,
   ) async {
@@ -1167,4 +1201,34 @@ class _LongNameProjectsPageFakeClient extends _ProjectsPageFakeClient {
       },
     ],
   });
+}
+
+class _LongRoleOrganizationFakeClient extends _LongNameProjectsPageFakeClient {
+  @override
+  Future<OrganizationDetail> organization(String id) async =>
+      OrganizationDetail.fromJson({
+        'organization': {
+          'id': 'org-a',
+          'name': _longTeamName,
+          'owner_identity': _longOwnerIdentity,
+          'role': _longCustomOrgRole,
+        },
+        'members': [
+          {
+            'identity': _longOwnerIdentity,
+            'role': 'owner',
+            'display_name': 'Owner With A Long Display Name',
+          },
+          {'identity': 'member@x', 'role': 'member', 'display_name': 'Member'},
+        ],
+        'projects': [
+          {
+            'id': 'p-long',
+            'org_id': 'org-a',
+            'name': _longProjectName,
+            'owner_identity': _longOwnerIdentity,
+            'role': 'owner',
+          },
+        ],
+      });
 }
