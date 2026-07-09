@@ -52,6 +52,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   List<Comment> _comments = const [];
   bool _loading = true;
   bool _picking = false;
+  int _loadGeneration = 0;
   final _commentCtl = TextEditingController();
 
   RelayClient get _client => widget.client;
@@ -77,6 +78,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final id = _id;
     setState(() {
       _pkg = null;
       _status = null;
@@ -85,37 +88,48 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _loading = true;
     });
     try {
-      final pkg = await _client.get(_id);
-      if (!mounted) return;
+      final pkg = await _client.get(id);
+      if (!_isCurrentLoad(generation, id)) return;
       setState(() {
         _pkg = pkg;
         _loading = false;
       });
       reloadComments();
-      _loadExtras();
+      _loadExtras(generation: generation, id: id);
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation, id)) return;
       setState(() => _loading = false);
       _snack(errorText(e));
     }
   }
 
+  bool _isCurrentLoad(int generation, String id) =>
+      mounted && generation == _loadGeneration && id == _id;
+
   // reloadComments is public so the host's SSE can refresh on comment.created.
   Future<void> reloadComments() async {
+    final generation = _loadGeneration;
+    final id = _id;
     try {
-      final cs = await _client.comments(_id);
-      if (mounted) setState(() => _comments = cs);
+      final cs = await _client.comments(id);
+      if (_isCurrentLoad(generation, id)) setState(() => _comments = cs);
     } catch (_) {}
   }
 
-  Future<void> _loadExtras() async {
+  Future<void> _loadExtras({int? generation, String? id}) async {
+    final loadGeneration = generation ?? _loadGeneration;
+    final handoffId = id ?? _id;
     try {
-      final p = await _client.prompt(_id);
-      if (mounted) setState(() => _prompt = p);
+      final p = await _client.prompt(handoffId);
+      if (_isCurrentLoad(loadGeneration, handoffId)) {
+        setState(() => _prompt = p);
+      }
     } catch (_) {}
     try {
-      final s = await _client.status(_id);
-      if (mounted) setState(() => _status = s);
+      final s = await _client.status(handoffId);
+      if (_isCurrentLoad(loadGeneration, handoffId)) {
+        setState(() => _status = s);
+      }
     } catch (_) {}
   }
 
@@ -149,7 +163,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   Future<void> _pickup(Package p) async {
     final path = _cfg.repoPath(p.repo.name);
     if (path == null) {
-      _snack('本地找不到 repo "${p.repo.name}" —— 在 config.toml 的 [[workspace]] 里把它加上');
+      _snack(
+        '本地找不到 repo "${p.repo.name}" —— 在 config.toml 的 [[workspace]] 里把它加上',
+      );
       return;
     }
     // pickup requires a per-repo .cc-handoff.toml directly in the repo dir (the
@@ -184,14 +200,24 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           '要现在初始化并接收吗？\n\npartner = ${p.sender}',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('初始化并接收')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('初始化并接收'),
+          ),
         ],
       ),
     );
     if (ok != true) return false;
     try {
-      await RepoConfig(raw: {}, partner: p.sender, base: 'origin/main').save(path);
+      await RepoConfig(
+        raw: {},
+        partner: p.sender,
+        base: 'origin/main',
+      ).save(path);
       return true;
     } catch (e) {
       _snack('初始化失败: ${errorText(e)}');
@@ -210,8 +236,14 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           decoration: const InputDecoration(hintText: '原因(可选)'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('撤回')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('撤回'),
+          ),
         ],
       ),
     );
@@ -248,8 +280,14 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('转交')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('转交'),
+          ),
         ],
       ),
     );
@@ -314,7 +352,10 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                 _tabPrompt(),
                 _tabApi(p),
                 _tabFiles(p),
-                SingleChildScrollView(padding: const EdgeInsets.all(16), child: _commentsSection()),
+                SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: _commentsSection(),
+                ),
               ],
             ),
           ),
@@ -339,10 +380,16 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                chip(p.repo.branch.isNotEmpty ? '${p.repo.name} @ ${p.repo.branch}' : p.repo.name),
+                chip(
+                  p.repo.branch.isNotEmpty
+                      ? '${p.repo.name} @ ${p.repo.branch}'
+                      : p.repo.name,
+                ),
                 kindBadge(p.kind),
-                if (p.urgency == 'urgent') tag('urgent', CcColors.danger, bold: true),
-                if (_status != null) tag(_status!.state, _stateColor(_status!.state)),
+                if (p.urgency == 'urgent')
+                  tag('urgent', CcColors.danger, bold: true),
+                if (_status != null)
+                  tag(_status!.state, _stateColor(_status!.state)),
               ],
             ),
             if (p.deliveryTarget != null) ...[
@@ -412,14 +459,21 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           children: [
             const Padding(
               padding: EdgeInsets.only(top: 1),
-              child: Icon(Icons.groups_2_rounded, size: 18, color: CcColors.accentBright),
+              child: Icon(
+                Icons.groups_2_rounded,
+                size: 18,
+                color: CcColors.accentBright,
+              ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('团队定向', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  const Text(
+                    '团队定向',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 6),
                   Wrap(spacing: 6, runSpacing: 6, children: tokens),
                 ],
@@ -444,7 +498,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         '$label · $value',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontFamily: CcType.mono, fontSize: 12, color: CcColors.text),
+        style: const TextStyle(
+          fontFamily: CcType.mono,
+          fontSize: 12,
+          color: CcColors.text,
+        ),
       ),
     ),
   );
@@ -502,7 +560,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
               ),
               TextButton.icon(
                 onPressed: () {
-                  Clipboard.setData(ClipboardData(text: 'cc-handoff pickup $_id --worktree'));
+                  Clipboard.setData(
+                    ClipboardData(text: 'cc-handoff pickup $_id --worktree'),
+                  );
                   _snack('已复制 pickup 命令');
                 },
                 icon: const Icon(Icons.terminal_rounded, size: 16),
@@ -566,7 +626,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
               const SizedBox(width: 8),
               Expanded(
                 child: SelectableText(
-                  op.summary.isNotEmpty ? '${op.path}  ·  ${op.summary}' : op.path,
+                  op.summary.isNotEmpty
+                      ? '${op.path}  ·  ${op.summary}'
+                      : op.path,
                   style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
                 ),
               ),
@@ -582,7 +644,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final children = <Widget>[];
     if (p.modulePaths.isNotEmpty) {
       children.add(_filesHeader('模块路径'));
-      children.addAll(p.modulePaths.map((m) => _fileRow(m, Icons.folder_rounded)));
+      children.addAll(
+        p.modulePaths.map((m) => _fileRow(m, Icons.folder_rounded)),
+      );
     }
     if (p.attachments.isNotEmpty) {
       children.add(_filesHeader('附件'));
@@ -613,10 +677,18 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           (c) => ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text(c.subject, maxLines: 2, overflow: TextOverflow.ellipsis),
+            title: Text(
+              c.subject,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             subtitle: Text(
               c.sha.length > 8 ? c.sha.substring(0, 8) : c.sha,
-              style: const TextStyle(color: CcColors.muted, fontFamily: CcType.mono, fontSize: 11),
+              style: const TextStyle(
+                color: CcColors.muted,
+                fontFamily: CcType.mono,
+                fontSize: 11,
+              ),
             ),
           ),
         ),
@@ -624,7 +696,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     }
     if (git != null && git.changedPaths.isNotEmpty) {
       children.add(_filesHeader('变更文件 (${git.changedPaths.length})'));
-      children.addAll(git.changedPaths.map((f) => _fileRow(f, Icons.description_rounded)));
+      children.addAll(
+        git.changedPaths.map((f) => _fileRow(f, Icons.description_rounded)),
+      );
     }
     if (children.isEmpty) return centerMsg('无文件 / 模块信息');
     return ListView(padding: const EdgeInsets.all(16), children: children);
@@ -642,7 +716,10 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         Icon(icon, size: 16, color: CcColors.muted),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(s, style: const TextStyle(fontFamily: CcType.mono, fontSize: 13)),
+          child: Text(
+            s,
+            style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
+          ),
         ),
       ],
     ),
@@ -682,12 +759,18 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                         children: [
                           Text(
                             c.sender,
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
                           ),
                           const SizedBox(width: 8),
                           Text(
                             relativeTime(c.createdAt),
-                            style: const TextStyle(color: CcColors.muted, fontSize: 11),
+                            style: const TextStyle(
+                              color: CcColors.muted,
+                              fontSize: 11,
+                            ),
                           ),
                         ],
                       ),
@@ -705,11 +788,17 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                     controller: _commentCtl,
                     minLines: 1,
                     maxLines: 4,
-                    decoration: const InputDecoration(hintText: '写评论…', isDense: true),
+                    decoration: const InputDecoration(
+                      hintText: '写评论…',
+                      isDense: true,
+                    ),
                     onSubmitted: (_) => _postComment(),
                   ),
                 ),
-                IconButton(onPressed: _postComment, icon: const Icon(Icons.send_rounded, size: 20)),
+                IconButton(
+                  onPressed: _postComment,
+                  icon: const Icon(Icons.send_rounded, size: 20),
+                ),
               ],
             ),
           ],
