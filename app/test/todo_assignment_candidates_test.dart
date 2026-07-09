@@ -343,6 +343,24 @@ void main() {
     );
   });
 
+  test('todo stale project and group filters are cleared for dropdowns', () {
+    final projects = [
+      ProjectRole.fromJson({'id': 'p1', 'name': 'Backend', 'role': 'member'}),
+      ProjectRole.fromJson({'id': 'p2', 'name': 'Frontend', 'role': 'member'}),
+    ];
+
+    expect(activeTodoProjectFilter(' p1 ', projects), 'p1');
+    expect(activeTodoProjectFilter('missing', projects), isNull);
+    expect(activeTodoProjectFilter(null, projects), isNull);
+
+    expect(
+      activeTodoGroupFilter(' sprint ', const ['backlog', 'sprint']),
+      'sprint',
+    );
+    expect(activeTodoGroupFilter('old', const ['backlog', 'sprint']), isNull);
+    expect(activeTodoGroupFilter('', const ['backlog']), isNull);
+  });
+
   test('todo dropdown menus are capped for many projects and groups', () {
     expect(todoMenuMaxHeight(const Size(1024, 900)), 320);
     expect(todoMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));

@@ -349,7 +349,9 @@ class _TodosPageState extends State<TodosPage> {
       }
       if (teamKey is String) _linearTeamKey = teamKey;
       if (projectId is String) _linearProjectId = projectId;
-      _projectFilter = projectFilter is String ? projectFilter : null;
+      _projectFilter = projectFilter is String
+          ? activeTodoProjectFilter(projectFilter, _myProjects)
+          : null;
       _groupFilter = null;
     });
     _mirrorViewToPrefs();
@@ -386,7 +388,10 @@ class _TodosPageState extends State<TodosPage> {
             identity,
           ) &&
           seq == _groupsLoadSeq) {
-        setState(() => _groups = []);
+        setState(() {
+          _groups = [];
+          _groupFilter = null;
+        });
       }
       return;
     }
@@ -400,7 +405,10 @@ class _TodosPageState extends State<TodosPage> {
             identity,
           ) &&
           seq == _groupsLoadSeq) {
-        setState(() => _groups = groups);
+        setState(() {
+          _groups = groups;
+          _groupFilter = activeTodoGroupFilter(_groupFilter, groups);
+        });
       }
     } catch (_) {
       if (_isCurrentAccountContext(
@@ -411,7 +419,10 @@ class _TodosPageState extends State<TodosPage> {
             identity,
           ) &&
           seq == _groupsLoadSeq) {
-        setState(() => _groups = []);
+        setState(() {
+          _groups = [];
+          _groupFilter = null;
+        });
       }
     }
   }
@@ -452,7 +463,23 @@ class _TodosPageState extends State<TodosPage> {
             token,
             identity,
           )) {
-        setState(() => _myProjects = m.projects);
+        var projectFilterChanged = false;
+        setState(() {
+          _myProjects = m.projects;
+          final activeProjectFilter = activeTodoProjectFilter(
+            _projectFilter,
+            _myProjects,
+          );
+          projectFilterChanged = activeProjectFilter != _projectFilter;
+          if (projectFilterChanged) {
+            _projectFilter = activeProjectFilter;
+            _groupFilter = null;
+          }
+        });
+        if (projectFilterChanged) {
+          _loadGroups();
+          _pushTodoView();
+        }
       }
     } catch (_) {
       /* keep the login-time list */
@@ -1343,6 +1370,10 @@ class _TodosPageState extends State<TodosPage> {
   );
 
   Widget _teamSourceControls({required bool wide}) {
+    final projectFilterValue = activeTodoProjectFilter(
+      _projectFilter,
+      _myProjects,
+    );
     final controls = <Widget>[
       SegmentedButton<String>(
         segments: const [
@@ -1374,7 +1405,7 @@ class _TodosPageState extends State<TodosPage> {
         ),
         const SizedBox(width: 8),
         DropdownButton<String?>(
-          value: _projectFilter,
+          value: projectFilterValue,
           hint: const Text('全部项目'),
           menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(context)),
           underline: const SizedBox(),
@@ -1483,12 +1514,13 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   Widget _groupControls({required bool wide}) {
+    final groupFilterValue = activeTodoGroupFilter(_groupFilter, _groups);
     final label = const Text(
       '分组',
       style: TextStyle(color: CcColors.muted, fontSize: 12.5),
     );
     final dropdown = DropdownButton<String?>(
-      value: _groupFilter,
+      value: groupFilterValue,
       hint: const Text('全部分组'),
       menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(context)),
       underline: const SizedBox(),
@@ -2566,6 +2598,21 @@ List<SessionCard> assignableSessionCardsForTodoProject(
     ))
       card,
 ];
+
+String? activeTodoProjectFilter(
+  String? projectFilter,
+  Iterable<ProjectRole> projects,
+) {
+  final filter = (projectFilter ?? '').trim();
+  if (filter.isEmpty) return null;
+  return projects.any((p) => p.id.trim() == filter) ? filter : null;
+}
+
+String? activeTodoGroupFilter(String? groupFilter, Iterable<String> groups) {
+  final filter = (groupFilter ?? '').trim();
+  if (filter.isEmpty) return null;
+  return groups.any((g) => g.trim() == filter) ? filter : null;
+}
 
 // _AssignTodoDialog is the "一键指派" flow: dispatch to an existing local
 // session, or spawn a brand-new one first (optionally in a fresh worktree
