@@ -74,6 +74,16 @@ void main() {
     );
   });
 
+  test('remote project list titles are width constrained', () {
+    final remote = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+
+    expect(remote, isNot(contains('title: Text(r.name),')));
+    expect(remote, contains('maxLines: 1'));
+    expect(remote, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });

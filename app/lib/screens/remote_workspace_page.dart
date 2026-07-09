@@ -746,7 +746,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                             key: ObjectKey(r),
                             dense: true,
                             leading: const Icon(Icons.drag_handle, size: 20),
-                            title: Text(r.name),
+                            title: Text(
+                              r.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             subtitle: Text(
                               r.workspace.isEmpty
                                   ? r.path
@@ -1331,7 +1335,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           for (final r in _orderedRoots())
             ListTile(
               leading: const Icon(Icons.folder_rounded),
-              title: Text(r.name),
+              title: Text(r.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                 r.path,
                 maxLines: 1,
@@ -1424,7 +1428,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           for (final r in _orderedRoots())
             ListTile(
               leading: const Icon(Icons.source_rounded),
-              title: Text(r.name),
+              title: Text(r.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                 r.path,
                 maxLines: 1,
