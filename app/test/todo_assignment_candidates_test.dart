@@ -162,6 +162,19 @@ void main() {
     );
   });
 
+  test('todo dialogs fit narrow screens while keeping desktop width', () {
+    expect(todoDialogWidth(const Size(320, 760)), 288);
+    expect(todoDialogWidth(const Size(1024, 760)), 440);
+    expect(
+      todoDialogWidth(
+        const Size(360, 760),
+        preferred: 480,
+        horizontalInset: 20,
+      ),
+      320,
+    );
+  });
+
   test('custom project roles keep explainable labels for capped pills', () {
     final members = assignableTodoMembers(
       selfIdentity: '',

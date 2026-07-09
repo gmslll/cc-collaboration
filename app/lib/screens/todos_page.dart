@@ -54,6 +54,16 @@ String todoMemberPrimaryLabel({
   return id.isNotEmpty && id == self ? '$label（我）' : label;
 }
 
+double todoDialogWidth(
+  Size screenSize, {
+  double preferred = 440,
+  double horizontalInset = 16,
+}) {
+  final available = screenSize.width - horizontalInset * 2;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 // _BoardColumnDef drives both the kanban board's columns and the mobile
 // card stream's collapsible groups, so they always agree on column meaning.
 // One status = one column now (the real Linear layout this board was always
@@ -547,82 +557,96 @@ class _TodosPageState extends State<TodosPage> {
     var importPid = _linearImportProjectId;
     final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Linear 团队 / 项目'),
-        content: SizedBox(
-          width: 440,
-          child: StatefulBuilder(
-            builder: (ctx, setLocal) => Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_canUseLocalCli) ...[
+      builder: (ctx) {
+        final dialogWidth = todoDialogWidth(MediaQuery.sizeOf(ctx));
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: const Text('Linear 团队 / 项目'),
+          content: SizedBox(
+            width: dialogWidth,
+            child: StatefulBuilder(
+              builder: (ctx, setLocal) => Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_canUseLocalCli) ...[
+                    TextField(
+                      controller: tokenCtl,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'linear_personal_token',
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   TextField(
-                    controller: tokenCtl,
-                    obscureText: true,
+                    controller: teamCtl,
                     decoration: const InputDecoration(
-                      labelText: 'linear_personal_token',
+                      labelText: '团队 team_key',
+                      hintText: '例如 INF',
                       isDense: true,
                     ),
                   ),
                   const SizedBox(height: 10),
-                ],
-                TextField(
-                  controller: teamCtl,
-                  decoration: const InputDecoration(
-                    labelText: '团队 team_key',
-                    hintText: '例如 INF',
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: projectCtl,
-                  decoration: const InputDecoration(
-                    labelText: '项目 project_id（Linear Project UUID，可选）',
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // Relay project to import INTO. Empty = 个人待办 (owner-only, hidden
-                // in the team view); picking a team project makes the imported
-                // Linear todos show under 团队 / 全部项目 and be assignable.
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '导入到 relay 项目',
-                    style: TextStyle(color: CcColors.muted, fontSize: 12),
-                  ),
-                ),
-                DropdownButton<String>(
-                  isExpanded: true,
-                  value: _myProjects.any((p) => p.id == importPid)
-                      ? importPid
-                      : '',
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('个人待办（仅自己可见）'),
+                  TextField(
+                    controller: projectCtl,
+                    decoration: const InputDecoration(
+                      labelText: '项目 project_id（Linear Project UUID，可选）',
+                      isDense: true,
                     ),
-                    for (final p in _myProjects)
-                      DropdownMenuItem(value: p.id, child: Text(p.name)),
-                  ],
-                  onChanged: (v) => setLocal(() => importPid = v ?? ''),
-                ),
-              ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Relay project to import INTO. Empty = 个人待办 (owner-only, hidden
+                  // in the team view); picking a team project makes the imported
+                  // Linear todos show under 团队 / 全部项目 and be assignable.
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '导入到 relay 项目',
+                      style: TextStyle(color: CcColors.muted, fontSize: 12),
+                    ),
+                  ),
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    value: _myProjects.any((p) => p.id == importPid)
+                        ? importPid
+                        : '',
+                    items: [
+                      const DropdownMenuItem(
+                        value: '',
+                        child: Text('个人待办（仅自己可见）'),
+                      ),
+                      for (final p in _myProjects)
+                        DropdownMenuItem(
+                          value: p.id,
+                          child: Text(
+                            p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) => setLocal(() => importPid = v ?? ''),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
     );
     if (saved != true) return;
     final token = tokenCtl.text.trim();
@@ -2815,10 +2839,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         : (_loadingMembers || _pickedIdentity == null)
         ? null
         : _assignToMember;
+    final dialogWidth = todoDialogWidth(MediaQuery.sizeOf(context));
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Text(_showSessionModes ? '一键指派' : '指派给成员'),
       content: SizedBox(
-        width: 440,
+        width: dialogWidth,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2910,7 +2936,14 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
               : null,
           items: [
             for (final w in workspaces)
-              DropdownMenuItem(value: w, child: Text(_groupLabel(w))),
+              DropdownMenuItem(
+                value: w,
+                child: Text(
+                  _groupLabel(w),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
           ],
           onChanged: (v) => setState(() {
             _existingWorkspace = v;
@@ -2935,7 +2968,14 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           value: projects.contains(_existingProject) ? _existingProject : null,
           items: [
             for (final p in projects)
-              DropdownMenuItem(value: p, child: Text(_groupLabel(p))),
+              DropdownMenuItem(
+                value: p,
+                child: Text(
+                  _groupLabel(p),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
           ],
           onChanged: (v) => setState(() {
             _existingProject = v;
@@ -2962,6 +3002,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                   c.worktree == null || c.worktree!.isEmpty
                       ? c.label
                       : '${c.label} · ${c.worktree}',
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -2986,7 +3027,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           hint: const Text('workspace'),
           value: wss.contains(_workspace) ? _workspace : null,
           items: wss
-              .map((w) => DropdownMenuItem(value: w, child: Text(w)))
+              .map(
+                (w) => DropdownMenuItem(
+                  value: w,
+                  child: Text(w, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+              )
               .toList(),
           onChanged: (v) => setState(() {
             _workspace = v;
@@ -3000,7 +3046,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           hint: const Text('project'),
           value: projs.contains(_project) ? _project : null,
           items: projs
-              .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+              .map(
+                (p) => DropdownMenuItem(
+                  value: p,
+                  child: Text(p, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+              )
               .toList(),
           onChanged: (v) => setState(() => _project = v),
         ),
