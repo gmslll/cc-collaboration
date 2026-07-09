@@ -112,6 +112,18 @@ double todoMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double todoMemberListMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 144,
+  double maxFraction = 0.48,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  final capped = available < preferred ? available : preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 String initialTodoAssignMode({
   required bool hasSessionCards,
   required bool remoteReady,
@@ -3136,7 +3148,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     // RadioListTile.groupValue (see git_log_commit_menu._pickResetMode).
     final self = _selfIdentity;
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 320),
+      constraints: BoxConstraints(
+        maxHeight: todoMemberListMaxHeight(MediaQuery.sizeOf(context)),
+      ),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,

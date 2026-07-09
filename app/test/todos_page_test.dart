@@ -56,6 +56,15 @@ void main() {
     );
   });
 
+  test('todo member assignment list height is responsive', () {
+    expect(todoMemberListMaxHeight(const Size(1024, 900)), 320);
+    expect(
+      todoMemberListMaxHeight(const Size(320, 420)),
+      closeTo(201.6, 0.001),
+    );
+    expect(todoMemberListMaxHeight(const Size(320, 220)), 144);
+  });
+
   testWidgets('team todo empty state ignores personal-only todos', (
     tester,
   ) async {
