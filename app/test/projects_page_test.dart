@@ -497,6 +497,39 @@ void main() {
     expect(button('新建团队').onPressed, isNotNull);
     expect(button('新建项目').onPressed, isNotNull);
   });
+
+  testWidgets('project sheet disables repo binding until a repo is entered', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    TextButton bindButton() =>
+        tester.widget<TextButton>(find.widgetWithText(TextButton, '绑定'));
+
+    expect(tester.takeException(), isNull);
+    expect(bindButton().onPressed, isNull);
+
+    await tester.enterText(
+      find.byWidgetPredicate(
+        (w) =>
+            w is TextField &&
+            w.decoration?.hintText == 'repo 名(如 kunlun-backend)',
+      ),
+      'kunlun/backend',
+    );
+    await tester.pump();
+
+    expect(bindButton().onPressed, isNotNull);
+  });
 }
 
 class _ProjectsPageFakeClient extends RelayClient {
@@ -553,4 +586,35 @@ class _ProjectsPageFakeClient extends RelayClient {
     OnlineUser.fromJson({'identity': 'owner@x', 'online': true}),
     OnlineUser.fromJson({'identity': 'offline@x', 'online': false}),
   ];
+
+  @override
+  Future<ProjectDetail> project(String id) async => ProjectDetail.fromJson({
+    'project': {
+      'id': id,
+      'org_id': 'org-a',
+      'name': id == 'p1' ? 'Backend' : 'Frontend',
+      'owner_identity': 'owner@x',
+      'role': 'owner',
+    },
+    'repos': const [],
+    'members': [
+      {'identity': 'owner@x', 'role': 'owner', 'display_name': 'Owner'},
+    ],
+  });
+
+  @override
+  Future<OrganizationDetail> organization(String id) async =>
+      OrganizationDetail.fromJson({
+        'organization': {
+          'id': id,
+          'name': 'Kunlun',
+          'owner_identity': 'owner@x',
+          'role': 'owner',
+        },
+        'members': [
+          {'identity': 'owner@x', 'role': 'owner', 'display_name': 'Owner'},
+          {'identity': 'dev@x', 'role': 'member', 'display_name': 'Dev'},
+        ],
+        'projects': const [],
+      });
 }

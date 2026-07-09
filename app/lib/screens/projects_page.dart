@@ -1228,16 +1228,24 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   @override
   void initState() {
     super.initState();
+    _repo.addListener(_onRepoInputChanged);
     _member.addListener(_onMemberInputChanged);
     _load();
   }
 
   @override
   void dispose() {
+    _repo.removeListener(_onRepoInputChanged);
     _member.removeListener(_onMemberInputChanged);
     _repo.dispose();
     _member.dispose();
     super.dispose();
+  }
+
+  bool get _canMapRepo => _repo.text.trim().isNotEmpty;
+
+  void _onRepoInputChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onMemberInputChanged() {
@@ -1476,13 +1484,15 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           ),
                         ),
                         TextButton(
-                          onPressed: () {
-                            final r = _repo.text.trim();
-                            if (r.isNotEmpty) {
-                              _repo.clear();
-                              _do(() => widget.client.mapRepo(widget.id, r));
-                            }
-                          },
+                          onPressed: _canMapRepo
+                              ? () {
+                                  final r = _repo.text.trim();
+                                  _repo.clear();
+                                  _do(
+                                    () => widget.client.mapRepo(widget.id, r),
+                                  );
+                                }
+                              : null,
                           child: const Text('绑定'),
                         ),
                       ],
