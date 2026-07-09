@@ -54,6 +54,37 @@ void main() {
     expect(find.textContaining('邀请成员'), findsOneWidget);
   });
 
+  testWidgets('register form scrolls on compact heights', (tester) async {
+    tester.view.physicalSize = const Size(360, 420);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: LoginScreen(
+          initialRelayUrl: 'http://127.0.0.1:1',
+          initialIdentity: 'dev@x',
+          showCancel: true,
+          onLoggedIn: (Session _) async {},
+        ),
+      ),
+    );
+
+    await tester.ensureVisible(find.text('没有账号?去注册'));
+    await tester.pump();
+    await tester.tap(find.text('没有账号?去注册'));
+    await tester.pump();
+
+    expect(find.byType(SingleChildScrollView), findsOneWidget);
+    await tester.ensureVisible(find.text('注册新账号'));
+    await tester.pump();
+    expect(find.text('注册新账号'), findsOneWidget);
+    expect(find.textContaining('默认团队'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('login failure after unmount does not call setState', (
     tester,
   ) async {
