@@ -56,6 +56,24 @@ func TestCopyCodexSkills_FreshDir(t *testing.T) {
 	}
 }
 
+func TestPickupCommandDocumentsTeamTargeting(t *testing.T) {
+	got, err := os.ReadFile(filepath.Join("templates", "commands", "pickup.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, want := range []string{
+		"project",
+		"org",
+		"member",
+		"不要因为本地配置里还有 `identity.partner(s)` 就扩大收件或影响范围",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("pickup command missing team targeting guidance %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestCopyCodexSkills_SameVersionSkips(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := CopyCodexSkills(dir, "0.1.1", nil, io.Discard); err != nil {
