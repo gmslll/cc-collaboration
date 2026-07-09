@@ -76,8 +76,7 @@ String projectListRoleLabel(
   final role = normalizedRole(project.role);
   if (role.isNotEmpty) return projectRoleLabel(role);
   if (isAdmin) return projectRoleLabel('admin');
-  if (identity.trim().isNotEmpty &&
-      project.ownerIdentity.trim() == identity.trim()) {
+  if (identityMatches(project.ownerIdentity, identity)) {
     return projectRoleLabel('owner');
   }
   return projectRoleLabel('viewer');
@@ -150,8 +149,10 @@ String projectOwnerGuardMessage(Iterable<String> uncheckedProjectNames) {
   return '项目负责人状态未确认: ${names.join(', ')}';
 }
 
+String identityDisplay(String identity) => identity.trim();
+
 String projectOwnerLabel(String identity) =>
-    '${projectRoleLabel('owner')} · $identity';
+    '${projectRoleLabel('owner')} · ${identityDisplay(identity)}';
 
 String projectListSubtitle(
   Project project, {

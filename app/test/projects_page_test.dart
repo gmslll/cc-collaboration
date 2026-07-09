@@ -129,6 +129,14 @@ void main() {
       '负责人',
     );
     expect(
+      projectListRoleLabel(
+        project(owner: ' owner@x '),
+        isAdmin: false,
+        identity: 'owner@x',
+      ),
+      '负责人',
+    );
+    expect(
       projectListRoleLabel(project(), isAdmin: false, identity: 'member@x'),
       '只读',
     );
@@ -276,6 +284,7 @@ void main() {
 
   test('project owner label uses localized owner text', () {
     expect(projectOwnerLabel('owner@x'), '负责人 · owner@x');
+    expect(projectOwnerLabel(' owner@x '), '负责人 · owner@x');
   });
 
   test('project list subtitle includes team role and owner', () {
