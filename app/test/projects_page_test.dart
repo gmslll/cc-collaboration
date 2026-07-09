@@ -768,6 +768,37 @@ void main() {
     expect(subtitle.overflow, TextOverflow.ellipsis);
   });
 
+  testWidgets('project create team dropdown clamps long team names', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: ProjectsPage(client: _LongNameProjectsPageFakeClient()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+
+    final teamOption = tester.widget<Text>(
+      find.byKey(const ValueKey('project-create-team-org-a')),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(teamOption.data, _longTeamName);
+    expect(teamOption.maxLines, 1);
+    expect(teamOption.overflow, TextOverflow.ellipsis);
+  });
+
   testWidgets('project sheet clamps long title chips and repo labels', (
     tester,
   ) async {

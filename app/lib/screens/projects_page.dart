@@ -534,7 +534,12 @@ class _ProjectsPageState extends State<ProjectsPage> {
                         ..._manageableOrgs.map(
                           (o) => DropdownMenuItem(
                             value: o.id,
-                            child: Text(o.name),
+                            child: Text(
+                              o.name,
+                              key: ValueKey('project-create-team-${o.id}'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ),
                       ],
