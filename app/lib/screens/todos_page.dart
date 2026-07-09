@@ -111,6 +111,15 @@ double todoMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+String initialTodoAssignMode({
+  required bool hasSessionCards,
+  required bool remoteReady,
+}) {
+  if (hasSessionCards) return 'existing';
+  if (remoteReady) return 'new';
+  return 'member';
+}
+
 // _BoardColumnDef drives both the kanban board's columns and the mobile
 // card stream's collapsible groups, so they always agree on column meaning.
 // One status = one column now (the real Linear layout this board was always
@@ -2695,12 +2704,14 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       _existingProject = first.project;
       _targetSid = first.sid;
     }
-    if (!_showSessionModes) {
+    _mode = initialTodoAssignMode(
+      hasSessionCards: _cards.isNotEmpty,
+      remoteReady: _remoteReady,
+    );
+    if (_mode == 'member') {
       // No sessions to dispatch to and no online desktop to drive → the only
       // assign path is 指派给成员, so force that mode and load candidates.
-      _mode = 'member';
-      _membersRequested = true;
-      Future.microtask(_loadMembers);
+      _requestMembers();
     }
     final wss = _workspaceNames;
     if (wss.isNotEmpty) {
@@ -2714,6 +2725,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   void dispose() {
     _branchCtl.dispose();
     super.dispose();
+  }
+
+  void _requestMembers() {
+    if (_membersRequested) return;
+    _membersRequested = true;
+    Future.microtask(_loadMembers);
   }
 
   SessionCard? _findCard(String sid) {
@@ -2948,6 +2965,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     // sessions AND no online desktop), regardless of the last-selected _mode —
     // on mobile the desktop can go offline mid-dialog.
     final mode = _showSessionModes ? _mode : 'member';
+    if (mode == 'member') _requestMembers();
     final VoidCallback? primaryAction = _submitting
         ? null
         : mode == 'existing'
@@ -2987,10 +3005,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                   showSelectedIcon: false,
                   onSelectionChanged: (s) => setState(() {
                     _mode = s.first;
-                    if (_mode == 'member' && !_membersRequested) {
-                      _membersRequested = true;
-                      _loadMembers();
-                    }
+                    if (_mode == 'member') _requestMembers();
                   }),
                 ),
                 const SizedBox(height: 12),

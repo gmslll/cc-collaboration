@@ -265,6 +265,21 @@ void main() {
     );
   });
 
+  test('initial todo assign mode prefers the first actionable path', () {
+    expect(
+      initialTodoAssignMode(hasSessionCards: true, remoteReady: false),
+      'existing',
+    );
+    expect(
+      initialTodoAssignMode(hasSessionCards: false, remoteReady: true),
+      'new',
+    );
+    expect(
+      initialTodoAssignMode(hasSessionCards: false, remoteReady: false),
+      'member',
+    );
+  });
+
   test('todo dropdown menus are capped for many projects and groups', () {
     expect(todoMenuMaxHeight(const Size(1024, 900)), 320);
     expect(todoMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));
