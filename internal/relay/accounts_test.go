@@ -367,8 +367,14 @@ func TestAdminCreateUserTrimsIdentity(t *testing.T) {
 	if created.Identity != "member@demo" {
 		t.Fatalf("created identity = %q, want trimmed", created.Identity)
 	}
-	if _, err := st.GetUser(context.Background(), "  member@demo  "); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("untrimmed account should not exist, got err=%v", err)
+	users, err := st.ListUsers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range users {
+		if user.Identity == "  member@demo  " {
+			t.Fatalf("untrimmed account should not exist in stored users: %+v", users)
+		}
 	}
 
 	memberTok := loginToken(t, srv.URL, "  member@demo  ", "memberpass1")

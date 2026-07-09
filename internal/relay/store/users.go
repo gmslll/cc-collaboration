@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,11 @@ func boolToInt(b bool) int {
 // CreateUser inserts a new account. Returns an error (UNIQUE violation) when the
 // identity already exists.
 func (s *Store) CreateUser(ctx context.Context, u User, now time.Time) error {
+	u.Identity = strings.TrimSpace(u.Identity)
+	u.DisplayName = strings.TrimSpace(u.DisplayName)
+	if u.Identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO users(identity, password_hash, display_name, is_admin, disabled, created_at)
 		 VALUES(?, ?, ?, ?, ?, ?)`,
@@ -37,6 +43,10 @@ func (s *Store) CreateUser(ctx context.Context, u User, now time.Time) error {
 
 // GetUser returns the account for identity, or ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, identity string) (User, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return User{}, ErrNotFound
+	}
 	var (
 		u                 User
 		isAdmin, disabled int
@@ -84,6 +94,10 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 // UserIsAdmin reports whether identity is a DB-flagged admin. A missing account
 // is not an admin (false, nil) — seed admins are layered on at the server level.
 func (s *Store) UserIsAdmin(ctx context.Context, identity string) (bool, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false, nil
+	}
 	var isAdmin, disabled int
 	err := s.db.QueryRowContext(ctx, `SELECT is_admin, disabled FROM users WHERE identity = ?`, identity).Scan(&isAdmin, &disabled)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -98,6 +112,10 @@ func (s *Store) UserIsAdmin(ctx context.Context, identity string) (bool, error) 
 // UserActive reports whether an identity is allowed to authenticate. Missing
 // DB users are allowed so legacy file-token identities keep working.
 func (s *Store) UserActive(ctx context.Context, identity string) (bool, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false, nil
+	}
 	var disabled int
 	err := s.db.QueryRowContext(ctx, `SELECT disabled FROM users WHERE identity = ?`, identity).Scan(&disabled)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -134,14 +152,26 @@ func (s *Store) execAffecting(ctx context.Context, query string, args ...any) er
 }
 
 func (s *Store) SetPasswordHash(ctx context.Context, identity, hash string) error {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
 	return s.execAffecting(ctx, `UPDATE users SET password_hash = ? WHERE identity = ?`, hash, identity)
 }
 
 func (s *Store) SetAdmin(ctx context.Context, identity string, isAdmin bool) error {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
 	return s.execAffecting(ctx, `UPDATE users SET is_admin = ? WHERE identity = ?`, boolToInt(isAdmin), identity)
 }
 
 func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool) error {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -170,6 +200,7 @@ func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool)
 }
 
 func prepareDisableOwnerIdentity(ctx context.Context, tx *sql.Tx, identity string) error {
+	identity = strings.TrimSpace(identity)
 	orgRows, err := tx.QueryContext(ctx,
 		`SELECT org_id FROM organization_members WHERE identity = ? AND role = ?`,
 		identity, OrgRoleOwner)
@@ -270,6 +301,11 @@ func requireOtherActiveProjectOwner(ctx context.Context, tx *sql.Tx, projectID, 
 
 // CreateSession records a login session keyed by the token hash, expiring at expires.
 func (s *Store) CreateSession(ctx context.Context, tokenHash, identity string, now, expires time.Time) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	identity = strings.TrimSpace(identity)
+	if tokenHash == "" || identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions(token_hash, identity, created_at, expires_at) VALUES(?, ?, ?, ?)`,
 		tokenHash, identity, now.UnixMilli(), expires.UnixMilli())
@@ -278,6 +314,7 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash, identity string, n
 
 // SessionIdentity returns the identity for a non-expired session token hash.
 func (s *Store) SessionIdentity(ctx context.Context, tokenHash string, now time.Time) (string, bool, error) {
+	tokenHash = strings.TrimSpace(tokenHash)
 	var identity string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT identity FROM sessions WHERE token_hash = ? AND expires_at > ?`, tokenHash, now.UnixMilli()).
@@ -292,6 +329,7 @@ func (s *Store) SessionIdentity(ctx context.Context, tokenHash string, now time.
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
+	tokenHash = strings.TrimSpace(tokenHash)
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
 	return err
 }
@@ -314,6 +352,12 @@ type MachineToken struct {
 }
 
 func (s *Store) CreateMachineToken(ctx context.Context, tokenHash, identity, label string, now time.Time) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	identity = strings.TrimSpace(identity)
+	label = strings.TrimSpace(label)
+	if tokenHash == "" || identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO machine_tokens(token_hash, identity, label, created_at) VALUES(?, ?, ?, ?)`,
 		tokenHash, identity, label, now.UnixMilli())
@@ -323,6 +367,11 @@ func (s *Store) CreateMachineToken(ctx context.Context, tokenHash, identity, lab
 // SeedMachineToken inserts a token from the legacy tokens.json, ignoring it if
 // already present (idempotent across restarts).
 func (s *Store) SeedMachineToken(ctx context.Context, tokenHash, identity string, now time.Time) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	identity = strings.TrimSpace(identity)
+	if tokenHash == "" || identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO machine_tokens(token_hash, identity, label, created_at) VALUES(?, ?, 'seed', ?)`,
 		tokenHash, identity, now.UnixMilli())
@@ -330,6 +379,7 @@ func (s *Store) SeedMachineToken(ctx context.Context, tokenHash, identity string
 }
 
 func (s *Store) MachineTokenIdentity(ctx context.Context, tokenHash string) (string, bool, error) {
+	tokenHash = strings.TrimSpace(tokenHash)
 	var identity string
 	err := s.db.QueryRowContext(ctx, `SELECT identity FROM machine_tokens WHERE token_hash = ?`, tokenHash).Scan(&identity)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -342,6 +392,7 @@ func (s *Store) MachineTokenIdentity(ctx context.Context, tokenHash string) (str
 }
 
 func (s *Store) ListMachineTokens(ctx context.Context, identity string) ([]MachineToken, error) {
+	identity = strings.TrimSpace(identity)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT token_hash, identity, label, created_at FROM machine_tokens WHERE identity = ? ORDER BY created_at DESC`, identity)
 	if err != nil {
@@ -363,6 +414,11 @@ func (s *Store) ListMachineTokens(ctx context.Context, identity string) ([]Machi
 // DeleteMachineToken revokes a token, scoped to its owner so a user can only
 // revoke their own.
 func (s *Store) DeleteMachineToken(ctx context.Context, identity, tokenHash string) error {
+	identity = strings.TrimSpace(identity)
+	tokenHash = strings.TrimSpace(tokenHash)
+	if identity == "" || tokenHash == "" {
+		return ErrInvalid
+	}
 	return s.execAffecting(ctx,
 		`DELETE FROM machine_tokens WHERE token_hash = ? AND identity = ?`, tokenHash, identity)
 }
