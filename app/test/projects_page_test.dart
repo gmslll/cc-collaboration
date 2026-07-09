@@ -714,6 +714,13 @@ void main() {
     );
   });
 
+  test('project workspace dropdown menus are capped for small screens', () {
+    expect(projectsMenuMaxHeight(const Size(1024, 900)), 320);
+    expect(projectsMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));
+    expect(projectsMenuMaxHeight(const Size(320, 220)), 160);
+    expect(projectsMenuMaxHeight(Size.zero), 320);
+  });
+
   test('sole project owner map only includes projects with one owner', () {
     ProjectDetail detail({
       required String name,
@@ -1362,6 +1369,37 @@ void main() {
     expect(find.widgetWithIcon(IconButton, Icons.close_rounded), findsWidgets);
   });
 
+  testWidgets('organization sheet role menus are capped on compact screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    final roleMenus = find.descendant(
+      of: find.byType(BottomSheet),
+      matching: find.byType(DropdownButton<String>),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(roleMenus, findsWidgets);
+    for (final menu in tester.widgetList<DropdownButton<String>>(roleMenus)) {
+      expect(menu.menuMaxHeight, projectsMenuMaxHeight(const Size(320, 760)));
+    }
+  });
+
   testWidgets('project sheet member actions fit compact widths', (
     tester,
   ) async {
@@ -1383,6 +1421,43 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.widgetWithIcon(IconButton, Icons.close_rounded), findsWidgets);
+  });
+
+  testWidgets('project sheet member menus are capped on compact screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    final roleMenus = find.descendant(
+      of: find.byType(BottomSheet),
+      matching: find.byType(DropdownButton<String>),
+    );
+    final candidateMenus = find.descendant(
+      of: find.byType(BottomSheet),
+      matching: find.byType(DropdownButtonFormField<String>),
+    );
+    final expectedHeight = projectsMenuMaxHeight(const Size(320, 760));
+
+    expect(tester.takeException(), isNull);
+    expect(roleMenus, findsWidgets);
+    expect(candidateMenus, findsOneWidget);
+    for (final menu in tester.widgetList<DropdownButton<String>>(roleMenus)) {
+      expect(menu.menuMaxHeight, expectedHeight);
+    }
   });
 
   testWidgets('project list clamps long project names and metadata', (

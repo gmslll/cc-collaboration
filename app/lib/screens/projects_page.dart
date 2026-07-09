@@ -333,6 +333,19 @@ double memberActionWidth(
   return available < preferred ? available : preferred;
 }
 
+double projectsMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.58,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   Iterable<ProjectDetail> details,
 ) {
@@ -659,6 +672,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
                   constraints,
                   240,
                 );
+                final menuMaxHeight = projectsMenuMaxHeight(
+                  MediaQuery.sizeOf(context),
+                );
                 final selectedTeamId = createProjectTeamId(
                   _selectedOrgId,
                   _manageableOrgs,
@@ -708,6 +724,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                         child: DropdownButton<String>(
                           value: selectedTeamId ?? '',
                           isExpanded: true,
+                          menuMaxHeight: menuMaxHeight,
                           items: [
                             const DropdownMenuItem(
                               value: '',
@@ -1358,6 +1375,10 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                                 ),
                                             isDense: true,
                                             isExpanded: true,
+                                            menuMaxHeight:
+                                                projectsMenuMaxHeight(
+                                                  MediaQuery.sizeOf(context),
+                                                ),
                                             selectedItemBuilder: (_) => const [
                                               _RoleMenuText('负责人'),
                                               _RoleMenuText('管理员'),
@@ -1481,6 +1502,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                             ),
                             DropdownButton<String>(
                               value: _role,
+                              menuMaxHeight: projectsMenuMaxHeight(
+                                MediaQuery.sizeOf(context),
+                              ),
                               items: const [
                                 DropdownMenuItem(
                                   value: 'member',
@@ -1997,6 +2021,10 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                             ),
                                             isDense: true,
                                             isExpanded: true,
+                                            menuMaxHeight:
+                                                projectsMenuMaxHeight(
+                                                  MediaQuery.sizeOf(context),
+                                                ),
                                             selectedItemBuilder: (_) => const [
                                               _RoleMenuText('负责人'),
                                               _RoleMenuText('成员'),
@@ -2102,6 +2130,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                 child: DropdownButtonFormField<String>(
                                   initialValue: null,
                                   isExpanded: true,
+                                  menuMaxHeight: projectsMenuMaxHeight(
+                                    MediaQuery.sizeOf(context),
+                                  ),
                                   decoration: const InputDecoration(
                                     hintText: '从团队选择',
                                     isDense: true,
@@ -2141,6 +2172,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                             ),
                             DropdownButton<String>(
                               value: _role,
+                              menuMaxHeight: projectsMenuMaxHeight(
+                                MediaQuery.sizeOf(context),
+                              ),
                               items: const [
                                 DropdownMenuItem(
                                   value: 'member',
