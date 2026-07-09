@@ -196,6 +196,7 @@ class _HomeShellState extends State<HomeShell> {
   // doc comment in local/todo_store.dart.
   final TodoStore _todoStore = TodoStore();
   bool _checkedUpdate = false; // one-shot on-launch update check guard
+  int _bootstrapGeneration = 0;
 
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -248,6 +249,8 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _bootstrap() async {
+    if (!mounted) return;
+    final generation = ++_bootstrapGeneration;
     setState(() {
       _loading = true;
       _needLogin = false;
@@ -274,9 +277,9 @@ class _HomeShellState extends State<HomeShell> {
             : null);
 
     if (session == null) {
-      if (!mounted) return;
+      if (!_isCurrentBootstrap(generation)) return;
       await _todoStore.stop();
-      if (!mounted) return;
+      if (!_isCurrentBootstrap(generation)) return;
       final localCfg = cfg ?? AppConfig('', '', '', const {});
       setState(() {
         _cfg = localCfg;
@@ -297,9 +300,10 @@ class _HomeShellState extends State<HomeShell> {
     } catch (_) {
       // older relay / transient — treat as non-admin member
     }
-    if (!mounted) return;
+    if (!_isCurrentBootstrap(generation)) return;
+    final activeCfg = _configWithSession(cfg, session);
     setState(() {
-      _cfg = _configWithSession(cfg, session);
+      _cfg = activeCfg;
       _client = client;
       // /v1/me can fail transiently (relay 502 / timeout / offline). Fall back
       // to a non-admin member identity so the local workspace still renders —
@@ -315,9 +319,13 @@ class _HomeShellState extends State<HomeShell> {
     // Skipped when `me` came back null (older relay / transient /me failure
     // above) since TodoStore.start requires a non-null Me.
     if (me != null) {
-      await _todoStore.start(client: client, me: me, config: _cfg!);
+      if (!_isCurrentBootstrap(generation)) return;
+      await _todoStore.start(client: client, me: me, config: activeCfg);
     }
   }
+
+  bool _isCurrentBootstrap(int generation) =>
+      mounted && generation == _bootstrapGeneration;
 
   Future<void> _onLoggedIn(Session s) async {
     await SessionStore.save(s);
@@ -422,6 +430,7 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _logout() async {
+    _bootstrapGeneration++;
     // Switch to the login screen immediately so the button always responds,
     // even if the secure-store writes below are slow or throw.
     if (mounted) {

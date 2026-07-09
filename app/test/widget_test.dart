@@ -55,6 +55,25 @@ void main() {
     }
   });
 
+  test('home shell bootstrap ignores stale auth results', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final state = source.substring(
+      source.indexOf('class _HomeShellState'),
+      source.indexOf('Future<void> _onLoggedIn'),
+    );
+    final logout = source.substring(
+      source.indexOf('Future<void> _logout() async'),
+      source.indexOf('Future<void> _showLogin() async'),
+    );
+
+    expect(state, contains('int _bootstrapGeneration = 0;'));
+    expect(state, contains('final generation = ++_bootstrapGeneration;'));
+    expect(state, contains('bool _isCurrentBootstrap(int generation)'));
+    expect(state, contains('if (!_isCurrentBootstrap(generation)) return;'));
+    expect(state, contains('config: activeCfg'));
+    expect(logout, contains('_bootstrapGeneration++;'));
+  });
+
   test('account dynamic labels and dropdown menus are constrained', () {
     final source = File('lib/screens/account_page.dart').readAsStringSync();
 
