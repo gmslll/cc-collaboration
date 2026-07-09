@@ -712,9 +712,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.attach_file_rounded, size: 18),
-            title: Text(a.name),
+            title: Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text(
               _fmtBytes(a.size),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: CcColors.muted, fontSize: 11),
             ),
             trailing: IconButton(
@@ -774,6 +776,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         Expanded(
           child: Text(
             s,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontFamily: CcType.mono, fontSize: 13),
           ),
         ),

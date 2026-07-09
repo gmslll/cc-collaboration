@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
@@ -9,6 +10,31 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('handoff file tab dynamic labels are width constrained', () {
+    final source = File(
+      'lib/screens/handoff_detail_view.dart',
+    ).readAsStringSync();
+    final fileTab = source.substring(
+      source.indexOf('Widget _tabFiles('),
+      source.indexOf('Widget _filesHeader('),
+    );
+    final fileRow = source.substring(
+      source.indexOf('Widget _fileRow('),
+      source.indexOf('Widget _commentsSection()'),
+    );
+
+    expect(fileTab, isNot(contains('title: Text(a.name),')));
+    expect(
+      fileTab,
+      contains(
+        'title: Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis)',
+      ),
+    );
+    expect(fileTab, contains('overflow: TextOverflow.ellipsis'));
+    expect(fileRow, contains('s,\n            maxLines: 1'));
+    expect(fileRow, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   testWidgets('stale handoff detail load cannot overwrite a newer handoff', (
     tester,
   ) async {
