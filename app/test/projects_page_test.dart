@@ -1658,6 +1658,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'project member removal confirmation after account switch is ignored',
+    (tester) async {
+      final oldClient = _CountingRemoveProjectMemberProjectsPageFakeClient();
+      final newClient = _CountingRemoveProjectMemberProjectsPageFakeClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: oldClient)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Backend'));
+      await tester.pumpAndSettle();
+
+      Finder removeButton() =>
+          find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '移除');
+
+      await tester.tap(removeButton());
+      await tester.pumpAndSettle();
+      expect(find.text('移除项目成员'), findsOneWidget);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: newClient)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilledButton, '移除'));
+      await tester.pumpAndSettle();
+
+      expect(oldClient.removeMemberCalls, 0);
+      expect(newClient.removeMemberCalls, 0);
+      expect(find.text('移除项目成员'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('organization sheet keeps member input when adding fails', (
     tester,
   ) async {
@@ -1765,6 +1808,49 @@ void main() {
 
       expect(find.widgetWithText(FilledButton, '加入团队'), findsNothing);
       expect(newClient.projectsCalls, newLoadCount);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'organization member removal confirmation after account switch is ignored',
+    (tester) async {
+      final oldClient = _CountingOrgMemberProjectsPageFakeClient();
+      final newClient = _CountingOrgMemberProjectsPageFakeClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: oldClient)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Kunlun').last);
+      await tester.pumpAndSettle();
+
+      Finder removeButton() =>
+          find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '移除');
+
+      await tester.tap(removeButton());
+      await tester.pumpAndSettle();
+      expect(find.text('移除团队成员'), findsOneWidget);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: newClient)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilledButton, '移除'));
+      await tester.pumpAndSettle();
+
+      expect(oldClient.removeOrganizationMemberCalls, 0);
+      expect(newClient.removeOrganizationMemberCalls, 0);
+      expect(find.text('移除团队成员'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -2500,12 +2586,20 @@ class _CountingOrgMemberProjectsPageFakeClient extends _ProjectsPageFakeClient {
   final _addOrganizationMemberCompleter = Completer<void>();
   int addOrganizationMemberCalls = 0;
   String? addedOrganizationMemberIdentity;
+  int removeOrganizationMemberCalls = 0;
+  String? removedOrganizationMemberIdentity;
 
   @override
   Future<void> addOrganizationMember(String id, String identity, String role) {
     addOrganizationMemberCalls++;
     addedOrganizationMemberIdentity = identity;
     return _addOrganizationMemberCompleter.future;
+  }
+
+  @override
+  Future<void> removeOrganizationMember(String id, String identity) async {
+    removeOrganizationMemberCalls++;
+    removedOrganizationMemberIdentity = identity;
   }
 
   void completeAddOrganizationMember() {
