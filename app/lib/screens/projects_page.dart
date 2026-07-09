@@ -147,6 +147,31 @@ String projectListSubtitle(
 }) =>
     '$teamName · ${projectListRoleLabel(project, isAdmin: isAdmin, identity: identity)} · ${projectOwnerLabel(project.ownerIdentity)}';
 
+bool identityMatches(String left, String right) {
+  final l = left.trim();
+  final r = right.trim();
+  return l.isNotEmpty && l == r;
+}
+
+bool isIdentityOnline(Iterable<OnlineUser> onlineUsers, String identity) =>
+    onlineUsers.any(
+      (user) => user.online && identityMatches(user.identity, identity),
+    );
+
+bool canManageProjectDetail(
+  ProjectDetail detail, {
+  required bool isAdmin,
+  required String identity,
+}) {
+  if (isAdmin) return true;
+  if (detail.project.role.trim() == 'admin') return true;
+  if (identityMatches(detail.project.ownerIdentity, identity)) return true;
+  return detail.members.any(
+    (member) =>
+        identityMatches(member.identity, identity) && member.role == 'owner',
+  );
+}
+
 String projectMemberTitle(ProjectMember member) =>
     member.displayName.isEmpty ? member.identity : member.displayName;
 
@@ -1369,22 +1394,21 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     }
   }
 
-  bool _isOnline(String identity) =>
-      widget.online.any((u) => u.identity == identity && u.online);
+  bool _isOnline(String identity) => isIdentityOnline(widget.online, identity);
 
-  bool _canManage(ProjectDetail d) {
-    if (widget.isAdmin) return true;
-    if (d.project.role == 'admin') return true;
-    if (d.project.ownerIdentity == widget.identity) return true;
-    return d.members.any(
-      (m) => m.identity == widget.identity && m.role == 'owner',
-    );
-  }
+  bool _canManage(ProjectDetail d) => canManageProjectDetail(
+    d,
+    isAdmin: widget.isAdmin,
+    identity: widget.identity,
+  );
 
   List<OrganizationMember> _memberCandidates(ProjectDetail d) {
-    final projectMembers = d.members.map((m) => m.identity).toSet();
+    final projectMembers = {
+      for (final member in d.members)
+        if (member.identity.trim().isNotEmpty) member.identity.trim(),
+    };
     final candidates = _orgMembers
-        .where((m) => !projectMembers.contains(m.identity))
+        .where((m) => !projectMembers.contains(m.identity.trim()))
         .toList();
     candidates.sort((a, b) {
       final an = a.displayName.isEmpty ? a.identity : a.displayName;

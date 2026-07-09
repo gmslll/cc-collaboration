@@ -281,6 +281,78 @@ void main() {
   });
 
   test(
+    'identity helpers ignore surrounding whitespace without matching blank',
+    () {
+      expect(identityMatches(' owner@x ', 'owner@x'), isTrue);
+      expect(identityMatches('owner@x', ' owner@x '), isTrue);
+      expect(identityMatches(' ', ' '), isFalse);
+      expect(identityMatches('', 'owner@x'), isFalse);
+    },
+  );
+
+  test('online identity lookup trims relay values', () {
+    final onlineUsers = [
+      OnlineUser.fromJson({'identity': ' owner@x ', 'online': true}),
+      OnlineUser.fromJson({'identity': 'viewer@x', 'online': false}),
+    ];
+
+    expect(isIdentityOnline(onlineUsers, 'owner@x'), isTrue);
+    expect(isIdentityOnline(onlineUsers, ' viewer@x '), isFalse);
+  });
+
+  test('project management checks normalize owner and member identities', () {
+    ProjectDetail detail({
+      required String ownerIdentity,
+      required List<Map<String, Object?>> members,
+    }) => ProjectDetail.fromJson({
+      'project': {
+        'id': 'p1',
+        'org_id': 'org-a',
+        'name': 'Backend',
+        'owner_identity': ownerIdentity,
+        'role': '',
+      },
+      'repos': const [],
+      'members': members,
+    });
+
+    expect(
+      canManageProjectDetail(
+        detail(ownerIdentity: ' owner@x ', members: const []),
+        isAdmin: false,
+        identity: 'owner@x',
+      ),
+      isTrue,
+    );
+    expect(
+      canManageProjectDetail(
+        detail(
+          ownerIdentity: 'other@x',
+          members: const [
+            {'identity': ' project-owner@x ', 'role': 'owner'},
+          ],
+        ),
+        isAdmin: false,
+        identity: 'project-owner@x',
+      ),
+      isTrue,
+    );
+    expect(
+      canManageProjectDetail(
+        detail(
+          ownerIdentity: 'other@x',
+          members: const [
+            {'identity': ' project-owner@x ', 'role': 'member'},
+          ],
+        ),
+        isAdmin: false,
+        identity: 'project-owner@x',
+      ),
+      isFalse,
+    );
+  });
+
+  test(
     'project member display prefers display name with identity subtitle',
     () {
       final named = ProjectMember.fromJson({
