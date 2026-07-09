@@ -3,7 +3,7 @@ import 'package:app/screens/terminal_pane.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _TestRemoteHost extends RemoteHost {
-  _TestRemoteHost({required List<TerminalSession> sessions})
+  _TestRemoteHost({required List<TerminalSession> sessions, super.onAssignTodo})
     : _sessions = sessions,
       super(
         relayUrl: 'http://relay.test',
@@ -117,4 +117,42 @@ void main() {
 
     expect(session.debugRemoteSize, (rows: 40, cols: 100));
   });
+
+  test('todo assign replies ok to the requesting client', () async {
+    final host = _TestRemoteHost(
+      sessions: const [],
+      onAssignTodo: (req) async {
+        expect(req['todoId'], 'todo-1');
+        return null;
+      },
+    );
+    addTearDown(host.dispose);
+
+    host.onFrame({'t': 'todo.assign', 'from': 7, 'todoId': 'todo-1'});
+    await Future<void>.delayed(Duration.zero);
+
+    expect(host.sent, [
+      {'t': 'todo.assign.ok', 'to': 7, 'todoId': 'todo-1'},
+    ]);
+  });
+
+  test(
+    'todo assign handler exceptions reply err instead of timing out',
+    () async {
+      final host = _TestRemoteHost(
+        sessions: const [],
+        onAssignTodo: (_) async => throw StateError('boom'),
+      );
+      addTearDown(host.dispose);
+
+      host.onFrame({'t': 'todo.assign', 'from': 9, 'todoId': 'todo-2'});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(host.sent, hasLength(1));
+      expect(host.sent.single['t'], 'todo.assign.err');
+      expect(host.sent.single['to'], 9);
+      expect(host.sent.single['todoId'], 'todo-2');
+      expect(host.sent.single['msg'], contains('boom'));
+    },
+  );
 }

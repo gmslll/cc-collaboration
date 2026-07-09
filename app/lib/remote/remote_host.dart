@@ -425,14 +425,7 @@ class RemoteHost extends RemoteChannel {
         final from = (f['from'] as num?)?.toInt();
         if (from != null) {
           final todoId = (f['todoId'] as String?) ?? '';
-          (onAssignTodo?.call(f) ??
-                  Future.value('桌面版不支持远程指派,请升级桌面 App'))
-              .then((err) => send({
-                    't': err == null ? 'todo.assign.ok' : 'todo.assign.err',
-                    'to': from,
-                    'todoId': todoId,
-                    'msg': ?err,
-                  }));
+          unawaited(_replyTodoAssign(f, from: from, todoId: todoId));
         }
       case 'session.close':
         final sid = f['sid'] as String?;
@@ -480,6 +473,26 @@ class RemoteHost extends RemoteChannel {
       case 'wt.list':
         _wtList(f);
     }
+  }
+
+  Future<void> _replyTodoAssign(
+    Map<String, dynamic> frame, {
+    required int from,
+    required String todoId,
+  }) async {
+    String? err;
+    try {
+      final handler = onAssignTodo;
+      err = handler == null ? '桌面版不支持远程指派,请升级桌面 App' : await handler(frame);
+    } catch (e) {
+      err = '远程指派失败: $e';
+    }
+    send({
+      't': err == null ? 'todo.assign.ok' : 'todo.assign.err',
+      'to': from,
+      'todoId': todoId,
+      'msg': ?err,
+    });
   }
 
   Future<void> _dispatchShare(String t, Map<String, dynamic> f) async {
