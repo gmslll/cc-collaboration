@@ -33,6 +33,26 @@ void main() {
     expect(loadDialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('capsule load and edit dialogs guard stale plaza context', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final loadDialog = source.substring(
+      source.indexOf('class _CapsuleLoadDialogState'),
+      source.indexOf('// bundledSkillNames lists'),
+    );
+    final editDialog = source.substring(
+      source.indexOf('class _CapsuleEditDialog extends StatefulWidget'),
+      source.length,
+    );
+
+    expect(loadDialog, contains('bool _closeIfStaleContext()'));
+    expect(loadDialog, contains('if (_closeIfStaleContext()) return;'));
+    expect(loadDialog, contains('if (!mounted || !widget.isCurrentContext())'));
+    expect(editDialog, contains('required this.isCurrentContext'));
+    expect(editDialog, contains('if (!mounted || !widget.isCurrentContext())'));
+  });
+
   testWidgets('stale capsule plaza load cannot overwrite a newer refresh', (
     tester,
   ) async {
@@ -198,14 +218,81 @@ void main() {
     expect(find.text('Old capsule'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('capsule edit save after account switch is ignored', (
+    tester,
+  ) async {
+    final oldClient = _DelayedCapsulesClient();
+    final newClient = _DelayedCapsulesClient();
+    final overviewStore = SessionOverviewStore();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: oldClient,
+            identity: 'old@x',
+            overviewStore: overviewStore,
+            config: AppConfig('http://127.0.0.1:1', 'old', 'old@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    oldClient.completeNext([
+      _capsule('old', headline: 'Old capsule', owner: 'old@x'),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, '编辑'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Old edited capsule');
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pump();
+    expect(oldClient.patchCalls, 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: newClient,
+            identity: 'new@x',
+            overviewStore: overviewStore,
+            config: AppConfig('http://127.0.0.1:1', 'new', 'new@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    newClient.completeNext([
+      _capsule('new', headline: 'New capsule', owner: 'new@x'),
+    ]);
+    await tester.pump();
+    await tester.pump();
+
+    oldClient.completePatch();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(newClient.patchCalls, 0);
+    expect(find.text('New capsule'), findsOneWidget);
+    expect(find.text('Old capsule'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _DelayedCapsulesClient extends RelayClient {
   final _requests = <Completer<List<CapsuleListItem>>>[];
+  final _patches = <Completer<void>>[];
 
   _DelayedCapsulesClient() : super('http://127.0.0.1', 'tok');
 
   int get requestCount => _requests.length;
+  int get patchCalls => _patches.length;
 
   @override
   Future<List<CapsuleListItem>> capsules() {
@@ -221,6 +308,30 @@ class _DelayedCapsulesClient extends RelayClient {
     deletedIds.add(id);
   }
 
+  @override
+  Future<Package> get(String id) async => Package.fromJson({
+    'id': id,
+    'kind': 'capsule',
+    'sender': 'owner@x',
+    'recipient': 'viewer@x',
+    'urgency': 'normal',
+    'summary_md': 'capsule package',
+    'repo': {'name': 'cc-collaboration', 'branch': 'main'},
+    'attachments': <Map<String, dynamic>>[],
+  });
+
+  @override
+  Future<List<int>> attachment(String id, String name) async {
+    throw Exception('missing attachment');
+  }
+
+  @override
+  Future<void> patchCapsule(String id, {String? visibility, String? summary}) {
+    final completer = Completer<void>();
+    _patches.add(completer);
+    return completer.future;
+  }
+
   void completeNext(List<CapsuleListItem> items) {
     final request = _requests.firstWhere((c) => !c.isCompleted);
     request.complete(items);
@@ -229,6 +340,11 @@ class _DelayedCapsulesClient extends RelayClient {
   void completeLatest(List<CapsuleListItem> items) {
     final request = _requests.lastWhere((c) => !c.isCompleted);
     request.complete(items);
+  }
+
+  void completePatch() {
+    final request = _patches.firstWhere((c) => !c.isCompleted);
+    request.complete();
   }
 }
 

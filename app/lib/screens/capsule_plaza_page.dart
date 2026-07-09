@@ -345,22 +345,35 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     final token = widget.config.token;
     final changed = await showDialog<bool>(
       context: context,
-      builder: (_) => _CapsuleEditDialog(client: client, capsule: c),
+      builder: (_) => _CapsuleEditDialog(
+        client: client,
+        capsule: c,
+        isCurrentContext: () =>
+            _isCurrentPlazaContext(client, identity, relayUrl, token),
+      ),
     );
     if (!mounted) return;
     if (!_isCurrentPlazaContext(client, identity, relayUrl, token)) return;
     if (changed == true) _load();
   }
 
-  Future<void> _loadCapsule(CapsuleListItem c) => showDialog(
-    context: context,
-    builder: (_) => _CapsuleLoadDialog(
-      client: widget.client,
-      overviewStore: widget.overviewStore,
-      config: widget.config,
-      capsule: c,
-    ),
-  );
+  Future<void> _loadCapsule(CapsuleListItem c) {
+    final client = widget.client;
+    final identity = widget.identity;
+    final relayUrl = widget.config.relayUrl;
+    final token = widget.config.token;
+    return showDialog(
+      context: context,
+      builder: (_) => _CapsuleLoadDialog(
+        client: client,
+        overviewStore: widget.overviewStore,
+        config: widget.config,
+        capsule: c,
+        isCurrentContext: () =>
+            _isCurrentPlazaContext(client, identity, relayUrl, token),
+      ),
+    );
+  }
 }
 
 // _crossMachineNote is appended to a loaded capsule's opening prompt. A capsule
@@ -383,11 +396,13 @@ class _CapsuleLoadDialog extends StatefulWidget {
   final SessionOverviewStore overviewStore;
   final AppConfig config;
   final CapsuleListItem capsule;
+  final bool Function() isCurrentContext;
   const _CapsuleLoadDialog({
     required this.client,
     required this.overviewStore,
     required this.config,
     required this.capsule,
+    required this.isCurrentContext,
   });
 
   @override
@@ -426,14 +441,15 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   Future<void> _loadPackage() async {
     try {
       final pkg = await widget.client.get(widget.capsule.id);
-      if (mounted) {
-        setState(() {
-          _pkg = pkg;
-          _bundledSkills = skillPackNames(pkg.attachments);
-        });
-      }
+      if (!mounted || !widget.isCurrentContext()) return;
+      setState(() {
+        _pkg = pkg;
+        _bundledSkills = skillPackNames(pkg.attachments);
+      });
     } catch (_) {
-      if (mounted) setState(() => _bundledSkills = const []);
+      if (mounted && widget.isCurrentContext()) {
+        setState(() => _bundledSkills = const []);
+      }
     }
   }
 
@@ -460,6 +476,12 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
     snack(context, msg);
   }
 
+  bool _closeIfStaleContext() {
+    if (widget.isCurrentContext()) return false;
+    Navigator.of(context).pop();
+    return true;
+  }
+
   Future<void> _submit() async {
     final ws = _workspace, proj = _project;
     final projPath = _projectPath;
@@ -467,18 +489,21 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
       snack(context, '请选择目标工作区 / 项目');
       return;
     }
+    if (_closeIfStaleContext()) return;
     setState(() => _submitting = true);
     try {
       // Place any bundled skill packs into the local skills dir first, so the
       // session (resumed or seeded) can use them immediately.
       final skills = await _extractSkillPacks();
       if (!mounted) return;
+      if (_closeIfStaleContext()) return;
 
       // ① same-tool: import the raw log locally → native `--resume` (highest
       // fidelity). Falls through to the seed path if it can't be set up.
       if (_wouldNativeResume) {
         final resumeId = await _importForResume(projPath);
         if (!mounted) return;
+        if (_closeIfStaleContext()) return;
         if (resumeId != null) {
           final (sid, err) = await widget.overviewStore.spawn(
             workspace: ws,
@@ -488,6 +513,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
             workdir: projPath,
           );
           if (!mounted) return;
+          if (_closeIfStaleContext()) return;
           if (sid == null) {
             _fail('起会话失败: ${err ?? "未知错误"}');
             return;
@@ -501,6 +527,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
       // Seed path: ② role, ① cross-tool, or native import unavailable.
       final prompt = await _buildOpeningPrompt(skills);
       if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       if (prompt == null) {
         _fail('拉取胶囊内容失败');
         return;
@@ -513,6 +540,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
         newWorktreeBranch: branch.isEmpty ? null : branch,
       );
       if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       if (sid == null) {
         _fail('起会话失败: ${err ?? "未知错误"}');
         return;
@@ -533,6 +561,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
       );
     } catch (e) {
       if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       _fail('载入失败: ${errorText(e)}');
     }
   }
@@ -829,7 +858,12 @@ Widget _sectionLabel(String s) => Padding(
 class _CapsuleEditDialog extends StatefulWidget {
   final RelayClient client;
   final CapsuleListItem capsule;
-  const _CapsuleEditDialog({required this.client, required this.capsule});
+  final bool Function() isCurrentContext;
+  const _CapsuleEditDialog({
+    required this.client,
+    required this.capsule,
+    required this.isCurrentContext,
+  });
 
   @override
   State<_CapsuleEditDialog> createState() => _CapsuleEditDialogState();
@@ -860,7 +894,7 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
     final skills = await skillsF;
     final persona = await personaF;
     final seed = await seedF;
-    if (!mounted) return;
+    if (!mounted || !widget.isCurrentContext()) return;
     setState(() {
       _skills = skills;
       _persona = persona ?? '';
@@ -906,11 +940,11 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
         visibility: _public ? 'public' : 'private',
         summary: _summary.text.trim(),
       );
-      if (!mounted) return;
+      if (!mounted || !widget.isCurrentContext()) return;
       Navigator.of(context).pop(true);
       snack(context, '已保存');
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !widget.isCurrentContext()) return;
       setState(() => _saving = false);
       snack(context, '保存失败: ${errorText(e)}');
     }
