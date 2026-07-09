@@ -157,6 +157,11 @@ func formatDeliveryTarget(target *handoffschema.DeliveryTarget) string {
 }
 
 func resolveSubmitRecipients(ctx context.Context, client *transport.Client, sender, recipient, projectID, orgID, member string) ([]string, error) {
+	sender = strings.TrimSpace(sender)
+	recipient = strings.TrimSpace(recipient)
+	projectID = strings.TrimSpace(projectID)
+	orgID = strings.TrimSpace(orgID)
+	member = strings.TrimSpace(member)
 	if (projectID != "" || orgID != "") && recipient != "" {
 		return nil, fmt.Errorf("--to cannot be combined with --project or --org")
 	}
