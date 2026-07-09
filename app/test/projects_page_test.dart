@@ -1149,6 +1149,43 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   });
 
+  testWidgets('organization sheet ignores duplicate member add taps', (
+    tester,
+  ) async {
+    final client = _CountingOrgMemberProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == '成员 identity',
+    );
+    await tester.enterText(memberField, 'qa@x');
+    await tester.pump();
+
+    final addButton = find.widgetWithText(FilledButton, '加入团队');
+    await tester.tap(addButton);
+    await tester.tap(addButton);
+
+    expect(client.addOrganizationMemberCalls, 1);
+    expect(client.addedOrganizationMemberIdentity, 'qa@x');
+    await tester.pump();
+    expect(find.text('加入中'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    client.completeAddOrganizationMember();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('organization sheet member input shrinks on compact widths', (
     tester,
   ) async {
@@ -1649,6 +1686,25 @@ class _FailingOrgMemberProjectsPageFakeClient extends _ProjectsPageFakeClient {
     String role,
   ) async {
     throw Exception('add member failed');
+  }
+}
+
+class _CountingOrgMemberProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  final _addOrganizationMemberCompleter = Completer<void>();
+  int addOrganizationMemberCalls = 0;
+  String? addedOrganizationMemberIdentity;
+
+  @override
+  Future<void> addOrganizationMember(String id, String identity, String role) {
+    addOrganizationMemberCalls++;
+    addedOrganizationMemberIdentity = identity;
+    return _addOrganizationMemberCompleter.future;
+  }
+
+  void completeAddOrganizationMember() {
+    if (!_addOrganizationMemberCompleter.isCompleted) {
+      _addOrganizationMemberCompleter.complete();
+    }
   }
 }
 
