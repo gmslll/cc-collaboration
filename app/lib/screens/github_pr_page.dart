@@ -13,7 +13,15 @@ import 'diff_view.dart';
 class GitHubPrPage extends StatefulWidget {
   final String githubUrl;
   final String name;
-  const GitHubPrPage({super.key, required this.githubUrl, required this.name});
+  final Future<String> Function()? loadToken;
+  final Future<List<PullRequest>> Function(String slug)? listPulls;
+  const GitHubPrPage({
+    super.key,
+    required this.githubUrl,
+    required this.name,
+    this.loadToken,
+    this.listPulls,
+  });
 
   @override
   State<GitHubPrPage> createState() => _GitHubPrPageState();
@@ -25,6 +33,7 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
   List<PullRequest>? _pulls;
   String? _error;
   bool _loading = true;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -32,20 +41,32 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(GitHubPrPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.githubUrl != widget.githubUrl) _load();
+  }
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final githubUrl = widget.githubUrl;
     setState(() {
       _loading = true;
       _error = null;
+      _pulls = null;
     });
-    final slug = GitHubClient.parseSlug(widget.githubUrl);
+    final slug = GitHubClient.parseSlug(githubUrl);
     if (slug == null) {
       setState(() {
-        _error = '无法从 ${widget.githubUrl} 解析 GitHub 仓库';
+        _error = '无法从 $githubUrl 解析 GitHub 仓库';
         _loading = false;
       });
       return;
     }
-    final token = (await AppConfig.load())?.githubToken ?? '';
+    final token = widget.loadToken == null
+        ? (await AppConfig.load())?.githubToken ?? ''
+        : await widget.loadToken!();
+    if (!_isCurrentLoad(generation, githubUrl)) return;
     if (token.isEmpty) {
       setState(() {
         _error = '未设置 GitHub token —— 去「账号 → 本地配置」填 github_token';
@@ -56,20 +77,25 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
     _slug = slug;
     _client = GitHubClient(token);
     try {
-      final p = await _client!.listPulls(slug);
-      if (!mounted) return;
+      final p = widget.listPulls == null
+          ? await _client!.listPulls(slug)
+          : await widget.listPulls!(slug);
+      if (!_isCurrentLoad(generation, githubUrl)) return;
       setState(() {
         _pulls = p;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation, githubUrl)) return;
       setState(() {
         _error = errorText(e);
         _loading = false;
       });
     }
   }
+
+  bool _isCurrentLoad(int generation, String githubUrl) =>
+      mounted && generation == _loadGeneration && githubUrl == widget.githubUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -80,9 +106,10 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton(
-                icon: const Icon(Icons.refresh_rounded),
-                tooltip: '刷新',
-                onPressed: _load),
+              icon: const Icon(Icons.refresh_rounded),
+              tooltip: '刷新',
+              onPressed: _load,
+            ),
           ),
         ],
       ),
@@ -90,12 +117,8 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
     );
   }
 
-  Widget _body() => asyncBody(
-        loading: _loading,
-        error: _error,
-        onRetry: _load,
-        child: _list,
-      );
+  Widget _body() =>
+      asyncBody(loading: _loading, error: _error, onRetry: _load, child: _list);
 
   Widget _list() {
     final pulls = _pulls ?? const [];
@@ -108,19 +131,26 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
         itemBuilder: (_, i) {
           final pr = pulls[i];
           return ListTile(
-            leading: tag('#${pr.number}',
-                pr.draft ? CcColors.subtle : CcColors.accent),
+            leading: tag(
+              '#${pr.number}',
+              pr.draft ? CcColors.subtle : CcColors.accent,
+            ),
             title: Text(pr.title, maxLines: 2, overflow: TextOverflow.ellipsis),
             subtitle: Text(
-                '${pr.author} · ${pr.headRef} → ${pr.baseRef}${pr.draft ? ' · draft' : ''}',
-                style: const TextStyle(color: CcColors.muted, fontSize: 12)),
-            trailing: const Icon(Icons.chevron_right_rounded,
-                color: CcColors.subtle),
+              '${pr.author} · ${pr.headRef} → ${pr.baseRef}${pr.draft ? ' · draft' : ''}',
+              style: const TextStyle(color: CcColors.muted, fontSize: 12),
+            ),
+            trailing: const Icon(
+              Icons.chevron_right_rounded,
+              color: CcColors.subtle,
+            ),
             onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) =>
-                        _PrDiffPage(client: _client!, slug: _slug!, pr: pr))),
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    _PrDiffPage(client: _client!, slug: _slug!, pr: pr),
+              ),
+            ),
           );
         },
       ),
@@ -133,8 +163,11 @@ class _PrDiffPage extends StatefulWidget {
   final GitHubClient client;
   final String slug;
   final PullRequest pr;
-  const _PrDiffPage(
-      {required this.client, required this.slug, required this.pr});
+  const _PrDiffPage({
+    required this.client,
+    required this.slug,
+    required this.pr,
+  });
 
   @override
   State<_PrDiffPage> createState() => _PrDiffPageState();
@@ -164,8 +197,13 @@ class _PrDiffPageState extends State<_PrDiffPage> {
           for (final p in f)
             // normalise GitHub's 'removed' to git's 'deleted' at the boundary
             // so DiffView only deals with git statuses.
-            FileDiff(p.filename, p.status == 'removed' ? 'deleted' : p.status,
-                p.additions, p.deletions, p.patch)
+            FileDiff(
+              p.filename,
+              p.status == 'removed' ? 'deleted' : p.status,
+              p.additions,
+              p.deletions,
+              p.patch,
+            ),
         ];
         _loading = false;
       });
@@ -182,8 +220,12 @@ class _PrDiffPageState extends State<_PrDiffPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title: Text('#${widget.pr.number}  ${widget.pr.title}',
-              maxLines: 1, overflow: TextOverflow.ellipsis)),
+        title: Text(
+          '#${widget.pr.number}  ${widget.pr.title}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: asyncBody(
         loading: _loading,
         error: _error,
