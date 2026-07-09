@@ -62,6 +62,7 @@ class _AccountPageState extends State<AccountPage> {
   List<MachineToken>? _tokens;
   bool _changingPw = false;
   bool _creatingToken = false;
+  final Set<String> _deletingTokenIds = {};
 
   // local config.toml editor (desktop only).
   AppConfig? _cfg;
@@ -387,6 +388,7 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _deleteToken(MachineToken token) async {
+    if (_deletingTokenIds.contains(token.id)) return;
     final label = token.label.trim().isEmpty ? token.id : token.label.trim();
     final ok = await confirm(
       context,
@@ -396,11 +398,14 @@ class _AccountPageState extends State<AccountPage> {
     );
     if (!ok) return;
     if (!mounted) return;
+    setState(() => _deletingTokenIds.add(token.id));
     try {
       await widget.client.deleteToken(token.id);
       await _loadTokens();
     } catch (e) {
       if (mounted) snack(context, '$e');
+    } finally {
+      if (mounted) setState(() => _deletingTokenIds.remove(token.id));
     }
   }
 
@@ -583,8 +588,9 @@ class _AccountPageState extends State<AccountPage> {
                 else if (_tokens!.isEmpty)
                   const Text('暂无', style: TextStyle(color: CcColors.muted))
                 else
-                  ..._tokens!.map(
-                    (t) => ListTile(
+                  ..._tokens!.map((t) {
+                    final deleting = _deletingTokenIds.contains(t.id);
+                    return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                       title: Text(
@@ -602,12 +608,20 @@ class _AccountPageState extends State<AccountPage> {
                         ),
                       ),
                       trailing: IconButton(
-                        icon: const Icon(Icons.delete_rounded, size: 20),
+                        icon: deleting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.delete_rounded, size: 20),
                         tooltip: '删除机器 token',
-                        onPressed: () => _deleteToken(t),
+                        onPressed: deleting ? null : () => _deleteToken(t),
                       ),
-                    ),
-                  ),
+                    );
+                  }),
               ],
             ),
           ),

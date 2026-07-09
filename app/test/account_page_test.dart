@@ -178,6 +178,43 @@ void main() {
     expect(find.text('laptop'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('machine token deletion locks while request is pending', (
+    tester,
+  ) async {
+    final client = _DelayedTokenDeleteAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    final deleteButton = find.byWidgetPredicate(
+      (w) => w is IconButton && w.tooltip == '删除机器 token',
+    );
+    tester.widget<IconButton>(deleteButton).onPressed!();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+
+    expect(client.deleteTokenCalls, 1);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(tester.widget<IconButton>(deleteButton).onPressed, isNull);
+
+    client.completeDeleteToken();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('laptop'), findsNothing);
+    expect(client.deleteTokenCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Finder _fieldWithLabel(String label) => find.byWidgetPredicate(
@@ -251,5 +288,37 @@ class _TokenDeleteAccountPageFakeClient extends RelayClient {
     deleteTokenCalls++;
     deletedTokenId = id;
     _deleted = true;
+  }
+}
+
+class _DelayedTokenDeleteAccountPageFakeClient extends RelayClient {
+  _DelayedTokenDeleteAccountPageFakeClient() : super('http://127.0.0.1', 'tok');
+
+  final _deleteCompleter = Completer<void>();
+  bool _deleted = false;
+  int deleteTokenCalls = 0;
+
+  @override
+  Future<List<MachineToken>> tokens() async => _deleted
+      ? const []
+      : [
+          MachineToken.fromJson({
+            'id': 'tok-1',
+            'label': 'laptop',
+            'created_at': '2026-01-01T00:00:00Z',
+          }),
+        ];
+
+  @override
+  Future<void> deleteToken(String id) async {
+    deleteTokenCalls++;
+    await _deleteCompleter.future;
+    _deleted = true;
+  }
+
+  void completeDeleteToken() {
+    if (!_deleteCompleter.isCompleted) {
+      _deleteCompleter.complete();
+    }
   }
 }
