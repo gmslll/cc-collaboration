@@ -101,7 +101,11 @@ class _DiffPageState extends State<DiffPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('变动 · ${widget.name}'),
+        title: Text(
+          '变动 · ${widget.name}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/api/github_client.dart';
 import 'package:app/screens/github_pr_page.dart';
@@ -7,6 +8,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('GitHub PR app bar title is width constrained', () {
+    final source = File('lib/screens/github_pr_page.dart').readAsStringSync();
+
+    expect(
+      source,
+      isNot(contains("title: Text('GitHub PR · \${widget.name}')")),
+    );
+    expect(
+      source,
+      contains("'GitHub PR · \${widget.name}',\n          maxLines: 1"),
+    );
+    expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   testWidgets('stale GitHub PR load cannot overwrite a newer repo', (
     tester,
   ) async {

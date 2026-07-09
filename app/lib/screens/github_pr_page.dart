@@ -101,7 +101,11 @@ class _GitHubPrPageState extends State<GitHubPrPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('GitHub PR · ${widget.name}'),
+        title: Text(
+          'GitHub PR · ${widget.name}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),

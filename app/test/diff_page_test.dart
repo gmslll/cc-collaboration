@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/screens/diff_page.dart';
 import 'package:app/theme.dart';
@@ -6,6 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('diff app bar title is width constrained', () {
+    final source = File('lib/screens/diff_page.dart').readAsStringSync();
+
+    expect(source, isNot(contains("title: Text('变动 · \${widget.name}')")));
+    expect(source, contains("'变动 · \${widget.name}',\n          maxLines: 1"));
+    expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   testWidgets('stale diff load cannot overwrite the selected mode', (
     tester,
   ) async {
