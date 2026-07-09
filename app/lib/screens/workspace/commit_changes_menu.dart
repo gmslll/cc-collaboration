@@ -266,6 +266,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     try {
       final patch = await _localChangesPatch(p, changes);
       if (patch == null) return;
+      if (!mounted) return;
       final suggested = changes.length == 1
           ? '${changes.first.path.split('/').last}.patch'
           : 'local-changes.patch';
@@ -291,6 +292,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     try {
       final patch = await _localChangesPatch(p, changes);
       if (patch == null) return;
+      if (!mounted) return;
       await Clipboard.setData(ClipboardData(text: patch));
       if (mounted) _snack('Patch 已复制到剪贴板');
     } catch (e) {

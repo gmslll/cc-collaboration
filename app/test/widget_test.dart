@@ -900,8 +900,26 @@ void main() {
         'Future<void> _createPatchFromChanges(',
         'Future<void> _copyPatchToClipboard(',
       ),
+      'if (patch == null) return;',
+      'FilePicker.platform.saveFile',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/commit_changes_menu.dart',
+        'Future<void> _createPatchFromChanges(',
+        'Future<void> _copyPatchToClipboard(',
+      ),
       'if (dest == null) return;',
       'File(out).writeAsString',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/commit_changes_menu.dart',
+        'Future<void> _copyPatchToClipboard(',
+        'Future<void> _shelveChange(',
+      ),
+      'if (patch == null) return;',
+      'Clipboard.setData',
     );
     expectGuardBefore(
       between(
