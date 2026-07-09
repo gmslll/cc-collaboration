@@ -186,7 +186,12 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
     FileDiff f,
   ) async {
     try {
-      final diff = await gitShowCommitFile(p.path, hash, f.path, context: 999999);
+      final diff = await gitShowCommitFile(
+        p.path,
+        hash,
+        f.path,
+        context: 999999,
+      );
       final files = parseUnifiedDiff(diff);
       if (!mounted) return;
       if (files.isEmpty) {
@@ -222,6 +227,7 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
         )) {
       return;
     }
+    if (!mounted) return;
     if (_gitLoading) return;
     setState(() => _gitLoading = true);
     try {
@@ -243,11 +249,11 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
       return;
     }
     try {
-      final saved = await writePatchToPickedFile(
-        f.raw,
-        '${f.path.split('/').last}.patch',
-      );
-      if (saved != null && mounted) _snack('已保存 patch: $saved');
+      final out = await pickPatchFilePath('${f.path.split('/').last}.patch');
+      if (out == null) return;
+      if (!mounted) return;
+      final saved = await writePatchFile(out, f.raw);
+      if (mounted) _snack('已保存 patch: $saved');
     } catch (e) {
       if (mounted) _snack(errorText(e));
     }
@@ -266,6 +272,7 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     if (_gitLoading) return;
     setState(() => _gitLoading = true);
     try {
@@ -283,16 +290,20 @@ mixin _GitLogDiffTreeMenu on _GitMixin, _SearchMixin {
   String _revShort(String h) => h.length <= 10 ? h : h.substring(0, 10);
 }
 
-/// 把 patch 内容存到用户选的 .patch 文件,返回保存的文件名(取消 → null)。补 `.patch`
-/// 后缀、规整末尾换行。中栏(commit format-patch)与右栏(单文件 diff)的 Create Patch
-/// 共用(同一 library 的 part,顶层函数彼此可见)。
-Future<String?> writePatchToPickedFile(String patch, String suggestedName) async {
+/// 选择 patch 保存路径(取消 → null),并补 `.patch` 后缀。中栏(commit
+/// format-patch)与右栏(单文件 diff)的 Create Patch 共用(同一 library 的 part,
+/// 顶层函数彼此可见)。
+Future<String?> pickPatchFilePath(String suggestedName) async {
   final dest = await FilePicker.platform.saveFile(
     dialogTitle: 'Create Patch',
     fileName: suggestedName,
   );
   if (dest == null) return null;
-  final out = dest.endsWith('.patch') ? dest : '$dest.patch';
+  return dest.endsWith('.patch') ? dest : '$dest.patch';
+}
+
+/// 把 patch 内容写入已确认的路径,规整末尾换行,返回保存的文件名。
+Future<String> writePatchFile(String out, String patch) async {
   await File(out).writeAsString(patch.endsWith('\n') ? patch : '$patch\n');
   return out.split('/').last;
 }

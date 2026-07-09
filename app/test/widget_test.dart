@@ -527,6 +527,50 @@ void main() {
 
     expectGuardBefore(
       between(
+        'lib/screens/workspace/git_log_commit_menu.dart',
+        'Future<void> _createPatchFromCommit(',
+        'Future<void> _checkoutRevision(',
+      ),
+      'if (out == null) return;',
+      'writePatchFile(out, patch)',
+    );
+
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/git_log_difftree_menu.dart',
+        'Future<void> _applyFileDiffPatch(',
+        'Future<void> _createPatchFromFileDiff(',
+      ),
+      'Revert selected changes?',
+      'setState(() => _gitLoading = true)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/git_log_difftree_menu.dart',
+        'Future<void> _createPatchFromFileDiff(',
+        'Future<void> _getFileFromRevision(',
+      ),
+      'if (out == null) return;',
+      'writePatchFile(out, f.raw)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/git_log_difftree_menu.dart',
+        'Future<void> _getFileFromRevision(',
+        'String _revShort(',
+      ),
+      'Get from revision?',
+      'setState(() => _gitLoading = true)',
+    );
+    expect(
+      File(
+        'lib/screens/workspace/git_log_difftree_menu.dart',
+      ).readAsStringSync(),
+      isNot(contains('writePatchToPickedFile')),
+    );
+
+    expectGuardBefore(
+      between(
         'lib/screens/workspace/commit_changes_menu.dart',
         'Future<void> _commitSingleFile(',
         'Future<void> _deleteChangeFile(',

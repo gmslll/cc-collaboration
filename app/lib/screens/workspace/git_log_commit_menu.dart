@@ -218,8 +218,11 @@ mixin _GitLogCommitMenu on _GitMixin {
         _snack('没有可导出的内容');
         return;
       }
-      final saved = await writePatchToPickedFile(patch, '${c.shortHash}.patch');
-      if (saved != null && mounted) _snack('已保存 patch: $saved');
+      final out = await pickPatchFilePath('${c.shortHash}.patch');
+      if (out == null) return;
+      if (!mounted) return;
+      final saved = await writePatchFile(out, patch);
+      if (mounted) _snack('已保存 patch: $saved');
     } catch (e) {
       if (mounted) _snack(errorText(e));
     }
