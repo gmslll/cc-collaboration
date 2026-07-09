@@ -56,8 +56,8 @@ func TestMemberTableDoesNotRenderLastOwnerAsRemovable(t *testing.T) {
 		`const isLastOwner = m.role === "owner" && ownerCount <= 1;`,
 		`const removeBlockReasons = options.removeBlockReasons || {};`,
 		`const removeDisabledReason = options.removeDisabledReason || "";`,
-		`const removeBlockReason = isLastOwner ? "至少保留一个 owner" : removeDisabledReason || removeBlockReasons[m.identity] || "";`,
-		`${isLastOwner ? ` + "`disabled title=\"至少保留一个 owner\"`" + ` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`,
+		`const removeBlockReason = isLastOwner ? "至少保留一个负责人" : removeDisabledReason || removeBlockReasons[m.identity] || "";`,
+		`${isLastOwner ? ` + "`disabled title=\"至少保留一个负责人\"`" + ` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`,
 		`disabled title="${escapeAttr(removeBlockReason)}"`,
 		`aria-label="不能移除成员 ${escapeAttr(m.identity)}"`,
 		": `<button type=\"button\" class=\"link-danger\" ${removeAttr}=\"${escapeAttr(m.identity)}\" aria-label=\"移除成员 ${escapeAttr(m.identity)}\">移除</button>`;",
@@ -91,6 +91,36 @@ func TestMemberRoleControlsAreRoleGated(t *testing.T) {
 		if !strings.Contains(js, want) {
 			t.Fatalf("member role controls are missing gated fragment %q", want)
 		}
+	}
+}
+
+func TestRoleLabelsAreLocalizedInManagementUI(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	required := []string{
+		`function roleLabel(role, scope = "team") {`,
+		`if (role === "owner") return "负责人";`,
+		`if (role === "admin") return "管理员";`,
+		`if (role === "viewer") return "只读";`,
+		`if (role === "guest") return "访客";`,
+		`${escapeHTML(roleLabel(role, "team"))}`,
+		`${metricTile("你的角色", roleLabel(role, "team"))}`,
+		`${escapeHTML(roleLabel(role, "project"))}`,
+		`${escapeHTML(roleLabel(m.role, roleOptions.includes("viewer") ? "project" : "team"))}`,
+	}
+	for _, want := range required {
+		if !strings.Contains(js, want) {
+			t.Fatalf("management UI is missing localized role label fragment %q", want)
+		}
+	}
+	if strings.Contains(js, `<span class="badge">${escapeHTML(role)}</span>`) {
+		t.Fatal("management UI still renders raw role badge text")
+	}
+	if strings.Contains(js, `>${escapeHTML(role)}</option>`) {
+		t.Fatal("management UI still renders raw role option text")
 	}
 }
 

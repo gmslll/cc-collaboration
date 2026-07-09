@@ -972,8 +972,22 @@ function roleTone(role) {
   return ["owner", "admin", "member", "viewer", "guest"].includes(role) ? `role-${role}` : "role-member";
 }
 
+function roleLabel(role, scope = "team") {
+  if (scope === "project") {
+    if (role === "owner") return "负责人";
+    if (role === "admin") return "管理员";
+    if (role === "viewer") return "只读";
+    if (role === "member") return "成员";
+  }
+  if (role === "owner") return "负责人";
+  if (role === "admin") return "管理员";
+  if (role === "guest") return "访客";
+  if (role === "member") return "成员";
+  return role || "成员";
+}
+
 function roleSelectOptions(roles, currentRole) {
-  return roles.map((role) => `<option value="${escapeAttr(role)}" ${role === currentRole ? "selected" : ""}>${escapeHTML(role)}</option>`).join("");
+  return roles.map((role) => `<option value="${escapeAttr(role)}" ${role === currentRole ? "selected" : ""}>${escapeHTML(roleLabel(role, role === "viewer" ? "project" : "team"))}</option>`).join("");
 }
 
 function metricTile(label, value) {
@@ -1003,7 +1017,8 @@ function reachableUserCandidates(existingMembers = []) {
 }
 
 function memberCandidateForm(kind, candidates, roles) {
-  const roleOptions = roles.map((role) => `<option value="${escapeAttr(role)}">${escapeHTML(role)}</option>`).join("");
+  const scope = kind === "member" ? "project" : "team";
+  const roleOptions = roles.map((role) => `<option value="${escapeAttr(role)}">${escapeHTML(roleLabel(role, scope))}</option>`).join("");
   const emptyHint = candidates.length ? "" : `<span class="member-picker-hint">没有候选时仍可手动输入 identity。</span>`;
   return `
     <form class="inline-form member-invite-form member-picker" data-form="${escapeAttr(kind)}">
@@ -1041,10 +1056,10 @@ function renderMemberTable(members, options = {}) {
         const displayName = (m.display_name || "").trim();
         const online = isOnlineIdentity(m.identity);
         const isLastOwner = m.role === "owner" && ownerCount <= 1;
-        const removeBlockReason = isLastOwner ? "至少保留一个 owner" : removeDisabledReason || removeBlockReasons[m.identity] || "";
+        const removeBlockReason = isLastOwner ? "至少保留一个负责人" : removeDisabledReason || removeBlockReasons[m.identity] || "";
         const roleControl = canChangeRole
-          ? `<select class="member-role-select" ${roleAttr}="${escapeAttr(m.identity)}" aria-label="更新成员 ${escapeAttr(m.identity)} 的角色" ${isLastOwner ? `disabled title="至少保留一个 owner"` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`
-          : `<span class="role-pill ${roleTone(m.role)}">${escapeHTML(m.role)}</span>`;
+          ? `<select class="member-role-select" ${roleAttr}="${escapeAttr(m.identity)}" aria-label="更新成员 ${escapeAttr(m.identity)} 的角色" ${isLastOwner ? `disabled title="至少保留一个负责人"` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`
+          : `<span class="role-pill ${roleTone(m.role)}">${escapeHTML(roleLabel(m.role, roleOptions.includes("viewer") ? "project" : "team"))}</span>`;
         const removeButton = removeBlockReason
           ? `<button type="button" class="link-danger" disabled title="${escapeAttr(removeBlockReason)}" aria-label="不能移除成员 ${escapeAttr(m.identity)}">${escapeHTML(isLastOwner ? "保留" : "受保护")}</button>`
           : `<button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button>`;
@@ -1112,7 +1127,7 @@ function renderOrganizations() {
         <div class="aux-card-head">
           <div class="org-title">
             <strong>${escapeHTML(org.name)}</strong>
-            <span class="badge">${escapeHTML(role)}</span>
+            <span class="badge">${escapeHTML(roleLabel(role, "team"))}</span>
           </div>
           <div class="aux-card-actions">
             ${canManage ? `<button class="secondary" type="button" data-action="manage-org">管理</button>` : ""}
@@ -1230,7 +1245,7 @@ async function renderOrganizationManage(id, body) {
         ${metricTile("项目", projects.length)}
         ${metricTile("成员", members.length)}
         ${metricTile("在线", onlineCount)}
-        ${metricTile("你的角色", role)}
+        ${metricTile("你的角色", roleLabel(role, "team"))}
       </div>
       <div class="manage-block">
         <h4>项目</h4>
@@ -1337,7 +1352,7 @@ function renderProjects() {
       <div class="aux-card" data-project="${escapeAttr(p.id)}">
         <div class="aux-card-head">
           <div>
-            <strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(role)}</span>
+            <strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(roleLabel(role, "project"))}</span>
             ${p.org_id ? `<span class="badge soft">${escapeHTML(organizationName(p.org_id))}</span>` : ""}
           </div>
           <div class="aux-card-actions">
