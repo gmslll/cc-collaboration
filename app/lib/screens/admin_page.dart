@@ -33,6 +33,7 @@ class _AdminPageState extends State<AdminPage> {
   final _identity = TextEditingController();
   final _password = TextEditingController();
   bool _newAdmin = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -56,18 +57,22 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     try {
       final u = await widget.client.users();
-      if (mounted) {
+      if (_isCurrentLoad(generation)) {
         setState(() {
           _users = u;
           _error = null;
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (_isCurrentLoad(generation)) setState(() => _error = '$e');
     }
   }
+
+  bool _isCurrentLoad(int generation) =>
+      mounted && generation == _loadGeneration;
 
   Future<void> _create() async {
     final id = _identity.text.trim();

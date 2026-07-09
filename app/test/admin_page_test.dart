@@ -138,6 +138,38 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('stale admin user load cannot overwrite a newer reload', (
+    tester,
+  ) async {
+    final client = _DelayedUsersAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: client)),
+      ),
+    );
+    await tester.pump();
+    expect(client.userRequestCount, 1);
+
+    await tester.enterText(find.byType(TextField).first, 'new@x');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+    await tester.pump();
+    client.completeCreate(null);
+    await tester.pump();
+    expect(client.userRequestCount, 2);
+
+    client.completeLatestUsers([_user('new@x', displayName: 'New User')]);
+    await tester.pumpAndSettle();
+    expect(find.text('New User'), findsOneWidget);
+    expect(find.text('Old User'), findsNothing);
+
+    client.completeNextUsers([_user('old@x', displayName: 'Old User')]);
+    await tester.pumpAndSettle();
+    expect(find.text('New User'), findsOneWidget);
+    expect(find.text('Old User'), findsNothing);
+  });
 }
 
 class _AdminPageFakeClient extends RelayClient {
@@ -170,3 +202,43 @@ class _DelayedCreateAdminPageFakeClient extends _AdminPageFakeClient {
     }
   }
 }
+
+class _DelayedUsersAdminPageFakeClient extends _AdminPageFakeClient {
+  final _usersRequests = <Completer<List<User>>>[];
+  final _createCompleter = Completer<String?>();
+
+  int get userRequestCount => _usersRequests.length;
+
+  @override
+  Future<List<User>> users() {
+    final completer = Completer<List<User>>();
+    _usersRequests.add(completer);
+    return completer.future;
+  }
+
+  @override
+  Future<String?> createUser(
+    String identity, {
+    String? password,
+    bool isAdmin = false,
+  }) => _createCompleter.future;
+
+  void completeCreate(String? password) {
+    if (!_createCompleter.isCompleted) {
+      _createCompleter.complete(password);
+    }
+  }
+
+  void completeNextUsers(List<User> users) {
+    final request = _usersRequests.firstWhere((c) => !c.isCompleted);
+    request.complete(users);
+  }
+
+  void completeLatestUsers(List<User> users) {
+    final request = _usersRequests.lastWhere((c) => !c.isCompleted);
+    request.complete(users);
+  }
+}
+
+User _user(String identity, {String displayName = ''}) =>
+    User.fromJson({'identity': identity, 'display_name': displayName});
