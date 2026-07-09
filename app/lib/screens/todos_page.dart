@@ -3502,8 +3502,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     } catch (e) {
       dispatchErr = errorText(e);
     }
-    if (dispatchErr != null && mounted) {
-      snack(context, '会话已创建，但投递失败: $dispatchErr');
+    if (dispatchErr != null) {
+      if (mounted) {
+        setState(() => _submitting = false);
+        snack(context, '会话已创建，但投递失败: $dispatchErr');
+      }
+      return;
     }
     await _syncAssignVisibility(
       sid,

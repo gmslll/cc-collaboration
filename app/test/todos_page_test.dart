@@ -501,13 +501,7 @@ void main() {
       ..all = [client.teamTodo];
     var dispatchCalls = 0;
     final overview = SessionOverviewStore()
-      ..publish([
-        _sessionCard(
-          's1',
-          project: 'Backend',
-          projectId: 'p1',
-        ),
-      ]);
+      ..publish([_sessionCard('s1', project: 'Backend', projectId: 'p1')]);
     overview.dispatchHandler = (_) {
       dispatchCalls++;
       throw StateError('boom');
@@ -549,6 +543,92 @@ void main() {
 
     expect(dispatchCalls, 1);
     expect(find.textContaining('投递失败'), findsOneWidget);
+    expect(find.text('一键指派'), findsOneWidget);
+    expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('new session assignment dispatch failure stays unassigned', (
+    tester,
+  ) async {
+    final client = _DelayedAssignTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+    var spawnCalls = 0;
+    var dispatchCalls = 0;
+    final overview = SessionOverviewStore()
+      ..publish([
+        _sessionCard('existing', project: 'Backend', projectId: 'p1'),
+      ]);
+    overview.spawnHandler =
+        ({
+          required workspace,
+          required project,
+          required kind,
+          projectId,
+          newWorktreeBranch,
+          worktreeStart,
+          resumeAgentSessionId,
+          workdir,
+        }) async {
+          spawnCalls++;
+          return ('new-sid', null);
+        };
+    overview.dispatchHandler = (_) {
+      dispatchCalls++;
+      return 'bus down';
+    };
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(
+              workspaces: const [
+                WorkspaceCfg('ws', '/tmp', 'claude', '', '', [
+                  ProjectCfg('Backend', '/tmp/backend', '', 'p1'),
+                ]),
+              ],
+            ),
+            me: _me(),
+            store: store,
+            overviewStore: overview,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Team todo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, '指派'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新建会话'));
+    await tester.pumpAndSettle();
+
+    final submit = find.widgetWithText(FilledButton, '指派并开始');
+    await tester.tap(submit);
+    for (var i = 0; i < 20 && dispatchCalls == 0; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pump();
+
+    expect(spawnCalls, 1);
+    expect(dispatchCalls, 1);
+    expect(client.assignCalls, 0);
+    expect(client.statusCalls, 0);
+    expect(find.textContaining('会话已创建，但投递失败'), findsOneWidget);
     expect(find.text('一键指派'), findsOneWidget);
     expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
 
@@ -766,8 +846,11 @@ SessionCard _sessionCard(
   workdir: workdir,
 );
 
-AppConfig _config({String token = 'tok', String identity = 'alice@x'}) =>
-    AppConfig('http://127.0.0.1', token, identity, const {});
+AppConfig _config({
+  String token = 'tok',
+  String identity = 'alice@x',
+  List<WorkspaceCfg> workspaces = const [],
+}) => AppConfig('http://127.0.0.1', token, identity, const {}, workspaces);
 
 Me _me() => Me.fromJson({
   'identity': 'alice@x',
@@ -835,6 +918,7 @@ class _DelayedAssignTodoClient extends RelayClient {
   final Todo teamTodo = Todo.fromJson(_todoJson());
   final _assignCompleter = Completer<Todo>();
   int assignCalls = 0;
+  int statusCalls = 0;
 
   @override
   Future<Map<String, dynamic>?> getSetting(String key) async => null;
@@ -901,11 +985,13 @@ class _DelayedAssignTodoClient extends RelayClient {
   }
 
   @override
-  Future<Todo> setTodoStatus(String id, TodoStatus status) async =>
-      Todo.fromJson({
-        ..._todoJson(assigneeIdentity: 'bob@x'),
-        'status': 'in_progress',
-      });
+  Future<Todo> setTodoStatus(String id, TodoStatus status) async {
+    statusCalls++;
+    return Todo.fromJson({
+      ..._todoJson(assigneeIdentity: 'bob@x'),
+      'status': 'in_progress',
+    });
+  }
 
   @override
   Future<List<Todo>> todos({
