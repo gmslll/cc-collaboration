@@ -1824,6 +1824,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     } catch (e) {
       return '读取待办失败: ${errorText(e)}';
     }
+    final me = widget.me;
+    if (me != null && !todoAccessFor(fallback, me).canAssign) {
+      return '你对这条待办没有指派权限';
+    }
 
     final String sid;
     var waitForAgentId = false;

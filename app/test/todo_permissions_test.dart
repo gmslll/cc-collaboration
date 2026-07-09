@@ -52,6 +52,8 @@ void main() {
     expect(access.canComment, isFalse);
     expect(access.canEdit, isFalse);
     expect(access.canDelete, isFalse);
+    expect(access.canAssign, isFalse);
+    expect(access.canUploadAttachment, isFalse);
   });
 
   test('team member can edit and comment but not delete', () {
@@ -63,6 +65,8 @@ void main() {
     expect(access.canComment, isTrue);
     expect(access.canEdit, isTrue);
     expect(access.canDelete, isFalse);
+    expect(access.canAssign, isTrue);
+    expect(access.canUploadAttachment, isTrue);
   });
 
   test('team owner admin and global admin get full access', () {

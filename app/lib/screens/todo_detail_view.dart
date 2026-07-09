@@ -126,7 +126,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   void didUpdateWidget(TodoDetailView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.todo.id != widget.todo.id) {
-      if (_textDirty) {
+      if (_textDirty && oldWidget.access.canEdit) {
         // Flush the OLD todo's edits before switching away — best-effort,
         // decoupled from this widget's _saving/_textDirty (which now track
         // the newly-selected todo).
@@ -149,6 +149,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
       });
       _loadFull();
       reloadComments();
+    } else if (!_access.canEdit &&
+        (oldWidget.access.canEdit || _textDirty || _bodyEditing)) {
+      _bodyDebounce?.cancel();
+      setState(() {
+        _textDirty = false;
+        _bodyEditing = false;
+      });
     } else if (!_textDirty &&
         oldWidget.todo.updatedAt != widget.todo.updatedAt) {
       // An external update (SSE-driven store upsert) landed while this todo is
@@ -165,7 +172,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
     // mid-edit. Best-effort like the didUpdateWidget switch-away flush: the
     // widget is gone by the time this could fail, so there's nowhere left to
     // surface an error.
-    if (_textDirty) {
+    if (_textDirty && _access.canEdit) {
       _client
           .updateTodo(_id, title: _titleCtl.text.trim(), bodyMd: _bodyCtl.text)
           .catchError((_) => _current);
@@ -805,7 +812,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
     duration: const Duration(milliseconds: 150),
     curve: Curves.easeOut,
     alignment: Alignment.topLeft,
-    child: _bodyEditing
+    child: _bodyEditing && _access.canEdit
         ? MarkdownLiteEditor(
             controller: _bodyCtl,
             focusNode: _bodyFocus,
