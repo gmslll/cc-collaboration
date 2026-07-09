@@ -53,6 +53,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    if (_busy) return;
     final url = _relay.text.trim();
     final id = _identity.text.trim();
     if (url.isEmpty || id.isEmpty || _password.text.isEmpty) {
@@ -85,6 +86,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _useSaved(SavedAccount account) async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
