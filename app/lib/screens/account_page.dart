@@ -764,6 +764,37 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  Widget _settingDropdownRow({
+    required String label,
+    required Widget child,
+    double maxWidth = 150,
+  }) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: CcColors.muted, fontSize: 13),
+        ),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth),
+              child: child,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _dropdownText(String text) =>
+      Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
+
+  DropdownMenuItem<String> _dropdownItem(String value, String label) =>
+      DropdownMenuItem(value: value, child: _dropdownText(label));
+
   Widget _localConfigCard() {
     return Card(
       child: Padding(
@@ -776,64 +807,55 @@ class _AccountPageState extends State<AccountPage> {
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text(
-                  '默认 agent',
-                  style: TextStyle(color: CcColors.muted, fontSize: 13),
-                ),
-                const Spacer(),
-                DropdownButton<String>(
-                  value: _agent,
-                  menuMaxHeight: accountMenuMaxHeight(
-                    MediaQuery.sizeOf(context),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'claude', child: Text('claude')),
-                    DropdownMenuItem(value: 'codex', child: Text('codex')),
-                    DropdownMenuItem(value: 'manual', child: Text('manual')),
-                  ],
-                  onChanged: (v) => setState(() => _agent = v ?? 'claude'),
-                ),
-              ],
+            _settingDropdownRow(
+              label: '默认 agent',
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: _agent,
+                menuMaxHeight: accountMenuMaxHeight(MediaQuery.sizeOf(context)),
+                selectedItemBuilder: (_) => [
+                  _dropdownText('claude'),
+                  _dropdownText('codex'),
+                  _dropdownText('manual'),
+                ],
+                items: [
+                  _dropdownItem('claude', 'claude'),
+                  _dropdownItem('codex', 'codex'),
+                  _dropdownItem('manual', 'manual'),
+                ],
+                onChanged: (v) => setState(() => _agent = v ?? 'claude'),
+              ),
             ),
             const SizedBox(height: 10),
             _cfgField(_claudeCmd, 'claude 启动命令(留空=自动找;绝对路径或命令)'),
             const SizedBox(height: 10),
             _cfgField(_codexCmd, 'codex 启动命令(留空=自动找;绝对路径或命令)'),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                const Text(
-                  '默认终端 App',
-                  style: TextStyle(color: CcColors.muted, fontSize: 13),
-                ),
-                const Spacer(),
-                DropdownButton<String>(
-                  value: _terminalApp,
-                  menuMaxHeight: accountMenuMaxHeight(
-                    MediaQuery.sizeOf(context),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: '', child: Text('(默认)')),
-                    DropdownMenuItem(
-                      value: 'terminal',
-                      child: Text('terminal'),
-                    ),
-                    DropdownMenuItem(value: 'iterm2', child: Text('iterm2')),
-                    DropdownMenuItem(value: 'ghostty', child: Text('ghostty')),
-                    DropdownMenuItem(
-                      value: 'windows-terminal',
-                      child: Text('windows-terminal'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'powershell',
-                      child: Text('powershell'),
-                    ),
-                  ],
-                  onChanged: (v) => setState(() => _terminalApp = v ?? ''),
-                ),
-              ],
+            _settingDropdownRow(
+              label: '默认终端 App',
+              maxWidth: 190,
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: _terminalApp,
+                menuMaxHeight: accountMenuMaxHeight(MediaQuery.sizeOf(context)),
+                selectedItemBuilder: (_) => [
+                  _dropdownText('(默认)'),
+                  _dropdownText('terminal'),
+                  _dropdownText('iterm2'),
+                  _dropdownText('ghostty'),
+                  _dropdownText('windows-terminal'),
+                  _dropdownText('powershell'),
+                ],
+                items: [
+                  _dropdownItem('', '(默认)'),
+                  _dropdownItem('terminal', 'terminal'),
+                  _dropdownItem('iterm2', 'iterm2'),
+                  _dropdownItem('ghostty', 'ghostty'),
+                  _dropdownItem('windows-terminal', 'windows-terminal'),
+                  _dropdownItem('powershell', 'powershell'),
+                ],
+                onChanged: (v) => setState(() => _terminalApp = v ?? ''),
+              ),
             ),
             const SizedBox(height: 8),
             SwitchListTile(

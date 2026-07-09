@@ -93,6 +93,25 @@ void main() {
       'Widget _cfgField(',
     );
     expect(localConfig, contains('menuMaxHeight: accountMenuMaxHeight'));
+    expect(localConfig, contains('_settingDropdownRow('));
+    expect(localConfig, contains('isExpanded: true'));
+    expect(localConfig, contains('selectedItemBuilder'));
+    expect(localConfig, contains("_dropdownText('windows-terminal')"));
+    expect(localConfig, contains("_dropdownItem('windows-terminal'"));
+
+    final settingRow = between(
+      'Widget _settingDropdownRow({',
+      'Widget _localConfigCard()',
+    );
+    expect(settingRow, contains('Flexible('));
+    expect(settingRow, contains('ConstrainedBox('));
+
+    final dropdownText = between(
+      'Widget _dropdownText(String text)',
+      'DropdownMenuItem<String> _dropdownItem',
+    );
+    expect(dropdownText, contains('maxLines: 1'));
+    expect(dropdownText, contains('overflow: TextOverflow.ellipsis'));
   });
 
   test('remote session content previews default to hidden', () {
