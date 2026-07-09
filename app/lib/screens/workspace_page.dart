@@ -10098,92 +10098,96 @@ class _WorkspacePageState extends State<WorkspacePage>
           },
         );
         return _ctxMenu(
-          Container(
-            decoration: BoxDecoration(
-              color: active ? CcColors.accent.withValues(alpha: 0.08) : null,
-              border: Border(
-                left: BorderSide(
-                  color: active ? CcColors.accent : Colors.transparent,
-                  width: 2.5,
+          Material(
+            color: active
+                ? CcColors.accent.withValues(alpha: 0.08)
+                : Colors.transparent,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: active ? CcColors.accent : Colors.transparent,
+                    width: 2.5,
+                  ),
                 ),
               ),
-            ),
-            child: ListTile(
-              visualDensity: _tileDensity,
-              contentPadding: const EdgeInsets.only(left: 12, right: 2),
-              horizontalTitleGap: 8,
-              selected: active,
-              // Live status avatar: rebuilds on the session's activity transitions
-              // (busy / needs-review, via activityRev) so it pulses while working
-              // and shows a status-coloured badge (working / done / idle) at rest.
-              // Coarse status is derived from the session's own in-memory flags —
-              // NOT _statusFor(_latestHookActivity(...)): that reads the hook-event
-              // dir off disk on every rebuild, and its fine-grained sub-states only
-              // refresh on the busy/needs-review flips activityRev fires on (so a
-              // 12-colour badge would go stale mid-turn). The coarse set is exactly
-              // what the trigger reliably covers; the 会话总览 keeps the rich status.
-              leading: ValueListenableBuilder<int>(
-                valueListenable: e.s.activityRev,
-                builder: (_, _, _) => SessionActivityAvatar(
-                  seed: e.s.id,
-                  isAgent: e.s.isAgent,
-                  status: !e.s.isAgent
-                      ? SessionStatus.shell
-                      : e.s.needsReview
-                      ? SessionStatus.needsReview
-                      : e.s.busy
-                      ? SessionStatus.working
-                      : SessionStatus.idle,
-                  size: 20,
+              child: ListTile(
+                visualDensity: _tileDensity,
+                contentPadding: const EdgeInsets.only(left: 12, right: 2),
+                horizontalTitleGap: 8,
+                selected: active,
+                // Live status avatar: rebuilds on the session's activity transitions
+                // (busy / needs-review, via activityRev) so it pulses while working
+                // and shows a status-coloured badge (working / done / idle) at rest.
+                // Coarse status is derived from the session's own in-memory flags —
+                // NOT _statusFor(_latestHookActivity(...)): that reads the hook-event
+                // dir off disk on every rebuild, and its fine-grained sub-states only
+                // refresh on the busy/needs-review flips activityRev fires on (so a
+                // 12-colour badge would go stale mid-turn). The coarse set is exactly
+                // what the trigger reliably covers; the 会话总览 keeps the rich status.
+                leading: ValueListenableBuilder<int>(
+                  valueListenable: e.s.activityRev,
+                  builder: (_, _, _) => SessionActivityAvatar(
+                    seed: e.s.id,
+                    isAgent: e.s.isAgent,
+                    status: !e.s.isAgent
+                        ? SessionStatus.shell
+                        : e.s.needsReview
+                        ? SessionStatus.needsReview
+                        : e.s.busy
+                        ? SessionStatus.working
+                        : SessionStatus.idle,
+                    size: 20,
+                  ),
                 ),
-              ),
-              title: Text(
-                display,
-                style: TextStyle(
-                  fontFamily: CcType.mono,
-                  fontSize: 13.5,
-                  color: active
-                      ? CcColors.text
-                      : (notLoaded ? CcColors.subtle : CcColors.muted),
-                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                title: Text(
+                  display,
+                  style: TextStyle(
+                    fontFamily: CcType.mono,
+                    fontSize: 13.5,
+                    color: active
+                        ? CcColors.text
+                        : (notLoaded ? CcColors.subtle : CcColors.muted),
+                    fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              onTap: () {
-                // Reopen the session's tab (un-hide it if its view was closed)
-                // and make it active, then surface the terminal panel so the
-                // reopened session is visible. reopenTermView re-arms TTS.
-                reopenTermView(e.idx);
-                _setBottomTool(_BottomTool.terminal);
-              },
-              trailing: active
-                  ? Padding(
-                      padding: const EdgeInsets.only(right: 2),
-                      child: statusDot(CcColors.ok, size: 7, glow: true),
-                    )
-                  : notLoaded
-                  ? Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Tooltip(
-                        message: '未加载 · 点击启动',
-                        child: Icon(
-                          Icons.bedtime_outlined,
-                          size: 13,
-                          color: CcColors.subtle,
+                onTap: () {
+                  // Reopen the session's tab (un-hide it if its view was closed)
+                  // and make it active, then surface the terminal panel so the
+                  // reopened session is visible. reopenTermView re-arms TTS.
+                  reopenTermView(e.idx);
+                  _setBottomTool(_BottomTool.terminal);
+                },
+                trailing: active
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 2),
+                        child: statusDot(CcColors.ok, size: 7, glow: true),
+                      )
+                    : notLoaded
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Tooltip(
+                          message: '未加载 · 点击启动',
+                          child: Icon(
+                            Icons.bedtime_outlined,
+                            size: 13,
+                            color: CcColors.subtle,
+                          ),
                         ),
-                      ),
-                    )
-                  : (hidden
-                        ? Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: Icon(
-                              Icons.visibility_off_outlined,
-                              size: 13,
-                              color: CcColors.muted,
-                            ),
-                          )
-                        : null),
+                      )
+                    : (hidden
+                          ? Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Icon(
+                                Icons.visibility_off_outlined,
+                                size: 13,
+                                color: CcColors.muted,
+                              ),
+                            )
+                          : null),
+              ),
             ),
           ),
           sessionMenu,
