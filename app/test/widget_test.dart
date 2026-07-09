@@ -315,6 +315,36 @@ void main() {
     expect(confirmDialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('workspace git dialog titles are width constrained', () {
+    final gitMixin = File(
+      'lib/screens/workspace/git_mixin.dart',
+    ).readAsStringSync();
+    final commitMenu = File(
+      'lib/screens/workspace/git_log_commit_menu.dart',
+    ).readAsStringSync();
+
+    final stashDialog = gitMixin.substring(
+      gitMixin.indexOf(
+        'Future<({String message, bool includeUntracked})?> _askStashOptions({',
+      ),
+      gitMixin.indexOf('Future<void> _stashPushCurrent('),
+    );
+    final rewordDialog = commitMenu.substring(
+      commitMenu.indexOf('Future<String?> _promptRewordMessage({'),
+    );
+
+    expect(stashDialog, isNot(contains('title: Text(title),')));
+    expect(rewordDialog, isNot(contains('title: Text(title),')));
+    expect(
+      stashDialog,
+      contains('title, maxLines: 1, overflow: TextOverflow.ellipsis'),
+    );
+    expect(
+      rewordDialog,
+      contains('title, maxLines: 1, overflow: TextOverflow.ellipsis'),
+    );
+  });
+
   test('terminal paste guards mounted before writing to the pty', () {
     final source = File('lib/screens/terminal_pane.dart').readAsStringSync();
 
