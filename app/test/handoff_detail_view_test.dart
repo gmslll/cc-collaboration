@@ -79,6 +79,67 @@ void main() {
     expect(find.text('alice@x → me@x'), findsNothing);
   });
 
+  testWidgets('handoff detail account switch ignores stale same-id load', (
+    tester,
+  ) async {
+    final oldClient = _DelayedDetailClient();
+    final newClient = _DelayedDetailClient();
+    final item = _item('same-handoff', 'sender@x', 'same handoff');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: oldClient,
+          config: AppConfig(
+            'http://127.0.0.1:1',
+            'old-token',
+            'old@x',
+            const {},
+          ),
+          item: item,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(oldClient.requestedPackages, ['same-handoff']);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: newClient,
+          config: AppConfig(
+            'http://127.0.0.1:1',
+            'new-token',
+            'new@x',
+            const {},
+          ),
+          item: item,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(newClient.requestedPackages, ['same-handoff']);
+
+    newClient.completePackage(
+      'same-handoff',
+      _package('same-handoff', 'new-sender@x', 'new account handoff'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('new-sender@x → me@x'), findsOneWidget);
+    expect(find.text('old-sender@x → me@x'), findsNothing);
+
+    oldClient.completePackage(
+      'same-handoff',
+      _package('same-handoff', 'old-sender@x', 'old account handoff'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('new-sender@x → me@x'), findsOneWidget);
+    expect(find.text('old-sender@x → me@x'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('handoff retract dialog cancel closes cleanly', (tester) async {
     final client = _ActionDetailClient(
       _package('h1', ' Me@X ', 'owned handoff'),

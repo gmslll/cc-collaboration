@@ -1593,7 +1593,7 @@ void main() {
         'Future<void> _postComment(',
         'Future<void> _ack(',
       ),
-      'await _client.postComment',
+      'await client.postComment',
       '_commentCtl.clear',
     );
     expectGuardBefore(
@@ -1602,7 +1602,7 @@ void main() {
         'Future<void> _ack(',
         'Future<void> _pickup(',
       ),
-      'await _client.ack',
+      'await client.ack',
       '_loadExtras',
     );
     expectGuardBefore(
@@ -1671,7 +1671,7 @@ void main() {
         'Future<void> _reassign(',
       ),
       'if (reason == null) return;',
-      '_client.retract',
+      'client.retract',
     );
     expectGuardBefore(
       between(
@@ -1679,7 +1679,7 @@ void main() {
         'Future<void> _retract(',
         'Future<void> _reassign(',
       ),
-      'await _client.retract',
+      'await client.retract',
       'widget.onChanged',
     );
     expectGuardBefore(
@@ -1689,7 +1689,7 @@ void main() {
         'Widget _header(',
       ),
       'if (result == null) return;',
-      '_client.reassign',
+      'client.reassign',
     );
     expectGuardBefore(
       between(
@@ -1697,7 +1697,7 @@ void main() {
         'Future<void> _reassign(',
         'Widget _header(',
       ),
-      'await _client.reassign',
+      'await client.reassign',
       'widget.onChanged',
     );
     expectGuardBefore(

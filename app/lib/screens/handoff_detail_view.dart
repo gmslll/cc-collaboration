@@ -69,7 +69,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   @override
   void didUpdateWidget(HandoffDetailView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.item.id != widget.item.id) _load();
+    if (_detailContextChanged(oldWidget)) {
+      _loadGeneration++;
+      _commentCtl.clear();
+      _load();
+    }
   }
 
   @override
@@ -80,6 +84,10 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
 
   Future<void> _load() async {
     final generation = ++_loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     final id = _id;
     setState(() {
       _pkg = null;
@@ -89,46 +97,129 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _loading = true;
     });
     try {
-      final pkg = await _client.get(id);
-      if (!_isCurrentLoad(generation, id)) return;
+      final pkg = await client.get(id);
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       setState(() {
         _pkg = pkg;
         _loading = false;
       });
-      reloadComments();
-      _loadExtras(generation: generation, id: id);
+      reloadComments(
+        generation: generation,
+        client: client,
+        id: id,
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+      );
+      _loadExtras(
+        generation: generation,
+        client: client,
+        id: id,
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+      );
     } catch (e) {
-      if (!_isCurrentLoad(generation, id)) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       setState(() => _loading = false);
       _snack(errorText(e));
     }
   }
 
-  bool _isCurrentLoad(int generation, String id) =>
-      mounted && generation == _loadGeneration && id == _id;
+  bool _detailContextChanged(HandoffDetailView oldWidget) =>
+      oldWidget.item.id != widget.item.id ||
+      !identical(oldWidget.client, widget.client) ||
+      oldWidget.config.relayUrl != widget.config.relayUrl ||
+      oldWidget.config.token != widget.config.token ||
+      oldWidget.config.identity != widget.config.identity;
+
+  bool _isCurrentLoad(
+    int generation,
+    RelayClient client,
+    String id,
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      generation == _loadGeneration &&
+      identical(client, widget.client) &&
+      id == _id &&
+      relayUrl == _cfg.relayUrl &&
+      token == _cfg.token &&
+      identity == _cfg.identity;
 
   // reloadComments is public so the host's SSE can refresh on comment.created.
-  Future<void> reloadComments() async {
-    final generation = _loadGeneration;
-    final id = _id;
+  Future<void> reloadComments({
+    int? generation,
+    RelayClient? client,
+    String? id,
+    String? relayUrl,
+    String? token,
+    String? identity,
+  }) async {
+    final loadGeneration = generation ?? _loadGeneration;
+    final handoffClient = client ?? _client;
+    final handoffId = id ?? _id;
+    final handoffRelayUrl = relayUrl ?? _cfg.relayUrl;
+    final handoffToken = token ?? _cfg.token;
+    final handoffIdentity = identity ?? _cfg.identity;
     try {
-      final cs = await _client.comments(id);
-      if (_isCurrentLoad(generation, id)) setState(() => _comments = cs);
+      final cs = await handoffClient.comments(handoffId);
+      if (_isCurrentLoad(
+        loadGeneration,
+        handoffClient,
+        handoffId,
+        handoffRelayUrl,
+        handoffToken,
+        handoffIdentity,
+      )) {
+        setState(() => _comments = cs);
+      }
     } catch (_) {}
   }
 
-  Future<void> _loadExtras({int? generation, String? id}) async {
+  Future<void> _loadExtras({
+    int? generation,
+    RelayClient? client,
+    String? id,
+    String? relayUrl,
+    String? token,
+    String? identity,
+  }) async {
     final loadGeneration = generation ?? _loadGeneration;
+    final handoffClient = client ?? _client;
     final handoffId = id ?? _id;
+    final handoffRelayUrl = relayUrl ?? _cfg.relayUrl;
+    final handoffToken = token ?? _cfg.token;
+    final handoffIdentity = identity ?? _cfg.identity;
     try {
-      final p = await _client.prompt(handoffId);
-      if (_isCurrentLoad(loadGeneration, handoffId)) {
+      final p = await handoffClient.prompt(handoffId);
+      if (_isCurrentLoad(
+        loadGeneration,
+        handoffClient,
+        handoffId,
+        handoffRelayUrl,
+        handoffToken,
+        handoffIdentity,
+      )) {
         setState(() => _prompt = p);
       }
     } catch (_) {}
     try {
-      final s = await _client.status(handoffId);
-      if (_isCurrentLoad(loadGeneration, handoffId)) {
+      final s = await handoffClient.status(handoffId);
+      if (_isCurrentLoad(
+        loadGeneration,
+        handoffClient,
+        handoffId,
+        handoffRelayUrl,
+        handoffToken,
+        handoffIdentity,
+      )) {
         setState(() => _status = s);
       }
     } catch (_) {}
@@ -141,24 +232,64 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   Future<void> _postComment() async {
     final body = _commentCtl.text.trim();
     if (body.isEmpty) return;
+    final generation = _loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    final id = _id;
     try {
-      await _client.postComment(_id, body);
+      await client.postComment(id, body);
       if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _commentCtl.clear();
-      await reloadComments();
+      await reloadComments(
+        generation: generation,
+        client: client,
+        id: id,
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+      );
     } catch (e) {
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('评论失败: ${errorText(e)}');
     }
   }
 
   Future<void> _ack() async {
+    final generation = _loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    final id = _id;
     try {
-      await _client.ack(_id);
+      await client.ack(id);
       if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('已标记接收');
-      _loadExtras();
+      _loadExtras(
+        generation: generation,
+        client: client,
+        id: id,
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+      );
       widget.onChanged?.call();
     } catch (e) {
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('ack 失败: ${errorText(e)}');
     }
   }
@@ -232,30 +363,62 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _retract(Package p) async {
+    final generation = _loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    final id = p.id;
     final reason = await showDialog<String>(
       context: context,
       builder: (_) => const _RetractDialog(),
     );
     if (reason == null) return;
     if (!mounted) return;
+    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+      return;
+    }
     try {
-      await _client.retract(p.id, reason.trim());
+      await client.retract(id, reason.trim());
       if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('已撤回');
-      _loadExtras();
+      _loadExtras(
+        generation: generation,
+        client: client,
+        id: id,
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+      );
       widget.onChanged?.call();
     } catch (e) {
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('撤回失败: ${errorText(e)}');
     }
   }
 
   Future<void> _reassign(Package p) async {
+    final generation = _loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    final id = p.id;
     final result = await showDialog<_ReassignInput>(
       context: context,
       builder: (_) => const _ReassignDialog(),
     );
     if (result == null) return;
     if (!mounted) return;
+    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+      return;
+    }
     final to = result.to.trim();
     final reason = result.reason.trim();
     if (to.isEmpty || reason.isEmpty) {
@@ -263,25 +426,57 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       return;
     }
     try {
-      await _client.reassign(p.id, to, reason);
+      await client.reassign(id, to, reason);
       if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('已转交');
-      _loadExtras();
+      _loadExtras(
+        generation: generation,
+        client: client,
+        id: id,
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+      );
       widget.onChanged?.call();
     } catch (e) {
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('转交失败: ${errorText(e)}');
     }
   }
 
   Future<void> _downloadAttachment(String name) async {
+    final generation = _loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    final id = _id;
     try {
-      final bytes = await _client.attachment(_id, name);
+      final bytes = await client.attachment(id, name);
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/$name');
       await file.writeAsBytes(bytes);
       final res = await OpenFilex.open(file.path);
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       if (res.type != ResultType.done) _snack('已保存到 ${file.path}');
     } catch (e) {
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       _snack('附件失败: ${errorText(e)}');
     }
   }
