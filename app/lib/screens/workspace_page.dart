@@ -4882,10 +4882,9 @@ class _WorkspacePageState extends State<WorkspacePage>
               status.modified +
               status.untracked +
               status.conflicted;
-    final canStageAll =
-        status == null || status.modified > 0 || status.untracked > 0;
-    final canUnstageAll = status == null || status.staged > 0;
-    final canRollbackAll = status == null || dirtyTotal > 0;
+    final canStageAll = status?.hasStageableChanges ?? false;
+    final canUnstageAll = status?.hasStagedChanges ?? false;
+    final canRollbackAll = status?.hasAnyChanges ?? false;
     final mod = _shortcutModLabel();
     return PopupMenuButton<String>(
       tooltip: p == null ? 'VCS Operations · 没有项目' : 'VCS Operations',
@@ -9601,13 +9600,15 @@ class _WorkspacePageState extends State<WorkspacePage>
             icon: const Icon(Icons.add_task_rounded, size: 16),
             tooltip: 'Stage All',
             visualDensity: VisualDensity.compact,
-            onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
+            onPressed: _gitLoading || !(status?.hasStageableChanges ?? false)
+                ? null
+                : () => _gitStageAllCurrent(p),
           ),
           IconButton(
             icon: const Icon(Icons.remove_done_rounded, size: 16),
             tooltip: 'Unstage All',
             visualDensity: VisualDensity.compact,
-            onPressed: _gitLoading || (status?.staged ?? 0) == 0
+            onPressed: _gitLoading || !(status?.hasStagedChanges ?? false)
                 ? null
                 : () => _gitUnstageAllCurrent(p),
           ),

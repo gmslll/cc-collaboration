@@ -120,6 +120,10 @@ class GitStatusSummary {
 
   bool get clean =>
       staged == 0 && modified == 0 && untracked == 0 && conflicted == 0;
+
+  bool get hasStageableChanges => modified > 0 || untracked > 0;
+  bool get hasStagedChanges => staged > 0;
+  bool get hasAnyChanges => !clean;
 }
 
 class GitChange {
