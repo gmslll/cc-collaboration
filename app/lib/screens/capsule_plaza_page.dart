@@ -570,14 +570,20 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
       // boot-ready watch flushes it. Waiting on the overview card's workdir is
       // only a metadata poll; it can move this first prompt out of the protected
       // queue path and back into a paste-vs-boot timing window.
-      final dispErr = widget.overviewStore.dispatch(
-        LocalMsg('', sid, prompt, true),
-      );
+      String? dispErr;
+      try {
+        dispErr = widget.overviewStore.dispatch(
+          LocalMsg('', sid, prompt, true),
+        );
+      } catch (e) {
+        dispErr = errorText(e);
+      }
+      if (dispErr != null) {
+        _fail('会话已起,但投递开场失败: $dispErr');
+        return;
+      }
       Navigator.of(context).pop();
-      snack(
-        context,
-        dispErr == null ? '已载入胶囊,新会话开跑' : '会话已起,但投递开场失败: $dispErr',
-      );
+      snack(context, '已载入胶囊,新会话开跑');
     } catch (e) {
       if (!mounted) return;
       if (_closeIfStaleContext()) return;

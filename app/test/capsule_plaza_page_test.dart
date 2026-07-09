@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:app/api/models.dart';
@@ -327,6 +328,86 @@ void main() {
     expect(find.text('Old capsule'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'capsule load keeps dialog open when opening prompt dispatch fails',
+    (tester) async {
+      final client = _DelayedCapsulesClient();
+      final overview = SessionOverviewStore();
+      var spawnCalls = 0;
+      var dispatchCalls = 0;
+      overview.spawnHandler =
+          ({
+            required workspace,
+            required project,
+            required kind,
+            projectId,
+            newWorktreeBranch,
+            worktreeStart,
+            resumeAgentSessionId,
+            workdir,
+          }) async {
+            spawnCalls++;
+            return ('sid-new', null);
+          };
+      overview.dispatchHandler = (_) {
+        dispatchCalls++;
+        return 'bus down';
+      };
+      final config = AppConfig(
+        'http://127.0.0.1:1',
+        'tok',
+        'me@x',
+        const {},
+        const [
+          WorkspaceCfg('ws', '/tmp', 'codex', '', '', [
+            ProjectCfg('proj', '/tmp/project', '', 'relay-proj-1'),
+          ]),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(
+            body: CapsulePlazaPage(
+              client: client,
+              identity: 'me@x',
+              overviewStore: overview,
+              config: config,
+              isDesktop: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      client.completeNext([
+        _capsule(
+          'cap-load',
+          headline: 'Load me',
+          hasTranscript: false,
+          hasPersona: true,
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '载入'));
+      await tester.pumpAndSettle();
+      expect(find.text('载入胶囊'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, '起会话'));
+      await tester.pumpAndSettle();
+
+      expect(spawnCalls, 1);
+      expect(dispatchCalls, 1);
+      expect(find.text('载入胶囊'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, '起会话'), findsOneWidget);
+      expect(find.textContaining('会话已起,但投递开场失败: bus down'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pump(const Duration(seconds: 5));
+    },
+  );
 }
 
 class _DelayedCapsulesClient extends RelayClient {
@@ -366,6 +447,7 @@ class _DelayedCapsulesClient extends RelayClient {
 
   @override
   Future<List<int>> attachment(String id, String name) async {
+    if (name == 'persona.md') return utf8.encode('persona body');
     throw Exception('missing attachment');
   }
 
@@ -396,6 +478,8 @@ CapsuleListItem _capsule(
   String id, {
   required String headline,
   String owner = 'me@x',
+  bool hasTranscript = true,
+  bool hasPersona = false,
 }) => CapsuleListItem.fromJson({
   'id': id,
   'owner': owner,
@@ -404,7 +488,7 @@ CapsuleListItem _capsule(
   'origin_session_id': 's-$id',
   'headline': headline,
   'repo_name': 'cc-collaboration',
-  'has_transcript': true,
-  'has_persona': false,
+  'has_transcript': hasTranscript,
+  'has_persona': hasPersona,
   'created_at': '2026-01-01T00:00:00Z',
 });
