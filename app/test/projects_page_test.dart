@@ -15,6 +15,10 @@ const _longRepoName =
     'kunlun/dispatch-coordination-platform-with-very-long-repository-name';
 const _longCustomOrgRole =
     'custom-organization-access-controller-with-a-very-long-label';
+const _longCandidateIdentity =
+    'candidate.with.a.very.long.identity.for.project.member.dropdown@kunlun.example.com';
+const _longCandidateDisplayName =
+    'Candidate With A Very Long Display Name For Project Member Dropdown';
 
 void main() {
   test('global admin can manage organizations without an org role', () {
@@ -1036,6 +1040,41 @@ void main() {
     expect(repoLabel.maxLines, 1);
     expect(repoLabel.overflow, TextOverflow.ellipsis);
   });
+
+  testWidgets('project member candidate dropdown clamps long member labels', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: ProjectsPage(client: _LongCandidateProjectsPageFakeClient()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+
+    final labelText =
+        '$_longCandidateDisplayName · $_longCandidateIdentity · 成员';
+    final label = tester.widget<Text>(
+      find.byKey(ValueKey('project-member-candidate-$_longCandidateIdentity')),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(label.data, labelText);
+    expect(label.maxLines, 1);
+    expect(label.overflow, TextOverflow.ellipsis);
+  });
 }
 
 class _ProjectsPageFakeClient extends RelayClient {
@@ -1144,6 +1183,28 @@ class _FailingOrgMemberProjectsPageFakeClient extends _ProjectsPageFakeClient {
   ) async {
     throw Exception('add member failed');
   }
+}
+
+class _LongCandidateProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<OrganizationDetail> organization(String id) async =>
+      OrganizationDetail.fromJson({
+        'organization': {
+          'id': id,
+          'name': 'Kunlun',
+          'owner_identity': 'owner@x',
+          'role': 'owner',
+        },
+        'members': [
+          {'identity': 'owner@x', 'role': 'owner', 'display_name': 'Owner'},
+          {
+            'identity': _longCandidateIdentity,
+            'role': 'member',
+            'display_name': _longCandidateDisplayName,
+          },
+        ],
+        'projects': const [],
+      });
 }
 
 class _LongNameProjectsPageFakeClient extends _ProjectsPageFakeClient {

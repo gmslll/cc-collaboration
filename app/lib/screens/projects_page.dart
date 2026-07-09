@@ -1740,6 +1740,10 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                           value: m.identity,
                                           child: Text(
                                             _memberLabel(m),
+                                            key: ValueKey(
+                                              'project-member-candidate-${m.identity}',
+                                            ),
+                                            maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
