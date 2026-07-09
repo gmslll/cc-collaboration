@@ -1,5 +1,8 @@
 import 'package:app/api/models.dart';
+import 'package:app/api/relay_client.dart';
 import 'package:app/screens/projects_page.dart';
+import 'package:app/theme.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -452,4 +455,86 @@ void main() {
       expect(stats.onlineUsers, 1);
     },
   );
+
+  testWidgets('team workspace header renders on narrow screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('团队工作台'), findsOneWidget);
+    expect(find.text('新建团队'), findsOneWidget);
+    expect(find.text('新建项目'), findsOneWidget);
+    expect(find.text('可管理'), findsOneWidget);
+    expect(find.text('在线'), findsOneWidget);
+    expect(find.text('2'), findsNWidgets(2)); // teams + projects
+    expect(find.text('1'), findsNWidgets(2)); // manageable + unique online
+  });
+}
+
+class _ProjectsPageFakeClient extends RelayClient {
+  _ProjectsPageFakeClient() : super('http://127.0.0.1', 'tok');
+
+  @override
+  Future<List<Organization>> organizations() async => [
+    Organization.fromJson({
+      'id': 'org-a',
+      'name': 'Kunlun',
+      'owner_identity': 'owner@x',
+      'role': 'owner',
+    }),
+    Organization.fromJson({
+      'id': 'org-b',
+      'name': 'Ops',
+      'owner_identity': 'owner@x',
+      'role': 'member',
+    }),
+  ];
+
+  @override
+  Future<Me> me() async => Me.fromJson({
+    'identity': 'owner@x',
+    'is_admin': false,
+    'organizations': [
+      {'id': 'org-a', 'name': 'Kunlun', 'role': 'owner'},
+      {'id': 'org-b', 'name': 'Ops', 'role': 'member'},
+    ],
+    'projects': [],
+  });
+
+  @override
+  Future<List<Project>> projects() async => [
+    Project.fromJson({
+      'id': 'p1',
+      'org_id': 'org-a',
+      'name': 'Backend',
+      'owner_identity': 'owner@x',
+      'role': 'owner',
+    }),
+    Project.fromJson({
+      'id': 'p2',
+      'org_id': 'org-b',
+      'name': 'Frontend',
+      'owner_identity': 'owner@x',
+      'role': 'member',
+    }),
+  ];
+
+  @override
+  Future<List<OnlineUser>> onlineUsers() async => [
+    OnlineUser.fromJson({'identity': 'owner@x', 'online': true}),
+    OnlineUser.fromJson({'identity': 'owner@x', 'online': true}),
+    OnlineUser.fromJson({'identity': 'offline@x', 'online': false}),
+  ];
 }
