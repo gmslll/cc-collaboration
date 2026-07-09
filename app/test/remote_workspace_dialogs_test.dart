@@ -58,6 +58,22 @@ void main() {
     expect(dialog, contains('scrollableBar(scrolling: [supervisorPicker])'));
   });
 
+  test('remote branch create dialog uses scroll-safe layout', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _RemoteBranchCreateDialogState'),
+      source.indexOf('// RemoteWorkspacePage is the phone'),
+    );
+
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('remoteWorkspaceDialogWidth'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('textInputAction: TextInputAction.next'));
+    expect(dialog, contains('onSubmitted: (_) => _submit()'));
+  });
+
   test('remote terminal screen rebinds client lifecycle on widget update', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',

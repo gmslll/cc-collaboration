@@ -111,24 +111,31 @@ class _RemoteBranchCreateDialogState extends State<_RemoteBranchCreateDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: const Text('新建分支'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _branchCtl,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: '分支名'),
-            textInputAction: TextInputAction.next,
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _branchCtl,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: '分支名'),
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _startCtl,
+                decoration: const InputDecoration(labelText: '起点 ref(可选)'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _startCtl,
-            decoration: const InputDecoration(labelText: '起点 ref(可选)'),
-            onSubmitted: (_) => _submit(),
-          ),
-        ],
+        ),
       ),
       actions: [
         TextButton(
