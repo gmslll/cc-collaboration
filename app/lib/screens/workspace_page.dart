@@ -191,6 +191,15 @@ String? onlineSendProjectIdForLocalProject(
   return uniqueProjectIdByName(projectRoles, project.name);
 }
 
+bool remoteSpawnProjectMatchesRequestedId(
+  ProjectCfg project,
+  String? requestedProjectId,
+) {
+  final requested = (requestedProjectId ?? '').trim();
+  if (requested.isEmpty) return true;
+  return project.projectId.trim() == requested;
+}
+
 class _OnlineSendProjectScopeError implements Exception {
   const _OnlineSendProjectScopeError();
 }
@@ -2898,9 +2907,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     for (final w in _cfg.workspaces) {
       if (workspace.isNotEmpty && w.name != workspace) continue;
       for (final proj in w.projects) {
-        if (requestedProjectId.isNotEmpty &&
-            proj.projectId.trim().isNotEmpty &&
-            proj.projectId.trim() != requestedProjectId) {
+        if (!remoteSpawnProjectMatchesRequestedId(proj, requestedProjectId)) {
           continue;
         }
         if (proj.name == project) {

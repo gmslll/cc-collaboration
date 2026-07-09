@@ -148,6 +148,34 @@ void main() {
     expect(onlineSendProjectIdForLocalProject(roles, localProject), isNull);
   });
 
+  test(
+    'remote spawn project matching requires configured relay project id',
+    () {
+      const unbound = ProjectCfg('backend', '/repo/backend');
+      const bound = ProjectCfg(
+        'backend',
+        '/repo/backend-team',
+        '',
+        'relay-backend',
+      );
+
+      expect(remoteSpawnProjectMatchesRequestedId(unbound, null), isTrue);
+      expect(remoteSpawnProjectMatchesRequestedId(unbound, ''), isTrue);
+      expect(
+        remoteSpawnProjectMatchesRequestedId(unbound, 'relay-backend'),
+        isFalse,
+      );
+      expect(
+        remoteSpawnProjectMatchesRequestedId(bound, ' relay-backend '),
+        isTrue,
+      );
+      expect(
+        remoteSpawnProjectMatchesRequestedId(bound, 'relay-frontend'),
+        isFalse,
+      );
+    },
+  );
+
   test('online send sessions prefer relay project id and fallback to name', () {
     final sessions = [
       RemoteSession.fromJson({
