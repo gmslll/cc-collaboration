@@ -103,6 +103,81 @@ const _searchSkipDirs = {
   '.venv',
 };
 
+class WorkspaceFieldSpec {
+  final String label;
+  final String? hint;
+  final bool required;
+
+  const WorkspaceFieldSpec({
+    required this.label,
+    this.hint,
+    this.required = false,
+  });
+}
+
+class WorkspaceFieldsDialog extends StatefulWidget {
+  final String title;
+  final String okLabel;
+  final List<WorkspaceFieldSpec> fields;
+
+  const WorkspaceFieldsDialog({
+    super.key,
+    required this.title,
+    required this.okLabel,
+    required this.fields,
+  });
+
+  @override
+  State<WorkspaceFieldsDialog> createState() => _WorkspaceFieldsDialogState();
+}
+
+class _WorkspaceFieldsDialogState extends State<WorkspaceFieldsDialog> {
+  late final List<TextEditingController> _ctls = [
+    for (final _ in widget.fields) TextEditingController(),
+  ];
+
+  @override
+  void dispose() {
+    for (final ctl in _ctls) {
+      ctl.dispose();
+    }
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, [for (final ctl in _ctls) ctl.text]);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < widget.fields.length; i++)
+            Padding(
+              padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
+              child: TextField(
+                controller: _ctls[i],
+                autofocus: i == 0,
+                decoration: InputDecoration(
+                  labelText: widget.fields[i].label,
+                  hintText: widget.fields[i].hint,
+                ),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: Text(widget.okLabel)),
+      ],
+    );
+  }
+}
+
 // _DiffTreeNode is one node of the directory tree built from a commit's changed
 // files (the right pane of the 3-pane Log).
 class _DiffTreeNode {
@@ -3440,42 +3515,23 @@ class _WorkspacePageState extends State<WorkspacePage>
     String okLabel,
     List<({String label, String? hint, bool required})> fields,
   ) async {
-    final ctls = [for (final _ in fields) TextEditingController()];
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<List<String>>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < fields.length; i++)
-              Padding(
-                padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
-                child: TextField(
-                  controller: ctls[i],
-                  autofocus: i == 0,
-                  decoration: InputDecoration(
-                    labelText: fields[i].label,
-                    hintText: fields[i].hint,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(okLabel),
-          ),
+      builder: (_) => WorkspaceFieldsDialog(
+        title: title,
+        okLabel: okLabel,
+        fields: [
+          for (final field in fields)
+            WorkspaceFieldSpec(
+              label: field.label,
+              hint: field.hint,
+              required: field.required,
+            ),
         ],
       ),
     );
-    if (ok != true) return null;
-    final vals = [for (final c in ctls) c.text.trim()];
+    if (raw == null) return null;
+    final vals = [for (final value in raw) value.trim()];
     for (var i = 0; i < fields.length; i++) {
       if (fields[i].required && vals[i].isEmpty) {
         _snack('${fields[i].label} 不能为空');

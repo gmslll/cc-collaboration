@@ -115,6 +115,19 @@ void main() {
     expect(dialog, isNot(contains('showDialog<bool>')));
   });
 
+  test('workspace fields dialog owns generated controllers', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final helper = source.substring(
+      source.indexOf('Future<List<String>?> _fieldsDialog('),
+      source.indexOf('@override\n  Future<bool> _confirm'),
+    );
+
+    expect(helper, contains('showDialog<List<String>>'));
+    expect(helper, contains('WorkspaceFieldsDialog('));
+    expect(helper, isNot(contains('TextEditingController')));
+    expect(helper, isNot(contains('showDialog<bool>')));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
