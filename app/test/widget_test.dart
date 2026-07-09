@@ -1707,7 +1707,7 @@ void main() {
         'Future<void> _postComment()',
       ),
       'if (ok != true) return;',
-      '_client.deleteTodo',
+      'client.deleteTodo',
     );
     expectGuardBefore(
       between(
@@ -1715,7 +1715,7 @@ void main() {
         'Future<void> _postComment()',
         'Future<void> _pickAndUploadAttachments()',
       ),
-      'await _client.postTodoComment',
+      'await client.postTodoComment',
       '_commentCtl.clear',
     );
     final attachmentUpload = between(
@@ -1731,7 +1731,7 @@ void main() {
     expectGuardBefore(
       attachmentUpload,
       'File(f.path!).readAsBytes',
-      '_client.uploadTodoAttachment',
+      'client.uploadTodoAttachment',
     );
     final quickCreate = between(
       'lib/screens/todos_page.dart',

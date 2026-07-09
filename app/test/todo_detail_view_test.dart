@@ -47,6 +47,46 @@ void main() {
     expect(find.widgetWithText(TextField, 'second full title'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'first full title'), findsNothing);
   });
+
+  testWidgets('stale todo detail load cannot overwrite a newer client', (
+    tester,
+  ) async {
+    final oldClient = _DelayedTodoClient();
+    final newClient = _DelayedTodoClient();
+    final listTodo = _todo('td1', 'list title');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: oldClient, todo: listTodo),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(oldClient.requestedTodos, ['td1']);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: newClient, todo: listTodo),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(newClient.requestedTodos, ['td1']);
+
+    newClient.completeTodo('td1', _todo('td1', 'new account title'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, 'new account title'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'old account title'), findsNothing);
+
+    oldClient.completeTodo('td1', _todo('td1', 'old account title'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, 'new account title'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'old account title'), findsNothing);
+  });
 }
 
 Todo _todo(String id, String title) => Todo.fromJson({

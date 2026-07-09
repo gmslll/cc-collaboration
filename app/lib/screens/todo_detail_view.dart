@@ -126,7 +126,9 @@ class TodoDetailViewState extends State<TodoDetailView> {
   @override
   void didUpdateWidget(TodoDetailView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.todo.id != widget.todo.id) {
+    final todoChanged = oldWidget.todo.id != widget.todo.id;
+    final clientChanged = !identical(oldWidget.client, widget.client);
+    if (todoChanged || clientChanged) {
       if (_textDirty && oldWidget.access.canEdit) {
         // Flush the OLD todo's edits before switching away — best-effort,
         // decoupled from this widget's _saving/_textDirty (which now track
@@ -134,7 +136,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
         final oldId = oldWidget.todo.id;
         final oldTitle = _titleCtl.text.trim();
         final oldBody = _bodyCtl.text;
-        _client
+        oldWidget.client
             .updateTodo(oldId, title: oldTitle, bodyMd: oldBody)
             .catchError((_) => oldWidget.todo);
       }
@@ -147,6 +149,9 @@ class TodoDetailViewState extends State<TodoDetailView> {
         _bodyEditing = false;
         _comments = const [];
         _loadingAttachments = true;
+        _saving = false;
+        _uploading = false;
+        _resumingSession = false;
       });
       _loadFull();
       reloadComments();
@@ -189,10 +194,11 @@ class TodoDetailViewState extends State<TodoDetailView> {
 
   Future<void> _loadFull() async {
     final generation = ++_loadGeneration;
+    final client = _client;
     final id = _id;
     try {
-      final t = await _client.todo(id);
-      if (!_isCurrentLoad(generation, id)) return;
+      final t = await client.todo(id);
+      if (!_isCurrentLoad(generation, client, id)) return;
       setState(() {
         _current = t;
         _loadingAttachments = false;
@@ -202,15 +208,18 @@ class TodoDetailViewState extends State<TodoDetailView> {
         }
       });
     } catch (e) {
-      if (!mounted) return;
-      if (generation != _loadGeneration || id != _id) return;
+      if (!_isCurrentLoad(generation, client, id)) return;
       setState(() => _loadingAttachments = false);
+      if (!mounted) return;
       snack(context, '加载待办详情失败: ${errorText(e)}');
     }
   }
 
-  bool _isCurrentLoad(int generation, String id) =>
-      mounted && generation == _loadGeneration && id == _id;
+  bool _isCurrentTodoClient(RelayClient client, String id) =>
+      mounted && identical(client, widget.client) && id == _id;
+
+  bool _isCurrentLoad(int generation, RelayClient client, String id) =>
+      _isCurrentTodoClient(client, id) && generation == _loadGeneration;
 
   // reloadComments is public so the host can force a refresh when
   // TodoStore.onComment fires for this todo's id (a todo.comment_created SSE
@@ -218,10 +227,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // which todo needs its comment list reloaded.
   Future<void> reloadComments() async {
     final generation = _loadGeneration;
+    final client = _client;
     final id = _id;
     try {
-      final cs = await _client.todoComments(id);
-      if (_isCurrentLoad(generation, id)) setState(() => _comments = cs);
+      final cs = await client.todoComments(id);
+      if (_isCurrentLoad(generation, client, id)) {
+        setState(() => _comments = cs);
+      }
     } catch (_) {}
   }
 
@@ -274,15 +286,17 @@ class TodoDetailViewState extends State<TodoDetailView> {
     }
     _bodyDebounce?.cancel();
     setState(() => _saving = true);
+    final client = _client;
+    final id = _id;
     final sentTitle = _titleCtl.text.trim();
     final sentBody = _bodyCtl.text;
     try {
-      final updated = await _client.updateTodo(
-        _id,
+      final updated = await client.updateTodo(
+        id,
         title: sentTitle,
         bodyMd: sentBody,
       );
-      if (!mounted) return;
+      if (!_isCurrentTodoClient(client, id)) return;
       // If the field(s) changed again while this request was in flight, the
       // just-saved snapshot is already stale — keep _textDirty set (and
       // re-arm the debounce) instead of clearing it, so those newer
@@ -300,8 +314,9 @@ class TodoDetailViewState extends State<TodoDetailView> {
       }
       _applyUpdated(updated);
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentTodoClient(client, id)) return;
       setState(() => _saving = false);
+      if (!mounted) return;
       snack(context, '保存失败: ${errorText(e)}');
     }
   }
@@ -311,11 +326,17 @@ class TodoDetailViewState extends State<TodoDetailView> {
       snack(context, '你对这条待办只有只读权限');
       return;
     }
+    final client = _client;
+    final id = _id;
     try {
-      final updated = await _client.setTodoStatus(_id, s);
+      final updated = await client.setTodoStatus(id, s);
+      if (!_isCurrentTodoClient(client, id)) return;
       _applyUpdated(updated);
     } catch (e) {
-      if (mounted) snack(context, '更新状态失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '更新状态失败: ${errorText(e)}');
+      }
     }
   }
 
@@ -332,9 +353,11 @@ class TodoDetailViewState extends State<TodoDetailView> {
       snack(context, '你对这条待办只有只读权限');
       return;
     }
+    final client = _client;
+    final id = _id;
     try {
-      final updated = await _client.updateTodo(
-        _id,
+      final updated = await client.updateTodo(
+        id,
         priority: priority,
         recurrence: recurrence,
         dueAt: dueAt,
@@ -343,9 +366,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
         repoName: repoName,
         groupName: groupName,
       );
+      if (!_isCurrentTodoClient(client, id)) return;
       _applyUpdated(updated);
     } catch (e) {
-      if (mounted) snack(context, '更新失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '更新失败: ${errorText(e)}');
+      }
     }
   }
 
@@ -438,6 +465,8 @@ class TodoDetailViewState extends State<TodoDetailView> {
       return;
     }
 
+    final client = _client;
+    final id = t.id;
     setState(() => _resumingSession = true);
     final (sid, err) = await overview.spawn(
       workspace: wsName,
@@ -452,7 +481,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
       // _spawnForDispatch/_spawnManagedSession in workspace_page.dart.
       workdir: workdir,
     );
-    if (!mounted) return;
+    if (!_isCurrentTodoClient(client, id)) return;
     setState(() => _resumingSession = false);
     if (sid == null) {
       snack(context, '恢复会话失败: ${err ?? "未知错误"}');
@@ -466,16 +495,17 @@ class TodoDetailViewState extends State<TodoDetailView> {
     // message is short, so a redundant reminder when history did restore is far
     // cheaper than leaving the user staring at a blank session with no context.
     final prep = await prepareTodoAssignmentText(
-      client: _client,
-      todoId: t.id,
+      client: client,
+      todoId: id,
       fallbackTodo: t,
       workdir: workdir,
     );
-    if (!mounted) return;
+    if (!_isCurrentTodoClient(client, id)) return;
     final dispatchErr = overview.dispatch(
       LocalMsg('', sid, prep.taskText, true),
     );
     if (dispatchErr != null) {
+      if (!mounted) return;
       snack(context, '会话已恢复，但投递任务说明失败: $dispatchErr');
     }
     _openSession(sid);
@@ -494,6 +524,8 @@ class TodoDetailViewState extends State<TodoDetailView> {
       snack(context, '你对这条待办没有删除权限');
       return;
     }
+    final client = _client;
+    final id = _id;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -512,12 +544,17 @@ class TodoDetailViewState extends State<TodoDetailView> {
       ),
     );
     if (ok != true) return;
+    if (!_isCurrentTodoClient(client, id)) return;
     if (!mounted) return;
     try {
-      await _client.deleteTodo(_id);
+      await client.deleteTodo(id);
+      if (!_isCurrentTodoClient(client, id)) return;
       widget.onDeleted?.call();
     } catch (e) {
-      if (mounted) snack(context, '删除失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '删除失败: ${errorText(e)}');
+      }
     }
   }
 
@@ -528,13 +565,19 @@ class TodoDetailViewState extends State<TodoDetailView> {
     }
     final body = _commentCtl.text.trim();
     if (body.isEmpty) return;
+    final client = _client;
+    final id = _id;
     try {
-      await _client.postTodoComment(_id, body);
+      await client.postTodoComment(id, body);
+      if (!_isCurrentTodoClient(client, id)) return;
       if (!mounted) return;
       _commentCtl.clear();
       await reloadComments();
     } catch (e) {
-      if (mounted) snack(context, '评论失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '评论失败: ${errorText(e)}');
+      }
     }
   }
 
@@ -548,20 +591,28 @@ class TodoDetailViewState extends State<TodoDetailView> {
       withData: true,
     );
     if (res == null || res.files.isEmpty || !mounted) return;
+    final client = _client;
+    final id = _id;
     setState(() => _uploading = true);
     for (final f in res.files) {
       if (!mounted) return;
+      if (!_isCurrentTodoClient(client, id)) return;
       try {
         Uint8List? bytes = f.bytes;
         bytes ??= f.path != null ? await File(f.path!).readAsBytes() : null;
+        if (!_isCurrentTodoClient(client, id)) return;
         if (!mounted) return;
         if (bytes == null) continue;
-        await _client.uploadTodoAttachment(_id, f.name, bytes);
+        await client.uploadTodoAttachment(id, f.name, bytes);
+        if (!_isCurrentTodoClient(client, id)) return;
       } catch (e) {
-        if (mounted) snack(context, '上传 ${f.name} 失败: ${errorText(e)}');
+        if (_isCurrentTodoClient(client, id)) {
+          if (!mounted) return;
+          snack(context, '上传 ${f.name} 失败: ${errorText(e)}');
+        }
       }
     }
-    if (!mounted) return;
+    if (!_isCurrentTodoClient(client, id)) return;
     setState(() => _uploading = false);
     await _loadFull();
   }
