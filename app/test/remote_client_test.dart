@@ -44,6 +44,63 @@ void main() {
     ]);
   });
 
+  test('remote config commands trim fields before sending frames', () {
+    final client = _TestRemoteClient();
+    addTearDown(client.dispose);
+
+    client.newWorkspace(' Mobile ', ' /tmp/mobile ');
+    client.removeWorkspace(' Mobile ');
+    client.addProject(' Team ', ' https://github.com/org/repo.git ');
+    client.removeProject(' Team ', ' Backend ');
+    client.addWorktree(' Team ', ' Backend ', ' feat/team ', ' origin/main ');
+    client.removeWorktree(' Team ', ' Backend ', ' feat/team ');
+
+    expect(client.sent, [
+      {'t': 'ws.new', 'name': 'Mobile', 'path': '/tmp/mobile'},
+      {'t': 'ws.remove', 'name': 'Mobile'},
+      {
+        't': 'proj.add',
+        'workspace': 'Team',
+        'source': 'https://github.com/org/repo.git',
+      },
+      {'t': 'proj.remove', 'workspace': 'Team', 'project': 'Backend'},
+      {
+        't': 'wt.add',
+        'workspace': 'Team',
+        'project': 'Backend',
+        'branch': 'feat/team',
+        'start': 'origin/main',
+      },
+      {
+        't': 'wt.remove',
+        'workspace': 'Team',
+        'project': 'Backend',
+        'branch': 'feat/team',
+        'force': true,
+      },
+    ]);
+  });
+
+  test('remote config commands preserve default workspace and omit blanks', () {
+    final client = _TestRemoteClient();
+    addTearDown(client.dispose);
+
+    client.newWorkspace(' Mobile ', '   ');
+    client.addProject('', ' /repo ');
+    client.addWorktree('', ' Backend ', ' feat/team ', '   ');
+
+    expect(client.sent, [
+      {'t': 'ws.new', 'name': 'Mobile'},
+      {'t': 'proj.add', 'workspace': '', 'source': '/repo'},
+      {
+        't': 'wt.add',
+        'workspace': '',
+        'project': 'Backend',
+        'branch': 'feat/team',
+      },
+    ]);
+  });
+
   testWidgets('remote assign fails immediately when the host is offline', (
     tester,
   ) async {

@@ -1300,13 +1300,24 @@ class RemoteClient extends RemoteChannel {
   // Project management — host replies cfg.ok (→ rebroadcast roots) or cfg.err.
   void loadWorktrees(String projectPath) =>
       send({'t': 'wt.list', 'path': projectPath});
-  void newWorkspace(String name, String path) =>
-      send({'t': 'ws.new', 'name': name, if (path.isNotEmpty) 'path': path});
-  void removeWorkspace(String name) => send({'t': 'ws.remove', 'name': name});
-  void addProject(String workspace, String source) =>
-      send({'t': 'proj.add', 'workspace': workspace, 'source': source});
-  void removeProject(String workspace, String project) =>
-      send({'t': 'proj.remove', 'workspace': workspace, 'project': project});
+  void newWorkspace(String name, String path) {
+    final trimmedPath = _trimOrNull(path);
+    send({'t': 'ws.new', 'name': name.trim(), 'path': ?trimmedPath});
+  }
+
+  void removeWorkspace(String name) =>
+      send({'t': 'ws.remove', 'name': name.trim()});
+  void addProject(String workspace, String source) => send({
+    't': 'proj.add',
+    'workspace': workspace.trim(),
+    'source': source.trim(),
+  });
+  void removeProject(String workspace, String project) => send({
+    't': 'proj.remove',
+    'workspace': workspace.trim(),
+    'project': project.trim(),
+  });
+
   void addWorktree(
     String workspace,
     String project,
@@ -1314,16 +1325,16 @@ class RemoteClient extends RemoteChannel {
     String start,
   ) => send({
     't': 'wt.add',
-    'workspace': workspace,
-    'project': project,
-    'branch': branch,
-    if (start.isNotEmpty) 'start': start,
+    'workspace': workspace.trim(),
+    'project': project.trim(),
+    'branch': branch.trim(),
+    if (_trimOrNull(start) != null) 'start': _trimOrNull(start),
   });
   void removeWorktree(String workspace, String project, String branch) => send({
     't': 'wt.remove',
-    'workspace': workspace,
-    'project': project,
-    'branch': branch,
+    'workspace': workspace.trim(),
+    'project': project.trim(),
+    'branch': branch.trim(),
     'force': true,
   });
 }
