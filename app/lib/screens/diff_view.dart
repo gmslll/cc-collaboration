@@ -308,46 +308,48 @@ class _DiffViewState extends State<DiffView> {
   Widget _fileTile(FileDiff f, String fname, int depth) {
     final sel = identical(_selected, f);
     final c = _statusColor(f.status);
-    return Container(
-      decoration: BoxDecoration(
-        color: sel ? CcColors.accent.withValues(alpha: 0.10) : null,
-        border: Border(
-          left: BorderSide(
-            color: sel ? CcColors.accent : Colors.transparent,
-            width: 2.5,
+    return Material(
+      color: sel ? CcColors.accent.withValues(alpha: 0.10) : Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: sel ? CcColors.accent : Colors.transparent,
+              width: 2.5,
+            ),
           ),
         ),
-      ),
-      child: ListTile(
-        dense: true,
-        visualDensity: const VisualDensity(vertical: -2),
-        selected: sel,
-        contentPadding: EdgeInsets.only(left: 8.0 + depth * 12, right: 8),
-        horizontalTitleGap: 6,
-        leading: Text(
-          _statusChar(f.status),
-          style: TextStyle(
-            fontFamily: CcType.mono,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: c,
+        child: ListTile(
+          dense: true,
+          visualDensity: const VisualDensity(vertical: -2),
+          selected: sel,
+          contentPadding: EdgeInsets.only(left: 8.0 + depth * 12, right: 8),
+          horizontalTitleGap: 6,
+          leading: Text(
+            _statusChar(f.status),
+            style: TextStyle(
+              fontFamily: CcType.mono,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: c,
+            ),
           ),
-        ),
-        title: Text(
-          fname,
-          style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Text(
-          '+${f.adds} −${f.dels}',
-          style: const TextStyle(
-            fontFamily: CcType.mono,
-            fontSize: 11,
-            color: CcColors.muted,
+          title: Text(
+            fname,
+            style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
+          trailing: Text(
+            '+${f.adds} −${f.dels}',
+            style: const TextStyle(
+              fontFamily: CcType.mono,
+              fontSize: 11,
+              color: CcColors.muted,
+            ),
+          ),
+          onTap: () => _select(f),
         ),
-        onTap: () => _select(f),
       ),
     );
   }
@@ -498,7 +500,12 @@ class _DiffViewState extends State<DiffView> {
         r.newNo != null &&
         r.rightKind != DiffKind.empty;
     if (!editable) {
-      return diffCell(r.right, r.rightKind, langId: _lang, wordSpans: wordSpans);
+      return diffCell(
+        r.right,
+        r.rightKind,
+        langId: _lang,
+        wordSpans: wordSpans,
+      );
     }
     return _EditableCell(
       text: r.right,
