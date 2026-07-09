@@ -53,6 +53,12 @@ void main() {
     expect(handoffReassignCandidateListMaxHeight(const Size(320, 220)), 88);
   });
 
+  test('handoff action dialog width fits compact screens', () {
+    expect(handoffActionDialogWidth(const Size(320, 760)), 288);
+    expect(handoffActionDialogWidth(const Size(1024, 760)), 440);
+    expect(handoffActionDialogWidth(const Size(360, 760), preferred: 460), 328);
+  });
+
   test('handoff reassign dialog avoids fixed candidate height', () {
     final source = File(
       'lib/screens/handoff_detail_view.dart',
@@ -60,6 +66,8 @@ void main() {
     final dialog = source.substring(source.indexOf('class _ReassignDialog'));
 
     expect(dialog, contains('handoffReassignCandidateListMaxHeight'));
+    expect(dialog, contains('handoffActionDialogWidth'));
+    expect(dialog, contains('SingleChildScrollView'));
     expect(dialog, isNot(contains('BoxConstraints(maxHeight: 112)')));
   });
 
@@ -227,6 +235,21 @@ void main() {
 
     await tester.tap(find.widgetWithText(OutlinedButton, '撤回'));
     await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(contentScroll.scrollDirection, Axis.vertical);
+
     await tester.enterText(find.byType(TextField), '  not now  ');
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
@@ -292,6 +315,21 @@ void main() {
 
     await tester.tap(find.widgetWithText(OutlinedButton, '转交'));
     await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(contentScroll.scrollDirection, Axis.vertical);
+
     await tester.enterText(
       find.widgetWithText(TextField, '转交给(identity)'),
       '  dev@x  ',

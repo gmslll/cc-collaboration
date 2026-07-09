@@ -173,6 +173,12 @@ double handoffReassignCandidateListMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double handoffActionDialogWidth(Size size, {double preferred = 440}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 String handoffAttachmentTempPath(String tempDirPath, String attachmentName) {
   final parts = attachmentName
       .split(RegExp(r'[\\/]+'))
@@ -1451,12 +1457,23 @@ class _RetractDialogState extends State<_RetractDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
-      title: const Text('撤回 handoff'),
-      content: TextField(
-        controller: _reason,
-        decoration: const InputDecoration(hintText: '原因(可选)'),
-        onSubmitted: (_) => _submit(),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text(
+        '撤回 handoff',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: handoffActionDialogWidth(size),
+        child: SingleChildScrollView(
+          child: TextField(
+            controller: _reason,
+            decoration: const InputDecoration(hintText: '原因(可选)'),
+            onSubmitted: (_) => _submit(),
+          ),
+        ),
       ),
       actions: [
         TextButton(
@@ -1523,74 +1540,82 @@ class _ReassignDialogState extends State<_ReassignDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
-      title: const Text('转交 bug'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (widget.candidates.isNotEmpty) ...[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '团队候选',
-                style: TextStyle(fontSize: 12, color: CcColors.muted),
-              ),
-            ),
-            const SizedBox(height: 6),
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: handoffReassignCandidateListMaxHeight(
-                  MediaQuery.sizeOf(context),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('转交 bug', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: handoffActionDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (widget.candidates.isNotEmpty) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '团队候选',
+                    style: TextStyle(fontSize: 12, color: CcColors.muted),
+                  ),
                 ),
-              ),
-              child: SingleChildScrollView(
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final candidate in widget.candidates)
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 220),
-                        child: ActionChip(
-                          label: Text(
-                            candidate.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 6),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: handoffReassignCandidateListMaxHeight(size),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final candidate in widget.candidates)
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 220),
+                            child: ActionChip(
+                              label: Text(
+                                candidate.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onPressed: () => _selectCandidate(candidate),
+                            ),
                           ),
-                          onPressed: () => _selectCandidate(candidate),
-                        ),
-                      ),
-                  ],
+                      ],
+                    ),
+                  ),
                 ),
+                const SizedBox(height: 12),
+              ],
+              TextField(
+                controller: _to,
+                decoration: const InputDecoration(labelText: '转交给(identity)'),
+                onChanged: (_) => _clearError(),
+                textInputAction: TextInputAction.next,
               ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          TextField(
-            controller: _to,
-            decoration: const InputDecoration(labelText: '转交给(identity)'),
-            onChanged: (_) => _clearError(),
-            onSubmitted: (_) => _submit(),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _reason,
-            decoration: const InputDecoration(labelText: '原因'),
-            onChanged: (_) => _clearError(),
-            onSubmitted: (_) => _submit(),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _error!,
-                style: const TextStyle(color: CcColors.danger, fontSize: 12),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _reason,
+                decoration: const InputDecoration(labelText: '原因'),
+                onChanged: (_) => _clearError(),
+                onSubmitted: (_) => _submit(),
               ),
-            ),
-          ],
-        ],
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(
+                      color: CcColors.danger,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
       actions: [
         TextButton(
