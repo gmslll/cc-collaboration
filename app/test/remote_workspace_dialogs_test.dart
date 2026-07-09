@@ -34,6 +34,27 @@ void main() {
     expect(remoteWorkspaceMenuMaxHeight(const Size(320, 220)), 160);
   });
 
+  test('remote terminal screen rebinds client lifecycle on widget update', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final screen = source.substring(
+      source.indexOf('class _RemoteTerminalScreenState'),
+      source.indexOf('// After a reconnect-driven resync'),
+    );
+
+    expect(screen, contains('void didUpdateWidget'));
+    expect(screen, contains('_detachRemoteClient(oldWidget.client'));
+    expect(screen, contains('_attachRemoteClient(showRefreshSnack: false)'));
+    expect(screen, contains('client.removeListener(_onClientChange)'));
+    expect(screen, contains('client.leaveViewedSession(session.sid)'));
+    expect(screen, contains('widget.client.addListener(_onClientChange)'));
+    expect(
+      screen,
+      contains('widget.client.setViewedSession(widget.session.sid)'),
+    );
+  });
+
   test('remote worktree remove target falls back to path name', () {
     expect(
       remoteWorktreeRemoveTarget(

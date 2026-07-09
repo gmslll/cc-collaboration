@@ -2503,6 +2503,26 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   @override
   void initState() {
     super.initState();
+    _attachRemoteClient(showRefreshSnack: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _RemoteTerminalScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.client, widget.client) &&
+        oldWidget.session.sid == widget.session.sid) {
+      return;
+    }
+    _detachRemoteClient(oldWidget.client, oldWidget.session);
+    _usageLabel = null;
+    if (_laStarted) {
+      _laStarted = false;
+      LiveActivity.end();
+    }
+    _attachRemoteClient(showRefreshSnack: false);
+  }
+
+  void _attachRemoteClient({required bool showRefreshSnack}) {
     // History replay mode ('text'/'ansi') lives on the client and rides every
     // term.open; load the saved pref before the first _term access (build →
     // terminalFor → term.open) so the initial replay uses it.
@@ -2526,13 +2546,28 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) widget.client.adoptSize(widget.session.sid);
     });
-    if (refreshed) {
+    if (showRefreshSnack && refreshed) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           snack(context, '已从电脑拉取最新（本地旧历史已清理）', clearPrevious: true);
         }
       });
     }
+  }
+
+  void _detachRemoteClient(RemoteClient client, RemoteSession session) {
+    if (client.onReplyText == _onReplyText) {
+      client.onReplyText = null;
+    }
+    if (client.onAgentStatus == _onAgentStatus) {
+      client.onAgentStatus = null;
+    }
+    if (client.onTerminalReset == _onTerminalReset) {
+      client.onTerminalReset = null;
+    }
+    client.removeListener(_onClientChange);
+    // Stop guarding this session from eviction; its idle TTL counts from now.
+    client.leaveViewedSession(session.sid);
   }
 
   // After a reconnect-driven resync the client recreates this session's Terminal
@@ -2609,18 +2644,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 
   @override
   void dispose() {
-    if (widget.client.onReplyText == _onReplyText) {
-      widget.client.onReplyText = null;
-    }
-    if (widget.client.onAgentStatus == _onAgentStatus) {
-      widget.client.onAgentStatus = null;
-    }
-    if (widget.client.onTerminalReset == _onTerminalReset) {
-      widget.client.onTerminalReset = null;
-    }
-    widget.client.removeListener(_onClientChange);
-    // Stop guarding this session from eviction; its idle TTL counts from now.
-    widget.client.leaveViewedSession(widget.session.sid);
+    _detachRemoteClient(widget.client, widget.session);
     if (_laStarted) LiveActivity.end();
     _stopScroll();
     _wheelFlushTimer?.cancel();
