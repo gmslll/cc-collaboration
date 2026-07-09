@@ -350,6 +350,35 @@ void main() {
     expect(find.text('$_longAdminIdentity 的新密码'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('admin user action is locked while request is in flight', (
+    tester,
+  ) async {
+    final client = _DelayedAdminToggleAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('取消管理员'));
+    await tester.pump();
+
+    expect(client.setAdminCount, 1);
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    client.completeSetAdmin();
+    await tester.pumpAndSettle();
+
+    expect(client.setAdminCount, 1);
+    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _AdminPageFakeClient extends RelayClient {
@@ -437,6 +466,23 @@ class _DelayedResetAdminPageFakeClient extends _AdminPageFakeClient {
   void completeReset(String password) {
     if (!_resetCompleter.isCompleted) {
       _resetCompleter.complete(password);
+    }
+  }
+}
+
+class _DelayedAdminToggleAdminPageFakeClient extends _AdminPageFakeClient {
+  final _setAdminCompleter = Completer<void>();
+  int setAdminCount = 0;
+
+  @override
+  Future<void> setUserAdmin(String identity, bool isAdmin) {
+    setAdminCount++;
+    return _setAdminCompleter.future;
+  }
+
+  void completeSetAdmin() {
+    if (!_setAdminCompleter.isCompleted) {
+      _setAdminCompleter.complete();
     }
   }
 }

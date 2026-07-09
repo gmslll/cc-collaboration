@@ -34,6 +34,7 @@ class _AdminPageState extends State<AdminPage> {
   final _password = TextEditingController();
   bool _newAdmin = false;
   bool _creating = false;
+  final Set<String> _pendingUserActions = {};
   int _loadGeneration = 0;
 
   @override
@@ -55,6 +56,7 @@ class _AdminPageState extends State<AdminPage> {
       _error = null;
       _newAdmin = false;
       _creating = false;
+      _pendingUserActions.clear();
     });
     _load();
   }
@@ -128,8 +130,11 @@ class _AdminPageState extends State<AdminPage> {
 
   Future<void> _act(
     RelayClient client,
+    String identity,
     Future<void> Function(RelayClient client) f,
   ) async {
+    if (_pendingUserActions.contains(identity)) return;
+    setState(() => _pendingUserActions.add(identity));
     try {
       await f(client);
       if (!_isCurrentClient(client)) return;
@@ -137,6 +142,10 @@ class _AdminPageState extends State<AdminPage> {
     } catch (e) {
       if (!mounted || !identical(client, widget.client)) return;
       snack(context, errorText(e));
+    } finally {
+      if (_isCurrentClient(client)) {
+        setState(() => _pendingUserActions.remove(identity));
+      }
     }
   }
 
@@ -286,50 +295,68 @@ class _AdminPageState extends State<AdminPage> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                trailing: PopupMenuButton<String>(
-                  onSelected: (v) {
-                    switch (v) {
-                      case 'admin':
-                        _act(
-                          widget.client,
-                          (client) =>
-                              client.setUserAdmin(u.identity, !u.isAdmin),
-                        );
-                      case 'disable':
-                        _act(
-                          widget.client,
-                          (client) =>
-                              client.setUserDisabled(u.identity, !u.disabled),
-                        );
-                      case 'reset':
-                        _act(widget.client, (client) async {
-                          final pw = await client.resetPassword(u.identity);
-                          if (_isCurrentClient(client)) {
-                            _showSecret('${u.identity} 的新密码', pw);
+                trailing: _pendingUserActions.contains(u.identity)
+                    ? const SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: Center(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      )
+                    : PopupMenuButton<String>(
+                        onSelected: (v) {
+                          switch (v) {
+                            case 'admin':
+                              _act(
+                                widget.client,
+                                u.identity,
+                                (client) =>
+                                    client.setUserAdmin(u.identity, !u.isAdmin),
+                              );
+                            case 'disable':
+                              _act(
+                                widget.client,
+                                u.identity,
+                                (client) => client.setUserDisabled(
+                                  u.identity,
+                                  !u.disabled,
+                                ),
+                              );
+                            case 'reset':
+                              _act(widget.client, u.identity, (client) async {
+                                final pw = await client.resetPassword(
+                                  u.identity,
+                                );
+                                if (_isCurrentClient(client)) {
+                                  _showSecret('${u.identity} 的新密码', pw);
+                                }
+                              });
                           }
-                        });
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    ccMenuItem(
-                      value: 'admin',
-                      icon: Icons.shield_rounded,
-                      label: adminToggleLabel(u.isAdmin),
-                    ),
-                    ccMenuItem(
-                      value: 'disable',
-                      icon: u.disabled
-                          ? Icons.check_circle_outline_rounded
-                          : Icons.block_rounded,
-                      label: u.disabled ? '启用' : '停用',
-                    ),
-                    ccMenuItem(
-                      value: 'reset',
-                      icon: Icons.password_rounded,
-                      label: '重置密码',
-                    ),
-                  ],
-                ),
+                        },
+                        itemBuilder: (_) => [
+                          ccMenuItem(
+                            value: 'admin',
+                            icon: Icons.shield_rounded,
+                            label: adminToggleLabel(u.isAdmin),
+                          ),
+                          ccMenuItem(
+                            value: 'disable',
+                            icon: u.disabled
+                                ? Icons.check_circle_outline_rounded
+                                : Icons.block_rounded,
+                            label: u.disabled ? '启用' : '停用',
+                          ),
+                          ccMenuItem(
+                            value: 'reset',
+                            icon: Icons.password_rounded,
+                            label: '重置密码',
+                          ),
+                        ],
+                      ),
               ),
             ),
           ),
