@@ -232,9 +232,12 @@ List<OrganizationMember> projectMemberCandidates(
     for (final member in projectMembers)
       if (member.identity.trim().isNotEmpty) member.identity.trim(),
   };
+  final seen = <String>{};
   final candidates = organizationMembers.where((member) {
     final identity = member.identity.trim();
-    return identity.isNotEmpty && !projectIdentities.contains(identity);
+    return identity.isNotEmpty &&
+        !projectIdentities.contains(identity) &&
+        seen.add(identity);
   }).toList();
   candidates.sort((a, b) {
     final an = a.displayName.isEmpty ? a.identity : a.displayName;

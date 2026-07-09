@@ -558,6 +558,11 @@ void main() {
           'display_name': 'Zed',
         }),
         OrganizationMember.fromJson({
+          'identity': ' zed@x ',
+          'role': 'admin',
+          'display_name': 'Zed Duplicate',
+        }),
+        OrganizationMember.fromJson({
           'identity': ' ann@x ',
           'role': 'member',
           'display_name': 'Ann',
