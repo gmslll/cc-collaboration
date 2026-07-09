@@ -223,6 +223,7 @@ class _DiffViewState extends State<DiffView> {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     try {
       await gitRestore(root, f.path);
       widget.onChanged?.call();

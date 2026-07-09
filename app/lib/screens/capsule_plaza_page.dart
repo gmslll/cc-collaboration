@@ -51,6 +51,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
@@ -278,6 +279,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
       context: context,
       builder: (_) => _CapsuleEditDialog(client: widget.client, capsule: c),
     );
+    if (!mounted) return;
     if (changed == true) _load();
   }
 

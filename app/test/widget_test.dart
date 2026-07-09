@@ -273,6 +273,46 @@ void main() {
     );
   });
 
+  test('diff and capsule dialogs guard mounted before side effects', () {
+    void expectGuardBefore(
+      String body,
+      String after,
+      String before, {
+      String guard = 'if (!mounted) return',
+    }) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf(guard, afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    final diffView = File('lib/screens/diff_view.dart').readAsStringSync();
+    final discard = diffView.substring(
+      diffView.indexOf('Future<void> _discard()'),
+      diffView.indexOf('@override\n  Widget build'),
+    );
+    expectGuardBefore(discard, 'if (ok != true) return;', 'gitRestore(');
+
+    final capsule = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final load = capsule.substring(
+      capsule.indexOf('Future<void> _load()'),
+      capsule.indexOf('bool _isCurrentLoad('),
+    );
+    expectGuardBefore(load, 'Future<void> _load()', 'setState(() {');
+
+    final edit = capsule.substring(
+      capsule.indexOf('Future<void> _editCapsule('),
+      capsule.indexOf('Future<void> _loadCapsule('),
+    );
+    expectGuardBefore(edit, 'showDialog<bool>', '_load();');
+  });
+
   test('workspace git confirmations guard mounted before loading state', () {
     final source = File(
       'lib/screens/workspace/git_mixin.dart',
