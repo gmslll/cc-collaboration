@@ -98,6 +98,32 @@ void main() {
     expect(dialog, contains('!onlineSendIdentitySelected(selected, identity)'));
   });
 
+  test('online send ignores stale relay clients after account switches', () {
+    final relay = source.substring(
+      source.indexOf('bool _isCurrentRelayClient('),
+      source.indexOf('// _publishSessions advertises'),
+    );
+    final dialog = source.substring(
+      source.indexOf('Future<void> _showSendToOnlineUser(String text)'),
+      source.indexOf('Future<void> _loadTasks()'),
+    );
+
+    expect(relay, contains('identical(client, widget.client)'));
+    expect(dialog, contains('if (!_isCurrentRelayClient(client)) return;'));
+    expect(dialog, contains('!_isCurrentRelayClient(client) ||'));
+    expect(dialog, contains("账号已切换,请重新选择在线用户"));
+    expect(
+      dialog.indexOf('await client.onlineUsers()'),
+      lessThan(dialog.indexOf('if (!_isCurrentRelayClient(client)) return;')),
+    );
+    expect(
+      dialog.indexOf('await client.sendMessage'),
+      lessThan(
+        dialog.lastIndexOf('if (!_isCurrentRelayClient(client)) return;'),
+      ),
+    );
+  });
+
   test('incoming peer message dialog uses responsive session labels', () {
     expect(source, contains('preferred: 460'));
     expect(source, contains('onlineSendSessionMenuMaxHeight'));

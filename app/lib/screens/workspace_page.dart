@@ -1407,6 +1407,9 @@ class _WorkspacePageState extends State<WorkspacePage>
       _cfg.token == token &&
       _cfg.identity == identity;
 
+  bool _isCurrentRelayClient(RelayClient client) =>
+      mounted && _relayConfigured && identical(client, widget.client);
+
   // _publishSessions advertises our open sessions only when publish_sessions is
   // enabled. Disabled still posts an empty list, clearing any older public list.
   void _publishSessions() {
@@ -1740,10 +1743,12 @@ class _WorkspacePageState extends State<WorkspacePage>
         _cfg.identity,
       );
     } catch (e) {
+      if (!_isCurrentRelayClient(client)) return;
       _snack('获取在线用户失败:${errorText(e)}');
       return;
     }
     if (!mounted) return;
+    if (!_isCurrentRelayClient(client)) return;
     if (users.isEmpty) {
       _snack('当前没有其它在线用户');
       return;
@@ -1772,6 +1777,7 @@ class _WorkspacePageState extends State<WorkspacePage>
               }
               if (!mounted ||
                   !ctx.mounted ||
+                  !_isCurrentRelayClient(client) ||
                   seq != loadSeq ||
                   !onlineSendIdentitySelected(selected, identity)) {
                 return;
@@ -1783,11 +1789,18 @@ class _WorkspacePageState extends State<WorkspacePage>
             }
 
             Future<void> send(RemoteSession s) async {
+              if (!_isCurrentRelayClient(client)) {
+                Navigator.pop(ctx);
+                _snack('账号已切换,请重新选择在线用户');
+                return;
+              }
               Navigator.pop(ctx);
               try {
                 await client.sendMessage(selected!, s.id, text);
+                if (!_isCurrentRelayClient(client)) return;
                 _snack('已发送到 $selected · ${s.label},等待对方确认');
               } catch (e) {
+                if (!_isCurrentRelayClient(client)) return;
                 _snack('发送失败:${errorText(e)}');
               }
             }
