@@ -71,7 +71,7 @@ func (c *Client) projectTeam(ctx context.Context, projectID string) (projectBrie
 		Project projectBrief    `json:"project"`
 		Members []ProjectMember `json:"members"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+projectID, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(projectID), nil, &out); err != nil {
 		return projectBrief{}, nil, err
 	}
 	return out.Project, out.Members, nil
@@ -81,7 +81,7 @@ func (c *Client) ListOrganizationMembers(ctx context.Context, orgID string) ([]O
 	var out struct {
 		Members []OrganizationMember `json:"members"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/orgs/"+orgID, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(orgID), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Members, nil

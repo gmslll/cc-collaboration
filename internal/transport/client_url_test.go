@@ -106,3 +106,37 @@ func TestListProjectHandoffsEncodesQuery(t *testing.T) {
 		t.Fatalf("query params = %#v", got)
 	}
 }
+
+func TestProjectAndOrganizationPathIDsAreEscaped(t *testing.T) {
+	seen := make(chan string, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.RequestURI
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/projects/"):
+			_, _ = w.Write([]byte(`{"project":{"id":"team/a#1","org_id":"org/b#2"},"members":[]}`))
+		case strings.HasPrefix(r.URL.Path, "/v1/orgs/"):
+			_, _ = w.Write([]byte(`{"members":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	if _, err := client.ListProjectMembers(context.Background(), "team/a#1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListOrganizationMembers(context.Background(), "org/b#2"); err != nil {
+		t.Fatal(err)
+	}
+
+	projectURI := <-seen
+	orgURI := <-seen
+	if !strings.Contains(projectURI, "/v1/projects/team%2Fa%231") {
+		t.Fatalf("project URI = %q, want escaped project id", projectURI)
+	}
+	if !strings.Contains(orgURI, "/v1/orgs/org%2Fb%232") {
+		t.Fatalf("org URI = %q, want escaped org id", orgURI)
+	}
+}
