@@ -476,7 +476,12 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
               )
               .toList();
     if (items.isEmpty) {
-      return centerMsg(_inbox.isEmpty ? '空' : '无匹配', onRetry: _refresh);
+      return _HandoffListEmptyState(
+        icon: _inbox.isEmpty ? _emptyIconForView(_view) : Icons.search_off,
+        title: _inbox.isEmpty ? _emptyTitleForView(_view) : '没有匹配结果',
+        detail: _inbox.isEmpty ? _emptyDetailForView(_view) : '换一个关键词或清空搜索后再看。',
+        onRetry: _refresh,
+      );
     }
     return RefreshIndicator(
       onRefresh: _refresh,
@@ -546,5 +551,119 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     if (kind == 'bug') return CcColors.danger;
     if (kind == 'request') return CcColors.warning;
     return CcColors.accent;
+  }
+
+  IconData _emptyIconForView(String view) {
+    switch (view) {
+      case 'project':
+        return Icons.groups_2_rounded;
+      case 'sender':
+        return Icons.outbox_rounded;
+      case 'history':
+        return Icons.history_rounded;
+      default:
+        return Icons.inbox_rounded;
+    }
+  }
+
+  String _emptyTitleForView(String view) {
+    switch (view) {
+      case 'project':
+        return '还没有团队 handoff';
+      case 'sender':
+        return '还没有发出的 handoff';
+      case 'history':
+        return '还没有历史记录';
+      default:
+        return '收件箱为空';
+    }
+  }
+
+  String _emptyDetailForView(String view) {
+    switch (view) {
+      case 'project':
+        return '项目成员共享的 handoff 会出现在这里。';
+      case 'sender':
+        return '从会话或命令发起 handoff 后会出现在这里。';
+      case 'history':
+        return '已完成或归档的 handoff 会出现在这里。';
+      default:
+        return '收到新的协作交接后会自动刷新。';
+    }
+  }
+}
+
+class _HandoffListEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String detail;
+  final VoidCallback onRetry;
+
+  const _HandoffListEmptyState({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 300),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: CcColors.panelHigh.withValues(alpha: 0.58),
+              borderRadius: BorderRadius.circular(CcRadius.md),
+              border: Border.all(color: CcColors.borderSoft),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: CcColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(CcRadius.md),
+                      border: Border.all(
+                        color: CcColors.accent.withValues(alpha: 0.28),
+                      ),
+                    ),
+                    child: Icon(icon, color: CcColors.accentBright, size: 20),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    detail,
+                    textAlign: TextAlign.center,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: CcColors.muted, fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('刷新'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

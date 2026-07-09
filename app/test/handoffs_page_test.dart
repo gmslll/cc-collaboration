@@ -116,6 +116,60 @@ void main() {
     expect(find.text('old@x'), findsNothing);
   });
 
+  testWidgets('empty inbox shows actionable empty state', (tester) async {
+    final client = _ImmediateHandoffsClient(const []);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: HandoffsPage(
+            client: client,
+            config: AppConfig('http://127.0.0.1:1', 'tok', 'dev@x', const {}),
+            showTerminal: false,
+            enableEvents: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('收件箱为空'), findsOneWidget);
+    expect(find.text('收到新的协作交接后会自动刷新。'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '刷新'), findsOneWidget);
+  });
+
+  testWidgets('empty team handoff view explains project sharing', (
+    tester,
+  ) async {
+    final client = _ViewDelayedHandoffsClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: HandoffsPage(
+            client: client,
+            config: AppConfig('http://127.0.0.1:1', 'tok', 'dev@x', const {}),
+            showTerminal: false,
+            enableEvents: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pump();
+    client.complete('project', const []);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('还没有团队 handoff'), findsOneWidget);
+    expect(find.text('项目成员共享的 handoff 会出现在这里。'), findsOneWidget);
+  });
+
   testWidgets('team handoff view lists project-shared handoffs', (
     tester,
   ) async {
@@ -247,6 +301,12 @@ void main() {
 
     expect(find.text('Team handoff'), findsOneWidget);
     expect(find.text('Solo handoff'), findsNothing);
+
+    await tester.enterText(find.byType(TextField), 'missing-recipient');
+    await tester.pump();
+
+    expect(find.text('没有匹配结果'), findsOneWidget);
+    expect(find.text('换一个关键词或清空搜索后再看。'), findsOneWidget);
   });
 }
 
