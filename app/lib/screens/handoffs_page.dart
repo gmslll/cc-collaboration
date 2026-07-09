@@ -318,14 +318,24 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     if (sel == null) {
       return centerMsg('从左侧选择一个 handoff,查看对接文档');
     }
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     return HandoffDetailView(
       key: _detailKey,
-      client: _client,
+      client: client,
       config: _cfg,
       item: sel,
       onOpenTerminal: widget.showTerminal ? addTerm : null,
       onSendToTerminal: sendToTerminal,
       onChanged: _refresh,
+      isCurrentContext: () =>
+          mounted &&
+          identical(client, widget.client) &&
+          _cfg.relayUrl == relayUrl &&
+          _cfg.token == token &&
+          _cfg.identity == identity,
     );
   }
 

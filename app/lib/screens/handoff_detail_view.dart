@@ -31,6 +31,7 @@ class HandoffDetailView extends StatefulWidget {
   final void Function(String workdir, String command)? onOpenTerminal;
   final void Function(String text)? onSendToTerminal;
   final VoidCallback? onChanged;
+  final bool Function()? isCurrentContext;
 
   const HandoffDetailView({
     super.key,
@@ -40,6 +41,7 @@ class HandoffDetailView extends StatefulWidget {
     this.onOpenTerminal,
     this.onSendToTerminal,
     this.onChanged,
+    this.isCurrentContext,
   });
 
   @override
@@ -94,6 +96,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _status = null;
       _prompt = null;
       _comments = const [];
+      _picking = false;
       _loading = true;
     });
     try {
@@ -137,6 +140,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       oldWidget.config.token != widget.config.token ||
       oldWidget.config.identity != widget.config.identity;
 
+  bool _isHostContextCurrent() => widget.isCurrentContext?.call() ?? true;
+
   bool _isCurrentLoad(
     int generation,
     RelayClient client,
@@ -151,7 +156,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       id == _id &&
       relayUrl == _cfg.relayUrl &&
       token == _cfg.token &&
-      identity == _cfg.identity;
+      identity == _cfg.identity &&
+      _isHostContextCurrent();
 
   // reloadComments is public so the host's SSE can refresh on comment.created.
   Future<void> reloadComments({
@@ -295,6 +301,12 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _pickup(Package p) async {
+    final generation = _loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    final id = p.id;
     final path = _cfg.repoPath(p.repo.name);
     if (path == null) {
       _snack(
@@ -310,13 +322,23 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       if (!await _confirmInit(p, path)) return;
     }
     if (!mounted) return;
+    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+      return;
+    }
     setState(() => _picking = true);
     try {
       final r = await Cli.pickup(p.id, path);
       if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       widget.onOpenTerminal?.call(r.worktreeDir, r.agentCmd);
       if (mounted) setState(() => _picking = false);
     } catch (e) {
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
       if (mounted) setState(() => _picking = false);
       _snack('pickup 失败: ${errorText(e)}');
     }
@@ -327,6 +349,12 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   // fields pickup/config.Resolve require. Returns true when the repo is ready to
   // pick up (config written), false when the user cancels or the write fails.
   Future<bool> _confirmInit(Package p, String path) async {
+    final generation = _loadGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    final id = p.id;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -349,14 +377,23 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     );
     if (ok != true) return false;
     if (!mounted) return false;
+    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+      return false;
+    }
     try {
       await RepoConfig(
         raw: {},
         partner: p.sender,
         base: 'origin/main',
       ).save(path);
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return false;
+      }
       return true;
     } catch (e) {
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return false;
+      }
       _snack('初始化失败: ${errorText(e)}');
       return false;
     }

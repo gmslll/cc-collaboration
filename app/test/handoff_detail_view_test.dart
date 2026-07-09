@@ -245,6 +245,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  test('pickup init and terminal launch guard host context', () {
+    final source = File(
+      'lib/screens/handoff_detail_view.dart',
+    ).readAsStringSync();
+    final pickup = source.substring(
+      source.indexOf('Future<void> _pickup('),
+      source.indexOf('// _confirmInit prompts'),
+    );
+    final confirmInit = source.substring(
+      source.indexOf('Future<bool> _confirmInit('),
+      source.indexOf('Future<void> _retract('),
+    );
+
+    expect(pickup, contains('final generation = _loadGeneration;'));
+    expect(pickup, contains('final client = _client;'));
+    expect(
+      pickup,
+      contains(
+        'if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity))',
+      ),
+    );
+    expect(
+      pickup.indexOf(
+        'if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity))',
+      ),
+      lessThan(pickup.indexOf('setState(() => _picking = true)')),
+    );
+    expect(
+      pickup.indexOf(
+        'if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity))',
+        pickup.indexOf('final r = await Cli.pickup'),
+      ),
+      lessThan(pickup.indexOf('widget.onOpenTerminal')),
+    );
+    expect(confirmInit, contains('final generation = _loadGeneration;'));
+    expect(
+      confirmInit.indexOf(
+        'if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity))',
+      ),
+      lessThan(confirmInit.indexOf('RepoConfig(')),
+    );
+  });
+
   testWidgets('team handoff detail shows fanout recipients and pickup slots', (
     tester,
   ) async {
