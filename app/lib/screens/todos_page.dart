@@ -1076,6 +1076,13 @@ class _TodosPageState extends State<TodosPage> {
   Color _statusColor(TodoStatus s) => todoStatusColor(s);
 
   Future<void> _createDialog() async {
+    final generation = _accountGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    bool isCurrentContext() =>
+        _isCurrentAccountContext(generation, client, relayUrl, token, identity);
     final editableProjects = _editableProjects;
     final initialProjectId = editableProjects.any((p) => p.id == _projectFilter)
         ? _projectFilter
@@ -1083,9 +1090,10 @@ class _TodosPageState extends State<TodosPage> {
     final created = await showDialog<bool>(
       context: context,
       builder: (_) => _QuickCreateDialog(
-        client: _client,
+        client: client,
         me: _me,
         projects: editableProjects,
+        isCurrentContext: isCurrentContext,
         initialScope:
             _scope == 'team' &&
                 _teamSource == 'relay' &&
@@ -1100,7 +1108,9 @@ class _TodosPageState extends State<TodosPage> {
     );
     if (created == true) {
       if (!mounted) return;
+      if (!isCurrentContext()) return;
       await _store.refresh();
+      if (!isCurrentContext()) return;
       await _loadGroups();
     }
   }
@@ -2170,11 +2180,13 @@ class _QuickCreateDialog extends StatefulWidget {
   // projects is TodosPage's live (refreshed) project list, passed in rather than
   // read off `me` so a relay project created after login is selectable here too.
   final List<ProjectRole> projects;
+  final bool Function() isCurrentContext;
 
   const _QuickCreateDialog({
     required this.client,
     required this.me,
     required this.projects,
+    required this.isCurrentContext,
     this.initialScope = 'personal',
     this.initialProjectId,
     this.groups = const [],
@@ -2246,6 +2258,12 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
     );
   }
 
+  bool _closeIfStaleContext() {
+    if (widget.isCurrentContext()) return false;
+    Navigator.pop(context, false);
+    return true;
+  }
+
   Future<void> _submit() async {
     final title = _titleCtl.text.trim();
     if (title.isEmpty) {
@@ -2256,6 +2274,7 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
       snack(context, '请选择项目');
       return;
     }
+    if (_closeIfStaleContext()) return;
     setState(() => _submitting = true);
     try {
       final created = await widget.client.createTodo(
@@ -2268,21 +2287,31 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
         groupName: _groupName,
       );
       if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       for (final f in _files) {
         if (!mounted) return;
+        if (_closeIfStaleContext()) return;
         try {
           Uint8List? bytes = f.bytes;
           bytes ??= f.path != null ? await File(f.path!).readAsBytes() : null;
           if (!mounted) return;
+          if (_closeIfStaleContext()) return;
           if (bytes == null) continue;
           await widget.client.uploadTodoAttachment(created.id, f.name, bytes);
+          if (!mounted) return;
+          if (_closeIfStaleContext()) return;
         } catch (e) {
-          if (mounted) snack(context, '附件 ${f.name} 上传失败: ${errorText(e)}');
+          if (!mounted) return;
+          if (_closeIfStaleContext()) return;
+          snack(context, '附件 ${f.name} 上传失败: ${errorText(e)}');
         }
       }
-      if (mounted) Navigator.pop(context, true);
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
+      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       setState(() => _submitting = false);
       snack(context, '创建失败: ${errorText(e)}');
     }

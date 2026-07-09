@@ -148,6 +148,155 @@ void main() {
     },
   );
 
+  testWidgets('quick create after account switch is ignored', (tester) async {
+    final oldClient = _CreateTodoClient();
+    final newClient = _CreateTodoClient();
+    final oldStore = TodoStore()
+      ..debugSetClient(oldClient)
+      ..all = [
+        Todo.fromJson(
+          _todoJson(id: 'old-todo', title: 'Old account todo', projectId: null),
+        ),
+      ];
+    final newStore = TodoStore()
+      ..debugSetClient(newClient)
+      ..all = [
+        Todo.fromJson(
+          _todoJson(id: 'new-todo', title: 'New account todo', projectId: null),
+        ),
+      ];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    Widget page({
+      required RelayClient client,
+      required TodoStore store,
+      required AppConfig config,
+      required Me me,
+    }) => MaterialApp(
+      theme: ccTheme(),
+      home: Scaffold(
+        body: TodosPage(
+          client: client,
+          config: config,
+          me: me,
+          store: store,
+          overviewStore: SessionOverviewStore(),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      page(
+        client: oldClient,
+        config: _config(token: 'old', identity: 'old@x'),
+        me: _adminMe(identity: 'old@x'),
+        store: oldStore,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('新建待办').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Should not create');
+    await tester.pump();
+
+    await tester.pumpWidget(
+      page(
+        client: newClient,
+        config: _config(token: 'new', identity: 'new@x'),
+        me: _adminMe(identity: 'new@x'),
+        store: newStore,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
+    await tester.pumpAndSettle();
+
+    expect(oldClient.createCalls, 0);
+    expect(newClient.createCalls, 0);
+    expect(find.text('New account todo'), findsOneWidget);
+  });
+
+  testWidgets('pending quick create after account switch closes stale dialog', (
+    tester,
+  ) async {
+    final oldClient = _PendingCreateTodoClient();
+    final newClient = _CreateTodoClient();
+    final oldStore = TodoStore()
+      ..debugSetClient(oldClient)
+      ..all = [
+        Todo.fromJson(
+          _todoJson(id: 'old-todo', title: 'Old account todo', projectId: null),
+        ),
+      ];
+    final newStore = TodoStore()
+      ..debugSetClient(newClient)
+      ..all = [
+        Todo.fromJson(
+          _todoJson(id: 'new-todo', title: 'New account todo', projectId: null),
+        ),
+      ];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    Widget page({
+      required RelayClient client,
+      required TodoStore store,
+      required AppConfig config,
+      required Me me,
+    }) => MaterialApp(
+      theme: ccTheme(),
+      home: Scaffold(
+        body: TodosPage(
+          client: client,
+          config: config,
+          me: me,
+          store: store,
+          overviewStore: SessionOverviewStore(),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      page(
+        client: oldClient,
+        config: _config(token: 'old', identity: 'old@x'),
+        me: _adminMe(identity: 'old@x'),
+        store: oldStore,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('新建待办').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Should not refresh');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
+    await tester.pump();
+    expect(oldClient.createCalls, 1);
+
+    await tester.pumpWidget(
+      page(
+        client: newClient,
+        config: _config(token: 'new', identity: 'new@x'),
+        me: _adminMe(identity: 'new@x'),
+        store: newStore,
+      ),
+    );
+    await tester.pump();
+
+    oldClient.completeCreate();
+    await tester.pumpAndSettle();
+
+    expect(newClient.createCalls, 0);
+    expect(find.widgetWithText(FilledButton, '创建'), findsNothing);
+    expect(find.text('New account todo'), findsOneWidget);
+  });
+
   testWidgets('member assignment ignores duplicate submit taps', (
     tester,
   ) async {
@@ -439,6 +588,56 @@ class _DelayedDeleteTodoClient extends _DelayedAssignTodoClient {
 
   void completeDelete() {
     _deleteCompleter.complete();
+  }
+}
+
+class _CreateTodoClient extends _DelayedAssignTodoClient {
+  int createCalls = 0;
+
+  @override
+  Future<Todo> createTodo({
+    required String title,
+    String bodyMd = '',
+    String priority = 'normal',
+    String? projectId,
+    String recurrence = '',
+    DateTime? dueAt,
+    String? workspaceName,
+    String? repoName,
+    String? groupName,
+  }) async {
+    createCalls++;
+    return Todo.fromJson(
+      _todoJson(id: 'created', title: title, projectId: projectId),
+    );
+  }
+}
+
+class _PendingCreateTodoClient extends _CreateTodoClient {
+  final _createCompleter = Completer<Todo>();
+
+  @override
+  Future<Todo> createTodo({
+    required String title,
+    String bodyMd = '',
+    String priority = 'normal',
+    String? projectId,
+    String recurrence = '',
+    DateTime? dueAt,
+    String? workspaceName,
+    String? repoName,
+    String? groupName,
+  }) {
+    createCalls++;
+    return _createCompleter.future;
+  }
+
+  void completeCreate() {
+    _createCompleter.complete(
+      Todo.fromJson(
+        _todoJson(id: 'created', title: 'Created', projectId: null),
+      ),
+    );
   }
 }
 
