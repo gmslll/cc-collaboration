@@ -20,7 +20,7 @@ void main() {
     );
     final fileRow = source.substring(
       source.indexOf('Widget _fileRow('),
-      source.indexOf('Widget _commentsSection()'),
+      source.indexOf('Widget _commentsSection('),
     );
 
     expect(fileTab, isNot(contains('title: Text(a.name),')));
@@ -350,6 +350,12 @@ void main() {
     expect(find.widgetWithText(FilledButton, '接收并开终端'), findsNothing);
     expect(find.widgetWithText(OutlinedButton, '标记接收'), findsNothing);
     expect(find.widgetWithText(OutlinedButton, '转交'), findsNothing);
+    await tester.tap(find.text('评论'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, '写评论…'), findsNothing);
+    await tester.tap(find.text('Prompt'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextButton, '复制 pickup 命令'), findsNothing);
   });
 
   testWidgets('team handoff detail keeps receive actions for slot recipient', (
@@ -381,6 +387,52 @@ void main() {
     expect(find.widgetWithText(FilledButton, '接收并开终端'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, '标记接收'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, '转交'), findsOneWidget);
+    await tester.tap(find.text('Prompt'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextButton, '复制 pickup 命令'), findsOneWidget);
+  });
+
+  testWidgets('project member can comment on team handoff without receiving', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package(
+        'team-comment',
+        'qa@x',
+        'team handoff',
+        recipients: const ['dev@x'],
+        deliveryTarget: const {'project_id': 'proj1', 'org_id': 'org1'},
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'member@x', const {}),
+          me: _me(
+            'member@x',
+            projects: const [
+              {
+                'id': 'proj1',
+                'org_id': 'org1',
+                'name': 'svc',
+                'role': 'member',
+              },
+            ],
+          ),
+          item: _item('team-comment', 'qa@x', 'team handoff'),
+          onOpenTerminal: (_, _) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, '接收并开终端'), findsNothing);
+    await tester.tap(find.text('评论'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, '写评论…'), findsOneWidget);
   });
 }
 
@@ -402,16 +454,33 @@ Package _package(
   String summary, {
   String kind = 'delivery',
   List<String> recipients = const [],
-}) => Package.fromJson({
-  'id': id,
-  'kind': kind,
-  'sender': sender,
-  'recipient': 'me@x',
-  if (recipients.isNotEmpty) 'recipients': recipients,
-  'urgency': 'normal',
-  'summary_md': summary,
-  'repo': {'name': 'repo', 'branch': 'main'},
-  'attachments': <Map<String, dynamic>>[],
+  Map<String, dynamic>? deliveryTarget,
+}) {
+  final json = <String, dynamic>{
+    'id': id,
+    'kind': kind,
+    'sender': sender,
+    'recipient': 'me@x',
+    if (recipients.isNotEmpty) 'recipients': recipients,
+    'urgency': 'normal',
+    'summary_md': summary,
+    'repo': {'name': 'repo', 'branch': 'main'},
+    'attachments': <Map<String, dynamic>>[],
+  };
+  if (deliveryTarget != null) {
+    json['delivery_target'] = deliveryTarget;
+  }
+  return Package.fromJson(json);
+}
+
+Me _me(
+  String identity, {
+  bool isAdmin = false,
+  List<Map<String, dynamic>> projects = const [],
+}) => Me.fromJson({
+  'identity': identity,
+  'is_admin': isAdmin,
+  'projects': projects,
 });
 
 class _DelayedDetailClient extends RelayClient {

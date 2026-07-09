@@ -6830,6 +6830,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         child: HandoffDetailView(
           client: widget.client!,
           config: _cfg,
+          me: widget.me,
           item: it,
           onOpenTerminal: (wt, cmd) {
             addTerm(wt, cmd);
@@ -7061,6 +7062,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   Widget _inboxSidebarDetail(ListItem it) => HandoffDetailView(
     client: widget.client!,
     config: _cfg,
+    me: widget.me,
     item: it,
     onOpenTerminal: (wt, cmd) {
       addTerm(wt, cmd);

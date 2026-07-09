@@ -20,12 +20,14 @@ import 'terminal_deck.dart';
 class HandoffsPage extends StatefulWidget {
   final RelayClient client;
   final AppConfig config;
+  final Me? me;
   final bool showTerminal;
   final bool enableEvents;
   const HandoffsPage({
     super.key,
     required this.client,
     required this.config,
+    this.me,
     this.showTerminal = true,
     this.enableEvents = true,
   });
@@ -328,6 +330,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       key: _detailKey,
       client: client,
       config: _cfg,
+      me: widget.me,
       item: sel,
       onOpenTerminal: widget.showTerminal ? addTerm : null,
       onSendToTerminal: sendToTerminal,

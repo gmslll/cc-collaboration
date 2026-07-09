@@ -558,6 +558,7 @@ class _HomeShellState extends State<HomeShell> {
           ? HandoffsPage(
               client: _client!,
               config: _cfg!,
+              me: _me,
               showTerminal: _isDesktop,
             )
           : _loginRequiredPage('收件箱'),

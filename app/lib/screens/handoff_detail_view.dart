@@ -27,6 +27,7 @@ import '../widgets.dart';
 class HandoffDetailView extends StatefulWidget {
   final RelayClient client;
   final AppConfig config;
+  final Me? me;
   final ListItem item;
   final void Function(String workdir, String command)? onOpenTerminal;
   final void Function(String text)? onSendToTerminal;
@@ -37,6 +38,7 @@ class HandoffDetailView extends StatefulWidget {
     super.key,
     required this.client,
     required this.config,
+    this.me,
     required this.item,
     this.onOpenTerminal,
     this.onSendToTerminal,
@@ -67,6 +69,35 @@ bool canCurrentIdentityReceiveHandoff({
   return status.pickupBy.keys.any(
     (recipient) => sameIdentity(recipient, identity),
   );
+}
+
+bool canCurrentIdentityCommentOnHandoff({
+  required Package package,
+  required Status? status,
+  required String identity,
+  required Me? me,
+}) {
+  if (me?.isAdmin == true) return true;
+  if (sameIdentity(package.sender, identity) ||
+      (status != null && sameIdentity(status.sender, identity))) {
+    return true;
+  }
+  if (canCurrentIdentityReceiveHandoff(
+    package: package,
+    status: status,
+    identity: identity,
+  )) {
+    return true;
+  }
+  final projectId = package.deliveryTarget?.projectId ?? '';
+  if (projectId.isEmpty || me == null) return false;
+  for (final project in me.projects) {
+    if (project.id.trim() == projectId.trim() &&
+        project.role.trim().toLowerCase() != 'viewer') {
+      return true;
+    }
+  }
+  return false;
 }
 
 class HandoffDetailViewState extends State<HandoffDetailView> {
@@ -545,6 +576,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       return const Center(child: CircularProgressIndicator());
     }
     final p = _pkg!;
+    final canReceive = canCurrentIdentityReceiveHandoff(
+      package: p,
+      status: _status,
+      identity: _cfg.identity,
+    );
     return DefaultTabController(
       length: 5,
       child: Column(
@@ -569,12 +605,12 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                   p.summaryMd.isNotEmpty ? p.summaryMd : '_(无 summary)_',
                   extras: _summaryExtras(p),
                 ),
-                _tabPrompt(),
+                _tabPrompt(canReceive: canReceive),
                 _tabApi(p),
                 _tabFiles(p),
                 SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
-                  child: _commentsSection(),
+                  child: _commentsSection(p),
                 ),
               ],
             ),
@@ -858,7 +894,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     ),
   );
 
-  Widget _tabPrompt() {
+  Widget _tabPrompt({required bool canReceive}) {
     if (_prompt == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -877,16 +913,17 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                 icon: const Icon(Icons.copy_rounded, size: 16),
                 label: const Text('复制 Prompt'),
               ),
-              TextButton.icon(
-                onPressed: () {
-                  Clipboard.setData(
-                    ClipboardData(text: 'cc-handoff pickup $_id --worktree'),
-                  );
-                  _snack('已复制 pickup 命令');
-                },
-                icon: const Icon(Icons.terminal_rounded, size: 16),
-                label: const Text('复制 pickup 命令'),
-              ),
+              if (canReceive)
+                TextButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(
+                      ClipboardData(text: 'cc-handoff pickup $_id --worktree'),
+                    );
+                    _snack('已复制 pickup 命令');
+                  },
+                  icon: const Icon(Icons.terminal_rounded, size: 16),
+                  label: const Text('复制 pickup 命令'),
+                ),
               if (widget.onSendToTerminal != null)
                 TextButton.icon(
                   onPressed: () {
@@ -1048,7 +1085,13 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     ),
   );
 
-  Widget _commentsSection() {
+  Widget _commentsSection(Package p) {
+    final canComment = canCurrentIdentityCommentOnHandoff(
+      package: p,
+      status: _status,
+      identity: _cfg.identity,
+      me: widget.me,
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1103,27 +1146,29 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                   ),
                 ),
               ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _commentCtl,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      hintText: '写评论…',
-                      isDense: true,
+            if (canComment) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _commentCtl,
+                      minLines: 1,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        hintText: '写评论…',
+                        isDense: true,
+                      ),
+                      onSubmitted: (_) => _postComment(),
                     ),
-                    onSubmitted: (_) => _postComment(),
                   ),
-                ),
-                IconButton(
-                  onPressed: _postComment,
-                  icon: const Icon(Icons.send_rounded, size: 20),
-                ),
-              ],
-            ),
+                  IconButton(
+                    onPressed: _postComment,
+                    icon: const Icon(Icons.send_rounded, size: 20),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
