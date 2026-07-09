@@ -183,7 +183,9 @@ Future<bool> confirm(
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: title == null ? null : Text(title),
+      title: title == null
+          ? null
+          : Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: Text(message),
       actions: [
         TextButton(
@@ -261,7 +263,7 @@ class _TextPromptDialogState extends State<_TextPromptDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.title),
+      title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: TextField(
         controller: _ctl,
         autofocus: true,
