@@ -330,7 +330,7 @@ bug 模式特有的多收件人和 reassign 链由 store 层的两个表协作:
 - `handoffs.recipients` (JSON 数组) + `handoffs.bug_group_id` —— 多收件人元数据
 - `handoff_recipients` —— 每个收件人一行(handoff_id, recipient, state ∈ {pending, picked, reassigned}, picked_at);
   `Ack` 只翻调用方那一行,所有行都 terminal 时才把 `handoffs.state` 推到 `picked`
-- `Reassign(id, from, newPkg, reason)` —— 在事务里把 caller 那一行翻 `reassigned`、给原 handoff 分配/继承 `bug_group_id`、把新 handoff 写进 group(`ReassignedFrom`、`ReassignedReason` 都进 payload)
+- `Reassign(id, from, newPkg, reason)` —— 在事务里把 caller 那一行翻 `reassigned`、给原 handoff 分配/继承 `bug_group_id`、把新 handoff 写进 group(`ReassignedFrom`、`ReassignedReason` 都进 payload)。若原 bug 携带 `DeliveryTarget`,新包继承 `project_id` / `org_id`,并把 `member` 重定向为新的接收人
 - **环路防护**:`Reassign` 拒绝把 bug 转给同一 group 内**已经出现过的任何身份**(不论该身份现在是 pending/picked/reassigned),让回旋只能通过 `comment_handoff` 协商
 - **评论可见性 SQL**:`ListCommentsSince` 走一个 CTE 收集"我参与过的全部 bug_group_id",再 union 出"我是 sender/recipient" 的 handoff —— 旧 2 方 handoff 的 `bug_group_id` 为空,CTE 跑出来是空集,语义和老查询一致
 

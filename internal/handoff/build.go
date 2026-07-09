@@ -75,10 +75,11 @@ func SummaryDraftPath(inboxDir string) string {
 // addressed to `to`, with the relay-side handler as the new sender. Used by
 // /v1/handoffs/{id}/reassign so the HTTP handler doesn't have to know which
 // fields a reassigned bug carries forward (summary / note / prd / repo /
-// urgency) vs. which are re-derived (id / sender / created_at / kind /
-// recipients / reassigned_from / reassigned_reason). OriginalSender is
-// preserved across the reassign chain so the receiver's prompt template can
-// still name the tester even after the bug bounces between sides.
+// urgency / team delivery boundary) vs. which are re-derived (id / sender /
+// created_at / kind / recipients / reassigned_from / reassigned_reason).
+// OriginalSender is preserved across the reassign chain so the receiver's
+// prompt template can still name the tester even after the bug bounces between
+// sides.
 func BuildReassignment(orig *handoffschema.Package, to, reason, by string, now time.Time) *handoffschema.Package {
 	originalSender := orig.OriginalSender
 	if originalSender == "" {
@@ -97,10 +98,20 @@ func BuildReassignment(orig *handoffschema.Package, to, reason, by string, now t
 		SummaryMD:        orig.SummaryMD,
 		NoteMD:           orig.NoteMD,
 		PrdMD:            orig.PrdMD,
+		DeliveryTarget:   reassignDeliveryTarget(orig.DeliveryTarget, to),
 		OriginalSender:   originalSender,
 		ReassignedFrom:   orig.ID,
 		ReassignedReason: reason,
 	}
+}
+
+func reassignDeliveryTarget(target *handoffschema.DeliveryTarget, to string) *handoffschema.DeliveryTarget {
+	if target == nil {
+		return nil
+	}
+	cp := *target
+	cp.Member = to
+	return &cp
 }
 
 // Build assembles the handoff Package plus any out-of-band attachments

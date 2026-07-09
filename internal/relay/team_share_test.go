@@ -227,7 +227,7 @@ func TestReassignRequiresReachableRecipient(t *testing.T) {
 
 	mkBug := func(id string) {
 		t.Helper()
-		if err := st.Insert(ctx, &handoffschema.Package{
+		pkg := &handoffschema.Package{
 			ID:            id,
 			SchemaVersion: handoffschema.SchemaVersion,
 			Kind:          handoffschema.KindBug,
@@ -237,7 +237,15 @@ func TestReassignRequiresReachableRecipient(t *testing.T) {
 			CreatedAt:     now,
 			Repo:          handoffschema.Repo{Name: "demo"},
 			SummaryMD:     "not mine",
-		}); err != nil {
+		}
+		if id == "bug-shared" {
+			pkg.DeliveryTarget = &handoffschema.DeliveryTarget{
+				ProjectID: "project-shared",
+				OrgID:     "org-shared",
+				Member:    "bob@frontend",
+			}
+		}
+		if err := st.Insert(ctx, pkg); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -256,5 +264,24 @@ func TestReassignRequiresReachableRecipient(t *testing.T) {
 	if code, body := postJSON(t, srv.URL+"/v1/handoffs/bug-shared/reassign", "tok-bob",
 		map[string]string{"to": "charlie@qa", "reason": "qa owns this"}); code != http.StatusCreated {
 		t.Fatalf("same-team reassign = %d %s, want 201", code, body)
+	}
+	items, err := st.ListPending(ctx, "charlie@qa", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("charlie pending after reassign = %+v", items)
+	}
+	reassigned, _, err := st.Get(ctx, items[0].ID)
+	if err != nil {
+		t.Fatalf("get reassigned bug: %v", err)
+	}
+	if reassigned.DeliveryTarget == nil {
+		t.Fatal("reassigned bug lost delivery_target")
+	}
+	if reassigned.DeliveryTarget.ProjectID != "project-shared" ||
+		reassigned.DeliveryTarget.OrgID != "org-shared" ||
+		reassigned.DeliveryTarget.Member != "charlie@qa" {
+		t.Fatalf("reassigned delivery_target = %+v", reassigned.DeliveryTarget)
 	}
 }

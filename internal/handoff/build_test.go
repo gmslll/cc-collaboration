@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
@@ -148,6 +149,36 @@ func TestBuild_PreservesDeliveryTarget(t *testing.T) {
 		pkg.DeliveryTarget.OrgID != "" ||
 		pkg.DeliveryTarget.Member != "dev@team" {
 		t.Fatalf("delivery target = %+v", pkg.DeliveryTarget)
+	}
+}
+
+func TestBuildReassignment_RetargetsDeliveryTargetMember(t *testing.T) {
+	orig := &handoffschema.Package{
+		ID:        "bug-original",
+		Kind:      handoffschema.KindBug,
+		Sender:    "tester@team",
+		Recipient: "backend@team",
+		Urgency:   handoffschema.UrgencyUrgent,
+		Repo:      handoffschema.Repo{Name: "demo"},
+		SummaryMD: "team scoped bug",
+		DeliveryTarget: &handoffschema.DeliveryTarget{
+			ProjectID: "project-1",
+			OrgID:     "org-1",
+			Member:    "backend@team",
+		},
+	}
+
+	got := BuildReassignment(orig, "frontend@team", "root cause is frontend", "backend@team", time.Date(2026, 7, 9, 8, 0, 0, 0, time.UTC))
+	if got.DeliveryTarget == nil {
+		t.Fatal("delivery target was not preserved")
+	}
+	if got.DeliveryTarget == orig.DeliveryTarget {
+		t.Fatal("delivery target should be copied, not aliased")
+	}
+	if got.DeliveryTarget.ProjectID != "project-1" ||
+		got.DeliveryTarget.OrgID != "org-1" ||
+		got.DeliveryTarget.Member != "frontend@team" {
+		t.Fatalf("delivery target = %+v", got.DeliveryTarget)
 	}
 }
 
