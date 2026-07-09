@@ -2060,6 +2060,40 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   }
 }
 
+class _MemberRolePill extends StatelessWidget {
+  final String label;
+  final bool selected;
+
+  const _MemberRolePill({required this.label, required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? CcColors.accentBright : CcColors.muted;
+    return Container(
+      constraints: const BoxConstraints(minHeight: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: CcColors.accent.withValues(alpha: selected ? 0.16 : 0.08),
+        border: Border.all(
+          color: selected ? CcColors.accent : CcColors.borderSoft,
+        ),
+        borderRadius: BorderRadius.circular(CcRadius.pill),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.2,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 // _AssignPrep is what _prepareAssignment resolves to just before dispatch:
 // the exact text to paste into the terminal (either the "go read this file"
 // pointer when materialization succeeded, or the raw title+body fallback), plus
@@ -2109,16 +2143,18 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // --- "指派给成员" mode: assign the todo to a real teammate by identity,
   // leaving the session-binding trio empty (same shape as a Linear import's
   // assignee). This is the only assign path on mobile, where there are no
-  // local agent sessions to dispatch to. Candidates = self + the todo's
-  // project members + currently-online users, deduped; display names are a
-  // best-effort overlay from /v1/users (may be admin-only → falls back to
-  // the raw identity). Loaded lazily: eagerly when there are no local
-  // sessions (member mode is forced), otherwise on first switch to the tab.
+  // local agent sessions to dispatch to. Candidates follow the relay gate:
+  // personal todos may pick self; team todos may pick project members and team
+  // owner/admin effective managers. Display names come from project/team member
+  // payloads and degrade to the raw identity. Loaded lazily: eagerly when there
+  // are no local sessions (member mode is forced), otherwise on first switch to
+  // the tab.
   bool _membersRequested = false;
   bool _loadingMembers = false;
   String? _membersError;
   List<String> _memberIds = const [];
   Map<String, String> _memberNames = const {};
+  Map<String, String> _memberRoles = const {};
   Set<String> _onlineIds = const {};
   String? _pickedIdentity;
   late final String _selfIdentity = widget.config.identity.trim();
@@ -2206,11 +2242,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
   }
 
-  // _loadMembers builds the candidate list for "指派给成员": self + direct
-  // project members + team owner/admin effective project managers, matching the
-  // relay's assignee validation. Display names come from project/team member
-  // payloads (degrades to raw identity). The online set is best-effort and
-  // drives ONLY the green dot; arbitrary online strangers are not added.
+  // _loadMembers builds the candidate list for "指派给成员": personal todos can
+  // assign to self; team todos can assign to direct project members and team
+  // owner/admin effective project managers, matching the relay's assignee
+  // validation. Display names come from project/team member payloads (degrades
+  // to raw identity). The online set is best-effort and drives ONLY the green
+  // dot; arbitrary online strangers are not added.
   Future<void> _loadMembers() async {
     setState(() {
       _loadingMembers = true;
@@ -2263,12 +2300,14 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     for (final m in orgMembers) {
       rememberName(m.identity, m.displayName);
     }
-    final ids = assignableTodoMemberIds(
+    final candidates = assignableTodoMembers(
       selfIdentity: self,
       includeSelf: pid.isEmpty,
       projectMembers: projectMembers,
       organizationMembers: orgMembers,
     );
+    final ids = [for (final c in candidates) c.identity];
+    final roles = {for (final c in candidates) c.identity: c.roleLabel};
     for (final u in await onlineF) {
       if (u.online) online.add(u.identity);
     }
@@ -2276,6 +2315,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     setState(() {
       _memberIds = ids;
       _memberNames = names;
+      _memberRoles = roles;
       _onlineIds = online;
       // Default to self, never the current assignee — pre-selecting the existing
       // assignee silently re-assigns to them if the user taps 指派 without
@@ -2342,6 +2382,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           children: _memberIds.map((id) {
             final sel = _pickedIdentity == id;
             final name = (_memberNames[id] ?? '').trim();
+            final role = (_memberRoles[id] ?? '').trim();
             final primary =
                 (name.isEmpty ? id : name) + (id == self ? '（我）' : '');
             return InkWell(
@@ -2371,12 +2412,34 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                             ),
                           ),
                           if (name.isNotEmpty)
-                            Text(
-                              id,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: CcColors.muted,
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      id,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: CcColors.muted,
+                                      ),
+                                    ),
+                                  ),
+                                  if (role.isNotEmpty) ...[
+                                    const SizedBox(width: 6),
+                                    _MemberRolePill(label: role, selected: sel),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          if (name.isEmpty && role.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: _MemberRolePill(
+                                label: role,
+                                selected: sel,
                               ),
                             ),
                         ],
