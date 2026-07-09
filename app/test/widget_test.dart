@@ -305,6 +305,18 @@ void main() {
     );
   });
 
+  test('workspace change filter menu labels are width constrained', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final menu = source.substring(
+      source.indexOf('Widget _changesFilterButton()'),
+      source.indexOf('// _fileTypeIcon picks'),
+    );
+
+    expect(menu, isNot(contains('Expanded(child: Text(e.value))')));
+    expect(menu, contains('e.value,\n                          maxLines: 1'));
+    expect(menu, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('workspace management dialog titles are width constrained', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final fieldsDialog = source.substring(

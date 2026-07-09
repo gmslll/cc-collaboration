@@ -7589,7 +7589,13 @@ class _WorkspacePageState extends State<WorkspacePage>
                             : Colors.transparent,
                       ),
                       const SizedBox(width: 8),
-                      Expanded(child: Text(e.value)),
+                      Expanded(
+                        child: Text(
+                          e.value,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                       const SizedBox(width: 12),
                       Text(
                         '${countOf(e.key)}',
