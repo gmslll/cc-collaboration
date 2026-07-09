@@ -11,7 +11,8 @@ OrganizationMember _orgMember(String identity, String role) =>
 void main() {
   test('includes direct project members and team managers only', () {
     final ids = assignableTodoMemberIds(
-      selfIdentity: 'owner@x',
+      selfIdentity: 'global-admin@x',
+      includeSelf: false,
       projectMembers: [
         _projectMember('member@x', 'member'),
         _projectMember('viewer@x', 'viewer'),
@@ -25,18 +26,13 @@ void main() {
       ],
     );
 
-    expect(ids, [
-      'owner@x',
-      'member@x',
-      'viewer@x',
-      'org-admin@x',
-      'org-owner@x',
-    ]);
+    expect(ids, ['member@x', 'viewer@x', 'org-admin@x', 'org-owner@x']);
   });
 
   test('trims and deduplicates identities while preserving priority order', () {
     final ids = assignableTodoMemberIds(
       selfIdentity: ' owner@x ',
+      includeSelf: true,
       projectMembers: [
         _projectMember(' member@x ', 'member'),
         _projectMember('member@x', 'viewer'),
@@ -53,11 +49,35 @@ void main() {
   test('does not keep inaccessible current assignee as assignable', () {
     final ids = assignableTodoMemberIds(
       selfIdentity: 'owner@x',
+      includeSelf: true,
       projectMembers: [_projectMember('member@x', 'member')],
       organizationMembers: [_orgMember('admin@x', 'admin')],
     );
 
     expect(ids, isNot(contains('former@x')));
     expect(ids, ['owner@x', 'member@x', 'admin@x']);
+  });
+
+  test('personal todos can include self as the only assignable identity', () {
+    final ids = assignableTodoMemberIds(
+      selfIdentity: 'owner@x',
+      includeSelf: true,
+      projectMembers: const [],
+      organizationMembers: const [],
+    );
+
+    expect(ids, ['owner@x']);
+  });
+
+  test('team todos do not include self unless self has project/team role', () {
+    final ids = assignableTodoMemberIds(
+      selfIdentity: 'global-admin@x',
+      includeSelf: false,
+      projectMembers: [_projectMember('member@x', 'member')],
+      organizationMembers: const [],
+    );
+
+    expect(ids, ['member@x']);
+    expect(ids, isNot(contains('global-admin@x')));
   });
 }

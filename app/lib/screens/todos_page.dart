@@ -2265,6 +2265,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
     final ids = assignableTodoMemberIds(
       selfIdentity: self,
+      includeSelf: pid.isEmpty,
       projectMembers: projectMembers,
       organizationMembers: orgMembers,
     );
@@ -2279,7 +2280,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       // Default to self, never the current assignee — pre-selecting the existing
       // assignee silently re-assigns to them if the user taps 指派 without
       // changing the radio (the "指派错了" report).
-      _pickedIdentity = self.isNotEmpty
+      _pickedIdentity = self.isNotEmpty && ids.contains(self)
           ? self
           : (ids.isNotEmpty ? ids.first : null);
       _loadingMembers = false;

@@ -1,10 +1,12 @@
 import '../api/models.dart';
 
-// assignableTodoMemberIds mirrors the relay's assignee gate: self, direct
-// project members, and team owner/admin are assignable through their effective
-// project role. Plain team members/guests still need a direct project role.
+// assignableTodoMemberIds mirrors the relay's assignee gate. Personal todos may
+// assign to self; team todos may assign only to direct project members or team
+// owner/admin through their effective project role. Plain team members/guests
+// still need a direct project role.
 List<String> assignableTodoMemberIds({
   required String selfIdentity,
+  required bool includeSelf,
   required Iterable<ProjectMember> projectMembers,
   required Iterable<OrganizationMember> organizationMembers,
 }) {
@@ -16,7 +18,7 @@ List<String> assignableTodoMemberIds({
     ids.add(id);
   }
 
-  add(selfIdentity);
+  if (includeSelf) add(selfIdentity);
   for (final m in projectMembers) {
     add(m.identity);
   }
