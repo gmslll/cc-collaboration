@@ -352,6 +352,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('viewer team todo hides assignment actions', (tester) async {
+    final client = _DelayedAssignTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _viewerMe(),
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Team todo'), findsOneWidget);
+    expect(find.byTooltip('一键指派'), findsNothing);
+
+    await tester.tap(find.text('Team todo'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, '指派'), findsNothing);
+  });
+
   testWidgets('account switch ignores stale todo view and project loads', (
     tester,
   ) async {
@@ -434,6 +471,14 @@ Me _me() => Me.fromJson({
   'is_admin': false,
   'projects': [
     {'id': 'p1', 'org_id': 'org1', 'name': 'Backend', 'role': 'member'},
+  ],
+});
+
+Me _viewerMe() => Me.fromJson({
+  'identity': 'alice@x',
+  'is_admin': false,
+  'projects': [
+    {'id': 'p1', 'org_id': 'org1', 'name': 'Backend', 'role': 'viewer'},
   ],
 });
 

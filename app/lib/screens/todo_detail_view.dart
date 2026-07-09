@@ -984,31 +984,32 @@ class TodoDetailViewState extends State<TodoDetailView> {
                 },
               ),
       ),
-      const Divider(height: 1),
-      Padding(
-        padding: const EdgeInsets.all(10),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _commentCtl,
-                readOnly: !_access.canComment,
-                minLines: 1,
-                maxLines: 4,
-                decoration: const InputDecoration(
-                  hintText: '写评论…',
-                  isDense: true,
+      if (_access.canComment) ...[
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _commentCtl,
+                  minLines: 1,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    hintText: '写评论…',
+                    isDense: true,
+                  ),
+                  onSubmitted: (_) => _postComment(),
                 ),
-                onSubmitted: _access.canComment ? (_) => _postComment() : null,
               ),
-            ),
-            IconButton(
-              onPressed: _access.canComment ? _postComment : null,
-              icon: const Icon(Icons.send_rounded, size: 20),
-            ),
-          ],
+              IconButton(
+                onPressed: _postComment,
+                icon: const Icon(Icons.send_rounded, size: 20),
+              ),
+            ],
+          ),
         ),
-      ),
+      ],
     ],
   );
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:app/api/relay_client.dart';
 import 'package:app/api/todo_models.dart';
+import 'package:app/local/todo_permissions.dart';
 import 'package:app/screens/todo_detail_view.dart';
 import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
@@ -119,6 +120,31 @@ void main() {
     client.completeComments('td1', [_comment('alice@x', 'comment landed')]);
     await tester.pump();
     expect(find.text('comment landed'), findsOneWidget);
+  });
+
+  testWidgets('read-only todo detail hides comment input', (tester) async {
+    final client = _DelayedTodoClient();
+    final todo = _todo('td-readonly', 'read only title');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(
+            client: client,
+            todo: todo,
+            access: TodoAccess.none,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    client.completeTodo('td-readonly', todo);
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextField, '写评论…'), findsNothing);
+    expect(find.widgetWithIcon(IconButton, Icons.send_rounded), findsNothing);
   });
 }
 

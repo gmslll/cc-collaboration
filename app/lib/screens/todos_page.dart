@@ -1567,6 +1567,7 @@ class _TodosPageState extends State<TodosPage> {
   Widget _row(Todo t) {
     final sel = _selected?.id == t.id;
     final checked = _selectedTodoIds.contains(t.id);
+    final access = _accessFor(t);
     final color = _statusColor(t.status);
     final overdue =
         t.dueAt != null &&
@@ -1654,17 +1655,18 @@ class _TodosPageState extends State<TodosPage> {
                   ),
                 ),
               ),
-              SizedBox(
-                width: 28,
-                height: 28,
-                child: IconButton(
-                  icon: const Icon(Icons.send_rounded, size: 15),
-                  tooltip: '一键指派',
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => _assignDialog(t),
+              if (access.canAssign)
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: IconButton(
+                    icon: const Icon(Icons.send_rounded, size: 15),
+                    tooltip: '一键指派',
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _assignDialog(t),
+                  ),
                 ),
-              ),
             ],
           ),
         ),
