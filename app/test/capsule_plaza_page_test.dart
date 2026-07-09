@@ -64,6 +64,18 @@ void main() {
     expect(editDialog, contains('if (!mounted || !widget.isCurrentContext())'));
   });
 
+  test('capsule load forwards selected relay project id to local spawn', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final loadDialog = source.substring(
+      source.indexOf('class _CapsuleLoadDialogState'),
+      source.indexOf('// bundledSkillNames lists'),
+    );
+
+    expect(loadDialog, contains('projectId: _selectedProject?.projectId'));
+  });
+
   testWidgets('stale capsule plaza load cannot overwrite a newer refresh', (
     tester,
   ) async {

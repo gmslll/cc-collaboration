@@ -259,6 +259,21 @@ void main() {
     expect(dialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('todo local spawns forward relay project ids', () {
+    final source = File('lib/screens/todos_page.dart').readAsStringSync();
+    final assistant = source.substring(
+      source.indexOf('Future<void> _summonTodoAssistant()'),
+      source.indexOf('Future<void> _linearConfigDialog()'),
+    );
+    final assignNew = source.substring(
+      source.indexOf('Future<void> _assignToNew() async {'),
+      source.indexOf('// Remote variants (mobile):'),
+    );
+
+    expect(assistant, contains('projectId: selectedProject?.projectId'));
+    expect(assignNew, contains('projectId: _todoProjectId'));
+  });
+
   test('todo property menu labels are width constrained', () {
     final source = File(
       'lib/widgets/todo_property_controls.dart',

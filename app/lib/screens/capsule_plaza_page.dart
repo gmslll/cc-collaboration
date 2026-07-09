@@ -461,9 +461,13 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
 
   List<ProjectCfg> get _projects => projectsOf(widget.config, _workspace);
 
-  String? get _projectPath {
+  ProjectCfg? get _selectedProject {
     final m = _projects.where((p) => p.name == _project);
-    return m.isEmpty ? null : m.first.path;
+    return m.isEmpty ? null : m.first;
+  }
+
+  String? get _projectPath {
+    return _selectedProject?.path;
   }
 
   // _wouldNativeResume is true for ① when the target tool matches the source:
@@ -509,6 +513,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
             workspace: ws,
             project: proj,
             kind: _tool,
+            projectId: _selectedProject?.projectId,
             resumeAgentSessionId: resumeId,
             workdir: projPath,
           );
@@ -537,6 +542,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
         workspace: ws,
         project: proj,
         kind: _tool,
+        projectId: _selectedProject?.projectId,
         newWorktreeBranch: branch.isEmpty ? null : branch,
       );
       if (!mounted) return;

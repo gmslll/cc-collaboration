@@ -598,10 +598,14 @@ class _TodosPageState extends State<TodosPage> {
     );
     if (go != true || proj == null) return;
     if (!mounted) return;
+    final selectedProject = projsFor(
+      ws,
+    ).where((p) => p.name == proj).firstOrNull;
     final (sid, err) = await _overview.spawn(
       workspace: ws,
       project: proj!,
       kind: 'todo:$agent',
+      projectId: selectedProject?.projectId,
     );
     if (!mounted) return;
     if (sid == null) {
@@ -3276,6 +3280,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       workspace: validWorkspace,
       project: validProject,
       kind: _kind,
+      projectId: _todoProjectId,
       newWorktreeBranch: branch.isEmpty ? null : branch,
     );
     if (sid == null) {

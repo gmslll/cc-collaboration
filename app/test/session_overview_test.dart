@@ -91,12 +91,19 @@ void main() {
     'spawn forwards args to spawnHandler and returns its (sid, error) tuple',
     () async {
       final store = SessionOverviewStore();
-      String? gotWs, gotProj, gotKind, gotBranch, gotStart, gotResume;
+      String? gotWs,
+          gotProj,
+          gotKind,
+          gotProjectId,
+          gotBranch,
+          gotStart,
+          gotResume;
       store.spawnHandler =
           ({
             required workspace,
             required project,
             required kind,
+            projectId,
             newWorktreeBranch,
             worktreeStart,
             resumeAgentSessionId,
@@ -105,6 +112,7 @@ void main() {
             gotWs = workspace;
             gotProj = project;
             gotKind = kind;
+            gotProjectId = projectId;
             gotBranch = newWorktreeBranch;
             gotStart = worktreeStart;
             gotResume = resumeAgentSessionId;
@@ -114,6 +122,7 @@ void main() {
         workspace: 'kunlun',
         project: 'cc-collaboration',
         kind: 'claude',
+        projectId: 'relay-project',
         newWorktreeBranch: 'feat/x',
         worktreeStart: 'main',
       );
@@ -122,6 +131,7 @@ void main() {
       expect(gotWs, 'kunlun');
       expect(gotProj, 'cc-collaboration');
       expect(gotKind, 'claude');
+      expect(gotProjectId, 'relay-project');
       expect(gotBranch, 'feat/x');
       expect(gotStart, 'main');
       expect(gotResume, isNull);
@@ -144,6 +154,7 @@ void main() {
           required workspace,
           required project,
           required kind,
+          projectId,
           newWorktreeBranch,
           worktreeStart,
           resumeAgentSessionId,
@@ -177,6 +188,7 @@ void main() {
           required workspace,
           required project,
           required kind,
+          projectId,
           newWorktreeBranch,
           worktreeStart,
           resumeAgentSessionId,
