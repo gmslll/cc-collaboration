@@ -331,9 +331,10 @@ class _AccountPageState extends State<AccountPage> {
     }
     try {
       await widget.client.changePassword(_oldPw.text, _newPw.text);
+      if (!mounted) return;
       _oldPw.clear();
       _newPw.clear();
-      if (mounted) snack(context, '密码已更新');
+      snack(context, '密码已更新');
     } catch (e) {
       if (mounted) snack(context, '改密码失败: ${errorText(e)}');
     }
@@ -344,6 +345,7 @@ class _AccountPageState extends State<AccountPage> {
     if (label.isEmpty) return;
     try {
       final raw = await widget.client.createToken(label);
+      if (!mounted) return;
       _label.clear();
       await _loadTokens();
       if (mounted) _showToken(raw);
