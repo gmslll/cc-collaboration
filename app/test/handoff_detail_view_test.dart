@@ -338,6 +338,50 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('handoff reassign ignores duplicate taps while loading team', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package(
+        'team-bug-once',
+        'qa@x',
+        'team bug',
+        kind: 'bug',
+        deliveryTarget: const {'project_id': 'proj1', 'org_id': 'org1'},
+      ),
+      delayProject: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('team-bug-once', 'qa@x', 'team bug'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '转交'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, '准备转交…'));
+    await tester.pump();
+
+    expect(client.projectCalls, 1);
+    expect(find.widgetWithText(OutlinedButton, '准备转交…'), findsOneWidget);
+
+    client.completeProject('proj1');
+    await tester.pumpAndSettle();
+
+    expect(client.projectCalls, 1);
+    expect(find.text('团队候选'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(OutlinedButton, '转交'), findsOneWidget);
+  });
+
   testWidgets('handoff reassign dialog rejects non-candidate team identities', (
     tester,
   ) async {
@@ -779,7 +823,9 @@ class _ActionDetailClient extends RelayClient {
   final Package package;
   final bool delayPostComment;
   final bool delayAck;
+  final bool delayProject;
   int ackCalls = 0;
+  int projectCalls = 0;
   int retractCalls = 0;
   String? retractReason;
   String? reassignedTo;
@@ -787,11 +833,13 @@ class _ActionDetailClient extends RelayClient {
   final postedComments = <String>[];
   final _posts = <String, Completer<Comment>>{};
   final _acks = <String, Completer<void>>{};
+  final _projects = <String, Completer<ProjectDetail>>{};
 
   _ActionDetailClient(
     this.package, {
     this.delayPostComment = false,
     this.delayAck = false,
+    this.delayProject = false,
   }) : super('http://127.0.0.1', 'tok');
 
   @override
@@ -822,7 +870,17 @@ class _ActionDetailClient extends RelayClient {
   });
 
   @override
-  Future<ProjectDetail> project(String id) async => _projectDetail(id, 'org1');
+  Future<ProjectDetail> project(String id) {
+    projectCalls++;
+    if (!delayProject) return Future.value(_projectDetail(id, 'org1'));
+    final completer = Completer<ProjectDetail>();
+    _projects[id] = completer;
+    return completer.future;
+  }
+
+  void completeProject(String id) {
+    _projects[id]!.complete(_projectDetail(id, 'org1'));
+  }
 
   @override
   Future<OrganizationDetail> organization(String id) async =>

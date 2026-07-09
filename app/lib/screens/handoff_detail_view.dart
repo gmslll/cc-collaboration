@@ -182,6 +182,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   bool _picking = false;
   bool _commenting = false;
   bool _acking = false;
+  bool _retracting = false;
+  bool _reassigning = false;
   int _loadGeneration = 0;
   final _commentCtl = TextEditingController();
 
@@ -226,6 +228,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _picking = false;
       _commenting = false;
       _acking = false;
+      _retracting = false;
+      _reassigning = false;
       _loading = true;
     });
     try {
@@ -543,22 +547,25 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _retract(Package p) async {
+    if (_retracting) return;
     final generation = _loadGeneration;
     final client = _client;
     final relayUrl = _cfg.relayUrl;
     final token = _cfg.token;
     final identity = _cfg.identity;
     final id = p.id;
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (_) => const _RetractDialog(),
-    );
-    if (reason == null) return;
-    if (!mounted) return;
-    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
-      return;
-    }
+    _retracting = true;
     try {
+      final reason = await showDialog<String>(
+        context: context,
+        builder: (_) => const _RetractDialog(),
+      );
+      if (reason == null) return;
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
+      setState(() => _retracting = true);
       await client.retract(id, reason.trim());
       if (!mounted) return;
       if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
@@ -580,46 +587,55 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         return;
       }
       _snack('撤回失败: ${errorText(e)}');
+    } finally {
+      if (mounted &&
+          _isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        setState(() => _retracting = false);
+      }
     }
   }
 
   Future<void> _reassign(Package p) async {
+    if (_reassigning) return;
     final generation = _loadGeneration;
     final client = _client;
     final relayUrl = _cfg.relayUrl;
     final token = _cfg.token;
     final identity = _cfg.identity;
     final id = p.id;
-    final candidates = await _loadReassignCandidates(
-      p,
-      generation: generation,
-      client: client,
-      id: id,
-      relayUrl: relayUrl,
-      token: token,
-      identity: identity,
-    );
-    if (candidates == null) return;
-    if (!mounted) return;
-    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
-      return;
-    }
-    final result = await showDialog<_ReassignInput>(
-      context: context,
-      builder: (_) => _ReassignDialog(candidates: candidates),
-    );
-    if (result == null) return;
-    if (!mounted) return;
-    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
-      return;
-    }
-    final to = result.to.trim();
-    final reason = result.reason.trim();
-    if (to.isEmpty || reason.isEmpty) {
-      _snack('需填转交对象和原因');
-      return;
-    }
+    setState(() => _reassigning = true);
     try {
+      final candidates = await _loadReassignCandidates(
+        p,
+        generation: generation,
+        client: client,
+        id: id,
+        relayUrl: relayUrl,
+        token: token,
+        identity: identity,
+      );
+      if (candidates == null) return;
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
+      setState(() => _reassigning = false);
+      final result = await showDialog<_ReassignInput>(
+        context: context,
+        builder: (_) => _ReassignDialog(candidates: candidates),
+      );
+      if (result == null) return;
+      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return;
+      }
+      final to = result.to.trim();
+      final reason = result.reason.trim();
+      if (to.isEmpty || reason.isEmpty) {
+        _snack('需填转交对象和原因');
+        return;
+      }
+      setState(() => _reassigning = true);
       await client.reassign(id, to, reason);
       if (!mounted) return;
       if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
@@ -641,6 +657,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         return;
       }
       _snack('转交失败: ${errorText(e)}');
+    } finally {
+      if (mounted &&
+          _isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        setState(() => _reassigning = false);
+      }
     }
   }
 
@@ -855,17 +876,29 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                 if (sameIdentity(p.sender, _cfg.identity) &&
                     _status?.state == 'pending')
                   OutlinedButton.icon(
-                    onPressed: () => _retract(p),
-                    icon: const Icon(Icons.undo_rounded, size: 18),
-                    label: const Text('撤回'),
+                    onPressed: _retracting ? null : () => _retract(p),
+                    icon: _retracting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.undo_rounded, size: 18),
+                    label: Text(_retracting ? '撤回中…' : '撤回'),
                   ),
                 if (canReceive &&
                     p.kind == 'bug' &&
                     _status?.state == 'pending')
                   OutlinedButton.icon(
-                    onPressed: () => _reassign(p),
-                    icon: const Icon(Icons.swap_horiz_rounded, size: 18),
-                    label: const Text('转交'),
+                    onPressed: _reassigning ? null : () => _reassign(p),
+                    icon: _reassigning
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.swap_horiz_rounded, size: 18),
+                    label: Text(_reassigning ? '准备转交…' : '转交'),
                   ),
               ],
             ),
