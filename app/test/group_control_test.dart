@@ -76,6 +76,12 @@ void main() {
     expect(groupPickerListMaxHeight(const Size(320, 240)), 96);
   });
 
+  test('group picker dialog width fits compact screens', () {
+    expect(groupPickerDialogWidth(const Size(320, 760)), 288);
+    expect(groupPickerDialogWidth(const Size(1024, 760)), 360);
+    expect(groupPickerDialogWidth(const Size(360, 760), preferred: 420), 328);
+  });
+
   test('group picker avoids fixed list height', () {
     final source = File(
       'lib/widgets/todo_property_controls.dart',
@@ -83,7 +89,43 @@ void main() {
     final picker = source.substring(source.indexOf('class _GroupPickerDialog'));
 
     expect(picker, contains('groupPickerListMaxHeight'));
+    expect(picker, contains('groupPickerDialogWidth'));
+    expect(picker, contains('SingleChildScrollView'));
     expect(picker, isNot(contains('BoxConstraints(maxHeight: 180)')));
+    expect(picker, isNot(contains('width: 320')));
+  });
+
+  testWidgets('group picker dialog fits compact screens', (tester) async {
+    tester.view.physicalSize = const Size(320, 360);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      harness(
+        groupName: null,
+        existingGroups: const [longGroupName, '我的日常', 'xxx项目', '团队任务'],
+        onSelect: (_) {},
+      ),
+    );
+
+    await tester.tap(find.text('未分组'));
+    await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(contentScroll.scrollDirection, Axis.vertical);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('picking an existing group from the list calls onSelect', (

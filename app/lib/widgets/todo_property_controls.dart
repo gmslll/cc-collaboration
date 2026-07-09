@@ -539,6 +539,12 @@ double groupPickerListMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double groupPickerDialogWidth(Size size, {double preferred = 360}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class _GroupControlState extends State<GroupControl> {
   final _key = GlobalKey();
 
@@ -637,65 +643,70 @@ class _GroupPickerDialogState extends State<_GroupPickerDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     final q = _ctl.text.trim();
     final matches = _filtered;
     final isNewName =
         q.isNotEmpty && !matches.any((g) => g.toLowerCase() == q.toLowerCase());
     return AlertDialog(
-      title: const Text('分组'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('分组', maxLines: 1, overflow: TextOverflow.ellipsis),
       content: SizedBox(
-        width: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _ctl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: '输入分组名，回车创建/选择',
-                isDense: true,
+        width: groupPickerDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: _ctl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: '输入分组名，回车创建/选择',
+                  isDense: true,
+                ),
+                onChanged: (_) => setState(() {}),
+                onSubmitted: _submit,
               ),
-              onChanged: (_) => setState(() {}),
-              onSubmitted: _submit,
-            ),
-            if (matches.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: groupPickerListMaxHeight(
-                      MediaQuery.sizeOf(context),
+              if (matches.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: groupPickerListMaxHeight(size),
+                    ),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final g in matches)
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(
+                              Icons.folder_outlined,
+                              size: 16,
+                            ),
+                            title: Text(
+                              g,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => Navigator.pop(context, g),
+                          ),
+                      ],
                     ),
                   ),
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (final g in matches)
-                        ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.folder_outlined, size: 16),
-                          title: Text(
-                            g,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          onTap: () => Navigator.pop(context, g),
-                        ),
-                    ],
+                )
+              else if (isNewName)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '将创建新分组 "$q"',
+                    style: const TextStyle(color: CcColors.muted, fontSize: 12),
                   ),
                 ),
-              )
-            else if (isNewName)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  '将创建新分组 "$q"',
-                  style: const TextStyle(color: CcColors.muted, fontSize: 12),
-                ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
       actions: [
