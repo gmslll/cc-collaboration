@@ -78,20 +78,22 @@ func runSubmit(ctx context.Context, args []string) error {
 		fanout = recipients
 	}
 	repoRoot := config.RepoRoot(cwd)
+	deliveryTarget := submitDeliveryTarget(*projectID, *orgID, *member)
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
-		RepoRoot:    repoRoot,
-		RepoName:    res.RepoName,
-		Sender:      res.Me,
-		Recipient:   recipient,
-		Recipients:  fanout,
-		Urgency:     urgency,
-		Base:        base,
-		Note:        *note,
-		Prd:         *prd,
-		Rules:       engine,
-		SwaggerPath: res.Swagger,
-		Amends:      *amends,
-		InboxDir:    inbox.InboxDir(repoRoot, res.InboxOverride),
+		RepoRoot:       repoRoot,
+		RepoName:       res.RepoName,
+		Sender:         res.Me,
+		Recipient:      recipient,
+		Recipients:     fanout,
+		Urgency:        urgency,
+		Base:           base,
+		Note:           *note,
+		Prd:            *prd,
+		Rules:          engine,
+		SwaggerPath:    res.Swagger,
+		Amends:         *amends,
+		InboxDir:       inbox.InboxDir(repoRoot, res.InboxOverride),
+		DeliveryTarget: deliveryTarget,
 	})
 	if err != nil {
 		return err
@@ -110,6 +112,9 @@ func runSubmit(ctx context.Context, args []string) error {
 	if len(pkg.TargetingHints) > 0 {
 		fmt.Printf("  targeting_hints=%d\n", len(pkg.TargetingHints))
 	}
+	if pkg.DeliveryTarget != nil {
+		fmt.Printf("  delivery_target=%s\n", formatDeliveryTarget(pkg.DeliveryTarget))
+	}
 	if pkg.APIDelta != nil {
 		fmt.Printf("  api_delta: +%d ~%d -%d\n",
 			len(pkg.APIDelta.Added), len(pkg.APIDelta.Changed), len(pkg.APIDelta.Removed))
@@ -118,6 +123,37 @@ func runSubmit(ctx context.Context, args []string) error {
 		fmt.Printf("  amends=%s\n", pkg.AmendsHandoff)
 	}
 	return nil
+}
+
+func submitDeliveryTarget(projectID, orgID, member string) *handoffschema.DeliveryTarget {
+	projectID = strings.TrimSpace(projectID)
+	orgID = strings.TrimSpace(orgID)
+	member = strings.TrimSpace(member)
+	if projectID == "" && orgID == "" && member == "" {
+		return nil
+	}
+	return &handoffschema.DeliveryTarget{
+		ProjectID: projectID,
+		OrgID:     orgID,
+		Member:    member,
+	}
+}
+
+func formatDeliveryTarget(target *handoffschema.DeliveryTarget) string {
+	if target == nil {
+		return ""
+	}
+	var parts []string
+	if target.ProjectID != "" {
+		parts = append(parts, "project="+target.ProjectID)
+	}
+	if target.OrgID != "" {
+		parts = append(parts, "org="+target.OrgID)
+	}
+	if target.Member != "" {
+		parts = append(parts, "member="+target.Member)
+	}
+	return strings.Join(parts, " ")
 }
 
 func resolveSubmitRecipients(ctx context.Context, client *transport.Client, sender, recipient, projectID, orgID, member string) ([]string, error) {

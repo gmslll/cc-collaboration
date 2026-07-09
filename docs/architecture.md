@@ -196,8 +196,10 @@ Claude 通用字段:
 [`handoff-package.schema.json`](handoff-package.schema.json)。要点:
 
 - **diff 模式 vs module-brief 模式 vs request 模式**(见 §6)
-- **`Kind`**:`""` / `"delivery"`(默认,正向 /handoff)或 `"request"`(反向 /request)。
+- **`Kind`**:`""` / `"delivery"`(默认,正向 /handoff)、`"request"`(反向 /request)、`"bug"` 或 `"capsule"`。
   空字符串通过 `Package.EffectiveKind()` 解释为 delivery,保证旧 payload 兼容
+- **`DeliveryTarget`**:可选;记录发送时选择的团队定向(`project_id` / `org_id` / `member`),
+  在 relay 已展开成具体 `Recipients` 后仍保留原始团队边界,方便接收端区分团队包和普通多收件包
 - **`RespondsTo`**:request 模式不携带;delivery 模式可以携带原 request id,
   接收端 prompt / summary.md 会渲染「↩️ 回应 r_xxx」banner 闭环
 - **附件分离**:`Attachments` 只存元信息(name / sha256 / size),字节通过单独的
@@ -314,6 +316,7 @@ cc-handoff 有四种发送场景,通过 `Package.Kind` + `Package.Git` 字段区
 | **`ModulePaths`** | 空 | 用户给的模块路径数组 | 空(reject 非空) | 空(reject 非空) |
 | **`APIDelta`** | 有(若 swagger 配置) | 无 | 无 | 无 |
 | **`TargetingHints`** | 有(rules 跑 changed_paths) | 有(rules 跑模块 *.go 文件) | 无 | 无 |
+| **`DeliveryTarget`** | 可选,团队定向发送时记录 project/org/member | 同左 | 同左 | 同左 |
 | **`SummaryMD`** | Claude 写的对接说明 | Claude 读 routes/dto 后整理的完整 API 契约 brief | Claude 写的需求描述(what's needed / why / acceptance) | 测试端写的 bug 描述(symptom / repro / expected / actual / 怀疑归属) |
 | **接收端 prompt 模板** | "读 diff 配 INTEGRATION.md" | "按 brief 调对应客户端、注意契约一致" | "读需求 → 设计响应方案到 `docs/requests/<id>.md` → 等 review;实现完跑 /handoff 时带 `responds_to`" | "判定归属决策树:是我的 → 修复 + `docs/bugs/<id>.md`;不是我的 → `reassign_bug`;不确定 → `comment_handoff` 协商" |
 | **`RespondsTo`** | 可选,关联到 request 触发的回送 | 可选,同 diff | 不携带(API 阻止) | 不携带 |

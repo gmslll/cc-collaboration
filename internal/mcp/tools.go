@@ -196,6 +196,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Amends:           a.Amends,
 		InboxDir:         inboxDir,
 		ExtraAttachments: extras,
+		DeliveryTarget:   deliveryTarget(a.Project, a.Org, a.Member),
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -222,6 +223,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if len(pkg.TargetingHints) > 0 {
 		fmt.Fprintf(&sb, "- targeting_hints: %d\n", len(pkg.TargetingHints))
 	}
+	writeDeliveryTargetSummary(&sb, pkg.DeliveryTarget)
 	if pkg.APIDelta != nil {
 		fmt.Fprintf(&sb, "- api_delta: +%d ~%d -%d\n",
 			len(pkg.APIDelta.Added), len(pkg.APIDelta.Changed), len(pkg.APIDelta.Removed))
@@ -253,6 +255,26 @@ func writeAttachmentSummary(sb *strings.Builder, pkg *handoffschema.Package) {
 		return
 	}
 	fmt.Fprintf(sb, "- attachments: %s\n", strings.Join(names, ", "))
+}
+
+func writeDeliveryTargetSummary(sb *strings.Builder, target *handoffschema.DeliveryTarget) {
+	if target == nil {
+		return
+	}
+	var parts []string
+	if target.ProjectID != "" {
+		parts = append(parts, "project="+target.ProjectID)
+	}
+	if target.OrgID != "" {
+		parts = append(parts, "org="+target.OrgID)
+	}
+	if target.Member != "" {
+		parts = append(parts, "member="+target.Member)
+	}
+	if len(parts) == 0 {
+		return
+	}
+	fmt.Fprintf(sb, "- delivery_target: %s\n", strings.Join(parts, " "))
 }
 
 // writeRepoMetaLines emits the branch/head context lines, but only when they
@@ -359,6 +381,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Kind:             handoffschema.KindRequest,
 		InboxDir:         inboxDir,
 		ExtraAttachments: extras,
+		DeliveryTarget:   deliveryTarget(a.Project, a.Org, a.Member),
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -373,6 +396,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	fmt.Fprintf(&sb, "Submitted request `%s` to %s.\n\n", out.ID, formatRecipientList(recipients))
 	sb.WriteString("- kind: request\n")
 	writeRepoMetaLines(&sb, pkg)
+	writeDeliveryTargetSummary(&sb, pkg.DeliveryTarget)
 	writeAttachmentSummary(&sb, pkg)
 	sb.WriteString("\nThe partner will pick it up via /pickup; their prompt will guide them to design/implement. When they handoff back, the package will carry `responds_to=" + out.ID + "`.")
 	sb.WriteString(linearSyncBlock(res.Linear, LinearEventSubmit, LinearSyncCtx{
@@ -490,6 +514,7 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 		Kind:             handoffschema.KindBug,
 		InboxDir:         inboxDir,
 		ExtraAttachments: extras,
+		DeliveryTarget:   deliveryTarget(a.Project, a.Org, a.Member),
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -504,6 +529,7 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 	fmt.Fprintf(&sb, "Submitted bug `%s` to %s.\n\n", out.ID, formatRecipientList(recipients))
 	sb.WriteString("- kind: bug\n")
 	writeRepoMetaLines(&sb, pkg)
+	writeDeliveryTargetSummary(&sb, pkg.DeliveryTarget)
 	writeAttachmentSummary(&sb, pkg)
 	sb.WriteString("\n每个收件人 /pickup 后会看到「归属判断决策树」:\n")
 	sb.WriteString("- 是我的 → 修复 + ack\n")
@@ -536,6 +562,20 @@ func resolveBugRecipients(to []string, res *config.Resolved) ([]string, error) {
 		}
 	}
 	return handoffschema.DedupeIdentities(out), nil
+}
+
+func deliveryTarget(projectID, orgID, member string) *handoffschema.DeliveryTarget {
+	projectID = strings.TrimSpace(projectID)
+	orgID = strings.TrimSpace(orgID)
+	member = strings.TrimSpace(member)
+	if projectID == "" && orgID == "" && member == "" {
+		return nil
+	}
+	return &handoffschema.DeliveryTarget{
+		ProjectID: projectID,
+		OrgID:     orgID,
+		Member:    member,
+	}
 }
 
 func resolveRecipientRole(role string, res *config.Resolved) (string, error) {

@@ -63,6 +63,57 @@ func TestDeliveryHandoffCanFanOutToTeamRecipients(t *testing.T) {
 	}
 }
 
+func TestSubmitPreservesDeliveryTargetPayload(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[
+		{"token":"tok-sender","identity":"sender@x"},
+		{"token":"tok-dev","identity":"dev@x"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: tokens, Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+
+	out, err := transport.New(srv.URL, "tok-sender").Submit(context.Background(), &handoffschema.Package{
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindDelivery,
+		Recipient:     "dev@x",
+		Urgency:       handoffschema.UrgencyNormal,
+		Repo:          handoffschema.Repo{Name: "demo"},
+		SummaryMD:     "team delivery",
+		DeliveryTarget: &handoffschema.DeliveryTarget{
+			ProjectID: "project-1",
+			Member:    "dev@x",
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	got, _, err := st.Get(context.Background(), out.ID)
+	if err != nil {
+		t.Fatalf("get stored handoff: %v", err)
+	}
+	if got.DeliveryTarget == nil {
+		t.Fatal("stored package lost delivery_target")
+	}
+	if got.DeliveryTarget.ProjectID != "project-1" ||
+		got.DeliveryTarget.OrgID != "" ||
+		got.DeliveryTarget.Member != "dev@x" {
+		t.Fatalf("stored delivery_target = %+v", got.DeliveryTarget)
+	}
+}
+
 func TestSubmitHandoffRequiresReachableRecipients(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {

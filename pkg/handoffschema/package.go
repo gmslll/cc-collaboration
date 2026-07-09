@@ -189,6 +189,10 @@ type Package struct {
 	APIDelta       *APIDelta       `json:"api_delta,omitempty"`
 	ModulePaths    []string        `json:"module_paths,omitempty"`
 	TargetingHints []TargetingHint `json:"targeting_hints,omitempty"`
+	// DeliveryTarget records the user's team delivery intent before it was
+	// expanded into concrete Recipients. It lets receivers distinguish a
+	// project/org/member-scoped package from an ordinary multi-recipient send.
+	DeliveryTarget *DeliveryTarget `json:"delivery_target,omitempty"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
 	NoteMD         string          `json:"note_md,omitempty"`
 	PrdMD          string          `json:"prd_md,omitempty"`
@@ -216,6 +220,12 @@ type Package struct {
 	// the source tool, origin session id, team scope, and which forms are
 	// present so the receiver's loader can pick a reconstruction path.
 	Capsule *Capsule `json:"capsule,omitempty"`
+}
+
+type DeliveryTarget struct {
+	ProjectID string `json:"project_id,omitempty"`
+	OrgID     string `json:"org_id,omitempty"`
+	Member    string `json:"member,omitempty"`
 }
 
 // Capsule is the metadata for a KindCapsule package — a frozen session context

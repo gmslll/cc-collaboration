@@ -113,6 +113,44 @@ func TestBuild_Bug_NoGitRepo(t *testing.T) {
 	}
 }
 
+func TestBuild_PreservesDeliveryTarget(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+
+	inboxDir := filepath.Join(dir, ".cc-handoff", "inbox")
+	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(SummaryDraftPath(inboxDir), []byte("team scoped handoff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	target := &handoffschema.DeliveryTarget{
+		ProjectID: "project-1",
+		Member:    "dev@team",
+	}
+	pkg, _, err := Build(context.Background(), BuildOptions{
+		RepoRoot:       dir,
+		RepoName:       "demo",
+		Sender:         "owner@team",
+		Recipient:      "dev@team",
+		Kind:           handoffschema.KindRequest,
+		InboxDir:       inboxDir,
+		DeliveryTarget: target,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if pkg.DeliveryTarget == nil {
+		t.Fatal("delivery target was not preserved")
+	}
+	if pkg.DeliveryTarget.ProjectID != "project-1" ||
+		pkg.DeliveryTarget.OrgID != "" ||
+		pkg.DeliveryTarget.Member != "dev@team" {
+		t.Fatalf("delivery target = %+v", pkg.DeliveryTarget)
+	}
+}
+
 // TestBuild_ExtraAttachment_RejectsSwaggerName: the reserved swagger.yaml
 // slot is owned by Build itself; user-supplied attachments with that name
 // must be rejected so they can't shadow the snapshot.

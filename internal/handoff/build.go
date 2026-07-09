@@ -60,6 +60,7 @@ type BuildOptions struct {
 	// for design refs. Reserved names (currently `swagger.yaml`) are rejected
 	// so user input can never shadow the auto-derived swagger snapshot.
 	ExtraAttachments map[string][]byte
+	DeliveryTarget   *handoffschema.DeliveryTarget
 }
 
 // SummaryDraftPath returns where the human-authored summary draft lives. The
@@ -232,6 +233,7 @@ func Build(ctx context.Context, opts BuildOptions) (*handoffschema.Package, map[
 		APIDelta:       apiDelta,
 		ModulePaths:    opts.ModulePaths,
 		TargetingHints: hints,
+		DeliveryTarget: opts.DeliveryTarget,
 		NoteMD:         opts.Note,
 		PrdMD:          opts.Prd,
 		RespondsTo:     opts.RespondsTo,

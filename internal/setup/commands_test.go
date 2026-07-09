@@ -63,10 +63,11 @@ func TestPickupCommandDocumentsTeamTargeting(t *testing.T) {
 	}
 	text := string(got)
 	for _, want := range []string{
-		"project",
-		"org",
+		"delivery_target",
+		"project_id",
+		"org_id",
 		"member",
-		"不要因为本地配置里还有 `identity.partner(s)` 就扩大收件或影响范围",
+		"团队包里的 `delivery_target` 是更强约束",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("pickup command missing team targeting guidance %q:\n%s", want, text)

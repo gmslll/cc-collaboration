@@ -143,6 +143,24 @@ func TestFormatTodoSummaryUsesAssigneeDisplayName(t *testing.T) {
 	}
 }
 
+func TestDeliveryTargetTrimAndSummary(t *testing.T) {
+	target := deliveryTarget(" project-1 ", "", " dev@team ")
+	if target == nil {
+		t.Fatal("expected delivery target")
+	}
+	if target.ProjectID != "project-1" || target.OrgID != "" || target.Member != "dev@team" {
+		t.Fatalf("delivery target = %+v", target)
+	}
+	var sb strings.Builder
+	writeDeliveryTargetSummary(&sb, target)
+	if got := sb.String(); got != "- delivery_target: project=project-1 member=dev@team\n" {
+		t.Fatalf("summary = %q", got)
+	}
+	if empty := deliveryTarget(" ", "", ""); empty != nil {
+		t.Fatalf("blank delivery target should be nil: %+v", empty)
+	}
+}
+
 func TestResolveBugRecipients_RoleAliasesUseConfiguredIdentities(t *testing.T) {
 	res := &config.Resolved{
 		Me:       "qa@tester",
