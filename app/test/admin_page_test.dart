@@ -139,6 +139,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('admin generated password dialog title is width constrained', (
+    tester,
+  ) async {
+    final client = _DelayedCreateAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, _longAdminIdentity);
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+    await tester.pump();
+    client.completeCreate('secret-password');
+    await tester.pumpAndSettle();
+
+    final dialogTitle = tester.widget<Text>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Text && widget.data == '账号 $_longAdminIdentity 的初始密码',
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(dialogTitle.maxLines, 1);
+    expect(dialogTitle.overflow, TextOverflow.ellipsis);
+  });
+
   testWidgets('stale admin user load cannot overwrite a newer reload', (
     tester,
   ) async {

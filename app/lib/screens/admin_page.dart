@@ -109,7 +109,7 @@ class _AdminPageState extends State<AdminPage> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(title),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         content: SelectableText(
           secret,
           style: const TextStyle(fontFamily: CcType.mono),
