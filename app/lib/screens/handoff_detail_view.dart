@@ -180,6 +180,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   List<Comment> _comments = const [];
   bool _loading = true;
   bool _picking = false;
+  bool _commenting = false;
   int _loadGeneration = 0;
   final _commentCtl = TextEditingController();
 
@@ -222,6 +223,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _prompt = null;
       _comments = const [];
       _picking = false;
+      _commenting = false;
       _loading = true;
     });
     try {
@@ -361,6 +363,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _postComment() async {
+    if (_commenting) return;
     final body = _commentCtl.text.trim();
     if (body.isEmpty) return;
     final generation = _loadGeneration;
@@ -369,6 +372,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final token = _cfg.token;
     final identity = _cfg.identity;
     final id = _id;
+    setState(() => _commenting = true);
     try {
       await client.postComment(id, body);
       if (!mounted) return;
@@ -390,6 +394,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         return;
       }
       _snack('评论失败: ${errorText(e)}');
+    } finally {
+      if (mounted &&
+          _isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        setState(() => _commenting = false);
+      }
     }
   }
 
@@ -1303,12 +1312,19 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                         hintText: '写评论…',
                         isDense: true,
                       ),
+                      enabled: !_commenting,
                       onSubmitted: (_) => _postComment(),
                     ),
                   ),
                   IconButton(
-                    onPressed: _postComment,
-                    icon: const Icon(Icons.send_rounded, size: 20),
+                    onPressed: _commenting ? null : _postComment,
+                    icon: _commenting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.send_rounded, size: 20),
                   ),
                 ],
               ),

@@ -579,6 +579,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.widgetWithText(TextField, '写评论…'), findsOneWidget);
   });
+
+  testWidgets('handoff comment submit ignores duplicate taps while posting', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package('comment-once', 'qa@x', 'team handoff'),
+      delayPostComment: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('comment-once', 'qa@x', 'team handoff'),
+          onOpenTerminal: (_, _) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('评论'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'ship it');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pump();
+    await tester.tap(find.byType(IconButton).last);
+    await tester.pump();
+
+    expect(client.postedComments, ['comment-once:ship it']);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    client.completePost('comment-once', 'ship it');
+    await tester.pumpAndSettle();
+
+    expect(client.postedComments, ['comment-once:ship it']);
+    expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+  });
 }
 
 ListItem _item(String id, String sender, String headline) => ListItem.fromJson({
@@ -649,6 +688,12 @@ OrganizationDetail _organizationDetail(String id) =>
       'projects': const [],
     });
 
+Comment _comment(String sender, String body) => Comment.fromJson({
+  'sender': sender,
+  'body': body,
+  'created_at': '2026-01-01T00:00:00Z',
+});
+
 Me _me(
   String identity, {
   bool isAdmin = false,
@@ -695,12 +740,16 @@ class _DelayedDetailClient extends RelayClient {
 
 class _ActionDetailClient extends RelayClient {
   final Package package;
+  final bool delayPostComment;
   int retractCalls = 0;
   String? retractReason;
   String? reassignedTo;
   String? reassignedReason;
+  final postedComments = <String>[];
+  final _posts = <String, Completer<Comment>>{};
 
-  _ActionDetailClient(this.package) : super('http://127.0.0.1', 'tok');
+  _ActionDetailClient(this.package, {this.delayPostComment = false})
+    : super('http://127.0.0.1', 'tok');
 
   @override
   Future<Package> get(String id) async => package;
@@ -746,5 +795,18 @@ class _ActionDetailClient extends RelayClient {
   Future<void> reassign(String id, String to, String reason) async {
     reassignedTo = to;
     reassignedReason = reason;
+  }
+
+  @override
+  Future<Comment> postComment(String id, String body) {
+    postedComments.add('$id:$body');
+    if (!delayPostComment) return Future.value(_comment('me@x', body));
+    final completer = Completer<Comment>();
+    _posts['$id:$body'] = completer;
+    return completer.future;
+  }
+
+  void completePost(String id, String body) {
+    _posts['$id:$body']!.complete(_comment('me@x', body));
   }
 }
