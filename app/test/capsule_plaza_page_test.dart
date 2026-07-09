@@ -1,0 +1,108 @@
+import 'dart:async';
+
+import 'package:app/api/models.dart';
+import 'package:app/api/relay_client.dart';
+import 'package:app/local/config.dart';
+import 'package:app/local/session_overview.dart';
+import 'package:app/screens/capsule_plaza_page.dart';
+import 'package:app/theme.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  testWidgets('stale capsule plaza load cannot overwrite a newer refresh', (
+    tester,
+  ) async {
+    final client = _DelayedCapsulesClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: client,
+            identity: 'me@x',
+            overviewStore: SessionOverviewStore(),
+            config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(client.requestCount, 1);
+
+    client.completeNext([_capsule('old', headline: 'Old capsule')]);
+    await tester.pumpAndSettle();
+    expect(find.text('Old capsule'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('刷新'));
+    await tester.pump();
+    expect(client.requestCount, 2);
+
+    await tester.tap(find.widgetWithText(TextButton, '删除'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+    expect(client.deletedIds, ['old']);
+    expect(client.requestCount, 3);
+
+    client.completeLatest([_capsule('new', headline: 'New capsule')]);
+    await tester.pumpAndSettle();
+    expect(find.text('New capsule'), findsOneWidget);
+    expect(find.text('Older capsule'), findsNothing);
+
+    client.completeNext([_capsule('older', headline: 'Older capsule')]);
+    await tester.pumpAndSettle();
+    expect(find.text('New capsule'), findsOneWidget);
+    expect(find.text('Older capsule'), findsNothing);
+
+    await tester.pump(const Duration(seconds: 5));
+  });
+}
+
+class _DelayedCapsulesClient extends RelayClient {
+  final _requests = <Completer<List<CapsuleListItem>>>[];
+
+  _DelayedCapsulesClient() : super('http://127.0.0.1', 'tok');
+
+  int get requestCount => _requests.length;
+
+  @override
+  Future<List<CapsuleListItem>> capsules() {
+    final completer = Completer<List<CapsuleListItem>>();
+    _requests.add(completer);
+    return completer.future;
+  }
+
+  final deletedIds = <String>[];
+
+  @override
+  Future<void> deleteCapsule(String id) async {
+    deletedIds.add(id);
+  }
+
+  void completeNext(List<CapsuleListItem> items) {
+    final request = _requests.firstWhere((c) => !c.isCompleted);
+    request.complete(items);
+  }
+
+  void completeLatest(List<CapsuleListItem> items) {
+    final request = _requests.lastWhere((c) => !c.isCompleted);
+    request.complete(items);
+  }
+}
+
+CapsuleListItem _capsule(String id, {required String headline}) =>
+    CapsuleListItem.fromJson({
+      'id': id,
+      'owner': 'me@x',
+      'visibility': 'public',
+      'source_agent': 'codex',
+      'origin_session_id': 's-$id',
+      'headline': headline,
+      'repo_name': 'cc-collaboration',
+      'has_transcript': true,
+      'has_persona': false,
+      'created_at': '2026-01-01T00:00:00Z',
+    });

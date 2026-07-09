@@ -42,6 +42,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   List<CapsuleListItem>? _items;
   String? _error;
   bool _loading = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -50,25 +51,29 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final items = await widget.client.capsules();
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation)) return;
       setState(() {
         _items = items;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation)) return;
       setState(() {
         _error = errorText(e);
         _loading = false;
       });
     }
   }
+
+  bool _isCurrentLoad(int generation) =>
+      mounted && generation == _loadGeneration;
 
   @override
   Widget build(BuildContext context) {
