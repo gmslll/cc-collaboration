@@ -1480,6 +1480,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project delete confirmation after account switch is ignored', (
+    tester,
+  ) async {
+    final oldClient = _CountingDeleteProjectProjectsPageFakeClient();
+    final newClient = _CountingDeleteProjectProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: oldClient)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    Finder deleteButton() =>
+        find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '删除');
+
+    await tester.tap(deleteButton());
+    await tester.pumpAndSettle();
+    expect(find.text('删除项目?'), findsOneWidget);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: newClient)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+
+    expect(oldClient.deleteProjectCalls, 0);
+    expect(newClient.deleteProjectCalls, 0);
+    expect(find.text('删除项目?'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('project sheet confirms member removal before request', (
     tester,
   ) async {

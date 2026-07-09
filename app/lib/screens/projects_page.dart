@@ -1906,6 +1906,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     );
     if (ok != true) return;
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     if (_mutating) return;
     if (mounted) setState(() => _mutationAction = 'deleteProject');
     try {
