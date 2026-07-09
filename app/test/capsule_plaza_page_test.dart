@@ -137,6 +137,67 @@ void main() {
     expect(find.text('New private capsule'), findsOneWidget);
     expect(find.text('Old private capsule'), findsNothing);
   });
+
+  testWidgets('capsule delete confirmation after account switch is ignored', (
+    tester,
+  ) async {
+    final oldClient = _DelayedCapsulesClient();
+    final newClient = _DelayedCapsulesClient();
+    final overviewStore = SessionOverviewStore();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: oldClient,
+            identity: 'old@x',
+            overviewStore: overviewStore,
+            config: AppConfig('http://127.0.0.1:1', 'old', 'old@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    oldClient.completeNext([
+      _capsule('old', headline: 'Old capsule', owner: 'old@x'),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, '删除'));
+    await tester.pumpAndSettle();
+    expect(find.text('删除胶囊?'), findsOneWidget);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: newClient,
+            identity: 'new@x',
+            overviewStore: overviewStore,
+            config: AppConfig('http://127.0.0.1:1', 'new', 'new@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    newClient.completeNext([
+      _capsule('new', headline: 'New capsule', owner: 'new@x'),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+
+    expect(oldClient.deletedIds, isEmpty);
+    expect(newClient.deletedIds, isEmpty);
+    expect(find.text('New capsule'), findsOneWidget);
+    expect(find.text('Old capsule'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _DelayedCapsulesClient extends RelayClient {

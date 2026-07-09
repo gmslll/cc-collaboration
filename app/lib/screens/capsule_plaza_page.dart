@@ -119,6 +119,18 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
       widget.config.relayUrl == relayUrl &&
       widget.config.token == token;
 
+  bool _isCurrentPlazaContext(
+    RelayClient client,
+    String identity,
+    String relayUrl,
+    String token,
+  ) =>
+      mounted &&
+      identical(client, widget.client) &&
+      widget.identity == identity &&
+      widget.config.relayUrl == relayUrl &&
+      widget.config.token == token;
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -286,6 +298,10 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   );
 
   Future<void> _deleteCapsule(CapsuleListItem c) async {
+    final client = widget.client;
+    final identity = widget.identity;
+    final relayUrl = widget.config.relayUrl;
+    final token = widget.config.token;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -306,23 +322,33 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
         ],
       ),
     );
-    if (ok != true || !mounted) return;
+    if (ok != true) return;
+    if (!mounted) return;
+    if (!_isCurrentPlazaContext(client, identity, relayUrl, token)) return;
     try {
-      await widget.client.deleteCapsule(c.id);
+      await client.deleteCapsule(c.id);
       if (!mounted) return;
+      if (!_isCurrentPlazaContext(client, identity, relayUrl, token)) return;
       snack(context, '胶囊已删除');
       _load();
     } catch (e) {
-      if (mounted) snack(context, '删除失败: ${errorText(e)}');
+      if (!mounted) return;
+      if (!_isCurrentPlazaContext(client, identity, relayUrl, token)) return;
+      snack(context, '删除失败: ${errorText(e)}');
     }
   }
 
   Future<void> _editCapsule(CapsuleListItem c) async {
+    final client = widget.client;
+    final identity = widget.identity;
+    final relayUrl = widget.config.relayUrl;
+    final token = widget.config.token;
     final changed = await showDialog<bool>(
       context: context,
-      builder: (_) => _CapsuleEditDialog(client: widget.client, capsule: c),
+      builder: (_) => _CapsuleEditDialog(client: client, capsule: c),
     );
     if (!mounted) return;
+    if (!_isCurrentPlazaContext(client, identity, relayUrl, token)) return;
     if (changed == true) _load();
   }
 
