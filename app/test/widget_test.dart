@@ -1510,6 +1510,29 @@ void main() {
     );
     expectGuardBefore(
       between(
+        'lib/screens/todos_page.dart',
+        'Future<void> _summonTodoAssistant()',
+        '// _importFromLinear shells',
+      ),
+      'if (go != true || proj == null) return;',
+      '_overview.spawn',
+    );
+    final linearConfigDialog = between(
+      'lib/screens/todos_page.dart',
+      'Future<void> _linearConfigDialog()',
+      '@override\n  void dispose()',
+    );
+    expectGuardBefore(
+      linearConfigDialog,
+      'if (saved != true) return;',
+      'Cli.configSet',
+    );
+    expect(linearConfigDialog, contains('finally {'));
+    expect(linearConfigDialog, contains('tokenCtl.dispose();'));
+    expect(linearConfigDialog, contains('teamCtl.dispose();'));
+    expect(linearConfigDialog, contains('projectCtl.dispose();'));
+    expectGuardBefore(
+      between(
         'lib/screens/handoff_detail_view.dart',
         'Future<void> _retract(',
         'Future<void> _reassign(',
