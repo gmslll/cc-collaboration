@@ -21,12 +21,37 @@ void main() {
     return null;
   }
 
+  Text? textWidgetOf(Widget? widget) {
+    if (widget == null) return null;
+    if (widget is Text) return widget;
+    if (widget is Expanded) return textWidgetOf(widget.child);
+    if (widget is Row) {
+      for (final child in widget.children) {
+        final text = textWidgetOf(child);
+        if (text != null) return text;
+      }
+    }
+    return null;
+  }
+
   List<String> labels(List<PopupMenuEntry<String>> entries) => [
     for (final e in entries)
       if (e is PopupMenuItem<String>) textOf(e.child) ?? '',
   ];
 
   SendTarget target(int i) => (id: 'ts$i', label: 'session $i');
+
+  test('menu item labels clamp instead of stretching long menus', () {
+    final item = ccMenuItem(
+      value: 'send:long',
+      icon: Icons.send_rounded,
+      label: '发送到「${'very-long-session-name-' * 8}」',
+    );
+    final text = textWidgetOf(item.child);
+
+    expect(text?.maxLines, 1);
+    expect(text?.overflow, TextOverflow.ellipsis);
+  });
 
   test('short same-project send targets stay inline', () {
     final entries = sendMenuEntries([target(1), target(2)], const []);

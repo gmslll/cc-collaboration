@@ -1653,6 +1653,8 @@ PopupMenuItem<String> ccMenuItem({
         Expanded(
           child: Text(
             label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: danger && on
                 ? const TextStyle(color: CcColors.danger)
                 : null,
