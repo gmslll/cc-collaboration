@@ -328,9 +328,9 @@ func printTodoDetail(t *todoschema.Todo) {
 	}
 	if t.AssigneeIdentity != "" {
 		if t.AssigneeSessionID != "" {
-			fmt.Printf("  assignee  : %s (session=%s label=%q)\n", t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel)
+			fmt.Printf("  assignee  : %s (session=%s label=%q)\n", t.AssigneeLabel(), t.AssigneeSessionID, t.AssigneeSessionLabel)
 		} else {
-			fmt.Printf("  assignee  : %s\n", t.AssigneeIdentity)
+			fmt.Printf("  assignee  : %s\n", t.AssigneeLabel())
 		}
 	}
 	if t.DueAt != nil {
@@ -430,7 +430,7 @@ func runTodoAssign(ctx context.Context, args []string) error {
 		fmt.Printf("✓ cleared assignment on todo %s\n", out.ID)
 		return nil
 	}
-	fmt.Printf("✓ assigned todo %s to %s\n", out.ID, out.AssigneeIdentity)
+	fmt.Printf("✓ assigned todo %s to %s\n", out.ID, out.AssigneeLabel())
 	if out.AssigneeSessionID != "" {
 		fmt.Printf("  session=%s label=%q\n", out.AssigneeSessionID, out.AssigneeSessionLabel)
 	}

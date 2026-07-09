@@ -9,6 +9,7 @@ import (
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/handoff"
+	"github.com/cc-collaboration/pkg/todoschema"
 )
 
 // TestReadAttachments_DedupeBasename: two files with the same basename land
@@ -127,6 +128,18 @@ func TestUniqueAttachmentName_NoExt(t *testing.T) {
 	taken := map[string][]byte{"Makefile": nil}
 	if got := uniqueAttachmentName("Makefile", taken); got != "Makefile-2" {
 		t.Errorf("got %q, want Makefile-2", got)
+	}
+}
+
+func TestFormatTodoSummaryUsesAssigneeDisplayName(t *testing.T) {
+	out := formatTodoSummary(&todoschema.Todo{
+		Status:              todoschema.StatusTodo,
+		Priority:            todoschema.PriorityNormal,
+		AssigneeIdentity:    "dev@x",
+		AssigneeDisplayName: "Dev",
+	})
+	if !strings.Contains(out, "- assignee: Dev <dev@x>") {
+		t.Fatalf("assignee display missing from summary:\n%s", out)
 	}
 }
 

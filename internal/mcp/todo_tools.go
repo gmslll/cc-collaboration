@@ -159,7 +159,7 @@ func formatTodoSummary(t *todoschema.Todo) string {
 		sb.WriteString("- scope: personal\n")
 	}
 	if t.AssigneeIdentity != "" {
-		fmt.Fprintf(&sb, "- assignee: %s", t.AssigneeIdentity)
+		fmt.Fprintf(&sb, "- assignee: %s", t.AssigneeLabel())
 		if t.AssigneeSessionLabel != "" {
 			fmt.Fprintf(&sb, " (session %s)", t.AssigneeSessionLabel)
 		}
@@ -257,7 +257,7 @@ func listTodosHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 			fmt.Fprintf(&sb, " project=%s", t.ProjectID)
 		}
 		if t.AssigneeIdentity != "" {
-			fmt.Fprintf(&sb, " assignee=%s", t.AssigneeIdentity)
+			fmt.Fprintf(&sb, " assignee=%s", t.AssigneeLabel())
 		}
 		if t.DueAt != nil {
 			fmt.Fprintf(&sb, " due=%s", t.DueAt.Format("2006-01-02"))
@@ -450,10 +450,10 @@ func assignTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 		return ToolResult{}, err
 	}
 	var sb strings.Builder
-	if a.AssigneeIdentity == "" {
+	if t.AssigneeIdentity == "" {
 		fmt.Fprintf(&sb, "todo `%s` assignment cleared.\n\n", t.ID)
 	} else {
-		fmt.Fprintf(&sb, "todo `%s` assigned → `%s`.\n\n", t.ID, a.AssigneeIdentity)
+		fmt.Fprintf(&sb, "todo `%s` assigned → `%s`.\n\n", t.ID, t.AssigneeLabel())
 	}
 	sb.WriteString(formatTodoSummary(t))
 	return textResult(sb.String()), nil

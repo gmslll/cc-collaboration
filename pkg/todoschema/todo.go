@@ -5,7 +5,10 @@
 // roles (see internal/relay/store/projects.go RoleOwner/RoleMember/RoleViewer).
 package todoschema
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const SchemaVersion = 1
 
@@ -191,6 +194,21 @@ type Todo struct {
 
 // IsPersonal reports whether t is a personal (not project-scoped) todo.
 func (t Todo) IsPersonal() bool { return t.ProjectID == "" }
+
+// AssigneeLabel returns the human-facing assignee label for text UIs. Keep the
+// identity visible when a display name exists so terminal/MCP output remains
+// copy-pasteable for follow-up commands.
+func (t Todo) AssigneeLabel() string {
+	id := strings.TrimSpace(t.AssigneeIdentity)
+	name := strings.TrimSpace(t.AssigneeDisplayName)
+	if name == "" || name == id {
+		return id
+	}
+	if id == "" {
+		return name
+	}
+	return name + " <" + id + ">"
+}
 
 // Attachment is metadata for a binary blob stored alongside a todo. The
 // bytes are uploaded/fetched via

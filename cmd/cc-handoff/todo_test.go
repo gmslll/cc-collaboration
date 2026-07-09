@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cc-collaboration/pkg/todoschema"
 )
 
 // TestTodoHelp: `todo`, `todo -h`, `todo --help`, `todo help` all print the
@@ -118,5 +120,22 @@ func TestTodoGetMissingID(t *testing.T) {
 	err := runTodoGet(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "usage: cc-handoff todo get") {
 		t.Fatalf("want usage error, got %v", err)
+	}
+}
+
+func TestPrintTodoDetailUsesAssigneeDisplayName(t *testing.T) {
+	out := captureStdout(t, func() {
+		printTodoDetail(&todoschema.Todo{
+			ID:                  "td1",
+			OwnerIdentity:       "owner@x",
+			Title:               "ship",
+			Status:              todoschema.StatusTodo,
+			Priority:            todoschema.PriorityNormal,
+			AssigneeIdentity:    "dev@x",
+			AssigneeDisplayName: "Dev",
+		})
+	})
+	if !strings.Contains(out, "assignee  : Dev <dev@x>") {
+		t.Fatalf("assignee display missing from detail:\n%s", out)
 	}
 }
