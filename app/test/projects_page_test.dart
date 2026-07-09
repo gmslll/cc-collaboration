@@ -313,6 +313,55 @@ void main() {
     );
   });
 
+  test('team workspace search matches projects and teams', () {
+    final org = Organization.fromJson({
+      'id': 'org-a',
+      'name': 'Kunlun Operations',
+      'owner_identity': 'owner@x',
+      'role': 'owner',
+    });
+    final project = Project.fromJson({
+      'id': 'p1',
+      'org_id': 'org-a',
+      'name': 'Backend Control',
+      'owner_identity': 'owner@x',
+      'role': 'member',
+    });
+
+    expect(organizationMatchesSearch(org, 'oper'), isTrue);
+    expect(organizationMatchesSearch(org, '访客'), isFalse);
+    expect(
+      projectMatchesSearch(
+        project,
+        'backend',
+        teamName: org.name,
+        isAdmin: false,
+        identity: 'member@x',
+      ),
+      isTrue,
+    );
+    expect(
+      projectMatchesSearch(
+        project,
+        'kunlun',
+        teamName: org.name,
+        isAdmin: false,
+        identity: 'member@x',
+      ),
+      isTrue,
+    );
+    expect(
+      projectMatchesSearch(
+        project,
+        '只读',
+        teamName: org.name,
+        isAdmin: false,
+        identity: 'member@x',
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'identity helpers ignore surrounding whitespace without matching blank',
     () {
@@ -800,6 +849,39 @@ void main() {
     expect(teamFieldWidth, lessThanOrEqualTo(180));
     expect(projectFieldWidth, lessThanOrEqualTo(180));
     expect(dropdownWidth, lessThanOrEqualTo(180));
+  });
+
+  testWidgets('team workspace search filters teams and projects together', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Kunlun'), findsOneWidget);
+    expect(find.text('Ops'), findsOneWidget);
+    expect(find.text('Backend'), findsOneWidget);
+    expect(find.text('Frontend'), findsOneWidget);
+
+    final searchField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == '搜索团队 / 项目 / 负责人',
+    );
+    await tester.enterText(searchField, 'ops');
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Kunlun'), findsNothing);
+    expect(find.text('Backend'), findsNothing);
+    expect(find.text('Ops'), findsOneWidget);
+    expect(find.text('Frontend'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('清除搜索'));
+    await tester.pump();
+    expect(find.text('Backend'), findsOneWidget);
   });
 
   testWidgets('project sheet disables repo binding until a repo is entered', (

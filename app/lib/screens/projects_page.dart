@@ -162,6 +162,37 @@ String projectListSubtitle(
 }) =>
     '$teamName · ${projectListRoleLabel(project, isAdmin: isAdmin, identity: identity)} · ${projectOwnerLabel(project.ownerIdentity)}';
 
+String normalizedProjectSearchQuery(String query) => query.trim().toLowerCase();
+
+bool organizationMatchesSearch(Organization org, String query) {
+  final q = normalizedProjectSearchQuery(query);
+  if (q.isEmpty) return true;
+  return [
+    org.name,
+    org.id,
+    org.ownerIdentity,
+    organizationRoleLabel(org.role, isAdmin: false),
+  ].any((value) => value.toLowerCase().contains(q));
+}
+
+bool projectMatchesSearch(
+  Project project,
+  String query, {
+  required String teamName,
+  required bool isAdmin,
+  required String identity,
+}) {
+  final q = normalizedProjectSearchQuery(query);
+  if (q.isEmpty) return true;
+  return [
+    project.name,
+    project.id,
+    teamName,
+    project.ownerIdentity,
+    projectListRoleLabel(project, isAdmin: isAdmin, identity: identity),
+  ].any((value) => value.toLowerCase().contains(q));
+}
+
 bool identityMatches(String left, String right) {
   final l = left.trim();
   final r = right.trim();
@@ -339,6 +370,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
   String? _error;
   final _name = TextEditingController();
   final _orgName = TextEditingController();
+  final _search = TextEditingController();
   String? _selectedOrgId;
 
   @override
@@ -346,6 +378,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
     super.initState();
     _name.addListener(_onCreateInputChanged);
     _orgName.addListener(_onCreateInputChanged);
+    _search.addListener(_onSearchChanged);
     _load();
   }
 
@@ -353,8 +386,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
   void dispose() {
     _name.removeListener(_onCreateInputChanged);
     _orgName.removeListener(_onCreateInputChanged);
+    _search.removeListener(_onSearchChanged);
     _name.dispose();
     _orgName.dispose();
+    _search.dispose();
     super.dispose();
   }
 
@@ -362,6 +397,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
   bool get _canCreateOrg => _orgName.text.trim().isNotEmpty;
 
   void _onCreateInputChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onSearchChanged() {
     if (mounted) setState(() {});
   }
 
@@ -459,6 +498,39 @@ class _ProjectsPageState extends State<ProjectsPage> {
   int _orgProjectCount(String orgId) =>
       (_projects ?? const <Project>[]).where((p) => p.orgId == orgId).length;
 
+  List<Organization> get _visibleOrgs {
+    final q = _search.text;
+    return _orgs.where((org) {
+      if (organizationMatchesSearch(org, q)) return true;
+      return (_projects ?? const <Project>[]).any(
+        (project) =>
+            project.orgId == org.id &&
+            projectMatchesSearch(
+              project,
+              q,
+              teamName: org.name,
+              isAdmin: _isAdmin,
+              identity: _identity,
+            ),
+      );
+    }).toList();
+  }
+
+  List<Project> get _visibleProjects {
+    final q = _search.text;
+    return (_projects ?? const <Project>[])
+        .where(
+          (project) => projectMatchesSearch(
+            project,
+            q,
+            teamName: _teamName(project.orgId),
+            isAdmin: _isAdmin,
+            identity: _identity,
+          ),
+        )
+        .toList();
+  }
+
   Future<void> _showOrganizationSheet(Organization org) async {
     await showModalBottomSheet(
       context: context,
@@ -482,6 +554,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
           _workspaceHeader(),
           const SizedBox(height: 12),
           _teamPanel(),
+          const SizedBox(height: 12),
+          _searchBar(),
           const SizedBox(height: 12),
           Expanded(child: _body()),
         ],
@@ -709,9 +783,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
         child: Text('还没有项目', style: TextStyle(color: CcColors.muted)),
       );
     }
+    final projects = _visibleProjects;
+    if (projects.isEmpty) {
+      return const Center(
+        child: Text('没有匹配的项目', style: TextStyle(color: CcColors.muted)),
+      );
+    }
     return ListView(
       padding: const EdgeInsets.only(bottom: 8),
-      children: _projects!
+      children: projects
           .map(
             (p) => Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -783,15 +863,16 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   Widget _teamPanel() {
-    if (_orgs.isEmpty) return const SizedBox.shrink();
+    final orgs = _visibleOrgs;
+    if (orgs.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: 104,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        itemCount: _orgs.length,
+        itemCount: orgs.length,
         separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (context, i) {
-          final org = _orgs[i];
+          final org = orgs[i];
           final canManage = _manageableOrgIds.contains(org.id);
           return SizedBox(
             width: 286,
@@ -885,6 +966,28 @@ class _ProjectsPageState extends State<ProjectsPage> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _searchBar() {
+    if ((_projects ?? const <Project>[]).isEmpty && _orgs.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final hasQuery = _search.text.trim().isNotEmpty;
+    return TextField(
+      controller: _search,
+      decoration: InputDecoration(
+        hintText: '搜索团队 / 项目 / 负责人',
+        isDense: true,
+        prefixIcon: const Icon(Icons.search_rounded),
+        suffixIcon: hasQuery
+            ? IconButton(
+                tooltip: '清除搜索',
+                icon: const Icon(Icons.close_rounded),
+                onPressed: _search.clear,
+              )
+            : null,
       ),
     );
   }
