@@ -8127,6 +8127,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         isExpanded: true,
         value: value,
         iconSize: 16,
+        menuMaxHeight: 320,
         style: CcType.code(size: 11.5, color: CcColors.text),
         items: items,
         onChanged: onChanged,
@@ -8151,7 +8152,11 @@ class _WorkspacePageState extends State<WorkspacePage>
             child: Text('All branches'),
           ),
           const DropdownMenuItem(value: '', child: Text('Current branch')),
-          for (final r in logRefs) DropdownMenuItem(value: r, child: Text(r)),
+          for (final r in logRefs)
+            DropdownMenuItem(
+              value: r,
+              child: Text(r, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
         ],
         onChanged: (v) {
           setState(() {
@@ -8180,7 +8185,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         value: effectiveAuthor,
         items: [
           const DropdownMenuItem(value: '', child: Text('All users')),
-          for (final a in authors) DropdownMenuItem(value: a, child: Text(a)),
+          for (final a in authors)
+            DropdownMenuItem(
+              value: a,
+              child: Text(a, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
         ],
         onChanged: (v) => setState(() => _logAuthorFilter = v ?? ''),
       ),

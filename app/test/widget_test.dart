@@ -264,6 +264,32 @@ void main() {
     );
   });
 
+  test('workspace git log filter menus are width constrained', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final filters = source.substring(
+      source.indexOf('Widget _logFilterDropdown({'),
+      source.indexOf('// _logPathFilterChip'),
+    );
+
+    expect(filters, contains('menuMaxHeight: 320'));
+    expect(
+      filters,
+      isNot(contains('DropdownMenuItem(value: r, child: Text(r))')),
+    );
+    expect(
+      filters,
+      isNot(contains('DropdownMenuItem(value: a, child: Text(a))')),
+    );
+    expect(
+      filters,
+      contains('Text(r, maxLines: 1, overflow: TextOverflow.ellipsis)'),
+    );
+    expect(
+      filters,
+      contains('Text(a, maxLines: 1, overflow: TextOverflow.ellipsis)'),
+    );
+  });
+
   test('terminal paste guards mounted before writing to the pty', () {
     final source = File('lib/screens/terminal_pane.dart').readAsStringSync();
 
