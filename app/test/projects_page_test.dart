@@ -521,6 +521,17 @@ void main() {
     );
   });
 
+  test('responsive control width never exceeds the available width', () {
+    expect(
+      responsiveControlWidth(const BoxConstraints(maxWidth: 180), 260),
+      180,
+    );
+    expect(
+      responsiveControlWidth(const BoxConstraints(maxWidth: 320), 260),
+      260,
+    );
+  });
+
   test('sole project owner map only includes projects with one owner', () {
     ProjectDetail detail({
       required String name,
@@ -642,6 +653,36 @@ void main() {
     await tester.pump();
     expect(button('新建团队').onPressed, isNotNull);
     expect(button('新建项目').onPressed, isNotNull);
+  });
+
+  testWidgets('team workspace creation controls shrink on compact widths', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(240, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final teamFieldWidth = tester.getSize(find.byType(TextField).at(0)).width;
+    final projectFieldWidth = tester
+        .getSize(find.byType(TextField).at(1))
+        .width;
+    final dropdownWidth = tester
+        .getSize(find.byType(DropdownButton<String>))
+        .width;
+
+    expect(tester.takeException(), isNull);
+    expect(teamFieldWidth, lessThanOrEqualTo(180));
+    expect(projectFieldWidth, lessThanOrEqualTo(180));
+    expect(dropdownWidth, lessThanOrEqualTo(180));
   });
 
   testWidgets('project sheet disables repo binding until a repo is entered', (

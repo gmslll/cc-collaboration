@@ -224,6 +224,12 @@ bool canUpsertProjectMemberRole(
   return true;
 }
 
+double responsiveControlWidth(BoxConstraints constraints, double preferred) {
+  final maxWidth = constraints.maxWidth;
+  if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
+  return maxWidth < preferred ? maxWidth : preferred;
+}
+
 Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   Iterable<ProjectDetail> details,
 ) {
@@ -485,73 +491,82 @@ class _ProjectsPageState extends State<ProjectsPage> {
               },
             ),
             const SizedBox(height: 14),
-            Wrap(
-              runSpacing: 8,
-              spacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: 260,
-                  child: TextField(
-                    controller: _orgName,
-                    decoration: const InputDecoration(
-                      hintText: '新团队名称',
-                      isDense: true,
-                      prefixIcon: Icon(Icons.groups_rounded),
-                    ),
-                    onSubmitted: (_) => _createOrg(),
-                  ),
-                ),
-                FilledButton.icon(
-                  onPressed: _canCreateOrg ? _createOrg : null,
-                  icon: const Icon(Icons.group_add_rounded, size: 18),
-                  label: const Text('新建团队'),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 260,
-                  child: TextField(
-                    controller: _name,
-                    decoration: const InputDecoration(
-                      hintText: '新项目名称',
-                      isDense: true,
-                      prefixIcon: Icon(Icons.create_new_folder_rounded),
-                    ),
-                    onSubmitted: (_) => _create(),
-                  ),
-                ),
-                if (_manageableOrgs.isNotEmpty)
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 240),
-                    child: DropdownButton<String>(
-                      value: _selectedOrgId ?? '',
-                      isExpanded: true,
-                      items: [
-                        const DropdownMenuItem(
-                          value: '',
-                          child: Text('我的默认团队'),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final fieldWidth = responsiveControlWidth(constraints, 260);
+                final teamPickerWidth = responsiveControlWidth(
+                  constraints,
+                  240,
+                );
+                return Wrap(
+                  runSpacing: 8,
+                  spacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextField(
+                        controller: _orgName,
+                        decoration: const InputDecoration(
+                          hintText: '新团队名称',
+                          isDense: true,
+                          prefixIcon: Icon(Icons.groups_rounded),
                         ),
-                        ..._manageableOrgs.map(
-                          (o) => DropdownMenuItem(
-                            value: o.id,
-                            child: Text(
-                              o.name,
-                              key: ValueKey('project-create-team-${o.id}'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                        onSubmitted: (_) => _createOrg(),
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _canCreateOrg ? _createOrg : null,
+                      icon: const Icon(Icons.group_add_rounded, size: 18),
+                      label: const Text('新建团队'),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextField(
+                        controller: _name,
+                        decoration: const InputDecoration(
+                          hintText: '新项目名称',
+                          isDense: true,
+                          prefixIcon: Icon(Icons.create_new_folder_rounded),
+                        ),
+                        onSubmitted: (_) => _create(),
+                      ),
+                    ),
+                    if (_manageableOrgs.isNotEmpty)
+                      SizedBox(
+                        width: teamPickerWidth,
+                        child: DropdownButton<String>(
+                          value: _selectedOrgId ?? '',
+                          isExpanded: true,
+                          items: [
+                            const DropdownMenuItem(
+                              value: '',
+                              child: Text('我的默认团队'),
                             ),
-                          ),
+                            ..._manageableOrgs.map(
+                              (o) => DropdownMenuItem(
+                                value: o.id,
+                                child: Text(
+                                  o.name,
+                                  key: ValueKey('project-create-team-${o.id}'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ],
+                          onChanged: (v) => setState(() => _selectedOrgId = v),
                         ),
-                      ],
-                      onChanged: (v) => setState(() => _selectedOrgId = v),
+                      ),
+                    FilledButton.icon(
+                      onPressed: _canCreateProject ? _create : null,
+                      icon: const Icon(Icons.add_rounded, size: 18),
+                      label: const Text('新建项目'),
                     ),
-                  ),
-                FilledButton.icon(
-                  onPressed: _canCreateProject ? _create : null,
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: const Text('新建项目'),
-                ),
-              ],
+                  ],
+                );
+              },
             ),
           ],
         ),
