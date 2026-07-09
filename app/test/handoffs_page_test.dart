@@ -116,6 +116,66 @@ void main() {
     expect(find.text('old@x'), findsNothing);
   });
 
+  testWidgets('handoff account switch ignores stale list and online users', (
+    tester,
+  ) async {
+    final oldClient = _SwitchDelayedHandoffsClient();
+    final newClient = _SwitchDelayedHandoffsClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: HandoffsPage(
+            client: oldClient,
+            config: AppConfig('http://127.0.0.1:1', 'old', 'old@x', const {}),
+            showTerminal: false,
+            enableEvents: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(oldClient.handoffsStarted, isTrue);
+    expect(oldClient.onlineStarted, isTrue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: HandoffsPage(
+            client: newClient,
+            config: AppConfig('http://127.0.0.1:1', 'new', 'new@x', const {}),
+            showTerminal: false,
+            enableEvents: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(newClient.handoffsStarted, isTrue);
+    expect(newClient.onlineStarted, isTrue);
+
+    newClient.completeHandoffs([
+      _handoff('new', sender: 'new-sender@x', headline: 'New inbox handoff'),
+    ]);
+    newClient.completeOnline(['new-online@x']);
+    await tester.pumpAndSettle();
+    expect(find.text('new-sender@x'), findsOneWidget);
+    expect(find.text('new-online@x'), findsOneWidget);
+
+    oldClient.completeHandoffs([
+      _handoff('old', sender: 'old-sender@x', headline: 'Old inbox handoff'),
+    ]);
+    oldClient.completeOnline(['old-online@x']);
+    await tester.pumpAndSettle();
+
+    expect(find.text('new-sender@x'), findsOneWidget);
+    expect(find.text('new-online@x'), findsOneWidget);
+    expect(find.text('old-sender@x'), findsNothing);
+    expect(find.text('old-online@x'), findsNothing);
+  });
+
   testWidgets('handoff list search matches team recipients', (tester) async {
     final client = _ImmediateHandoffsClient([
       _handoff(
@@ -228,6 +288,41 @@ class _ViewDelayedHandoffsClient extends RelayClient {
   void complete(String view, List<ListItem> items) {
     final request = _requests[view];
     if (request != null && !request.isCompleted) request.complete(items);
+  }
+}
+
+class _SwitchDelayedHandoffsClient extends RelayClient {
+  _SwitchDelayedHandoffsClient() : super('http://127.0.0.1', 'tok');
+
+  final _handoffsCompleter = Completer<List<ListItem>>();
+  final _onlineCompleter = Completer<List<OnlineUser>>();
+  bool handoffsStarted = false;
+  bool onlineStarted = false;
+
+  @override
+  Future<List<ListItem>> handoffs({String as = 'recipient'}) {
+    handoffsStarted = true;
+    return _handoffsCompleter.future;
+  }
+
+  @override
+  Future<List<OnlineUser>> onlineUsers() {
+    onlineStarted = true;
+    return _onlineCompleter.future;
+  }
+
+  void completeHandoffs(List<ListItem> items) {
+    if (!_handoffsCompleter.isCompleted) {
+      _handoffsCompleter.complete(items);
+    }
+  }
+
+  void completeOnline(List<String> identities) {
+    if (_onlineCompleter.isCompleted) return;
+    _onlineCompleter.complete([
+      for (final identity in identities)
+        OnlineUser.fromJson({'identity': identity, 'online': true}),
+    ]);
   }
 }
 

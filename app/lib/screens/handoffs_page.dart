@@ -55,6 +55,8 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   StreamSubscription<SseEvent>? _sse;
   Set<String> _online = {};
   int _refreshGeneration = 0;
+  int _onlineGeneration = 0;
+  int _eventGeneration = 0;
   bool _listCollapsed = Prefs.getBool('inbox.list');
   bool _termCollapsed = Prefs.getBool('inbox.term');
   double _listWidth = Prefs.getDouble('inbox.listWidth', def: 340);
@@ -69,19 +71,46 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     super.initState();
     _refresh();
     _loadOnline();
-    if (widget.enableEvents) {
-      _sse = subscribeEvents(
-        _cfg.relayUrl,
-        _cfg.token,
-        _cfg.identity,
-      ).listen(_onSse, onError: (_) {});
+    _connectEvents();
+  }
+
+  @override
+  void didUpdateWidget(covariant HandoffsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_relayContextChanged(oldWidget)) {
+      _refreshGeneration++;
+      _onlineGeneration++;
+      _eventGeneration++;
+      _sse?.cancel();
+      _sse = null;
+      setState(() {
+        _error = null;
+        _loading = true;
+        _inbox = const [];
+        _selected = null;
+        _online = {};
+      });
+      _refresh();
+      _loadOnline();
+      _connectEvents();
+      return;
+    }
+    if (oldWidget.enableEvents != widget.enableEvents) {
+      _eventGeneration++;
+      _sse?.cancel();
+      _sse = null;
+      _connectEvents();
     }
   }
 
   Future<void> _loadOnline() async {
+    final generation = ++_onlineGeneration;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     try {
       final users = await _client.onlineUsers();
-      if (mounted) {
+      if (_isCurrentOnlineLoad(generation, relayUrl, token, identity)) {
         setState(
           () => _online = users
               .where((u) => u.online)
@@ -91,6 +120,51 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       }
     } catch (_) {}
   }
+
+  void _connectEvents() {
+    _sse?.cancel();
+    _sse = null;
+    final generation = ++_eventGeneration;
+    if (!widget.enableEvents) return;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    _sse = subscribeEvents(relayUrl, token, identity).listen((ev) {
+      if (!_isCurrentEventStream(generation, relayUrl, token, identity)) return;
+      _onSse(ev);
+    }, onError: (_) {});
+  }
+
+  bool _relayContextChanged(HandoffsPage oldWidget) =>
+      oldWidget.client != widget.client ||
+      oldWidget.config.relayUrl != _cfg.relayUrl ||
+      oldWidget.config.token != _cfg.token ||
+      oldWidget.config.identity != _cfg.identity;
+
+  bool _isCurrentOnlineLoad(
+    int generation,
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      generation == _onlineGeneration &&
+      _cfg.relayUrl == relayUrl &&
+      _cfg.token == token &&
+      _cfg.identity == identity;
+
+  bool _isCurrentEventStream(
+    int generation,
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      widget.enableEvents &&
+      generation == _eventGeneration &&
+      _cfg.relayUrl == relayUrl &&
+      _cfg.token == token &&
+      _cfg.identity == identity;
 
   @override
   void dispose() {
