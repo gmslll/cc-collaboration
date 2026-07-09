@@ -2206,18 +2206,17 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
   }
 
-  // _loadMembers builds the candidate list for "指派给成员": self + the current
-  // assignee + direct project members + team owner/admin effective project
-  // managers. Display names come from project/team member payloads (degrades to
-  // raw identity). The online set is best-effort and drives ONLY the green dot;
-  // arbitrary online strangers are not added to the assignable pool.
+  // _loadMembers builds the candidate list for "指派给成员": self + direct
+  // project members + team owner/admin effective project managers, matching the
+  // relay's assignee validation. Display names come from project/team member
+  // payloads (degrades to raw identity). The online set is best-effort and
+  // drives ONLY the green dot; arbitrary online strangers are not added.
   Future<void> _loadMembers() async {
     setState(() {
       _loadingMembers = true;
       _membersError = null;
     });
     final self = _selfIdentity;
-    final cur = (widget.todo.assigneeIdentity ?? '').trim();
     final online = <String>{};
     final names = <String, String>{};
     void rememberName(String raw, [String name = '']) {
@@ -2258,9 +2257,6 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         : const <OrganizationMember>[];
 
     rememberName(self);
-    // Keep the current assignee selectable even if they lost access; use the
-    // todo's assignee_display_name overlay so this fallback row stays readable.
-    rememberName(cur, currentAssigneeCandidateName(widget.todo));
     for (final m in projectMembers) {
       rememberName(m.identity, m.displayName);
     }
@@ -2269,7 +2265,6 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     }
     final ids = assignableTodoMemberIds(
       selfIdentity: self,
-      currentAssignee: cur,
       projectMembers: projectMembers,
       organizationMembers: orgMembers,
     );
