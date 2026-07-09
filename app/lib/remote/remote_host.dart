@@ -24,6 +24,19 @@ class RemoteRoot {
   const RemoteRoot(this.name, this.path, this.workspace, [this.projectId = '']);
 }
 
+bool remoteGitFilePathAllowed(String? file) {
+  final raw = (file ?? '').trim();
+  if (raw.isEmpty) return false;
+  final path = normalizePathSeparators(raw);
+  if (path.startsWith('/') || path.startsWith('//')) return false;
+  if (RegExp(r'^[A-Za-z]:/').hasMatch(path)) return false;
+  if (path.startsWith(':(')) return false; // git pathspec magic
+  for (final part in path.split('/')) {
+    if (part.isEmpty || part == '.' || part == '..') return false;
+  }
+  return true;
+}
+
 // _isHighSurrogate reports whether [u] is the leading half of a UTF-16 surrogate
 // pair, so backlog replay never splits an astral char (emoji) across two frames.
 bool _isHighSurrogate(int u) => u >= 0xd800 && u <= 0xdbff;
@@ -963,7 +976,7 @@ class RemoteHost extends RemoteChannel {
     final path = await _safePath(f['path'] as String?);
     final file = f['file'] as String?;
     if (to == null) return;
-    if (path == null || file == null || file.contains('..')) {
+    if (path == null || !remoteGitFilePathAllowed(file)) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
       return;
     }
@@ -972,7 +985,7 @@ class RemoteHost extends RemoteChannel {
       final full = f['full'] == true;
       final diff = await gitDiffFileWorking(
         path,
-        file,
+        file!,
         context: full ? 999999 : 3,
       );
       send({'t': 'git.diff.ok', 'to': to, 'file': file, 'diff': diff});
@@ -1015,18 +1028,24 @@ class RemoteHost extends RemoteChannel {
     }
     final file = f['file'] as String?;
     final branch = f['branch'] as String?;
+    final isFileOp =
+        op == 'git.stage' || op == 'git.unstage' || op == 'git.discard';
+    if (isFileOp && !remoteGitFilePathAllowed(file)) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
     try {
       switch (op) {
         case 'git.stage':
-          if (file != null) await gitStageFiles(path, [file]);
+          await gitStageFiles(path, [file!]);
         case 'git.unstage':
-          if (file != null) await gitUnstageFiles(path, [file]);
+          await gitUnstageFiles(path, [file!]);
         case 'git.stageAll':
           await gitStageAll(path);
         case 'git.unstageAll':
           await gitUnstageAll(path);
         case 'git.discard':
-          if (file != null) await gitRestore(path, file);
+          await gitRestore(path, file!);
         case 'git.discardAll':
           await gitRestoreChanges(path, await gitChanges(path));
         case 'git.commit':

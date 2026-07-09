@@ -52,6 +52,16 @@ void main() {
     expect(roots['items'], [containsPair('project_id', 'relay-project')]);
   });
 
+  test('remote git file path gate rejects traversal and pathspec magic', () {
+    expect(remoteGitFilePathAllowed('lib/main.dart'), isTrue);
+    expect(remoteGitFilePathAllowed('dir.with.dots/file.txt'), isTrue);
+    expect(remoteGitFilePathAllowed('../outside.txt'), isFalse);
+    expect(remoteGitFilePathAllowed('/tmp/outside.txt'), isFalse);
+    expect(remoteGitFilePathAllowed(r'C:\tmp\outside.txt'), isFalse);
+    expect(remoteGitFilePathAllowed(':(top)outside.txt'), isFalse);
+    expect(remoteGitFilePathAllowed('dir//file.txt'), isFalse);
+  });
+
   test(
     'remote fs.write rejects paths escaping root through symlinks',
     () async {
@@ -86,6 +96,30 @@ void main() {
       expect(File('${outside.path}/owned.txt').existsSync(), isFalse);
     },
   );
+
+  test('remote git.stage rejects unsafe file path before git runs', () async {
+    final root = await Directory.systemTemp.createTemp('cc-remote-git-root');
+    addTearDown(() => root.delete(recursive: true));
+    final host = _TestRemoteHost(
+      sessions: const [],
+      roots: [RemoteRoot('repo', root.path, 'ws')],
+    );
+    addTearDown(host.dispose);
+
+    host.onFrame({
+      't': 'git.stage',
+      'from': 8,
+      'path': root.path,
+      'file': '../outside.txt',
+    });
+    for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(host.sent, [
+      {'t': 'git.err', 'to': 8, 'msg': 'forbidden'},
+    ]);
+  });
 
   test('remote term.open wakes a deferred restored session', () {
     final session = TerminalSession('', '')..deferred = true;
