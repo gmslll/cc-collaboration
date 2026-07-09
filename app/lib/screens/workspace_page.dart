@@ -98,10 +98,20 @@ bool workspaceCommitActionEnabled({
 List<OnlineUser> onlineSendSelectableUsers(
   Iterable<OnlineUser> users,
   String selfIdentity,
-) => [
-  for (final user in users)
-    if (user.online && !sameIdentity(user.identity, selfIdentity)) user,
-];
+) {
+  final seen = <String>{};
+  final selectable = <OnlineUser>[];
+  for (final user in users) {
+    final key = identityLookupKey(user.identity);
+    if (!user.online ||
+        key.isEmpty ||
+        sameIdentity(user.identity, selfIdentity)) {
+      continue;
+    }
+    if (seen.add(key)) selectable.add(user);
+  }
+  return selectable;
+}
 
 bool onlineSendIdentitySelected(String? selected, String identity) =>
     selected != null && sameIdentity(selected, identity);

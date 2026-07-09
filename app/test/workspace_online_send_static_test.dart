@@ -17,6 +17,23 @@ void main() {
     expect([for (final user in users) user.identity], ['teammate@x']);
   });
 
+  test(
+    'online send selectable users skip blanks and normalized duplicates',
+    () {
+      final users = onlineSendSelectableUsers([
+        OnlineUser.fromJson({'identity': 'teammate@x', 'online': true}),
+        OnlineUser.fromJson({'identity': ' Teammate@X ', 'online': true}),
+        OnlineUser.fromJson({'identity': '   ', 'online': true}),
+        OnlineUser.fromJson({'identity': 'ops@x', 'online': true}),
+      ], 'me@x');
+
+      expect(
+        [for (final user in users) user.identity],
+        ['teammate@x', 'ops@x'],
+      );
+    },
+  );
+
   test('online send selected user comparison is identity-normalized', () {
     expect(onlineSendIdentitySelected(' Dev@X ', 'dev@x'), isTrue);
     expect(onlineSendIdentitySelected(null, 'dev@x'), isFalse);
