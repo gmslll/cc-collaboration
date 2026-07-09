@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'identity.dart';
 import 'session_kv.dart';
 
 // Session is the active relay auth: where + who + token. It comes from an
@@ -18,11 +19,11 @@ class Session {
   });
 
   Session copyWith({bool? isAdmin}) => Session(
-        relayUrl: relayUrl,
-        token: token,
-        identity: identity,
-        isAdmin: isAdmin ?? this.isAdmin,
-      );
+    relayUrl: relayUrl,
+    token: token,
+    identity: identity,
+    isAdmin: isAdmin ?? this.isAdmin,
+  );
 }
 
 class SavedAccount {
@@ -39,18 +40,18 @@ class SavedAccount {
   });
 
   Session toSession() => Session(
-        relayUrl: relayUrl,
-        token: token,
-        identity: identity,
-        isAdmin: isAdmin,
-      );
+    relayUrl: relayUrl,
+    token: token,
+    identity: identity,
+    isAdmin: isAdmin,
+  );
 
   Map<String, dynamic> toJson() => {
-        'relay_url': relayUrl,
-        'token': token,
-        'identity': identity,
-        'is_admin': isAdmin,
-      };
+    'relay_url': relayUrl,
+    'token': token,
+    'identity': identity,
+    'is_admin': isAdmin,
+  };
 
   static SavedAccount? fromJson(Object? v) {
     if (v is! Map) return null;
@@ -66,6 +67,14 @@ class SavedAccount {
     );
   }
 }
+
+bool savedAccountMatchesSession(
+  SavedAccount account, {
+  required String? relayUrl,
+  required String? identity,
+}) =>
+    account.relayUrl == (relayUrl ?? '') &&
+    sameIdentity(account.identity, identity ?? '');
 
 // SessionStore persists a logged-in session via a per-platform key-value backend
 // (OS secure store on desktop/mobile, browser localStorage on web — see
@@ -130,7 +139,12 @@ class SessionStore {
         isAdmin: s.isAdmin,
       ),
       for (final a in list)
-        if (a.relayUrl != s.relayUrl || a.identity != s.identity) a,
+        if (!savedAccountMatchesSession(
+          a,
+          relayUrl: s.relayUrl,
+          identity: s.identity,
+        ))
+          a,
     ];
     await kvWrite(
       _accountsKey,

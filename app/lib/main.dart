@@ -347,13 +347,20 @@ class _HomeShellState extends State<HomeShell> {
               child: Row(
                 children: [
                   Icon(
-                    a.identity == currentIdentity && a.relayUrl == currentRelay
+                    savedAccountMatchesSession(
+                          a,
+                          relayUrl: currentRelay,
+                          identity: currentIdentity,
+                        )
                         ? Icons.check_circle_rounded
                         : Icons.account_circle_rounded,
                     size: 20,
                     color:
-                        a.identity == currentIdentity &&
-                            a.relayUrl == currentRelay
+                        savedAccountMatchesSession(
+                          a,
+                          relayUrl: currentRelay,
+                          identity: currentIdentity,
+                        )
                         ? CcColors.accent
                         : CcColors.muted,
                   ),
