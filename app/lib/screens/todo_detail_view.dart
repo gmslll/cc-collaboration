@@ -99,6 +99,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   bool _saving = false;
   bool _uploading = false;
   bool _commenting = false;
+  bool _deleting = false;
   // Body starts in read-only display mode (TodoBodyView, images inlined);
   // clicking it swaps to the live MarkdownLiteEditor for editing, and losing
   // focus swaps back — same split as the plan's "编辑态/展示态" design so
@@ -154,6 +155,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
         _saving = false;
         _uploading = false;
         _commenting = false;
+        _deleting = false;
         _resumingSession = false;
       });
       _loadFull();
@@ -530,6 +532,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
       snack(context, '你对这条待办没有删除权限');
       return;
     }
+    if (_deleting) return;
     final client = _client;
     final id = _id;
     final ok = await showDialog<bool>(
@@ -552,6 +555,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
     if (ok != true) return;
     if (!_isCurrentTodoClient(client, id)) return;
     if (!mounted) return;
+    setState(() => _deleting = true);
     try {
       await client.deleteTodo(id);
       if (!_isCurrentTodoClient(client, id)) return;
@@ -560,6 +564,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
       if (_isCurrentTodoClient(client, id)) {
         if (!mounted) return;
         snack(context, '删除失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _deleting = false);
       }
     }
   }
@@ -728,10 +736,16 @@ class TodoDetailViewState extends State<TodoDetailView> {
               ),
             if (_access.canDelete)
               IconButton(
-                icon: const Icon(Icons.delete_outline_rounded, size: 19),
+                icon: _deleting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.delete_outline_rounded, size: 19),
                 tooltip: '删除待办',
                 visualDensity: VisualDensity.compact,
-                onPressed: _delete,
+                onPressed: _deleting ? null : _delete,
               ),
           ],
         ),

@@ -180,6 +180,53 @@ void main() {
     expect(client.postedComments, ['td-comment:ship it']);
     expect(find.byIcon(Icons.send_rounded), findsOneWidget);
   });
+
+  testWidgets('delete action ignores duplicate taps while pending', (
+    tester,
+  ) async {
+    final client = _DelayedTodoClient(delayDelete: true);
+    final todo = _todo('td-delete', 'delete title');
+    var deleted = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(
+            client: client,
+            todo: todo,
+            onDeleted: () => deleted++,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    client.completeTodo('td-delete', todo);
+    await tester.pumpAndSettle();
+
+    Finder deleteButton() =>
+        find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '删除待办');
+
+    await tester.tap(deleteButton());
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+
+    expect(client.deleteCalls, 1);
+    expect(tester.widget<IconButton>(deleteButton()).onPressed, isNull);
+
+    await tester.tap(deleteButton());
+    await tester.pump();
+    expect(client.deleteCalls, 1);
+    expect(deleted, 0);
+
+    client.completeDelete();
+    await tester.pumpAndSettle();
+
+    expect(client.deleteCalls, 1);
+    expect(deleted, 1);
+    expect(tester.widget<IconButton>(deleteButton()).onPressed, isNotNull);
+  });
 }
 
 Todo _todo(
@@ -210,17 +257,21 @@ class _DelayedTodoClient extends RelayClient {
   _DelayedTodoClient({
     this.delayComments = false,
     this.delayPostComment = false,
+    this.delayDelete = false,
   }) : super('http://127.0.0.1', 'tok');
 
   final bool delayComments;
   final bool delayPostComment;
+  final bool delayDelete;
 
   final requestedTodos = <String>[];
   final requestedComments = <String>[];
   final postedComments = <String>[];
+  int deleteCalls = 0;
   final _todos = <String, Completer<Todo>>{};
   final _comments = <String, Completer<List<TodoComment>>>{};
   final _posts = <String, Completer<TodoComment>>{};
+  final _delete = Completer<void>();
 
   @override
   Future<Todo> todo(String id) {
@@ -248,6 +299,13 @@ class _DelayedTodoClient extends RelayClient {
     return completer.future;
   }
 
+  @override
+  Future<void> deleteTodo(String id) {
+    deleteCalls++;
+    if (!delayDelete) return Future.value();
+    return _delete.future;
+  }
+
   void completeTodo(String id, Todo todo) {
     _todos[id]!.complete(todo);
   }
@@ -258,5 +316,9 @@ class _DelayedTodoClient extends RelayClient {
 
   void completePost(String id, String body) {
     _posts['$id:$body']!.complete(_comment('me@x', body));
+  }
+
+  void completeDelete() {
+    if (!_delete.isCompleted) _delete.complete();
   }
 }
