@@ -124,6 +124,53 @@ func TestRoleLabelsAreLocalizedInManagementUI(t *testing.T) {
 	}
 }
 
+func TestRelayUIChromeUsesLocalizedTeamCopy(t *testing.T) {
+	htmlBytes, err := os.ReadFile("ui/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsBytes, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBytes)
+	js := string(jsBytes)
+	requiredHTML := []string{
+		`<html lang="zh-CN">`,
+		`data-view="organizations">团队</button>`,
+		`data-view="projects">项目</button>`,
+		`data-view="account">账号</button>`,
+		`data-view="admin">管理</button>`,
+		`data-view="workspaces">工作区</button>`,
+		`<h2 id="list-title">收件箱</h2>`,
+		`<h2>选择一个 handoff</h2>`,
+		`<span>状态</span>`,
+		`<h3 id="comments-title">评论</h3>`,
+		`<h2 id="orgs-title">团队</h2>`,
+		`负责人/管理员可邀请成员。`,
+	}
+	for _, want := range requiredHTML {
+		if !strings.Contains(html, want) {
+			t.Fatalf("relay UI html is missing localized copy %q", want)
+		}
+	}
+	requiredJS := []string{
+		`els.onlineCount.textContent = ` + "`${online} 在线`" + `;`,
+		"els.onlineList.innerHTML = `<p class=\"muted\">暂无已知用户。</p>`;",
+		"els.commentsList.innerHTML = `<p class=\"muted\">还没有评论。</p>`;",
+		`if (view === "sender") return "已发送";`,
+		`if (view === "project") return state.projectID ? ` + "`项目 · ${currentProjectLabel()}`" + ` : "项目 handoff";`,
+		`const base = ` + "`显示 ${shown} 条，共加载 ${loaded} 条`" + `;`,
+		`return org?.name || id || "默认团队";`,
+		`负责人 · ${escapeHTML(org.owner_identity || "-")} · ${escapeHTML(org.id)}`,
+	}
+	for _, want := range requiredJS {
+		if !strings.Contains(js, want) {
+			t.Fatalf("relay UI js is missing localized copy %q", want)
+		}
+	}
+}
+
 func TestOrganizationManageUIProtectsProjectSoleOwners(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {

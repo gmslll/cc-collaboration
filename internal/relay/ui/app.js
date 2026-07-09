@@ -491,15 +491,15 @@ function renderList() {
 
 function renderOnline(users) {
   const online = users.filter((user) => user.online).length;
-  els.onlineCount.textContent = `${online} online`;
+  els.onlineCount.textContent = `${online} 在线`;
   if (!users.length) {
-    els.onlineList.innerHTML = `<p class="muted">No known users.</p>`;
+    els.onlineList.innerHTML = `<p class="muted">暂无已知用户。</p>`;
     return;
   }
   els.onlineList.innerHTML = users.map((user) => `
     <div class="online-user">
       <span>${escapeHTML(user.identity)}</span>
-      <span class="presence ${user.online ? "online" : ""}" title="${user.online ? "Online" : "Offline"}"></span>
+      <span class="presence ${user.online ? "online" : ""}" title="${user.online ? "在线" : "离线"}"></span>
     </div>
   `).join("");
 }
@@ -544,7 +544,7 @@ function renderWorkspaces() {
     ? `${items.length} 个项目 · 点击「复制启动命令」到终端粘贴执行。`
     : "未配置 workspace。用 `cc-handoff workspace add <name> <github-url|path>` 添加。";
   if (!items.length) {
-    els.workspaceList.innerHTML = `<div class="empty-list">${escapeHTML("No workspaces configured.")}</div>`;
+    els.workspaceList.innerHTML = `<div class="empty-list">${escapeHTML("还没有配置工作区。")}</div>`;
     return;
   }
   els.workspaceList.innerHTML = items.map((ws, i) => `
@@ -658,7 +658,7 @@ function renderAPIDelta(delta) {
 
 function renderComments() {
   if (!state.comments.length) {
-    els.commentsList.innerHTML = `<p class="muted">No comments yet.</p>`;
+    els.commentsList.innerHTML = `<p class="muted">还没有评论。</p>`;
     return;
   }
   els.commentsList.innerHTML = state.comments.map((comment) => `
@@ -674,14 +674,14 @@ function renderComments() {
 
 function setConnectedLabel() {
   const connected = Boolean(state.token);
-  els.sessionLabel.textContent = connected ? (state.me?.identity || "connected") : "Not connected";
+  els.sessionLabel.textContent = connected ? (state.me?.identity || "已连接") : "未连接";
   els.signoutButton.classList.toggle("hidden", !connected);
 }
 
 function authError(err) {
   const msg = err.message || String(err);
   if (msg.includes("401") || msg.includes("invalid token") || msg.includes("missing bearer")) {
-    els.authMessage.textContent = "Token rejected by relay.";
+    els.authMessage.textContent = "Relay 拒绝了这个 token。";
   }
   toast(msg);
 }
@@ -694,26 +694,26 @@ function toast(message) {
 }
 
 function viewTitle(view) {
-  if (view === "sender") return "Sent";
-  if (view === "history") return "History";
-  if (view === "project") return state.projectID ? `Project · ${currentProjectLabel()}` : "Project handoffs";
-  if (view === "all") return "All handoffs";
-  return "Inbox";
+  if (view === "sender") return "已发送";
+  if (view === "history") return "历史";
+  if (view === "project") return state.projectID ? `项目 · ${currentProjectLabel()}` : "项目 handoff";
+  if (view === "all") return "全部 handoff";
+  return "收件箱";
 }
 
 function currentProjectLabel() {
   const project = state.projects.find((p) => p.id === state.projectID)
     || (state.me?.projects || []).find((p) => p.id === state.projectID);
-  return state.projectLabel || project?.name || state.projectID || "Project";
+  return state.projectLabel || project?.name || state.projectID || "项目";
 }
 
 function listMetaLabel(shown, loaded) {
-  const base = `${shown} shown from ${loaded} loaded`;
+  const base = `显示 ${shown} 条，共加载 ${loaded} 条`;
   if (state.view === "project") {
-    return state.projectID ? `${base} · ${currentProjectLabel()}` : `${base} · all visible projects`;
+    return state.projectID ? `${base} · ${currentProjectLabel()}` : `${base} · 全部可见项目`;
   }
   if (state.view === "all") {
-    return `${base} · admin scope`;
+    return `${base} · 管理员范围`;
   }
   return base;
 }
@@ -952,7 +952,7 @@ function organizationRole(id) {
 
 function organizationName(id) {
   const org = state.organizations.find((o) => o.id === id) || (state.me?.organizations || []).find((o) => o.id === id);
-  return org?.name || id || "Default team";
+  return org?.name || id || "默认团队";
 }
 
 function canManageOrganization(role) {
@@ -965,7 +965,7 @@ function isOnlineIdentity(identity) {
 
 function memberPresence(identity) {
   const online = isOnlineIdentity(identity);
-  return `<span class="presence ${online ? "online" : ""}" title="${online ? "Online" : "Offline"}"></span>`;
+  return `<span class="presence ${online ? "online" : ""}" title="${online ? "在线" : "离线"}"></span>`;
 }
 
 function roleTone(role) {
@@ -1116,7 +1116,7 @@ function inlineWarning(message) {
 
 function renderOrganizations() {
   if (!state.organizations.length) {
-    els.orgsList.innerHTML = `<div class="empty-list">还没有团队。新建一个团队，然后在 Projects 里创建项目。</div>`;
+    els.orgsList.innerHTML = `<div class="empty-list">还没有团队。新建一个团队，然后在项目页创建项目。</div>`;
     return;
   }
   els.orgsList.innerHTML = state.organizations.map((org) => {
@@ -1133,7 +1133,7 @@ function renderOrganizations() {
             ${canManage ? `<button class="secondary" type="button" data-action="manage-org">管理</button>` : ""}
           </div>
         </div>
-        <div class="muted org-meta">owner · ${escapeHTML(org.owner_identity || "-")} · ${escapeHTML(org.id)}</div>
+        <div class="muted org-meta">负责人 · ${escapeHTML(org.owner_identity || "-")} · ${escapeHTML(org.id)}</div>
         <div class="aux-card-body hidden" data-body></div>
       </div>`;
   }).join("");
