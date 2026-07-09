@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:app/remote/remote_client.dart';
 import 'package:app/screens/remote_workspace_page.dart';
 import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +32,21 @@ void main() {
       closeTo(243.6, 0.001),
     );
     expect(remoteWorkspaceMenuMaxHeight(const Size(320, 220)), 160);
+  });
+
+  test('remote worktree remove target falls back to path name', () {
+    expect(
+      remoteWorktreeRemoveTarget(
+        RemoteWorktree('/repo/.worktrees/feat-mobile', ''),
+      ),
+      'feat-mobile',
+    );
+    expect(
+      remoteWorktreeRemoveTarget(
+        RemoteWorktree('/repo/.worktrees/feat-team', '  feat/team  '),
+      ),
+      'feat/team',
+    );
   });
 
   testWidgets('RemoteCommitDialog returns trimmed message and push choice', (

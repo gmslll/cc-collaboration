@@ -44,6 +44,11 @@ double remoteWorkspaceMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+String remoteWorktreeRemoveTarget(RemoteWorktree worktree) {
+  final branch = worktree.branch.trim();
+  return branch.isEmpty ? worktree.name : branch;
+}
+
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
 // desktop must have "cast to phone" enabled (workspace toolbar).
@@ -4276,14 +4281,14 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
   }
 
   Future<void> _remove(RemoteWorktree w) async {
-    final label = w.branch.isEmpty ? w.name : w.branch;
-    final ok = await confirm(context, '删除 worktree $label？', okLabel: '删除');
+    final target = remoteWorktreeRemoveTarget(w);
+    final ok = await confirm(context, '删除 worktree $target？', okLabel: '删除');
     if (!mounted) return;
     if (ok) {
       widget.client.removeWorktree(
         widget.project.workspace,
         widget.project.name,
-        w.branch,
+        target,
       );
     }
   }
