@@ -419,12 +419,17 @@ class _TodosPageState extends State<TodosPage> {
                 const SizedBox(height: 12),
                 DropdownButton<String>(
                   isExpanded: true,
+                  menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(ctx)),
                   value: ws,
                   items: workspaces
                       .map(
                         (w) => DropdownMenuItem(
                           value: w.name,
-                          child: Text(w.name),
+                          child: Text(
+                            w.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       )
                       .toList(),
@@ -437,13 +442,18 @@ class _TodosPageState extends State<TodosPage> {
                 const SizedBox(height: 8),
                 DropdownButton<String>(
                   isExpanded: true,
+                  menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(ctx)),
                   hint: const Text('project'),
                   value: proj,
                   items: projsFor(ws)
                       .map(
                         (p) => DropdownMenuItem(
                           value: p.name,
-                          child: Text(p.name),
+                          child: Text(
+                            p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       )
                       .toList(),

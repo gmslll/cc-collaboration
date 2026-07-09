@@ -124,6 +124,27 @@ void main() {
     expect(remote, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('todo assistant workspace menus are width constrained', () {
+    final source = File('lib/screens/todos_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<void> _summonTodoAssistant()'),
+      source.indexOf('Future<void> _linearConfigDialog()'),
+    );
+
+    expect(dialog, contains('menuMaxHeight: todoMenuMaxHeight'));
+    expect(dialog, isNot(contains('child: Text(w.name),')));
+    expect(dialog, isNot(contains('child: Text(p.name),')));
+    expect(
+      dialog,
+      contains('w.name,\n                            maxLines: 1'),
+    );
+    expect(
+      dialog,
+      contains('p.name,\n                            maxLines: 1'),
+    );
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('remote shared workspace dynamic labels are width constrained', () {
     final remote = File(
       'lib/screens/remote_workspace_page.dart',
