@@ -167,6 +167,30 @@ void main() {
     expect(helper, isNot(contains('showDialog<bool>')));
   });
 
+  test('workspace branch create and rename dialogs own controllers', () {
+    final source = File(
+      'lib/screens/workspace/branch_dialog.dart',
+    ).readAsStringSync();
+    final createHelper = source.substring(
+      source.indexOf('Future<void> _createBranch('),
+      source.indexOf('Future<void> _renameBranch('),
+    );
+    final renameHelper = source.substring(
+      source.indexOf('Future<void> _renameBranch('),
+      source.indexOf('Future<void> _deleteBranch('),
+    );
+
+    expect(createHelper, contains('showDialog<WorkspaceBranchCreateDraft>'));
+    expect(createHelper, contains('WorkspaceBranchCreateDialog('));
+    expect(createHelper, isNot(contains('TextEditingController')));
+    expect(createHelper, isNot(contains('showDialog<bool>')));
+
+    expect(renameHelper, contains('showDialog<String>'));
+    expect(renameHelper, contains('WorkspaceBranchRenameDialog('));
+    expect(renameHelper, isNot(contains('TextEditingController')));
+    expect(renameHelper, isNot(contains('showDialog<bool>')));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });

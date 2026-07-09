@@ -9,6 +9,129 @@ class _BranchNode {
   GitBranch? branch;
 }
 
+class WorkspaceBranchCreateDraft {
+  final String branch;
+  final String startRef;
+
+  const WorkspaceBranchCreateDraft({
+    required this.branch,
+    required this.startRef,
+  });
+}
+
+class WorkspaceBranchCreateDialog extends StatefulWidget {
+  final String initialBranch;
+  final String initialStartRef;
+
+  const WorkspaceBranchCreateDialog({
+    super.key,
+    this.initialBranch = '',
+    this.initialStartRef = '',
+  });
+
+  @override
+  State<WorkspaceBranchCreateDialog> createState() =>
+      _WorkspaceBranchCreateDialogState();
+}
+
+class _WorkspaceBranchCreateDialogState
+    extends State<WorkspaceBranchCreateDialog> {
+  late final TextEditingController _branchCtl = TextEditingController(
+    text: widget.initialBranch,
+  );
+  late final TextEditingController _startCtl = TextEditingController(
+    text: widget.initialStartRef,
+  );
+
+  @override
+  void dispose() {
+    _branchCtl.dispose();
+    _startCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    WorkspaceBranchCreateDraft(
+      branch: _branchCtl.text,
+      startRef: _startCtl.text,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新建分支'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _branchCtl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '分支名'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _startCtl,
+            decoration: const InputDecoration(labelText: '起点 ref(可选)'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建并切换')),
+      ],
+    );
+  }
+}
+
+class WorkspaceBranchRenameDialog extends StatefulWidget {
+  final String initialName;
+
+  const WorkspaceBranchRenameDialog({super.key, required this.initialName});
+
+  @override
+  State<WorkspaceBranchRenameDialog> createState() =>
+      _WorkspaceBranchRenameDialogState();
+}
+
+class _WorkspaceBranchRenameDialogState
+    extends State<WorkspaceBranchRenameDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重命名分支'),
+      content: TextField(
+        controller: _ctl,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: '新分支名'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('重命名')),
+      ],
+    );
+  }
+}
+
 class _BranchDialog extends StatefulWidget {
   final ProjectCfg project;
   final Future<void> Function(GitBranch branch) onCheckout;
@@ -236,45 +359,19 @@ class _BranchListPaneState extends State<_BranchListPane> {
   }
 
   Future<void> _createBranch() async {
-    final ctl = TextEditingController(text: _query.trim());
     final current = widget.branches
         .where((b) => b.current)
         .map((b) => b.name)
         .firstOrNull;
-    final startCtl = TextEditingController(text: current ?? '');
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<WorkspaceBranchCreateDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建分支'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '分支名'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: startCtl,
-              decoration: const InputDecoration(labelText: '起点 ref(可选)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建并切换'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchCreateDialog(
+        initialBranch: _query.trim(),
+        initialStartRef: current ?? '',
       ),
     );
-    if (ok != true) return;
-    final branch = ctl.text.trim();
+    if (draft == null) return;
+    final branch = draft.branch.trim();
     if (branch.isEmpty) {
       if (mounted) snack(context, '分支名不能为空');
       return;
@@ -282,37 +379,19 @@ class _BranchListPaneState extends State<_BranchListPane> {
     await _run(
       () => widget.onCreate(
         branch,
-        startCtl.text.trim().isEmpty ? null : startCtl.text.trim(),
+        draft.startRef.trim().isEmpty ? null : draft.startRef.trim(),
       ),
     );
   }
 
   Future<void> _renameBranch(GitBranch b) async {
     if (b.remote) return;
-    final ctl = TextEditingController(text: b.name);
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重命名分支'),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: '新分支名'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('重命名'),
-          ),
-        ],
-      ),
+      builder: (_) => WorkspaceBranchRenameDialog(initialName: b.name),
     );
-    if (ok != true) return;
-    final next = ctl.text.trim();
+    if (raw == null) return;
+    final next = raw.trim();
     if (next.isEmpty || next == b.name) return;
     await _run(() => widget.onRename(b.name, next));
   }
@@ -745,9 +824,11 @@ class _BranchListPaneState extends State<_BranchListPane> {
     final meta = [
       if (b.upstream.isNotEmpty) 'tracks ${b.upstream}',
       if (b.lastHash.isNotEmpty)
-        [b.lastHash, if (age.isNotEmpty) age, b.lastSubject]
-            .where((s) => s.isNotEmpty)
-            .join(' · '),
+        [
+          b.lastHash,
+          if (age.isNotEmpty) age,
+          b.lastSubject,
+        ].where((s) => s.isNotEmpty).join(' · '),
     ].join(' · ');
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
