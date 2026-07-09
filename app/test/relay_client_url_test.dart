@@ -240,6 +240,31 @@ void main() {
     });
     expect(seen[7]['body'], {'assignee_identity': ''});
   });
+
+  test('auth trims identity but preserves password bytes', () async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    Map<String, dynamic>? body;
+    server.listen((req) async {
+      expect(req.uri.path, '/v1/register');
+      body =
+          jsonDecode(await utf8.decoder.bind(req).join())
+              as Map<String, dynamic>;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(
+        jsonEncode({'token': 'tok', 'identity': body?['identity']}),
+      );
+      await req.response.close();
+    });
+
+    final result = await register(
+      'http://127.0.0.1:${server.port}',
+      ' dev@x ',
+      '  password  ',
+    );
+
+    expect(result.identity, 'dev@x');
+    expect(body, {'identity': 'dev@x', 'password': '  password  '});
+  });
 }
 
 Map<String, dynamic> _todoResponse() => {

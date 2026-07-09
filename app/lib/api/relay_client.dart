@@ -373,23 +373,23 @@ class RelayClient {
   }
 
   Future<OrganizationDetail> organization(String id) async {
-    final r = await _dio.get('/v1/orgs/${_pathSegment(id)}');
+    final r = await _dio.get('/v1/orgs/${_idSegment(id)}');
     return OrganizationDetail.fromJson(r.data as Map<String, dynamic>);
   }
 
   Future<Organization> createOrganization(String name) async {
-    final r = await _dio.post('/v1/orgs', data: {'name': name});
+    final r = await _dio.post('/v1/orgs', data: {'name': name.trim()});
     return Organization.fromJson(r.data as Map<String, dynamic>);
   }
 
   Future<void> addOrganizationMember(String id, String identity, String role) =>
       _dio.post(
-        '/v1/orgs/${_pathSegment(id)}/members',
-        data: {'identity': identity, 'role': role},
+        '/v1/orgs/${_idSegment(id)}/members',
+        data: {'identity': identity.trim(), 'role': role.trim()},
       );
 
-  Future<void> removeOrganizationMember(String id, String identity) => _dio
-      .delete('/v1/orgs/${_pathSegment(id)}/members/${_pathSegment(identity)}');
+  Future<void> removeOrganizationMember(String id, String identity) =>
+      _dio.delete('/v1/orgs/${_idSegment(id)}/members/${_idSegment(identity)}');
 
   // --- per-identity synced settings (see internal/relay/settings.go) ---
 
@@ -417,7 +417,7 @@ class RelayClient {
   // userSessions fetches another user's currently-open sessions (empty if
   // they're offline / haven't published).
   Future<List<RemoteSession>> userSessions(String identity) async {
-    final r = await _dio.get('/v1/users/${_pathSegment(identity)}/sessions');
+    final r = await _dio.get('/v1/users/${_idSegment(identity)}/sessions');
     return _asList(
       r.data,
       'sessions',
@@ -435,11 +435,11 @@ class RelayClient {
   }) => _dio.post(
     '/v1/messages',
     data: {
-      'recipient': recipient,
-      'session_id': sessionId,
+      'recipient': recipient.trim(),
+      'session_id': sessionId.trim(),
       'body': body,
-      'project': ?project,
-      'project_id': ?projectId,
+      'project': ?_trimOrNull(project),
+      'project_id': ?_trimOrNull(projectId),
     },
   );
 
@@ -452,44 +452,42 @@ class RelayClient {
   }
 
   Future<Project> createProject(String name, {String? orgId}) async {
+    final teamId = _trimOrNull(orgId);
     final r = await _dio.post(
       '/v1/projects',
-      data: {
-        'name': name,
-        if (orgId != null && orgId.isNotEmpty) 'org_id': orgId,
-      },
+      data: {'name': name.trim(), 'org_id': ?teamId},
     );
     return Project.fromJson(r.data as Map<String, dynamic>);
   }
 
   Future<ProjectDetail> project(String id) async {
-    final r = await _dio.get('/v1/projects/${_pathSegment(id)}');
+    final r = await _dio.get('/v1/projects/${_idSegment(id)}');
     return ProjectDetail.fromJson(r.data as Map<String, dynamic>);
   }
 
   Future<void> renameProject(String id, String name) =>
-      _dio.patch('/v1/projects/${_pathSegment(id)}', data: {'name': name});
+      _dio.patch('/v1/projects/${_idSegment(id)}', data: {'name': name.trim()});
 
   Future<void> deleteProject(String id) =>
-      _dio.delete('/v1/projects/${_pathSegment(id)}');
+      _dio.delete('/v1/projects/${_idSegment(id)}');
 
   Future<void> mapRepo(String id, String repoName) => _dio.post(
-    '/v1/projects/${_pathSegment(id)}/repos',
-    data: {'repo_name': repoName},
+    '/v1/projects/${_idSegment(id)}/repos',
+    data: {'repo_name': repoName.trim()},
   );
 
   Future<void> unmapRepo(String id, String repoName) => _dio.delete(
-    '/v1/projects/${_pathSegment(id)}/repos',
-    queryParameters: {'repo_name': repoName},
+    '/v1/projects/${_idSegment(id)}/repos',
+    queryParameters: {'repo_name': repoName.trim()},
   );
 
   Future<void> addMember(String id, String identity, String role) => _dio.post(
-    '/v1/projects/${_pathSegment(id)}/members',
-    data: {'identity': identity, 'role': role},
+    '/v1/projects/${_idSegment(id)}/members',
+    data: {'identity': identity.trim(), 'role': role.trim()},
   );
 
   Future<void> removeMember(String id, String identity) => _dio.delete(
-    '/v1/projects/${_pathSegment(id)}/members/${_pathSegment(identity)}',
+    '/v1/projects/${_idSegment(id)}/members/${_idSegment(identity)}',
   );
 
   Future<void> changePassword(String oldPw, String newPw) =>
@@ -528,7 +526,7 @@ class RelayClient {
     final r = await _dio.post(
       '/v1/users',
       data: {
-        'identity': identity,
+        'identity': identity.trim(),
         if (password != null && password.isNotEmpty) 'password': password,
         'is_admin': isAdmin,
       },
@@ -538,22 +536,24 @@ class RelayClient {
   }
 
   Future<void> setUserAdmin(String identity, bool isAdmin) => _dio.post(
-    '/v1/users/${_pathSegment(identity)}/admin',
+    '/v1/users/${_idSegment(identity)}/admin',
     data: {'is_admin': isAdmin},
   );
 
   Future<void> setUserDisabled(String identity, bool disabled) => _dio.post(
-    '/v1/users/${_pathSegment(identity)}/disable',
+    '/v1/users/${_idSegment(identity)}/disable',
     data: {'disabled': disabled},
   );
 
   Future<String> resetPassword(String identity) async {
     final r = await _dio.post(
-      '/v1/users/${_pathSegment(identity)}/reset-password',
+      '/v1/users/${_idSegment(identity)}/reset-password',
     );
     return (r.data['password'] ?? '').toString();
   }
 }
+
+String _idSegment(String value) => _pathSegment(value.trim());
 
 String _pathSegment(String value) => Uri.encodeComponent(value);
 
@@ -600,7 +600,7 @@ Future<LoginResult> _authPost(
   try {
     final r = await dio.post(
       path,
-      data: {'identity': identity, 'password': password},
+      data: {'identity': identity.trim(), 'password': password},
     );
     final d = (r.data as Map).cast<String, dynamic>();
     return LoginResult(

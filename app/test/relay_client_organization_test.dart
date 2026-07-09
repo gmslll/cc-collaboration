@@ -81,4 +81,82 @@ void main() {
       'DELETE /v1/orgs/org1/members/dev%40x',
     ]);
   });
+
+  test('normalizes organization and project management fields', () async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final seen = <Map<String, dynamic>>[];
+    server.listen((req) async {
+      Map<String, dynamic> body = const {};
+      if (req.method != 'GET' && req.method != 'DELETE') {
+        final raw = await utf8.decoder.bind(req).join();
+        body = raw.isEmpty ? const {} : jsonDecode(raw) as Map<String, dynamic>;
+      }
+      seen.add({
+        'method': req.method,
+        'path': req.uri.path,
+        'query': req.uri.queryParameters,
+        'body': body,
+      });
+      req.response.headers.contentType = ContentType.json;
+      if (req.uri.path == '/v1/orgs' && req.method == 'POST') {
+        req.response.write(
+          jsonEncode({
+            'id': 'org1',
+            'name': 'Kunlun',
+            'owner_identity': 'owner@x',
+            'role': 'owner',
+          }),
+        );
+      } else if (req.uri.path == '/v1/projects' && req.method == 'POST') {
+        req.response.write(
+          jsonEncode({
+            'id': 'p1',
+            'org_id': 'org1',
+            'name': 'Backend',
+            'owner_identity': 'owner@x',
+            'role': 'owner',
+          }),
+        );
+      } else {
+        req.response.write(jsonEncode({'ok': true}));
+      }
+      await req.response.close();
+    });
+
+    final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
+    await client.createOrganization(' Kunlun ');
+    await client.addOrganizationMember(' org1 ', ' dev@x ', ' admin ');
+    await client.removeOrganizationMember(' org1 ', ' dev@x ');
+    await client.createProject(' Backend ', orgId: ' org1 ');
+    await client.renameProject(' p1 ', ' Backend API ');
+    await client.mapRepo(' p1 ', ' owner/repo ');
+    await client.unmapRepo(' p1 ', ' owner/repo ');
+    await client.addMember(' p1 ', ' dev@x ', ' member ');
+    await client.removeMember(' p1 ', ' dev@x ');
+
+    expect(seen[0]['body'], {'name': 'Kunlun'});
+    expect(seen[1], {
+      'method': 'POST',
+      'path': '/v1/orgs/org1/members',
+      'query': <String, String>{},
+      'body': {'identity': 'dev@x', 'role': 'admin'},
+    });
+    expect(seen[2]['path'], '/v1/orgs/org1/members/dev%40x');
+    expect(seen[3]['body'], {'name': 'Backend', 'org_id': 'org1'});
+    expect(seen[4], {
+      'method': 'PATCH',
+      'path': '/v1/projects/p1',
+      'query': <String, String>{},
+      'body': {'name': 'Backend API'},
+    });
+    expect(seen[5]['body'], {'repo_name': 'owner/repo'});
+    expect(seen[6]['query'], {'repo_name': 'owner/repo'});
+    expect(seen[7], {
+      'method': 'POST',
+      'path': '/v1/projects/p1/members',
+      'query': <String, String>{},
+      'body': {'identity': 'dev@x', 'role': 'member'},
+    });
+    expect(seen[8]['path'], '/v1/projects/p1/members/dev%40x');
+  });
 }
