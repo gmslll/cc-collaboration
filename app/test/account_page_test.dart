@@ -42,6 +42,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('password change ignores duplicate submit taps', (tester) async {
+    final client = _DelayedAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(_fieldWithLabel('当前密码'), 'old-password');
+    await tester.enterText(_fieldWithLabel('新密码(≥8 位)'), 'new-password');
+    final button = find.widgetWithText(FilledButton, '更新密码');
+    await tester.tap(button);
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(client.passwordChangeCalls, 1);
+    expect(find.text('更新中'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton).first).onPressed,
+      isNull,
+    );
+
+    client.completePasswordChange();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 5));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('token creation completion after unmount is ignored', (
     tester,
   ) async {
@@ -69,6 +101,40 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('token creation ignores duplicate submit taps', (tester) async {
+    final client = _DelayedAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(_fieldWithHint('标签(如 laptop)'), 'laptop');
+    final button = find.widgetWithText(TextButton, '生成');
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(client.tokenCreateCalls, 1);
+    expect(find.text('生成中'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, '生成中'))
+          .onPressed,
+      isNull,
+    );
+
+    client.completeTokenCreate('raw-token');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Finder _fieldWithLabel(String label) => find.byWidgetPredicate(
@@ -86,6 +152,8 @@ class _DelayedAccountPageFakeClient extends RelayClient {
   final _tokenCompleter = Completer<String>();
   bool passwordChangeStarted = false;
   bool tokenCreateStarted = false;
+  int passwordChangeCalls = 0;
+  int tokenCreateCalls = 0;
 
   @override
   Future<List<MachineToken>> tokens() async => const [];
@@ -93,12 +161,14 @@ class _DelayedAccountPageFakeClient extends RelayClient {
   @override
   Future<void> changePassword(String oldPw, String newPw) {
     passwordChangeStarted = true;
+    passwordChangeCalls++;
     return _passwordCompleter.future;
   }
 
   @override
   Future<String> createToken(String label) {
     tokenCreateStarted = true;
+    tokenCreateCalls++;
     return _tokenCompleter.future;
   }
 

@@ -60,6 +60,8 @@ class _AccountPageState extends State<AccountPage> {
   final _newPw = TextEditingController();
   final _label = TextEditingController();
   List<MachineToken>? _tokens;
+  bool _changingPw = false;
+  bool _creatingToken = false;
 
   // local config.toml editor (desktop only).
   AppConfig? _cfg;
@@ -348,10 +350,12 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _changePw() async {
+    if (_changingPw) return;
     if (_newPw.text.length < 8) {
       snack(context, '新密码至少 8 位');
       return;
     }
+    setState(() => _changingPw = true);
     try {
       await widget.client.changePassword(_oldPw.text, _newPw.text);
       if (!mounted) return;
@@ -360,12 +364,15 @@ class _AccountPageState extends State<AccountPage> {
       snack(context, '密码已更新');
     } catch (e) {
       if (mounted) snack(context, '改密码失败: ${errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _changingPw = false);
     }
   }
 
   Future<void> _createToken() async {
     final label = _label.text.trim();
-    if (label.isEmpty) return;
+    if (label.isEmpty || _creatingToken) return;
+    setState(() => _creatingToken = true);
     try {
       final raw = await widget.client.createToken(label);
       if (!mounted) return;
@@ -374,6 +381,8 @@ class _AccountPageState extends State<AccountPage> {
       if (mounted) _showToken(raw);
     } catch (e) {
       if (mounted) snack(context, '生成失败: ${errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _creatingToken = false);
     }
   }
 
@@ -510,8 +519,8 @@ class _AccountPageState extends State<AccountPage> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: FilledButton(
-                    onPressed: _changePw,
-                    child: const Text('更新密码'),
+                    onPressed: _changingPw ? null : _changePw,
+                    child: Text(_changingPw ? '更新中' : '更新密码'),
                   ),
                 ),
               ],
@@ -542,8 +551,8 @@ class _AccountPageState extends State<AccountPage> {
                       ),
                     ),
                     TextButton(
-                      onPressed: _createToken,
-                      child: const Text('生成'),
+                      onPressed: _creatingToken ? null : _createToken,
+                      child: Text(_creatingToken ? '生成中' : '生成'),
                     ),
                   ],
                 ),
