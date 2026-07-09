@@ -73,6 +73,37 @@ void main() {
     expect(projectEditableRoleValue('custom'), 'member');
   });
 
+  test('project list role label uses conservative fallback', () {
+    Project project({String role = '', String owner = 'owner@x'}) =>
+        Project.fromJson({
+          'id': 'p1',
+          'name': 'P',
+          'owner_identity': owner,
+          'role': role,
+        });
+
+    expect(
+      projectListRoleLabel(
+        project(role: 'member'),
+        isAdmin: false,
+        identity: 'viewer@x',
+      ),
+      '成员',
+    );
+    expect(
+      projectListRoleLabel(project(), isAdmin: true, identity: 'admin@x'),
+      '管理员',
+    );
+    expect(
+      projectListRoleLabel(project(), isAdmin: false, identity: ' owner@x '),
+      '负责人',
+    );
+    expect(
+      projectListRoleLabel(project(), isAdmin: false, identity: 'member@x'),
+      '只读',
+    );
+  });
+
   test('organization member picker label localizes roles', () {
     final named = OrganizationMember.fromJson({
       'identity': 'dev@x',

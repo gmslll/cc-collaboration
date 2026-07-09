@@ -56,6 +56,21 @@ String projectEditableRoleValue(String role) {
   return 'member';
 }
 
+String projectListRoleLabel(
+  Project project, {
+  required bool isAdmin,
+  required String identity,
+}) {
+  final role = project.role.trim();
+  if (role.isNotEmpty) return projectRoleLabel(role);
+  if (isAdmin) return projectRoleLabel('admin');
+  if (identity.trim().isNotEmpty &&
+      project.ownerIdentity.trim() == identity.trim()) {
+    return projectRoleLabel('owner');
+  }
+  return projectRoleLabel('viewer');
+}
+
 String organizationMemberPickerLabel(OrganizationMember member) {
   final role = organizationRoleLabel(member.role, isAdmin: false);
   if (member.displayName.isEmpty) return '${member.identity} · $role';
@@ -303,15 +318,6 @@ class _ProjectsPageState extends State<ProjectsPage> {
     return id;
   }
 
-  String _projectRoleLabel(Project p) {
-    final role = p.role.isEmpty
-        ? (_isAdmin
-              ? 'admin'
-              : (p.ownerIdentity == _identity ? 'owner' : 'member'))
-        : p.role;
-    return projectRoleLabel(role);
-  }
-
   List<Organization> get _manageableOrgs =>
       _orgs.where((org) => _manageableOrgIds.contains(org.id)).toList();
 
@@ -466,7 +472,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '${_teamName(p.orgId)} · ${_projectRoleLabel(p)} · ${projectOwnerLabel(p.ownerIdentity)}',
+                            '${_teamName(p.orgId)} · ${projectListRoleLabel(p, isAdmin: _isAdmin, identity: _identity)} · ${projectOwnerLabel(p.ownerIdentity)}',
                             style: const TextStyle(
                               fontFamily: CcType.mono,
                               color: CcColors.muted,
