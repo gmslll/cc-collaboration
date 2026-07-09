@@ -530,6 +530,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
     if (body.isEmpty) return;
     try {
       await _client.postTodoComment(_id, body);
+      if (!mounted) return;
       _commentCtl.clear();
       await reloadComments();
     } catch (e) {
@@ -549,9 +550,11 @@ class TodoDetailViewState extends State<TodoDetailView> {
     if (res == null || res.files.isEmpty || !mounted) return;
     setState(() => _uploading = true);
     for (final f in res.files) {
+      if (!mounted) return;
       try {
         Uint8List? bytes = f.bytes;
         bytes ??= f.path != null ? await File(f.path!).readAsBytes() : null;
+        if (!mounted) return;
         if (bytes == null) continue;
         await _client.uploadTodoAttachment(_id, f.name, bytes);
       } catch (e) {

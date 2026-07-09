@@ -1022,6 +1022,30 @@ void main() {
     );
     expectGuardBefore(
       between(
+        'lib/screens/todo_detail_view.dart',
+        'Future<void> _postComment()',
+        'Future<void> _pickAndUploadAttachments()',
+      ),
+      'await _client.postTodoComment',
+      '_commentCtl.clear',
+    );
+    final attachmentUpload = between(
+      'lib/screens/todo_detail_view.dart',
+      'Future<void> _pickAndUploadAttachments()',
+      'Color _statusColor(',
+    );
+    expectGuardBefore(
+      attachmentUpload,
+      'for (final f in res.files)',
+      'File(f.path!).readAsBytes',
+    );
+    expectGuardBefore(
+      attachmentUpload,
+      'File(f.path!).readAsBytes',
+      '_client.uploadTodoAttachment',
+    );
+    expectGuardBefore(
+      between(
         'lib/widgets/todo_property_controls.dart',
         'class _GroupControlState',
         '@override\n  Widget build',
