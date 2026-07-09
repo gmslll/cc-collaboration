@@ -148,7 +148,7 @@ class AppConfig {
     final linear = (map['linear_personal_token'] ?? '').toString();
     final githubToken = (map['github_token'] ?? '').toString();
     final terminalApp = (map['terminal_app'] ?? '').toString();
-    final publishSessions = map['publish_sessions'] == true;
+    final publishSessions = parsePublishSessionsFlag(map);
     final claudeCommand = (map['claude_command'] ?? '').toString();
     final codexCommand = (map['codex_command'] ?? '').toString();
     final repos = <String, String>{};
@@ -207,6 +207,9 @@ class AppConfig {
       publishSessions,
     );
   }
+
+  static bool parsePublishSessionsFlag(Map<String, dynamic> map) =>
+      map['publish_sessions'] == true;
 }
 
 String _home() => homeDir();
