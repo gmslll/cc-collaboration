@@ -36,6 +36,12 @@ void main() {
     );
   });
 
+  test('admin secret dialog width fits compact screens', () {
+    expect(adminSecretDialogWidth(const Size(320, 760)), 288);
+    expect(adminSecretDialogWidth(const Size(1024, 760)), 420);
+    expect(adminSecretDialogWidth(const Size(360, 760), preferred: 460), 328);
+  });
+
   test('admin user labels prefer display names with identity subtitle', () {
     final named = User.fromJson({
       'identity': 'admin@x',
@@ -219,6 +225,11 @@ void main() {
     tester,
   ) async {
     final client = _DelayedCreateAdminPageFakeClient();
+    tester.view.physicalSize = const Size(320, 560);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await tester.pumpWidget(
       MaterialApp(
         theme: ccTheme(),
@@ -244,6 +255,20 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(dialogTitle.maxLines, 1);
     expect(dialogTitle.overflow, TextOverflow.ellipsis);
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final secretScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(secretScroll.scrollDirection, Axis.horizontal);
   });
 
   testWidgets('stale admin user load cannot overwrite a newer reload', (

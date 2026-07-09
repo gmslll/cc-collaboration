@@ -19,6 +19,12 @@ double adminCreateOptionWidth(BoxConstraints constraints, double preferred) {
   return maxWidth < preferred ? maxWidth : preferred;
 }
 
+double adminSecretDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class AdminPage extends StatefulWidget {
   final RelayClient client;
   const AdminPage({super.key, required this.client});
@@ -152,23 +158,36 @@ class _AdminPageState extends State<AdminPage> {
   void _showSecret(String title, String secret) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        content: SelectableText(
-          secret,
-          style: const TextStyle(fontFamily: CcType.mono),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Clipboard.setData(ClipboardData(text: secret)),
-            child: const Text('复制'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: adminSecretDialogWidth(size),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SelectableText(
+                secret,
+                style: const TextStyle(fontFamily: CcType.mono),
+              ),
+            ),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Clipboard.setData(ClipboardData(text: secret)),
+              child: const Text('复制'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
     );
   }
 
