@@ -7092,6 +7092,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       '${c.shortHash} · ${c.subject}\n\n这会把该提交应用到当前分支。',
     );
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitCherryPick(p.path, c.hash);
@@ -7112,6 +7113,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       '${c.shortHash} · ${c.subject}\n\n这会创建一个反向提交。',
     );
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitRevertCommit(p.path, c.hash);

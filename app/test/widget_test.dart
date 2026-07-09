@@ -957,6 +957,22 @@ void main() {
       'setState(() => _gitLoading = true)',
     );
     expectGuardBefore(
+      between(
+        '@override\n  Future<void> _cherryPickCommit',
+        '@override\n  Future<void> _revertCommit',
+      ),
+      'if (!ok) return;',
+      'setState(() => _gitLoading = true)',
+    );
+    expectGuardBefore(
+      between(
+        '@override\n  Future<void> _revertCommit',
+        'Future<void> _selectStash',
+      ),
+      'if (!ok) return;',
+      'setState(() => _gitLoading = true)',
+    );
+    expectGuardBefore(
       between('Future<void> _renameSession(', 'List<Widget> _worktreeNodes('),
       'final v = raw.trim();',
       'setState(() => s.name',
