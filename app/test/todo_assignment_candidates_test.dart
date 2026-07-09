@@ -1,5 +1,7 @@
 import 'package:app/api/models.dart';
 import 'package:app/local/todo_assignment_candidates.dart';
+import 'package:app/screens/todos_page.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ProjectMember _projectMember(String identity, String role) =>
@@ -110,4 +112,40 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'member role pill width is capped and can shrink to available space',
+    () {
+      expect(
+        todoMemberRolePillMaxWidth(const BoxConstraints(maxWidth: 80)),
+        80,
+      );
+      expect(
+        todoMemberRolePillMaxWidth(const BoxConstraints(maxWidth: 240)),
+        128,
+      );
+      expect(todoMemberRolePillMaxWidth(const BoxConstraints()), 128);
+    },
+  );
+
+  test('custom project roles keep explainable labels for capped pills', () {
+    final members = assignableTodoMembers(
+      selfIdentity: '',
+      includeSelf: false,
+      projectMembers: [
+        _projectMember(
+          'custom@x',
+          'custom-project-assignment-role-with-a-very-long-label',
+        ),
+      ],
+      organizationMembers: const [],
+    );
+
+    expect(members, [
+      (
+        identity: 'custom@x',
+        roleLabel: '项目custom-project-assignment-role-with-a-very-long-label',
+      ),
+    ]);
+  });
 }

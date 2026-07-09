@@ -30,6 +30,15 @@ import 'todo_detail_view.dart';
 // split entirely and switches to a full-screen mobile card stream.
 const double _wideBreakpoint = 720;
 
+double todoMemberRolePillMaxWidth(
+  BoxConstraints constraints, {
+  double preferred = 128,
+}) {
+  final maxWidth = constraints.maxWidth;
+  if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
+  return maxWidth < preferred ? maxWidth : preferred;
+}
+
 // _BoardColumnDef drives both the kanban board's columns and the mobile
 // card stream's collapsible groups, so they always agree on column meaning.
 // One status = one column now (the real Linear layout this board was always
@@ -2467,7 +2476,17 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                                   ),
                                   if (role.isNotEmpty) ...[
                                     const SizedBox(width: 6),
-                                    _MemberRolePill(label: role, selected: sel),
+                                    ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth: todoMemberRolePillMaxWidth(
+                                          const BoxConstraints(),
+                                        ),
+                                      ),
+                                      child: _MemberRolePill(
+                                        label: role,
+                                        selected: sel,
+                                      ),
+                                    ),
                                   ],
                                 ],
                               ),
@@ -2475,9 +2494,20 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                           if (name.isEmpty && role.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: 3),
-                              child: _MemberRolePill(
-                                label: role,
-                                selected: sel,
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  return ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: todoMemberRolePillMaxWidth(
+                                        constraints,
+                                      ),
+                                    ),
+                                    child: _MemberRolePill(
+                                      label: role,
+                                      selected: sel,
+                                    ),
+                                  );
+                                },
                               ),
                             ),
                         ],
