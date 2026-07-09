@@ -1385,12 +1385,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     final token = _cfg.token;
     final identity = _cfg.identity;
     _relaySse = subscribeEvents(relayUrl, token, identity).listen((ev) {
-      if (!_relayConfigured ||
-          _cfg.relayUrl != relayUrl ||
-          _cfg.token != token ||
-          _cfg.identity != identity) {
-        return;
-      }
+      if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;
       _onRelayEvent(ev);
     }, onError: (_) {});
     _publishSessions();
@@ -1400,6 +1395,17 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
+  bool _isCurrentRelayIdentity(
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      _relayConfigured &&
+      _cfg.relayUrl == relayUrl &&
+      _cfg.token == token &&
+      _cfg.identity == identity;
+
   // _publishSessions advertises our open sessions only when publish_sessions is
   // enabled. Disabled still posts an empty list, clearing any older public list.
   void _publishSessions() {
@@ -1408,10 +1414,15 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> _publishSessionsNow() async {
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;
     var publish = _cfg.publishSessions;
     try {
       publish = (await AppConfig.load())?.publishSessions ?? publish;
     } catch (_) {}
+    if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;
     final list = publish
         ? [
             for (final s in terms)

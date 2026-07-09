@@ -74,6 +74,42 @@ void main() {
     expect(logout, contains('_bootstrapGeneration++;'));
   });
 
+  test('workspace session publishing ignores stale relay identity', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final relayPresence = source.substring(
+      source.indexOf('void _connectRelayPresence()'),
+      source.indexOf('// _publishSessions advertises our open sessions'),
+    );
+    final publish = source.substring(
+      source.indexOf('Future<void> _publishSessionsNow() async'),
+      source.indexOf('// _onRelayEvent acts on the cross-user message.deliver'),
+    );
+
+    expect(relayPresence, contains('bool _isCurrentRelayIdentity('));
+    expect(relayPresence, contains('_cfg.relayUrl == relayUrl'));
+    expect(relayPresence, contains('_cfg.token == token'));
+    expect(relayPresence, contains('_cfg.identity == identity'));
+    expect(
+      relayPresence,
+      contains(
+        'if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;',
+      ),
+    );
+    expect(publish, contains('final relayUrl = _cfg.relayUrl;'));
+    expect(publish, contains('final token = _cfg.token;'));
+    expect(publish, contains('final identity = _cfg.identity;'));
+    expect(
+      publish,
+      contains(
+        'if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;',
+      ),
+    );
+    expect(
+      publish.indexOf('await AppConfig.load()'),
+      lessThan(publish.lastIndexOf('_isCurrentRelayIdentity')),
+    );
+  });
+
   test('account dynamic labels and dropdown menus are constrained', () {
     final source = File('lib/screens/account_page.dart').readAsStringSync();
 
