@@ -25,6 +25,19 @@ typedef HookInstallStatus = ({
   List<String> missingEvents,
 });
 
+double accountMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.58,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 class AccountPage extends StatefulWidget {
   final RelayClient client;
   final String identity;
@@ -224,7 +237,11 @@ class _AccountPageState extends State<AccountPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           return AlertDialog(
-            title: Text('选择 ${h.name} hook'),
+            title: Text(
+              '选择 ${h.name} hook',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             content: SizedBox(
               width: 420,
               child: ConstrainedBox(
@@ -243,7 +260,12 @@ class _AccountPageState extends State<AccountPage> {
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
                         value: selected.contains(ev),
-                        title: Text(ev, style: CcType.code(size: 12.5)),
+                        title: Text(
+                          ev,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CcType.code(size: 12.5),
+                        ),
                         onChanged: (v) => setDialogState(() {
                           if (v == true) {
                             selected.add(ev);
@@ -538,7 +560,11 @@ class _AccountPageState extends State<AccountPage> {
                     (t) => ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      title: Text(t.label.isEmpty ? '(无标签)' : t.label),
+                      title: Text(
+                        t.label.isEmpty ? '(无标签)' : t.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       subtitle: Text(
                         t.id,
                         maxLines: 1,
@@ -692,6 +718,8 @@ class _AccountPageState extends State<AccountPage> {
             width: 52,
             child: Text(
               h.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
           ),
@@ -757,6 +785,9 @@ class _AccountPageState extends State<AccountPage> {
                 const Spacer(),
                 DropdownButton<String>(
                   value: _agent,
+                  menuMaxHeight: accountMenuMaxHeight(
+                    MediaQuery.sizeOf(context),
+                  ),
                   items: const [
                     DropdownMenuItem(value: 'claude', child: Text('claude')),
                     DropdownMenuItem(value: 'codex', child: Text('codex')),
@@ -780,6 +811,9 @@ class _AccountPageState extends State<AccountPage> {
                 const Spacer(),
                 DropdownButton<String>(
                   value: _terminalApp,
+                  menuMaxHeight: accountMenuMaxHeight(
+                    MediaQuery.sizeOf(context),
+                  ),
                   items: const [
                     DropdownMenuItem(value: '', child: Text('(默认)')),
                     DropdownMenuItem(

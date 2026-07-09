@@ -38,6 +38,46 @@ void main() {
     expect(source, isNot(contains('构建 \$kBuildMarker')));
   });
 
+  test('account dynamic labels and dropdown menus are constrained', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+
+    String between(String start, String end) {
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
+
+    final hookDialog = between(
+      'Future<void> _chooseHookEvents(',
+      'Future<void> _saveLocalConfig()',
+    );
+    expect(hookDialog, contains("'选择 \${h.name} hook',"));
+    expect(hookDialog, contains('maxLines: 1'));
+    expect(hookDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(hookDialog, isNot(contains('title: Text(ev, style:')));
+
+    final tokenCard = between(
+      "'机器 token(给 CLI / watch / MCP)'",
+      "if (!_isDesktop)",
+    );
+    expect(tokenCard, contains("t.label.isEmpty ? '(无标签)' : t.label"));
+    expect(tokenCard, contains('maxLines: 1'));
+    expect(tokenCard, contains('overflow: TextOverflow.ellipsis'));
+
+    final hookRow = between('Widget _hookRow(', 'Widget _localConfigCard()');
+    expect(hookRow, contains('h.name,'));
+    expect(hookRow, contains('maxLines: 1'));
+    expect(hookRow, contains('overflow: TextOverflow.ellipsis'));
+
+    final localConfig = between(
+      'Widget _localConfigCard()',
+      'Widget _cfgField(',
+    );
+    expect(localConfig, contains('menuMaxHeight: accountMenuMaxHeight'));
+  });
+
   test('remote session content previews default to hidden', () {
     expect(kRemoteShowSessionContentDefault, isFalse);
 

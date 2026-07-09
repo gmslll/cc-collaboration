@@ -8,6 +8,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('account dropdown menus are capped for compact screens', () {
+    expect(accountMenuMaxHeight(const Size(1024, 900)), 320);
+    expect(accountMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));
+    expect(accountMenuMaxHeight(const Size(320, 220)), 160);
+    expect(accountMenuMaxHeight(Size.zero), 320);
+  });
+
   testWidgets('password change completion after unmount is ignored', (
     tester,
   ) async {
