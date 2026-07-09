@@ -960,6 +960,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Map<String, List<ListItem>> _tasksByRepo = const {};
+  int _taskLoadGeneration = 0;
   // project path -> worktrees. Key absent = not loaded; value null = loading;
   // value list = loaded (possibly empty).
   final Map<String, List<Worktree>?> _worktrees = {};
@@ -1921,9 +1922,12 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 
   Future<void> _loadTasks() async {
+    final generation = ++_taskLoadGeneration;
     final client = widget.client;
     if (client == null) {
-      if (mounted) setState(() => _tasksByRepo = const {});
+      if (_isCurrentTaskLoad(generation, client)) {
+        setState(() => _tasksByRepo = const {});
+      }
       return;
     }
     try {
@@ -1939,9 +1943,16 @@ class _WorkspacePageState extends State<WorkspacePage>
       for (final it in byId.values) {
         (byRepo[it.repoName] ??= []).add(it);
       }
-      if (mounted) setState(() => _tasksByRepo = byRepo);
+      if (_isCurrentTaskLoad(generation, client)) {
+        setState(() => _tasksByRepo = byRepo);
+      }
     } catch (_) {}
   }
+
+  bool _isCurrentTaskLoad(int generation, RelayClient? client) =>
+      mounted &&
+      generation == _taskLoadGeneration &&
+      identical(client, widget.client);
 
   Future<void> _ensureWorktrees(String path) async {
     if (_worktrees.containsKey(path)) return;

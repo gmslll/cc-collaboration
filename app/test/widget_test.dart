@@ -110,6 +110,29 @@ void main() {
     );
   });
 
+  test('workspace task loading ignores stale relay clients', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final state = source.substring(
+      source.indexOf('Map<String, List<ListItem>> _tasksByRepo'),
+      source.indexOf('// Split-pane file editor'),
+    );
+    final loadTasks = source.substring(
+      source.indexOf('Future<void> _loadTasks() async'),
+      source.indexOf('Future<void> _ensureWorktrees'),
+    );
+
+    expect(state, contains('int _taskLoadGeneration = 0;'));
+    expect(loadTasks, contains('final generation = ++_taskLoadGeneration;'));
+    expect(loadTasks, contains('final client = widget.client;'));
+    expect(loadTasks, contains('bool _isCurrentTaskLoad('));
+    expect(loadTasks, contains('generation == _taskLoadGeneration'));
+    expect(loadTasks, contains('identical(client, widget.client)'));
+    expect(
+      loadTasks.indexOf('await Future.wait'),
+      lessThan(loadTasks.lastIndexOf('_isCurrentTaskLoad(generation, client)')),
+    );
+  });
+
   test('account dynamic labels and dropdown menus are constrained', () {
     final source = File('lib/screens/account_page.dart').readAsStringSync();
 
