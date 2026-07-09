@@ -76,7 +76,7 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 	// bob publishes the session alice will target, then opens an SSE stream to receive it.
 	if code, body := postJSON(t, srv.URL+"/v1/sessions", "tok-bob", map[string]any{
 		"sessions": []map[string]string{
-			{"id": "ts3", "label": "review", "project": "frontend"},
+			{"id": "ts3", "label": "review", "project": "frontend", "project_id": "project-frontend"},
 		},
 	}); code != http.StatusOK {
 		t.Fatalf("publish bob sessions: status=%d body=%s", code, body)
@@ -115,7 +115,11 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 
 	// alice sends a message targeting bob's session ts3.
 	if code, body := postJSON(t, srv.URL+"/v1/messages", "tok-alice", map[string]any{
-		"recipient": "bob@frontend", "session_id": "ts3", "body": "看下这段",
+		"recipient":  "bob@frontend",
+		"session_id": "ts3",
+		"body":       "看下这段",
+		"project":    " forged-backend ",
+		"project_id": " forged-project ",
 	}); code != http.StatusAccepted {
 		t.Fatalf("post message: status=%d body=%s", code, body)
 	}
@@ -129,6 +133,9 @@ func TestSessionRegistryAndMessage(t *testing.T) {
 	}
 	if msg.SessionID != "ts3" || msg.Body != "看下这段" {
 		t.Errorf("payload mismatch: %+v", msg)
+	}
+	if msg.Project != "frontend" || msg.ProjectID != "project-frontend" {
+		t.Errorf("project context = (%q, %q), want (frontend, project-frontend)", msg.Project, msg.ProjectID)
 	}
 }
 

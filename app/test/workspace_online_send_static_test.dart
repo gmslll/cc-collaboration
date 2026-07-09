@@ -208,6 +208,54 @@ void main() {
     expect(incomingMessageTargetIsOpen([open], closed), isFalse);
   });
 
+  test('incoming peer message project matching prefers ids and falls back', () {
+    expect(
+      incomingMessageSessionMatchesProject(
+        sessionProjectId: 'relay-backend',
+        sessionProjectName: 'Backend',
+        messageProjectId: 'relay-backend',
+        messageProjectName: 'Backend',
+      ),
+      isTrue,
+    );
+    expect(
+      incomingMessageSessionMatchesProject(
+        sessionProjectId: 'relay-frontend',
+        sessionProjectName: 'Backend',
+        messageProjectId: 'relay-backend',
+        messageProjectName: 'Backend',
+      ),
+      isFalse,
+    );
+    expect(
+      incomingMessageSessionMatchesProject(
+        sessionProjectId: '',
+        sessionProjectName: 'Backend',
+        messageProjectId: 'relay-backend',
+        messageProjectName: 'Backend',
+      ),
+      isTrue,
+    );
+    expect(
+      incomingMessageSessionMatchesProject(
+        sessionProjectId: '',
+        sessionProjectName: 'Frontend',
+        messageProjectId: 'relay-backend',
+        messageProjectName: 'Backend',
+      ),
+      isFalse,
+    );
+    expect(
+      incomingMessageSessionMatchesProject(
+        sessionProjectId: 'anything',
+        sessionProjectName: 'Anything',
+        messageProjectId: '',
+        messageProjectName: '',
+      ),
+      isTrue,
+    );
+  });
+
   test('online send action is synchronized with relay availability', () {
     expect(source, contains('void _syncOnlineSendAction()'));
     expect(source, contains('onSendToOnline = _canSendToOnline'));
@@ -300,7 +348,18 @@ void main() {
     expect(source, contains('onlineSendSessionMenuMaxHeight'));
     expect(source, contains('menuMaxHeight:'));
     expect(source, contains('incomingMessageTargetIsOpen'));
-    expect(source, contains("message: '目标会话已关闭,已挂起'"));
+    expect(source, contains('incomingMessageSessionMatchesProject'));
+    expect(source, contains('final candidates = ['));
+    expect(source, contains('for (final s in candidates)'));
+    expect(source, contains("message: '没有匹配项目的会话,已挂起'"));
+    expect(source, contains("message: '目标会话已关闭或项目不匹配,已挂起'"));
+    expect(source, contains("final project = (m['project'] ?? '').toString()"));
+    expect(
+      source,
+      contains("final projectId = (m['project_id'] ?? '').toString()"),
+    );
+    expect(source, contains("'project': project"));
+    expect(source, contains("'project_id': projectId"));
     expect(source, isNot(contains("title: Text('\$from 发来内容')")));
     expect(source, contains("'\$from 发来内容',\n              maxLines: 1"));
     expect(source, contains('overflow: TextOverflow.ellipsis'));
@@ -317,5 +376,15 @@ void main() {
     expect(source, contains('width: 92'));
     expect(source, contains('maxLines: 1'));
     expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
+
+  test('online send forwards selected remote session project context', () {
+    final dialog = source.substring(
+      source.indexOf('_showSendToOnlineUser'),
+      source.indexOf('Future<void> _loadTasks()'),
+    );
+
+    expect(dialog, contains('project: s.project'));
+    expect(dialog, contains('projectId: s.projectId'));
   });
 }

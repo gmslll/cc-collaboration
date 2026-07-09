@@ -200,6 +200,21 @@ bool incomingMessageTargetIsOpen(
   TerminalSession target,
 ) => sessions.any((session) => session.id == target.id);
 
+bool incomingMessageSessionMatchesProject({
+  required String sessionProjectId,
+  required String sessionProjectName,
+  required String messageProjectId,
+  required String messageProjectName,
+}) {
+  final msgPid = messageProjectId.trim();
+  final msgProject = messageProjectName.trim();
+  if (msgPid.isEmpty && msgProject.isEmpty) return true;
+  final sessionPid = sessionProjectId.trim();
+  if (msgPid.isNotEmpty && sessionPid.isNotEmpty) return sessionPid == msgPid;
+  final sessionProject = sessionProjectName.trim();
+  return msgProject.isNotEmpty && sessionProject == msgProject;
+}
+
 const _searchSkipDirs = {
   '.git',
   'node_modules',
@@ -601,17 +616,27 @@ class _CodeLocation {
 // (and persisted) until injected later, manually or when the target session
 // next goes idle. [sessionId] is the local session the sender targeted.
 class _ParkedMessage {
-  final String from, sessionId, body;
-  _ParkedMessage(this.from, this.sessionId, this.body);
+  final String from, sessionId, body, project, projectId;
+  _ParkedMessage(
+    this.from,
+    this.sessionId,
+    this.body, {
+    this.project = '',
+    this.projectId = '',
+  });
   Map<String, dynamic> toJson() => {
     'from': from,
     'session_id': sessionId,
     'body': body,
+    'project': project,
+    'project_id': projectId,
   };
   _ParkedMessage.fromJson(Map j)
     : from = (j['from'] ?? '').toString(),
       sessionId = (j['session_id'] ?? '').toString(),
-      body = (j['body'] ?? '').toString();
+      body = (j['body'] ?? '').toString(),
+      project = (j['project'] ?? '').toString(),
+      projectId = (j['project_id'] ?? '').toString();
 }
 
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
@@ -1592,12 +1617,20 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (body.isEmpty) return;
     final from = (m['from'] ?? '').toString();
     final sid = (m['session_id'] ?? '').toString();
+    final project = (m['project'] ?? '').toString();
+    final projectId = (m['project_id'] ?? '').toString();
     // Don't stack popups: if one is already open, park the new arrival straight
     // into the badge instead.
     if (_msgDialogOpen) {
-      _park(from, sid, body);
+      _park(from, sid, body, project: project, projectId: projectId);
     } else {
-      _showIncomingMessage(from, sid, body);
+      _showIncomingMessage(
+        from,
+        sid,
+        body,
+        project: project,
+        projectId: projectId,
+      );
     }
   }
 
@@ -1607,15 +1640,42 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _showIncomingMessage(
     String from,
     String sid,
-    String body,
-  ) async {
+    String body, {
+    String project = '',
+    String projectId = '',
+  }) async {
     if (!mounted) return;
     if (terms.isEmpty) {
       _snack('$from 发来内容,但当前没有会话可注入');
       return;
     }
+    final candidates = [
+      for (final s in terms)
+        if (_incomingMessageSessionMatchesProject(
+          s,
+          project: project,
+          projectId: projectId,
+        ))
+          s,
+    ];
+    if (candidates.isEmpty) {
+      _park(
+        from,
+        sid,
+        body,
+        project: project,
+        projectId: projectId,
+        message: '没有匹配项目的会话,已挂起',
+      );
+      return;
+    }
+    final active = activeTerm >= 0 && activeTerm < terms.length
+        ? terms[activeTerm]
+        : null;
     var target =
-        sessionById(sid) ?? terms[activeTerm.clamp(0, terms.length - 1)];
+        candidates.where((s) => s.id == sid).firstOrNull ??
+        candidates.where((s) => s == active).firstOrNull ??
+        candidates.first;
     _msgDialogOpen = true;
     final result = await showDialog<String>(
       context: context,
@@ -1649,7 +1709,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                       MediaQuery.sizeOf(ctx),
                     ),
                     items: [
-                      for (final s in terms)
+                      for (final s in candidates)
                         DropdownMenuItem(
                           value: s,
                           child: Text(
@@ -1696,20 +1756,57 @@ class _WorkspacePageState extends State<WorkspacePage>
       case 'inject':
         final liveTarget = sessionById(target.id);
         if (liveTarget == null ||
-            !incomingMessageTargetIsOpen(terms, liveTarget)) {
-          _park(from, sid, body, message: '目标会话已关闭,已挂起');
+            !incomingMessageTargetIsOpen(terms, liveTarget) ||
+            !_incomingMessageSessionMatchesProject(
+              liveTarget,
+              project: project,
+              projectId: projectId,
+            )) {
+          _park(
+            from,
+            sid,
+            body,
+            project: project,
+            projectId: projectId,
+            message: '目标会话已关闭或项目不匹配,已挂起',
+          );
           return;
         }
         liveTarget.pasteText('[来自 $from · 远程] $body', submit: false);
         _snack('已注入到 ${liveTarget.label}');
       case 'park':
-        _park(from, sid, body);
+        _park(from, sid, body, project: project, projectId: projectId);
     }
   }
 
+  bool _incomingMessageSessionMatchesProject(
+    TerminalSession session, {
+    required String project,
+    required String projectId,
+  }) {
+    final hit = _projectForFile(session.workdir)?.project;
+    return incomingMessageSessionMatchesProject(
+      sessionProjectId: hit?.projectId ?? '',
+      sessionProjectName: hit?.name ?? '',
+      messageProjectId: projectId,
+      messageProjectName: project,
+    );
+  }
+
   // _park stashes a cross-user message for later; surfaced via the toolbar badge.
-  void _park(String from, String sid, String body, {String? message}) {
-    _mutateParked(() => _parked.add(_ParkedMessage(from, sid, body)));
+  void _park(
+    String from,
+    String sid,
+    String body, {
+    String project = '',
+    String projectId = '',
+    String? message,
+  }) {
+    _mutateParked(
+      () => _parked.add(
+        _ParkedMessage(from, sid, body, project: project, projectId: projectId),
+      ),
+    );
     _snack(message ?? '已挂起,稍后处理');
   }
 
@@ -1753,7 +1850,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (i < 0) return;
     final m = _parked[i];
     _mutateParked(() => _parked.removeAt(i));
-    _showIncomingMessage(m.from, m.sessionId, m.body);
+    _showIncomingMessage(
+      m.from,
+      m.sessionId,
+      m.body,
+      project: m.project,
+      projectId: m.projectId,
+    );
   }
 
   // _showParkedList lets the user inject (处理) or discard (忽略) parked messages
@@ -1816,6 +1919,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                                           m.from,
                                           m.sessionId,
                                           m.body,
+                                          project: m.project,
+                                          projectId: m.projectId,
                                         );
                                       },
                                       child: const Text('处理'),
@@ -1950,7 +2055,13 @@ class _WorkspacePageState extends State<WorkspacePage>
               }
               Navigator.pop(ctx);
               try {
-                await client.sendMessage(selected!, s.id, text);
+                await client.sendMessage(
+                  selected!,
+                  s.id,
+                  text,
+                  project: s.project,
+                  projectId: s.projectId,
+                );
                 if (!_isCurrentRelayClient(client)) return;
                 _snack('已发送到 $selected · ${s.label},等待对方确认');
               } catch (e) {

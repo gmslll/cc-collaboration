@@ -94,4 +94,34 @@ void main() {
       'POST /v1/users/dev%2Fteam%231/reset-password',
     ]);
   });
+
+  test('sendMessage includes project context for scoped injection', () async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    Map<String, dynamic>? body;
+    server.listen((req) async {
+      body =
+          jsonDecode(await utf8.decoder.bind(req).join())
+              as Map<String, dynamic>;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode({'ok': true}));
+      await req.response.close();
+    });
+
+    final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
+    await client.sendMessage(
+      'dev@x',
+      'ts1',
+      'hello',
+      project: 'Backend',
+      projectId: 'project-1',
+    );
+
+    expect(body, {
+      'recipient': 'dev@x',
+      'session_id': 'ts1',
+      'body': 'hello',
+      'project': 'Backend',
+      'project_id': 'project-1',
+    });
+  });
 }

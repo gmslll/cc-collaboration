@@ -415,11 +415,22 @@ class RelayClient {
 
   // sendMessage delivers [body] to a specific session on [recipient]'s machine
   // (transient; the recipient's app confirms before injecting).
-  Future<void> sendMessage(String recipient, String sessionId, String body) =>
-      _dio.post(
-        '/v1/messages',
-        data: {'recipient': recipient, 'session_id': sessionId, 'body': body},
-      );
+  Future<void> sendMessage(
+    String recipient,
+    String sessionId,
+    String body, {
+    String? project,
+    String? projectId,
+  }) => _dio.post(
+    '/v1/messages',
+    data: {
+      'recipient': recipient,
+      'session_id': sessionId,
+      'body': body,
+      'project': ?project,
+      'project_id': ?projectId,
+    },
+  );
 
   Future<List<Project>> projects() async {
     final r = await _dio.get('/v1/projects');
