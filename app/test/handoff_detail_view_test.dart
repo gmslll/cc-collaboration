@@ -80,7 +80,9 @@ void main() {
   });
 
   testWidgets('handoff retract dialog cancel closes cleanly', (tester) async {
-    final client = _ActionDetailClient(_package('h1', 'me@x', 'owned handoff'));
+    final client = _ActionDetailClient(
+      _package('h1', ' Me@X ', 'owned handoff'),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
@@ -88,7 +90,7 @@ void main() {
         home: HandoffDetailView(
           client: client,
           config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
-          item: _item('h1', 'me@x', 'owned handoff'),
+          item: _item('h1', ' Me@X ', 'owned handoff'),
         ),
       ),
     );

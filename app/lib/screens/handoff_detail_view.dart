@@ -10,6 +10,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../local/cli.dart';
 import '../local/config.dart';
+import '../local/identity.dart';
 import '../local/repo_config.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -388,7 +389,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                   icon: const Icon(Icons.check_rounded, size: 18),
                   label: const Text('标记接收'),
                 ),
-                if (p.sender == _cfg.identity && _status?.state == 'pending')
+                if (sameIdentity(p.sender, _cfg.identity) &&
+                    _status?.state == 'pending')
                   OutlinedButton.icon(
                     onPressed: () => _retract(p),
                     icon: const Icon(Icons.undo_rounded, size: 18),
