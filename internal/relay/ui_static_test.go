@@ -210,6 +210,61 @@ func TestRelayUIChromeUsesLocalizedTeamCopy(t *testing.T) {
 	}
 }
 
+func TestRelayUIDisplaysDeliveryTarget(t *testing.T) {
+	htmlBytes, err := os.ReadFile("ui/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsBytes, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssBytes, err := os.ReadFile("ui/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBytes)
+	js := string(jsBytes)
+	css := string(cssBytes)
+	requiredHTML := []string{
+		`<div id="delivery-target" class="delivery-target hidden"></div>`,
+	}
+	for _, want := range requiredHTML {
+		if !strings.Contains(html, want) {
+			t.Fatalf("relay UI html is missing delivery target fragment %q", want)
+		}
+	}
+	requiredJS := []string{
+		`deliveryTarget: document.querySelector("#delivery-target"),`,
+		`renderDeliveryTarget(pkg.delivery_target);`,
+		`["Delivery Target", deliveryTargetLabel(pkg.delivery_target)],`,
+		`function renderDeliveryTarget(target) {`,
+		`function deliveryTargetParts(target) {`,
+		`const clean = String(value || "").trim();`,
+		`add("项目", target.project_id);`,
+		`add("团队", target.org_id);`,
+		`add("指定成员", target.member);`,
+		`function deliveryTargetLabel(target) {`,
+	}
+	for _, want := range requiredJS {
+		if !strings.Contains(js, want) {
+			t.Fatalf("relay UI js is missing delivery target fragment %q", want)
+		}
+	}
+	requiredCSS := []string{
+		`.delivery-target {`,
+		`.delivery-target-title {`,
+		`.delivery-target-items {`,
+		`.delivery-target-items span {`,
+		`text-overflow: ellipsis;`,
+	}
+	for _, want := range requiredCSS {
+		if !strings.Contains(css, want) {
+			t.Fatalf("relay UI css is missing delivery target fragment %q", want)
+		}
+	}
+}
+
 func TestAdminAccountsUIUsesLocalizedStatusCopy(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {

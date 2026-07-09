@@ -91,6 +91,7 @@ const els = {
   detailBadges: document.querySelector("#detail-badges"),
   detailTitle: document.querySelector("#detail-title"),
   detailSubtitle: document.querySelector("#detail-subtitle"),
+  deliveryTarget: document.querySelector("#delivery-target"),
   pickupButton: document.querySelector("#pickup-button"),
   ackButton: document.querySelector("#ack-button"),
   reassignButton: document.querySelector("#reassign-button"),
@@ -578,6 +579,7 @@ function renderDetail() {
   ].join("");
   els.detailTitle.textContent = headline;
   els.detailSubtitle.textContent = `${pkg.sender || "-"} -> ${recipientsFromPackage(pkg).join(", ") || pkg.recipient || "-"}`;
+  renderDeliveryTarget(pkg.delivery_target);
 
   els.statusState.textContent = status?.state || "-";
   els.statusCreated.textContent = formatDate(status?.created_at || pkg.created_at);
@@ -618,6 +620,7 @@ function renderMetadata(pkg) {
     ["Base SHA", pkg.repo?.base_sha],
     ["Sender", pkg.sender],
     ["Recipients", recipientsFromPackage(pkg).join(", ") || pkg.recipient],
+    ["Delivery Target", deliveryTargetLabel(pkg.delivery_target)],
     ["Created", formatDate(pkg.created_at)],
     ["Amends", pkg.amends_handoff],
     ["Responds To", pkg.responds_to],
@@ -634,6 +637,38 @@ function renderMetadata(pkg) {
       <dd>${escapeHTML(String(value))}</dd>
     </div>
   `).join("");
+}
+
+function renderDeliveryTarget(target) {
+  const parts = deliveryTargetParts(target);
+  els.deliveryTarget.classList.toggle("hidden", parts.length === 0);
+  if (!parts.length) {
+    els.deliveryTarget.innerHTML = "";
+    return;
+  }
+  els.deliveryTarget.innerHTML = `
+    <span class="delivery-target-title">团队定向</span>
+    <span class="delivery-target-items">
+      ${parts.map(([label, value]) => `<span title="${escapeAttr(label)} ${escapeAttr(value)}">${escapeHTML(label)} · ${escapeHTML(value)}</span>`).join("")}
+    </span>
+  `;
+}
+
+function deliveryTargetParts(target) {
+  if (!target) return [];
+  const parts = [];
+  const add = (label, value) => {
+    const clean = String(value || "").trim();
+    if (clean) parts.push([label, clean]);
+  };
+  add("项目", target.project_id);
+  add("团队", target.org_id);
+  add("指定成员", target.member);
+  return parts;
+}
+
+function deliveryTargetLabel(target) {
+  return deliveryTargetParts(target).map(([label, value]) => `${label} ${value}`).join(" · ");
 }
 
 function renderAPIDelta(delta) {
