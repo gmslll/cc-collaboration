@@ -389,6 +389,7 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _deleteToken(MachineToken token) async {
     if (_deletingTokenIds.contains(token.id)) return;
+    setState(() => _deletingTokenIds.add(token.id));
     final label = token.label.trim().isEmpty ? token.id : token.label.trim();
     final ok = await confirm(
       context,
@@ -396,9 +397,11 @@ class _AccountPageState extends State<AccountPage> {
       title: '删除机器 token',
       okLabel: '删除',
     );
-    if (!ok) return;
     if (!mounted) return;
-    setState(() => _deletingTokenIds.add(token.id));
+    if (!ok) {
+      setState(() => _deletingTokenIds.remove(token.id));
+      return;
+    }
     try {
       await widget.client.deleteToken(token.id);
       await _loadTokens();

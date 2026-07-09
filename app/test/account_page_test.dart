@@ -158,6 +158,7 @@ void main() {
 
     expect(find.text('删除机器 token'), findsOneWidget);
     expect(client.deleteTokenCalls, 0);
+    expect(tester.widget<IconButton>(deleteButton).onPressed, isNull);
 
     await tester.tap(find.widgetWithText(TextButton, '取消'));
     await tester.pump();
@@ -165,6 +166,7 @@ void main() {
 
     expect(find.text('删除机器 token'), findsNothing);
     expect(client.deleteTokenCalls, 0);
+    expect(tester.widget<IconButton>(deleteButton).onPressed, isNotNull);
 
     tester.widget<IconButton>(deleteButton).onPressed!();
     await tester.pump();
