@@ -1367,6 +1367,7 @@ void main() {
     final it = ListItem.fromJson({
       'id': 'h1',
       'sender': 'a@x',
+      'recipients': ['b@x', ' c@x ', ' '],
       'urgency': 'urgent',
       'state': 'pending',
       'repo_name': 'repo',
@@ -1378,6 +1379,9 @@ void main() {
     expect(it.urgency, 'urgent');
     expect(it.kind, 'delivery'); // omitted → default
     expect(it.repoName, 'repo');
+    expect(it.recipients, ['b@x', 'c@x']);
+    expect(it.recipientSummary, '2 人');
+    expect(it.routeLabel, 'a@x → 2 人');
   });
 
   test('Package.fromJson parses nested api_delta / git / attachments', () {
@@ -1385,6 +1389,7 @@ void main() {
       'id': 'h1',
       'sender': 'a',
       'recipient': 'b',
+      'recipients': ['b', 'c'],
       'summary_md': '# hi',
       'repo': {'name': 'r', 'branch': 'main'},
       'delivery_target': {
@@ -1409,6 +1414,8 @@ void main() {
       },
     });
     expect(p.repo.name, 'r');
+    expect(p.recipients, ['b', 'c']);
+    expect(p.routeLabel(), 'a → 2 人');
     expect(p.deliveryTarget?.projectId, 'project-1');
     expect(p.deliveryTarget?.orgId, 'org-1');
     expect(p.deliveryTarget?.member, 'dev@team');
@@ -1521,12 +1528,23 @@ void main() {
   test('Status.fromJson handles null picked_at', () {
     final s = Status.fromJson({
       'state': 'pending',
+      'recipients': [' dev@x ', 'ops@x'],
+      'pickup_by': {
+        ' dev@x ': {'state': 'picked', 'picked_at': '2026-01-01T00:01:00Z'},
+        'ops@x': {'state': 'pending'},
+      },
       'comment_count': 3,
       'created_at': '2026-01-01T00:00:00Z',
     });
     expect(s.state, 'pending');
     expect(s.pickedAt, isNull);
     expect(s.commentCount, 3);
+    expect(s.recipients, ['dev@x', 'ops@x']);
+    expect(s.pickupBy['dev@x']?.state, 'picked');
+    expect(s.pickupSlots.map((e) => '${e.identity}:${e.state}'), [
+      'dev@x:picked',
+      'ops@x:pending',
+    ]);
   });
 
   test('errorText maps DioException to friendly text', () {

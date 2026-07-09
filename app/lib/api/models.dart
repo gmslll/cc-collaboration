@@ -5,29 +5,63 @@ String _s(dynamic v) => v?.toString() ?? '';
 String _trimmed(dynamic v) => _s(v).trim();
 
 DateTime _t(dynamic v) =>
-    DateTime.tryParse(_s(v))?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
+    DateTime.tryParse(_s(v))?.toLocal() ??
+    DateTime.fromMillisecondsSinceEpoch(0);
+
+List<String> _strings(dynamic v) =>
+    (v as List?)?.map(_trimmed).where((e) => e.isNotEmpty).toList() ?? const [];
 
 class ListItem {
-  final String id, kind, sender, recipient, urgency, state, repoName, branch, headline;
+  final String id,
+      kind,
+      sender,
+      recipient,
+      urgency,
+      state,
+      repoName,
+      branch,
+      headline;
+  final List<String> recipients;
   final DateTime createdAt;
 
   ListItem.fromJson(Map<String, dynamic> j)
     : id = _s(j['id']),
-      kind = j['kind'] == null || _s(j['kind']).isEmpty ? 'delivery' : _s(j['kind']),
+      kind = j['kind'] == null || _s(j['kind']).isEmpty
+          ? 'delivery'
+          : _s(j['kind']),
       sender = _s(j['sender']),
       recipient = _s(j['recipient']),
+      recipients = _strings(j['recipients']),
       urgency = _s(j['urgency']).isEmpty ? 'normal' : _s(j['urgency']),
       state = _s(j['state']),
       repoName = _s(j['repo_name']),
       branch = _s(j['branch']),
       headline = _s(j['headline']),
       createdAt = _t(j['created_at']);
+
+  String get recipientSummary {
+    if (recipients.length == 1) return recipients.single;
+    if (recipients.length > 1) return '${recipients.length} 人';
+    return recipient;
+  }
+
+  String get routeLabel {
+    final target = recipientSummary;
+    if (sender.isEmpty || target.isEmpty) return '';
+    return '$sender → $target';
+  }
 }
 
 // CapsuleListItem is one plaza row (GET /v1/capsules) — mirrors
 // handoffschema.CapsuleListItem.
 class CapsuleListItem {
-  final String id, owner, visibility, sourceAgent, originSessionId, headline, repoName;
+  final String id,
+      owner,
+      visibility,
+      sourceAgent,
+      originSessionId,
+      headline,
+      repoName;
   final bool hasTranscript, hasPersona;
   final DateTime createdAt;
 
@@ -46,13 +80,16 @@ class CapsuleListItem {
 
 class Repo {
   final String name, branch;
-  Repo.fromJson(Map<String, dynamic>? j) : name = _s(j?['name']), branch = _s(j?['branch']);
+  Repo.fromJson(Map<String, dynamic>? j)
+    : name = _s(j?['name']),
+      branch = _s(j?['branch']);
 }
 
 class Package {
   final String id, kind, sender, recipient, urgency, summaryMd, noteMd, prdMd;
   final Repo repo;
   final DeliveryTarget? deliveryTarget;
+  final List<String> recipients;
   final List<String> modulePaths;
   final List<Attachment> attachments;
   final Git? git;
@@ -63,28 +100,49 @@ class Package {
       kind = _s(j['kind']).isEmpty ? 'delivery' : _s(j['kind']),
       sender = _s(j['sender']),
       recipient = _s(j['recipient']),
+      recipients = _strings(j['recipients']),
       urgency = _s(j['urgency']).isEmpty ? 'normal' : _s(j['urgency']),
       summaryMd = _s(j['summary_md']),
       noteMd = _s(j['note_md']),
       prdMd = _s(j['prd_md']),
       repo = Repo.fromJson(j['repo'] as Map<String, dynamic>?),
       deliveryTarget = DeliveryTarget.fromJsonOrNull(j['delivery_target']),
-      modulePaths = (j['module_paths'] as List?)?.map((e) => _s(e)).toList() ?? const [],
+      modulePaths =
+          (j['module_paths'] as List?)?.map((e) => _s(e)).toList() ?? const [],
       attachments =
           (j['attachments'] as List?)
               ?.map((e) => Attachment.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
-      git = j['git'] is Map ? Git.fromJson(j['git'] as Map<String, dynamic>) : null,
+      git = j['git'] is Map
+          ? Git.fromJson(j['git'] as Map<String, dynamic>)
+          : null,
       apiDelta = j['api_delta'] is Map
           ? ApiDelta.fromJson(j['api_delta'] as Map<String, dynamic>)
           : null;
+
+  String recipientSummary({String fallback = ''}) {
+    if (recipients.length == 1) return recipients.single;
+    if (recipients.length > 1) return '${recipients.length} 人';
+    if (recipient.isNotEmpty) return recipient;
+    return fallback;
+  }
+
+  String routeLabel({String fallbackRecipient = ''}) {
+    final target = recipientSummary(fallback: fallbackRecipient);
+    if (sender.isEmpty || target.isEmpty) return '';
+    return '$sender → $target';
+  }
 }
 
 class DeliveryTarget {
   final String projectId, orgId, member;
 
-  const DeliveryTarget({required this.projectId, required this.orgId, required this.member});
+  const DeliveryTarget({
+    required this.projectId,
+    required this.orgId,
+    required this.member,
+  });
 
   static DeliveryTarget? fromJsonOrNull(dynamic v) {
     if (v is! Map<String, dynamic>) return null;
@@ -113,7 +171,9 @@ class Attachment {
   Attachment.fromJson(Map<String, dynamic> j)
     : name = _s(j['name']),
       sha256 = _s(j['sha256']),
-      size = j['size'] is int ? j['size'] as int : int.tryParse(_s(j['size'])) ?? 0;
+      size = j['size'] is int
+          ? j['size'] as int
+          : int.tryParse(_s(j['size'])) ?? 0;
 }
 
 class Commit {
@@ -133,7 +193,8 @@ class Git {
               ?.map((e) => Commit.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
-      changedPaths = (j['changed_paths'] as List?)?.map(_s).toList() ?? const [];
+      changedPaths =
+          (j['changed_paths'] as List?)?.map(_s).toList() ?? const [];
 }
 
 // ApiOp keeps only the summary fields the detail view shows (method/path/
@@ -153,12 +214,17 @@ class ApiDelta {
       changed = _ops(j['changed']),
       removed = _ops(j['removed']);
   static List<ApiOp> _ops(dynamic v) =>
-      (v as List?)?.map((e) => ApiOp.fromJson(e as Map<String, dynamic>)).toList() ?? const [];
+      (v as List?)
+          ?.map((e) => ApiOp.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const [];
   bool get isEmpty => added.isEmpty && changed.isEmpty && removed.isEmpty;
 }
 
 class Status {
   final String state, sender, recipient;
+  final List<String> recipients;
+  final Map<String, RecipientPickupStatus> pickupBy;
   final DateTime createdAt;
   final DateTime? pickedAt;
   final int commentCount;
@@ -166,9 +232,61 @@ class Status {
     : state = _s(j['state']),
       sender = _s(j['sender']),
       recipient = _s(j['recipient']),
+      recipients = _strings(j['recipients']),
+      pickupBy = _pickupBy(j['pickup_by']),
       createdAt = _t(j['created_at']),
       pickedAt = j['picked_at'] == null ? null : _t(j['picked_at']),
       commentCount = j['comment_count'] is int ? j['comment_count'] as int : 0;
+
+  bool get hasRecipientSlots => recipients.isNotEmpty || pickupBy.isNotEmpty;
+
+  List<RecipientPickupStatus> get pickupSlots {
+    final out = <RecipientPickupStatus>[];
+    final seen = <String>{};
+    for (final id in recipients) {
+      if (!seen.add(id)) continue;
+      out.add(
+        pickupBy[id] ?? RecipientPickupStatus(identity: id, state: 'unknown'),
+      );
+    }
+    final extras = pickupBy.keys.where((id) => !seen.contains(id)).toList()
+      ..sort();
+    for (final id in extras) {
+      out.add(pickupBy[id]!);
+    }
+    return out;
+  }
+}
+
+class RecipientPickupStatus {
+  final String identity, state;
+  final DateTime? pickedAt;
+
+  RecipientPickupStatus({
+    required this.identity,
+    required this.state,
+    this.pickedAt,
+  });
+
+  factory RecipientPickupStatus.fromJson(String identity, dynamic value) {
+    final j = value is Map<String, dynamic> ? value : const <String, dynamic>{};
+    return RecipientPickupStatus(
+      identity: identity,
+      state: _s(j['state']).isEmpty ? 'unknown' : _s(j['state']),
+      pickedAt: j['picked_at'] == null ? null : _t(j['picked_at']),
+    );
+  }
+}
+
+Map<String, RecipientPickupStatus> _pickupBy(dynamic value) {
+  if (value is! Map) return const {};
+  final out = <String, RecipientPickupStatus>{};
+  for (final entry in value.entries) {
+    final identity = _trimmed(entry.key);
+    if (identity.isEmpty) continue;
+    out[identity] = RecipientPickupStatus.fromJson(identity, entry.value);
+  }
+  return Map.unmodifiable(out);
 }
 
 class Comment {
@@ -221,7 +339,10 @@ class Me {
   // Minimal valid identity: a non-admin member with no projects. Used as a
   // fallback when the real role isn't known yet (e.g. /v1/me unreachable at
   // launch) so consumers always get a legal Me instead of null.
-  const Me.member(this.identity) : isAdmin = false, organizations = const [], projects = const [];
+  const Me.member(this.identity)
+    : isAdmin = false,
+      organizations = const [],
+      projects = const [];
 }
 
 class Organization {
@@ -246,10 +367,14 @@ class OrganizationDetail {
   final List<OrganizationMember> members;
   final List<Project> projects;
   OrganizationDetail.fromJson(Map<String, dynamic> j)
-    : organization = Organization.fromJson((j['organization'] ?? const {}) as Map<String, dynamic>),
+    : organization = Organization.fromJson(
+        (j['organization'] ?? const {}) as Map<String, dynamic>,
+      ),
       members =
           (j['members'] as List?)
-              ?.map((e) => OrganizationMember.fromJson(e as Map<String, dynamic>))
+              ?.map(
+                (e) => OrganizationMember.fromJson(e as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
       projects =
@@ -284,7 +409,9 @@ class ProjectDetail {
   final List<String> repos;
   final List<ProjectMember> members;
   ProjectDetail.fromJson(Map<String, dynamic> j)
-    : project = Project.fromJson((j['project'] ?? const {}) as Map<String, dynamic>),
+    : project = Project.fromJson(
+        (j['project'] ?? const {}) as Map<String, dynamic>,
+      ),
       repos = (j['repos'] as List?)?.map(_s).toList() ?? const [],
       members =
           (j['members'] as List?)

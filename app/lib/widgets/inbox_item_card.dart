@@ -29,7 +29,7 @@ class InboxItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final urgent = item.urgency == 'urgent';
-    final hasRoute = item.sender.isNotEmpty && item.recipient.isNotEmpty;
+    final route = item.routeLabel;
     return HoverLift(
       onTap: onTap,
       padding: padding,
@@ -58,22 +58,18 @@ class InboxItemCard extends StatelessWidget {
               height: 1.3,
             ),
           ),
-          if (item.repoName.isNotEmpty || hasRoute) ...[
+          if (item.repoName.isNotEmpty || route.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
               runSpacing: 4,
               children: [
                 if (item.repoName.isNotEmpty)
-                  _miniTag(
-                    Icons.source_rounded,
-                    item.repoName,
-                    CcColors.muted,
-                  ),
-                if (hasRoute)
+                  _miniTag(Icons.source_rounded, item.repoName, CcColors.muted),
+                if (route.isNotEmpty)
                   _miniTag(
                     Icons.swap_horiz_rounded,
-                    '${item.sender} → ${item.recipient}',
+                    route,
                     CcColors.accentBright,
                   ),
               ],

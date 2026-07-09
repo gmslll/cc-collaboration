@@ -338,7 +338,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${p.sender} → ${p.recipient.isNotEmpty ? p.recipient : _cfg.identity}',
+              p.routeLabel(fallbackRecipient: _cfg.identity),
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
@@ -361,6 +361,10 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
             if (p.deliveryTarget != null) ...[
               const SizedBox(height: 10),
               _deliveryTargetPanel(p.deliveryTarget!),
+            ],
+            if (_status?.hasRecipientSlots == true) ...[
+              const SizedBox(height: 10),
+              _pickupStatusPanel(_status!),
             ],
             const SizedBox(height: 12),
             Wrap(
@@ -472,6 +476,92 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       ),
     ),
   );
+
+  Widget _pickupStatusPanel(Status status) {
+    final slots = status.pickupSlots;
+    if (slots.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: CcColors.panelHigh,
+        border: Border.all(color: CcColors.border),
+        borderRadius: BorderRadius.circular(CcRadius.md),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: Icon(
+              Icons.fact_check_rounded,
+              size: 18,
+              color: CcColors.info,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '团队接收状态',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: slots.map(_pickupToken).toList(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pickupToken(RecipientPickupStatus slot) {
+    final color = _stateColor(slot.state);
+    final pickedSuffix = slot.pickedAt == null
+        ? ''
+        : ' · ${relativeTime(slot.pickedAt!)}';
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 260),
+      child: Tooltip(
+        message: '${slot.identity} · ${slot.state}$pickedSuffix',
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+            borderRadius: BorderRadius.circular(CcRadius.sm),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              statusDot(color, size: 6, glow: slot.state == 'picked'),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  '${slot.identity} · ${slot.state}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: CcType.mono,
+                    fontSize: 11.5,
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _mdScroll(String md, {Widget? extras}) => SingleChildScrollView(
     padding: const EdgeInsets.all(16),

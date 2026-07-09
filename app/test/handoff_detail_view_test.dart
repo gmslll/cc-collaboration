@@ -112,6 +112,37 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('team handoff detail shows fanout recipients and pickup slots', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package(
+        'team1',
+        'qa@x',
+        'team handoff',
+        recipients: const ['dev@x', 'ops@x'],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('team1', 'qa@x', 'team handoff'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('qa@x → 2 人'), findsOneWidget);
+    expect(find.text('团队接收状态'), findsOneWidget);
+    expect(find.text('dev@x · picked'), findsOneWidget);
+    expect(find.text('ops@x · pending'), findsOneWidget);
+    expect(find.text('qa@x → me@x'), findsNothing);
+  });
 }
 
 ListItem _item(String id, String sender, String headline) => ListItem.fromJson({
@@ -131,11 +162,13 @@ Package _package(
   String sender,
   String summary, {
   String kind = 'delivery',
+  List<String> recipients = const [],
 }) => Package.fromJson({
   'id': id,
   'kind': kind,
   'sender': sender,
   'recipient': 'me@x',
+  if (recipients.isNotEmpty) 'recipients': recipients,
   'urgency': 'normal',
   'summary_md': summary,
   'repo': {'name': 'repo', 'branch': 'main'},
@@ -199,6 +232,15 @@ class _ActionDetailClient extends RelayClient {
     'state': 'pending',
     'sender': package.sender,
     'recipient': 'me@x',
+    if (package.recipients.isNotEmpty) 'recipients': package.recipients,
+    if (package.recipients.isNotEmpty)
+      'pickup_by': {
+        package.recipients.first: {
+          'state': 'picked',
+          'picked_at': '2026-01-01T00:01:00Z',
+        },
+        for (final r in package.recipients.skip(1)) r: {'state': 'pending'},
+      },
     'created_at': '2026-01-01T00:00:00Z',
     'comment_count': 0,
   });
