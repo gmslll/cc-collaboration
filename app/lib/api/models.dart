@@ -2,6 +2,7 @@
 // renders.
 
 String _s(dynamic v) => v?.toString() ?? '';
+String _trimmed(dynamic v) => _s(v).trim();
 
 DateTime _t(dynamic v) =>
     DateTime.tryParse(_s(v))?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -213,9 +214,9 @@ class Organization {
 class OrganizationMember {
   final String identity, role, displayName;
   OrganizationMember.fromJson(Map<String, dynamic> j)
-      : identity = _s(j['identity']),
-        role = _s(j['role']),
-        displayName = _s(j['display_name']);
+      : identity = _trimmed(j['identity']),
+        role = _trimmed(j['role']),
+        displayName = _trimmed(j['display_name']);
 }
 
 class OrganizationDetail {
@@ -248,11 +249,11 @@ class Project {
 class ProjectMember {
   final String identity, role, displayName;
   ProjectMember.fromJson(Map<String, dynamic> j)
-      : identity = _s(j['identity']),
-        role = _s(j['role']),
+      : identity = _trimmed(j['identity']),
+        role = _trimmed(j['role']),
         // Empty on a relay that predates the display_name join (getProject) —
         // the member picker then falls back to showing the raw identity.
-        displayName = _s(j['display_name']);
+        displayName = _trimmed(j['display_name']);
 }
 
 class ProjectDetail {

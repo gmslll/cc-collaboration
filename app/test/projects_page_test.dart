@@ -68,6 +68,16 @@ void main() {
     expect(organizationMemberPickerLabel(unnamed), 'ops@x · 访客');
   });
 
+  test('organization member picker ignores blank display names', () {
+    final member = OrganizationMember.fromJson({
+      'identity': ' ops@x ',
+      'role': ' guest ',
+      'display_name': '   ',
+    });
+
+    expect(organizationMemberPickerLabel(member), 'ops@x · 访客');
+  });
+
   test('project owner label uses localized owner text', () {
     expect(projectOwnerLabel('owner@x'), '负责人 · owner@x');
   });
@@ -91,4 +101,22 @@ void main() {
       expect(projectMemberSubtitle(unnamed), isNull);
     },
   );
+
+  test('project member display trims names and falls back on blank names', () {
+    final named = ProjectMember.fromJson({
+      'identity': ' dev@x ',
+      'role': ' member ',
+      'display_name': ' Dev ',
+    });
+    final blank = ProjectMember.fromJson({
+      'identity': ' ops@x ',
+      'role': ' viewer ',
+      'display_name': '   ',
+    });
+
+    expect(projectMemberTitle(named), 'Dev');
+    expect(projectMemberSubtitle(named), 'dev@x');
+    expect(projectMemberTitle(blank), 'ops@x');
+    expect(projectMemberSubtitle(blank), isNull);
+  });
 }
