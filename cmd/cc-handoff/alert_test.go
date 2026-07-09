@@ -26,3 +26,19 @@ func TestAlertTeamTargetRequiresIdentity(t *testing.T) {
 		t.Fatalf("runAlert error = %v, want missing identity", err)
 	}
 }
+
+func TestAlertBlankTargetsAreRejectedBeforeConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	err := runAlert(context.Background(), []string{
+		"--to", "  ",
+		"--team-project", "  ",
+		"--org", "  ",
+		"--member", "  ",
+		"--project", " backend ",
+		"--message", "boom",
+	})
+	if err == nil || !strings.Contains(err.Error(), "usage: cc-handoff alert") {
+		t.Fatalf("runAlert error = %v, want usage", err)
+	}
+}

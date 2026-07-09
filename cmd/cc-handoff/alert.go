@@ -30,13 +30,18 @@ func runAlert(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *to == "" && *teamProjectID == "" && *orgID == "" {
+	toID := cleanTargetArg(*to)
+	projectName := cleanTargetArg(*project)
+	teamProject := cleanTargetArg(*teamProjectID)
+	org := cleanTargetArg(*orgID)
+	targetMember := cleanTargetArg(*member)
+	if toID == "" && teamProject == "" && org == "" {
 		return fmt.Errorf("usage: cc-handoff alert [--to <identity> | --team-project <id> | --org <id>] [--member ID] --project <name> [--message TEXT | --file PATH] [--level LVL]")
 	}
-	if *to != "" && (*teamProjectID != "" || *orgID != "" || *member != "") {
+	if toID != "" && (teamProject != "" || org != "" || targetMember != "") {
 		return fmt.Errorf("--to cannot be combined with --team-project/--org/--member")
 	}
-	if *member != "" && *teamProjectID == "" && *orgID == "" {
+	if targetMember != "" && teamProject == "" && org == "" {
 		return fmt.Errorf("--member requires --team-project or --org")
 	}
 
@@ -67,7 +72,7 @@ func runAlert(ctx context.Context, args []string) error {
 	if u.RelayURL == "" || u.Token == "" {
 		return fmt.Errorf("relay_url/token missing in user config; run `cc-handoff init`")
 	}
-	if (*teamProjectID != "" || *orgID != "") && u.Identity == "" {
+	if (teamProject != "" || org != "") && u.Identity == "" {
 		return fmt.Errorf("identity missing in user config; run `cc-handoff config set --identity <you>` before using team alert targets")
 	}
 
@@ -80,23 +85,23 @@ func runAlert(ctx context.Context, args []string) error {
 	}
 
 	client := transport.New(u.RelayURL, u.Token)
-	recipients := []string{*to}
-	if *teamProjectID != "" || *orgID != "" {
-		recipients, err = client.ResolveTeamRecipients(ctx, *teamProjectID, *orgID, u.Identity, *member)
+	recipients := []string{toID}
+	if teamProject != "" || org != "" {
+		recipients, err = client.ResolveTeamRecipients(ctx, teamProject, org, u.Identity, targetMember)
 		if err != nil {
 			return err
 		}
 		if len(recipients) == 0 {
-			if *teamProjectID != "" {
-				return fmt.Errorf("project %s has no actionable alert recipients (direct owners/members or team owners/admins)", *teamProjectID)
+			if teamProject != "" {
+				return fmt.Errorf("project %s has no actionable alert recipients (direct owners/members or team owners/admins)", teamProject)
 			}
-			return fmt.Errorf("organization %s has no actionable alert recipients", *orgID)
+			return fmt.Errorf("organization %s has no actionable alert recipients", org)
 		}
 	}
 	for _, recipient := range recipients {
 		if err := client.Alert(ctx, &handoffschema.LogAlert{
 			Recipient: recipient,
-			Project:   *project,
+			Project:   projectName,
 			Level:     lvl,
 			Message:   msg,
 		}); err != nil {
@@ -104,8 +109,8 @@ func runAlert(ctx context.Context, args []string) error {
 		}
 	}
 	fmt.Printf("alert sent to %s", formatRecipientTarget(recipients))
-	if *project != "" {
-		fmt.Printf(" (project %s)", *project)
+	if projectName != "" {
+		fmt.Printf(" (project %s)", projectName)
 	}
 	fmt.Println()
 	return nil

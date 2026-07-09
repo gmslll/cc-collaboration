@@ -1,6 +1,9 @@
 package main
 
-import "flag"
+import (
+	"flag"
+	"strings"
+)
 
 // parseFlexible parses fs allowing flags and positionals to be interleaved in
 // any order, and returns the positionals. Go's flag package stops at the first
@@ -22,4 +25,8 @@ func parseFlexible(fs *flag.FlagSet, args []string) ([]string, error) {
 		args = args[1:]
 	}
 	return positional, nil
+}
+
+func cleanTargetArg(value string) string {
+	return strings.TrimSpace(value)
 }

@@ -21,6 +21,9 @@ func runOnline(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	project := cleanTargetArg(*projectID)
+	org := cleanTargetArg(*orgID)
+	targetMember := cleanTargetArg(*member)
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -35,8 +38,8 @@ func runOnline(ctx context.Context, args []string) error {
 	if err != nil {
 		return relayCompatError(err, "online users listing")
 	}
-	if *projectID != "" || *orgID != "" || *member != "" {
-		ids, err := client.ListTeamIdentities(ctx, *projectID, *orgID, *member)
+	if project != "" || org != "" || targetMember != "" {
+		ids, err := client.ListTeamIdentities(ctx, project, org, targetMember)
 		if err != nil {
 			return err
 		}
