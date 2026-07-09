@@ -59,6 +59,35 @@ Set<String> normalizedOnlineTodoMemberIds(Iterable<OnlineUser> users) => {
     if (user.online && user.identity.trim().isNotEmpty) user.identity.trim(),
 };
 
+Map<String, String> todoMemberDisplayNames({
+  required Iterable<ProjectMember> projectMembers,
+  required Iterable<OrganizationMember> organizationMembers,
+}) {
+  final names = <String, String>{};
+
+  void rememberFallback(String raw, String name) {
+    final id = raw.trim();
+    final label = name.trim();
+    if (id.isEmpty || label.isEmpty) return;
+    names.putIfAbsent(id, () => label);
+  }
+
+  void rememberPreferred(String raw, String name) {
+    final id = raw.trim();
+    final label = name.trim();
+    if (id.isEmpty || label.isEmpty) return;
+    names[id] = label;
+  }
+
+  for (final member in organizationMembers) {
+    rememberFallback(member.identity, member.displayName);
+  }
+  for (final member in projectMembers) {
+    rememberPreferred(member.identity, member.displayName);
+  }
+  return names;
+}
+
 double todoDialogWidth(
   Size screenSize, {
   double preferred = 440,
@@ -2346,12 +2375,6 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     });
     final self = _selfIdentity;
     final online = <String>{};
-    final names = <String, String>{};
-    void rememberName(String raw, [String name = '']) {
-      final id = raw.trim();
-      if (id.isEmpty) return;
-      if (name.trim().isNotEmpty) names[id] = name.trim();
-    }
 
     final pid = widget.todo.projectId ?? '';
     // onlineUsers is best-effort (dot only). project() is load-bearing for team
@@ -2384,13 +2407,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
               .catchError((_) => <OrganizationMember>[])
         : const <OrganizationMember>[];
 
-    rememberName(self);
-    for (final m in projectMembers) {
-      rememberName(m.identity, m.displayName);
-    }
-    for (final m in orgMembers) {
-      rememberName(m.identity, m.displayName);
-    }
+    final names = todoMemberDisplayNames(
+      projectMembers: projectMembers,
+      organizationMembers: orgMembers,
+    );
     final candidates = assignableTodoMembers(
       selfIdentity: self,
       includeSelf: pid.isEmpty,

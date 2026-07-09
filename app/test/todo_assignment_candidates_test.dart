@@ -162,6 +162,42 @@ void main() {
     );
   });
 
+  test('todo member display names prefer project labels over team labels', () {
+    final names = todoMemberDisplayNames(
+      projectMembers: [
+        ProjectMember.fromJson({
+          'identity': ' dev@x ',
+          'display_name': ' Project Dev ',
+          'role': 'member',
+        }),
+        ProjectMember.fromJson({
+          'identity': 'blank@x',
+          'display_name': '   ',
+          'role': 'member',
+        }),
+      ],
+      organizationMembers: [
+        OrganizationMember.fromJson({
+          'identity': 'dev@x',
+          'display_name': ' Team Dev ',
+          'role': 'member',
+        }),
+        OrganizationMember.fromJson({
+          'identity': 'blank@x',
+          'display_name': ' Team Blank ',
+          'role': 'member',
+        }),
+        OrganizationMember.fromJson({
+          'identity': '   ',
+          'display_name': 'Ignored',
+          'role': 'member',
+        }),
+      ],
+    );
+
+    expect(names, {'dev@x': 'Project Dev', 'blank@x': 'Team Blank'});
+  });
+
   test(
     'online todo member ids trim relay identities and skip offline users',
     () {
