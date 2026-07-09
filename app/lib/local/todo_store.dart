@@ -78,7 +78,7 @@ class TodoStore extends ChangeNotifier {
         client.todos(scope: 'project'),
       ]);
       if (epoch != _epoch || client != _client) return;
-      all = [...results[0], ...results[1]];
+      all = mergeTodoRefreshResults(results[0], results[1]);
     } catch (e) {
       if (epoch != _epoch || client != _client) return;
       error = '加载待办失败: $e';
@@ -141,4 +141,21 @@ class TodoStore extends ChangeNotifier {
     _sse?.cancel();
     super.dispose();
   }
+}
+
+@visibleForTesting
+List<Todo> mergeTodoRefreshResults(List<Todo> personal, List<Todo> project) {
+  final merged = <Todo>[];
+  final byId = <String, int>{};
+  for (final todo in [...personal, ...project]) {
+    if (todo.id.isEmpty) continue;
+    final index = byId[todo.id];
+    if (index == null) {
+      byId[todo.id] = merged.length;
+      merged.add(todo);
+    } else {
+      merged[index] = todo;
+    }
+  }
+  return merged;
 }

@@ -41,6 +41,26 @@ Map<String, dynamic> _todoJson({
 };
 
 void main() {
+  test(
+    'mergeTodoRefreshResults deduplicates by id and keeps later payload',
+    () {
+      final merged = mergeTodoRefreshResults(
+        [
+          Todo.fromJson(_todoJson(id: 'p1', title: 'personal')),
+          Todo.fromJson(_todoJson(id: 'dup', title: 'old')),
+        ],
+        [
+          Todo.fromJson(_todoJson(id: 'dup', projectId: 'proj1', title: 'new')),
+          Todo.fromJson(_todoJson(id: 't1', projectId: 'proj1')),
+        ],
+      );
+
+      expect(merged.map((t) => t.id), ['p1', 'dup', 't1']);
+      expect(merged.firstWhere((t) => t.id == 'dup').title, 'new');
+      expect(merged.firstWhere((t) => t.id == 'dup').projectId, 'proj1');
+    },
+  );
+
   group('refresh', () {
     late HttpServer server;
 
@@ -113,7 +133,7 @@ void main() {
       final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
       final store = TodoStore()..debugSetClient(client);
       await store.refresh();
-      expect(store.all.map((t) => t.id), ['p1', 'p1']);
+      expect(store.all.map((t) => t.id), ['p1']);
 
       await store.stop();
       expect(store.all, isEmpty);
