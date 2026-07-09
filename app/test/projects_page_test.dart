@@ -530,6 +530,39 @@ void main() {
 
     expect(bindButton().onPressed, isNotNull);
   });
+
+  testWidgets('project sheet keeps repo input when binding fails', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: ProjectsPage(client: _FailingMapRepoProjectsPageFakeClient()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    final repoField = find.byWidgetPredicate(
+      (w) =>
+          w is TextField &&
+          w.decoration?.hintText == 'repo 名(如 kunlun-backend)',
+    );
+    await tester.enterText(repoField, 'kunlun/backend');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, '绑定'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<TextField>(repoField).controller?.text,
+      'kunlun/backend',
+    );
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
 
 class _ProjectsPageFakeClient extends RelayClient {
@@ -617,4 +650,14 @@ class _ProjectsPageFakeClient extends RelayClient {
         ],
         'projects': const [],
       });
+
+  @override
+  Future<void> mapRepo(String id, String repoName) async {}
+}
+
+class _FailingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<void> mapRepo(String id, String repoName) async {
+    throw Exception('map failed');
+  }
 }

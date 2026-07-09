@@ -861,13 +861,15 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     }
   }
 
-  Future<void> _do(Future<void> Function() action) async {
+  Future<bool> _do(Future<void> Function() action) async {
     try {
       await action();
       await _load();
       widget.onChanged();
+      return true;
     } catch (e) {
       if (mounted) snack(context, errorText(e));
+      return false;
     }
   }
 
@@ -892,10 +894,10 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   Future<void> _addMember() async {
     final identity = _identity.text.trim();
     if (identity.isEmpty) return;
-    _identity.clear();
-    await _do(
+    final ok = await _do(
       () => widget.client.addOrganizationMember(widget.id, identity, _role),
     );
+    if (ok) _identity.clear();
   }
 
   @override
@@ -1275,13 +1277,15 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     }
   }
 
-  Future<void> _do(Future<void> Function() action) async {
+  Future<bool> _do(Future<void> Function() action) async {
     try {
       await action();
       await _load();
       widget.onChanged();
+      return true;
     } catch (e) {
       if (mounted) snack(context, errorText(e));
+      return false;
     }
   }
 
@@ -1485,12 +1489,12 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         ),
                         TextButton(
                           onPressed: _canMapRepo
-                              ? () {
+                              ? () async {
                                   final r = _repo.text.trim();
-                                  _repo.clear();
-                                  _do(
+                                  final ok = await _do(
                                     () => widget.client.mapRepo(widget.id, r),
                                   );
+                                  if (ok) _repo.clear();
                                 }
                               : null,
                           child: const Text('绑定'),
@@ -1660,16 +1664,16 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                               : '加成员',
                           child: FilledButton.icon(
                             onPressed: canSubmitMember
-                                ? () {
+                                ? () async {
                                     final m = _member.text.trim();
-                                    _member.clear();
-                                    _do(
+                                    final ok = await _do(
                                       () => widget.client.addMember(
                                         widget.id,
                                         m,
                                         _role,
                                       ),
                                     );
+                                    if (ok) _member.clear();
                                   }
                                 : null,
                             icon: const Icon(
