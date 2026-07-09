@@ -91,8 +91,12 @@ abstract class RemoteChannel extends ChangeNotifier {
     } else if (!u.startsWith('ws://') && !u.startsWith('wss://')) {
       u = 'ws://$u';
     }
-    return Uri.parse('$u/v1/ws?role=$role');
+    return Uri.parse('$u/v1/ws').replace(queryParameters: {'role': role});
   }
+
+  @visibleForTesting
+  static Uri uriForTesting(String relayUrl, String role) =>
+      _uri(relayUrl, role);
 
   Future<void> _loop() async {
     while (_running) {
