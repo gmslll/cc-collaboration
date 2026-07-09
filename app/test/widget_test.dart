@@ -102,6 +102,45 @@ void main() {
     );
   });
 
+  test('terminal paste guards mounted before writing to the pty', () {
+    final source = File('lib/screens/terminal_pane.dart').readAsStringSync();
+
+    String between(String start, String end) {
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
+
+    void expectGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return;', afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    final pasteText = between(
+      'Future<void> _paste() async {',
+      '// _pasteImage',
+    );
+    expectGuardBefore(pasteText, 'Clipboard.getData', '_terminal.paste(text)');
+    final pasteImage = between(
+      'Future<void> _pasteImage() async {',
+      '// Mirrors xterm',
+    );
+    expectGuardBefore(pasteImage, 'Pasteboard.image', 'if (bytes == null');
+    expectGuardBefore(
+      pasteImage,
+      'File(path).writeAsBytes',
+      '_terminal.paste(path)',
+    );
+  });
+
   test('workspace name dialog uses owned controller widget', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final dialog = source.substring(

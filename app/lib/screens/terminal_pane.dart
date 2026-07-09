@@ -1288,6 +1288,7 @@ class _TerminalPaneState extends State<TerminalPane> {
   // text-only, so the image goes through `pasteboard`.
   Future<void> _paste() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
     final text = data?.text;
     if (text != null && text.isNotEmpty) {
       _terminal.paste(text);
@@ -1304,6 +1305,7 @@ class _TerminalPaneState extends State<TerminalPane> {
     try {
       bytes = await Pasteboard.image;
     } catch (_) {}
+    if (!mounted) return;
     if (bytes == null || bytes.isEmpty) return;
     try {
       final dir = Directory('${(await getTemporaryDirectory()).path}/cc-paste');
@@ -1311,6 +1313,7 @@ class _TerminalPaneState extends State<TerminalPane> {
       final path =
           '${dir.path}/img-${DateTime.now().millisecondsSinceEpoch}.png';
       await File(path).writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
       _terminal.paste(path);
       if (mounted) snack(context, '已粘贴图片路径(回车让 agent 读取)');
     } catch (_) {
