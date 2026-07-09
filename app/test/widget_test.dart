@@ -162,6 +162,21 @@ void main() {
     expect(dialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('todo property menu labels are width constrained', () {
+    final source = File(
+      'lib/widgets/todo_property_controls.dart',
+    ).readAsStringSync();
+    final row = source.substring(
+      source.indexOf('PopupMenuItem<T> _checkableRow<T>({'),
+      source.indexOf('class PriorityControl'),
+    );
+
+    expect(row, isNot(contains('Text(label),')));
+    expect(row, contains('Expanded('));
+    expect(row, contains('label, maxLines: 1'));
+    expect(row, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('remote shared workspace dynamic labels are width constrained', () {
     final remote = File(
       'lib/screens/remote_workspace_page.dart',

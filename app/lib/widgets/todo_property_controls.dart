@@ -123,9 +123,11 @@ PopupMenuItem<T> _checkableRow<T>({
     children: [
       leading,
       const SizedBox(width: 8),
-      Text(label),
+      Expanded(
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
       if (selected) ...[
-        const Spacer(),
+        const SizedBox(width: 8),
         const Icon(Icons.check_rounded, size: 14, color: CcColors.accentBright),
       ],
     ],
