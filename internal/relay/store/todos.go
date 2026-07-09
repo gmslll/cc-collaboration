@@ -16,7 +16,9 @@ import (
 // contract calls for (avoids an N+1 join from list views). Every query
 // using it must alias the todos table "t".
 const todoColumns = `t.id, t.project_id, t.owner_identity, t.title, t.body_md, t.status, t.priority,
-       t.assignee_identity, t.assignee_session_id, t.assignee_session_label,
+       t.assignee_identity,
+       COALESCE((SELECT u.display_name FROM users u WHERE u.identity = t.assignee_identity AND u.disabled = 0), '') AS assignee_display_name,
+       t.assignee_session_id, t.assignee_session_label,
        t.assignee_agent_session_id, t.assignee_workdir, t.assignee_agent_kind,
        t.workspace_name, t.repo_name, t.recurrence, t.group_name,
        t.due_at, t.next_occurrence_at, t.created_at, t.updated_at, t.completed_at,
@@ -34,7 +36,7 @@ func scanTodoRow(row scanner) (todoschema.Todo, error) {
 	)
 	if err := row.Scan(
 		&t.ID, &projectID, &t.OwnerIdentity, &t.Title, &t.BodyMD, &t.Status, &t.Priority,
-		&t.AssigneeIdentity, &t.AssigneeSessionID, &t.AssigneeSessionLabel,
+		&t.AssigneeIdentity, &t.AssigneeDisplayName, &t.AssigneeSessionID, &t.AssigneeSessionLabel,
 		&t.AssigneeAgentSessionID, &t.AssigneeWorkdir, &t.AssigneeAgentKind,
 		&t.WorkspaceName, &t.RepoName, &t.Recurrence, &t.GroupName,
 		&dueMS, &nextMS, &createdMS, &updatedMS, &completedMS,

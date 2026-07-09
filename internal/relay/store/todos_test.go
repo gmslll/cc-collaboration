@@ -198,6 +198,9 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	if err := st.CreateProject(ctx, "p1", "Kunlun", "owner@x", now); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.CreateUser(ctx, User{Identity: "member@x", DisplayName: "Member X"}, now); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.AddMember(ctx, "p1", "member@x", RoleMember); err != nil {
 		t.Fatal(err)
 	}
@@ -248,8 +251,32 @@ func TestTodoAssignRequiresScopedAssignee(t *testing.T) {
 	}
 	mustCreateTodo(t, st, &todoschema.Todo{ID: "personal", OwnerIdentity: "owner@x", Title: "private task"})
 
-	if _, err := st.AssignTodo(ctx, "team", "owner@x", "member@x", "", "", "", "", ""); err != nil {
+	assignedTodo, err := st.AssignTodo(ctx, "team", "owner@x", "member@x", "", "", "", "", "")
+	if err != nil {
 		t.Fatalf("assign team todo to project member: %v", err)
+	}
+	if assignedTodo.AssigneeDisplayName != "Member X" {
+		t.Fatalf("assigned todo display name = %q, want Member X", assignedTodo.AssigneeDisplayName)
+	}
+	listed, err := st.ListTodos(ctx, "owner@x", TodoListFilter{Scope: "project", ProjectID: "p1"})
+	if err != nil {
+		t.Fatalf("list project todos: %v", err)
+	}
+	var foundListDisplay bool
+	for _, td := range listed {
+		if td.ID == "team" && td.AssigneeDisplayName == "Member X" {
+			foundListDisplay = true
+		}
+	}
+	if !foundListDisplay {
+		t.Fatalf("project todo list did not include assignee display name: %+v", listed)
+	}
+	got, err := st.GetTodo(ctx, "team", "member@x")
+	if err != nil {
+		t.Fatalf("get assigned todo as member: %v", err)
+	}
+	if got.AssigneeDisplayName != "Member X" {
+		t.Fatalf("get todo display name = %q, want Member X", got.AssigneeDisplayName)
 	}
 	if _, err := st.AssignTodo(ctx, "team", "owner@x", "stranger@x", "", "", "", "", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("assign team todo to non-member: want ErrForbidden, got %v", err)

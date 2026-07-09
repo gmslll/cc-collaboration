@@ -13,9 +13,11 @@ String? _sn(dynamic v) {
 }
 
 DateTime _t(dynamic v) =>
-    DateTime.tryParse(_s(v))?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
+    DateTime.tryParse(_s(v))?.toLocal() ??
+    DateTime.fromMillisecondsSinceEpoch(0);
 
-DateTime? _tn(dynamic v) => v == null ? null : DateTime.tryParse(_s(v))?.toLocal();
+DateTime? _tn(dynamic v) =>
+    v == null ? null : DateTime.tryParse(_s(v))?.toLocal();
 
 int _i(dynamic v) => v is int ? v : int.tryParse(_s(v)) ?? 0;
 
@@ -77,18 +79,18 @@ class TodoAttachment {
   final String name, sha256;
   final int size;
   TodoAttachment.fromJson(Map<String, dynamic> j)
-      : name = _s(j['name']),
-        sha256 = _s(j['sha256']),
-        size = _i(j['size']);
+    : name = _s(j['name']),
+      sha256 = _s(j['sha256']),
+      size = _i(j['size']);
 }
 
 class TodoComment {
   final String authorIdentity, body;
   final DateTime createdAt;
   TodoComment.fromJson(Map<String, dynamic> j)
-      : authorIdentity = _s(j['author_identity']),
-        body = _s(j['body']),
-        createdAt = _t(j['created_at']);
+    : authorIdentity = _s(j['author_identity']),
+      body = _s(j['body']),
+      createdAt = _t(j['created_at']);
 }
 
 class Todo {
@@ -98,7 +100,8 @@ class Todo {
   final String title, bodyMd;
   final TodoStatus status;
   final String priority; // low | normal | high
-  final String? assigneeIdentity, assigneeSessionId, assigneeSessionLabel;
+  final String? assigneeIdentity, assigneeDisplayName;
+  final String? assigneeSessionId, assigneeSessionLabel;
   // assigneeAgentSessionId/assigneeWorkdir/assigneeAgentKind are the
   // permanent-resume counterpart to assigneeSessionId: the latter is a bus
   // session id (e.g. "ts2") that goes stale the moment that tab closes,
@@ -137,6 +140,7 @@ class Todo {
     required this.status,
     required this.priority,
     required this.assigneeIdentity,
+    required this.assigneeDisplayName,
     required this.assigneeSessionId,
     required this.assigneeSessionLabel,
     required this.assigneeAgentSessionId,
@@ -164,42 +168,44 @@ class Todo {
   });
 
   factory Todo.fromJson(Map<String, dynamic> j) => Todo(
-        id: _s(j['id']),
-        projectId: _sn(j['project_id']),
-        ownerIdentity: _s(j['owner_identity']),
-        title: _s(j['title']),
-        bodyMd: _s(j['body_md']),
-        status: todoStatusFromName(_s(j['status'])),
-        priority: _s(j['priority']).isEmpty ? 'normal' : _s(j['priority']),
-        assigneeIdentity: _sn(j['assignee_identity']),
-        assigneeSessionId: _sn(j['assignee_session_id']),
-        assigneeSessionLabel: _sn(j['assignee_session_label']),
-        assigneeAgentSessionId: _sn(j['assignee_agent_session_id']),
-        assigneeWorkdir: _sn(j['assignee_workdir']),
-        assigneeAgentKind: _sn(j['assignee_agent_kind']),
-        workspaceName: _sn(j['workspace_name']),
-        repoName: _sn(j['repo_name']),
-        groupName: _sn(j['group_name']),
-        recurrence: _s(j['recurrence']),
-        dueAt: _tn(j['due_at']),
-        nextOccurrenceAt: _tn(j['next_occurrence_at']),
-        completedAt: _tn(j['completed_at']),
-        createdAt: _t(j['created_at']),
-        updatedAt: _t(j['updated_at']),
-        commentCount: _i(j['comment_count']),
-        attachmentCount: _i(j['attachment_count']),
-        attachments: (j['attachments'] as List?)
-                ?.map((e) => TodoAttachment.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            const [],
-        sourceRef: _sn(j['source_ref']),
-        sourceUrl: _sn(j['source_url']),
-        sourceProvider: _sn(j['source_provider']),
-        sourceTeamKey: _sn(j['source_team_key']),
-        sourceProjectId: _sn(j['source_project_id']),
-        sourceAssigneeName: _sn(j['source_assignee_name']),
-        sourceAssigneeAvatarUrl: _sn(j['source_assignee_avatar_url']),
-      );
+    id: _s(j['id']),
+    projectId: _sn(j['project_id']),
+    ownerIdentity: _s(j['owner_identity']),
+    title: _s(j['title']),
+    bodyMd: _s(j['body_md']),
+    status: todoStatusFromName(_s(j['status'])),
+    priority: _s(j['priority']).isEmpty ? 'normal' : _s(j['priority']),
+    assigneeIdentity: _sn(j['assignee_identity']),
+    assigneeDisplayName: _sn(j['assignee_display_name']),
+    assigneeSessionId: _sn(j['assignee_session_id']),
+    assigneeSessionLabel: _sn(j['assignee_session_label']),
+    assigneeAgentSessionId: _sn(j['assignee_agent_session_id']),
+    assigneeWorkdir: _sn(j['assignee_workdir']),
+    assigneeAgentKind: _sn(j['assignee_agent_kind']),
+    workspaceName: _sn(j['workspace_name']),
+    repoName: _sn(j['repo_name']),
+    groupName: _sn(j['group_name']),
+    recurrence: _s(j['recurrence']),
+    dueAt: _tn(j['due_at']),
+    nextOccurrenceAt: _tn(j['next_occurrence_at']),
+    completedAt: _tn(j['completed_at']),
+    createdAt: _t(j['created_at']),
+    updatedAt: _t(j['updated_at']),
+    commentCount: _i(j['comment_count']),
+    attachmentCount: _i(j['attachment_count']),
+    attachments:
+        (j['attachments'] as List?)
+            ?.map((e) => TodoAttachment.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        const [],
+    sourceRef: _sn(j['source_ref']),
+    sourceUrl: _sn(j['source_url']),
+    sourceProvider: _sn(j['source_provider']),
+    sourceTeamKey: _sn(j['source_team_key']),
+    sourceProjectId: _sn(j['source_project_id']),
+    sourceAssigneeName: _sn(j['source_assignee_name']),
+    sourceAssigneeAvatarUrl: _sn(j['source_assignee_avatar_url']),
+  );
 
   // PATCH /v1/todos/{id} and the status-update endpoint both reuse the bare
   // row scan (no attachments join, to dodge an N+1) — so their responses
@@ -208,39 +214,40 @@ class Todo {
   // copyWith to keep the previously-fetched attachment list instead of
   // clobbering it back to empty.
   Todo copyWith({List<TodoAttachment>? attachments}) => Todo(
-        id: id,
-        projectId: projectId,
-        ownerIdentity: ownerIdentity,
-        title: title,
-        bodyMd: bodyMd,
-        status: status,
-        priority: priority,
-        assigneeIdentity: assigneeIdentity,
-        assigneeSessionId: assigneeSessionId,
-        assigneeSessionLabel: assigneeSessionLabel,
-        assigneeAgentSessionId: assigneeAgentSessionId,
-        assigneeWorkdir: assigneeWorkdir,
-        assigneeAgentKind: assigneeAgentKind,
-        workspaceName: workspaceName,
-        repoName: repoName,
-        groupName: groupName,
-        recurrence: recurrence,
-        dueAt: dueAt,
-        nextOccurrenceAt: nextOccurrenceAt,
-        completedAt: completedAt,
-        createdAt: createdAt,
-        updatedAt: updatedAt,
-        commentCount: commentCount,
-        attachmentCount: attachmentCount,
-        attachments: attachments ?? this.attachments,
-        sourceRef: sourceRef,
-        sourceUrl: sourceUrl,
-        sourceProvider: sourceProvider,
-        sourceTeamKey: sourceTeamKey,
-        sourceProjectId: sourceProjectId,
-        sourceAssigneeName: sourceAssigneeName,
-        sourceAssigneeAvatarUrl: sourceAssigneeAvatarUrl,
-      );
+    id: id,
+    projectId: projectId,
+    ownerIdentity: ownerIdentity,
+    title: title,
+    bodyMd: bodyMd,
+    status: status,
+    priority: priority,
+    assigneeIdentity: assigneeIdentity,
+    assigneeDisplayName: assigneeDisplayName,
+    assigneeSessionId: assigneeSessionId,
+    assigneeSessionLabel: assigneeSessionLabel,
+    assigneeAgentSessionId: assigneeAgentSessionId,
+    assigneeWorkdir: assigneeWorkdir,
+    assigneeAgentKind: assigneeAgentKind,
+    workspaceName: workspaceName,
+    repoName: repoName,
+    groupName: groupName,
+    recurrence: recurrence,
+    dueAt: dueAt,
+    nextOccurrenceAt: nextOccurrenceAt,
+    completedAt: completedAt,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+    commentCount: commentCount,
+    attachmentCount: attachmentCount,
+    attachments: attachments ?? this.attachments,
+    sourceRef: sourceRef,
+    sourceUrl: sourceUrl,
+    sourceProvider: sourceProvider,
+    sourceTeamKey: sourceTeamKey,
+    sourceProjectId: sourceProjectId,
+    sourceAssigneeName: sourceAssigneeName,
+    sourceAssigneeAvatarUrl: sourceAssigneeAvatarUrl,
+  );
 
   // scope is never sent by the relay — it's derived locally so the UI can
   // split "个人待办" vs "团队待办" without a server-side concept of scope.
@@ -250,4 +257,20 @@ class Todo {
   String get scope => isPersonal ? 'personal' : 'project';
   bool get isLinear =>
       sourceProvider == 'linear' || (sourceRef ?? '').startsWith('linear:');
+
+  String? get assigneeLabel {
+    final session = (assigneeSessionLabel ?? '').trim();
+    if (session.isNotEmpty) return session;
+    final name = (assigneeDisplayName ?? '').trim();
+    if (name.isNotEmpty) return name;
+    return assigneeIdentity;
+  }
+
+  String? get assigneeTooltip {
+    final name = (assigneeDisplayName ?? '').trim();
+    final id = (assigneeIdentity ?? '').trim();
+    if (name.isNotEmpty && id.isNotEmpty && name != id) return '$name · $id';
+    if (name.isNotEmpty) return name;
+    return id.isEmpty ? null : id;
+  }
 }

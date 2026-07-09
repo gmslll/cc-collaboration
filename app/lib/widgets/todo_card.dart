@@ -45,6 +45,7 @@ class TodoCard extends StatelessWidget {
               const Spacer(),
               _AssigneeAvatar(
                 identity: todo.assigneeIdentity,
+                displayName: todo.assigneeDisplayName,
                 sourceName: todo.sourceAssigneeName,
                 sourceAvatarUrl: todo.sourceAssigneeAvatarUrl,
               ),
@@ -79,7 +80,11 @@ class TodoCard extends StatelessWidget {
                 if (projectName != null)
                   _miniTag(Icons.folder_rounded, projectName!, CcColors.muted),
                 if ((todo.repoName ?? '').isNotEmpty)
-                  _miniTag(Icons.source_rounded, todo.repoName!, CcColors.muted),
+                  _miniTag(
+                    Icons.source_rounded,
+                    todo.repoName!,
+                    CcColors.muted,
+                  ),
                 if ((todo.groupName ?? '').isNotEmpty)
                   _miniTag(
                     Icons.folder_outlined,
@@ -139,10 +144,12 @@ Widget _miniTag(IconData icon, String label, Color color) => Container(
 // "assigned" affordance in this app (see StatusControl's inProgress dot).
 class _AssigneeAvatar extends StatelessWidget {
   final String? identity;
+  final String? displayName;
   final String? sourceName;
   final String? sourceAvatarUrl;
   const _AssigneeAvatar({
     required this.identity,
+    this.displayName,
     this.sourceName,
     this.sourceAvatarUrl,
   });
@@ -151,10 +158,11 @@ class _AssigneeAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     const size = 20.0;
     final id = (identity ?? '').trim();
+    final display = (displayName ?? '').trim();
     final name = (sourceName ?? '').trim();
     final avatarUrl = (sourceAvatarUrl ?? '').trim();
     // Unassigned in both the relay and the source → hollow ring.
-    if (id.isEmpty && name.isEmpty && avatarUrl.isEmpty) {
+    if (id.isEmpty && display.isEmpty && name.isEmpty && avatarUrl.isEmpty) {
       return Container(
         width: size,
         height: size,
@@ -164,7 +172,7 @@ class _AssigneeAvatar extends StatelessWidget {
         ),
       );
     }
-    final label = id.isNotEmpty ? id : name;
+    final label = display.isNotEmpty ? display : (id.isNotEmpty ? id : name);
     final initial = label.isEmpty ? '?' : label[0].toUpperCase();
     final glyph = Container(
       width: size,
@@ -199,6 +207,9 @@ class _AssigneeAvatar extends StatelessWidget {
                   progress == null ? child : glyph,
             ),
           );
-    return Tooltip(message: name.isNotEmpty ? name : id, child: avatar);
+    final tip = display.isNotEmpty
+        ? (id.isNotEmpty && id != display ? '$display · $id' : display)
+        : (name.isNotEmpty ? name : id);
+    return Tooltip(message: tip, child: avatar);
   }
 }

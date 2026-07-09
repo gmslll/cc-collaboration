@@ -105,16 +105,20 @@ func (r Recurrence) AddInterval(t time.Time) time.Time {
 // client) build against — see the "统一 API 契约" section of the feature
 // plan; do not rename.
 type Todo struct {
-	ID                   string   `json:"id"`
-	ProjectID            string   `json:"project_id,omitempty"` // empty = personal todo
-	OwnerIdentity        string   `json:"owner_identity"`
-	Title                string   `json:"title"`
-	BodyMD               string   `json:"body_md,omitempty"`
-	Status               Status   `json:"status"`
-	Priority             Priority `json:"priority"`
-	AssigneeIdentity     string   `json:"assignee_identity,omitempty"`
-	AssigneeSessionID    string   `json:"assignee_session_id,omitempty"`
-	AssigneeSessionLabel string   `json:"assignee_session_label,omitempty"`
+	ID               string   `json:"id"`
+	ProjectID        string   `json:"project_id,omitempty"` // empty = personal todo
+	OwnerIdentity    string   `json:"owner_identity"`
+	Title            string   `json:"title"`
+	BodyMD           string   `json:"body_md,omitempty"`
+	Status           Status   `json:"status"`
+	Priority         Priority `json:"priority"`
+	AssigneeIdentity string   `json:"assignee_identity,omitempty"`
+	// AssigneeDisplayName is a read-only relay-user display overlay for
+	// AssigneeIdentity. It is derived from users.display_name and not persisted
+	// on the todo row, so older relays/unknown users naturally omit it.
+	AssigneeDisplayName  string `json:"assignee_display_name,omitempty"`
+	AssigneeSessionID    string `json:"assignee_session_id,omitempty"`
+	AssigneeSessionLabel string `json:"assignee_session_label,omitempty"`
 	// AssigneeAgentSessionID/AssigneeWorkdir/AssigneeAgentKind are the
 	// permanent-resume counterpart to AssigneeSessionID: the latter is a bus
 	// session id that goes stale the moment a tab closes, while these three
