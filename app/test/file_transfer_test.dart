@@ -32,6 +32,23 @@ void main() {
     expect(sanitizeFileName(''), 'file');
   });
 
+  test('openReceiveSink sanitizes direct disk sink names', () async {
+    final tmp = await Directory.systemTemp.createTemp('cc-ft-sink');
+    addTearDown(() => tmp.delete(recursive: true));
+
+    final sink = await openReceiveSink(
+      IncomingFile('x', '../nested/evil.txt', 3, null, 1),
+      host: true,
+      landingDirOverride: tmp,
+    );
+    await sink.add([1, 2, 3]);
+    final path = await sink.finish();
+
+    expect(path, '${tmp.path}/evil.txt');
+    expect(await File(path).readAsBytes(), [1, 2, 3]);
+    expect(File('${tmp.parent.path}/nested/evil.txt').existsSync(), isFalse);
+  });
+
   test('send → receive preserves bytes + sha256 across many chunks', () async {
     final tmp = await Directory.systemTemp.createTemp('cc-ft');
     addTearDown(() => tmp.delete(recursive: true));
@@ -39,8 +56,9 @@ void main() {
     // 700KB of pseudo-random bytes → 3 chunks (256+256+188KB), exercising the
     // streaming sha256 and the multi-chunk reassembly path.
     final rnd = Random(42);
-    final data =
-        Uint8List.fromList(List.generate(700 * 1024, (_) => rnd.nextInt(256)));
+    final data = Uint8List.fromList(
+      List.generate(700 * 1024, (_) => rnd.nextInt(256)),
+    );
     await src.writeAsBytes(data);
 
     _MemSink? sink;
@@ -69,25 +87,44 @@ void main() {
     );
   });
 
-  test('a corrupted sha256 is rejected and the partial file is aborted',
-      () async {
-    final tmp = await Directory.systemTemp.createTemp('cc-ft');
-    addTearDown(() => tmp.delete(recursive: true));
+  test(
+    'a corrupted sha256 is rejected and the partial file is aborted',
+    () async {
+      final tmp = await Directory.systemTemp.createTemp('cc-ft');
+      addTearDown(() => tmp.delete(recursive: true));
 
-    _MemSink? sink;
-    final done = Completer<String>();
-    final rx = FileReceiver(
-      openSink: (info) async => sink = _MemSink('${tmp.path}/dst.bin'),
-      sendFrame: (_) {},
-      onComplete: (info, path) => done.complete(path),
-      onError: (info, reason) => done.completeError(reason),
-    );
+      _MemSink? sink;
+      final done = Completer<String>();
+      final rx = FileReceiver(
+        openSink: (info) async => sink = _MemSink('${tmp.path}/dst.bin'),
+        sendFrame: (_) {},
+        onComplete: (info, path) => done.complete(path),
+        onError: (info, reason) => done.completeError(reason),
+      );
 
-    rx.dispatch({'t': 'file.offer', 'from': 1, 'xid': 'x', 'name': 'a.bin', 'size': 3});
-    rx.dispatch({'t': 'file.chunk', 'from': 1, 'xid': 'x', 'seq': 0, 'data': 'AQID'}); // [1,2,3]
-    rx.dispatch({'t': 'file.end', 'from': 1, 'xid': 'x', 'sha256': 'deadbeef'});
+      rx.dispatch({
+        't': 'file.offer',
+        'from': 1,
+        'xid': 'x',
+        'name': 'a.bin',
+        'size': 3,
+      });
+      rx.dispatch({
+        't': 'file.chunk',
+        'from': 1,
+        'xid': 'x',
+        'seq': 0,
+        'data': 'AQID',
+      }); // [1,2,3]
+      rx.dispatch({
+        't': 'file.end',
+        'from': 1,
+        'xid': 'x',
+        'sha256': 'deadbeef',
+      });
 
-    await expectLater(done.future, throwsA(contains('校验')));
-    expect(sink!.aborted, isTrue);
-  });
+      await expectLater(done.future, throwsA(contains('校验')));
+      expect(sink!.aborted, isTrue);
+    },
+  );
 }
