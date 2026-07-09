@@ -357,6 +357,12 @@ class LspCommandDialog extends StatefulWidget {
   State<LspCommandDialog> createState() => _LspCommandDialogState();
 }
 
+double lspCommandDialogWidth(Size size, {double preferred = 440}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class _LspCommandDialogState extends State<LspCommandDialog> {
   late final TextEditingController _ctl;
 
@@ -376,33 +382,46 @@ class _LspCommandDialogState extends State<LspCommandDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
       backgroundColor: CcColors.panel,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Text(
         '${widget.plugin.name} · 服务器命令',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
       ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '填可执行文件名或绝对路径(启动参数用内置默认)。留空恢复默认命令。',
-            style: TextStyle(color: CcColors.muted, fontSize: 12, height: 1.4),
+      content: SizedBox(
+        width: lspCommandDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '填可执行文件名或绝对路径(启动参数用内置默认)。留空恢复默认命令。',
+                style: TextStyle(
+                  color: CcColors.muted,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _ctl,
+                autofocus: true,
+                style: CcType.code(size: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: widget.plugin.command,
+                  border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => _save(),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _ctl,
-            autofocus: true,
-            style: CcType.code(size: 13),
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: widget.plugin.command,
-              border: const OutlineInputBorder(),
-            ),
-            onSubmitted: (_) => _save(),
-          ),
-        ],
+        ),
       ),
       actions: [
         TextButton(

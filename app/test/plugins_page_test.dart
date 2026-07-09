@@ -5,6 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('LSP command dialog width fits compact screens', () {
+    expect(lspCommandDialogWidth(const Size(320, 760)), 288);
+    expect(lspCommandDialogWidth(const Size(1024, 760)), 440);
+    expect(lspCommandDialogWidth(const Size(360, 760), preferred: 460), 328);
+  });
+
   testWidgets('LSP command dialog cancel closes cleanly', (tester) async {
     String? result = 'unchanged';
 
@@ -33,6 +39,9 @@ void main() {
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
     expect(find.text('Go (gopls) · 服务器命令'), findsOneWidget);
+    final title = tester.widget<Text>(find.text('Go (gopls) · 服务器命令'));
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
       'custom-gopls',
@@ -43,6 +52,54 @@ void main() {
 
     expect(result, isNull);
     expect(find.byType(TextField), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('LSP command dialog fits compact screens', (tester) async {
+    tester.view.physicalSize = const Size(320, 360);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                await showDialog<String>(
+                  context: context,
+                  builder: (_) => LspCommandDialog(
+                    plugin: kLspServers.first,
+                    initialCommand:
+                        '/very/long/team/workspace/toolchain/bin/custom-gopls',
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(contentScroll.scrollDirection, Axis.vertical);
     expect(tester.takeException(), isNull);
   });
 
