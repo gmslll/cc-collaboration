@@ -17,6 +17,7 @@ import (
 	"github.com/cc-collaboration/internal/linear"
 	"github.com/cc-collaboration/internal/rules"
 	gitsrc "github.com/cc-collaboration/internal/sources/git"
+	"github.com/cc-collaboration/internal/statusfmt"
 	"github.com/cc-collaboration/internal/transport"
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
@@ -1201,21 +1202,7 @@ func statusHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if err != nil {
 		return ToolResult{}, err
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "handoff `%s`\n", st.ID)
-	fmt.Fprintf(&sb, "- state: %s\n", st.State)
-	fmt.Fprintf(&sb, "- sender: %s\n- recipient: %s\n", st.Sender, st.Recipient)
-	fmt.Fprintf(&sb, "- created: %s\n", st.CreatedAt.Format("2006-01-02 15:04:05 MST"))
-	if st.PickedAt != nil {
-		fmt.Fprintf(&sb, "- picked: %s\n", st.PickedAt.Format("2006-01-02 15:04:05 MST"))
-	} else {
-		fmt.Fprintf(&sb, "- picked: (not yet)\n")
-	}
-	fmt.Fprintf(&sb, "- comments: %d\n", st.CommentCount)
-	if st.LastComment != nil {
-		fmt.Fprintf(&sb, "- last comment by %s: %s\n", st.LastComment.Sender, st.LastComment.Body)
-	}
-	return textResult(sb.String()), nil
+	return textResult(statusfmt.Markdown(st)), nil
 }
 
 // --- list_sent --------------------------------------------------------------
