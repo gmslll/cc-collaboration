@@ -227,19 +227,71 @@ void main() {
     expect(deleted, 1);
     expect(tester.widget<IconButton>(deleteButton()).onPressed, isNotNull);
   });
+
+  testWidgets('property controls are locked while an update is pending', (
+    tester,
+  ) async {
+    final client = _DelayedTodoClient(delayUpdate: true);
+    final todo = _todo('td-props', 'property title');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: client, todo: todo),
+        ),
+      ),
+    );
+    await tester.pump();
+    client.completeTodo('td-props', todo);
+    await tester.pumpAndSettle();
+
+    Finder priorityLabel() => find.descendant(
+      of: find.byType(TodoDetailView),
+      matching: find.text('普通'),
+    );
+
+    await tester.tap(priorityLabel());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('高'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(client.updateCalls, 1);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+    await tester.tap(priorityLabel());
+    await tester.pump();
+
+    expect(client.updateCalls, 1);
+    if (find.text('低').evaluate().isNotEmpty) {
+      await tester.tap(find.text('低'), warnIfMissed: false);
+      await tester.pump();
+    }
+    expect(client.updateCalls, 1);
+
+    client.completeUpdate(
+      _todo('td-props', 'property title', priority: 'high'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(client.updateCalls, 1);
+    expect(find.text('高'), findsOneWidget);
+    expect(find.text('普通'), findsNothing);
+  });
 }
 
 Todo _todo(
   String id,
   String title, {
   String updatedAt = '2026-01-01T00:00:00Z',
+  String priority = 'normal',
 }) => Todo.fromJson({
   'id': id,
   'owner_identity': 'me@x',
   'title': title,
   'body_md': '',
   'status': 'todo',
-  'priority': 'normal',
+  'priority': priority,
   'created_at': '2026-01-01T00:00:00Z',
   'updated_at': updatedAt,
   'comment_count': 0,
@@ -258,20 +310,24 @@ class _DelayedTodoClient extends RelayClient {
     this.delayComments = false,
     this.delayPostComment = false,
     this.delayDelete = false,
+    this.delayUpdate = false,
   }) : super('http://127.0.0.1', 'tok');
 
   final bool delayComments;
   final bool delayPostComment;
   final bool delayDelete;
+  final bool delayUpdate;
 
   final requestedTodos = <String>[];
   final requestedComments = <String>[];
   final postedComments = <String>[];
   int deleteCalls = 0;
+  int updateCalls = 0;
   final _todos = <String, Completer<Todo>>{};
   final _comments = <String, Completer<List<TodoComment>>>{};
   final _posts = <String, Completer<TodoComment>>{};
   final _delete = Completer<void>();
+  final _update = Completer<Todo>();
 
   @override
   Future<Todo> todo(String id) {
@@ -306,6 +362,26 @@ class _DelayedTodoClient extends RelayClient {
     return _delete.future;
   }
 
+  @override
+  Future<Todo> updateTodo(
+    String id, {
+    String? title,
+    String? bodyMd,
+    String? priority,
+    String? recurrence,
+    DateTime? dueAt,
+    bool clearDueAt = false,
+    String? workspaceName,
+    String? repoName,
+    String? groupName,
+  }) {
+    updateCalls++;
+    if (delayUpdate) return _update.future;
+    return Future.value(
+      _todo(id, title ?? 'updated', priority: priority ?? 'normal'),
+    );
+  }
+
   void completeTodo(String id, Todo todo) {
     _todos[id]!.complete(todo);
   }
@@ -320,5 +396,9 @@ class _DelayedTodoClient extends RelayClient {
 
   void completeDelete() {
     if (!_delete.isCompleted) _delete.complete();
+  }
+
+  void completeUpdate(Todo todo) {
+    if (!_update.isCompleted) _update.complete(todo);
   }
 }

@@ -100,6 +100,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   bool _uploading = false;
   bool _commenting = false;
   bool _deleting = false;
+  bool _propertyMutating = false;
   // Body starts in read-only display mode (TodoBodyView, images inlined);
   // clicking it swaps to the live MarkdownLiteEditor for editing, and losing
   // focus swaps back — same split as the plan's "编辑态/展示态" design so
@@ -156,6 +157,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
         _uploading = false;
         _commenting = false;
         _deleting = false;
+        _propertyMutating = false;
         _resumingSession = false;
       });
       _loadFull();
@@ -334,8 +336,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
       snack(context, '你对这条待办只有只读权限');
       return;
     }
+    if (_propertyMutating) return;
     final client = _client;
     final id = _id;
+    setState(() => _propertyMutating = true);
     try {
       final updated = await client.setTodoStatus(id, s);
       if (!_isCurrentTodoClient(client, id)) return;
@@ -344,6 +348,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
       if (_isCurrentTodoClient(client, id)) {
         if (!mounted) return;
         snack(context, '更新状态失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _propertyMutating = false);
       }
     }
   }
@@ -361,8 +369,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
       snack(context, '你对这条待办只有只读权限');
       return;
     }
+    if (_propertyMutating) return;
     final client = _client;
     final id = _id;
+    setState(() => _propertyMutating = true);
     try {
       final updated = await client.updateTodo(
         id,
@@ -380,6 +390,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
       if (_isCurrentTodoClient(client, id)) {
         if (!mounted) return;
         snack(context, '更新失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _propertyMutating = false);
       }
     }
   }
@@ -401,6 +415,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   Future<void> _clearGroup() => _patch(groupName: '');
 
   Future<void> _pickDueDate() async {
+    if (_propertyMutating) return;
     final now = DateTime.now();
     final current = _current.dueAt ?? now;
     final date = await showDatePicker(
@@ -760,6 +775,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
                 status: _current.status,
                 colorOf: _statusColor,
                 onChanged: _setStatus,
+                enabled: !_propertyMutating,
               )
             else
               _readOnlyPill(
@@ -774,6 +790,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
                     ? _current.priority
                     : 'normal',
                 onChanged: (v) => _patch(priority: v),
+                enabled: !_propertyMutating,
               )
             else
               _readOnlyPill(
@@ -787,6 +804,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
                     ? _current.recurrence
                     : '',
                 onChanged: (v) => _patch(recurrence: v),
+                enabled: !_propertyMutating,
               )
             else
               _readOnlyPill(
@@ -799,6 +817,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
                 dueAt: _current.dueAt,
                 onTap: _pickDueDate,
                 onClear: () => _patch(clearDueAt: true),
+                enabled: !_propertyMutating,
               )
             else
               _readOnlyPill(
@@ -815,6 +834,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
                 workspaces: widget.config?.workspaces ?? const [],
                 onBind: _bindRepo,
                 onClear: _clearRepo,
+                enabled: !_propertyMutating,
               )
             else
               _readOnlyPill(
@@ -832,6 +852,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
                 existingGroups: widget.groups,
                 onSelect: _setGroup,
                 onClear: _clearGroup,
+                enabled: !_propertyMutating,
               )
             else
               _readOnlyPill(
@@ -840,6 +861,14 @@ class TodoDetailViewState extends State<TodoDetailView> {
                     ? '未分组'
                     : _current.groupName!,
               ),
+            if (_propertyMutating) ...[
+              _dot(),
+              const SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ],
           ],
         ),
         if ((_current.assigneeIdentity ?? '').isNotEmpty ||

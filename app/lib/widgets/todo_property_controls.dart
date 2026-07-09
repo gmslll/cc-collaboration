@@ -84,15 +84,19 @@ Widget _pillTap({
   required GlobalKey key,
   required VoidCallback onTap,
   required Widget child,
-}) => Material(
-  key: key,
-  color: Colors.transparent,
-  child: InkWell(
-    borderRadius: BorderRadius.circular(CcRadius.sm),
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      child: child,
+  bool enabled = true,
+}) => Opacity(
+  opacity: enabled ? 1 : 0.55,
+  child: Material(
+    key: key,
+    color: Colors.transparent,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+      onTap: enabled ? onTap : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: child,
+      ),
     ),
   ),
 );
@@ -138,11 +142,13 @@ class PriorityControl extends StatefulWidget {
   final String priority;
   final ValueChanged<String> onChanged;
   final bool showLabel;
+  final bool enabled;
   const PriorityControl({
     super.key,
     required this.priority,
     required this.onChanged,
     this.showLabel = true,
+    this.enabled = true,
   });
 
   @override
@@ -170,6 +176,7 @@ class _PriorityControlState extends State<PriorityControl> {
   Widget build(BuildContext context) => _pillTap(
     key: _key,
     onTap: _open,
+    enabled: widget.enabled,
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -190,11 +197,13 @@ class StatusControl extends StatefulWidget {
   final TodoStatus status;
   final Color Function(TodoStatus) colorOf;
   final ValueChanged<TodoStatus> onChanged;
+  final bool enabled;
   const StatusControl({
     super.key,
     required this.status,
     required this.colorOf,
     required this.onChanged,
+    this.enabled = true,
   });
 
   @override
@@ -224,6 +233,7 @@ class _StatusControlState extends State<StatusControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
+      enabled: widget.enabled,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -250,10 +260,12 @@ class _StatusControlState extends State<StatusControl> {
 class RecurrenceControl extends StatefulWidget {
   final String recurrence;
   final ValueChanged<String> onChanged;
+  final bool enabled;
   const RecurrenceControl({
     super.key,
     required this.recurrence,
     required this.onChanged,
+    this.enabled = true,
   });
 
   @override
@@ -287,6 +299,7 @@ class _RecurrenceControlState extends State<RecurrenceControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
+      enabled: widget.enabled,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -313,11 +326,13 @@ class DueDatePill extends StatelessWidget {
   final DateTime? dueAt;
   final VoidCallback onTap;
   final VoidCallback? onClear;
+  final bool enabled;
   const DueDatePill({
     super.key,
     required this.dueAt,
     required this.onTap,
     this.onClear,
+    this.enabled = true,
   });
 
   @override
@@ -332,7 +347,7 @@ class DueDatePill extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(CcRadius.sm),
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           child: Row(
@@ -351,7 +366,7 @@ class DueDatePill extends StatelessWidget {
               if (has && onClear != null) ...[
                 const SizedBox(width: 2),
                 InkWell(
-                  onTap: onClear,
+                  onTap: enabled ? onClear : null,
                   borderRadius: BorderRadius.circular(10),
                   child: const Padding(
                     padding: EdgeInsets.all(2),
@@ -382,6 +397,7 @@ class WorkspaceRepoControl extends StatefulWidget {
   final List<WorkspaceCfg> workspaces;
   final void Function(String workspaceName, String repoName) onBind;
   final VoidCallback onClear;
+  final bool enabled;
   const WorkspaceRepoControl({
     super.key,
     required this.workspaceName,
@@ -389,6 +405,7 @@ class WorkspaceRepoControl extends StatefulWidget {
     required this.workspaces,
     required this.onBind,
     required this.onClear,
+    this.enabled = true,
   });
 
   @override
@@ -445,6 +462,7 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
+      enabled: widget.enabled,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -464,7 +482,7 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
           if (bound) ...[
             const SizedBox(width: 2),
             InkWell(
-              onTap: widget.onClear,
+              onTap: widget.enabled ? widget.onClear : null,
               borderRadius: BorderRadius.circular(10),
               child: const Padding(
                 padding: EdgeInsets.all(2),
@@ -494,12 +512,14 @@ class GroupControl extends StatefulWidget {
   final List<String> existingGroups;
   final ValueChanged<String> onSelect;
   final VoidCallback? onClear;
+  final bool enabled;
   const GroupControl({
     super.key,
     required this.groupName,
     required this.existingGroups,
     required this.onSelect,
     this.onClear,
+    this.enabled = true,
   });
 
   @override
@@ -541,6 +561,7 @@ class _GroupControlState extends State<GroupControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
+      enabled: widget.enabled,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -565,7 +586,7 @@ class _GroupControlState extends State<GroupControl> {
           if (has && widget.onClear != null) ...[
             const SizedBox(width: 2),
             InkWell(
-              onTap: widget.onClear,
+              onTap: widget.enabled ? widget.onClear : null,
               borderRadius: BorderRadius.circular(10),
               child: const Padding(
                 padding: EdgeInsets.all(2),
