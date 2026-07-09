@@ -2937,6 +2937,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         '${f.path}\n\n未保存修改会保留在编辑器里,关闭后需要重新打开。',
       );
       if (!ok) return;
+      if (!mounted) return;
     }
     setState(() {
       _codeFiles.removeAt(i);
@@ -3023,6 +3024,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭其他未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     final keepPath = _codeFiles[keep].path;
     setState(() {
@@ -3048,6 +3050,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭右侧未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     final keepPath = _codeFiles[keep].path;
     setState(() {
@@ -3073,6 +3076,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭左侧未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     final keepPath = _codeFiles[keep].path;
     setState(() {
@@ -3110,6 +3114,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭所有未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     setState(() {
       _codeFiles.clear();
@@ -3142,6 +3147,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭此分屏未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     setState(() {
       _codeFiles.removeWhere((f) => closePaths.contains(f.path));

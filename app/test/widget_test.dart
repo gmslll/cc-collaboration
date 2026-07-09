@@ -895,6 +895,51 @@ void main() {
     );
     expectGuardBefore(
       between(
+        'Future<void> _closeCodeFile(',
+        'Future<void> _closeActiveCodeFile',
+      ),
+      "await _confirm(\n        '关闭未保存文件?'",
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _closeOtherCodeFiles(',
+        'Future<void> _closeCodeFilesToRight',
+      ),
+      "await _confirm('关闭其他未保存文件?'",
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _closeCodeFilesToRight(',
+        'Future<void> _closeCodeFilesToLeft',
+      ),
+      "await _confirm('关闭右侧未保存文件?'",
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _closeCodeFilesToLeft(',
+        'Future<void> _closeUnmodifiedCodeFiles',
+      ),
+      "await _confirm('关闭左侧未保存文件?'",
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _closeAllCodeFiles(',
+        'Future<void> _closePaneFiles',
+      ),
+      "await _confirm('关闭所有未保存文件?'",
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between('Future<void> _closePaneFiles(', 'void _copyFilePath'),
+      "await _confirm('关闭此分屏未保存文件?'",
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between(
         'void _refreshFileTrees(',
         'Future<bool> _closeAffectedOpenFiles(',
       ),
