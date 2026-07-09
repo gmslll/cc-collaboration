@@ -200,18 +200,18 @@ func runTodoCreate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := client.CreateTodo(ctx, &todoschema.Todo{
-		ProjectID:        *project,
-		Title:            title,
-		BodyMD:           *body,
-		Priority:         p,
-		Recurrence:       r,
-		DueAt:            dueAt,
-		AssigneeIdentity: *assignee,
-		WorkspaceName:    *workspace,
-		RepoName:         repoName,
-		GroupName:        *group,
-	})
+	out, err := client.CreateTodo(ctx, todoCreatePayload(
+		title,
+		*body,
+		*project,
+		*assignee,
+		*workspace,
+		repoName,
+		*group,
+		p,
+		r,
+		dueAt,
+	))
 	if err != nil {
 		return relayCompatError(err, "todo create")
 	}
@@ -235,6 +235,32 @@ func runTodoCreate(ctx context.Context, args []string) error {
 	return nil
 }
 
+func todoCreatePayload(
+	title,
+	body,
+	project,
+	assignee,
+	workspace,
+	repo,
+	group string,
+	priority todoschema.Priority,
+	recurrence todoschema.Recurrence,
+	dueAt *time.Time,
+) *todoschema.Todo {
+	return &todoschema.Todo{
+		ProjectID:        cleanTargetArg(project),
+		Title:            title,
+		BodyMD:           body,
+		Priority:         priority,
+		Recurrence:       recurrence,
+		DueAt:            dueAt,
+		AssigneeIdentity: cleanTargetArg(assignee),
+		WorkspaceName:    cleanTargetArg(workspace),
+		RepoName:         cleanTargetArg(repo),
+		GroupName:        cleanTargetArg(group),
+	}
+}
+
 func runTodoList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("todo list", flag.ContinueOnError)
 	scope := fs.String("scope", "personal", "personal|project|assigned|all")
@@ -251,13 +277,7 @@ func runTodoList(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	items, err := client.ListTodos(ctx, transport.TodoListFilter{
-		Scope:     *scope,
-		ProjectID: *project,
-		Status:    *status,
-		GroupName: *group,
-		Limit:     *limit,
-	})
+	items, err := client.ListTodos(ctx, todoListFilter(*scope, *project, *status, *group, *limit))
 	if err != nil {
 		return relayCompatError(err, "todo list")
 	}
@@ -278,6 +298,16 @@ func runTodoList(ctx context.Context, args []string) error {
 			it.ID, it.Status, it.Priority, due, truncRight(it.Title, 60))
 	}
 	return nil
+}
+
+func todoListFilter(scope, project, status, group string, limit int) transport.TodoListFilter {
+	return transport.TodoListFilter{
+		Scope:     cleanTargetArg(scope),
+		ProjectID: cleanTargetArg(project),
+		Status:    cleanTargetArg(status),
+		GroupName: cleanTargetArg(group),
+		Limit:     limit,
+	}
 }
 
 func runTodoGet(ctx context.Context, args []string) error {

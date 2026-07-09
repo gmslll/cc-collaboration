@@ -69,6 +69,42 @@ func TestTodoCreateAttachmentReadHappensBeforeNetwork(t *testing.T) {
 	}
 }
 
+func TestTodoCreatePayloadNormalizesTeamFields(t *testing.T) {
+	payload := todoCreatePayload(
+		"  keep title padding  ",
+		"  keep body padding  ",
+		" project-1 ",
+		" dev@x ",
+		" Workspace ",
+		" Repo ",
+		" Sprint ",
+		todoschema.PriorityHigh,
+		todoschema.RecurrenceWeekly,
+		nil,
+	)
+	if payload.ProjectID != "project-1" ||
+		payload.AssigneeIdentity != "dev@x" ||
+		payload.WorkspaceName != "Workspace" ||
+		payload.RepoName != "Repo" ||
+		payload.GroupName != "Sprint" {
+		t.Fatalf("payload fields not normalized: %+v", payload)
+	}
+	if payload.Title != "  keep title padding  " || payload.BodyMD != "  keep body padding  " {
+		t.Fatalf("title/body should be preserved: %+v", payload)
+	}
+}
+
+func TestTodoListFilterNormalizesTeamFields(t *testing.T) {
+	filter := todoListFilter(" project ", " project-1 ", " in_review ", " Sprint ", 25)
+	if filter.Scope != "project" ||
+		filter.ProjectID != "project-1" ||
+		filter.Status != "in_review" ||
+		filter.GroupName != "Sprint" ||
+		filter.Limit != 25 {
+		t.Fatalf("filter not normalized: %+v", filter)
+	}
+}
+
 func TestTodoStatusValidation(t *testing.T) {
 	cases := []struct {
 		name string
