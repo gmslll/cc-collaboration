@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:app/api/relay_client.dart';
 import 'package:app/api/todo_models.dart';
+import 'package:app/local/config.dart';
+import 'package:app/local/session_overview.dart';
 import 'package:app/local/todo_permissions.dart';
 import 'package:app/screens/todo_detail_view.dart';
 import 'package:app/theme.dart';
@@ -335,6 +337,80 @@ void main() {
     expect(find.widgetWithText(TextField, 'older title'), findsNothing);
     expect(changed.map((t) => t.title), ['newer title']);
   });
+
+  testWidgets('resume session failure releases the action button', (
+    tester,
+  ) async {
+    final client = _DelayedTodoClient();
+    final overview = SessionOverviewStore();
+    final spawn = Completer<(String?, String?)>();
+    var spawnCalls = 0;
+    overview.spawnHandler =
+        ({
+          required workspace,
+          required project,
+          required kind,
+          projectId,
+          newWorktreeBranch,
+          worktreeStart,
+          resumeAgentSessionId,
+          workdir,
+        }) {
+          spawnCalls++;
+          return spawn.future;
+        };
+
+    final todo = _todo(
+      'td-resume-fail',
+      'resume title',
+      assigneeIdentity: 'bot@x',
+      assigneeAgentSessionId: 'agent-session-1',
+      assigneeWorkdir: '/tmp/cc-project',
+      assigneeAgentKind: 'codex',
+    );
+    final config = AppConfig(
+      'http://127.0.0.1',
+      'tok',
+      'me@x',
+      const {},
+      const [
+        WorkspaceCfg('ws', '/tmp', 'codex', '', '', [
+          ProjectCfg('proj', '/tmp/cc-project'),
+        ]),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(
+            client: client,
+            todo: todo,
+            overviewStore: overview,
+            config: config,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    Finder resumeButton() => find.widgetWithText(TextButton, '打开/恢复会话');
+
+    await tester.tap(resumeButton());
+    await tester.pump();
+
+    expect(spawnCalls, 1);
+    expect(tester.widget<TextButton>(resumeButton()).onPressed, isNull);
+
+    spawn.complete((null, 'boom'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('恢复会话失败: boom'), findsOneWidget);
+    expect(tester.widget<TextButton>(resumeButton()).onPressed, isNotNull);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
 }
 
 Todo _todo(
@@ -342,19 +418,38 @@ Todo _todo(
   String title, {
   String updatedAt = '2026-01-01T00:00:00Z',
   String priority = 'normal',
-}) => Todo.fromJson({
-  'id': id,
-  'owner_identity': 'me@x',
-  'title': title,
-  'body_md': '',
-  'status': 'todo',
-  'priority': priority,
-  'created_at': '2026-01-01T00:00:00Z',
-  'updated_at': updatedAt,
-  'comment_count': 0,
-  'attachment_count': 0,
-  'attachments': <Map<String, dynamic>>[],
-});
+  String? assigneeIdentity,
+  String? assigneeAgentSessionId,
+  String? assigneeWorkdir,
+  String? assigneeAgentKind,
+}) {
+  final json = <String, dynamic>{
+    'id': id,
+    'owner_identity': 'me@x',
+    'title': title,
+    'body_md': '',
+    'status': 'todo',
+    'priority': priority,
+    'created_at': '2026-01-01T00:00:00Z',
+    'updated_at': updatedAt,
+    'comment_count': 0,
+    'attachment_count': 0,
+    'attachments': <Map<String, dynamic>>[],
+  };
+  if (assigneeIdentity != null) {
+    json['assignee_identity'] = assigneeIdentity;
+  }
+  if (assigneeAgentSessionId != null) {
+    json['assignee_agent_session_id'] = assigneeAgentSessionId;
+  }
+  if (assigneeWorkdir != null) {
+    json['assignee_workdir'] = assigneeWorkdir;
+  }
+  if (assigneeAgentKind != null) {
+    json['assignee_agent_kind'] = assigneeAgentKind;
+  }
+  return Todo.fromJson(json);
+}
 
 TodoComment _comment(String author, String body) => TodoComment.fromJson({
   'author_identity': author,

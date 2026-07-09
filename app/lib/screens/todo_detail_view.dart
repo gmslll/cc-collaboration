@@ -496,47 +496,59 @@ class TodoDetailViewState extends State<TodoDetailView> {
     final client = _client;
     final id = t.id;
     setState(() => _resumingSession = true);
-    final (sid, err) = await overview.spawn(
-      workspace: wsName,
-      project: projName,
-      kind: (t.assigneeAgentKind ?? '').isNotEmpty
-          ? t.assigneeAgentKind!
-          : 'claude',
-      resumeAgentSessionId: resumeId,
-      // Pass the exact saved dir through (not just the project it resolved
-      // to) so a session that ran inside a worktree respawns there instead
-      // of silently falling back to the project root — see
-      // _spawnForDispatch/_spawnManagedSession in workspace_page.dart.
-      workdir: workdir,
-    );
-    if (!_isCurrentTodoClient(client, id)) return;
-    setState(() => _resumingSession = false);
-    if (sid == null) {
-      snack(context, '恢复会话失败: ${err ?? "未知错误"}');
-      return;
-    }
-    // A respawned --resume session is brand-new terminal state: even if the CLI
-    // restored the conversation history, Flutter has no signal telling "history
-    // came back" from "silently got a blank session" apart (overview.spawn only
-    // returns (sid, error)). So always re-deliver the task pointer — the
-    // materialized file is overwrite-based (reflects latest state) and the
-    // message is short, so a redundant reminder when history did restore is far
-    // cheaper than leaving the user staring at a blank session with no context.
-    final prep = await prepareTodoAssignmentText(
-      client: client,
-      todoId: id,
-      fallbackTodo: t,
-      workdir: workdir,
-    );
-    if (!_isCurrentTodoClient(client, id)) return;
-    final dispatchErr = overview.dispatch(
-      LocalMsg('', sid, prep.taskText, true),
-    );
-    if (dispatchErr != null) {
+    try {
+      final (sid, err) = await overview.spawn(
+        workspace: wsName,
+        project: projName,
+        kind: (t.assigneeAgentKind ?? '').isNotEmpty
+            ? t.assigneeAgentKind!
+            : 'claude',
+        resumeAgentSessionId: resumeId,
+        // Pass the exact saved dir through (not just the project it resolved
+        // to) so a session that ran inside a worktree respawns there instead
+        // of silently falling back to the project root — see
+        // _spawnForDispatch/_spawnManagedSession in workspace_page.dart.
+        workdir: workdir,
+      );
+      if (!_isCurrentTodoClient(client, id)) return;
+      if (sid == null) {
+        snack(context, '恢复会话失败: ${err ?? "未知错误"}');
+        return;
+      }
+      // A respawned --resume session is brand-new terminal state: even if the CLI
+      // restored the conversation history, Flutter has no signal telling "history
+      // came back" from "silently got a blank session" apart (overview.spawn only
+      // returns (sid, error)). So always re-deliver the task pointer — the
+      // materialized file is overwrite-based (reflects latest state) and the
+      // message is short, so a redundant reminder when history did restore is far
+      // cheaper than leaving the user staring at a blank session with no context.
+      final prep = await prepareTodoAssignmentText(
+        client: client,
+        todoId: id,
+        fallbackTodo: t,
+        workdir: workdir,
+      );
+      if (!_isCurrentTodoClient(client, id)) return;
+      String? dispatchErr;
+      try {
+        dispatchErr = overview.dispatch(LocalMsg('', sid, prep.taskText, true));
+      } catch (e) {
+        dispatchErr = errorText(e);
+      }
+      if (dispatchErr != null) {
+        if (!mounted) return;
+        snack(context, '会话已恢复，但投递任务说明失败: $dispatchErr');
+      }
+      _openSession(sid);
+    } catch (e) {
+      if (!_isCurrentTodoClient(client, id)) return;
       if (!mounted) return;
-      snack(context, '会话已恢复，但投递任务说明失败: $dispatchErr');
+      snack(context, '恢复会话失败: ${errorText(e)}');
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _resumingSession = false);
+      }
     }
-    _openSession(sid);
   }
 
   void _openSession(String sid) {
