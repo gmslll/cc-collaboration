@@ -317,14 +317,14 @@ void main() {
     final org = Organization.fromJson({
       'id': 'org-a',
       'name': 'Kunlun Operations',
-      'owner_identity': 'owner@x',
+      'owner_identity': 'team-owner@x',
       'role': 'owner',
     });
     final project = Project.fromJson({
       'id': 'p1',
       'org_id': 'org-a',
       'name': 'Backend Control',
-      'owner_identity': 'owner@x',
+      'owner_identity': 'project-owner@x',
       'role': 'member',
     });
 
@@ -359,6 +359,17 @@ void main() {
         identity: 'member@x',
       ),
       isFalse,
+    );
+    expect(
+      projectVisibleForSearch(
+        project,
+        'team-owner@x',
+        team: org,
+        fallbackTeamName: 'Fallback',
+        isAdmin: false,
+        identity: 'member@x',
+      ),
+      isTrue,
     );
   });
 
@@ -878,6 +889,7 @@ void main() {
     expect(find.text('Backend'), findsNothing);
     expect(find.text('Ops'), findsOneWidget);
     expect(find.text('Frontend'), findsOneWidget);
+    expect(find.text('匹配 1 团队 · 1 项目'), findsOneWidget);
 
     await tester.tap(find.byTooltip('清除搜索'));
     await tester.pump();

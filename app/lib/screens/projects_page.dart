@@ -193,6 +193,26 @@ bool projectMatchesSearch(
   ].any((value) => value.toLowerCase().contains(q));
 }
 
+bool projectVisibleForSearch(
+  Project project,
+  String query, {
+  required Organization? team,
+  required String fallbackTeamName,
+  required bool isAdmin,
+  required String identity,
+}) {
+  final q = normalizedProjectSearchQuery(query);
+  if (q.isEmpty) return true;
+  if (team != null && organizationMatchesSearch(team, q)) return true;
+  return projectMatchesSearch(
+    project,
+    q,
+    teamName: team?.name ?? fallbackTeamName,
+    isAdmin: isAdmin,
+    identity: identity,
+  );
+}
+
 bool identityMatches(String left, String right) {
   final l = left.trim();
   final r = right.trim();
@@ -518,12 +538,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
 
   List<Project> get _visibleProjects {
     final q = _search.text;
+    final orgById = {for (final org in _orgs) org.id: org};
     return (_projects ?? const <Project>[])
         .where(
-          (project) => projectMatchesSearch(
+          (project) => projectVisibleForSearch(
             project,
             q,
-            teamName: _teamName(project.orgId),
+            team: orgById[project.orgId],
+            fallbackTeamName: _teamName(project.orgId),
             isAdmin: _isAdmin,
             identity: _identity,
           ),
@@ -975,20 +997,34 @@ class _ProjectsPageState extends State<ProjectsPage> {
       return const SizedBox.shrink();
     }
     final hasQuery = _search.text.trim().isNotEmpty;
-    return TextField(
-      controller: _search,
-      decoration: InputDecoration(
-        hintText: '搜索团队 / 项目 / 负责人',
-        isDense: true,
-        prefixIcon: const Icon(Icons.search_rounded),
-        suffixIcon: hasQuery
-            ? IconButton(
-                tooltip: '清除搜索',
-                icon: const Icon(Icons.close_rounded),
-                onPressed: _search.clear,
-              )
-            : null,
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _search,
+          decoration: InputDecoration(
+            hintText: '搜索团队 / 项目 / 负责人',
+            isDense: true,
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: hasQuery
+                ? IconButton(
+                    tooltip: '清除搜索',
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: _search.clear,
+                  )
+                : null,
+          ),
+        ),
+        if (hasQuery) ...[
+          const SizedBox(height: 6),
+          Text(
+            '匹配 ${_visibleOrgs.length} 团队 · ${_visibleProjects.length} 项目',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CcType.code(size: 11.5, color: CcColors.muted),
+          ),
+        ],
+      ],
     );
   }
 }
