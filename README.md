@@ -62,7 +62,7 @@ CLI / MCP 是现有部署的兼容入口。`cc-handoff submit/list/pickup/watch/
 
 **平台**：桌面(macOS / Windows)为主，移动端(iOS / Android)侧重投屏 / 查看。终端、git、格式化、LSP 等本地能力仅桌面端生效。
 
-**构建 / 运行**：`app/` 是标准 Flutter 工程，打包 / 签名脚本见 `scripts/`。桌面端功能需要宿主机装好对应命令行工具(git / 各语言服务器 / 格式化器)，没装的会在插件面板显示「未检测到」并给安装提示。
+**构建 / 运行**：`app/` 是标准 Flutter 工程，打包 / 签名脚本见 `scripts/`。桌面端功能需要宿主机装好对应命令行工具(git / 各语言服务器 / 格式化器)，没装的会在插件面板显示「未检测到」并给安装提示。iOS 真机构建 / 安装步骤见 [`app/README.md`](app/README.md#ios-device-build--run)。
 
 ## 架构
 

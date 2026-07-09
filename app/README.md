@@ -46,7 +46,50 @@ flutter build apk --release          # → build/app/outputs/flutter-apk/
 ```
 
 Convenience wrappers exist in the repo Makefile: `make app-run` / `app-macos` /
-`app-apk`.
+`app-ios` / `app-ios-run DEVICE=<flutter-device-id>` / `app-apk`.
+
+## iOS device build / run
+
+The iOS app display name is **Infinite Agents** and the bundle identifier is
+`dev.cchandoff.app`.
+
+Prerequisites:
+
+- Xcode with the iOS platform installed.
+- An Apple Development signing identity and a provisioning profile/team that can
+  sign `dev.cchandoff.app`.
+- CocoaPods. Flutter will run `pod install` as needed; `ios/Podfile.lock` is
+  committed so CI/local machines resolve the same plugin set.
+- A connected or paired iPhone with Developer Mode enabled and the device
+  unlocked while installing.
+
+Common commands:
+
+```bash
+cd app
+flutter pub get
+flutter devices
+
+# Install and run a release build on a real device.
+flutter run -d <DEVICE_ID> --release --dart-define=APP_VERSION=$(cat ../VERSION)
+
+# Same command through the repo Makefile.
+cd ..
+make app-ios-run DEVICE=<DEVICE_ID>
+
+# Produce a signed release build with the active Xcode signing settings.
+make app-ios
+```
+
+When signing needs to be adjusted, open the workspace (not the project file):
+
+```bash
+open app/ios/Runner.xcworkspace
+```
+
+Select the `Runner` target, set the signing team/provisioning profile, then
+rerun the Flutter command above. If the device install fails with a locked-device
+error, unlock the iPhone and run the command again.
 
 ## Notes
 

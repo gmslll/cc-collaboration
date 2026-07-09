@@ -62,7 +62,7 @@ The CLI and MCP server are the compatibility entry points for current deployment
 
 **Platforms**: desktop (macOS / Windows) is primary; mobile (iOS / Android) focuses on mirroring and viewing. Local capabilities such as terminals, git, formatting, and LSP are desktop-only.
 
-**Build / run**: `app/` is a standard Flutter project; packaging / signing scripts live in `scripts/`. Desktop features need the corresponding CLI tools installed on the host (git, language servers, formatters); missing tools are shown in the plugin panel with install hints.
+**Build / run**: `app/` is a standard Flutter project; packaging / signing scripts live in `scripts/`. Desktop features need the corresponding CLI tools installed on the host (git, language servers, formatters); missing tools are shown in the plugin panel with install hints. iOS device build / install steps are in [`app/README.md`](app/README.md#ios-device-build--run).
 
 ## Architecture
 

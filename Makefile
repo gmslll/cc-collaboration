@@ -8,7 +8,7 @@ VERSION     := $(shell cat VERSION)
 LDFLAGS     := -X 'github.com/cc-collaboration/internal/version.Version=$(VERSION)'
 INSTALL_DIR ?= /usr/local/bin
 
-.PHONY: all build cli relay mcp web relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-apk package package-macos package-android install test e2e deploy clean version release-tag
+.PHONY: all build cli relay mcp web relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-ios app-ios-run app-apk package package-macos package-android install test e2e deploy clean version release-tag
 
 all: build
 
@@ -69,6 +69,13 @@ app-run:
 
 app-macos:
 	cd app && flutter build macos --release
+
+app-ios:
+	cd app && flutter build ios --release --dart-define=APP_VERSION=$(VERSION)
+
+app-ios-run:
+	@if [ -z "$(DEVICE)" ]; then echo "usage: make app-ios-run DEVICE=<flutter-device-id>"; exit 2; fi
+	cd app && flutter run -d $(DEVICE) --release --dart-define=APP_VERSION=$(VERSION)
 
 app-apk:
 	cd app && flutter build apk --release
