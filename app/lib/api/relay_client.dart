@@ -597,15 +597,16 @@ Future<LoginResult> _authPost(
   String password,
 ) async {
   final dio = Dio(BaseOptions(baseUrl: baseUrl.replaceAll(RegExp(r'/+$'), '')));
+  final cleanIdentity = identity.trim();
   try {
     final r = await dio.post(
       path,
-      data: {'identity': identity.trim(), 'password': password},
+      data: {'identity': cleanIdentity, 'password': password},
     );
     final d = (r.data as Map).cast<String, dynamic>();
     return LoginResult(
       (d['token'] ?? '').toString(),
-      (d['identity'] ?? identity).toString(),
+      (d['identity'] ?? cleanIdentity).toString(),
       d['is_admin'] == true,
     );
   } on DioException catch (e) {

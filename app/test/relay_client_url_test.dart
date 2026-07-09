@@ -265,6 +265,23 @@ void main() {
     expect(result.identity, 'dev@x');
     expect(body, {'identity': 'dev@x', 'password': '  password  '});
   });
+
+  test('auth fallback identity uses the trimmed request identity', () async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((req) async {
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode({'token': 'tok'}));
+      await req.response.close();
+    });
+
+    final result = await login(
+      'http://127.0.0.1:${server.port}',
+      ' dev@x ',
+      'password',
+    );
+
+    expect(result.identity, 'dev@x');
+  });
 }
 
 Map<String, dynamic> _todoResponse() => {
