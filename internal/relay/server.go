@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1147,8 +1146,6 @@ func auditLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }
 
-var handoffIDInPath = regexp.MustCompile(`^/v1/handoffs/([^/]+)`)
-
 func logging(next http.Handler) http.Handler {
 	logger := auditLogger()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1156,7 +1153,8 @@ func logging(next http.Handler) http.Handler {
 		var identity string
 		ctx := auth.WithIdentityHolder(r.Context(), &identity)
 		rec := &statusRecorder{ResponseWriter: w, code: 200}
-		next.ServeHTTP(rec, r.WithContext(ctx))
+		req := r.WithContext(ctx)
+		next.ServeHTTP(rec, req)
 
 		attrs := []slog.Attr{
 			slog.String("method", r.Method),
@@ -1167,9 +1165,16 @@ func logging(next http.Handler) http.Handler {
 		if identity != "" {
 			attrs = append(attrs, slog.String("identity", identity))
 		}
-		if m := handoffIDInPath.FindStringSubmatch(r.URL.Path); len(m) == 2 {
-			attrs = append(attrs, slog.String("handoff_id", m[1]))
+		if id := handoffIDForLog(req); id != "" {
+			attrs = append(attrs, slog.String("handoff_id", id))
 		}
 		logger.LogAttrs(r.Context(), slog.LevelInfo, "relay.request", attrs...)
 	})
+}
+
+func handoffIDForLog(r *http.Request) string {
+	if !strings.HasPrefix(r.URL.Path, "/v1/handoffs/") {
+		return ""
+	}
+	return r.PathValue("id")
 }
