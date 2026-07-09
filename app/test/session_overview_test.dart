@@ -225,6 +225,29 @@ void main() {
     expect(reviewDialog, contains('setState(() => _submitting = false);'));
   });
 
+  test(
+    'capsule review keeps default private and labels public as team shared',
+    () {
+      final source = File(
+        'lib/screens/session_overview_page.dart',
+      ).readAsStringSync();
+      final reviewDialog = source.substring(
+        source.indexOf('class _CapsuleReviewDialogState'),
+        source.indexOf('  // _labeledCodeField'),
+      );
+
+      expect(reviewDialog, contains('bool _public = false;'));
+      expect(
+        reviewDialog,
+        contains("visibility: _public ? 'public' : 'private'"),
+      );
+      expect(source, contains('个人 / 团队共享'));
+      expect(source, contains("label: Text('团队')"));
+      expect(source, contains('同团队成员能在广场看到'));
+      expect(source, isNot(contains('团队所有人能在广场看到')));
+    },
+  );
+
   // The last hop of the "打开/恢复会话" chain: TerminalHost.addTerm mints a
   // fresh uuid for a brand-new claude session, but when the caller already
   // has one (a todo's saved assigneeAgentSessionId) it passes that straight

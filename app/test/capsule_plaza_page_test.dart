@@ -33,6 +33,17 @@ void main() {
     expect(loadDialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('capsule plaza describes public visibility as team shared', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+
+    expect(source, contains('团队共享'));
+    expect(source, contains('同团队成员能在广场看到'));
+    expect(source, isNot(contains('团队所有人能在广场看到')));
+    expect(source, isNot(contains('设为公开,就会出现在这里')));
+  });
+
   test('capsule load and edit dialogs guard stale plaza context', () {
     final source = File(
       'lib/screens/capsule_plaza_page.dart',

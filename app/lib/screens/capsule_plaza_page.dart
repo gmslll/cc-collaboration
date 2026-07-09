@@ -14,9 +14,9 @@ import '../theme.dart';
 import '../widgets.dart';
 
 // CapsulePlazaPage is the 胶囊广场: a browsable gallery of session capsules the
-// caller can see — every 公开 (public) capsule plus their own 个人 (private)
-// ones. Fed by GET /v1/capsules. On desktop each capsule can be 载入 into a
-// fresh specialized session (① full-context snapshot / ② distilled role).
+// caller can see — team-shared capsules plus their own 个人 (private) ones. Fed
+// by GET /v1/capsules. On desktop each capsule can be 载入 into a fresh
+// specialized session (① full-context snapshot / ② distilled role).
 class CapsulePlazaPage extends StatefulWidget {
   final RelayClient client;
   final String identity;
@@ -177,7 +177,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     child: () {
       final items = _items ?? const <CapsuleListItem>[];
       if (items.isEmpty) {
-        return centerMsg('广场还没有胶囊。\n在「会话总览」把一个会话「打成胶囊」并设为公开,就会出现在这里。');
+        return centerMsg('广场还没有胶囊。\n在「会话总览」把一个会话「打成胶囊」并设为团队共享,就会出现在这里。');
       }
       return RefreshIndicator(
         onRefresh: _load,
@@ -226,7 +226,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
               ),
               const SizedBox(width: 8),
               tag(
-                isPublic ? '公开' : '个人',
+                isPublic ? '团队共享' : '个人',
                 isPublic ? CcColors.accent : CcColors.muted,
               ),
             ],
@@ -1003,7 +1003,7 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
                     ),
                     ButtonSegment(
                       value: true,
-                      label: Text('公开'),
+                      label: Text('团队'),
                       icon: Icon(Icons.public_rounded, size: 16),
                     ),
                   ],
@@ -1012,7 +1012,7 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  _public ? '团队所有人能在广场看到' : '只有你自己能在广场看到',
+                  _public ? '同团队成员能在广场看到' : '只有你自己能在广场看到',
                   style: CcType.code(size: 11.5, color: CcColors.subtle),
                 ),
                 const SizedBox(height: 14),

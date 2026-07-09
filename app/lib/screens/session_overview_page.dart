@@ -649,7 +649,7 @@ Future<void> startCapsuleFlow(
 
 // _CapsuleReviewDialog previews the distilled persona/seed, lets the user edit
 // them in place (the user's "先落草稿供编辑再发" choice), pick a visibility
-// (个人 / 公开), and publish the capsule to the plaza.
+// (个人 / 团队共享), and publish the capsule to the plaza.
 class _CapsuleReviewDialog extends StatefulWidget {
   final SessionOverviewStore store;
   final CapsuleDraft draft;
@@ -897,7 +897,7 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                               ),
                               ButtonSegment(
                                 value: true,
-                                label: Text('公开'),
+                                label: Text('团队'),
                                 icon: Icon(Icons.public_rounded, size: 16),
                               ),
                             ],
@@ -908,7 +908,7 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              _public ? '团队所有人能在广场看到' : '只有你自己能在广场看到',
+                              _public ? '同团队成员能在广场看到' : '只有你自己能在广场看到',
                               style: CcType.code(
                                 size: 11.5,
                                 color: CcColors.subtle,
