@@ -32,6 +32,18 @@ void main() {
     ]);
   });
 
+  test('handoff reassign target validation follows loaded candidates', () {
+    final candidates = [
+      (identity: 'ops@x', label: 'Ops · ops@x'),
+      (identity: 'Admin@X', label: 'Admin · Admin@X'),
+    ];
+
+    expect(handoffReassignTargetAllowed(' OPS@X ', candidates), isTrue);
+    expect(handoffReassignTargetAllowed('admin@x', candidates), isTrue);
+    expect(handoffReassignTargetAllowed('outsider@x', candidates), isFalse);
+    expect(handoffReassignTargetAllowed('outsider@x', const []), isTrue);
+  });
+
   test('handoff file tab dynamic labels are width constrained', () {
     final source = File(
       'lib/screens/handoff_detail_view.dart',
@@ -302,6 +314,58 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(client.reassignedTo, 'ops@x');
+    expect(client.reassignedReason, 'fix it');
+    await tester.pump(const Duration(seconds: 5));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('handoff reassign dialog rejects non-candidate team identities', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package(
+        'team-bug',
+        'qa@x',
+        'team bug',
+        kind: 'bug',
+        deliveryTarget: const {'project_id': 'proj1', 'org_id': 'org1'},
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('team-bug', 'qa@x', 'team bug'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '转交'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, '转交给(identity)'),
+      'outsider@x',
+    );
+    await tester.enterText(find.widgetWithText(TextField, '原因'), 'fix it');
+    await tester.tap(find.widgetWithText(FilledButton, '转交'));
+    await tester.pumpAndSettle();
+
+    expect(client.reassignedTo, isNull);
+    expect(find.text('请选择团队候选，或输入候选里的成员 identity'), findsOneWidget);
+    expect(find.widgetWithText(TextField, '转交给(identity)'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, '转交给(identity)'),
+      'ADMIN@X',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '转交'));
+    await tester.pumpAndSettle();
+
+    expect(client.reassignedTo, 'ADMIN@X');
     expect(client.reassignedReason, 'fix it');
     await tester.pump(const Duration(seconds: 5));
     expect(tester.takeException(), isNull);

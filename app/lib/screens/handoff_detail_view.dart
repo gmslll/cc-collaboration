@@ -148,6 +148,18 @@ List<HandoffReassignCandidate> handoffReassignCandidates({
   return candidates;
 }
 
+bool handoffReassignTargetAllowed(
+  String target,
+  List<HandoffReassignCandidate> candidates,
+) {
+  if (candidates.isEmpty) return true;
+  final key = identityLookupKey(target);
+  if (key.isEmpty) return false;
+  return candidates.any((candidate) {
+    return identityLookupKey(candidate.identity) == key;
+  });
+}
+
 class HandoffDetailViewState extends State<HandoffDetailView> {
   Package? _pkg;
   Status? _status;
@@ -1385,6 +1397,10 @@ class _ReassignDialogState extends State<_ReassignDialog> {
     final reason = _reason.text.trim();
     if (to.isEmpty || reason.isEmpty) {
       setState(() => _error = '需填转交对象和原因');
+      return;
+    }
+    if (!handoffReassignTargetAllowed(to, widget.candidates)) {
+      setState(() => _error = '请选择团队候选，或输入候选里的成员 identity');
       return;
     }
     Navigator.pop(context, _ReassignInput(to: to, reason: reason));
