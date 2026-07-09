@@ -141,6 +141,50 @@ void main() {
     );
   });
 
+  test('workspace search dialogs guard mounted before opening files', () {
+    final source = File(
+      'lib/screens/workspace/search_mixin.dart',
+    ).readAsStringSync();
+
+    String between(String start, String end) {
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
+
+    void expectGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return;', afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    final methods = <(String, String)>[
+      ('Future<void> _showQuickOpen()', 'Future<void> _showFindInFiles()'),
+      (
+        'Future<void> _showFindInFiles()',
+        'Future<void> _showFindInCurrentFile()',
+      ),
+      ('Future<void> _showFindInCurrentFile()', 'Future<void> _showGoToLine()'),
+      ('Future<void> _showGoToLine()', 'Future<void> _showFileStructure()'),
+      ('Future<void> _showFileStructure()', 'Future<void> _showGoToSymbol()'),
+      (
+        'Future<void> _showGoToSymbol()',
+        'Future<void> _showFindUsagesForActiveFile()',
+      ),
+      ('Future<void> _showFindUsagesForActiveFile()', '\n}'),
+    ];
+    for (final (start, end) in methods) {
+      expectGuardBefore(between(start, end), 'showDialog', '_openCodeFile');
+    }
+  });
+
   test('workspace name dialog uses owned controller widget', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final dialog = source.substring(

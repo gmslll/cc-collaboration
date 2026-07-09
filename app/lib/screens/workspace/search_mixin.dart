@@ -21,6 +21,7 @@ mixin _SearchMixin on State<WorkspacePage> {
       context: context,
       builder: (_) => _QuickOpenDialog(workspaces: _cfg.workspaces),
     );
+    if (!mounted) return;
     if (loc != null) _openCodeFile(loc.path, line: loc.line);
   }
 
@@ -34,6 +35,7 @@ mixin _SearchMixin on State<WorkspacePage> {
       context: context,
       builder: (_) => _FindInFilesDialog(workspaces: _cfg.workspaces),
     );
+    if (!mounted) return;
     if (hit != null) _openCodeFile(hit.path, line: hit.line);
   }
 
@@ -52,6 +54,7 @@ mixin _SearchMixin on State<WorkspacePage> {
       context: context,
       builder: (_) => _FindInCurrentFileDialog(path: file.path, text: text),
     );
+    if (!mounted) return;
     if (line != null) _openCodeFile(file.path, line: line);
   }
 
@@ -74,6 +77,7 @@ mixin _SearchMixin on State<WorkspacePage> {
         initialLine: file.line,
       ),
     );
+    if (!mounted) return;
     if (line != null) _openCodeFile(file.path, line: line);
   }
 
@@ -97,6 +101,7 @@ mixin _SearchMixin on State<WorkspacePage> {
       context: context,
       builder: (_) => _FileStructureDialog(path: file.path, symbols: symbols),
     );
+    if (!mounted) return;
     if (symbol != null) _openCodeFile(file.path, line: symbol.line);
   }
 
@@ -110,6 +115,7 @@ mixin _SearchMixin on State<WorkspacePage> {
       context: context,
       builder: (_) => _GoToSymbolDialog(workspaces: _cfg.workspaces),
     );
+    if (!mounted) return;
     if (hit != null) _openCodeFile(hit.path, line: hit.line);
   }
 
@@ -137,6 +143,7 @@ mixin _SearchMixin on State<WorkspacePage> {
         symbols: symbols,
       ),
     );
+    if (!mounted) return;
     if (hit != null) _openCodeFile(hit.path, line: hit.line);
   }
 }
