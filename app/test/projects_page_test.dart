@@ -779,6 +779,63 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   });
 
+  testWidgets('organization sheet member input shrinks on compact widths', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(240, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == '成员 identity',
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(memberField).width, lessThanOrEqualTo(208));
+  });
+
+  testWidgets('project sheet member controls shrink on compact widths', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(240, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    final teamPicker = find.byType(DropdownButtonFormField<String>);
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'identity',
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(teamPicker), isNotNull);
+    expect(tester.getSize(teamPicker).width, lessThanOrEqualTo(208));
+    expect(tester.getSize(memberField).width, lessThanOrEqualTo(208));
+  });
+
   testWidgets('project list clamps long project names and metadata', (
     tester,
   ) async {

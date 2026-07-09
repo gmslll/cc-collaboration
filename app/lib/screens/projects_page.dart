@@ -1159,59 +1159,73 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                   }),
                   if (canManage) ...[
                     const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 280,
-                          child: TextField(
-                            controller: _identity,
-                            decoration: const InputDecoration(
-                              hintText: '成员 identity',
-                              isDense: true,
-                              prefixIcon: Icon(Icons.alternate_email_rounded),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final memberFieldWidth = responsiveControlWidth(
+                          constraints,
+                          280,
+                        );
+                        return Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: memberFieldWidth,
+                              child: TextField(
+                                controller: _identity,
+                                decoration: const InputDecoration(
+                                  hintText: '成员 identity',
+                                  isDense: true,
+                                  prefixIcon: Icon(
+                                    Icons.alternate_email_rounded,
+                                  ),
+                                ),
+                                onSubmitted: (_) {
+                                  if (canSubmitMember) _addMember();
+                                },
+                              ),
                             ),
-                            onSubmitted: (_) {
-                              if (canSubmitMember) _addMember();
-                            },
-                          ),
-                        ),
-                        DropdownButton<String>(
-                          value: _role,
-                          items: const [
-                            DropdownMenuItem(
-                              value: 'member',
-                              child: Text('成员'),
+                            DropdownButton<String>(
+                              value: _role,
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'member',
+                                  child: Text('成员'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'admin',
+                                  child: Text('管理员'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'guest',
+                                  child: Text('访客'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'owner',
+                                  child: Text('负责人'),
+                                ),
+                              ],
+                              onChanged: (v) =>
+                                  setState(() => _role = v ?? 'member'),
                             ),
-                            DropdownMenuItem(
-                              value: 'admin',
-                              child: Text('管理员'),
-                            ),
-                            DropdownMenuItem(value: 'guest', child: Text('访客')),
-                            DropdownMenuItem(
-                              value: 'owner',
-                              child: Text('负责人'),
+                            Tooltip(
+                              message:
+                                  memberInput.isNotEmpty && !canSubmitMember
+                                  ? '至少保留一个负责人'
+                                  : '加入团队',
+                              child: FilledButton.icon(
+                                onPressed: canSubmitMember ? _addMember : null,
+                                icon: const Icon(
+                                  Icons.person_add_alt_1_rounded,
+                                  size: 18,
+                                ),
+                                label: const Text('加入团队'),
+                              ),
                             ),
                           ],
-                          onChanged: (v) =>
-                              setState(() => _role = v ?? 'member'),
-                        ),
-                        Tooltip(
-                          message: memberInput.isNotEmpty && !canSubmitMember
-                              ? '至少保留一个负责人'
-                              : '加入团队',
-                          child: FilledButton.icon(
-                            onPressed: canSubmitMember ? _addMember : null,
-                            icon: const Icon(
-                              Icons.person_add_alt_1_rounded,
-                              size: 18,
-                            ),
-                            label: const Text('加入团队'),
-                          ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
                   ],
                   const SizedBox(height: 18),
@@ -1687,92 +1701,101 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                     );
                   }),
                   if (canManage)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        if (memberCandidates.isNotEmpty)
-                          SizedBox(
-                            width: 260,
-                            child: DropdownButtonFormField<String>(
-                              initialValue: null,
-                              isExpanded: true,
-                              decoration: const InputDecoration(
-                                hintText: '从团队选择',
-                                isDense: true,
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final memberControlWidth = responsiveControlWidth(
+                          constraints,
+                          260,
+                        );
+                        return Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            if (memberCandidates.isNotEmpty)
+                              SizedBox(
+                                width: memberControlWidth,
+                                child: DropdownButtonFormField<String>(
+                                  initialValue: null,
+                                  isExpanded: true,
+                                  decoration: const InputDecoration(
+                                    hintText: '从团队选择',
+                                    isDense: true,
+                                  ),
+                                  items: memberCandidates
+                                      .map(
+                                        (m) => DropdownMenuItem(
+                                          value: m.identity,
+                                          child: Text(
+                                            _memberLabel(m),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (v) {
+                                    if (v != null) _member.text = v;
+                                  },
+                                ),
                               ),
-                              items: memberCandidates
-                                  .map(
-                                    (m) => DropdownMenuItem(
-                                      value: m.identity,
-                                      child: Text(
-                                        _memberLabel(m),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (v) {
-                                if (v != null) _member.text = v;
-                              },
+                            SizedBox(
+                              width: memberControlWidth,
+                              child: TextField(
+                                controller: _member,
+                                decoration: const InputDecoration(
+                                  hintText: 'identity',
+                                  isDense: true,
+                                ),
+                              ),
                             ),
-                          ),
-                        SizedBox(
-                          width: 260,
-                          child: TextField(
-                            controller: _member,
-                            decoration: const InputDecoration(
-                              hintText: 'identity',
-                              isDense: true,
+                            DropdownButton<String>(
+                              value: _role,
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'member',
+                                  child: Text('成员'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'viewer',
+                                  child: Text('只读'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'owner',
+                                  child: Text('负责人'),
+                                ),
+                              ],
+                              onChanged: (v) =>
+                                  setState(() => _role = v ?? 'member'),
                             ),
-                          ),
-                        ),
-                        DropdownButton<String>(
-                          value: _role,
-                          items: const [
-                            DropdownMenuItem(
-                              value: 'member',
-                              child: Text('成员'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'viewer',
-                              child: Text('只读'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'owner',
-                              child: Text('负责人'),
+                            Tooltip(
+                              message:
+                                  memberInput.isNotEmpty && !canSubmitMember
+                                  ? '至少保留一个项目负责人'
+                                  : '加成员',
+                              child: FilledButton.icon(
+                                onPressed: canSubmitMember
+                                    ? () async {
+                                        final m = _member.text.trim();
+                                        final ok = await _do(
+                                          () => widget.client.addMember(
+                                            widget.id,
+                                            m,
+                                            _role,
+                                          ),
+                                        );
+                                        if (ok) _member.clear();
+                                      }
+                                    : null,
+                                icon: const Icon(
+                                  Icons.person_add_alt_1_rounded,
+                                  size: 18,
+                                ),
+                                label: const Text('加成员'),
+                              ),
                             ),
                           ],
-                          onChanged: (v) =>
-                              setState(() => _role = v ?? 'member'),
-                        ),
-                        Tooltip(
-                          message: memberInput.isNotEmpty && !canSubmitMember
-                              ? '至少保留一个项目负责人'
-                              : '加成员',
-                          child: FilledButton.icon(
-                            onPressed: canSubmitMember
-                                ? () async {
-                                    final m = _member.text.trim();
-                                    final ok = await _do(
-                                      () => widget.client.addMember(
-                                        widget.id,
-                                        m,
-                                        _role,
-                                      ),
-                                    );
-                                    if (ok) _member.clear();
-                                  }
-                                : null,
-                            icon: const Icon(
-                              Icons.person_add_alt_1_rounded,
-                              size: 18,
-                            ),
-                            label: const Text('加成员'),
-                          ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
                 ],
               ),
