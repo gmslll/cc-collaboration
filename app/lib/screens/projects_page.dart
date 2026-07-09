@@ -1191,6 +1191,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     Future<void> Function() action, {
     String actionKey = 'mutation',
   }) async {
+    if (!mounted) return false;
     if (_mutating) return false;
     if (mounted) setState(() => _mutationAction = actionKey);
     try {
@@ -1219,6 +1220,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
       okLabel: '移除',
     );
     if (!ok) return;
+    if (!mounted) return;
     await _do(
       () => widget.client.removeOrganizationMember(widget.id, identity),
     );
@@ -1697,6 +1699,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     Future<void> Function() action, {
     String actionKey = 'mutation',
   }) async {
+    if (!mounted) return false;
     if (_mutating) return false;
     if (mounted) setState(() => _mutationAction = actionKey);
     try {
@@ -1741,6 +1744,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
       ctl.dispose();
     }
     if (!ok || name.isEmpty) return;
+    if (!mounted) return;
     await _do(() => widget.client.renameProject(widget.id, name));
   }
 
@@ -1763,7 +1767,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
         ],
       ),
     );
-    if (ok != true || _mutating) return;
+    if (ok != true) return;
+    if (!mounted) return;
+    if (_mutating) return;
     if (mounted) setState(() => _mutationAction = 'deleteProject');
     try {
       await widget.client.deleteProject(widget.id);

@@ -205,6 +205,74 @@ void main() {
     );
   });
 
+  test('project detail dialogs guard mounted before mutations', () {
+    final source = File('lib/screens/projects_page.dart').readAsStringSync();
+
+    String between(String start, String end) {
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
+
+    void expectGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return', afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    final organizationSheet = between(
+      'class _OrganizationSheetState',
+      'class _ProjectSheet extends StatefulWidget',
+    );
+    final projectSheet = between(
+      'class _ProjectSheetState',
+      'class _CompactProjectChip',
+    );
+
+    for (final body in [organizationSheet, projectSheet]) {
+      final doBody = body.substring(
+        body.indexOf('Future<bool> _do('),
+        body.indexOf('bool _canManage'),
+      );
+      expect(
+        doBody.indexOf('if (!mounted) return false;'),
+        lessThan(doBody.indexOf('if (_mutating) return false;')),
+      );
+    }
+
+    expectGuardBefore(
+      organizationSheet.substring(
+        organizationSheet.indexOf('Future<void> _removeMember('),
+        organizationSheet.indexOf('Future<void> _addMember()'),
+      ),
+      'if (!ok) return;',
+      '_do(',
+    );
+    expectGuardBefore(
+      projectSheet.substring(
+        projectSheet.indexOf('Future<void> _rename('),
+        projectSheet.indexOf('Future<void> _delete()'),
+      ),
+      'if (!ok || name.isEmpty) return;',
+      'widget.client.renameProject',
+    );
+    expectGuardBefore(
+      projectSheet.substring(
+        projectSheet.indexOf('Future<void> _delete() async {'),
+        projectSheet.indexOf('bool _isOnline('),
+      ),
+      'if (ok != true) return;',
+      "setState(() => _mutationAction = 'deleteProject')",
+    );
+  });
+
   test('workspace git confirmations guard mounted before loading state', () {
     final source = File(
       'lib/screens/workspace/git_mixin.dart',
