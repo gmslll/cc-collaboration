@@ -205,6 +205,101 @@ void main() {
     );
   });
 
+  test('workspace git confirmations guard mounted before loading state', () {
+    final source = File(
+      'lib/screens/workspace/git_mixin.dart',
+    ).readAsStringSync();
+
+    String method(String start, String end) => source.substring(
+      source.indexOf('Future<$start'),
+      source.indexOf('Future<$end'),
+    );
+
+    void expectGuardBeforeLoading(String body, String after) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return;', afterIndex);
+      final loadingIndex = body.indexOf(
+        'setState(() => _gitLoading = true)',
+        afterIndex,
+      );
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(loadingIndex, isNonNegative);
+      expect(guardIndex, lessThan(loadingIndex));
+    }
+
+    expectGuardBeforeLoading(
+      method('void> _gitPullRebaseCurrent', 'void> _gitFetchCurrent'),
+      'if (!ok) return;',
+    );
+    expectGuardBeforeLoading(
+      method(
+        'void> _gitDiscardFileCurrent',
+        'void> _gitDiscardSelectedCurrent',
+      ),
+      "if (!await _confirm('丢弃文件改动?'",
+    );
+    expectGuardBeforeLoading(
+      method('void> _gitDiscardSelectedCurrent', 'void> _gitDiscardAllCurrent'),
+      'Rollback selected changes?',
+    );
+    expectGuardBeforeLoading(
+      method(
+        'void> _gitDiscardAllCurrent',
+        'void> _gitContinueCurrentOperation',
+      ),
+      'Rollback all changes?',
+    );
+    expectGuardBeforeLoading(
+      method('void> _gitAbortCurrentOperation', 'void> _gitCommitCurrent'),
+      'Abort \${op.kind}?',
+    );
+    expectGuardBeforeLoading(
+      method('void> _gitCommitAmendCurrent', 'void> _gitCommitSelected'),
+      'Amend 上一条 commit?',
+    );
+    expectGuardBeforeLoading(
+      method('void> _stashPushCurrent', 'void> _stashAllCurrent'),
+      'if (opts == null) return;',
+    );
+    expectGuardBeforeLoading(
+      method('void> _stashSelectedCurrent', 'void> _stashApplyCurrent'),
+      'if (opts == null) return;',
+    );
+    expectGuardBeforeLoading(
+      method('void> _stashDropCurrent', 'void> _gitPushCurrent'),
+      "if (!await _confirm('Drop stash?'",
+    );
+
+    final pushFallback = method(
+      'bool> _gitPushWithUpstreamFallback',
+      'void> _showBranchDialog',
+    );
+    final upstreamOk = pushFallback.indexOf('if (!ok) return false;');
+    final upstreamGuard = pushFallback.indexOf(
+      'if (!mounted) return false;',
+      upstreamOk,
+    );
+    final upstreamLoading = pushFallback.indexOf(
+      'setState(() => _gitLoading = true)',
+      upstreamOk,
+    );
+    expect(upstreamOk, isNonNegative);
+    expect(upstreamGuard, isNonNegative);
+    expect(upstreamLoading, isNonNegative);
+    expect(upstreamGuard, lessThan(upstreamLoading));
+
+    expectGuardBeforeLoading(
+      method('void> _mergeBranchIntoCurrent', 'void> _rebaseCurrentOntoBranch'),
+      'Merge into current branch?',
+    );
+    expectGuardBeforeLoading(
+      source.substring(source.indexOf('Future<void> _rebaseCurrentOntoBranch')),
+      'Rebase current branch?',
+    );
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });

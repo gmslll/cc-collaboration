@@ -199,6 +199,7 @@ mixin _GitMixin on State<WorkspacePage> {
       '$branch\n\n会执行 `git pull --rebase`，把本地提交变基到 upstream 之后。',
     );
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitPullRebase(p.path);
@@ -374,6 +375,7 @@ mixin _GitMixin on State<WorkspacePage> {
 
   Future<void> _gitDiscardFileCurrent(ProjectCfg p, String file) async {
     if (!await _confirm('丢弃文件改动?', '$file\n\n这会恢复工作区文件。')) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       final changes = _gitChanges.where((c) => c.path == file).toList();
@@ -408,6 +410,7 @@ mixin _GitMixin on State<WorkspacePage> {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitRestoreChanges(p.path, changes);
@@ -438,6 +441,7 @@ mixin _GitMixin on State<WorkspacePage> {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitRestoreChanges(p.path, changes);
@@ -476,6 +480,7 @@ mixin _GitMixin on State<WorkspacePage> {
     if (!await _confirm('Abort ${op.kind}?', '这会中止当前 ${op.kind} 操作。')) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitAbortOperation(p.path, op.kind);
@@ -531,6 +536,7 @@ mixin _GitMixin on State<WorkspacePage> {
         ? '将 staged changes 合入上一条 commit，并沿用上一条 commit message。'
         : '将 staged changes 合入上一条 commit，并用当前输入框内容替换上一条 commit message。';
     if (!await _confirm('Amend 上一条 commit?', detail)) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitCommitAmend(p.path, _commitCtl.text);
@@ -654,6 +660,7 @@ mixin _GitMixin on State<WorkspacePage> {
     if (_gitLoading) return;
     final opts = await _askStashOptions(title: 'Stash Changes');
     if (opts == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitStashPush(
@@ -710,6 +717,7 @@ mixin _GitMixin on State<WorkspacePage> {
       detail: '${files.length} selected files',
     );
     if (opts == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitStashPush(
@@ -759,6 +767,7 @@ mixin _GitMixin on State<WorkspacePage> {
 
   Future<void> _stashDropCurrent(ProjectCfg p, GitStash s) async {
     if (!await _confirm('Drop stash?', s.ref)) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitStashDrop(p.path, s.ref);
@@ -870,6 +879,7 @@ mixin _GitMixin on State<WorkspacePage> {
       setState(() => _gitLoading = false);
       final ok = await _confirm('设置 upstream 并 push?', msg);
       if (!ok) return false;
+      if (!mounted) return false;
       setState(() => _gitLoading = true);
       await gitPush(p.path, setUpstream: true);
       return true;
@@ -917,6 +927,7 @@ mixin _GitMixin on State<WorkspacePage> {
       '${branch.name}\n\n会执行 `git merge --no-ff ${branch.name}`，把它合并到 $current。',
     );
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitMergeBranch(p.path, branch.name);
@@ -937,6 +948,7 @@ mixin _GitMixin on State<WorkspacePage> {
       '$current -> ${branch.name}\n\n会执行 `git rebase ${branch.name}`，把当前分支变基到选中分支。',
     );
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitRebaseOnto(p.path, branch.name);
