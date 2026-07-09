@@ -230,6 +230,71 @@ class _WorkspaceSessionRenameDialogState
   }
 }
 
+class WorkspaceCommitBranchDialog extends StatefulWidget {
+  final String initialBranch;
+  final String shortHash;
+  final String subject;
+
+  const WorkspaceCommitBranchDialog({
+    super.key,
+    required this.initialBranch,
+    required this.shortHash,
+    required this.subject,
+  });
+
+  @override
+  State<WorkspaceCommitBranchDialog> createState() =>
+      _WorkspaceCommitBranchDialogState();
+}
+
+class _WorkspaceCommitBranchDialogState
+    extends State<WorkspaceCommitBranchDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initialBranch,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New Branch from Commit'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${widget.shortHash} · ${widget.subject}',
+            style: CcType.code(size: 12, color: CcColors.muted),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _ctl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Branch name'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Create and Checkout'),
+        ),
+      ],
+    );
+  }
+}
+
 // _DiffTreeNode is one node of the directory tree built from a commit's changed
 // files (the right pane of the 3-pane Log).
 class _DiffTreeNode {
@@ -6821,45 +6886,19 @@ class _WorkspacePageState extends State<WorkspacePage>
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
         .replaceAll(RegExp(r'^-+|-+$'), '');
-    final ctl = TextEditingController(
-      text: safeSubject.isEmpty
-          ? 'branch-${c.shortHash}'
-          : '${safeSubject.length > 32 ? safeSubject.substring(0, 32) : safeSubject}-${c.shortHash}',
-    );
-    final ok = await showDialog<bool>(
+    final initialBranch = safeSubject.isEmpty
+        ? 'branch-${c.shortHash}'
+        : '${safeSubject.length > 32 ? safeSubject.substring(0, 32) : safeSubject}-${c.shortHash}';
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New Branch from Commit'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${c.shortHash} · ${c.subject}',
-              style: CcType.code(size: 12, color: CcColors.muted),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Branch name'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Create and Checkout'),
-          ),
-        ],
+      builder: (_) => WorkspaceCommitBranchDialog(
+        initialBranch: initialBranch,
+        shortHash: c.shortHash,
+        subject: c.subject,
       ),
     );
-    if (ok != true) return;
-    final branch = ctl.text.trim();
+    if (raw == null) return;
+    final branch = raw.trim();
     if (branch.isEmpty) {
       _snack('分支名不能为空');
       return;

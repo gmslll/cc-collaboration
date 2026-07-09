@@ -141,6 +141,19 @@ void main() {
     expect(helper, isNot(contains('showDialog<bool>')));
   });
 
+  test('workspace commit branch dialog owns controller', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final helper = source.substring(
+      source.indexOf('Future<void> _createBranchFromCommit('),
+      source.indexOf('@override\n  Future<void> _cherryPickCommit'),
+    );
+
+    expect(helper, contains('showDialog<String>'));
+    expect(helper, contains('WorkspaceCommitBranchDialog('));
+    expect(helper, isNot(contains('TextEditingController')));
+    expect(helper, isNot(contains('showDialog<bool>')));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
