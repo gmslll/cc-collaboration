@@ -203,6 +203,13 @@ void main() {
       loader.indexOf('if (!mounted) return;'),
       lessThan(loader.indexOf('setState(() {')),
     );
+    final orgLookup = loader.indexOf('organization(detail!.project.orgId)');
+    final orgGuard = loader.indexOf('if (!mounted) return;', orgLookup);
+    final displayNames = loader.indexOf('todoMemberDisplayNames', orgLookup);
+    expect(orgLookup, isNonNegative);
+    expect(orgGuard, isNonNegative);
+    expect(displayNames, isNonNegative);
+    expect(orgGuard, lessThan(displayNames));
   });
 
   test('project detail dialogs guard mounted before mutations', () {
@@ -1043,6 +1050,61 @@ void main() {
       attachmentUpload,
       'File(f.path!).readAsBytes',
       '_client.uploadTodoAttachment',
+    );
+    final quickCreate = between(
+      'lib/screens/todos_page.dart',
+      'Future<void> _submit() async {',
+      '@override\n  Widget build(BuildContext context) {',
+    );
+    expectGuardBefore(
+      quickCreate,
+      'await widget.client.createTodo',
+      'for (final f in _files)',
+    );
+    expectGuardBefore(
+      quickCreate,
+      'for (final f in _files)',
+      'File(f.path!).readAsBytes',
+    );
+    expectGuardBefore(
+      quickCreate,
+      'File(f.path!).readAsBytes',
+      'widget.client.uploadTodoAttachment',
+    );
+    final assignExisting = between(
+      'lib/screens/todos_page.dart',
+      'Future<void> _assignToExisting() async {',
+      'Future<void> _assignToNew() async {',
+    );
+    expectGuardBefore(
+      assignExisting,
+      'final prep = await _prepareAssignment',
+      'widget.overviewStore.dispatch',
+    );
+    expectGuardBefore(
+      assignExisting,
+      'await _syncAssignVisibility',
+      '_maybeBumpToInProgress',
+    );
+    final assignNew = between(
+      'lib/screens/todos_page.dart',
+      'Future<void> _assignToNew() async {',
+      '// Remote variants (mobile):',
+    );
+    expectGuardBefore(
+      assignNew,
+      'await widget.overviewStore.spawn',
+      'final prep = await _prepareAssignment',
+    );
+    expectGuardBefore(
+      assignNew,
+      'final prep = await _prepareAssignment',
+      'widget.overviewStore.dispatch',
+    );
+    expectGuardBefore(
+      assignNew,
+      'await _syncAssignVisibility',
+      '_maybeBumpToInProgress',
     );
     expectGuardBefore(
       between(

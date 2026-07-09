@@ -2017,10 +2017,13 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
         dueAt: _dueAt,
         groupName: _groupName,
       );
+      if (!mounted) return;
       for (final f in _files) {
+        if (!mounted) return;
         try {
           Uint8List? bytes = f.bytes;
           bytes ??= f.path != null ? await File(f.path!).readAsBytes() : null;
+          if (!mounted) return;
           if (bytes == null) continue;
           await widget.client.uploadTodoAttachment(created.id, f.name, bytes);
         } catch (e) {
@@ -2334,8 +2337,13 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     String? workdir = _findCard(sid)?.workdir;
     for (var i = 0; i < 5 && (workdir == null || workdir.isEmpty); i++) {
       await Future.delayed(const Duration(milliseconds: 100));
-      if (!mounted) break;
+      if (!mounted) {
+        return (taskText: widget.todo.title, statusAtPrep: widget.todo.status);
+      }
       workdir = _findCard(sid)?.workdir;
+    }
+    if (!mounted) {
+      return (taskText: widget.todo.title, statusAtPrep: widget.todo.status);
     }
     final prep = await prepareTodoAssignmentText(
       client: widget.client,
@@ -2400,6 +2408,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
+    if (!mounted) return;
     final projectMembers = detail?.members ?? const <ProjectMember>[];
     final orgMembers = detail?.project.orgId.isNotEmpty == true
         ? await widget.client
@@ -2407,6 +2416,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
               .then((d) => d.members)
               .catchError((_) => <OrganizationMember>[])
         : const <OrganizationMember>[];
+    if (!mounted) return;
 
     final names = todoMemberDisplayNames(
       projectMembers: projectMembers,
@@ -2457,6 +2467,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
+    if (!mounted) return;
     await _maybeBumpToInProgress(widget.todo.status);
     if (mounted) Navigator.pop(context, true);
   }
@@ -2718,6 +2729,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     // Materialize the todo.md BEFORE dispatching: the pasted text points the
     // agent at that file, so the file must already be on disk when it lands.
     final prep = await _prepareAssignment(sid);
+    if (!mounted) return;
     final err = widget.overviewStore.dispatch(
       LocalMsg('', sid, prep.taskText, true),
     );
@@ -2735,6 +2747,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       workspaceName: card?.workspace ?? '',
       repoName: card?.project ?? '',
     );
+    if (!mounted) return;
     await _maybeBumpToInProgress(prep.statusAtPrep);
     if (mounted) Navigator.pop(context, true);
   }
@@ -2760,11 +2773,13 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
+    if (!mounted) return;
     // Prep (materialize) AFTER the session exists but BEFORE dispatch — the
     // pointer text must reference an already-written file. _prepareAssignment
     // polls for the fresh card's workdir since it may not be populated the
     // instant spawn returns; it falls back to a raw paste if it never appears.
     final prep = await _prepareAssignment(sid);
+    if (!mounted) return;
     final dispatchErr = widget.overviewStore.dispatch(
       LocalMsg('', sid, prep.taskText, true),
     );
@@ -2778,6 +2793,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       repoName: proj,
       waitForAgentId: true,
     );
+    if (!mounted) return;
     await _maybeBumpToInProgress(prep.statusAtPrep);
     if (mounted) Navigator.pop(context, true);
   }
