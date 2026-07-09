@@ -9,6 +9,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'handoff refresh selection keeps fresh item and clears removed item',
+    () {
+      final old = _handoff('h1', headline: 'Old handoff');
+      final fresh = _handoff('h1', headline: 'Fresh handoff');
+      final other = _handoff('h2', headline: 'Other handoff');
+
+      expect(refreshedSelectedHandoff(null, [fresh]), isNull);
+      expect(refreshedSelectedHandoff(old, [other, fresh]), same(fresh));
+      expect(refreshedSelectedHandoff(old, [other]), isNull);
+    },
+  );
+
   testWidgets('handoff refresh completion after unmount is ignored', (
     tester,
   ) async {

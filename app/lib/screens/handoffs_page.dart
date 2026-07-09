@@ -34,6 +34,17 @@ class HandoffsPage extends StatefulWidget {
   State<HandoffsPage> createState() => _HandoffsPageState();
 }
 
+ListItem? refreshedSelectedHandoff(
+  ListItem? selected,
+  Iterable<ListItem> items,
+) {
+  if (selected == null) return null;
+  for (final item in items) {
+    if (item.id == selected.id) return item;
+  }
+  return null;
+}
+
 class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   String? _error;
   bool _loading = true;
@@ -146,6 +157,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
       if (!_isCurrentRefresh(generation, view)) return;
       setState(() {
         _inbox = items;
+        _selected = refreshedSelectedHandoff(_selected, items);
         _loading = false;
       });
     } catch (e) {
