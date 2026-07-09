@@ -19,6 +19,12 @@ class WorkspaceBranchCreateDraft {
   });
 }
 
+double workspaceBranchDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class WorkspaceBranchCreateDialog extends StatefulWidget {
   final String initialBranch;
   final String initialStartRef;
@@ -60,22 +66,31 @@ class _WorkspaceBranchCreateDialogState
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
-      title: const Text('新建分支'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _branchCtl,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: '分支名'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('新建分支', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: workspaceBranchDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _branchCtl,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: '分支名'),
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _startCtl,
+                decoration: const InputDecoration(labelText: '起点 ref(可选)'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _startCtl,
-            decoration: const InputDecoration(labelText: '起点 ref(可选)'),
-          ),
-        ],
+        ),
       ),
       actions: [
         TextButton(
@@ -114,12 +129,20 @@ class _WorkspaceBranchRenameDialogState
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
-      title: const Text('重命名分支'),
-      content: TextField(
-        controller: _ctl,
-        autofocus: true,
-        decoration: const InputDecoration(labelText: '新分支名'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('重命名分支', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: workspaceBranchDialogWidth(size),
+        child: SingleChildScrollView(
+          child: TextField(
+            controller: _ctl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '新分支名'),
+            onSubmitted: (_) => _submit(),
+          ),
+        ),
       ),
       actions: [
         TextButton(
