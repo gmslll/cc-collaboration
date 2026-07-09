@@ -12,6 +12,7 @@ void main() {
     if (widget == null) return null;
     if (widget is Text) return widget.data;
     if (widget is Expanded) return textOf(widget.child);
+    if (widget is Tooltip) return textOf(widget.child);
     if (widget is Row) {
       for (final child in widget.children) {
         final text = textOf(child);
@@ -25,6 +26,7 @@ void main() {
     if (widget == null) return null;
     if (widget is Text) return widget;
     if (widget is Expanded) return textWidgetOf(widget.child);
+    if (widget is Tooltip) return textWidgetOf(widget.child);
     if (widget is Row) {
       for (final child in widget.children) {
         final text = textWidgetOf(child);
@@ -42,15 +44,32 @@ void main() {
   SendTarget target(int i) => (id: 'ts$i', label: 'session $i');
 
   test('menu item labels clamp instead of stretching long menus', () {
+    final label = '发送到「${'very-long-session-name-' * 8}」';
     final item = ccMenuItem(
       value: 'send:long',
       icon: Icons.send_rounded,
-      label: '发送到「${'very-long-session-name-' * 8}」',
+      label: label,
     );
     final text = textWidgetOf(item.child);
 
     expect(text?.maxLines, 1);
     expect(text?.overflow, TextOverflow.ellipsis);
+  });
+
+  test('menu item labels keep full text in a tooltip', () {
+    const label = '发送到「remote teammate with a very long session label」';
+    final item = ccMenuItem(
+      value: 'send:long',
+      icon: Icons.send_rounded,
+      label: label,
+    );
+    final tooltip = (item.child as Row).children
+        .whereType<Expanded>()
+        .single
+        .child;
+
+    expect(tooltip, isA<Tooltip>());
+    expect((tooltip as Tooltip).message, label);
   });
 
   test('short same-project send targets stay inline', () {

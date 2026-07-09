@@ -1651,13 +1651,16 @@ PopupMenuItem<String> ccMenuItem({
         Icon(icon, size: 13, color: color),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: danger && on
-                ? const TextStyle(color: CcColors.danger)
-                : null,
+          child: Tooltip(
+            message: label,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: danger && on
+                  ? const TextStyle(color: CcColors.danger)
+                  : null,
+            ),
           ),
         ),
         if (shortcut != null) ...[
