@@ -73,31 +73,17 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     String initial = '',
     String hint = '',
   }) async {
-    final ctl = TextEditingController(text: initial);
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: InputDecoration(labelText: label, hintText: hint),
-          onSubmitted: (_) => Navigator.pop(ctx, true),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确定'),
-          ),
-        ],
+      builder: (_) => FileNameDialog(
+        title: title,
+        label: label,
+        initial: initial,
+        hint: hint,
       ),
     );
-    if (ok != true) return null;
-    final name = ctl.text.trim();
+    if (raw == null) return null;
+    final name = raw.trim();
     if (!_validName(name)) {
       if (!mounted) return null;
       snack(context, '名称不能为空，也不能包含路径分隔符');
@@ -394,6 +380,65 @@ class _FileBrowserPageState extends State<FileBrowserPage>
           ),
         ),
       ),
+    );
+  }
+}
+
+class FileNameDialog extends StatefulWidget {
+  final String title;
+  final String label;
+  final String initial;
+  final String hint;
+
+  const FileNameDialog({
+    super.key,
+    required this.title,
+    required this.label,
+    this.initial = '',
+    this.hint = '',
+  });
+
+  @override
+  State<FileNameDialog> createState() => _FileNameDialogState();
+}
+
+class _FileNameDialogState extends State<FileNameDialog> {
+  late final TextEditingController _ctl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _ctl,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: widget.label,
+          hintText: widget.hint,
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('确定')),
+      ],
     );
   }
 }
