@@ -32,3 +32,15 @@ double onlineSendUserListMaxHeight(
   final capped = available < preferred ? available : preferred;
   return capped < minHeight ? minHeight : capped;
 }
+
+double onlineSendSessionMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.58,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  final capped = available < preferred ? available : preferred;
+  return capped < minHeight ? minHeight : capped;
+}

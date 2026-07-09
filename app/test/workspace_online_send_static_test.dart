@@ -41,6 +41,8 @@ void main() {
 
   test('incoming peer message dialog uses responsive session labels', () {
     expect(source, contains('preferred: 460'));
+    expect(source, contains('onlineSendSessionMenuMaxHeight'));
+    expect(source, contains('menuMaxHeight:'));
     expect(
       source,
       isNot(contains('DropdownMenuItem(value: s, child: Text(s.label))')),

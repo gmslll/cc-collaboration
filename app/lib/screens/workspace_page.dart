@@ -1455,6 +1455,9 @@ class _WorkspacePageState extends State<WorkspacePage>
                   DropdownButton<TerminalSession>(
                     value: target,
                     isExpanded: true,
+                    menuMaxHeight: onlineSendSessionMenuMaxHeight(
+                      MediaQuery.sizeOf(ctx),
+                    ),
                     items: [
                       for (final s in terms)
                         DropdownMenuItem(

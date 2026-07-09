@@ -34,4 +34,13 @@ void main() {
     );
     expect(onlineSendUserListMaxHeight(const Size(320, 120)), 72);
   });
+
+  test('online send session menu height is capped for many sessions', () {
+    expect(onlineSendSessionMenuMaxHeight(const Size(1024, 900)), 320);
+    expect(
+      onlineSendSessionMenuMaxHeight(const Size(320, 420)),
+      closeTo(243.6, 0.001),
+    );
+    expect(onlineSendSessionMenuMaxHeight(const Size(320, 220)), 160);
+  });
 }
