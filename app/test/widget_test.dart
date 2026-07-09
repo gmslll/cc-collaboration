@@ -38,6 +38,23 @@ void main() {
     expect(source, isNot(contains('构建 \$kBuildMarker')));
   });
 
+  test('account switcher labels are width constrained', () {
+    for (final path in ['lib/main.dart', 'lib/main_web.dart']) {
+      final source = File(path).readAsStringSync();
+      final dialog = source.substring(
+        source.indexOf('title: const Text(\'切换账号\')'),
+      );
+
+      expect(dialog, isNot(contains('Text(a.identity),')));
+      expect(
+        dialog,
+        contains('a.identity,\n                          maxLines: 1'),
+      );
+      expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+      expect(dialog, contains('a.relayUrl)'));
+    }
+  });
+
   test('account dynamic labels and dropdown menus are constrained', () {
     final source = File('lib/screens/account_page.dart').readAsStringSync();
 

@@ -362,9 +362,15 @@ class _HomeShellState extends State<HomeShell> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(a.identity),
+                        Text(
+                          a.identity,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         Text(
                           hostOf(a.relayUrl),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: CcColors.subtle,
                             fontSize: 12,
