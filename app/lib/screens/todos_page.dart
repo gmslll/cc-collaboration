@@ -753,70 +753,75 @@ class _TodosPageState extends State<TodosPage> {
             content: SizedBox(
               width: dialogWidth,
               child: StatefulBuilder(
-                builder: (ctx, setLocal) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_canUseLocalCli) ...[
+                builder: (ctx, setLocal) => SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_canUseLocalCli) ...[
+                        TextField(
+                          controller: tokenCtl,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            labelText: 'linear_personal_token',
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                       TextField(
-                        controller: tokenCtl,
-                        obscureText: true,
+                        controller: teamCtl,
                         decoration: const InputDecoration(
-                          labelText: 'linear_personal_token',
+                          labelText: '团队 team_key',
+                          hintText: '例如 INF',
                           isDense: true,
                         ),
                       ),
                       const SizedBox(height: 10),
-                    ],
-                    TextField(
-                      controller: teamCtl,
-                      decoration: const InputDecoration(
-                        labelText: '团队 team_key',
-                        hintText: '例如 INF',
-                        isDense: true,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: projectCtl,
-                      decoration: const InputDecoration(
-                        labelText: '项目 project_id（Linear Project UUID，可选）',
-                        isDense: true,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // Relay project to import INTO. Empty = 个人待办 (owner-only, hidden
-                    // in the team view); picking a team project makes the imported
-                    // Linear todos show under 团队 / 全部项目 and be assignable.
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '导入到 relay 项目',
-                        style: TextStyle(color: CcColors.muted, fontSize: 12),
-                      ),
-                    ),
-                    DropdownButton<String>(
-                      isExpanded: true,
-                      value: _myProjects.any((p) => p.id == importPid)
-                          ? importPid
-                          : '',
-                      items: [
-                        const DropdownMenuItem(
-                          value: '',
-                          child: Text('个人待办（仅自己可见）'),
+                      TextField(
+                        controller: projectCtl,
+                        decoration: const InputDecoration(
+                          labelText: '项目 project_id（Linear Project UUID，可选）',
+                          isDense: true,
                         ),
-                        for (final p in _myProjects)
-                          DropdownMenuItem(
-                            value: p.id,
-                            child: Text(
-                              p.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Relay project to import INTO. Empty = 个人待办 (owner-only, hidden
+                      // in the team view); picking a team project makes the imported
+                      // Linear todos show under 团队 / 全部项目 and be assignable.
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '导入到 relay 项目',
+                          style: TextStyle(color: CcColors.muted, fontSize: 12),
+                        ),
+                      ),
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        value: _myProjects.any((p) => p.id == importPid)
+                            ? importPid
+                            : '',
+                        menuMaxHeight: todoMenuMaxHeight(
+                          MediaQuery.sizeOf(ctx),
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('个人待办（仅自己可见）'),
                           ),
-                      ],
-                      onChanged: (v) => setLocal(() => importPid = v ?? ''),
-                    ),
-                  ],
+                          for (final p in _myProjects)
+                            DropdownMenuItem(
+                              value: p.id,
+                              child: Text(
+                                p.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (v) => setLocal(() => importPid = v ?? ''),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

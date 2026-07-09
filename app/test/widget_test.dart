@@ -259,6 +259,19 @@ void main() {
     expect(dialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('todo Linear config dialog uses scroll-safe controls', () {
+    final source = File('lib/screens/todos_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<void> _linearConfigDialog()'),
+      source.indexOf('  @override\n  void didUpdateWidget'),
+    );
+
+    expect(dialog, contains('todoDialogWidth'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('menuMaxHeight: todoMenuMaxHeight'));
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('todo local spawns forward relay project ids', () {
     final source = File('lib/screens/todos_page.dart').readAsStringSync();
     final assistant = source.substring(
