@@ -66,6 +66,12 @@ void main() {
     expect(organizationRoleLabel(' custom ', isAdmin: false), 'custom');
   });
 
+  test('role matching normalizes dropdown values', () {
+    expect(roleMatches('owner', ' owner '), isTrue);
+    expect(roleMatches(' admin ', 'admin'), isTrue);
+    expect(roleMatches('member', 'viewer'), isFalse);
+  });
+
   test(
     'organization editable role value falls back to a dropdown-safe role',
     () {

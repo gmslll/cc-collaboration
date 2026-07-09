@@ -7,6 +7,9 @@ import '../widgets.dart';
 
 String normalizedRole(String role) => role.trim();
 
+bool roleMatches(String left, String right) =>
+    normalizedRole(left) == normalizedRole(right);
+
 bool isManageRole(String role) {
   final value = normalizedRole(role);
   return value == 'owner' || value == 'admin';
@@ -1097,7 +1100,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                     onChanged: roleChangeBlockReason == null
                                         ? (role) {
                                             if (role == null ||
-                                                role == m.role) {
+                                                roleMatches(role, m.role)) {
                                               return;
                                             }
                                             _do(
@@ -1622,7 +1625,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                 ],
                                 onChanged: roleChangeBlockReason == null
                                     ? (role) {
-                                        if (role == null || role == m.role) {
+                                        if (role == null ||
+                                            roleMatches(role, m.role)) {
                                           return;
                                         }
                                         _do(
