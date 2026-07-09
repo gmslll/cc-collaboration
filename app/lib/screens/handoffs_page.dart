@@ -47,6 +47,19 @@ ListItem? refreshedSelectedHandoff(
   return null;
 }
 
+double handoffOnlineRosterMaxHeight(
+  Size screenSize, {
+  double preferred = 130,
+  double minHeight = 82,
+  double maxFraction = 0.22,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   String? _error;
   bool _loading = true;
@@ -401,7 +414,9 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   );
 
   Widget _onlineRoster() => Container(
-    constraints: const BoxConstraints(maxHeight: 130),
+    constraints: BoxConstraints(
+      maxHeight: handoffOnlineRosterMaxHeight(MediaQuery.sizeOf(context)),
+    ),
     margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
     decoration: BoxDecoration(
       color: CcColors.panelHigh.withValues(alpha: 0.45),

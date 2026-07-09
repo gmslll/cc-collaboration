@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
@@ -21,6 +22,23 @@ void main() {
       expect(refreshedSelectedHandoff(old, [other]), isNull);
     },
   );
+
+  test('handoff online roster height is responsive', () {
+    expect(handoffOnlineRosterMaxHeight(const Size(1200, 900)), 130);
+    expect(
+      handoffOnlineRosterMaxHeight(const Size(320, 420)),
+      closeTo(92.4, 0.001),
+    );
+    expect(handoffOnlineRosterMaxHeight(const Size(320, 260)), 82);
+  });
+
+  test('handoff online roster avoids fixed height', () {
+    final source = File('lib/screens/handoffs_page.dart').readAsStringSync();
+    final roster = source.substring(source.indexOf('Widget _onlineRoster'));
+
+    expect(roster, contains('handoffOnlineRosterMaxHeight'));
+    expect(roster, isNot(contains('BoxConstraints(maxHeight: 130)')));
+  });
 
   testWidgets('handoff refresh completion after unmount is ignored', (
     tester,
