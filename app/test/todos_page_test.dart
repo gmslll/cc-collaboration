@@ -288,6 +288,52 @@ void main() {
     },
   );
 
+  testWidgets('team quick create dialog scrolls on compact screens', (
+    tester,
+  ) async {
+    final client = _CreateTodoClient();
+    final store = TodoStore()..debugSetClient(client);
+    const longProjectName = '团队协作跨项目超长项目名称-用于验证新建待办弹窗不会撑开布局';
+
+    await tester.binding.setSurfaceSize(const Size(360, 420));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _meWithProject('p-long', longProjectName),
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byTooltip('新建待办').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+      findsWidgets,
+    );
+    expect(find.widgetWithText(FilledButton, '创建'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('quick create after account switch is ignored', (tester) async {
     final oldClient = _CreateTodoClient();
     final newClient = _CreateTodoClient();

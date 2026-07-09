@@ -1218,36 +1218,41 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final wide = MediaQuery.of(context).size.width >= _wideBreakpoint;
-    if (!wide) return _mobileBody();
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final width = constraints.maxWidth.isFinite
+          ? constraints.maxWidth
+          : MediaQuery.sizeOf(context).width;
+      final wide = width >= _wideBreakpoint;
+      if (!wide) return _mobileBody();
 
-    final contentPane = Column(
-      children: [
-        _filterHeader(wide: true),
-        Expanded(child: _boardView ? _boardPane() : _buildList()),
-      ],
-    );
-
-    if (_boardView) {
-      return Row(
+      final contentPane = Column(
         children: [
-          Expanded(child: contentPane),
-          if (_selected != null) ...[
-            const VerticalDivider(width: 1),
-            SizedBox(width: 380, child: _rightPane()),
-          ],
+          _filterHeader(wide: true),
+          Expanded(child: _boardView ? _boardPane() : _buildList()),
         ],
       );
-    }
-    return Row(
-      children: [
-        SizedBox(width: 360, child: contentPane),
-        const VerticalDivider(width: 1),
-        Expanded(child: _rightPane()),
-      ],
-    );
-  }
+
+      if (_boardView) {
+        return Row(
+          children: [
+            Expanded(child: contentPane),
+            if (_selected != null) ...[
+              const VerticalDivider(width: 1),
+              SizedBox(width: 380, child: _rightPane()),
+            ],
+          ],
+        );
+      }
+      return Row(
+        children: [
+          SizedBox(width: 360, child: contentPane),
+          const VerticalDivider(width: 1),
+          Expanded(child: _rightPane()),
+        ],
+      );
+    },
+  );
 
   // _filterHeader is the title/scope/project/status filter chrome shared by
   // the board view, the list view, and the mobile card stream — only the
@@ -1268,75 +1273,79 @@ class _TodosPageState extends State<TodosPage> {
               '待办',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
-            const Spacer(),
-            if (_selectingTodos) ...[
-              Text(
-                '已选 ${_selectedTodoIds.length}',
-                style: const TextStyle(
-                  color: CcColors.muted,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
+            const SizedBox(width: 8),
+            scrollableActions([
+              if (_selectingTodos) ...[
+                Text(
+                  '已选 ${_selectedTodoIds.length}',
+                  style: const TextStyle(
+                    color: CcColors.muted,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              IconButton(
-                icon: _deletingSelectedTodos
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.delete_outline_rounded, size: 18),
-                tooltip: '删除选中待办',
-                onPressed: _deletingSelectedTodos ? null : _deleteSelectedTodos,
-              ),
-              IconButton(
-                icon: const Icon(Icons.close_rounded, size: 18),
-                tooltip: '取消选择',
-                onPressed: _deletingSelectedTodos
-                    ? null
-                    : () => setState(_selectedTodoIds.clear),
-              ),
-            ] else
-              IconButton(
-                icon: const Icon(Icons.checklist_rtl_rounded, size: 18),
-                tooltip: '选择当前筛选结果',
-                onPressed: !_hasDeletableFilteredTodo
-                    ? null
-                    : () => setState(
-                        () => _selectedTodoIds.addAll(
-                          _filtered
-                              .where((t) => _accessFor(t).canDelete)
-                              .map((t) => t.id),
+                IconButton(
+                  icon: _deletingSelectedTodos
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_outline_rounded, size: 18),
+                  tooltip: '删除选中待办',
+                  onPressed: _deletingSelectedTodos
+                      ? null
+                      : _deleteSelectedTodos,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  tooltip: '取消选择',
+                  onPressed: _deletingSelectedTodos
+                      ? null
+                      : () => setState(_selectedTodoIds.clear),
+                ),
+              ] else
+                IconButton(
+                  icon: const Icon(Icons.checklist_rtl_rounded, size: 18),
+                  tooltip: '选择当前筛选结果',
+                  onPressed: !_hasDeletableFilteredTodo
+                      ? null
+                      : () => setState(
+                          () => _selectedTodoIds.addAll(
+                            _filtered
+                                .where((t) => _accessFor(t).canDelete)
+                                .map((t) => t.id),
+                          ),
                         ),
-                      ),
-              ),
-            if (wide)
-              IconButton(
-                icon: Icon(
-                  _boardView
-                      ? Icons.view_list_rounded
-                      : Icons.view_kanban_rounded,
-                  size: 18,
                 ),
-                tooltip: _boardView ? '切换到列表视图' : '切换到看板视图',
-                onPressed: () => setState(() => _boardView = !_boardView),
-              ),
-            IconButton(
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              tooltip: '刷新',
-              onPressed: _refresh,
-            ),
-            if (_canUseLocalCli)
+              if (wide)
+                IconButton(
+                  icon: Icon(
+                    _boardView
+                        ? Icons.view_list_rounded
+                        : Icons.view_kanban_rounded,
+                    size: 18,
+                  ),
+                  tooltip: _boardView ? '切换到列表视图' : '切换到看板视图',
+                  onPressed: () => setState(() => _boardView = !_boardView),
+                ),
               IconButton(
-                icon: const Icon(Icons.smart_toy_outlined, size: 18),
-                tooltip: '召唤待办助手',
-                onPressed: _summonTodoAssistant,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                tooltip: '刷新',
+                onPressed: _refresh,
               ),
-            IconButton(
-              icon: const Icon(Icons.add_rounded),
-              tooltip: '新建待办',
-              onPressed: _createDialog,
-            ),
+              if (_canUseLocalCli)
+                IconButton(
+                  icon: const Icon(Icons.smart_toy_outlined, size: 18),
+                  tooltip: '召唤待办助手',
+                  onPressed: _summonTodoAssistant,
+                ),
+              IconButton(
+                icon: const Icon(Icons.add_rounded),
+                tooltip: '新建待办',
+                onPressed: _createDialog,
+              ),
+            ]),
           ],
         ),
       ),
@@ -1432,32 +1441,36 @@ class _TodosPageState extends State<TodosPage> {
           style: TextStyle(color: CcColors.muted, fontSize: 12.5),
         ),
         const SizedBox(width: 8),
-        DropdownButton<String?>(
-          value: projectFilterValue,
-          hint: const Text('全部项目'),
-          menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(context)),
-          underline: const SizedBox(),
-          items: [
-            const DropdownMenuItem<String?>(value: null, child: Text('全部项目')),
-            ..._myProjects.map(
-              (p) => DropdownMenuItem<String?>(
-                value: p.id,
-                child: Text(
-                  p.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: wide ? 360 : 200),
+          child: DropdownButton<String?>(
+            value: projectFilterValue,
+            isExpanded: true,
+            hint: const Text('全部项目'),
+            menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(context)),
+            underline: const SizedBox(),
+            items: [
+              const DropdownMenuItem<String?>(value: null, child: Text('全部项目')),
+              ..._myProjects.map(
+                (p) => DropdownMenuItem<String?>(
+                  value: p.id,
+                  child: Text(
+                    p.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ),
-            ),
-          ],
-          onChanged: (v) {
-            setState(() {
-              _projectFilter = v;
-              _groupFilter = null;
-            });
-            _loadGroups();
-            _pushTodoView();
-          },
+            ],
+            onChanged: (v) {
+              setState(() {
+                _projectFilter = v;
+                _groupFilter = null;
+              });
+              _loadGroups();
+              _pushTodoView();
+            },
+          ),
         ),
       ] else ...[
         const Text(
@@ -1499,10 +1512,7 @@ class _TodosPageState extends State<TodosPage> {
         ],
       ],
     ];
-    if (!wide) {
-      return scrollableBar(scrolling: controls);
-    }
-    return Row(children: [...controls, const Spacer()]);
+    return scrollableBar(scrolling: controls);
   }
 
   Widget _linearImportControls({required bool wide}) {
@@ -2531,129 +2541,149 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final maxDialogHeight = size.height > 48 ? size.height - 48 : size.height;
+    final scopeProjectControls = <Widget>[
+      if (widget.projects.isNotEmpty)
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'personal', label: Text('个人')),
+            ButtonSegment(value: 'team', label: Text('团队')),
+          ],
+          selected: {_scope},
+          showSelectedIcon: false,
+          style: const ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          onSelectionChanged: (s) => setState(() {
+            _scope = s.first;
+            if (_scope == 'team' &&
+                _projectId == null &&
+                widget.projects.isNotEmpty) {
+              _projectId = widget.projects.first.id;
+            }
+          }),
+        ),
+      if (_scope == 'team' && widget.projects.isNotEmpty) ...[
+        const SizedBox(width: 12),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 260),
+          child: DropdownButton<String>(
+            isDense: true,
+            isExpanded: true,
+            underline: const SizedBox(),
+            menuMaxHeight: todoMenuMaxHeight(size),
+            value: _projectId,
+            items: widget.projects
+                .map(
+                  (p) => DropdownMenuItem(
+                    value: p.id,
+                    child: Text(
+                      p.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (v) => setState(() => _projectId = v),
+          ),
+        ),
+      ],
+    ];
+    final propertyControls = [
+      PriorityControl(
+        priority: _priority,
+        onChanged: (v) => setState(() => _priority = v),
+      ),
+      const SizedBox(width: 6),
+      RecurrenceControl(
+        recurrence: _recurrence,
+        onChanged: (v) => setState(() => _recurrence = v),
+      ),
+      const SizedBox(width: 6),
+      DueDatePill(
+        dueAt: _dueAt,
+        onTap: _pickDueDate,
+        onClear: () => setState(() => _dueAt = null),
+      ),
+      const SizedBox(width: 6),
+      GroupControl(
+        groupName: _groupName,
+        existingGroups: widget.groups,
+        onSelect: (v) => setState(() => _groupName = v),
+        onClear: () => setState(() => _groupName = null),
+      ),
+      const SizedBox(width: 8),
+    ];
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  if (widget.projects.isNotEmpty)
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'personal', label: Text('个人')),
-                        ButtonSegment(value: 'team', label: Text('团队')),
+        constraints: BoxConstraints(maxWidth: 560, maxHeight: maxDialogHeight),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (scopeProjectControls.isNotEmpty)
+                      scrollableBar(scrolling: scopeProjectControls),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _titleCtl,
+                      autofocus: true,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        filled: false,
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                        hintText: '待办标题',
+                      ),
+                      onSubmitted: (_) => _submit(),
+                    ),
+                    const SizedBox(height: 6),
+                    MarkdownLiteEditor(
+                      controller: _bodyCtl,
+                      hintText: '添加描述…（可选，支持 Markdown）',
+                      minLines: 2,
+                      maxLines: 6,
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(height: 1),
+                    const SizedBox(height: 10),
+                    scrollableBar(
+                      scrolling: propertyControls,
+                      pinnedTrailing: [
+                        IconButton(
+                          icon: const Icon(Icons.attach_file_rounded, size: 18),
+                          tooltip: _files.isEmpty
+                              ? '添加附件'
+                              : '已选 ${_files.length} 个文件',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _pickFiles,
+                        ),
                       ],
-                      selected: {_scope},
-                      showSelectedIcon: false,
-                      style: const ButtonStyle(
-                        visualDensity: VisualDensity.compact,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      onSelectionChanged: (s) => setState(() {
-                        _scope = s.first;
-                        if (_scope == 'team' &&
-                            _projectId == null &&
-                            widget.projects.isNotEmpty) {
-                          _projectId = widget.projects.first.id;
-                        }
-                      }),
                     ),
-                  const Spacer(),
-                  if (_scope == 'team' && widget.projects.isNotEmpty)
-                    DropdownButton<String>(
-                      isDense: true,
-                      underline: const SizedBox(),
-                      menuMaxHeight: todoMenuMaxHeight(
-                        MediaQuery.sizeOf(context),
-                      ),
-                      value: _projectId,
-                      items: widget.projects
-                          .map(
-                            (p) => DropdownMenuItem(
-                              value: p.id,
-                              child: Text(
-                                p.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (v) => setState(() => _projectId = v),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _titleCtl,
-                autofocus: true,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
+                  ],
                 ),
-                decoration: const InputDecoration(
-                  isDense: true,
-                  filled: false,
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
-                  hintText: '待办标题',
-                ),
-                onSubmitted: (_) => _submit(),
               ),
-              const SizedBox(height: 6),
-              MarkdownLiteEditor(
-                controller: _bodyCtl,
-                hintText: '添加描述…（可选，支持 Markdown）',
-                minLines: 2,
-                maxLines: 6,
-              ),
-              const SizedBox(height: 12),
-              const Divider(height: 1),
-              const SizedBox(height: 10),
-              Row(
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  PriorityControl(
-                    priority: _priority,
-                    onChanged: (v) => setState(() => _priority = v),
-                  ),
-                  const SizedBox(width: 6),
-                  RecurrenceControl(
-                    recurrence: _recurrence,
-                    onChanged: (v) => setState(() => _recurrence = v),
-                  ),
-                  const SizedBox(width: 6),
-                  DueDatePill(
-                    dueAt: _dueAt,
-                    onTap: _pickDueDate,
-                    onClear: () => setState(() => _dueAt = null),
-                  ),
-                  const SizedBox(width: 6),
-                  GroupControl(
-                    groupName: _groupName,
-                    existingGroups: widget.groups,
-                    onSelect: (v) => setState(() => _groupName = v),
-                    onClear: () => setState(() => _groupName = null),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.attach_file_rounded, size: 18),
-                    tooltip: _files.isEmpty
-                        ? '添加附件'
-                        : '已选 ${_files.length} 个文件',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: _pickFiles,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  const Spacer(),
                   TextButton(
                     onPressed: _submitting
                         ? null
@@ -2673,8 +2703,8 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
