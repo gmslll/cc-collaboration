@@ -1,9 +1,34 @@
+import 'dart:io';
+
 import 'package:app/screens/file_browser_page.dart';
 import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('file browser dynamic titles are width constrained', () {
+    final source = File(
+      'lib/screens/file_browser_page.dart',
+    ).readAsStringSync();
+
+    expect(
+      source,
+      isNot(contains("appBar: AppBar(title: Text('文件 · \${widget.name}'))")),
+    );
+    expect(source, isNot(contains('title: Text(title),')));
+    expect(source, isNot(contains('title: Text(widget.title),')));
+    expect(source, contains("'文件 · \${widget.name}',\n          maxLines: 1"));
+    expect(
+      source,
+      contains('title, maxLines: 1, overflow: TextOverflow.ellipsis'),
+    );
+    expect(
+      source,
+      contains('widget.title, maxLines: 1, overflow: TextOverflow.ellipsis'),
+    );
+    expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   testWidgets('FileNameDialog cancel closes cleanly', (tester) async {
     String? result = 'unchanged';
 

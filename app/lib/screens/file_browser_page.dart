@@ -97,7 +97,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         content: Text(message),
         actions: [
           TextButton(
@@ -353,7 +353,13 @@ class _FileBrowserPageState extends State<FileBrowserPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('文件 · ${widget.name}')),
+      appBar: AppBar(
+        title: Text(
+          '文件 · ${widget.name}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: DecoratedBox(
         decoration: appGradient,
         // CallbackShortcuts 在外、聚焦节点在内：点进树使其聚焦后才响应 Cmd/Ctrl+C/X/V。
@@ -428,7 +434,7 @@ class _FileNameDialogState extends State<FileNameDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.title),
+      title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: TextField(
         controller: _ctl,
         autofocus: true,
