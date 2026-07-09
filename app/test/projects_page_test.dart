@@ -563,6 +563,34 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('organization sheet keeps member input when adding fails', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: ProjectsPage(client: _FailingOrgMemberProjectsPageFakeClient()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == '成员 identity',
+    );
+    await tester.enterText(memberField, 'qa@x');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '加入团队'));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<TextField>(memberField).controller?.text, 'qa@x');
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
 
 class _ProjectsPageFakeClient extends RelayClient {
@@ -659,5 +687,16 @@ class _FailingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
   @override
   Future<void> mapRepo(String id, String repoName) async {
     throw Exception('map failed');
+  }
+}
+
+class _FailingOrgMemberProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<void> addOrganizationMember(
+    String id,
+    String identity,
+    String role,
+  ) async {
+    throw Exception('add member failed');
   }
 }
