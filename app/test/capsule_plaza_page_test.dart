@@ -82,6 +82,61 @@ void main() {
 
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('capsule plaza account switch ignores stale capsules', (
+    tester,
+  ) async {
+    final oldClient = _DelayedCapsulesClient();
+    final newClient = _DelayedCapsulesClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: oldClient,
+            identity: 'old@x',
+            overviewStore: SessionOverviewStore(),
+            config: AppConfig('http://127.0.0.1:1', 'old', 'old@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(oldClient.requestCount, 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: newClient,
+            identity: 'new@x',
+            overviewStore: SessionOverviewStore(),
+            config: AppConfig('http://127.0.0.1:1', 'new', 'new@x', const {}),
+            isDesktop: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(newClient.requestCount, 1);
+
+    newClient.completeNext([
+      _capsule('new', headline: 'New private capsule', owner: 'new@x'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('New private capsule'), findsOneWidget);
+
+    oldClient.completeNext([
+      _capsule('old', headline: 'Old private capsule', owner: 'old@x'),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('New private capsule'), findsOneWidget);
+    expect(find.text('Old private capsule'), findsNothing);
+  });
 }
 
 class _DelayedCapsulesClient extends RelayClient {
@@ -116,16 +171,19 @@ class _DelayedCapsulesClient extends RelayClient {
   }
 }
 
-CapsuleListItem _capsule(String id, {required String headline}) =>
-    CapsuleListItem.fromJson({
-      'id': id,
-      'owner': 'me@x',
-      'visibility': 'public',
-      'source_agent': 'codex',
-      'origin_session_id': 's-$id',
-      'headline': headline,
-      'repo_name': 'cc-collaboration',
-      'has_transcript': true,
-      'has_persona': false,
-      'created_at': '2026-01-01T00:00:00Z',
-    });
+CapsuleListItem _capsule(
+  String id, {
+  required String headline,
+  String owner = 'me@x',
+}) => CapsuleListItem.fromJson({
+  'id': id,
+  'owner': owner,
+  'visibility': 'public',
+  'source_agent': 'codex',
+  'origin_session_id': 's-$id',
+  'headline': headline,
+  'repo_name': 'cc-collaboration',
+  'has_transcript': true,
+  'has_persona': false,
+  'created_at': '2026-01-01T00:00:00Z',
+});

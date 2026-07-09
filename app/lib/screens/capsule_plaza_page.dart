@@ -54,22 +54,44 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant CapsulePlazaPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_plazaContextChanged(oldWidget)) {
+      _loadGeneration++;
+      setState(() {
+        _items = null;
+        _error = null;
+        _loading = true;
+      });
+      _load();
+    }
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
     final generation = ++_loadGeneration;
+    final client = widget.client;
+    final identity = widget.identity;
+    final relayUrl = widget.config.relayUrl;
+    final token = widget.config.token;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final items = await widget.client.capsules();
-      if (!_isCurrentLoad(generation)) return;
+      final items = await client.capsules();
+      if (!_isCurrentLoad(generation, client, identity, relayUrl, token)) {
+        return;
+      }
       setState(() {
         _items = items;
         _loading = false;
       });
     } catch (e) {
-      if (!_isCurrentLoad(generation)) return;
+      if (!_isCurrentLoad(generation, client, identity, relayUrl, token)) {
+        return;
+      }
       setState(() {
         _error = errorText(e);
         _loading = false;
@@ -77,8 +99,25 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     }
   }
 
-  bool _isCurrentLoad(int generation) =>
-      mounted && generation == _loadGeneration;
+  bool _plazaContextChanged(CapsulePlazaPage oldWidget) =>
+      oldWidget.client != widget.client ||
+      oldWidget.identity != widget.identity ||
+      oldWidget.config.relayUrl != widget.config.relayUrl ||
+      oldWidget.config.token != widget.config.token;
+
+  bool _isCurrentLoad(
+    int generation,
+    RelayClient client,
+    String identity,
+    String relayUrl,
+    String token,
+  ) =>
+      mounted &&
+      generation == _loadGeneration &&
+      identical(client, widget.client) &&
+      widget.identity == identity &&
+      widget.config.relayUrl == relayUrl &&
+      widget.config.token == token;
 
   @override
   Widget build(BuildContext context) {
