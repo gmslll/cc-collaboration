@@ -71,12 +71,21 @@ func TestLoginFlow(t *testing.T) {
 		t.Fatalf("me status=%d", code)
 	}
 	var me struct {
-		Identity string `json:"identity"`
-		IsAdmin  bool   `json:"is_admin"`
+		Identity      string `json:"identity"`
+		IsAdmin       bool   `json:"is_admin"`
+		Organizations []struct {
+			Name string `json:"name"`
+			Role string `json:"role"`
+		} `json:"organizations"`
 	}
 	_ = json.Unmarshal(body, &me)
 	if me.Identity != "alice@backend" || !me.IsAdmin {
 		t.Fatalf("me=%+v", me)
+	}
+	if len(me.Organizations) != 1 ||
+		me.Organizations[0].Name != "alice@backend's team" ||
+		me.Organizations[0].Role != "owner" {
+		t.Fatalf("login should repair default organization for existing users: %+v", me.Organizations)
 	}
 
 	// No token → 401.

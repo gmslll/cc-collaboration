@@ -223,6 +223,15 @@ func prepareDisableOwnerIdentity(ctx context.Context, tx *sql.Tx, identity strin
 		return err
 	}
 	for _, orgID := range orgIDs {
+		if orgID == defaultOrganizationID(identity) {
+			deleted, err := deleteEmptyDefaultOrganization(ctx, tx, orgID, identity)
+			if err != nil {
+				return err
+			}
+			if deleted {
+				continue
+			}
+		}
 		if err := requireOtherActiveOrgOwner(ctx, tx, orgID, identity); err != nil {
 			return err
 		}
@@ -261,6 +270,38 @@ func prepareDisableOwnerIdentity(ctx context.Context, tx *sql.Tx, identity strin
 		}
 	}
 	return nil
+}
+
+func deleteEmptyDefaultOrganization(ctx context.Context, tx *sql.Tx, orgID, owner string) (bool, error) {
+	var currentOwner string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT owner_identity FROM organizations WHERE id = ?`, orgID).Scan(&currentOwner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	if currentOwner != owner {
+		return false, nil
+	}
+	var members int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM organization_members WHERE org_id = ?`, orgID).Scan(&members); err != nil {
+		return false, err
+	}
+	var projects int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE org_id = ?`, orgID).Scan(&projects); err != nil {
+		return false, err
+	}
+	if members != 1 || projects != 0 {
+		return false, nil
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM organizations WHERE id = ?`, orgID)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func requireOtherActiveOrgOwner(ctx context.Context, tx *sql.Tx, orgID, disabledOwner string) error {

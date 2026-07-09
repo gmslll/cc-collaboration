@@ -83,6 +83,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
+	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), u.Identity, time.Now().UTC()); err != nil {
+		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.issueSession(w, r, u.Identity, http.StatusOK)
 }
 

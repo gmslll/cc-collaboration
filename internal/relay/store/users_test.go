@@ -234,6 +234,29 @@ func TestSetDisabledProtectsOwnerInvariants(t *testing.T) {
 	}
 }
 
+func TestSetDisabledDeletesEmptyDefaultOrganization(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateUser(ctx, User{Identity: "owner@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	org, err := st.EnsureDefaultOrganization(ctx, "owner@x", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(ctx, "owner@x", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetOrganization(ctx, org.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("default organization should be deleted after disabling sole owner: %v", err)
+	}
+	if active, err := st.UserActive(ctx, "owner@x"); err != nil || active {
+		t.Fatalf("disabled owner should be inactive: active=%v err=%v", active, err)
+	}
+}
+
 func TestSessions(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
