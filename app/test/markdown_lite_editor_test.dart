@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:app/api/relay_client.dart';
 import 'package:app/widgets/markdown_lite_editor.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,6 +25,50 @@ List<String> _leafTexts(InlineSpan span) {
 }
 
 void main() {
+  testWidgets(
+    'stale dropped image upload cannot insert into a different todo',
+    (tester) async {
+      final firstClient = _DelayedUploadClient();
+      final secondClient = _DelayedUploadClient();
+      final controller = MarkdownLiteController(text: 'old body');
+
+      Widget editor(RelayClient client, String todoId) => MaterialApp(
+        home: Scaffold(
+          body: MarkdownLiteEditor(
+            controller: controller,
+            client: client,
+            todoId: todoId,
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(editor(firstClient, 'td1'));
+      _dropImage(tester, 'old.png', [1, 2, 3]);
+      await tester.pump();
+      await tester.pump();
+      expect(firstClient.requested, ['td1/old.png']);
+
+      controller.value = const TextEditingValue(
+        text: 'new body',
+        selection: TextSelection.collapsed(offset: 8),
+      );
+      await tester.pumpWidget(editor(secondClient, 'td2'));
+      _dropImage(tester, 'new.png', [4, 5, 6]);
+      await tester.pump();
+      await tester.pump();
+      expect(secondClient.requested, ['td2/new.png']);
+
+      secondClient.complete('td2', 'new.png');
+      await tester.pump();
+      expect(controller.text, 'new body![](new.png)');
+
+      firstClient.complete('td1', 'old.png');
+      await tester.pump();
+      expect(controller.text, 'new body![](new.png)');
+      await tester.pump(const Duration(seconds: 3));
+    },
+  );
+
   testWidgets(
     'buildTextSpan still decorates markdown outside the IME composing range',
     (tester) async {
@@ -138,4 +187,42 @@ void main() {
       },
     );
   });
+}
+
+void _dropImage(WidgetTester tester, String name, List<int> bytes) {
+  final target = tester.widget<DropTarget>(find.byType(DropTarget));
+  target.onDragDone!(
+    DropDoneDetails(
+      files: [
+        DropItemFile.fromData(
+          Uint8List.fromList(bytes),
+          name: name,
+          path: name,
+        ),
+      ],
+      localPosition: Offset.zero,
+      globalPosition: Offset.zero,
+    ),
+  );
+}
+
+class _DelayedUploadClient extends RelayClient {
+  _DelayedUploadClient() : super('http://127.0.0.1', 'tok');
+
+  final requested = <String>[];
+  final _uploads = <String, Completer<void>>{};
+
+  @override
+  Future<void> uploadTodoAttachment(String id, String name, List<int> bytes) {
+    requested.add(_key(id, name));
+    final completer = Completer<void>();
+    _uploads[_key(id, name)] = completer;
+    return completer.future;
+  }
+
+  String _key(String id, String name) => '$id/$name';
+
+  void complete(String id, String name) {
+    _uploads[_key(id, name)]!.complete();
+  }
 }
