@@ -10179,6 +10179,47 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  Future<void> _selectFsMenu(
+    String value,
+    String path, {
+    required String rootPath,
+    required bool isDir,
+    ProjectCfg? project,
+  }) async {
+    if (value == fileMenuEdit ||
+        value == fileMenuLocate ||
+        value == fileMenuVersion) {
+      final pick = await showMenu<String>(
+        context: context,
+        position: menuPosAt(
+          context,
+          _lastContextMenuPosition ?? _fallbackMenuPosition(),
+        ),
+        items: fileActionSubmenuEntries(
+          value,
+          atRoot: path == rootPath,
+          includeProjectReveal: project != null,
+        ),
+      );
+      if (pick == null || !mounted) return;
+      _handleFsMenu(
+        pick,
+        path,
+        rootPath: rootPath,
+        isDir: isDir,
+        project: project,
+      );
+      return;
+    }
+    _handleFsMenu(
+      value,
+      path,
+      rootPath: rootPath,
+      isDir: isDir,
+      project: project,
+    );
+  }
+
   PopupMenuButton<String> _projectFileMenu(
     ProjectCfg project,
     String path, {
@@ -10191,110 +10232,23 @@ class _WorkspacePageState extends State<WorkspacePage>
       tooltip: 'File actions',
       icon: const Icon(Icons.more_vert_rounded, size: 16),
       padding: EdgeInsets.zero,
-      onOpened: () => setState(() => _revealedProjectFilePath = path),
-      onSelected: (v) => _handleFsMenu(
-        v,
-        path,
-        rootPath: project.path,
-        isDir: isDir,
-        project: project,
+      onOpened: () {
+        _lastContextMenuPosition = null;
+        setState(() => _revealedProjectFilePath = path);
+      },
+      onSelected: (v) => unawaited(
+        _selectFsMenu(
+          v,
+          path,
+          rootPath: project.path,
+          isDir: isDir,
+          project: project,
+        ),
       ),
-      itemBuilder: (_) => [
-        ccMenuItem(
-          value: 'open',
-          icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
-          label: isDir ? 'Open Folder' : 'Open',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'newFile',
-          icon: Icons.note_add_outlined,
-          label: 'New File',
-        ),
-        ccMenuItem(
-          value: 'newDir',
-          icon: Icons.create_new_folder_outlined,
-          label: 'New Directory',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: path == project.path ? null : 'rename',
-          icon: Icons.drive_file_rename_outline_rounded,
-          label: 'Rename',
-        ),
-        ccMenuItem(
-          value: path == project.path ? null : 'delete',
-          icon: Icons.delete_outline_rounded,
-          label: 'Delete',
-          danger: true,
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'copyPath',
-          icon: Icons.content_copy_rounded,
-          label: 'Copy Path',
-        ),
-        ccMenuItem(
-          value: 'copy',
-          icon: Icons.copy_rounded,
-          label: 'Copy',
-          shortcut: '⌘C',
-        ),
-        ccMenuItem(
-          value: path == project.path ? null : 'cut',
-          icon: Icons.content_cut_rounded,
-          label: 'Cut',
-          shortcut: '⌘X',
-        ),
-        ccMenuItem(
-          value: 'paste',
-          icon: Icons.content_paste_rounded,
-          label: 'Paste',
-          shortcut: '⌘V',
-        ),
-        ccMenuItem(
-          value: 'revealProject',
-          icon: Icons.my_location_rounded,
-          label: 'Reveal in Project',
-        ),
-        ccMenuItem(
-          value: 'revealSystem',
-          icon: Icons.folder_open_rounded,
-          label: 'Reveal in System',
-        ),
-        ccMenuItem(
-          value: 'openExternal',
-          icon: Icons.open_in_new_rounded,
-          label: 'Open In',
-        ),
-        ccMenuItem(
-          value: 'terminal',
-          icon: Icons.terminal_rounded,
-          label: 'Open Terminal Here',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: !isDir && rel.isNotEmpty ? 'compare' : null,
-          icon: Icons.difference_rounded,
-          label: 'Compare with HEAD',
-        ),
-        ccMenuItem(
-          value: !isDir && rel.isNotEmpty ? 'history' : null,
-          icon: Icons.history_rounded,
-          label: 'File History',
-        ),
-        ccMenuItem(
-          value: !isDir && rel.isNotEmpty ? 'annotate' : null,
-          icon: Icons.format_align_left_rounded,
-          label: 'Annotate / Blame',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'refresh',
-          icon: Icons.refresh_rounded,
-          label: 'Reload from Disk',
-        ),
-      ],
+      itemBuilder: (_) => fileActionMenuEntries(
+        isDir: isDir,
+        includeVersionControl: !isDir && rel.isNotEmpty,
+      ),
     );
   }
 
@@ -10368,6 +10322,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             sendGroups.same.isNotEmpty || sendGroups.others.isNotEmpty;
         final sessionMenu = PopupMenuButton<String>(
           tooltip: '会话操作',
+          onOpened: () => _lastContextMenuPosition = null,
           onSelected: (v) async {
             if (v == 'supervisor') {
               if (project != null) {
@@ -10684,65 +10639,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     tooltip: 'File actions',
     icon: const Icon(Icons.more_vert_rounded, size: 16),
     padding: EdgeInsets.zero,
-    onOpened: () => setState(() => _revealedProjectFilePath = path),
-    onSelected: (v) => _handleFsMenu(v, path, rootPath: rootPath, isDir: isDir),
-    itemBuilder: (_) => [
-      ccMenuItem(
-        value: 'open',
-        icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
-        label: isDir ? 'Open Folder' : 'Open',
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: 'newFile',
-        icon: Icons.note_add_outlined,
-        label: 'New File',
-      ),
-      ccMenuItem(
-        value: 'newDir',
-        icon: Icons.create_new_folder_outlined,
-        label: 'New Directory',
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: path == rootPath ? null : 'rename',
-        icon: Icons.drive_file_rename_outline_rounded,
-        label: 'Rename',
-      ),
-      ccMenuItem(
-        value: path == rootPath ? null : 'delete',
-        icon: Icons.delete_outline_rounded,
-        label: 'Delete',
-        danger: true,
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: 'copyPath',
-        icon: Icons.content_copy_rounded,
-        label: 'Copy Path',
-      ),
-      ccMenuItem(
-        value: 'revealSystem',
-        icon: Icons.folder_open_rounded,
-        label: 'Reveal in System',
-      ),
-      ccMenuItem(
-        value: 'openExternal',
-        icon: Icons.open_in_new_rounded,
-        label: 'Open In',
-      ),
-      ccMenuItem(
-        value: 'terminal',
-        icon: Icons.terminal_rounded,
-        label: 'Open Terminal Here',
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: 'refresh',
-        icon: Icons.refresh_rounded,
-        label: 'Reload from Disk',
-      ),
-    ],
+    onOpened: () {
+      _lastContextMenuPosition = null;
+      setState(() => _revealedProjectFilePath = path);
+    },
+    onSelected: (v) =>
+        unawaited(_selectFsMenu(v, path, rootPath: rootPath, isDir: isDir)),
+    itemBuilder: (_) =>
+        fileActionMenuEntries(isDir: isDir, includeVersionControl: false),
   );
 
   List<Widget> _taskNodes(ProjectCfg p) {
@@ -11180,8 +11084,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       GestureDetector(
         behavior: HitTestBehavior.translucent,
         onSecondaryTapDown: (d) async {
-          _lastContextMenuPosition = d.globalPosition;
           menu.onOpened?.call();
+          _lastContextMenuPosition = d.globalPosition;
           final overlay =
               Overlay.of(context).context.findRenderObject() as RenderBox;
           final value = await showMenu<String>(

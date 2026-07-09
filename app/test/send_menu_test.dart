@@ -143,4 +143,73 @@ void main() {
 
     expect(values(entries), ['interject-same', 'interject-others']);
   });
+
+  test('project file action menu collapses secondary actions', () {
+    final entries = fileActionMenuEntries(
+      isDir: false,
+      includeVersionControl: true,
+    );
+
+    expect(values(entries), [
+      'open',
+      'newFile',
+      'newDir',
+      fileMenuEdit,
+      fileMenuLocate,
+      fileMenuVersion,
+      'refresh',
+    ]);
+    expect(labels(entries), [
+      'Open',
+      'New File',
+      'New Directory',
+      'Edit Actions ▸',
+      'Locate / Open ▸',
+      'Version Control ▸',
+      'Reload from Disk',
+    ]);
+  });
+
+  test('worktree file action menu omits project-only version group', () {
+    final entries = fileActionMenuEntries(
+      isDir: true,
+      includeVersionControl: false,
+    );
+
+    expect(values(entries), [
+      'open',
+      'newFile',
+      'newDir',
+      fileMenuEdit,
+      fileMenuLocate,
+      'refresh',
+    ]);
+    expect(labels(entries), isNot(contains('Version Control ▸')));
+  });
+
+  test('file edit submenu disables root-destructive actions', () {
+    final entries = fileActionSubmenuEntries(
+      fileMenuEdit,
+      atRoot: true,
+      includeProjectReveal: true,
+    );
+
+    expect(values(entries), [null, null, 'copy', null, 'paste']);
+  });
+
+  test('file locate submenu only shows project reveal for project files', () {
+    final projectEntries = fileActionSubmenuEntries(
+      fileMenuLocate,
+      atRoot: false,
+      includeProjectReveal: true,
+    );
+    final worktreeEntries = fileActionSubmenuEntries(
+      fileMenuLocate,
+      atRoot: false,
+      includeProjectReveal: false,
+    );
+
+    expect(values(projectEntries), contains('revealProject'));
+    expect(values(worktreeEntries), isNot(contains('revealProject')));
+  });
 }

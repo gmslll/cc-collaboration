@@ -1715,6 +1715,140 @@ PopupMenuItem<String> ccMenuItem({
   );
 }
 
+const String fileMenuEdit = 'file-edit';
+const String fileMenuLocate = 'file-locate';
+const String fileMenuVersion = 'file-version';
+
+List<PopupMenuEntry<String>> fileActionMenuEntries({
+  required bool isDir,
+  required bool includeVersionControl,
+}) => [
+  ccMenuItem(
+    value: 'open',
+    icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
+    label: isDir ? 'Open Folder' : 'Open',
+  ),
+  const PopupMenuDivider(),
+  ccMenuItem(
+    value: 'newFile',
+    icon: Icons.note_add_outlined,
+    label: 'New File',
+  ),
+  ccMenuItem(
+    value: 'newDir',
+    icon: Icons.create_new_folder_outlined,
+    label: 'New Directory',
+  ),
+  const PopupMenuDivider(),
+  ccMenuItem(
+    value: fileMenuEdit,
+    icon: Icons.edit_note_rounded,
+    label: 'Edit Actions ▸',
+  ),
+  ccMenuItem(
+    value: fileMenuLocate,
+    icon: Icons.travel_explore_rounded,
+    label: 'Locate / Open ▸',
+  ),
+  if (includeVersionControl)
+    ccMenuItem(
+      value: fileMenuVersion,
+      icon: Icons.history_edu_rounded,
+      label: 'Version Control ▸',
+    ),
+  const PopupMenuDivider(),
+  ccMenuItem(
+    value: 'refresh',
+    icon: Icons.refresh_rounded,
+    label: 'Reload from Disk',
+  ),
+];
+
+List<PopupMenuEntry<String>> fileActionSubmenuEntries(
+  String group, {
+  required bool atRoot,
+  required bool includeProjectReveal,
+}) => switch (group) {
+  fileMenuEdit => [
+    ccMenuItem(
+      value: atRoot ? null : 'rename',
+      icon: Icons.drive_file_rename_outline_rounded,
+      label: 'Rename',
+    ),
+    ccMenuItem(
+      value: atRoot ? null : 'delete',
+      icon: Icons.delete_outline_rounded,
+      label: 'Delete',
+      danger: true,
+    ),
+    const PopupMenuDivider(),
+    ccMenuItem(
+      value: 'copy',
+      icon: Icons.copy_rounded,
+      label: 'Copy',
+      shortcut: '⌘C',
+    ),
+    ccMenuItem(
+      value: atRoot ? null : 'cut',
+      icon: Icons.content_cut_rounded,
+      label: 'Cut',
+      shortcut: '⌘X',
+    ),
+    ccMenuItem(
+      value: 'paste',
+      icon: Icons.content_paste_rounded,
+      label: 'Paste',
+      shortcut: '⌘V',
+    ),
+  ],
+  fileMenuLocate => [
+    ccMenuItem(
+      value: 'copyPath',
+      icon: Icons.content_copy_rounded,
+      label: 'Copy Path',
+    ),
+    if (includeProjectReveal)
+      ccMenuItem(
+        value: 'revealProject',
+        icon: Icons.my_location_rounded,
+        label: 'Reveal in Project',
+      ),
+    ccMenuItem(
+      value: 'revealSystem',
+      icon: Icons.folder_open_rounded,
+      label: 'Reveal in System',
+    ),
+    ccMenuItem(
+      value: 'openExternal',
+      icon: Icons.open_in_new_rounded,
+      label: 'Open In',
+    ),
+    ccMenuItem(
+      value: 'terminal',
+      icon: Icons.terminal_rounded,
+      label: 'Open Terminal Here',
+    ),
+  ],
+  fileMenuVersion => [
+    ccMenuItem(
+      value: 'compare',
+      icon: Icons.difference_rounded,
+      label: 'Compare with HEAD',
+    ),
+    ccMenuItem(
+      value: 'history',
+      icon: Icons.history_rounded,
+      label: 'File History',
+    ),
+    ccMenuItem(
+      value: 'annotate',
+      icon: Icons.format_align_left_rounded,
+      label: 'Annotate / Blame',
+    ),
+  ],
+  _ => const <PopupMenuEntry<String>>[],
+};
+
 // SendTarget is one "send to session" menu target: a session id + its label.
 typedef SendTarget = ({String id, String label});
 
