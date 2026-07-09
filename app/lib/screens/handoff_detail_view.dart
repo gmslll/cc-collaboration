@@ -181,6 +181,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   bool _loading = true;
   bool _picking = false;
   bool _commenting = false;
+  bool _acking = false;
   int _loadGeneration = 0;
   final _commentCtl = TextEditingController();
 
@@ -224,6 +225,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _comments = const [];
       _picking = false;
       _commenting = false;
+      _acking = false;
       _loading = true;
     });
     try {
@@ -403,12 +405,14 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _ack() async {
+    if (_acking) return;
     final generation = _loadGeneration;
     final client = _client;
     final relayUrl = _cfg.relayUrl;
     final token = _cfg.token;
     final identity = _cfg.identity;
     final id = _id;
+    setState(() => _acking = true);
     try {
       await client.ack(id);
       if (!mounted) return;
@@ -431,6 +435,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         return;
       }
       _snack('ack 失败: ${errorText(e)}');
+    } finally {
+      if (mounted &&
+          _isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        setState(() => _acking = false);
+      }
     }
   }
 
@@ -833,9 +842,15 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                   ),
                 if (canReceive)
                   OutlinedButton.icon(
-                    onPressed: _ack,
-                    icon: const Icon(Icons.check_rounded, size: 18),
-                    label: const Text('标记接收'),
+                    onPressed: _acking ? null : _ack,
+                    icon: _acking
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.check_rounded, size: 18),
+                    label: Text(_acking ? '标记中…' : '标记接收'),
                   ),
                 if (sameIdentity(p.sender, _cfg.identity) &&
                     _status?.state == 'pending')

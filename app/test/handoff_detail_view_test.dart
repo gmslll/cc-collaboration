@@ -618,6 +618,43 @@ void main() {
     expect(client.postedComments, ['comment-once:ship it']);
     expect(find.byIcon(Icons.send_rounded), findsOneWidget);
   });
+
+  testWidgets('handoff ack ignores duplicate taps while posting', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package('ack-once', 'qa@x', 'team handoff'),
+      delayAck: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('ack-once', 'qa@x', 'team handoff'),
+          onOpenTerminal: (_, _) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '标记接收'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, '标记中…'));
+    await tester.pump();
+
+    expect(client.ackCalls, 1);
+    expect(find.widgetWithText(OutlinedButton, '标记中…'), findsOneWidget);
+
+    client.completeAck('ack-once');
+    await tester.pumpAndSettle();
+
+    expect(client.ackCalls, 1);
+    expect(find.widgetWithText(OutlinedButton, '标记接收'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
 
 ListItem _item(String id, String sender, String headline) => ListItem.fromJson({
@@ -741,15 +778,21 @@ class _DelayedDetailClient extends RelayClient {
 class _ActionDetailClient extends RelayClient {
   final Package package;
   final bool delayPostComment;
+  final bool delayAck;
+  int ackCalls = 0;
   int retractCalls = 0;
   String? retractReason;
   String? reassignedTo;
   String? reassignedReason;
   final postedComments = <String>[];
   final _posts = <String, Completer<Comment>>{};
+  final _acks = <String, Completer<void>>{};
 
-  _ActionDetailClient(this.package, {this.delayPostComment = false})
-    : super('http://127.0.0.1', 'tok');
+  _ActionDetailClient(
+    this.package, {
+    this.delayPostComment = false,
+    this.delayAck = false,
+  }) : super('http://127.0.0.1', 'tok');
 
   @override
   Future<Package> get(String id) async => package;
@@ -784,6 +827,19 @@ class _ActionDetailClient extends RelayClient {
   @override
   Future<OrganizationDetail> organization(String id) async =>
       _organizationDetail(id);
+
+  @override
+  Future<void> ack(String id) {
+    ackCalls++;
+    if (!delayAck) return Future.value();
+    final completer = Completer<void>();
+    _acks[id] = completer;
+    return completer.future;
+  }
+
+  void completeAck(String id) {
+    _acks[id]!.complete();
+  }
 
   @override
   Future<void> retract(String id, String reason) async {
