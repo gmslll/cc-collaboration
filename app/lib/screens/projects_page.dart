@@ -430,6 +430,30 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   @override
+  void didUpdateWidget(covariant ProjectsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.client != widget.client) {
+      _loadGeneration++;
+      _name.clear();
+      _orgName.clear();
+      _search.clear();
+      setState(() {
+        _projects = null;
+        _orgs = const [];
+        _manageableOrgIds = const <String>{};
+        _online = const [];
+        _isAdmin = false;
+        _creatingProject = false;
+        _creatingOrg = false;
+        _identity = '';
+        _selectedOrgId = null;
+        _error = null;
+      });
+      _load();
+    }
+  }
+
+  @override
   void dispose() {
     _name.removeListener(_onCreateInputChanged);
     _orgName.removeListener(_onCreateInputChanged);
@@ -454,18 +478,19 @@ class _ProjectsPageState extends State<ProjectsPage> {
 
   Future<void> _load() async {
     final generation = ++_loadGeneration;
+    final client = widget.client;
     try {
-      final orgs = await widget.client.organizations().catchError(
+      final orgs = await client.organizations().catchError(
         (_) => <Organization>[],
       );
       Me? me;
       try {
-        me = await widget.client.me();
+        me = await client.me();
       } catch (_) {
         me = null;
       }
-      final ps = await widget.client.projects();
-      final online = await widget.client.onlineUsers().catchError(
+      final ps = await client.projects();
+      final online = await client.onlineUsers().catchError(
         (_) => <OnlineUser>[],
       );
       final meOrgRoles = {
@@ -483,7 +508,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                 })
                 .map((org) => org.id)
                 .toSet();
-      if (_isCurrentLoad(generation)) {
+      if (_isCurrentLoad(generation, client)) {
         setState(() {
           _orgs = orgs;
           _manageableOrgIds = manageableOrgIds;
@@ -496,12 +521,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
         });
       }
     } catch (e) {
-      if (_isCurrentLoad(generation)) setState(() => _error = '$e');
+      if (_isCurrentLoad(generation, client)) setState(() => _error = '$e');
     }
   }
 
-  bool _isCurrentLoad(int generation) =>
-      mounted && generation == _loadGeneration;
+  bool _isCurrentLoad(int generation, RelayClient client) =>
+      mounted &&
+      generation == _loadGeneration &&
+      identical(client, widget.client);
 
   Future<void> _create() async {
     final name = _name.text.trim();

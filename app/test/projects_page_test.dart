@@ -1047,6 +1047,50 @@ void main() {
     expect(find.text('Stale Project'), findsNothing);
   });
 
+  testWidgets('project page account switch ignores stale team loads', (
+    tester,
+  ) async {
+    final oldClient = _DelayedProjectsContextFakeClient(
+      identity: 'old@x',
+      orgName: 'Old Team',
+      projectName: 'Old Project',
+    );
+    final newClient = _DelayedProjectsContextFakeClient(
+      identity: 'new@x',
+      orgName: 'New Team',
+      projectName: 'New Project',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: oldClient)),
+      ),
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: newClient)),
+      ),
+    );
+    await tester.pump();
+
+    newClient.completeAll();
+    await tester.pumpAndSettle();
+    expect(find.text('New Project'), findsOneWidget);
+    expect(find.text('New Team'), findsOneWidget);
+
+    oldClient.completeAll();
+    await tester.pumpAndSettle();
+
+    expect(find.text('New Project'), findsOneWidget);
+    expect(find.text('New Team'), findsOneWidget);
+    expect(find.text('Old Project'), findsNothing);
+    expect(find.text('Old Team'), findsNothing);
+  });
+
   test('team and project sheets ignore stale detail loads', () {
     final orgSheet = source.substring(
       source.indexOf('class _OrganizationSheetState'),
@@ -1958,6 +2002,75 @@ class _StaleProjectsLoadFakeClient extends _ProjectsPageFakeClient {
   @override
   Future<Project> createProject(String name, {String? orgId}) async =>
       _project(id: 'created', name: name);
+}
+
+class _DelayedProjectsContextFakeClient extends RelayClient {
+  _DelayedProjectsContextFakeClient({
+    required this.identity,
+    required this.orgName,
+    required this.projectName,
+  }) : super('http://127.0.0.1', 'tok');
+
+  final String identity;
+  final String orgName;
+  final String projectName;
+  final _orgs = Completer<List<Organization>>();
+  final _me = Completer<Me>();
+  final _projects = Completer<List<Project>>();
+  final _online = Completer<List<OnlineUser>>();
+
+  @override
+  Future<List<Organization>> organizations() => _orgs.future;
+
+  @override
+  Future<Me> me() => _me.future;
+
+  @override
+  Future<List<Project>> projects() => _projects.future;
+
+  @override
+  Future<List<OnlineUser>> onlineUsers() => _online.future;
+
+  void completeAll() {
+    if (!_orgs.isCompleted) {
+      _orgs.complete([
+        Organization.fromJson({
+          'id': 'org-context',
+          'name': orgName,
+          'owner_identity': identity,
+          'role': 'owner',
+        }),
+      ]);
+    }
+    if (!_me.isCompleted) {
+      _me.complete(
+        Me.fromJson({
+          'identity': identity,
+          'is_admin': false,
+          'organizations': [
+            {'id': 'org-context', 'name': orgName, 'role': 'owner'},
+          ],
+          'projects': const [],
+        }),
+      );
+    }
+    if (!_projects.isCompleted) {
+      _projects.complete([
+        Project.fromJson({
+          'id': 'project-context',
+          'org_id': 'org-context',
+          'name': projectName,
+          'owner_identity': identity,
+          'role': 'owner',
+        }),
+      ]);
+    }
+    if (!_online.isCompleted) {
+      _online.complete([
+        OnlineUser.fromJson({'identity': identity, 'online': true}),
+      ]);
+    }
+  }
 }
 
 class _FailingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
