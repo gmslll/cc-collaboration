@@ -4344,6 +4344,19 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
   @override
   void initState() {
     super.initState();
+    _loadWorktrees();
+  }
+
+  @override
+  void didUpdateWidget(covariant _WorktreeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.client, widget.client) ||
+        oldWidget.project.path != widget.project.path) {
+      _loadWorktrees();
+    }
+  }
+
+  void _loadWorktrees() {
     widget.client.loadWorktrees(widget.project.path);
   }
 

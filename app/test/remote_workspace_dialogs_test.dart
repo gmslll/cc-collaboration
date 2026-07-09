@@ -73,6 +73,22 @@ void main() {
     expect(state, contains('phoneRemoteClient = client'));
   });
 
+  test('remote worktree screen reloads when target changes', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final state = source.substring(
+      source.indexOf('class _WorktreeScreenState'),
+      source.indexOf('  Future<void> _addDialog()'),
+    );
+
+    expect(state, contains('void didUpdateWidget'));
+    expect(state, contains('!identical(oldWidget.client, widget.client)'));
+    expect(state, contains('oldWidget.project.path != widget.project.path'));
+    expect(state, contains('void _loadWorktrees()'));
+    expect(state, contains('widget.client.loadWorktrees(widget.project.path)'));
+  });
+
   test('remote worktree remove target falls back to path name', () {
     expect(
       remoteWorktreeRemoveTarget(
