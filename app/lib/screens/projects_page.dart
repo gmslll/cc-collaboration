@@ -1714,25 +1714,34 @@ class _ProjectSheetState extends State<_ProjectSheet> {
 
   Future<void> _rename(String current) async {
     final ctl = TextEditingController(text: current);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重命名项目'),
-        content: TextField(controller: ctl, autofocus: true),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || ctl.text.trim().isEmpty) return;
-    await _do(() => widget.client.renameProject(widget.id, ctl.text.trim()));
+    bool ok = false;
+    String name = '';
+    try {
+      ok =
+          await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('重命名项目'),
+              content: TextField(controller: ctl, autofocus: true),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('保存'),
+                ),
+              ],
+            ),
+          ) ==
+          true;
+      name = ctl.text.trim();
+    } finally {
+      ctl.dispose();
+    }
+    if (!ok || name.isEmpty) return;
+    await _do(() => widget.client.renameProject(widget.id, name));
   }
 
   Future<void> _delete() async {
@@ -1754,13 +1763,16 @@ class _ProjectSheetState extends State<_ProjectSheet> {
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true || _mutating) return;
+    if (mounted) setState(() => _mutationAction = 'deleteProject');
     try {
       await widget.client.deleteProject(widget.id);
       widget.onChanged();
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) snack(context, errorText(e));
+    } finally {
+      if (mounted) setState(() => _mutationAction = null);
     }
   }
 
@@ -1830,11 +1842,13 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                               : () => _rename(d.project.name),
                         ),
                         IconButton(
-                          icon: const Icon(
-                            Icons.delete_rounded,
-                            size: 18,
-                            color: CcColors.danger,
-                          ),
+                          icon: _mutationAction == 'deleteProject'
+                              ? const _InlineButtonSpinner()
+                              : const Icon(
+                                  Icons.delete_rounded,
+                                  size: 18,
+                                  color: CcColors.danger,
+                                ),
                           tooltip: '删除',
                           onPressed: _mutating ? null : _delete,
                         ),

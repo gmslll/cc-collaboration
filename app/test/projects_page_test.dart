@@ -1174,6 +1174,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project sheet locks delete while request is pending', (
+    tester,
+  ) async {
+    final client = _CountingDeleteProjectProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    Finder deleteButton() =>
+        find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '删除');
+
+    await tester.tap(deleteButton());
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(client.deleteProjectCalls, 1);
+    expect(find.text('删除项目?'), findsNothing);
+    expect(tester.widget<IconButton>(deleteButton()).onPressed, isNull);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.tap(deleteButton());
+    await tester.pump();
+
+    expect(client.deleteProjectCalls, 1);
+    expect(find.text('删除项目?'), findsNothing);
+
+    client.completeDeleteProject();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('organization sheet keeps member input when adding fails', (
     tester,
   ) async {
@@ -1747,6 +1789,24 @@ class _CountingProjectMemberProjectsPageFakeClient
 
   void completeAddMember() {
     if (!_addMemberCompleter.isCompleted) _addMemberCompleter.complete();
+  }
+}
+
+class _CountingDeleteProjectProjectsPageFakeClient
+    extends _ProjectsPageFakeClient {
+  final _deleteProjectCompleter = Completer<void>();
+  int deleteProjectCalls = 0;
+
+  @override
+  Future<void> deleteProject(String id) {
+    deleteProjectCalls++;
+    return _deleteProjectCompleter.future;
+  }
+
+  void completeDeleteProject() {
+    if (!_deleteProjectCompleter.isCompleted) {
+      _deleteProjectCompleter.complete();
+    }
   }
 }
 
