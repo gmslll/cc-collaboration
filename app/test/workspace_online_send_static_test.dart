@@ -44,4 +44,12 @@ void main() {
       isNot(contains('DropdownMenuItem(value: s, child: Text(s.label))')),
     );
   });
+
+  test('parked peer message list uses responsive labels and actions', () {
+    expect(source, contains("title: Text('待处理 (\${_parked.length})')"));
+    expect(source, isNot(contains('width: 460')));
+    expect(source, contains('width: 92'));
+    expect(source, contains('maxLines: 1'));
+    expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
 }
