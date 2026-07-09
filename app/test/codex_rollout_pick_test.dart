@@ -30,10 +30,7 @@ void main() {
 
   File rollout(String name, {String? cwd, String? id}) {
     final f = File('${tmp.path}/rollout-$name.jsonl');
-    final payload = <String, String>{
-      if (cwd != null) 'cwd': cwd,
-      if (id != null) 'id': id,
-    };
+    final payload = <String, String>{'cwd': ?cwd, 'id': ?id};
     f.writeAsStringSync('${jsonEncode({'payload': payload})}\n');
     return f;
   }
@@ -56,14 +53,16 @@ void main() {
   // wrote a rollout for this cwd. Neither mtime nor arbitrary ordering can
   // tell them apart, so the ambiguity must surface as "still unknown", not a
   // guess.
-  test('two cwd matches in the same window return null, not a guess',
-      () async {
+  test('two cwd matches in the same window return null, not a guess', () async {
     const wd = '/w/proj';
     final a = rollout('a', cwd: wd, id: 'id-a');
     final b = rollout('b', cwd: wd, id: 'id-b');
     final id = await pickUniqueRolloutId([a, b], wd);
-    expect(id, isNull,
-        reason: 'ambiguous candidates must not resolve to either one');
+    expect(
+      id,
+      isNull,
+      reason: 'ambiguous candidates must not resolve to either one',
+    );
   });
 
   test('an unparsable candidate is skipped, not fatal', () async {
@@ -86,19 +85,20 @@ void main() {
   group('pickNewestCodexRollout', () {
     final now = DateTime(2026, 1, 1, 12, 0, 0);
 
-    test('exactly one recent cwd match returns it, ignoring older history',
-        () async {
-      const wd = '/w/proj';
-      final recentFile =
-          rollout('recent', cwd: wd, id: 'id-recent');
-      final oldFile = rollout('old', cwd: wd, id: 'id-old');
-      final dated = [
-        (now.subtract(const Duration(minutes: 1)), recentFile),
-        (now.subtract(const Duration(hours: 2)), oldFile),
-      ];
-      final p = await pickNewestCodexRollout(dated, wd, now: now);
-      expect(p, recentFile.path);
-    });
+    test(
+      'exactly one recent cwd match returns it, ignoring older history',
+      () async {
+        const wd = '/w/proj';
+        final recentFile = rollout('recent', cwd: wd, id: 'id-recent');
+        final oldFile = rollout('old', cwd: wd, id: 'id-old');
+        final dated = [
+          (now.subtract(const Duration(minutes: 1)), recentFile),
+          (now.subtract(const Duration(hours: 2)), oldFile),
+        ];
+        final p = await pickNewestCodexRollout(dated, wd, now: now);
+        expect(p, recentFile.path);
+      },
+    );
 
     // The 串味 fix, applied to the id-less fallback: two sibling sessions
     // both wrote a rollout for this cwd within the last few minutes. Neither
@@ -113,25 +113,35 @@ void main() {
         (now.subtract(const Duration(minutes: 2)), b),
       ];
       final p = await pickNewestCodexRollout(dated, wd, now: now);
-      expect(p, isNull,
-          reason: 'concurrent sibling candidates must not resolve to '
-              'either one');
+      expect(
+        p,
+        isNull,
+        reason:
+            'concurrent sibling candidates must not resolve to '
+            'either one',
+      );
     });
 
-    test('no recent match falls back to the newest historical entry',
-        () async {
+    test('no recent match falls back to the newest historical entry', () async {
       const wd = '/w/proj';
       final older = rollout('older', cwd: wd, id: 'id-older');
-      final newerHistorical =
-          rollout('newer-historical', cwd: wd, id: 'id-newer-historical');
+      final newerHistorical = rollout(
+        'newer-historical',
+        cwd: wd,
+        id: 'id-newer-historical',
+      );
       final dated = [
         (now.subtract(const Duration(hours: 3)), older),
         (now.subtract(const Duration(hours: 1)), newerHistorical),
       ];
       final p = await pickNewestCodexRollout(dated, wd, now: now);
-      expect(p, newerHistorical.path,
-          reason: 'no concurrent activity right now -> the legacy '
-              '--continue-restore fallback still applies');
+      expect(
+        p,
+        newerHistorical.path,
+        reason:
+            'no concurrent activity right now -> the legacy '
+            '--continue-restore fallback still applies',
+      );
     });
 
     // Mixed case: a genuinely live session (recent) plus a pile of unrelated

@@ -38,7 +38,7 @@ mixin _GitMixin on State<WorkspacePage> {
   Future<List<FileDiff>> Function(int context)? _logDiffReload;
   String? _selectedGitPath;
   final Set<String> _selectedChangePaths = {};
-  String _changesQuery = '';
+  final String _changesQuery = '';
   _ChangeFilter _changesFilter = _ChangeFilter.all;
   String _logQuery = '';
   String _logAuthorFilter = '';
