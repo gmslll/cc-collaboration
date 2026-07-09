@@ -98,6 +98,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   bool _textDirty = false;
   bool _saving = false;
   bool _uploading = false;
+  bool _commenting = false;
   // Body starts in read-only display mode (TodoBodyView, images inlined);
   // clicking it swaps to the live MarkdownLiteEditor for editing, and losing
   // focus swaps back — same split as the plan's "编辑态/展示态" design so
@@ -152,6 +153,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
         _loadingAttachments = true;
         _saving = false;
         _uploading = false;
+        _commenting = false;
         _resumingSession = false;
       });
       _loadFull();
@@ -567,10 +569,12 @@ class TodoDetailViewState extends State<TodoDetailView> {
       snack(context, '你对这条待办没有评论权限');
       return;
     }
+    if (_commenting) return;
     final body = _commentCtl.text.trim();
     if (body.isEmpty) return;
     final client = _client;
     final id = _id;
+    setState(() => _commenting = true);
     try {
       await client.postTodoComment(id, body);
       if (!_isCurrentTodoClient(client, id)) return;
@@ -581,6 +585,10 @@ class TodoDetailViewState extends State<TodoDetailView> {
       if (_isCurrentTodoClient(client, id)) {
         if (!mounted) return;
         snack(context, '评论失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _commenting = false);
       }
     }
   }
@@ -999,12 +1007,19 @@ class TodoDetailViewState extends State<TodoDetailView> {
                     hintText: '写评论…',
                     isDense: true,
                   ),
+                  enabled: !_commenting,
                   onSubmitted: (_) => _postComment(),
                 ),
               ),
               IconButton(
-                onPressed: _postComment,
-                icon: const Icon(Icons.send_rounded, size: 20),
+                onPressed: _commenting ? null : _postComment,
+                icon: _commenting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send_rounded, size: 20),
               ),
             ],
           ),

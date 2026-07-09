@@ -146,6 +146,40 @@ void main() {
     expect(find.widgetWithText(TextField, '写评论…'), findsNothing);
     expect(find.widgetWithIcon(IconButton, Icons.send_rounded), findsNothing);
   });
+
+  testWidgets('comment submit ignores duplicate taps while posting', (
+    tester,
+  ) async {
+    final client = _DelayedTodoClient(delayPostComment: true);
+    final todo = _todo('td-comment', 'comment title');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: client, todo: todo),
+        ),
+      ),
+    );
+    await tester.pump();
+    client.completeTodo('td-comment', todo);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).last, 'ship it');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pump();
+    await tester.tap(find.byType(IconButton).last);
+    await tester.pump();
+
+    expect(client.postedComments, ['td-comment:ship it']);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    client.completePost('td-comment', 'ship it');
+    await tester.pumpAndSettle();
+
+    expect(client.postedComments, ['td-comment:ship it']);
+    expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+  });
 }
 
 Todo _todo(
@@ -173,15 +207,20 @@ TodoComment _comment(String author, String body) => TodoComment.fromJson({
 });
 
 class _DelayedTodoClient extends RelayClient {
-  _DelayedTodoClient({this.delayComments = false})
-    : super('http://127.0.0.1', 'tok');
+  _DelayedTodoClient({
+    this.delayComments = false,
+    this.delayPostComment = false,
+  }) : super('http://127.0.0.1', 'tok');
 
   final bool delayComments;
+  final bool delayPostComment;
 
   final requestedTodos = <String>[];
   final requestedComments = <String>[];
+  final postedComments = <String>[];
   final _todos = <String, Completer<Todo>>{};
   final _comments = <String, Completer<List<TodoComment>>>{};
+  final _posts = <String, Completer<TodoComment>>{};
 
   @override
   Future<Todo> todo(String id) {
@@ -200,11 +239,24 @@ class _DelayedTodoClient extends RelayClient {
     return completer.future;
   }
 
+  @override
+  Future<TodoComment> postTodoComment(String id, String body) {
+    postedComments.add('$id:$body');
+    if (!delayPostComment) return Future.value(_comment('me@x', body));
+    final completer = Completer<TodoComment>();
+    _posts['$id:$body'] = completer;
+    return completer.future;
+  }
+
   void completeTodo(String id, Todo todo) {
     _todos[id]!.complete(todo);
   }
 
   void completeComments(String id, List<TodoComment> comments) {
     _comments[id]!.complete(comments);
+  }
+
+  void completePost(String id, String body) {
+    _posts['$id:$body']!.complete(_comment('me@x', body));
   }
 }
