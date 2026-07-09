@@ -3538,12 +3538,22 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       return;
     }
     setState(() => _submitting = true);
-    final err = await r.requestAssign(
-      todoId: widget.todo.id,
-      mode: 'existing',
-      sid: sid,
-      projectId: _todoProjectId,
-    );
+    final String? err;
+    try {
+      err = await r.requestAssign(
+        todoId: widget.todo.id,
+        mode: 'existing',
+        sid: sid,
+        projectId: _todoProjectId,
+      );
+    } catch (e) {
+      if (mounted) {
+        if (_closeIfStaleContext()) return;
+        setState(() => _submitting = false);
+        snack(context, '远程指派失败: ${errorText(e)}');
+      }
+      return;
+    }
     if (!mounted) return;
     if (_closeIfStaleContext()) return;
     if (err != null) {
@@ -3573,15 +3583,25 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final validProject = proj!;
     setState(() => _submitting = true);
     final branch = _branchCtl.text.trim();
-    final err = await r.requestAssign(
-      todoId: widget.todo.id,
-      mode: 'new',
-      workspace: validWorkspace,
-      project: validProject,
-      projectId: _todoProjectId,
-      kind: _kind,
-      branch: branch.isEmpty ? null : branch,
-    );
+    final String? err;
+    try {
+      err = await r.requestAssign(
+        todoId: widget.todo.id,
+        mode: 'new',
+        workspace: validWorkspace,
+        project: validProject,
+        projectId: _todoProjectId,
+        kind: _kind,
+        branch: branch.isEmpty ? null : branch,
+      );
+    } catch (e) {
+      if (mounted) {
+        if (_closeIfStaleContext()) return;
+        setState(() => _submitting = false);
+        snack(context, '远程指派失败: ${errorText(e)}');
+      }
+      return;
+    }
     if (!mounted) return;
     if (_closeIfStaleContext()) return;
     if (err != null) {

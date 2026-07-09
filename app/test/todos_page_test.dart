@@ -637,6 +637,68 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('remote existing assignment exception releases submit', (
+    tester,
+  ) async {
+    final client = _DelayedAssignTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+    final remote = _ThrowingAssignRemoteClient();
+    addTearDown(() {
+      if (identical(phoneRemoteClient, remote)) phoneRemoteClient = null;
+      remote.dispose();
+    });
+    phoneRemoteClient = remote;
+    remote.onFrame({'t': 'sessions', 'items': const []});
+    remote.onFrame({
+      't': 'overview',
+      'items': [
+        _sessionCard('remote-s1', project: 'Backend', projectId: 'p1').toJson(),
+      ],
+    });
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _me(),
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Team todo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, '指派'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('一键指派'), findsOneWidget);
+    final submit = find.widgetWithText(FilledButton, '指派并开始');
+    await tester.tap(submit);
+    await tester.pump();
+
+    expect(remote.assignCalls, 1);
+    expect(find.textContaining('远程指派失败'), findsOneWidget);
+    expect(find.text('一键指派'), findsOneWidget);
+    expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('pending member assignment after account switch is ignored', (
     tester,
   ) async {
@@ -1008,6 +1070,28 @@ class _DelayedAssignTodoClient extends RelayClient {
     _assignCompleter.complete(
       Todo.fromJson(_todoJson(assigneeIdentity: 'bob@x')),
     );
+  }
+}
+
+class _ThrowingAssignRemoteClient extends RemoteClient {
+  _ThrowingAssignRemoteClient()
+    : super(relayUrl: 'http://127.0.0.1', token: 'tok');
+
+  int assignCalls = 0;
+
+  @override
+  Future<String?> requestAssign({
+    required String todoId,
+    required String mode,
+    String? sid,
+    String? workspace,
+    String? project,
+    String? projectId,
+    String? kind,
+    String? branch,
+  }) async {
+    assignCalls++;
+    throw StateError('bridge down');
   }
 }
 
