@@ -1127,7 +1127,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   OrganizationDetail? _detail;
   Map<String, List<String>> _soleProjectOwnerNames = const {};
   bool _projectOwnerGuardComplete = true;
-  bool _mutating = false;
+  String? _mutationAction;
   List<String> _uncheckedProjectOwnerNames = const [];
   final _identity = TextEditingController();
   String _role = 'member';
@@ -1149,6 +1149,8 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   void _onIdentityInputChanged() {
     if (mounted) setState(() {});
   }
+
+  bool get _mutating => _mutationAction != null;
 
   Future<void> _load() async {
     try {
@@ -1181,9 +1183,12 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     }
   }
 
-  Future<bool> _do(Future<void> Function() action) async {
+  Future<bool> _do(
+    Future<void> Function() action, {
+    String actionKey = 'mutation',
+  }) async {
     if (_mutating) return false;
-    if (mounted) setState(() => _mutating = true);
+    if (mounted) setState(() => _mutationAction = actionKey);
     try {
       await action();
       await _load();
@@ -1193,7 +1198,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
       if (mounted) snack(context, errorText(e));
       return false;
     } finally {
-      if (mounted) setState(() => _mutating = false);
+      if (mounted) setState(() => _mutationAction = null);
     }
   }
 
@@ -1220,6 +1225,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     if (identity.isEmpty) return;
     final ok = await _do(
       () => widget.client.addOrganizationMember(widget.id, identity, _role),
+      actionKey: 'addOrgMember',
     );
     if (ok) _identity.clear();
   }
@@ -1498,11 +1504,17 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                   : '加入团队',
                               child: FilledButton.icon(
                                 onPressed: canSubmitMember ? _addMember : null,
-                                icon: const Icon(
-                                  Icons.person_add_alt_1_rounded,
-                                  size: 18,
+                                icon: _mutationAction == 'addOrgMember'
+                                    ? const _InlineButtonSpinner()
+                                    : const Icon(
+                                        Icons.person_add_alt_1_rounded,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  _mutationAction == 'addOrgMember'
+                                      ? '加入中'
+                                      : '加入团队',
                                 ),
-                                label: const Text('加入团队'),
                               ),
                             ),
                           ],
@@ -1619,7 +1631,7 @@ class _ProjectSheet extends StatefulWidget {
 class _ProjectSheetState extends State<_ProjectSheet> {
   ProjectDetail? _d;
   List<OrganizationMember> _orgMembers = const [];
-  bool _mutating = false;
+  String? _mutationAction;
   final _repo = TextEditingController();
   final _member = TextEditingController();
   String _role = 'member';
@@ -1651,6 +1663,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     if (mounted) setState(() {});
   }
 
+  bool get _mutating => _mutationAction != null;
+
   Future<void> _load() async {
     try {
       final d = await widget.client.project(widget.id);
@@ -1674,9 +1688,12 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     }
   }
 
-  Future<bool> _do(Future<void> Function() action) async {
+  Future<bool> _do(
+    Future<void> Function() action, {
+    String actionKey = 'mutation',
+  }) async {
     if (_mutating) return false;
-    if (mounted) setState(() => _mutating = true);
+    if (mounted) setState(() => _mutationAction = actionKey);
     try {
       await action();
       await _load();
@@ -1686,7 +1703,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
       if (mounted) snack(context, errorText(e));
       return false;
     } finally {
-      if (mounted) setState(() => _mutating = false);
+      if (mounted) setState(() => _mutationAction = null);
     }
   }
 
@@ -1884,11 +1901,21 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                   final r = _repo.text.trim();
                                   final ok = await _do(
                                     () => widget.client.mapRepo(widget.id, r),
+                                    actionKey: 'mapRepo',
                                   );
                                   if (ok) _repo.clear();
                                 }
                               : null,
-                          child: const Text('绑定'),
+                          child: _mutationAction == 'mapRepo'
+                              ? const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _InlineButtonSpinner(),
+                                    SizedBox(width: 6),
+                                    Text('绑定中'),
+                                  ],
+                                )
+                              : const Text('绑定'),
                         ),
                       ],
                     ),
@@ -2121,15 +2148,22 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                             m,
                                             _role,
                                           ),
+                                          actionKey: 'addProjectMember',
                                         );
                                         if (ok) _member.clear();
                                       }
                                     : null,
-                                icon: const Icon(
-                                  Icons.person_add_alt_1_rounded,
-                                  size: 18,
+                                icon: _mutationAction == 'addProjectMember'
+                                    ? const _InlineButtonSpinner()
+                                    : const Icon(
+                                        Icons.person_add_alt_1_rounded,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  _mutationAction == 'addProjectMember'
+                                      ? '添加中'
+                                      : '加成员',
                                 ),
-                                label: const Text('加成员'),
                               ),
                             ),
                           ],

@@ -1112,6 +1112,9 @@ void main() {
     await tester.tap(bindButton);
 
     expect(client.mapRepoCalls, 1);
+    await tester.pump();
+    expect(find.text('绑定中'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     client.completeMapRepo();
     await tester.pumpAndSettle();
