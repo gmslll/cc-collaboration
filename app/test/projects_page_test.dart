@@ -883,6 +883,10 @@ void main() {
     await tester.pump();
     expect(find.text('创建中'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).at(1)).enabled,
+      isFalse,
+    );
 
     client.completeCreateProject();
     await tester.pumpAndSettle();
@@ -914,6 +918,10 @@ void main() {
     await tester.pump();
     expect(find.text('创建中'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).at(0)).enabled,
+      isFalse,
+    );
 
     client.completeCreateOrganization();
     await tester.pumpAndSettle();
@@ -1115,6 +1123,7 @@ void main() {
     await tester.pump();
     expect(find.text('绑定中'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(tester.widget<TextField>(repoField).enabled, isFalse);
 
     client.completeMapRepo();
     await tester.pumpAndSettle();
@@ -1152,6 +1161,7 @@ void main() {
     await tester.pump();
     expect(find.text('添加中'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(tester.widget<TextField>(memberField).enabled, isFalse);
 
     client.completeAddMember();
     await tester.pumpAndSettle();
@@ -1217,6 +1227,7 @@ void main() {
     await tester.pump();
     expect(find.text('加入中'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(tester.widget<TextField>(memberField).enabled, isFalse);
 
     client.completeAddOrganizationMember();
     await tester.pumpAndSettle();

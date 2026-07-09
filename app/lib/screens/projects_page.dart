@@ -672,6 +672,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       width: fieldWidth,
                       child: TextField(
                         controller: _orgName,
+                        enabled: !_creatingOrg,
                         decoration: const InputDecoration(
                           hintText: '新团队名称',
                           isDense: true,
@@ -692,6 +693,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       width: fieldWidth,
                       child: TextField(
                         controller: _name,
+                        enabled: !_creatingProject,
                         decoration: const InputDecoration(
                           hintText: '新项目名称',
                           isDense: true,
@@ -1460,6 +1462,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                               width: memberFieldWidth,
                               child: TextField(
                                 controller: _identity,
+                                enabled: !_mutating,
                                 decoration: const InputDecoration(
                                   hintText: '成员 identity',
                                   isDense: true,
@@ -1889,6 +1892,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         Expanded(
                           child: TextField(
                             controller: _repo,
+                            enabled: !_mutating,
                             decoration: const InputDecoration(
                               hintText: 'repo 名(如 kunlun-backend)',
                               isDense: true,
@@ -2106,6 +2110,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                               width: memberControlWidth,
                               child: TextField(
                                 controller: _member,
+                                enabled: !_mutating,
                                 decoration: const InputDecoration(
                                   hintText: 'identity',
                                   isDense: true,
