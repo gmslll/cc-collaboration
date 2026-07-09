@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -248,6 +249,56 @@ func TestInsertMultiRecipientListPendingShowsBoth(t *testing.T) {
 		if len(items[0].Recipients) != 2 {
 			t.Errorf("%s inbox recipients: got %v, want [backend frontend]", who, items[0].Recipients)
 		}
+	}
+}
+
+func TestInsertNormalizesRecipientsAndDeliveryTarget(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	pkg := &handoffschema.Package{
+		ID:            "h-normalized",
+		SchemaVersion: handoffschema.SchemaVersion,
+		Kind:          handoffschema.KindBug,
+		Sender:        " tester ",
+		Recipients:    []string{" backend ", "backend", " frontend ", " "},
+		Urgency:       handoffschema.UrgencyNormal,
+		CreatedAt:     time.Now().UTC(),
+		Repo:          handoffschema.Repo{Name: "demo"},
+		SummaryMD:     "## Symptom\n spaced recipients",
+		DeliveryTarget: &handoffschema.DeliveryTarget{
+			ProjectID: " p1 ",
+			OrgID:     " org1 ",
+			Member:    " backend ",
+		},
+	}
+	if err := st.Insert(ctx, pkg); err != nil {
+		t.Fatal(err)
+	}
+
+	if items, err := st.ListPending(ctx, "backend", 10); err != nil || len(items) != 1 || items[0].ID != "h-normalized" {
+		t.Fatalf("trimmed backend inbox = %+v err=%v", items, err)
+	}
+	if items, err := st.ListPending(ctx, " backend ", 10); err != nil || len(items) != 1 || items[0].ID != "h-normalized" {
+		t.Fatalf("padded backend inbox = %+v err=%v", items, err)
+	}
+	if items, err := st.ListPending(ctx, "frontend", 10); err != nil || len(items) != 1 || items[0].ID != "h-normalized" {
+		t.Fatalf("frontend inbox = %+v err=%v", items, err)
+	} else if got := items[0].Recipients; !reflect.DeepEqual(got, []string{"backend", "frontend"}) {
+		t.Fatalf("list recipients = %#v", got)
+	}
+
+	got, _, err := st.Get(ctx, "h-normalized")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sender != "tester" || !reflect.DeepEqual(got.Recipients, []string{"backend", "frontend"}) {
+		t.Fatalf("payload identities not normalized: sender=%q recipients=%#v", got.Sender, got.Recipients)
+	}
+	if got.DeliveryTarget == nil ||
+		got.DeliveryTarget.ProjectID != "p1" ||
+		got.DeliveryTarget.OrgID != "org1" ||
+		got.DeliveryTarget.Member != "backend" {
+		t.Fatalf("delivery target not normalized: %+v", got.DeliveryTarget)
 	}
 }
 

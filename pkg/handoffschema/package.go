@@ -166,10 +166,10 @@ func (p *Package) ApplyCapsuleEdit(visibility, summary *string) {
 // callers can iterate uniformly.
 func (p *Package) EffectiveRecipients() []string {
 	if len(p.Recipients) > 0 {
-		return p.Recipients
+		return DedupeIdentities(p.Recipients)
 	}
 	if p.Recipient != "" {
-		return []string{p.Recipient}
+		return DedupeIdentities([]string{p.Recipient})
 	}
 	return nil
 }
@@ -469,6 +469,7 @@ func DedupeIdentities(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
 	for _, s := range in {
+		s = strings.TrimSpace(s)
 		if s == "" {
 			continue
 		}

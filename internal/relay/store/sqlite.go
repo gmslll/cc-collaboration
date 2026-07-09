@@ -484,6 +484,17 @@ func (s *Store) Insert(ctx context.Context, p *handoffschema.Package) error {
 // Shared between Insert (own tx) and Reassign (which already owns a tx that
 // also flips the previous recipient's slot atomically with the new handoff).
 func insertHandoffInTx(ctx context.Context, tx *sql.Tx, p *handoffschema.Package) error {
+	p.Sender = strings.TrimSpace(p.Sender)
+	p.Recipient = strings.TrimSpace(p.Recipient)
+	p.Recipients = handoffschema.DedupeIdentities(p.Recipients)
+	if p.DeliveryTarget != nil {
+		p.DeliveryTarget.ProjectID = strings.TrimSpace(p.DeliveryTarget.ProjectID)
+		p.DeliveryTarget.OrgID = strings.TrimSpace(p.DeliveryTarget.OrgID)
+		p.DeliveryTarget.Member = strings.TrimSpace(p.DeliveryTarget.Member)
+		if p.DeliveryTarget.ProjectID == "" && p.DeliveryTarget.OrgID == "" && p.DeliveryTarget.Member == "" {
+			p.DeliveryTarget = nil
+		}
+	}
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -527,6 +538,7 @@ func insertHandoffInTx(ctx context.Context, tx *sql.Tx, p *handoffschema.Package
 }
 
 func (s *Store) Get(ctx context.Context, id string) (*handoffschema.Package, handoffschema.State, error) {
+	id = strings.TrimSpace(id)
 	var payload string
 	var state string
 	err := s.db.QueryRowContext(ctx,
@@ -550,6 +562,7 @@ func (s *Store) Get(ctx context.Context, id string) (*handoffschema.Package, han
 // handoff_recipients so multi-recipient bug handoffs show up for every
 // recipient until each individual slot is acked or reassigned.
 func (s *Store) ListPending(ctx context.Context, recipient string, limit int) ([]handoffschema.ListItem, error) {
+	recipient = strings.TrimSpace(recipient)
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -582,6 +595,7 @@ func (s *Store) ListPending(ctx context.Context, recipient string, limit int) ([
 // "Picked" surfaces normal closure; "reassigned" surfaces bugs the caller
 // kicked over to the other side (still useful to look back at).
 func (s *Store) ListHistory(ctx context.Context, recipient string, limit int) ([]handoffschema.ListItem, error) {
+	recipient = strings.TrimSpace(recipient)
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -764,6 +778,8 @@ func scanListItem(rows *sql.Rows) (handoffschema.ListItem, error) {
 }
 
 func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body string) (handoffschema.Comment, error) {
+	handoffID = strings.TrimSpace(handoffID)
+	sender = strings.TrimSpace(sender)
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO comments(handoff_id, sender, body, created_at) VALUES(?, ?, ?, ?)`,
@@ -795,6 +811,7 @@ func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body strin
 // no rows and the extra clause is a no-op — semantics match the legacy
 // (h.sender = ? OR h.recipient = ?) query.
 func (s *Store) ListCommentsSince(ctx context.Context, identity string, since int64, limit int) ([]handoffschema.Comment, int64, error) {
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return nil, 0, err
@@ -864,6 +881,7 @@ func (s *Store) ListCommentsSince(ctx context.Context, identity string, since in
 // out comment SSE events to everyone who has ever touched the bug chain, so
 // tester + original-side + reassigned-side all stay in sync.
 func (s *Store) BugGroupParticipants(ctx context.Context, bugGroupID string) ([]string, error) {
+	bugGroupID = strings.TrimSpace(bugGroupID)
 	if bugGroupID == "" {
 		return nil, nil
 	}
@@ -894,6 +912,7 @@ func (s *Store) BugGroupParticipants(ctx context.Context, bugGroupID string) ([]
 }
 
 func (s *Store) ListComments(ctx context.Context, handoffID string) ([]handoffschema.Comment, error) {
+	handoffID = strings.TrimSpace(handoffID)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, sender, body, created_at FROM comments
 		 WHERE handoff_id = ? ORDER BY created_at ASC`,
@@ -918,6 +937,7 @@ func (s *Store) ListComments(ctx context.Context, handoffID string) ([]handoffsc
 }
 
 func (s *Store) PutAttachment(ctx context.Context, handoffID, name, sha256Hex string, content []byte) error {
+	handoffID = strings.TrimSpace(handoffID)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO attachments(handoff_id, name, sha256, size, content)
 		 VALUES(?, ?, ?, ?, ?)
@@ -932,6 +952,7 @@ func (s *Store) PutAttachment(ctx context.Context, handoffID, name, sha256Hex st
 
 // GetAttachment returns the raw bytes plus sha256/size, or ErrNotFound.
 func (s *Store) GetAttachment(ctx context.Context, handoffID, name string) ([]byte, string, int, error) {
+	handoffID = strings.TrimSpace(handoffID)
 	var content []byte
 	var sum string
 	var size int
@@ -953,6 +974,8 @@ func (s *Store) GetAttachment(ctx context.Context, handoffID, name string) ([]by
 // rolls forward to "picked". For legacy single-recipient handoffs this matches
 // the original semantics exactly (one slot ⇒ slot-close == parent-close).
 func (s *Store) Ack(ctx context.Context, id, byIdentity string) error {
+	id = strings.TrimSpace(id)
+	byIdentity = strings.TrimSpace(byIdentity)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1025,6 +1048,14 @@ func (s *Store) Ack(ctx context.Context, id, byIdentity string) error {
 // pending/picked recipient of `id`, ErrConflict if `to` is already busy in
 // the same bug group, ErrNotFound if the handoff doesn't exist.
 func (s *Store) Reassign(ctx context.Context, id, from string, newPkg *handoffschema.Package, reason string) error {
+	id = strings.TrimSpace(id)
+	from = strings.TrimSpace(from)
+	reason = strings.TrimSpace(reason)
+	if newPkg == nil {
+		return ErrInvalid
+	}
+	newPkg.Recipient = strings.TrimSpace(newPkg.Recipient)
+	newPkg.Recipients = handoffschema.DedupeIdentities(newPkg.Recipients)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1138,6 +1169,8 @@ var ErrForbidden = errors.New("forbidden")
 // id doesn't exist, ErrForbidden if caller isn't the sender, ErrConflict if
 // the handoff was already picked or retracted.
 func (s *Store) Retract(ctx context.Context, id, byIdentity string) ([]string, error) {
+	id = strings.TrimSpace(id)
+	byIdentity = strings.TrimSpace(byIdentity)
 	var sender, recipient, recipientsJSON, state string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT sender, recipient, recipients, state FROM handoffs WHERE id = ?`, id,
@@ -1205,6 +1238,7 @@ func (s *Store) Retract(ctx context.Context, id, byIdentity string) ([]string, e
 // multi-recipient bug handoffs Recipients is populated; Recipient remains the
 // first recipient for back-compat with old clients reading the scalar.
 func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]handoffschema.ListItem, error) {
+	sender = strings.TrimSpace(sender)
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -1259,6 +1293,7 @@ func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]hando
 // bug handoffs PickupBy carries per-recipient slot state so testers can see
 // "backend picked it up but frontend hasn't even read it" at a glance.
 func (s *Store) Status(ctx context.Context, id string) (handoffschema.Status, error) {
+	id = strings.TrimSpace(id)
 	var (
 		sender, recipient, recipientsJSON, state, bugGroupID string
 		createdMS                                            int64
