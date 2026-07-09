@@ -22,6 +22,7 @@ const (
 
 // ValidRole reports whether r is one of the known project roles.
 func ValidRole(r string) bool {
+	r = strings.TrimSpace(r)
 	return r == RoleOwner || r == RoleMember || r == RoleViewer
 }
 
@@ -55,11 +56,15 @@ const effectiveProjectRoleExpr = `CASE
 		        END`
 
 func effectiveProjectRoleArgs(identity string) []any {
+	identity = strings.TrimSpace(identity)
 	return []any{RoleOwner, RoleOwner, OrgRoleOwner, OrgRoleAdmin, RoleAdmin, identity, identity, OrgRoleOwner, OrgRoleAdmin}
 }
 
 // CreateProject inserts a project in the owner's default organization.
 func (s *Store) CreateProject(ctx context.Context, id, name, owner string, now time.Time) error {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	owner = strings.TrimSpace(owner)
 	org, err := s.EnsureDefaultOrganization(ctx, owner, now)
 	if err != nil {
 		return err
@@ -70,6 +75,10 @@ func (s *Store) CreateProject(ctx context.Context, id, name, owner string, now t
 // CreateProjectInOrg inserts a project and seats its owner (role=owner)
 // atomically. The owner must already belong to the organization.
 func (s *Store) CreateProjectInOrg(ctx context.Context, id, orgID, name, owner string, now time.Time) error {
+	id = strings.TrimSpace(id)
+	orgID = strings.TrimSpace(orgID)
+	name = strings.TrimSpace(name)
+	owner = strings.TrimSpace(owner)
 	active, err := s.UserActive(ctx, owner)
 	if err != nil {
 		return err
@@ -117,6 +126,7 @@ func scanProject(row scanner) (Project, error) {
 }
 
 func (s *Store) GetProject(ctx context.Context, id string) (Project, error) {
+	id = strings.TrimSpace(id)
 	p, err := scanProject(s.db.QueryRowContext(ctx,
 		`SELECT id, org_id, name, owner_identity, created_at FROM projects WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -133,6 +143,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 // ListProjectsForIdentity returns projects the identity can access directly or
 // govern through team owner/admin rights.
 func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([]Project, error) {
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -161,6 +172,8 @@ func (s *Store) ListProjectsForIdentity(ctx context.Context, identity string) ([
 // owner/admin can govern every project in the organization even when they are
 // not direct project members.
 func (s *Store) EffectiveProjectRole(ctx context.Context, projectID, identity string) (string, bool, error) {
+	projectID = strings.TrimSpace(projectID)
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return "", false, err
@@ -230,16 +243,21 @@ func scanProjectWithRole(row scanner) (Project, error) {
 }
 
 func (s *Store) RenameProject(ctx context.Context, id, name string) error {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
 	return s.execAffecting(ctx, `UPDATE projects SET name = ? WHERE id = ?`, name, id)
 }
 
 func (s *Store) DeleteProject(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
 	return s.execAffecting(ctx, `DELETE FROM projects WHERE id = ?`, id)
 }
 
 // MapRepo binds a repo to a project; a repo belongs to exactly one project, so a
 // re-map moves it. Requires the project to exist (FK).
 func (s *Store) MapRepo(ctx context.Context, repoName, projectID string) error {
+	repoName = strings.TrimSpace(repoName)
+	projectID = strings.TrimSpace(projectID)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO project_repos(repo_name, project_id) VALUES(?, ?)
 		 ON CONFLICT(repo_name) DO UPDATE SET project_id = excluded.project_id`,
@@ -248,10 +266,13 @@ func (s *Store) MapRepo(ctx context.Context, repoName, projectID string) error {
 }
 
 func (s *Store) UnmapRepo(ctx context.Context, repoName, projectID string) error {
+	repoName = strings.TrimSpace(repoName)
+	projectID = strings.TrimSpace(projectID)
 	return s.execAffecting(ctx, `DELETE FROM project_repos WHERE repo_name = ? AND project_id = ?`, repoName, projectID)
 }
 
 func (s *Store) RepoProjectID(ctx context.Context, repoName string) (string, bool, error) {
+	repoName = strings.TrimSpace(repoName)
 	var projectID string
 	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM project_repos WHERE repo_name = ?`, repoName).Scan(&projectID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -264,11 +285,15 @@ func (s *Store) RepoProjectID(ctx context.Context, repoName string) (string, boo
 }
 
 func (s *Store) ListProjectRepos(ctx context.Context, projectID string) ([]string, error) {
+	projectID = strings.TrimSpace(projectID)
 	return s.queryStrings(ctx, `SELECT repo_name FROM project_repos WHERE project_id = ? ORDER BY repo_name`, projectID)
 }
 
 // AddMember adds or updates a member's role (upsert).
 func (s *Store) AddMember(ctx context.Context, projectID, identity, role string) error {
+	projectID = strings.TrimSpace(projectID)
+	identity = strings.TrimSpace(identity)
+	role = strings.TrimSpace(role)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return err
@@ -299,6 +324,8 @@ func (s *Store) AddMember(ctx context.Context, projectID, identity, role string)
 }
 
 func (s *Store) RemoveMember(ctx context.Context, projectID, identity string) error {
+	projectID = strings.TrimSpace(projectID)
+	identity = strings.TrimSpace(identity)
 	role, ok, err := s.MemberRole(ctx, projectID, identity)
 	if err != nil {
 		return err
@@ -337,6 +364,7 @@ func (s *Store) RemoveMember(ctx context.Context, projectID, identity string) er
 }
 
 func (s *Store) ListMembers(ctx context.Context, projectID string) ([]ProjectMember, error) {
+	projectID = strings.TrimSpace(projectID)
 	// LEFT JOIN users for the member's display name so the assign-member picker
 	// shows real names instead of raw identities — getProject is member-gated, so
 	// this works for non-admins (unlike the admin-only /v1/users).
@@ -361,6 +389,7 @@ func (s *Store) ListMembers(ctx context.Context, projectID string) ([]ProjectMem
 // effective access through the owning organization. Disabled DB users are
 // excluded; legacy identities without a users row are preserved.
 func (s *Store) ListProjectTodoTargets(ctx context.Context, projectID string) ([]string, error) {
+	projectID = strings.TrimSpace(projectID)
 	return s.queryStrings(ctx,
 		`SELECT identity FROM (
 		    SELECT pm.identity
@@ -382,6 +411,7 @@ func (s *Store) ListProjectTodoTargets(ctx context.Context, projectID string) ([
 // owners/admins. Disabled DB users are excluded; legacy identities without a
 // users row are preserved.
 func (s *Store) ListRepoHandoffEventTargets(ctx context.Context, repoName string) ([]string, error) {
+	repoName = strings.TrimSpace(repoName)
 	return s.queryStrings(ctx,
 		`SELECT identity FROM (
 		    SELECT pm.identity
@@ -402,6 +432,8 @@ func (s *Store) ListRepoHandoffEventTargets(ctx context.Context, repoName string
 
 // MemberRole returns identity's role in a project, or ok=false if not a member.
 func (s *Store) MemberRole(ctx context.Context, projectID, identity string) (string, bool, error) {
+	projectID = strings.TrimSpace(projectID)
+	identity = strings.TrimSpace(identity)
 	var role string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT role FROM project_members WHERE project_id = ? AND identity = ?`, projectID, identity).Scan(&role)
@@ -417,6 +449,7 @@ func (s *Store) MemberRole(ctx context.Context, projectID, identity string) (str
 // MemberProjects returns the projects (with the caller's effective role) for
 // /v1/me. Team owner/admin see the projects they can govern as role=admin.
 func (s *Store) MemberProjects(ctx context.Context, identity string) ([]ProjectRole, error) {
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -447,6 +480,8 @@ func (s *Store) MemberProjects(ctx context.Context, identity string) ([]ProjectR
 // case, if neither side has a DB account nor org/project membership, they remain
 // mutually reachable to preserve the pre-SaaS flat-roster behavior.
 func (s *Store) IdentitiesShareTeam(ctx context.Context, a, b string) (bool, error) {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
 	if a == b {
 		return true, nil
 	}
@@ -499,6 +534,7 @@ func (s *Store) IdentitiesShareTeam(ctx context.Context, a, b string) (bool, err
 }
 
 func (s *Store) identityHasUserRow(ctx context.Context, identity string) (bool, error) {
+	identity = strings.TrimSpace(identity)
 	var one int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE identity = ?`, identity).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -511,6 +547,7 @@ func (s *Store) identityHasUserRow(ctx context.Context, identity string) (bool, 
 }
 
 func (s *Store) CountProjectOwners(ctx context.Context, projectID string) (int, error) {
+	projectID = strings.TrimSpace(projectID)
 	var count int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*)
@@ -522,6 +559,9 @@ func (s *Store) CountProjectOwners(ctx context.Context, projectID string) (int, 
 }
 
 func (s *Store) guardLastProjectOwner(ctx context.Context, projectID, identity, nextRole string) error {
+	projectID = strings.TrimSpace(projectID)
+	identity = strings.TrimSpace(identity)
+	nextRole = strings.TrimSpace(nextRole)
 	current, ok, err := s.MemberRole(ctx, projectID, identity)
 	if err != nil || !ok || current != RoleOwner || nextRole == RoleOwner {
 		return err
@@ -571,6 +611,8 @@ func replaceProjectOwnerIdentity(ctx context.Context, tx *sql.Tx, projectID, rem
 // repoName, or ok=false when the repo is unmapped or the caller cannot access
 // that project. Used by the read-authz check (view + comment gating).
 func (s *Store) RepoVisibleTo(ctx context.Context, repoName, identity string) (string, bool, error) {
+	repoName = strings.TrimSpace(repoName)
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return "", false, err
@@ -600,6 +642,7 @@ func (s *Store) RepoVisibleTo(ctx context.Context, repoName, identity string) (s
 // VisibleRepoNames returns every repo across the caller's directly visible or
 // team-managed projects (the project-scoped list filter set).
 func (s *Store) VisibleRepoNames(ctx context.Context, identity string) ([]string, error) {
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -621,6 +664,13 @@ func (s *Store) VisibleRepoNames(ctx context.Context, identity string) ([]string
 // in repoNames, newest-first — the project-scoped view. Empty repoNames returns
 // nil early (avoids an `IN ()` syntax error).
 func (s *Store) ListByRepos(ctx context.Context, repoNames []string, limit int) ([]handoffschema.ListItem, error) {
+	normalizedRepoNames := make([]string, 0, len(repoNames))
+	for _, repoName := range repoNames {
+		if repoName = strings.TrimSpace(repoName); repoName != "" {
+			normalizedRepoNames = append(normalizedRepoNames, repoName)
+		}
+	}
+	repoNames = normalizedRepoNames
 	if len(repoNames) == 0 {
 		return nil, nil
 	}

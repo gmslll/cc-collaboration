@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -15,10 +16,12 @@ const (
 )
 
 func ValidOrgRole(role string) bool {
+	role = strings.TrimSpace(role)
 	return role == OrgRoleOwner || role == OrgRoleAdmin || role == OrgRoleMember || role == OrgRoleGuest
 }
 
 func OrgRoleCanManage(role string) bool {
+	role = strings.TrimSpace(role)
 	return role == OrgRoleOwner || role == OrgRoleAdmin
 }
 
@@ -43,6 +46,9 @@ type OrganizationRole struct {
 }
 
 func (s *Store) CreateOrganization(ctx context.Context, id, name, owner string, now time.Time) error {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	owner = strings.TrimSpace(owner)
 	active, err := s.UserActive(ctx, owner)
 	if err != nil {
 		return err
@@ -69,6 +75,7 @@ func (s *Store) CreateOrganization(ctx context.Context, id, name, owner string, 
 }
 
 func (s *Store) EnsureDefaultOrganization(ctx context.Context, owner string, now time.Time) (Organization, error) {
+	owner = strings.TrimSpace(owner)
 	id := defaultOrganizationID(owner)
 	if org, err := s.GetOrganization(ctx, id); err == nil {
 		return org, nil
@@ -83,6 +90,7 @@ func (s *Store) EnsureDefaultOrganization(ctx context.Context, owner string, now
 }
 
 func (s *Store) GetOrganization(ctx context.Context, id string) (Organization, error) {
+	id = strings.TrimSpace(id)
 	return scanOrganization(s.db.QueryRowContext(ctx,
 		`SELECT id, name, owner_identity, created_at FROM organizations WHERE id = ?`, id))
 }
@@ -92,6 +100,7 @@ func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 }
 
 func (s *Store) ListOrganizationsForIdentity(ctx context.Context, identity string) ([]Organization, error) {
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -113,6 +122,7 @@ func (s *Store) ListOrganizationsForIdentity(ctx context.Context, identity strin
 }
 
 func (s *Store) MemberOrganizations(ctx context.Context, identity string) ([]OrganizationRole, error) {
+	identity = strings.TrimSpace(identity)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -136,6 +146,7 @@ func (s *Store) MemberOrganizations(ctx context.Context, identity string) ([]Org
 }
 
 func (s *Store) ListOrganizationMembers(ctx context.Context, orgID string) ([]OrganizationMember, error) {
+	orgID = strings.TrimSpace(orgID)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT om.identity, om.role, COALESCE(u.display_name, '')
 		   FROM organization_members om
@@ -153,6 +164,8 @@ func (s *Store) ListOrganizationMembers(ctx context.Context, orgID string) ([]Or
 }
 
 func (s *Store) OrganizationMemberRole(ctx context.Context, orgID, identity string) (string, bool, error) {
+	orgID = strings.TrimSpace(orgID)
+	identity = strings.TrimSpace(identity)
 	var role string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT role FROM organization_members WHERE org_id = ? AND identity = ?`, orgID, identity).Scan(&role)
@@ -166,6 +179,9 @@ func (s *Store) OrganizationMemberRole(ctx context.Context, orgID, identity stri
 }
 
 func (s *Store) AddOrganizationMember(ctx context.Context, orgID, identity, role string) error {
+	orgID = strings.TrimSpace(orgID)
+	identity = strings.TrimSpace(identity)
+	role = strings.TrimSpace(role)
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return err
@@ -201,6 +217,8 @@ func (s *Store) AddOrganizationMember(ctx context.Context, orgID, identity, role
 }
 
 func (s *Store) RemoveOrganizationMember(ctx context.Context, orgID, identity string) error {
+	orgID = strings.TrimSpace(orgID)
+	identity = strings.TrimSpace(identity)
 	role, ok, err := s.OrganizationMemberRole(ctx, orgID, identity)
 	if err != nil {
 		return err
@@ -242,6 +260,7 @@ func (s *Store) RemoveOrganizationMember(ctx context.Context, orgID, identity st
 }
 
 func (s *Store) CountOrganizationOwners(ctx context.Context, orgID string) (int, error) {
+	orgID = strings.TrimSpace(orgID)
 	var count int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*)
@@ -253,6 +272,7 @@ func (s *Store) CountOrganizationOwners(ctx context.Context, orgID string) (int,
 }
 
 func (s *Store) ListProjectsForOrganization(ctx context.Context, orgID string) ([]Project, error) {
+	orgID = strings.TrimSpace(orgID)
 	return s.queryProjects(ctx,
 		`SELECT id, org_id, name, owner_identity, created_at FROM projects WHERE org_id = ? ORDER BY name`, orgID)
 }
@@ -296,6 +316,9 @@ func (s *Store) queryOrganizations(ctx context.Context, query string, args ...an
 }
 
 func (s *Store) guardLastOrgOwner(ctx context.Context, orgID, identity, nextRole string) error {
+	orgID = strings.TrimSpace(orgID)
+	identity = strings.TrimSpace(identity)
+	nextRole = strings.TrimSpace(nextRole)
 	current, ok, err := s.OrganizationMemberRole(ctx, orgID, identity)
 	if err != nil || !ok || current != OrgRoleOwner || nextRole == OrgRoleOwner {
 		return err

@@ -39,6 +39,60 @@ func TestOrganizationsAndOwnerInvariant(t *testing.T) {
 	}
 }
 
+func TestOrganizationStoreNormalizesTeamInputs(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if !ValidOrgRole(" admin ") {
+		t.Fatal("ValidOrgRole should accept padded roles")
+	}
+	if !OrgRoleCanManage(" admin ") {
+		t.Fatal("OrgRoleCanManage should accept padded admin role")
+	}
+	if err := st.CreateOrganization(ctx, " org1 ", " Acme ", " owner@x ", now); err != nil {
+		t.Fatal(err)
+	}
+	org, err := st.GetOrganization(ctx, " org1 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.ID != "org1" || org.Name != "Acme" || org.OwnerIdentity != "owner@x" {
+		t.Fatalf("organization not normalized: %+v", org)
+	}
+
+	if err := st.AddOrganizationMember(ctx, " org1 ", " admin@x ", " admin "); err != nil {
+		t.Fatal(err)
+	}
+	if role, ok, err := st.OrganizationMemberRole(ctx, " org1 ", " admin@x "); err != nil || !ok || role != OrgRoleAdmin {
+		t.Fatalf("organization member role = %q ok=%v err=%v", role, ok, err)
+	}
+	members, err := st.ListOrganizationMembers(ctx, " org1 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range members {
+		if member.Identity == " admin@x " || member.Role == " admin " {
+			t.Fatalf("padded organization member leaked into store: %+v", members)
+		}
+	}
+	if orgs, err := st.MemberOrganizations(ctx, " admin@x "); err != nil || len(orgs) != 1 || orgs[0].ID != "org1" || orgs[0].Role != OrgRoleAdmin {
+		t.Fatalf("member organizations = %+v err=%v", orgs, err)
+	}
+	if orgs, err := st.ListOrganizationsForIdentity(ctx, " admin@x "); err != nil || len(orgs) != 1 || orgs[0].ID != "org1" || orgs[0].Role != OrgRoleAdmin {
+		t.Fatalf("organizations for identity = %+v err=%v", orgs, err)
+	}
+	if owners, err := st.CountOrganizationOwners(ctx, " org1 "); err != nil || owners != 1 {
+		t.Fatalf("organization owners = %d err=%v", owners, err)
+	}
+	if err := st.RemoveOrganizationMember(ctx, " org1 ", " admin@x "); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.OrganizationMemberRole(ctx, "org1", "admin@x"); err != nil || ok {
+		t.Fatalf("removed normalized organization member still present: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestOrganizationOwnerInvariantIgnoresDisabledOwners(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

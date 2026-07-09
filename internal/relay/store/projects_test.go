@@ -118,6 +118,63 @@ func TestProjectsAndMembers(t *testing.T) {
 	}
 }
 
+func TestProjectStoreNormalizesTeamInputs(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if !ValidRole(" member ") {
+		t.Fatal("ValidRole should accept padded roles")
+	}
+	if err := st.CreateProject(ctx, " p1 ", " Kunlun ", " owner@x ", now); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.GetProject(ctx, " p1 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ID != "p1" || p.Name != "Kunlun" || p.OwnerIdentity != "owner@x" {
+		t.Fatalf("project not normalized: %+v", p)
+	}
+
+	if err := st.MapRepo(ctx, " kunlun-backend ", " p1 "); err != nil {
+		t.Fatal(err)
+	}
+	if projectID, ok, err := st.RepoProjectID(ctx, " kunlun-backend "); err != nil || !ok || projectID != "p1" {
+		t.Fatalf("repo project = %q ok=%v err=%v", projectID, ok, err)
+	}
+	if err := st.AddMember(ctx, " p1 ", " member@x ", " member "); err != nil {
+		t.Fatal(err)
+	}
+	if role, ok, err := st.MemberRole(ctx, " p1 ", " member@x "); err != nil || !ok || role != RoleMember {
+		t.Fatalf("member role = %q ok=%v err=%v", role, ok, err)
+	}
+	members, err := st.ListMembers(ctx, " p1 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range members {
+		if member.Identity == " member@x " || member.Role == " member " {
+			t.Fatalf("padded project member leaked into store: %+v", members)
+		}
+	}
+	if repos, err := st.ListProjectRepos(ctx, " p1 "); err != nil || len(repos) != 1 || repos[0] != "kunlun-backend" {
+		t.Fatalf("project repos = %+v err=%v", repos, err)
+	}
+	if visible, err := st.VisibleRepoNames(ctx, " member@x "); err != nil || len(visible) != 1 || visible[0] != "kunlun-backend" {
+		t.Fatalf("visible repos = %+v err=%v", visible, err)
+	}
+	if _, err := st.ListByRepos(ctx, []string{" ", " kunlun-backend "}, 10); err != nil {
+		t.Fatalf("ListByRepos with padded repos: %v", err)
+	}
+	if err := st.RemoveMember(ctx, " p1 ", " member@x "); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.MemberRole(ctx, "p1", "member@x"); err != nil || ok {
+		t.Fatalf("removed normalized member still present: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestListMembersHidesDisabledUsers(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
