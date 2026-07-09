@@ -295,6 +295,119 @@ class _WorkspaceCommitBranchDialogState
   }
 }
 
+class WorkspaceSettingsDraft {
+  final String preLaunch;
+  final String editor;
+  final String agent;
+
+  const WorkspaceSettingsDraft({
+    required this.preLaunch,
+    required this.editor,
+    required this.agent,
+  });
+}
+
+class WorkspaceSettingsDialog extends StatefulWidget {
+  final String workspaceName;
+  final String initialPreLaunch;
+  final String initialEditor;
+  final String initialAgent;
+
+  const WorkspaceSettingsDialog({
+    super.key,
+    required this.workspaceName,
+    this.initialPreLaunch = '',
+    this.initialEditor = '',
+    this.initialAgent = 'claude',
+  });
+
+  @override
+  State<WorkspaceSettingsDialog> createState() =>
+      _WorkspaceSettingsDialogState();
+}
+
+class _WorkspaceSettingsDialogState extends State<WorkspaceSettingsDialog> {
+  late final TextEditingController _preCtl = TextEditingController(
+    text: widget.initialPreLaunch,
+  );
+  late final TextEditingController _editorCtl = TextEditingController(
+    text: widget.initialEditor,
+  );
+  late String _agent = _safeAgent(widget.initialAgent);
+
+  static String _safeAgent(String value) =>
+      value == 'codex' || value == 'manual' ? value : 'claude';
+
+  @override
+  void dispose() {
+    _preCtl.dispose();
+    _editorCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    WorkspaceSettingsDraft(
+      preLaunch: _preCtl.text,
+      editor: _editorCtl.text,
+      agent: _agent,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        '「${widget.workspaceName.isEmpty ? '默认' : widget.workspaceName}」工作区设置',
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _preCtl,
+            decoration: const InputDecoration(
+              labelText: 'pre_launch(起 agent 前跑)',
+              hintText: 'nvm use 18',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _editorCtl,
+            decoration: const InputDecoration(
+              labelText: 'editor(编辑器命令)',
+              hintText: 'code .',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Text('agent', style: TextStyle(color: CcColors.muted)),
+              const Spacer(),
+              DropdownButton<String>(
+                value: _agent,
+                items: const [
+                  DropdownMenuItem(value: 'claude', child: Text('claude')),
+                  DropdownMenuItem(value: 'codex', child: Text('codex')),
+                  DropdownMenuItem(value: 'manual', child: Text('manual')),
+                ],
+                onChanged: (v) => setState(() => _agent = _safeAgent(v ?? '')),
+              ),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
 // _DiffTreeNode is one node of the directory tree built from a commit's changed
 // files (the right pane of the 3-pane Log).
 class _DiffTreeNode {
@@ -10708,73 +10821,22 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> _workspaceSettings(WorkspaceCfg ws) async {
-    final pre = TextEditingController(text: ws.preLaunch);
-    final editor = TextEditingController(text: ws.editor);
-    var agent = (ws.agent == 'codex' || ws.agent == 'manual')
-        ? ws.agent
-        : 'claude';
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<WorkspaceSettingsDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('「${ws.name.isEmpty ? '默认' : ws.name}」工作区设置'),
-        content: StatefulBuilder(
-          builder: (ctx, setLocal) => Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: pre,
-                decoration: const InputDecoration(
-                  labelText: 'pre_launch(起 agent 前跑)',
-                  hintText: 'nvm use 18',
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: editor,
-                decoration: const InputDecoration(
-                  labelText: 'editor(编辑器命令)',
-                  hintText: 'code .',
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Text('agent', style: TextStyle(color: CcColors.muted)),
-                  const Spacer(),
-                  DropdownButton<String>(
-                    value: agent,
-                    items: const [
-                      DropdownMenuItem(value: 'claude', child: Text('claude')),
-                      DropdownMenuItem(value: 'codex', child: Text('codex')),
-                      DropdownMenuItem(value: 'manual', child: Text('manual')),
-                    ],
-                    onChanged: (v) => setLocal(() => agent = v ?? 'claude'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存'),
-          ),
-        ],
+      builder: (_) => WorkspaceSettingsDialog(
+        workspaceName: ws.name,
+        initialPreLaunch: ws.preLaunch,
+        initialEditor: ws.editor,
+        initialAgent: ws.agent,
       ),
     );
-    if (ok != true) return;
+    if (draft == null) return;
     await _runCli(
       () => Cli.workspaceSet(
         ws.name,
-        preLaunch: pre.text.trim(),
-        editor: editor.text.trim(),
-        agent: agent,
+        preLaunch: draft.preLaunch.trim(),
+        editor: draft.editor.trim(),
+        agent: draft.agent,
       ),
       '已保存',
       after: _reloadConfig,

@@ -154,6 +154,19 @@ void main() {
     expect(helper, isNot(contains('showDialog<bool>')));
   });
 
+  test('workspace settings dialog owns controllers', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final helper = source.substring(
+      source.indexOf('Future<void> _workspaceSettings('),
+      source.indexOf('PopupMenuButton<String> _projectMenu'),
+    );
+
+    expect(helper, contains('showDialog<WorkspaceSettingsDraft>'));
+    expect(helper, contains('WorkspaceSettingsDialog('));
+    expect(helper, isNot(contains('TextEditingController')));
+    expect(helper, isNot(contains('showDialog<bool>')));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
