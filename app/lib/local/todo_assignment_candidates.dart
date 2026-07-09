@@ -35,11 +35,11 @@ List<AssignableTodoMember> assignableTodoMembers({
 
   if (includeSelf) add(selfIdentity, '个人', 100);
   for (final m in projectMembers) {
-    final role = m.role.trim();
+    final role = _roleKey(m.role);
     add(m.identity, _projectAssignmentRoleLabel(role), _projectRoleRank(role));
   }
   for (final m in organizationMembers) {
-    final role = m.role.trim();
+    final role = _roleKey(m.role);
     if (role == 'owner' || role == 'admin') {
       add(
         m.identity,
@@ -50,6 +50,8 @@ List<AssignableTodoMember> assignableTodoMembers({
   }
   return members;
 }
+
+String _roleKey(String role) => role.trim().toLowerCase();
 
 List<String> assignableTodoMemberIds({
   required String selfIdentity,
@@ -67,7 +69,8 @@ List<String> assignableTodoMemberIds({
 ];
 
 String _projectAssignmentRoleLabel(String raw) {
-  switch (raw.trim()) {
+  final role = _roleKey(raw);
+  switch (role) {
     case 'owner':
       return '项目负责人';
     case 'admin':
@@ -83,7 +86,7 @@ String _projectAssignmentRoleLabel(String raw) {
 }
 
 String _teamManagerAssignmentRoleLabel(String role) {
-  switch (role) {
+  switch (_roleKey(role)) {
     case 'owner':
       return '团队负责人';
     case 'admin':
@@ -94,7 +97,7 @@ String _teamManagerAssignmentRoleLabel(String role) {
 }
 
 int _projectRoleRank(String role) {
-  switch (role) {
+  switch (_roleKey(role)) {
     case 'owner':
       return 90;
     case 'admin':
@@ -109,7 +112,7 @@ int _projectRoleRank(String role) {
 }
 
 int _teamRoleRank(String role) {
-  switch (role) {
+  switch (_roleKey(role)) {
     case 'owner':
       return 85;
     case 'admin':

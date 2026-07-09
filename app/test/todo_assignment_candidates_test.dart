@@ -68,6 +68,30 @@ void main() {
     ]);
   });
 
+  test(
+    'normalizes project and team roles before applying assignment rules',
+    () {
+      final members = assignableTodoMembers(
+        selfIdentity: '',
+        includeSelf: false,
+        projectMembers: [
+          _projectMember('owner@x', ' OWNER '),
+          _projectMember('viewer@x', ' VIEWER '),
+        ],
+        organizationMembers: [
+          _orgMember('admin@x', ' ADMIN '),
+          _orgMember('guest@x', ' GUEST '),
+        ],
+      );
+
+      expect(members, [
+        (identity: 'owner@x', roleLabel: '项目负责人'),
+        (identity: 'viewer@x', roleLabel: '项目只读'),
+        (identity: 'admin@x', roleLabel: '团队管理员'),
+      ]);
+    },
+  );
+
   test('does not keep inaccessible current assignee as assignable', () {
     final ids = assignableTodoMemberIds(
       selfIdentity: 'owner@x',
