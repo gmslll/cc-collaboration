@@ -97,15 +97,24 @@ bool workspaceCommitActionEnabled({
 
 List<OnlineUser> onlineSendSelectableUsers(
   Iterable<OnlineUser> users,
-  String selfIdentity,
-) {
+  String selfIdentity, {
+  Iterable<String>? allowedIdentities,
+}) {
   final seen = <String>{};
+  final allowed = allowedIdentities == null
+      ? null
+      : {
+          for (final identity in allowedIdentities)
+            if (identityLookupKey(identity).isNotEmpty)
+              identityLookupKey(identity),
+        };
   final selectable = <OnlineUser>[];
   for (final user in users) {
     final key = identityLookupKey(user.identity);
     if (!user.online ||
         key.isEmpty ||
-        sameIdentity(user.identity, selfIdentity)) {
+        sameIdentity(user.identity, selfIdentity) ||
+        (allowed != null && !allowed.contains(key))) {
       continue;
     }
     if (seen.add(key)) selectable.add(user);
@@ -115,6 +124,13 @@ List<OnlineUser> onlineSendSelectableUsers(
 
 bool onlineSendIdentitySelected(String? selected, String identity) =>
     selected != null && sameIdentity(selected, identity);
+
+Set<String> onlineSendProjectRecipientIdentities(ProjectDetail detail) => {
+  if (identityLookupKey(detail.project.ownerIdentity).isNotEmpty)
+    detail.project.ownerIdentity,
+  for (final member in detail.members)
+    if (identityLookupKey(member.identity).isNotEmpty) member.identity,
+};
 
 bool incomingMessageTargetIsOpen(
   Iterable<TerminalSession> sessions,
@@ -1377,7 +1393,31 @@ class _WorkspacePageState extends State<WorkspacePage>
   bool get _canSendToOnline => _relayConfigured;
 
   void _syncOnlineSendAction() {
-    onSendToOnline = _canSendToOnline ? _showSendToOnlineUser : null;
+    onSendToOnline = _canSendToOnline
+        ? (text) => _showSendToOnlineUser(
+            text,
+            sourcePath: activeTerm >= 0 && activeTerm < terms.length
+                ? terms[activeTerm].workdir
+                : null,
+          )
+        : null;
+  }
+
+  String? _onlineSendProjectIdForSource(String? sourcePath) {
+    if (sourcePath == null || widget.me == null) return null;
+    final project = _projectForFile(sourcePath)?.project;
+    if (project == null) return null;
+    return uniqueProjectIdByName(widget.me!.projects, project.name);
+  }
+
+  Future<Set<String>?> _onlineSendAllowedIdentities(
+    RelayClient client,
+    String? sourcePath,
+  ) async {
+    final projectId = _onlineSendProjectIdForSource(sourcePath);
+    if (projectId == null) return null;
+    final detail = await client.project(projectId);
+    return onlineSendProjectRecipientIdentities(detail);
   }
 
   void _connectRelayPresence() {
@@ -1726,7 +1766,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // _showSendToOnlineUser sends [text] to a specific session of a chosen online
   // user: pick a user → load their published sessions → pick one → send.
-  Future<void> _showSendToOnlineUser(String text) async {
+  Future<void> _showSendToOnlineUser(String text, {String? sourcePath}) async {
     if (text.trim().isEmpty) {
       _snack('没有可发送的内容');
       return;
@@ -1738,19 +1778,25 @@ class _WorkspacePageState extends State<WorkspacePage>
     final client = widget.client!;
     List<OnlineUser> users;
     try {
+      final allowedIdentities = await _onlineSendAllowedIdentities(
+        client,
+        sourcePath,
+      );
+      if (!_isCurrentRelayClient(client)) return;
       users = onlineSendSelectableUsers(
         await client.onlineUsers(),
         _cfg.identity,
+        allowedIdentities: allowedIdentities,
       );
     } catch (e) {
       if (!_isCurrentRelayClient(client)) return;
-      _snack('获取在线用户失败:${errorText(e)}');
+      _snack('获取团队在线用户失败:${errorText(e)}');
       return;
     }
     if (!mounted) return;
     if (!_isCurrentRelayClient(client)) return;
     if (users.isEmpty) {
-      _snack('当前没有其它在线用户');
+      _snack('当前没有可发送的团队在线用户');
       return;
     }
     await showDialog<void>(
@@ -4275,7 +4321,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
     if (v == null || !mounted) return;
     if (v == 'online') {
-      _showSendToOnlineUser(text);
+      _showSendToOnlineUser(text, sourcePath: f.path);
       return;
     }
     if (!v.startsWith('send:')) return;
@@ -10430,6 +10476,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             } else if (v == 'send-online') {
               _showSendToOnlineUser(
                 e.s.selectedText ?? e.s.renderSnapshot(_kForwardLines),
+                sourcePath: e.s.workdir,
               );
             } else if (v == 'send-session') {
               final pick = await showGroupedSendMenu(

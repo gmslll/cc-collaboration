@@ -37,6 +37,41 @@ void main() {
     },
   );
 
+  test('online send selectable users can be limited to project members', () {
+    final users = onlineSendSelectableUsers(
+      [
+        OnlineUser.fromJson({'identity': 'owner@x', 'online': true}),
+        OnlineUser.fromJson({'identity': 'member@x', 'online': true}),
+        OnlineUser.fromJson({'identity': 'outside@x', 'online': true}),
+        OnlineUser.fromJson({'identity': 'offline@x', 'online': false}),
+      ],
+      'owner@x',
+      allowedIdentities: [' Owner@X ', 'member@x'],
+    );
+
+    expect([for (final user in users) user.identity], ['member@x']);
+  });
+
+  test('online send project recipients include owner and members', () {
+    final detail = ProjectDetail.fromJson({
+      'project': {
+        'id': 'p1',
+        'org_id': 'o1',
+        'name': 'backend',
+        'owner_identity': ' owner@x ',
+      },
+      'members': [
+        {'identity': 'member@x', 'role': 'member'},
+        {'identity': '   ', 'role': 'member'},
+      ],
+    });
+
+    expect(onlineSendProjectRecipientIdentities(detail), {
+      'owner@x',
+      'member@x',
+    });
+  });
+
   test('online send selected user comparison is identity-normalized', () {
     expect(onlineSendIdentitySelected(' Dev@X ', 'dev@x'), isTrue);
     expect(onlineSendIdentitySelected(null, 'dev@x'), isFalse);
@@ -55,12 +90,8 @@ void main() {
 
   test('online send action is synchronized with relay availability', () {
     expect(source, contains('void _syncOnlineSendAction()'));
-    expect(
-      source,
-      contains(
-        'onSendToOnline = _canSendToOnline ? _showSendToOnlineUser : null;',
-      ),
-    );
+    expect(source, contains('onSendToOnline = _canSendToOnline'));
+    expect(source, contains('sourcePath: activeTerm >= 0'));
   });
 
   test('file and session menus hide online send when relay is unavailable', () {
@@ -89,7 +120,7 @@ void main() {
 
   test('online send ignores stale session loads after switching users', () {
     final dialog = source.substring(
-      source.indexOf('Future<void> _showSendToOnlineUser(String text)'),
+      source.indexOf('_showSendToOnlineUser'),
       source.indexOf('Future<void> _loadTasks()'),
     );
     expect(dialog, contains('var loadSeq = 0;'));
@@ -104,17 +135,27 @@ void main() {
       source.indexOf('// _publishSessions advertises'),
     );
     final dialog = source.substring(
-      source.indexOf('Future<void> _showSendToOnlineUser(String text)'),
+      source.indexOf('_showSendToOnlineUser'),
       source.indexOf('Future<void> _loadTasks()'),
     );
 
     expect(relay, contains('identical(client, widget.client)'));
     expect(dialog, contains('if (!_isCurrentRelayClient(client)) return;'));
+    expect(dialog, contains('await _onlineSendAllowedIdentities'));
     expect(dialog, contains('!_isCurrentRelayClient(client) ||'));
     expect(dialog, contains("账号已切换,请重新选择在线用户"));
     expect(
-      dialog.indexOf('await client.onlineUsers()'),
+      dialog.indexOf('await _onlineSendAllowedIdentities'),
       lessThan(dialog.indexOf('if (!_isCurrentRelayClient(client)) return;')),
+    );
+    expect(
+      dialog.indexOf('await client.onlineUsers()'),
+      lessThan(
+        dialog.indexOf(
+          'if (!_isCurrentRelayClient(client)) return;',
+          dialog.indexOf('await client.onlineUsers()'),
+        ),
+      ),
     );
     expect(
       dialog.indexOf('await client.sendMessage'),
@@ -122,6 +163,11 @@ void main() {
         dialog.lastIndexOf('if (!_isCurrentRelayClient(client)) return;'),
       ),
     );
+  });
+
+  test('online send file and session actions keep source context', () {
+    expect(source, contains('sourcePath: f.path'));
+    expect(source, contains('sourcePath: e.s.workdir'));
   });
 
   test('incoming peer message dialog uses responsive session labels', () {

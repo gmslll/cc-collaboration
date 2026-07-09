@@ -1123,7 +1123,7 @@ void main() {
       'await _runCli(',
     );
     final onlineSend = between(
-      'Future<void> _showSendToOnlineUser(String text)',
+      '_showSendToOnlineUser',
       'Future<void> _loadTasks()',
     );
     expectMarkerBefore(onlineSend, 'if (!mounted ||', 'setSt(() {');
