@@ -124,10 +124,50 @@ func TestTodoStatusValidation(t *testing.T) {
 	}
 }
 
+func TestTodoStatusTargetNormalizesIDAndStatus(t *testing.T) {
+	id, status, err := todoStatusTarget([]string{" td-1 ", " in_review "})
+	if err != nil {
+		t.Fatalf("todoStatusTarget returned error: %v", err)
+	}
+	if id != "td-1" || status != todoschema.StatusInReview {
+		t.Fatalf("target = (%q, %q), want td-1/in_review", id, status)
+	}
+}
+
 func TestTodoAssignRequiresIdentityOrUnassign(t *testing.T) {
 	err := runTodoAssign(context.Background(), []string{"id123"})
 	if err == nil || !strings.Contains(err.Error(), "identity required") {
 		t.Fatalf("want identity-required error, got %v", err)
+	}
+}
+
+func TestTodoAssignTargetNormalizesFields(t *testing.T) {
+	id, identity, sessionID, sessionLabel, err := todoAssignTarget(
+		[]string{" td-1 ", " dev@x "},
+		" ts1 ",
+		" codex ",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("todoAssignTarget returned error: %v", err)
+	}
+	if id != "td-1" || identity != "dev@x" || sessionID != "ts1" || sessionLabel != "codex" {
+		t.Fatalf("target = (%q, %q, %q, %q), want trimmed fields", id, identity, sessionID, sessionLabel)
+	}
+}
+
+func TestTodoAssignTargetUnassignClearsFields(t *testing.T) {
+	id, identity, sessionID, sessionLabel, err := todoAssignTarget(
+		[]string{" td-1 ", " dev@x "},
+		" ts1 ",
+		" codex ",
+		true,
+	)
+	if err != nil {
+		t.Fatalf("todoAssignTarget returned error: %v", err)
+	}
+	if id != "td-1" || identity != "" || sessionID != "" || sessionLabel != "" {
+		t.Fatalf("target = (%q, %q, %q, %q), want id with cleared assignment", id, identity, sessionID, sessionLabel)
 	}
 }
 

@@ -320,12 +320,13 @@ func runTodoGet(ctx context.Context, args []string) error {
 	if len(pos) < 1 {
 		return fmt.Errorf("usage: cc-handoff todo get <id> [--json]")
 	}
+	id := cleanTargetArg(pos[0])
 
 	client, err := todoClient()
 	if err != nil {
 		return err
 	}
-	t, err := client.GetTodo(ctx, pos[0])
+	t, err := client.GetTodo(ctx, id)
 	if err != nil {
 		return relayCompatError(err, "todo get")
 	}
@@ -398,16 +399,16 @@ func runTodoStatus(ctx context.Context, args []string) error {
 	if len(pos) < 2 {
 		return fmt.Errorf("usage: cc-handoff todo status <id> <triage|backlog|todo|in_progress|in_review|done|canceled|duplicate>")
 	}
-	s := todoschema.Status(pos[1])
-	if !todoschema.ValidStatus(s) {
-		return fmt.Errorf("invalid status %q (want triage|backlog|todo|in_progress|in_review|done|canceled|duplicate)", pos[1])
+	id, status, err := todoStatusTarget(pos)
+	if err != nil {
+		return err
 	}
 
 	client, err := todoClient()
 	if err != nil {
 		return err
 	}
-	out, err := client.SetTodoStatus(ctx, pos[0], s)
+	out, err := client.SetTodoStatus(ctx, id, status)
 	if err != nil {
 		return relayCompatError(err, "todo status")
 	}
@@ -419,6 +420,16 @@ func runTodoStatus(ctx context.Context, args []string) error {
 		fmt.Printf("  next_occurrence=%s\n", out.NextOccurrenceAt.Local().Format(time.RFC3339))
 	}
 	return nil
+}
+
+func todoStatusTarget(pos []string) (string, todoschema.Status, error) {
+	id := cleanTargetArg(pos[0])
+	rawStatus := cleanTargetArg(pos[1])
+	status := todoschema.Status(rawStatus)
+	if !todoschema.ValidStatus(status) {
+		return "", "", fmt.Errorf("invalid status %q (want triage|backlog|todo|in_progress|in_review|done|canceled|duplicate)", rawStatus)
+	}
+	return id, status, nil
 }
 
 func runTodoAssign(ctx context.Context, args []string) error {
@@ -433,15 +444,9 @@ func runTodoAssign(ctx context.Context, args []string) error {
 	if len(pos) < 1 {
 		return fmt.Errorf("usage: cc-handoff todo assign <id> <identity> [--session ID] [--label TEXT] | cc-handoff todo assign <id> --unassign")
 	}
-	id := pos[0]
-	identity, sessionID, sessionLabel := "", *session, *label
-	switch {
-	case *unassign:
-		identity, sessionID, sessionLabel = "", "", ""
-	case len(pos) >= 2:
-		identity = pos[1]
-	default:
-		return fmt.Errorf(`identity required (pass an identity, an explicit "", or --unassign to clear)`)
+	id, identity, sessionID, sessionLabel, err := todoAssignTarget(pos, *session, *label, *unassign)
+	if err != nil {
+		return err
 	}
 
 	client, err := todoClient()
@@ -467,6 +472,17 @@ func runTodoAssign(ctx context.Context, args []string) error {
 	return nil
 }
 
+func todoAssignTarget(pos []string, session, label string, unassign bool) (id, identity, sessionID, sessionLabel string, err error) {
+	id = cleanTargetArg(pos[0])
+	if unassign {
+		return id, "", "", "", nil
+	}
+	if len(pos) < 2 {
+		return "", "", "", "", fmt.Errorf(`identity required (pass an identity, an explicit "", or --unassign to clear)`)
+	}
+	return id, cleanTargetArg(pos[1]), cleanTargetArg(session), cleanTargetArg(label), nil
+}
+
 func runTodoComment(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("todo comment", flag.ContinueOnError)
 	listMode := fs.Bool("list", false, "列出该待办的评论,而不是发一条新的")
@@ -477,7 +493,7 @@ func runTodoComment(ctx context.Context, args []string) error {
 	if len(pos) < 1 {
 		return fmt.Errorf("usage: cc-handoff todo comment <id> <body...> | --list <id>")
 	}
-	id := pos[0]
+	id := cleanTargetArg(pos[0])
 	if !*listMode && len(pos) < 2 {
 		return fmt.Errorf("comment body required (or pass --list)")
 	}
