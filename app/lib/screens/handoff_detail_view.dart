@@ -198,6 +198,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   bool _picking = false;
   bool _commenting = false;
   bool _acking = false;
+  bool _retractDialogOpen = false;
   bool _retracting = false;
   bool _reassigning = false;
   int _loadGeneration = 0;
@@ -244,6 +245,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       _picking = false;
       _commenting = false;
       _acking = false;
+      _retractDialogOpen = false;
       _retracting = false;
       _reassigning = false;
       _loading = true;
@@ -563,14 +565,14 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _retract(Package p) async {
-    if (_retracting) return;
+    if (_retracting || _retractDialogOpen) return;
     final generation = _loadGeneration;
     final client = _client;
     final relayUrl = _cfg.relayUrl;
     final token = _cfg.token;
     final identity = _cfg.identity;
     final id = p.id;
-    _retracting = true;
+    setState(() => _retractDialogOpen = true);
     try {
       final reason = await showDialog<String>(
         context: context,
@@ -581,7 +583,10 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
         return;
       }
-      setState(() => _retracting = true);
+      setState(() {
+        _retractDialogOpen = false;
+        _retracting = true;
+      });
       await client.retract(id, reason.trim());
       if (!mounted) return;
       if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
@@ -606,7 +611,10 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     } finally {
       if (mounted &&
           _isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
-        setState(() => _retracting = false);
+        setState(() {
+          _retractDialogOpen = false;
+          _retracting = false;
+        });
       }
     }
   }
@@ -893,7 +901,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                 if (sameIdentity(p.sender, _cfg.identity) &&
                     _status?.state == 'pending')
                   OutlinedButton.icon(
-                    onPressed: _retracting ? null : () => _retract(p),
+                    onPressed: _retracting || _retractDialogOpen
+                        ? null
+                        : () => _retract(p),
                     icon: _retracting
                         ? const SizedBox(
                             width: 16,

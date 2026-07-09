@@ -236,6 +236,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('handoff retract disables button while dialog is open', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package('h1', ' Me@X ', 'owned handoff'),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('h1', ' Me@X ', 'owned handoff'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '撤回'));
+    await tester.pumpAndSettle();
+
+    final lockedButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, '撤回'),
+    );
+    expect(lockedButton.onPressed, isNull);
+    expect(find.widgetWithText(OutlinedButton, '撤回中…'), findsNothing);
+    expect(find.text('撤回 handoff'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(client.retractCalls, 0);
+    expect(find.widgetWithText(OutlinedButton, '撤回'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('handoff reassign dialog submits trimmed values', (tester) async {
     final client = _ActionDetailClient(
       _package('bug1', 'qa@x', 'bug handoff', kind: 'bug'),
