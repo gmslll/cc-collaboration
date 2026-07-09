@@ -132,6 +132,22 @@ Set<String> onlineSendProjectRecipientIdentities(ProjectDetail detail) => {
     if (identityLookupKey(member.identity).isNotEmpty) member.identity,
 };
 
+Set<String> onlineSendProjectReachableIdentities(
+  ProjectDetail detail, {
+  OrganizationDetail? organization,
+}) {
+  final identities = onlineSendProjectRecipientIdentities(detail);
+  if (organization == null) return identities;
+  for (final member in organization.members) {
+    final role = member.role.trim().toLowerCase();
+    if ((role == 'owner' || role == 'admin') &&
+        identityLookupKey(member.identity).isNotEmpty) {
+      identities.add(member.identity);
+    }
+  }
+  return identities;
+}
+
 bool incomingMessageTargetIsOpen(
   Iterable<TerminalSession> sessions,
   TerminalSession target,
@@ -1417,7 +1433,17 @@ class _WorkspacePageState extends State<WorkspacePage>
     final projectId = _onlineSendProjectIdForSource(sourcePath);
     if (projectId == null) return null;
     final detail = await client.project(projectId);
-    return onlineSendProjectRecipientIdentities(detail);
+    OrganizationDetail? organization;
+    final orgId = detail.project.orgId;
+    if (orgId.isNotEmpty) {
+      try {
+        organization = await client.organization(orgId);
+      } catch (_) {}
+    }
+    return onlineSendProjectReachableIdentities(
+      detail,
+      organization: organization,
+    );
   }
 
   void _connectRelayPresence() {

@@ -72,6 +72,39 @@ void main() {
     });
   });
 
+  test('online send project reach includes team owners and admins', () {
+    final detail = ProjectDetail.fromJson({
+      'project': {
+        'id': 'p1',
+        'org_id': 'o1',
+        'name': 'backend',
+        'owner_identity': ' owner@x ',
+      },
+      'members': [
+        {'identity': 'direct@x', 'role': 'member'},
+      ],
+    });
+    final organization = OrganizationDetail.fromJson({
+      'organization': {
+        'id': 'o1',
+        'name': 'Team',
+        'owner_identity': 'org-owner@x',
+      },
+      'members': [
+        {'identity': 'org-owner@x', 'role': 'owner'},
+        {'identity': 'org-admin@x', 'role': 'admin'},
+        {'identity': 'org-member@x', 'role': 'member'},
+        {'identity': 'org-guest@x', 'role': 'guest'},
+        {'identity': '   ', 'role': 'admin'},
+      ],
+    });
+
+    expect(
+      onlineSendProjectReachableIdentities(detail, organization: organization),
+      {'owner@x', 'direct@x', 'org-owner@x', 'org-admin@x'},
+    );
+  });
+
   test('online send selected user comparison is identity-normalized', () {
     expect(onlineSendIdentitySelected(' Dev@X ', 'dev@x'), isTrue);
     expect(onlineSendIdentitySelected(null, 'dev@x'), isFalse);
@@ -142,6 +175,8 @@ void main() {
     expect(relay, contains('identical(client, widget.client)'));
     expect(dialog, contains('if (!_isCurrentRelayClient(client)) return;'));
     expect(dialog, contains('await _onlineSendAllowedIdentities'));
+    expect(dialog, contains('organization = await client.organization(orgId)'));
+    expect(dialog, contains('} catch (_) {}'));
     expect(dialog, contains('!_isCurrentRelayClient(client) ||'));
     expect(dialog, contains("账号已切换,请重新选择在线用户"));
     expect(
