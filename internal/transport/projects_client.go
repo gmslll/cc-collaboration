@@ -52,16 +52,18 @@ func (c *Client) ListProjectAssigneeIdentities(ctx context.Context, projectID st
 	}
 	out := make([]string, 0, len(members)+len(orgMembers))
 	for _, m := range members {
-		if m.Identity == "" {
+		identity := cleanIdentity(m.Identity)
+		if identity == "" {
 			continue
 		}
-		out = append(out, m.Identity)
+		out = append(out, identity)
 	}
 	for _, m := range orgMembers {
-		if m.Identity == "" || !orgRoleCanManage(m.Role) {
+		identity := cleanIdentity(m.Identity)
+		if identity == "" || !orgRoleCanManage(m.Role) {
 			continue
 		}
-		out = append(out, m.Identity)
+		out = append(out, identity)
 	}
 	return handoffschema.DedupeIdentities(out), nil
 }
@@ -97,6 +99,7 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 	if projectID != "" && orgID != "" {
 		return nil, errors.New("project and org are mutually exclusive")
 	}
+	sender = cleanIdentity(sender)
 	member = strings.TrimSpace(member)
 	switch {
 	case projectID != "":
@@ -126,22 +129,24 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
-			if m.Identity == "" || m.Identity == sender || m.Role == "viewer" {
+			identity := cleanIdentity(m.Identity)
+			if identity == "" || identity == sender || roleKey(m.Role) == "viewer" {
 				continue
 			}
-			if active != nil && !active[m.Identity] {
+			if active != nil && !active[identity] {
 				continue
 			}
-			out = append(out, m.Identity)
+			out = append(out, identity)
 		}
 		for _, m := range orgMembers {
-			if m.Identity == "" || m.Identity == sender || !orgRoleCanManage(m.Role) {
+			identity := cleanIdentity(m.Identity)
+			if identity == "" || identity == sender || !orgRoleCanManage(m.Role) {
 				continue
 			}
-			if active != nil && !active[m.Identity] {
+			if active != nil && !active[identity] {
 				continue
 			}
-			out = append(out, m.Identity)
+			out = append(out, identity)
 		}
 		return handoffschema.DedupeIdentities(out), nil
 	case orgID != "":
@@ -171,13 +176,14 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
-			if m.Identity == "" || m.Identity == sender || m.Role == "guest" {
+			identity := cleanIdentity(m.Identity)
+			if identity == "" || identity == sender || roleKey(m.Role) == "guest" {
 				continue
 			}
-			if active != nil && !active[m.Identity] {
+			if active != nil && !active[identity] {
 				continue
 			}
-			out = append(out, m.Identity)
+			out = append(out, identity)
 		}
 		return handoffschema.DedupeIdentities(out), nil
 	default:
@@ -194,7 +200,7 @@ func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, membe
 	if projectID != "" && orgID != "" {
 		return nil, errors.New("project and org are mutually exclusive")
 	}
-	member = strings.TrimSpace(member)
+	member = cleanIdentity(member)
 	switch {
 	case projectID != "":
 		project, members, err := c.projectTeam(ctx, projectID)
@@ -207,28 +213,30 @@ func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, membe
 		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
-			if m.Identity == "" {
+			identity := cleanIdentity(m.Identity)
+			if identity == "" {
 				continue
 			}
 			if member != "" {
-				if m.Identity == member {
+				if identity == member {
 					return []string{member}, nil
 				}
 				continue
 			}
-			out = append(out, m.Identity)
+			out = append(out, identity)
 		}
 		for _, m := range orgMembers {
-			if m.Identity == "" || !orgRoleCanManage(m.Role) {
+			identity := cleanIdentity(m.Identity)
+			if identity == "" || !orgRoleCanManage(m.Role) {
 				continue
 			}
 			if member != "" {
-				if m.Identity == member {
+				if identity == member {
 					return []string{member}, nil
 				}
 				continue
 			}
-			out = append(out, m.Identity)
+			out = append(out, identity)
 		}
 		if member != "" {
 			return nil, fmt.Errorf("%s is not a member or team manager of project %s", member, projectID)
@@ -241,16 +249,17 @@ func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, membe
 		}
 		out := make([]string, 0, len(members))
 		for _, m := range members {
-			if m.Identity == "" {
+			identity := cleanIdentity(m.Identity)
+			if identity == "" {
 				continue
 			}
 			if member != "" {
-				if m.Identity == member {
+				if identity == member {
 					return []string{member}, nil
 				}
 				continue
 			}
-			out = append(out, m.Identity)
+			out = append(out, identity)
 		}
 		if member != "" {
 			return nil, fmt.Errorf("%s is not a member of organization %s", member, orgID)
@@ -265,6 +274,8 @@ func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, membe
 }
 
 func resolveOneProjectRecipient(members []ProjectMember, orgMembers []OrganizationMember, active map[string]bool, sender, member string) ([]string, error) {
+	sender = cleanIdentity(sender)
+	member = cleanIdentity(member)
 	role, ok := memberRole(members, member)
 	if !ok && orgCanManage(orgMembers, member) {
 		role, ok = "admin", true
@@ -275,7 +286,7 @@ func resolveOneProjectRecipient(members []ProjectMember, orgMembers []Organizati
 	if member == sender {
 		return nil, fmt.Errorf("cannot send to yourself (%s)", sender)
 	}
-	if role == "viewer" {
+	if roleKey(role) == "viewer" {
 		return nil, fmt.Errorf("project viewer %s cannot receive actionable team handoffs", member)
 	}
 	if active != nil && !active[member] {
@@ -300,6 +311,8 @@ func (c *Client) projectOrgMembers(ctx context.Context, orgID string) ([]Organiz
 }
 
 func resolveOneOrgRecipient(members []OrganizationMember, active map[string]bool, sender, member string) ([]string, error) {
+	sender = cleanIdentity(sender)
+	member = cleanIdentity(member)
 	role, ok := orgMemberRole(members, member)
 	if !ok {
 		return nil, fmt.Errorf("%s is not a member of the organization", member)
@@ -307,7 +320,7 @@ func resolveOneOrgRecipient(members []OrganizationMember, active map[string]bool
 	if member == sender {
 		return nil, fmt.Errorf("cannot send to yourself (%s)", sender)
 	}
-	if role == "guest" {
+	if roleKey(role) == "guest" {
 		return nil, fmt.Errorf("organization guest %s cannot receive actionable team handoffs", member)
 	}
 	if active != nil && !active[member] {
@@ -340,24 +353,30 @@ func (c *Client) activeIdentities(ctx context.Context) (map[string]bool, error) 
 	}
 	out := make(map[string]bool, len(users))
 	for _, u := range users {
-		out[u.Identity] = true
+		identity := cleanIdentity(u.Identity)
+		if identity == "" {
+			continue
+		}
+		out[identity] = true
 	}
 	return out, nil
 }
 
 func memberRole(members []ProjectMember, identity string) (string, bool) {
+	identity = cleanIdentity(identity)
 	for _, m := range members {
-		if m.Identity == identity {
-			return m.Role, true
+		if cleanIdentity(m.Identity) == identity {
+			return roleKey(m.Role), true
 		}
 	}
 	return "", false
 }
 
 func orgMemberRole(members []OrganizationMember, identity string) (string, bool) {
+	identity = cleanIdentity(identity)
 	for _, m := range members {
-		if m.Identity == identity {
-			return m.Role, true
+		if cleanIdentity(m.Identity) == identity {
+			return roleKey(m.Role), true
 		}
 	}
 	return "", false
@@ -369,7 +388,16 @@ func orgCanManage(members []OrganizationMember, identity string) bool {
 }
 
 func orgRoleCanManage(role string) bool {
+	role = roleKey(role)
 	return role == "owner" || role == "admin"
+}
+
+func cleanIdentity(identity string) string {
+	return strings.TrimSpace(identity)
+}
+
+func roleKey(role string) string {
+	return strings.ToLower(strings.TrimSpace(role))
 }
 
 func (c *Client) ListProjectHandoffs(ctx context.Context, projectID string, limit int) ([]handoffschema.ListItem, error) {

@@ -284,6 +284,58 @@ func TestResolveTeamRecipientsCanTargetOneMember(t *testing.T) {
 	}
 }
 
+func TestResolveTeamRecipientsNormalizesTeamIdentityAndRoleFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects/p1":
+			w.Write([]byte(`{
+				"project":{"id":"p1","org_id":"o1"},
+				"members":[
+					{"identity":" owner@x ","role":" OWNER "},
+					{"identity":" dev@x ","role":" MEMBER "},
+					{"identity":" viewer@x ","role":" VIEWER "}
+				]}`))
+		case "/v1/orgs/o1":
+			w.Write([]byte(`{"members":[
+				{"identity":" org-admin@x ","role":" ADMIN "},
+				{"identity":" org-member@x ","role":" MEMBER "}
+			]}`))
+		case "/v1/users/online":
+			w.Write([]byte(`{"users":[
+				{"identity":" owner@x ","online":false},
+				{"identity":" dev@x ","online":false},
+				{"identity":" viewer@x ","online":false},
+				{"identity":" org-admin@x ","online":false},
+				{"identity":" org-member@x ","online":false}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	recipients, err := client.ResolveTeamRecipients(context.Background(), "p1", "", " owner@x ", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"dev@x", "org-admin@x"}; !slices.Equal(recipients, want) {
+		t.Fatalf("normalized project recipients = %v, want %v", recipients, want)
+	}
+
+	recipients, err = client.ResolveTeamRecipients(context.Background(), "p1", "", "owner@x", " dev@x ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"dev@x"}; !slices.Equal(recipients, want) {
+		t.Fatalf("normalized targeted recipient = %v, want %v", recipients, want)
+	}
+
+	if _, err := client.ResolveTeamRecipients(context.Background(), "p1", "", "owner@x", " viewer@x "); err == nil {
+		t.Fatal("normalized project viewer should still be rejected")
+	}
+}
+
 func TestListProjectAssigneeIdentitiesIncludesTeamManagers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
