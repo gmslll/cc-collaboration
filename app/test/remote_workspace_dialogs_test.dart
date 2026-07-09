@@ -55,6 +55,24 @@ void main() {
     );
   });
 
+  test('remote workspace page rebinds client when auth changes', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final state = source.substring(
+      source.indexOf('class _RemoteWorkspacePageState'),
+      source.indexOf('  @override\n  void didChangeAppLifecycleState'),
+    );
+
+    expect(state, contains('late RemoteClient _c;'));
+    expect(state, contains('void didUpdateWidget'));
+    expect(state, contains('oldWidget.relayUrl == widget.relayUrl'));
+    expect(state, contains('oldWidget.token == widget.token'));
+    expect(state, contains('_disposeRemoteClient(oldClient)'));
+    expect(state, contains('_c = _newRemoteClient()'));
+    expect(state, contains('phoneRemoteClient = client'));
+  });
+
   test('remote worktree remove target falls back to path name', () {
     expect(
       remoteWorktreeRemoveTarget(

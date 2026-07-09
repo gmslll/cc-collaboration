@@ -86,10 +86,7 @@ class RemoteWorkspacePage extends StatefulWidget {
 
 class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     with WidgetsBindingObserver {
-  late final RemoteClient _c = RemoteClient(
-    relayUrl: widget.relayUrl,
-    token: widget.token,
-  );
+  late RemoteClient _c;
   int _tab = 0; // 0 = 会话, 1 = 代码, 2 = Git
   // Collapsed project groups in the sessions tab, keyed by project path.
   final Set<String> _collapsedProjects = <String>{};
@@ -109,26 +106,61 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     WidgetsBinding.instance.addObserver(this);
     final focus = Prefs.getString('remote.focusProject', def: '');
     if (focus.isNotEmpty) _focusedProjectPath = focus;
-    _c.addListener(_onClientChange);
-    _c.onFileReceived = (name, path) {
-      if (!mounted) return;
-      snack(context, '📁 收到文件：$name（在「⇅」里打开）', background: CcColors.ok);
-    };
-    // A desktop file offer → prompt 接受/拒绝 (one dialog at a time).
-    _c.onIncomingOffer = (_) => _pumpOffers();
-    _c.connect();
-    // Publish this connection so TodosPage's 一键指派 can reach the paired
-    // desktop's sessions/roots + send a remote assign (see phoneRemoteClient).
-    phoneRemoteClient = _c;
+    _c = _newRemoteClient();
+    _attachRemoteClient(_c);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _c.removeListener(_onClientChange);
-    if (identical(phoneRemoteClient, _c)) phoneRemoteClient = null;
-    _c.dispose();
+    _disposeRemoteClient(_c);
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant RemoteWorkspacePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.relayUrl == widget.relayUrl &&
+        oldWidget.token == widget.token) {
+      return;
+    }
+    final oldClient = _c;
+    final historyMode = oldClient.historyMode;
+    _disposeRemoteClient(oldClient);
+    _c = _newRemoteClient()..historyMode = historyMode;
+    _dirStack.clear();
+    _gitRepo = null;
+    _collapsedProjects.clear();
+    _focusedProjectPath = null;
+    Prefs.setString('remote.focusProject', '');
+    _attachRemoteClient(_c);
+    if (mounted) setState(() {});
+  }
+
+  RemoteClient _newRemoteClient() =>
+      RemoteClient(relayUrl: widget.relayUrl, token: widget.token);
+
+  void _attachRemoteClient(RemoteClient client) {
+    client.addListener(_onClientChange);
+    client.onFileReceived = (name, path) {
+      if (!mounted || !identical(client, _c)) return;
+      snack(context, '📁 收到文件：$name（在「⇅」里打开）', background: CcColors.ok);
+    };
+    // A desktop file offer → prompt 接受/拒绝 (one dialog at a time).
+    client.onIncomingOffer = (_) {
+      if (!mounted || !identical(client, _c)) return;
+      _pumpOffers();
+    };
+    client.connect();
+    // Publish this connection so TodosPage's 一键指派 can reach the paired
+    // desktop's sessions/roots + send a remote assign (see phoneRemoteClient).
+    phoneRemoteClient = client;
+  }
+
+  void _disposeRemoteClient(RemoteClient client) {
+    client.removeListener(_onClientChange);
+    if (identical(phoneRemoteClient, client)) phoneRemoteClient = null;
+    client.dispose();
   }
 
   @override
