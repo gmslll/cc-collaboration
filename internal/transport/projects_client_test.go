@@ -58,6 +58,63 @@ func TestResolveTeamRecipientsFiltersReadOnlyRoles(t *testing.T) {
 	}
 }
 
+func TestResolveTeamRecipientsTrimsTeamTargetArgs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/projects/p1":
+			w.Write([]byte(`{
+				"project":{"id":"p1","org_id":"o1"},
+				"members":[
+					{"identity":"owner@x","role":"owner"},
+					{"identity":"dev@x","role":"member"}
+				]}`))
+		case "/v1/orgs/o1":
+			w.Write([]byte(`{"members":[
+				{"identity":"owner@x","role":"owner"},
+				{"identity":"admin@x","role":"admin"}
+			]}`))
+		case "/v1/users/online":
+			w.Write([]byte(`{"users":[
+				{"identity":"owner@x","online":true},
+				{"identity":"dev@x","online":true},
+				{"identity":"admin@x","online":true}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	projectRecipients, err := client.ResolveTeamRecipients(
+		context.Background(),
+		" p1 ",
+		" ",
+		" owner@x ",
+		" dev@x ",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"dev@x"}; !slices.Equal(projectRecipients, want) {
+		t.Fatalf("project recipients = %v, want %v", projectRecipients, want)
+	}
+
+	orgRecipients, err := client.ResolveTeamRecipients(
+		context.Background(),
+		" ",
+		" o1 ",
+		" owner@x ",
+		" admin@x ",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"admin@x"}; !slices.Equal(orgRecipients, want) {
+		t.Fatalf("org recipients = %v, want %v", orgRecipients, want)
+	}
+}
+
 func TestResolveTeamRecipientsIncludesProjectTeamManagers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

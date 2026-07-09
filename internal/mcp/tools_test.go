@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -158,6 +159,57 @@ func TestDeliveryTargetTrimAndSummary(t *testing.T) {
 	}
 	if empty := deliveryTarget(" ", "", ""); empty != nil {
 		t.Fatalf("blank delivery target should be nil: %+v", empty)
+	}
+}
+
+func TestResolveToolRecipientsTrimsDirectTargets(t *testing.T) {
+	got, recipient, err := resolveToolRecipients(
+		context.Background(),
+		nil,
+		" sender@x ",
+		" partner@x ",
+		" receiver@x ",
+		" ",
+		"",
+		" ",
+	)
+	if err != nil {
+		t.Fatalf("resolveToolRecipients returned error: %v", err)
+	}
+	if want := []string{"receiver@x"}; !slices.Equal(got, want) || recipient != "receiver@x" {
+		t.Fatalf("recipients = %v recipient = %q, want %v / receiver@x", got, recipient, want)
+	}
+}
+
+func TestResolveToolRecipientsRejectsTrimmedSelfTarget(t *testing.T) {
+	_, _, err := resolveToolRecipients(
+		context.Background(),
+		nil,
+		" sender@x ",
+		" partner@x ",
+		" sender@x ",
+		"",
+		"",
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), "cannot send to yourself") {
+		t.Fatalf("expected trimmed self-send rejection, got %v", err)
+	}
+}
+
+func TestResolveToolRecipientsMemberRequiresTrimmedTeamTarget(t *testing.T) {
+	_, _, err := resolveToolRecipients(
+		context.Background(),
+		nil,
+		"sender@x",
+		"partner@x",
+		"",
+		" ",
+		"",
+		" member@x ",
+	)
+	if err == nil || !strings.Contains(err.Error(), "member requires project or org") {
+		t.Fatalf("expected member/team target error, got %v", err)
 	}
 }
 

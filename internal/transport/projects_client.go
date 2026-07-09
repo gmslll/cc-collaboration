@@ -96,11 +96,13 @@ func (c *Client) ListOrganizationMembers(ctx context.Context, orgID string) ([]O
 // shared work via project/org views, but they should not get actionable pickup
 // slots.
 func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, sender, member string) ([]string, error) {
+	projectID = strings.TrimSpace(projectID)
+	orgID = strings.TrimSpace(orgID)
+	member = strings.TrimSpace(member)
 	if projectID != "" && orgID != "" {
 		return nil, errors.New("project and org are mutually exclusive")
 	}
 	sender = cleanIdentity(sender)
-	member = strings.TrimSpace(member)
 	switch {
 	case projectID != "":
 		project, members, err := c.projectTeam(ctx, projectID)
@@ -197,6 +199,8 @@ func (c *Client) ResolveTeamRecipients(ctx context.Context, projectID, orgID, se
 // such as online. When member is set, it validates that identity belongs to the
 // selected team/effective project team.
 func (c *Client) ListTeamIdentities(ctx context.Context, projectID, orgID, member string) ([]string, error) {
+	projectID = strings.TrimSpace(projectID)
+	orgID = strings.TrimSpace(orgID)
 	if projectID != "" && orgID != "" {
 		return nil, errors.New("project and org are mutually exclusive")
 	}

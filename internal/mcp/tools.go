@@ -688,6 +688,12 @@ func formatRecipientList(rs []string) string {
 }
 
 func resolveToolRecipients(ctx context.Context, client *transport.Client, sender, defaultRecipient, to, projectID, orgID, member string) ([]string, string, error) {
+	sender = strings.TrimSpace(sender)
+	defaultRecipient = strings.TrimSpace(defaultRecipient)
+	to = strings.TrimSpace(to)
+	projectID = strings.TrimSpace(projectID)
+	orgID = strings.TrimSpace(orgID)
+	member = strings.TrimSpace(member)
 	if (projectID != "" || orgID != "") && to != "" {
 		return nil, "", fmt.Errorf("to cannot be combined with project or org")
 	}
