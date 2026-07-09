@@ -1492,6 +1492,24 @@ void main() {
     );
     expectGuardBefore(
       between(
+        'lib/screens/todos_page.dart',
+        'Future<void> _createDialog()',
+        '// _dropStatus is',
+      ),
+      'if (created == true)',
+      '_store.refresh',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/todos_page.dart',
+        'Future<void> _assignDialog(',
+        '@override\n  Widget build',
+      ),
+      'if (changed == true)',
+      '_store.refresh',
+    );
+    expectGuardBefore(
+      between(
         'lib/screens/handoff_detail_view.dart',
         'Future<void> _retract(',
         'Future<void> _reassign(',

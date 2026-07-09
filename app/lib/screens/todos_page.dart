@@ -894,6 +894,7 @@ class _TodosPageState extends State<TodosPage> {
       ),
     );
     if (created == true) {
+      if (!mounted) return;
       await _store.refresh();
       await _loadGroups();
     }
@@ -930,7 +931,10 @@ class _TodosPageState extends State<TodosPage> {
         config: _cfg,
       ),
     );
-    if (changed == true) await _store.refresh();
+    if (changed == true) {
+      if (!mounted) return;
+      await _store.refresh();
+    }
   }
 
   @override
