@@ -83,9 +83,9 @@ class AppConfig {
   final String codexCommand;
 
   AppConfig(
-    this.relayUrl,
-    this.token,
-    this.identity,
+    String relayUrl,
+    String token,
+    String identity,
     this.repos, [
     this.workspaces = const [],
     this.agent = '',
@@ -97,7 +97,9 @@ class AppConfig {
     this.claudeCommand = '',
     this.codexCommand = '',
     this.publishSessions = false,
-  ]);
+  ]) : relayUrl = relayUrl.trim(),
+       token = token.trim(),
+       identity = identity.trim();
 
   String? repoPath(String name) => repos[name];
 

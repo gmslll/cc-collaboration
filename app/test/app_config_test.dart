@@ -4,6 +4,19 @@ import 'package:app/local/config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('normalizes auth fields at the config boundary', () {
+    final cfg = AppConfig(
+      ' https://relay.example ',
+      ' token-1 ',
+      ' dev@x ',
+      const {},
+    );
+
+    expect(cfg.relayUrl, 'https://relay.example');
+    expect(cfg.token, 'token-1');
+    expect(cfg.identity, 'dev@x');
+  });
+
   test(
     'publish sessions config defaults to private unless explicitly true',
     () {
