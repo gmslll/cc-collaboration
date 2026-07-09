@@ -7,6 +7,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  void expectRemoteDialogScrollSafe(WidgetTester tester) {
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(contentScroll.scrollDirection, Axis.vertical);
+  }
+
   test('remote key bar button labels are width constrained', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',
@@ -193,6 +209,7 @@ void main() {
 
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
+    expectRemoteDialogScrollSafe(tester);
     await tester.enterText(find.byType(TextField), '  fix remote git  ');
     await tester.tap(find.text('提交后 Push'));
     await tester.pumpAndSettle();
@@ -231,6 +248,7 @@ void main() {
 
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
+    expectRemoteDialogScrollSafe(tester);
     await tester.enterText(find.byType(TextField).at(0), '  mobile  ');
     await tester.enterText(find.byType(TextField).at(1), '  /tmp/mobile  ');
     await tester.tap(find.widgetWithText(FilledButton, '创建'));
@@ -271,6 +289,7 @@ void main() {
 
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
+      expectRemoteDialogScrollSafe(tester);
       await tester.enterText(find.byType(TextField).at(0), '   ');
       await tester.tap(find.widgetWithText(FilledButton, '创建'));
       await tester.pumpAndSettle();
@@ -281,6 +300,7 @@ void main() {
 
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
+      expectRemoteDialogScrollSafe(tester);
       await tester.enterText(find.byType(TextField).at(0), '  feat/dialogs  ');
       await tester.enterText(find.byType(TextField).at(1), '  main  ');
       await tester.tap(find.widgetWithText(FilledButton, '创建'));

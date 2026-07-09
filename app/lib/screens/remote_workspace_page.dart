@@ -2246,26 +2246,33 @@ class _RemoteCommitDialogState extends State<RemoteCommitDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
-      title: const Text('提交'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _messageCtl,
-            autofocus: true,
-            minLines: 1,
-            maxLines: 4,
-            decoration: const InputDecoration(hintText: '提交信息'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('提交', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _messageCtl,
+                autofocus: true,
+                minLines: 1,
+                maxLines: 4,
+                decoration: const InputDecoration(hintText: '提交信息'),
+              ),
+              CheckboxListTile(
+                value: _push,
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('提交后 Push'),
+                onChanged: (v) => setState(() => _push = v ?? false),
+              ),
+            ],
           ),
-          CheckboxListTile(
-            value: _push,
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('提交后 Push'),
-            onChanged: (v) => setState(() => _push = v ?? false),
-          ),
-        ],
+        ),
       ),
       actions: [
         TextButton(
@@ -2317,21 +2324,30 @@ class _RemoteWorkspaceCreateDialogState
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
-      title: const Text('新建工作区'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _nameCtl,
-            autofocus: true,
-            decoration: const InputDecoration(hintText: '名称'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('新建工作区', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _nameCtl,
+                autofocus: true,
+                decoration: const InputDecoration(hintText: '名称'),
+                textInputAction: TextInputAction.next,
+              ),
+              TextField(
+                controller: _pathCtl,
+                decoration: const InputDecoration(hintText: '目录（可选，绝对路径）'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
           ),
-          TextField(
-            controller: _pathCtl,
-            decoration: const InputDecoration(hintText: '目录（可选，绝对路径）'),
-          ),
-        ],
+        ),
       ),
       actions: [
         TextButton(
@@ -2386,21 +2402,34 @@ class _RemoteWorktreeCreateDialogState
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
-      title: const Text('新建 worktree'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _branchCtl,
-            autofocus: true,
-            decoration: const InputDecoration(hintText: '分支名'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text(
+        '新建 worktree',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _branchCtl,
+                autofocus: true,
+                decoration: const InputDecoration(hintText: '分支名'),
+                textInputAction: TextInputAction.next,
+              ),
+              TextField(
+                controller: _startCtl,
+                decoration: const InputDecoration(hintText: '起点（可选，如 main）'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
           ),
-          TextField(
-            controller: _startCtl,
-            decoration: const InputDecoration(hintText: '起点（可选，如 main）'),
-          ),
-        ],
+        ),
       ),
       actions: [
         TextButton(
