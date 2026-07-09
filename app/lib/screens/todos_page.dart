@@ -221,7 +221,8 @@ class _TodosPageState extends State<TodosPage> {
     final projectId = m['linearProjectId'];
     final projectFilter = m['projectFilter'];
     setState(() {
-      if (scope is String && const {'personal', 'team', 'all'}.contains(scope)) {
+      if (scope is String &&
+          const {'personal', 'team', 'all'}.contains(scope)) {
         _scope = scope;
       }
       if (source is String && const {'relay', 'linear'}.contains(source)) {
@@ -267,8 +268,10 @@ class _TodosPageState extends State<TodosPage> {
   void _loadLinearImportPrefs() {
     _linearTeamKey = Prefs.getString('todo.linear.teamKey', def: '');
     _linearProjectId = Prefs.getString('todo.linear.projectId', def: '');
-    _linearImportProjectId =
-        Prefs.getString('todo.linear.importProjectId', def: '');
+    _linearImportProjectId = Prefs.getString(
+      'todo.linear.importProjectId',
+      def: '',
+    );
     _teamSource = Prefs.getString('todo.team.source', def: 'relay') == 'linear'
         ? 'linear'
         : 'relay';
@@ -286,7 +289,9 @@ class _TodosPageState extends State<TodosPage> {
     try {
       final m = await widget.client.me();
       if (mounted) setState(() => _myProjects = m.projects);
-    } catch (_) {/* keep the login-time list */}
+    } catch (_) {
+      /* keep the login-time list */
+    }
   }
 
   // _summonTodoAssistant spawns a dedicated 待办助手 session (claude/codex) in a
@@ -324,16 +329,23 @@ class _TodosPageState extends State<TodosPage> {
                 Text(
                   '起一个专门帮你生成/管理待办的会话,已注入待办助手人格,可直接用 '
                   'cc-handoff todo 在同一 relay 上增删改;改动会同步回看板和手机。',
-                  style:
-                      TextStyle(color: CcColors.muted, fontSize: 12, height: 1.35),
+                  style: TextStyle(
+                    color: CcColors.muted,
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 DropdownButton<String>(
                   isExpanded: true,
                   value: ws,
                   items: workspaces
-                      .map((w) =>
-                          DropdownMenuItem(value: w.name, child: Text(w.name)))
+                      .map(
+                        (w) => DropdownMenuItem(
+                          value: w.name,
+                          child: Text(w.name),
+                        ),
+                      )
                       .toList(),
                   onChanged: (v) => setLocal(() {
                     ws = v ?? ws;
@@ -347,8 +359,12 @@ class _TodosPageState extends State<TodosPage> {
                   hint: const Text('project'),
                   value: proj,
                   items: projsFor(ws)
-                      .map((p) =>
-                          DropdownMenuItem(value: p.name, child: Text(p.name)))
+                      .map(
+                        (p) => DropdownMenuItem(
+                          value: p.name,
+                          child: Text(p.name),
+                        ),
+                      )
                       .toList(),
                   onChanged: (v) => setLocal(() => proj = v),
                 ),
@@ -389,13 +405,15 @@ class _TodosPageState extends State<TodosPage> {
       snack(context, '召唤失败: ${err ?? "未知错误"}');
       return;
     }
-    _overview.dispatch(LocalMsg(
-      '',
-      sid,
-      '你是这个看板的待办助手。请先运行 `cc-handoff todo list` 查看当前待办并简要汇报,'
-      '然后等我的指示。',
-      true,
-    ));
+    _overview.dispatch(
+      LocalMsg(
+        '',
+        sid,
+        '你是这个看板的待办助手。请先运行 `cc-handoff todo list` 查看当前待办并简要汇报,'
+            '然后等我的指示。',
+        true,
+      ),
+    );
     snack(context, '已召唤待办助手');
     widget.onOpenSession?.call(sid);
   }
@@ -470,8 +488,12 @@ class _TodosPageState extends State<TodosPage> {
                 const _HelpText('1. 手机/Web 端只切换查看来源；导入需在桌面端执行。'),
               const _HelpText('2. 在待办页的 Linear 配置里填 team_key 和 project_id。'),
               const _HelpText('3. team_key 填 issue 编号前缀，例如 INF-502 填 INF。'),
-              const _HelpText('4. project_id 是 Linear Project UUID；不填会看整个 team。'),
-              const _HelpText('5. Web 版 Linear 里打开项目，按 Cmd/Ctrl+K，搜索 Copy model UUID。'),
+              const _HelpText(
+                '4. project_id 是 Linear Project UUID；不填会看整个 team。',
+              ),
+              const _HelpText(
+                '5. Web 版 Linear 里打开项目，按 Cmd/Ctrl+K，搜索 Copy model UUID。',
+              ),
               const _HelpText('6. 团队视图可在 Relay 项目和 Linear 项目之间切换；两者互斥。'),
               const SizedBox(height: 10),
               Text(
@@ -492,8 +514,9 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   Future<void> _linearConfigDialog() async {
-    final tokenCtl =
-        TextEditingController(text: _linearTokenOverride ?? _cfg.linearToken);
+    final tokenCtl = TextEditingController(
+      text: _linearTokenOverride ?? _cfg.linearToken,
+    );
     final teamCtl = TextEditingController(text: _linearTeamKey);
     final projectCtl = TextEditingController(text: _linearProjectId);
     var importPid = _linearImportProjectId;
@@ -505,57 +528,62 @@ class _TodosPageState extends State<TodosPage> {
           width: 440,
           child: StatefulBuilder(
             builder: (ctx, setLocal) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_canUseLocalCli) ...[
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_canUseLocalCli) ...[
+                  TextField(
+                    controller: tokenCtl,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'linear_personal_token',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 TextField(
-                  controller: tokenCtl,
-                  obscureText: true,
+                  controller: teamCtl,
                   decoration: const InputDecoration(
-                    labelText: 'linear_personal_token',
+                    labelText: '团队 team_key',
+                    hintText: '例如 INF',
                     isDense: true,
                   ),
                 ),
                 const SizedBox(height: 10),
+                TextField(
+                  controller: projectCtl,
+                  decoration: const InputDecoration(
+                    labelText: '项目 project_id（Linear Project UUID，可选）',
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Relay project to import INTO. Empty = 个人待办 (owner-only, hidden
+                // in the team view); picking a team project makes the imported
+                // Linear todos show under 团队 / 全部项目 and be assignable.
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '导入到 relay 项目',
+                    style: TextStyle(color: CcColors.muted, fontSize: 12),
+                  ),
+                ),
+                DropdownButton<String>(
+                  isExpanded: true,
+                  value: _myProjects.any((p) => p.id == importPid)
+                      ? importPid
+                      : '',
+                  items: [
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text('个人待办（仅自己可见）'),
+                    ),
+                    for (final p in _myProjects)
+                      DropdownMenuItem(value: p.id, child: Text(p.name)),
+                  ],
+                  onChanged: (v) => setLocal(() => importPid = v ?? ''),
+                ),
               ],
-              TextField(
-                controller: teamCtl,
-                decoration: const InputDecoration(
-                  labelText: '团队 team_key',
-                  hintText: '例如 INF',
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: projectCtl,
-                decoration: const InputDecoration(
-                  labelText: '项目 project_id（Linear Project UUID，可选）',
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 12),
-              // Relay project to import INTO. Empty = 个人待办 (owner-only, hidden
-              // in the team view); picking a team project makes the imported
-              // Linear todos show under 团队 / 全部项目 and be assignable.
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text('导入到 relay 项目',
-                    style: TextStyle(color: CcColors.muted, fontSize: 12)),
-              ),
-              DropdownButton<String>(
-                isExpanded: true,
-                value:
-                    _myProjects.any((p) => p.id == importPid) ? importPid : '',
-                items: [
-                  const DropdownMenuItem(
-                      value: '', child: Text('个人待办（仅自己可见）')),
-                  for (final p in _myProjects)
-                    DropdownMenuItem(value: p.id, child: Text(p.name)),
-                ],
-                onChanged: (v) => setLocal(() => importPid = v ?? ''),
-              ),
-            ],
             ),
           ),
         ),
@@ -658,7 +686,12 @@ class _TodosPageState extends State<TodosPage> {
     });
     await _store.refresh();
     if (mounted) {
-      snack(context, failed == 0 ? '已删除 ${ids.length} 个待办' : '已删除 ${ids.length - failed} 个，失败 $failed 个');
+      snack(
+        context,
+        failed == 0
+            ? '已删除 ${ids.length} 个待办'
+            : '已删除 ${ids.length - failed} 个，失败 $failed 个',
+      );
     }
   }
 
@@ -696,9 +729,7 @@ class _TodosPageState extends State<TodosPage> {
       if (sourceTeam.toLowerCase() != team.toLowerCase()) {
         return false;
       }
-    } else if (!ref
-        .toLowerCase()
-        .startsWith('linear:${team.toLowerCase()}-')) {
+    } else if (!ref.toLowerCase().startsWith('linear:${team.toLowerCase()}-')) {
       return false;
     }
     if (project.isNotEmpty && (t.sourceProjectId ?? '').trim() != project) {
@@ -728,10 +759,12 @@ class _TodosPageState extends State<TodosPage> {
         client: _client,
         me: _me,
         projects: _myProjects,
-        initialScope:
-            _scope == 'team' && _teamSource == 'relay' ? 'team' : 'personal',
-        initialProjectId:
-            _scope == 'team' && _teamSource == 'relay' ? _projectFilter : null,
+        initialScope: _scope == 'team' && _teamSource == 'relay'
+            ? 'team'
+            : 'personal',
+        initialProjectId: _scope == 'team' && _teamSource == 'relay'
+            ? _projectFilter
+            : null,
         groups: _groups,
       ),
     );
@@ -845,9 +878,8 @@ class _TodosPageState extends State<TodosPage> {
                 onPressed: _filtered.isEmpty
                     ? null
                     : () => setState(
-                        () => _selectedTodoIds.addAll(
-                          _filtered.map((t) => t.id),
-                        ),
+                        () =>
+                            _selectedTodoIds.addAll(_filtered.map((t) => t.id)),
                       ),
               ),
             if (wide)
@@ -973,15 +1005,10 @@ class _TodosPageState extends State<TodosPage> {
           hint: const Text('全部项目'),
           underline: const SizedBox(),
           items: [
-            const DropdownMenuItem<String?>(
-              value: null,
-              child: Text('全部项目'),
-            ),
+            const DropdownMenuItem<String?>(value: null, child: Text('全部项目')),
             ..._myProjects.map(
-              (p) => DropdownMenuItem<String?>(
-                value: p.id,
-                child: Text(p.name),
-              ),
+              (p) =>
+                  DropdownMenuItem<String?>(value: p.id, child: Text(p.name)),
             ),
           ],
           onChanged: (v) {
@@ -1002,11 +1029,11 @@ class _TodosPageState extends State<TodosPage> {
         ConstrainedBox(
           constraints: BoxConstraints(maxWidth: wide ? 420 : 220),
           child: Text(
-          _linearTeamKey.trim().isEmpty
+            _linearTeamKey.trim().isEmpty
                 ? '未配置团队'
                 : _linearProjectId.trim().isEmpty
-                    ? '${_linearTeamKey.trim()} / 全部项目'
-                    : '${_linearTeamKey.trim()} / ${_linearProjectId.trim()}',
+                ? '${_linearTeamKey.trim()} / 全部项目'
+                : '${_linearTeamKey.trim()} / ${_linearProjectId.trim()}',
             style: const TextStyle(color: CcColors.subtle, fontSize: 12.5),
             overflow: TextOverflow.ellipsis,
           ),
@@ -1036,24 +1063,20 @@ class _TodosPageState extends State<TodosPage> {
     if (!wide) {
       return scrollableBar(scrolling: controls);
     }
-    return Row(
-      children: [
-        ...controls,
-        const Spacer(),
-      ],
-    );
+    return Row(children: [...controls, const Spacer()]);
   }
 
   Widget _linearImportControls({required bool wide}) {
     final importTooltip = !_canUseLocalCli
         ? '桌面端可从 Linear 导入'
         : _linearTeamKey.trim().isEmpty
-            ? '先配置 Linear 团队'
-            : '从 Linear 导入';
+        ? '先配置 Linear 团队'
+        : '从 Linear 导入';
     final importButton = Tooltip(
       message: importTooltip,
       child: TextButton.icon(
-        onPressed: !_canUseLocalCli ||
+        onPressed:
+            !_canUseLocalCli ||
                 _importingLinear ||
                 _linearTeamKey.trim().isEmpty
             ? null
@@ -1076,13 +1099,7 @@ class _TodosPageState extends State<TodosPage> {
     if (!wide) {
       return scrollableBar(scrolling: [importButton, helpButton]);
     }
-    return Row(
-      children: [
-        importButton,
-        const Spacer(),
-        helpButton,
-      ],
-    );
+    return Row(children: [importButton, const Spacer(), helpButton]);
   }
 
   Widget _groupControls({required bool wide}) {
@@ -1095,10 +1112,7 @@ class _TodosPageState extends State<TodosPage> {
       hint: const Text('全部分组'),
       underline: const SizedBox(),
       items: [
-        const DropdownMenuItem<String?>(
-          value: null,
-          child: Text('全部分组'),
-        ),
+        const DropdownMenuItem<String?>(value: null, child: Text('全部分组')),
         ..._groups.map(
           (g) => DropdownMenuItem<String?>(value: g, child: Text(g)),
         ),
@@ -1110,13 +1124,7 @@ class _TodosPageState extends State<TodosPage> {
         scrolling: [label, const SizedBox(width: 10), dropdown],
       );
     }
-    return Row(
-      children: [
-        label,
-        const Spacer(),
-        dropdown,
-      ],
-    );
+    return Row(children: [label, const Spacer(), dropdown]);
   }
 
   Widget _statusChip(TodoStatus s) {
@@ -1352,39 +1360,33 @@ class _TodosPageState extends State<TodosPage> {
   // column width to the viewport), each a DragTarget<Todo> that maps a drop
   // to its dropStatus via _dropStatus.
   Widget _boardPane() => asyncBody(
-        loading: _store.loading && _store.all.isEmpty,
-        error: _store.error,
-        onRetry: _store.refresh,
-        child: () {
-          final items = _filtered;
-          if (items.isEmpty) {
-            return centerMsg(
-              _store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配',
-            );
-          }
-          final columns = [
-            for (final def in _boardColumnDefs)
-              (
-                def: def,
-                items: items
-                    .where((t) => def.statuses.contains(t.status))
-                    .toList(),
-              ),
-          ].where((c) => c.items.isNotEmpty).toList();
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final c in columns) _boardColumn(c.def, c.items),
-                ],
-              ),
-            ),
-          );
-        },
+    loading: _store.loading && _store.all.isEmpty,
+    error: _store.error,
+    onRetry: _store.refresh,
+    child: () {
+      final items = _filtered;
+      if (items.isEmpty) {
+        return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
+      }
+      final columns = [
+        for (final def in _boardColumnDefs)
+          (
+            def: def,
+            items: items.where((t) => def.statuses.contains(t.status)).toList(),
+          ),
+      ].where((c) => c.items.isNotEmpty).toList();
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [for (final c in columns) _boardColumn(c.def, c.items)],
+          ),
+        ),
       );
+    },
+  );
 
   Widget _boardColumn(_BoardColumnDef def, List<Todo> items) => Container(
     width: 272,
@@ -1828,9 +1830,7 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   void initState() {
     super.initState();
     _projectId = widget.initialProjectId;
-    if (_scope == 'team' &&
-        _projectId == null &&
-        widget.projects.isNotEmpty) {
+    if (_scope == 'team' && _projectId == null && widget.projects.isNotEmpty) {
       _projectId = widget.projects.first.id;
     }
   }
@@ -2158,7 +2158,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   List<String> _projectNamesFor(String? ws) {
     final r = _remote;
     if (r != null) {
-      return [for (final root in r.roots) if (root.workspace == ws) root.name];
+      return [
+        for (final root in r.roots)
+          if (root.workspace == ws) root.name,
+      ];
     }
     return [for (final p in projectsOf(widget.config, ws)) p.name];
   }
@@ -2227,9 +2230,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     // onlineUsers is best-effort (dot only). project() is load-bearing for team
     // todos; organization() is best-effort so older relays still show direct
     // project members.
-    final onlineF = widget.client.onlineUsers().catchError((_) => <OnlineUser>[]);
-    final detailF =
-        pid.isEmpty ? Future.value(null) : widget.client.project(pid);
+    final onlineF = widget.client.onlineUsers().catchError(
+      (_) => <OnlineUser>[],
+    );
+    final detailF = pid.isEmpty
+        ? Future.value(null)
+        : widget.client.project(pid);
 
     final ProjectDetail? detail;
     try {
@@ -2246,13 +2252,15 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final projectMembers = detail?.members ?? const <ProjectMember>[];
     final orgMembers = detail?.project.orgId.isNotEmpty == true
         ? await widget.client
-            .organization(detail!.project.orgId)
-            .then((d) => d.members)
-            .catchError((_) => <OrganizationMember>[])
+              .organization(detail!.project.orgId)
+              .then((d) => d.members)
+              .catchError((_) => <OrganizationMember>[])
         : const <OrganizationMember>[];
 
     rememberName(self);
-    rememberName(cur); // keep current assignee selectable even if they lost access
+    // Keep the current assignee selectable even if they lost access; use the
+    // todo's assignee_display_name overlay so this fallback row stays readable.
+    rememberName(cur, currentAssigneeCandidateName(widget.todo));
     for (final m in projectMembers) {
       rememberName(m.identity, m.displayName);
     }
@@ -2276,8 +2284,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       // Default to self, never the current assignee — pre-selecting the existing
       // assignee silently re-assigns to them if the user taps 指派 without
       // changing the radio (the "指派错了" report).
-      _pickedIdentity =
-          self.isNotEmpty ? self : (ids.isNotEmpty ? ids.first : null);
+      _pickedIdentity = self.isNotEmpty
+          ? self
+          : (ids.isNotEmpty ? ids.first : null);
       _loadingMembers = false;
     });
   }
@@ -2314,8 +2323,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       );
     }
     if (_membersError != null) {
-      return Text('加载成员失败: $_membersError',
-          style: TextStyle(color: CcColors.muted));
+      return Text(
+        '加载成员失败: $_membersError',
+        style: TextStyle(color: CcColors.muted),
+      );
     }
     if (_memberIds.isEmpty) {
       return Text(
@@ -2335,7 +2346,8 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           children: _memberIds.map((id) {
             final sel = _pickedIdentity == id;
             final name = (_memberNames[id] ?? '').trim();
-            final primary = (name.isEmpty ? id : name) + (id == self ? '（我）' : '');
+            final primary =
+                (name.isEmpty ? id : name) + (id == self ? '（我）' : '');
             return InkWell(
               onTap: () => setState(() => _pickedIdentity = id),
               child: Padding(
@@ -2354,15 +2366,23 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(primary,
+                          Text(
+                            primary,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: CcColors.text,
+                            ),
+                          ),
+                          if (name.isNotEmpty)
+                            Text(
+                              id,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: 12.5, color: CcColors.text)),
-                          if (name.isNotEmpty)
-                            Text(id,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    fontSize: 11, color: CcColors.muted)),
+                                fontSize: 11,
+                                color: CcColors.muted,
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -2574,8 +2594,11 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       return;
     }
     setState(() => _submitting = true);
-    final err =
-        await r.requestAssign(todoId: widget.todo.id, mode: 'existing', sid: sid);
+    final err = await r.requestAssign(
+      todoId: widget.todo.id,
+      mode: 'existing',
+      sid: sid,
+    );
     if (!mounted) return;
     if (err != null) {
       setState(() => _submitting = false);
@@ -2634,12 +2657,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final VoidCallback? primaryAction = _submitting
         ? null
         : mode == 'existing'
-            ? (_remote != null ? _remoteAssignExisting : _assignToExisting)
-            : mode == 'new'
-                ? (_remote != null ? _remoteAssignNew : _assignToNew)
-                : (_loadingMembers || _pickedIdentity == null)
-                    ? null
-                    : _assignToMember;
+        ? (_remote != null ? _remoteAssignExisting : _assignToExisting)
+        : mode == 'new'
+        ? (_remote != null ? _remoteAssignNew : _assignToNew)
+        : (_loadingMembers || _pickedIdentity == null)
+        ? null
+        : _assignToMember;
     return AlertDialog(
       title: Text(_showSessionModes ? '一键指派' : '指派给成员'),
       content: SizedBox(
@@ -2708,15 +2731,19 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // 已有会话的 workspace→project→会话 三级级联，跟 _newForm() 一个体验。
   Widget _existingForm() {
     final workspaces = {for (final c in _cards) c.workspace}.toList()..sort();
-    final projects = _cards
-        .where((c) => c.workspace == _existingWorkspace)
-        .map((c) => c.project)
-        .toSet()
-        .toList()
-      ..sort();
+    final projects =
+        _cards
+            .where((c) => c.workspace == _existingWorkspace)
+            .map((c) => c.project)
+            .toSet()
+            .toList()
+          ..sort();
     final sessions = _cards
-        .where((c) =>
-            c.workspace == _existingWorkspace && c.project == _existingProject)
+        .where(
+          (c) =>
+              c.workspace == _existingWorkspace &&
+              c.project == _existingProject,
+        )
         .toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2726,23 +2753,25 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           hint: const Text('workspace'),
           // Guard against a value no longer in items — remote session lists
           // (mobile) can change under an open dialog and a stale value asserts.
-          value: workspaces.contains(_existingWorkspace) ? _existingWorkspace : null,
+          value: workspaces.contains(_existingWorkspace)
+              ? _existingWorkspace
+              : null,
           items: [
             for (final w in workspaces)
               DropdownMenuItem(value: w, child: Text(_groupLabel(w))),
           ],
           onChanged: (v) => setState(() {
             _existingWorkspace = v;
-            final projs = _cards
-                .where((c) => c.workspace == v)
-                .map((c) => c.project)
-                .toSet()
-                .toList()
-              ..sort();
+            final projs =
+                _cards
+                    .where((c) => c.workspace == v)
+                    .map((c) => c.project)
+                    .toSet()
+                    .toList()
+                  ..sort();
             _existingProject = projs.isEmpty ? null : projs.first;
             final sess = _cards
-                .where(
-                    (c) => c.workspace == v && c.project == _existingProject)
+                .where((c) => c.workspace == v && c.project == _existingProject)
                 .toList();
             _targetSid = sess.isEmpty ? null : sess.first.sid;
           }),
@@ -2759,7 +2788,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           onChanged: (v) => setState(() {
             _existingProject = v;
             final sess = _cards
-                .where((c) => c.workspace == _existingWorkspace && c.project == v)
+                .where(
+                  (c) => c.workspace == _existingWorkspace && c.project == v,
+                )
                 .toList();
             _targetSid = sess.isEmpty ? null : sess.first.sid;
           }),
@@ -2796,51 +2827,51 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final wss = _workspaceNames;
     final projs = _projectNamesFor(_workspace);
     return Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      DropdownButton<String>(
-        isExpanded: true,
-        hint: const Text('workspace'),
-        value: wss.contains(_workspace) ? _workspace : null,
-        items: wss
-            .map((w) => DropdownMenuItem(value: w, child: Text(w)))
-            .toList(),
-        onChanged: (v) => setState(() {
-          _workspace = v;
-          final ps = _projectNamesFor(_workspace);
-          _project = ps.isEmpty ? null : ps.first;
-        }),
-      ),
-      const SizedBox(height: 8),
-      DropdownButton<String>(
-        isExpanded: true,
-        hint: const Text('project'),
-        value: projs.contains(_project) ? _project : null,
-        items: projs
-            .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-            .toList(),
-        onChanged: (v) => setState(() => _project = v),
-      ),
-      const SizedBox(height: 8),
-      DropdownButton<String>(
-        isExpanded: true,
-        value: _kind,
-        items: const [
-          DropdownMenuItem(value: 'claude', child: Text('Claude')),
-          DropdownMenuItem(value: 'codex', child: Text('Codex')),
-          DropdownMenuItem(value: 'shell', child: Text('Shell')),
-        ],
-        onChanged: (v) => setState(() => _kind = v ?? 'claude'),
-      ),
-      const SizedBox(height: 8),
-      TextField(
-        controller: _branchCtl,
-        decoration: const InputDecoration(
-          labelText: '新建 worktree 分支名（可选）',
-          isDense: true,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButton<String>(
+          isExpanded: true,
+          hint: const Text('workspace'),
+          value: wss.contains(_workspace) ? _workspace : null,
+          items: wss
+              .map((w) => DropdownMenuItem(value: w, child: Text(w)))
+              .toList(),
+          onChanged: (v) => setState(() {
+            _workspace = v;
+            final ps = _projectNamesFor(_workspace);
+            _project = ps.isEmpty ? null : ps.first;
+          }),
         ),
-      ),
-    ],
+        const SizedBox(height: 8),
+        DropdownButton<String>(
+          isExpanded: true,
+          hint: const Text('project'),
+          value: projs.contains(_project) ? _project : null,
+          items: projs
+              .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+              .toList(),
+          onChanged: (v) => setState(() => _project = v),
+        ),
+        const SizedBox(height: 8),
+        DropdownButton<String>(
+          isExpanded: true,
+          value: _kind,
+          items: const [
+            DropdownMenuItem(value: 'claude', child: Text('Claude')),
+            DropdownMenuItem(value: 'codex', child: Text('Codex')),
+            DropdownMenuItem(value: 'shell', child: Text('Shell')),
+          ],
+          onChanged: (v) => setState(() => _kind = v ?? 'claude'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _branchCtl,
+          decoration: const InputDecoration(
+            labelText: '新建 worktree 分支名（可选）',
+            isDense: true,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2851,7 +2882,7 @@ class _HelpText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text, style: const TextStyle(height: 1.35)),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text, style: const TextStyle(height: 1.35)),
+  );
 }

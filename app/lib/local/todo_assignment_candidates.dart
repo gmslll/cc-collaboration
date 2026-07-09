@@ -1,4 +1,5 @@
 import '../api/models.dart';
+import '../api/todo_models.dart';
 
 // assignableTodoMemberIds mirrors the relay's project-todo assignee gate:
 // direct project members are assignable, and team owner/admin are assignable
@@ -28,4 +29,13 @@ List<String> assignableTodoMemberIds({
     if (role == 'owner' || role == 'admin') add(m.identity);
   }
   return ids;
+}
+
+// currentAssigneeCandidateName preserves the display overlay for the current
+// assignee when they are kept selectable even after losing project/team access.
+String currentAssigneeCandidateName(Todo todo) {
+  final id = (todo.assigneeIdentity ?? '').trim();
+  final name = (todo.assigneeDisplayName ?? '').trim();
+  if (id.isEmpty || name.isEmpty || name == id) return '';
+  return name;
 }
