@@ -39,6 +39,12 @@ String projectRoleLabel(String role) {
   }
 }
 
+String projectEditableRoleValue(String role) {
+  final value = role.trim();
+  if (value == 'owner' || value == 'member' || value == 'viewer') return value;
+  return 'member';
+}
+
 String organizationMemberPickerLabel(OrganizationMember member) {
   final role = organizationRoleLabel(member.role, isAdmin: false);
   if (member.displayName.isEmpty) return '${member.identity} · $role';
@@ -120,6 +126,11 @@ bool canRemoveProjectMember(
   ProjectMember member,
   Iterable<ProjectMember> members,
 ) => member.role != 'owner' || projectOwnerCount(members) > 1;
+
+String? projectMemberRoleChangeBlockReason(
+  ProjectMember member,
+  Iterable<ProjectMember> members,
+) => canRemoveProjectMember(member, members) ? null : '至少保留一个项目负责人';
 
 bool canUpsertProjectMemberRole(
   String identity,
@@ -1273,6 +1284,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                       m,
                       d.members,
                     );
+                    final roleChangeBlockReason =
+                        projectMemberRoleChangeBlockReason(m, d.members);
                     return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -1281,15 +1294,61 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                         size: 9,
                         glow: _isOnline(m.identity),
                       ),
-                      title: Text(projectMemberTitle(m)),
-                      subtitle: subtitle == null ? null : Text(subtitle),
+                      title: Text(
+                        projectMemberTitle(m),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: subtitle == null
+                          ? null
+                          : Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            projectRoleLabel(m.role),
-                            style: const TextStyle(color: CcColors.muted),
-                          ),
+                          if (canManage)
+                            DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: projectEditableRoleValue(m.role),
+                                isDense: true,
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: 'owner',
+                                    child: Text('负责人'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'member',
+                                    child: Text('成员'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'viewer',
+                                    child: Text('只读'),
+                                  ),
+                                ],
+                                onChanged: roleChangeBlockReason == null
+                                    ? (role) {
+                                        if (role == null || role == m.role) {
+                                          return;
+                                        }
+                                        _do(
+                                          () => widget.client.addMember(
+                                            widget.id,
+                                            m.identity,
+                                            role,
+                                          ),
+                                        );
+                                      }
+                                    : null,
+                              ),
+                            )
+                          else
+                            Text(
+                              projectRoleLabel(m.role),
+                              style: const TextStyle(color: CcColors.muted),
+                            ),
                           if (canManage)
                             IconButton(
                               tooltip: canRemoveMember ? '移除' : '至少保留一个项目负责人',

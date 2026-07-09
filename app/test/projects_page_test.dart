@@ -53,6 +53,14 @@ void main() {
     expect(projectRoleLabel('custom'), 'custom');
   });
 
+  test('project editable role value falls back to a dropdown-safe role', () {
+    expect(projectEditableRoleValue(' owner '), 'owner');
+    expect(projectEditableRoleValue('member'), 'member');
+    expect(projectEditableRoleValue('viewer'), 'viewer');
+    expect(projectEditableRoleValue(''), 'member');
+    expect(projectEditableRoleValue('custom'), 'member');
+  });
+
   test('organization member picker label localizes roles', () {
     final named = OrganizationMember.fromJson({
       'identity': 'dev@x',
@@ -253,6 +261,31 @@ void main() {
     expect(canRemoveProjectMember(owner, [owner, member]), isFalse);
     expect(canRemoveProjectMember(member, [owner, member]), isTrue);
     expect(canRemoveProjectMember(owner, [owner, secondOwner, member]), isTrue);
+  });
+
+  test('project member role change reason protects the last project owner', () {
+    final owner = ProjectMember.fromJson({
+      'identity': 'owner@x',
+      'role': 'owner',
+    });
+    final member = ProjectMember.fromJson({
+      'identity': 'member@x',
+      'role': 'member',
+    });
+    final secondOwner = ProjectMember.fromJson({
+      'identity': 'owner2@x',
+      'role': 'owner',
+    });
+
+    expect(
+      projectMemberRoleChangeBlockReason(owner, [owner, member]),
+      '至少保留一个项目负责人',
+    );
+    expect(projectMemberRoleChangeBlockReason(member, [owner, member]), isNull);
+    expect(
+      projectMemberRoleChangeBlockReason(owner, [owner, secondOwner, member]),
+      isNull,
+    );
   });
 
   test('project member role updates protect the last project owner', () {
