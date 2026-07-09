@@ -41,6 +41,19 @@ double todoMemberRolePillMaxWidth(
   return available < preferred ? available : preferred;
 }
 
+String todoMemberPrimaryLabel({
+  required String identity,
+  required String displayName,
+  required String selfIdentity,
+}) {
+  final id = identity.trim();
+  final name = displayName.trim();
+  final self = selfIdentity.trim();
+  final label = name.isEmpty ? id : name;
+  if (label.isEmpty) return '';
+  return id.isNotEmpty && id == self ? '$label（我）' : label;
+}
+
 // _BoardColumnDef drives both the kanban board's columns and the mobile
 // card stream's collapsible groups, so they always agree on column meaning.
 // One status = one column now (the real Linear layout this board was always
@@ -2432,8 +2445,11 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
             final sel = _pickedIdentity == id;
             final name = (_memberNames[id] ?? '').trim();
             final role = (_memberRoles[id] ?? '').trim();
-            final primary =
-                (name.isEmpty ? id : name) + (id == self ? '（我）' : '');
+            final primary = todoMemberPrimaryLabel(
+              identity: id,
+              displayName: name,
+              selfIdentity: self,
+            );
             return InkWell(
               onTap: () => setState(() => _pickedIdentity = id),
               child: Padding(
@@ -2454,6 +2470,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                         children: [
                           Text(
                             primary,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 12.5,

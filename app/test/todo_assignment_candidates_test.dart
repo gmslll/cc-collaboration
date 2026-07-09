@@ -135,6 +135,33 @@ void main() {
     },
   );
 
+  test('member primary labels prefer display names and mark self', () {
+    expect(
+      todoMemberPrimaryLabel(
+        identity: ' self@x ',
+        displayName: ' Self Display ',
+        selfIdentity: 'self@x',
+      ),
+      'Self Display（我）',
+    );
+    expect(
+      todoMemberPrimaryLabel(
+        identity: ' member@x ',
+        displayName: '   ',
+        selfIdentity: 'self@x',
+      ),
+      'member@x',
+    );
+    expect(
+      todoMemberPrimaryLabel(
+        identity: '   ',
+        displayName: '   ',
+        selfIdentity: 'self@x',
+      ),
+      '',
+    );
+  });
+
   test('custom project roles keep explainable labels for capped pills', () {
     final members = assignableTodoMembers(
       selfIdentity: '',
