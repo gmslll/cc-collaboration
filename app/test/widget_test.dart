@@ -128,6 +128,19 @@ void main() {
     expect(helper, isNot(contains('showDialog<bool>')));
   });
 
+  test('workspace session rename uses owned controller widget', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final helper = source.substring(
+      source.indexOf('Future<void> _renameSession('),
+      source.indexOf('List<Widget> _worktreeNodes'),
+    );
+
+    expect(helper, contains('showDialog<String>'));
+    expect(helper, contains('WorkspaceSessionRenameDialog('));
+    expect(helper, isNot(contains('TextEditingController')));
+    expect(helper, isNot(contains('showDialog<bool>')));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });

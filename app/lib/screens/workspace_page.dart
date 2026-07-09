@@ -178,6 +178,58 @@ class _WorkspaceFieldsDialogState extends State<WorkspaceFieldsDialog> {
   }
 }
 
+class WorkspaceSessionRenameDialog extends StatefulWidget {
+  final String initialName;
+  final String hint;
+
+  const WorkspaceSessionRenameDialog({
+    super.key,
+    this.initialName = '',
+    required this.hint,
+  });
+
+  @override
+  State<WorkspaceSessionRenameDialog> createState() =>
+      _WorkspaceSessionRenameDialogState();
+}
+
+class _WorkspaceSessionRenameDialogState
+    extends State<WorkspaceSessionRenameDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重命名会话'),
+      content: TextField(
+        controller: _ctl,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: '名称(留空 = 默认)',
+          hintText: widget.hint,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
 // _DiffTreeNode is one node of the directory tree built from a commit's changed
 // files (the right pane of the 3-pane Log).
 class _DiffTreeNode {
@@ -10260,33 +10312,15 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> _renameSession(TerminalSession s) async {
-    final ctl = TextEditingController(text: s.name ?? '');
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重命名会话'),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: '名称(留空 = 默认)',
-            hintText: s.title,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存'),
-          ),
-        ],
+      builder: (_) => WorkspaceSessionRenameDialog(
+        initialName: s.name ?? '',
+        hint: s.title,
       ),
     );
-    if (ok != true) return;
-    final v = ctl.text.trim();
+    if (raw == null) return;
+    final v = raw.trim();
     setState(() => s.name = v.isEmpty ? null : v);
     persistTerms();
   }
