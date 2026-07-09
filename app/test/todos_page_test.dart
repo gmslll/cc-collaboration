@@ -56,6 +56,93 @@ void main() {
     );
   });
 
+  testWidgets('team todo empty state ignores personal-only todos', (
+    tester,
+  ) async {
+    final client = _DelayedAssignTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [
+        Todo.fromJson(
+          _todoJson(
+            id: 'personal-only',
+            title: 'Personal only',
+            projectId: null,
+          ),
+        ),
+      ];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _adminMe(),
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('还没有团队待办'), findsOneWidget);
+    expect(find.text('Relay 团队视图暂时为空。'), findsOneWidget);
+    expect(find.text('无匹配'), findsNothing);
+  });
+
+  testWidgets('team todo empty state separates filters from empty scope', (
+    tester,
+  ) async {
+    final client = _DelayedAssignTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _adminMe(),
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    expect(find.text('Team todo'), findsOneWidget);
+
+    await tester.tap(find.text('已完成'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('没有匹配的待办'), findsOneWidget);
+    expect(find.text('清除筛选'), findsOneWidget);
+    expect(find.text('还没有团队待办'), findsNothing);
+
+    await tester.tap(find.text('清除筛选'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Team todo'), findsOneWidget);
+  });
+
   testWidgets('bulk todo deletion locks while request is pending', (
     tester,
   ) async {
@@ -642,6 +729,7 @@ Map<String, dynamic> _todoJson({
   String id = 't1',
   String title = 'Team todo',
   String? projectId = 'p1',
+  String status = 'todo',
   String? assigneeIdentity,
 }) => {
   'id': id,
@@ -649,7 +737,7 @@ Map<String, dynamic> _todoJson({
   'owner_identity': 'alice@x',
   'title': title,
   'body_md': '',
-  'status': 'todo',
+  'status': status,
   'priority': 'normal',
   'assignee_identity': assigneeIdentity,
   'assignee_display_name': assigneeIdentity == null ? null : 'Bob',

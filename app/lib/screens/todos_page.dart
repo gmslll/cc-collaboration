@@ -1052,17 +1052,7 @@ class _TodosPageState extends State<TodosPage> {
 
   List<Todo> get _filtered {
     final items = _store.all.where((t) {
-      if (_scope == 'personal' && !t.isPersonal) return false;
-      if (_scope == 'team') {
-        if (_teamSource == 'linear') {
-          if (!_matchesLinearSource(t)) return false;
-        } else {
-          if (t.isPersonal) return false;
-          if (_projectFilter != null && t.projectId != _projectFilter) {
-            return false;
-          }
-        }
-      }
+      if (!_matchesCurrentScope(t)) return false;
       if (_statusFilter.isNotEmpty && !_statusFilter.contains(t.status)) {
         return false;
       }
@@ -1071,6 +1061,14 @@ class _TodosPageState extends State<TodosPage> {
     }).toList();
     items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return items;
+  }
+
+  bool _matchesCurrentScope(Todo t) {
+    if (_scope == 'personal') return t.isPersonal;
+    if (_scope != 'team') return true;
+    if (_teamSource == 'linear') return _matchesLinearSource(t);
+    if (t.isPersonal) return false;
+    return _projectFilter == null || t.projectId == _projectFilter;
   }
 
   bool _matchesLinearSource(Todo t) {
@@ -1091,6 +1089,20 @@ class _TodosPageState extends State<TodosPage> {
       return false;
     }
     return true;
+  }
+
+  bool get _hasTodosInCurrentScope => _store.all.any(_matchesCurrentScope);
+
+  bool get _hasActiveTodoFilters =>
+      _statusFilter.isNotEmpty || _groupFilter != null;
+
+  String get _currentProjectFilterName {
+    final id = activeTodoProjectFilter(_projectFilter, _myProjects);
+    if (id == null) return '';
+    for (final project in _myProjects) {
+      if (project.id == id) return project.name.trim();
+    }
+    return '';
   }
 
   // _projectName resolves a team todo's project id to its display name for
@@ -1587,6 +1599,88 @@ class _TodosPageState extends State<TodosPage> {
     );
   }
 
+  Widget _emptyTodoState() {
+    final noMatches = _hasTodosInCurrentScope && _hasActiveTodoFilters;
+    final projectName = _currentProjectFilterName;
+    final linearTeam = _linearTeamKey.trim();
+    final linearProject = _linearProjectId.trim();
+
+    late final IconData icon;
+    late final String title;
+    late final String detail;
+    Widget? action;
+
+    if (noMatches) {
+      icon = Icons.filter_alt_off_rounded;
+      title = '没有匹配的待办';
+      detail = '当前状态或分组筛选下没有待办。';
+      action = OutlinedButton.icon(
+        onPressed: () => setState(() {
+          _statusFilter.clear();
+          _groupFilter = null;
+        }),
+        icon: const Icon(Icons.close_rounded, size: 16),
+        label: const Text('清除筛选'),
+      );
+    } else if (_scope == 'team' && _teamSource == 'linear') {
+      icon = Icons.account_tree_outlined;
+      if (linearTeam.isEmpty) {
+        title = 'Linear 团队未配置';
+        detail = '未选择 team_key，当前没有可显示的 Linear 待办。';
+        action = OutlinedButton.icon(
+          onPressed: _linearConfigDialog,
+          icon: const Icon(Icons.tune_rounded, size: 16),
+          label: const Text('配置 Linear'),
+        );
+      } else if (linearProject.isEmpty) {
+        title = '$linearTeam 没有 Linear 待办';
+        detail = '当前 Linear 团队视图暂时为空。';
+      } else {
+        title = '该 Linear 项目没有待办';
+        detail = '$linearProject 暂时为空。';
+      }
+    } else if (_scope == 'team') {
+      icon = Icons.groups_2_outlined;
+      if (projectName.isEmpty) {
+        title = '还没有团队待办';
+        detail = 'Relay 团队视图暂时为空。';
+      } else {
+        title = '$projectName 没有团队待办';
+        detail = '该项目暂时没有团队待办。';
+      }
+      action = FilledButton.icon(
+        onPressed: _createDialog,
+        icon: const Icon(Icons.add_rounded, size: 16),
+        label: const Text('新建待办'),
+      );
+    } else if (_scope == 'personal') {
+      icon = Icons.person_outline_rounded;
+      title = '还没有个人待办';
+      detail = '个人视图暂时为空。';
+      action = FilledButton.icon(
+        onPressed: _createDialog,
+        icon: const Icon(Icons.add_rounded, size: 16),
+        label: const Text('新建待办'),
+      );
+    } else {
+      icon = Icons.checklist_rtl_rounded;
+      title = '还没有待办';
+      detail = '全部视图暂时为空。';
+      action = FilledButton.icon(
+        onPressed: _createDialog,
+        icon: const Icon(Icons.add_rounded, size: 16),
+        label: const Text('新建待办'),
+      );
+    }
+
+    return _TodoEmptyState(
+      icon: icon,
+      title: title,
+      detail: detail,
+      action: action,
+    );
+  }
+
   Widget _buildList() => asyncBody(
     loading: _store.loading && _store.all.isEmpty,
     error: _store.error,
@@ -1594,7 +1688,7 @@ class _TodosPageState extends State<TodosPage> {
     child: () {
       final items = _filtered;
       if (items.isEmpty) {
-        return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
+        return _emptyTodoState();
       }
       return RefreshIndicator(
         onRefresh: () async {
@@ -1790,7 +1884,7 @@ class _TodosPageState extends State<TodosPage> {
     child: () {
       final items = _filtered;
       if (items.isEmpty) {
-        return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
+        return _emptyTodoState();
       }
       final columns = [
         for (final def in _boardColumnDefs)
@@ -1996,7 +2090,7 @@ class _TodosPageState extends State<TodosPage> {
     child: () {
       final items = _filtered;
       if (items.isEmpty) {
-        return centerMsg(_store.all.isEmpty ? '暂无待办，点右上角 + 新建' : '无匹配');
+        return _emptyTodoState();
       }
       final width = MediaQuery.of(context).size.width;
       final cols = width >= 480 ? 2 : 1;
@@ -2139,6 +2233,64 @@ class _TodosPageState extends State<TodosPage> {
       ),
     );
   }
+}
+
+class _TodoEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String detail;
+  final Widget? action;
+
+  const _TodoEmptyState({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    this.action,
+  });
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: CcColors.accent.withValues(alpha: 0.12),
+                border: Border.all(
+                  color: CcColors.accent.withValues(alpha: 0.34),
+                ),
+                borderRadius: BorderRadius.circular(CcRadius.md),
+              ),
+              child: Icon(icon, color: CcColors.accentBright, size: 22),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              detail,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: CcColors.muted,
+                fontSize: 12.5,
+                height: 1.35,
+              ),
+            ),
+            if (action != null) ...[const SizedBox(height: 14), action!],
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 // _RowThumb lazily fetches the full Todo (GET /v1/todos/{id}) to find its
