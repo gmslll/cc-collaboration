@@ -1121,6 +1121,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project sheet ignores duplicate member add taps', (
+    tester,
+  ) async {
+    final client = _CountingProjectMemberProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'identity',
+    );
+    await tester.enterText(memberField, 'dev@x');
+    await tester.pump();
+
+    final addButton = find.widgetWithText(FilledButton, '加成员');
+    await tester.tap(addButton);
+    await tester.tap(addButton);
+
+    expect(client.addMemberCalls, 1);
+    expect(client.addedMemberIdentity, 'dev@x');
+    await tester.pump();
+    expect(find.text('添加中'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    client.completeAddMember();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('organization sheet keeps member input when adding fails', (
     tester,
   ) async {
@@ -1675,6 +1712,24 @@ class _CountingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
 
   void completeMapRepo() {
     if (!_mapRepoCompleter.isCompleted) _mapRepoCompleter.complete();
+  }
+}
+
+class _CountingProjectMemberProjectsPageFakeClient
+    extends _ProjectsPageFakeClient {
+  final _addMemberCompleter = Completer<void>();
+  int addMemberCalls = 0;
+  String? addedMemberIdentity;
+
+  @override
+  Future<void> addMember(String id, String identity, String role) {
+    addMemberCalls++;
+    addedMemberIdentity = identity;
+    return _addMemberCompleter.future;
+  }
+
+  void completeAddMember() {
+    if (!_addMemberCompleter.isCompleted) _addMemberCompleter.complete();
   }
 }
 
