@@ -63,6 +63,7 @@ class _AccountPageState extends State<AccountPage> {
   bool _changingPw = false;
   bool _creatingToken = false;
   final Set<String> _deletingTokenIds = {};
+  int _tokenLoadGeneration = 0;
 
   // local config.toml editor (desktop only).
   AppConfig? _cfg;
@@ -105,6 +106,26 @@ class _AccountPageState extends State<AccountPage> {
     _loadTokens();
     _loadLocalConfig();
     _loadHookStatus();
+  }
+
+  @override
+  void didUpdateWidget(covariant AccountPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.client, widget.client) &&
+        oldWidget.identity == widget.identity) {
+      return;
+    }
+    _tokenLoadGeneration++;
+    _oldPw.clear();
+    _newPw.clear();
+    _label.clear();
+    setState(() {
+      _tokens = null;
+      _changingPw = false;
+      _creatingToken = false;
+      _deletingTokenIds.clear();
+    });
+    _loadTokens();
   }
 
   @override
@@ -342,12 +363,27 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  Future<void> _loadTokens() async {
+  bool _isCurrentClient(RelayClient client) =>
+      mounted && identical(client, widget.client);
+
+  bool _isCurrentTokenLoad(int generation, RelayClient client) =>
+      _isCurrentClient(client) && generation == _tokenLoadGeneration;
+
+  Future<void> _loadTokens([RelayClient? capturedClient]) async {
+    final generation = ++_tokenLoadGeneration;
+    final client = capturedClient ?? widget.client;
     try {
-      final t = await widget.client.tokens();
-      if (mounted) setState(() => _tokens = t);
+      final t = await client.tokens();
+      if (_isCurrentTokenLoad(generation, client)) {
+        setState(() => _tokens = t);
+      }
     } catch (e) {
-      if (mounted) snack(context, errorText(e));
+      if (!mounted ||
+          !identical(client, widget.client) ||
+          generation != _tokenLoadGeneration) {
+        return;
+      }
+      snack(context, errorText(e));
     }
   }
 
@@ -357,39 +393,52 @@ class _AccountPageState extends State<AccountPage> {
       snack(context, '新密码至少 8 位');
       return;
     }
+    final client = widget.client;
+    final oldPw = _oldPw.text;
+    final newPw = _newPw.text;
     setState(() => _changingPw = true);
     try {
-      await widget.client.changePassword(_oldPw.text, _newPw.text);
-      if (!mounted) return;
+      await client.changePassword(oldPw, newPw);
+      if (!mounted || !identical(client, widget.client)) return;
       _oldPw.clear();
       _newPw.clear();
       snack(context, '密码已更新');
     } catch (e) {
-      if (mounted) snack(context, '改密码失败: ${errorText(e)}');
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '改密码失败: ${errorText(e)}');
     } finally {
-      if (mounted) setState(() => _changingPw = false);
+      if (_isCurrentClient(client)) {
+        setState(() => _changingPw = false);
+      }
     }
   }
 
   Future<void> _createToken() async {
     final label = _label.text.trim();
     if (label.isEmpty || _creatingToken) return;
+    final client = widget.client;
     setState(() => _creatingToken = true);
     try {
-      final raw = await widget.client.createToken(label);
-      if (!mounted) return;
+      final raw = await client.createToken(label);
+      if (!_isCurrentClient(client)) return;
       _label.clear();
-      await _loadTokens();
-      if (mounted) _showToken(raw);
+      await _loadTokens(client);
+      if (!mounted || !identical(client, widget.client)) return;
+      _showToken(raw);
     } catch (e) {
-      if (mounted) snack(context, '生成失败: ${errorText(e)}');
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '生成失败: ${errorText(e)}');
     } finally {
-      if (mounted) setState(() => _creatingToken = false);
+      if (_isCurrentClient(client)) {
+        setState(() => _creatingToken = false);
+      }
     }
   }
 
   Future<void> _deleteToken(MachineToken token) async {
     if (_deletingTokenIds.contains(token.id)) return;
+    final client = widget.client;
+    final tokenId = token.id;
     setState(() => _deletingTokenIds.add(token.id));
     final label = token.label.trim().isEmpty ? token.id : token.label.trim();
     final ok = await confirm(
@@ -398,18 +447,22 @@ class _AccountPageState extends State<AccountPage> {
       title: '删除机器 token',
       okLabel: '删除',
     );
-    if (!mounted) return;
+    if (!_isCurrentClient(client)) return;
     if (!ok) {
-      setState(() => _deletingTokenIds.remove(token.id));
+      setState(() => _deletingTokenIds.remove(tokenId));
       return;
     }
     try {
-      await widget.client.deleteToken(token.id);
-      await _loadTokens();
+      await client.deleteToken(tokenId);
+      if (!_isCurrentClient(client)) return;
+      await _loadTokens(client);
     } catch (e) {
-      if (mounted) snack(context, '$e');
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '$e');
     } finally {
-      if (mounted) setState(() => _deletingTokenIds.remove(token.id));
+      if (_isCurrentClient(client)) {
+        setState(() => _deletingTokenIds.remove(tokenId));
+      }
     }
   }
 

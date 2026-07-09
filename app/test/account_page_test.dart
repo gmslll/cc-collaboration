@@ -20,7 +20,7 @@ void main() {
     final source = File('lib/screens/account_page.dart').readAsStringSync();
     final saveLocalConfig = source.substring(
       source.indexOf('Future<void> _saveLocalConfig() async'),
-      source.indexOf('Future<void> _loadTokens() async'),
+      source.indexOf('bool _isCurrentClient'),
     );
 
     expect(saveLocalConfig, contains('if (_savingCfg) return;'));
@@ -146,6 +146,47 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('token list ignores stale loads after account switch', (
+    tester,
+  ) async {
+    final oldClient = _DelayedTokenListAccountPageFakeClient();
+    final newClient = _DelayedTokenListAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: oldClient, identity: 'old@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(oldClient.tokenLoadCalls, 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: newClient, identity: 'new@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(newClient.tokenLoadCalls, 1);
+
+    newClient.completeTokenLoad(0, 'new laptop');
+    await tester.pump();
+    expect(find.text('new laptop'), findsOneWidget);
+
+    oldClient.completeTokenLoad(0, 'old laptop');
+    await tester.pump();
+    expect(find.text('new laptop'), findsOneWidget);
+    expect(find.text('old laptop'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
   });
 
   testWidgets('machine token deletion requires confirmation', (tester) async {
@@ -276,6 +317,33 @@ class _DelayedAccountPageFakeClient extends RelayClient {
     if (!_tokenCompleter.isCompleted) {
       _tokenCompleter.complete(token);
     }
+  }
+}
+
+class _DelayedTokenListAccountPageFakeClient extends RelayClient {
+  _DelayedTokenListAccountPageFakeClient() : super('http://127.0.0.1', 'tok');
+
+  final _tokenLoads = <Completer<List<MachineToken>>>[];
+
+  int get tokenLoadCalls => _tokenLoads.length;
+
+  @override
+  Future<List<MachineToken>> tokens() {
+    final completer = Completer<List<MachineToken>>();
+    _tokenLoads.add(completer);
+    return completer.future;
+  }
+
+  void completeTokenLoad(int index, String label) {
+    final completer = _tokenLoads[index];
+    if (completer.isCompleted) return;
+    completer.complete([
+      MachineToken.fromJson({
+        'id': 'tok-$label',
+        'label': label,
+        'created_at': '2026-01-01T00:00:00Z',
+      }),
+    ]);
   }
 }
 
