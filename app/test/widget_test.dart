@@ -250,6 +250,10 @@ void main() {
       'role': ' member ',
     });
     final online = OnlineUser.fromJson({'identity': ' alice ', 'online': true});
+    final user = User.fromJson({
+      'identity': ' alice ',
+      'display_name': ' Alice ',
+    });
 
     expect(me.identity, 'alice');
     expect(me.organizations.single.id, 'org-a');
@@ -269,6 +273,8 @@ void main() {
     expect(project.ownerIdentity, 'alice');
     expect(project.role, 'member');
     expect(online.identity, 'alice');
+    expect(user.identity, 'alice');
+    expect(user.displayName, 'Alice');
   });
 
   test('Status.fromJson handles null picked_at', () {

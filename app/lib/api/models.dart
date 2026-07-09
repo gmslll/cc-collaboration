@@ -301,8 +301,8 @@ class User {
   final String identity, displayName;
   final bool isAdmin, disabled;
   User.fromJson(Map<String, dynamic> j)
-      : identity = _s(j['identity']),
-        displayName = _s(j['display_name']),
+      : identity = _trimmed(j['identity']),
+        displayName = _trimmed(j['display_name']),
         isAdmin = j['is_admin'] == true,
         disabled = j['disabled'] == true;
 }
