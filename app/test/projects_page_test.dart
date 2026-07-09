@@ -880,6 +880,9 @@ void main() {
 
     expect(client.createProjectCalls, 1);
     expect(client.createdProjectName, 'Single Project');
+    await tester.pump();
+    expect(find.text('创建中'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     client.completeCreateProject();
     await tester.pumpAndSettle();
@@ -908,6 +911,9 @@ void main() {
 
     expect(client.createOrganizationCalls, 1);
     expect(client.createdOrganizationName, 'Single Team');
+    await tester.pump();
+    expect(find.text('创建中'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     client.completeCreateOrganization();
     await tester.pumpAndSettle();

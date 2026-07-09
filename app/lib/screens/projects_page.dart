@@ -682,8 +682,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
                     ),
                     FilledButton.icon(
                       onPressed: _canCreateOrg ? _createOrg : null,
-                      icon: const Icon(Icons.group_add_rounded, size: 18),
-                      label: const Text('新建团队'),
+                      icon: _creatingOrg
+                          ? const _InlineButtonSpinner()
+                          : const Icon(Icons.group_add_rounded, size: 18),
+                      label: Text(_creatingOrg ? '创建中' : '新建团队'),
                     ),
                     const SizedBox(width: 8),
                     SizedBox(
@@ -731,8 +733,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       ),
                     FilledButton.icon(
                       onPressed: _canCreateProject ? _create : null,
-                      icon: const Icon(Icons.add_rounded, size: 18),
-                      label: const Text('新建项目'),
+                      icon: _creatingProject
+                          ? const _InlineButtonSpinner()
+                          : const Icon(Icons.add_rounded, size: 18),
+                      label: Text(_creatingProject ? '创建中' : '新建项目'),
                     ),
                   ],
                 );
@@ -1085,6 +1089,19 @@ class _MetricPill extends StatelessWidget {
           Text(label, style: CcType.code(size: 11, color: CcColors.muted)),
         ],
       ),
+    );
+  }
+}
+
+class _InlineButtonSpinner extends StatelessWidget {
+  const _InlineButtonSpinner();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 18,
+      height: 18,
+      child: CircularProgressIndicator(strokeWidth: 2),
     );
   }
 }
