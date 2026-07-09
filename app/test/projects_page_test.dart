@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
@@ -23,6 +24,8 @@ const _longCandidateDisplayName =
     'Candidate With A Very Long Display Name For Project Member Dropdown';
 
 void main() {
+  final source = File('lib/screens/projects_page.dart').readAsStringSync();
+
   test('global admin can manage organizations without an org role', () {
     final org = Organization.fromJson({
       'id': 'org1',
@@ -1042,6 +1045,24 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Fresh Project'), findsOneWidget);
     expect(find.text('Stale Project'), findsNothing);
+  });
+
+  test('team and project sheets ignore stale detail loads', () {
+    final orgSheet = source.substring(
+      source.indexOf('class _OrganizationSheetState'),
+      source.indexOf('class _ProjectSheet extends StatefulWidget'),
+    );
+    final projectSheet = source.substring(
+      source.indexOf('class _ProjectSheetState'),
+      source.indexOf('class _CompactProjectChip'),
+    );
+
+    for (final sheet in [orgSheet, projectSheet]) {
+      expect(sheet, contains('int _loadGeneration = 0;'));
+      expect(sheet, contains('final generation = ++_loadGeneration;'));
+      expect(sheet, contains('bool _isCurrentLoad(int generation)'));
+      expect(sheet, contains('if (_isCurrentLoad(generation))'));
+    }
   });
 
   testWidgets('team workspace creation controls shrink on compact widths', (

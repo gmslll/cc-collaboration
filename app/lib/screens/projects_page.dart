@@ -1153,6 +1153,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   bool _projectOwnerGuardComplete = true;
   String? _mutationAction;
   List<String> _uncheckedProjectOwnerNames = const [];
+  int _loadGeneration = 0;
   final _identity = TextEditingController();
   String _role = 'member';
 
@@ -1177,6 +1178,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   bool get _mutating => _mutationAction != null;
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     try {
       final detail = await widget.client.organization(widget.id);
       var soleProjectOwnerNames = const <String, List<String>>{};
@@ -1194,7 +1196,7 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
         }
         soleProjectOwnerNames = soleProjectOwnerNamesByIdentity(projectDetails);
       }
-      if (mounted) {
+      if (_isCurrentLoad(generation)) {
         setState(() {
           _detail = detail;
           _soleProjectOwnerNames = soleProjectOwnerNames;
@@ -1203,9 +1205,13 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
         });
       }
     } catch (e) {
-      if (mounted) snack(context, errorText(e));
+      if (!mounted || generation != _loadGeneration) return;
+      snack(context, errorText(e));
     }
   }
+
+  bool _isCurrentLoad(int generation) =>
+      mounted && generation == _loadGeneration;
 
   Future<bool> _do(
     Future<void> Function() action, {
@@ -1668,6 +1674,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   ProjectDetail? _d;
   List<OrganizationMember> _orgMembers = const [];
   String? _mutationAction;
+  int _loadGeneration = 0;
   final _repo = TextEditingController();
   final _member = TextEditingController();
   String _role = 'member';
@@ -1702,6 +1709,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   bool get _mutating => _mutationAction != null;
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     try {
       final d = await widget.client.project(widget.id);
       var orgMembers = const <OrganizationMember>[];
@@ -1713,16 +1721,20 @@ class _ProjectSheetState extends State<_ProjectSheet> {
           orgMembers = const [];
         }
       }
-      if (mounted) {
+      if (_isCurrentLoad(generation)) {
         setState(() {
           _d = d;
           _orgMembers = orgMembers;
         });
       }
     } catch (e) {
-      if (mounted) snack(context, errorText(e));
+      if (!mounted || generation != _loadGeneration) return;
+      snack(context, errorText(e));
     }
   }
+
+  bool _isCurrentLoad(int generation) =>
+      mounted && generation == _loadGeneration;
 
   Future<bool> _do(
     Future<void> Function() action, {
