@@ -210,32 +210,73 @@ Future<String?> textPrompt(
   String okLabel = '确定',
   bool allowEmpty = false,
 }) async {
-  final ctl = TextEditingController(text: initial);
-  final ok = await showDialog<bool>(
+  final raw = await showDialog<String>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
+    builder: (ctx) => _TextPromptDialog(
+      title: title,
+      hint: hint,
+      initial: initial,
+      okLabel: okLabel,
+    ),
+  );
+  if (raw == null) return null;
+  final text = raw.trim();
+  return (text.isEmpty && !allowEmpty) ? null : text;
+}
+
+class _TextPromptDialog extends StatefulWidget {
+  final String title;
+  final String? hint;
+  final String initial;
+  final String okLabel;
+
+  const _TextPromptDialog({
+    required this.title,
+    required this.hint,
+    required this.initial,
+    required this.okLabel,
+  });
+
+  @override
+  State<_TextPromptDialog> createState() => _TextPromptDialogState();
+}
+
+class _TextPromptDialogState extends State<_TextPromptDialog> {
+  late final TextEditingController _ctl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
       content: TextField(
-        controller: ctl,
+        controller: _ctl,
         autofocus: true,
-        decoration: InputDecoration(hintText: hint),
-        onSubmitted: (_) => Navigator.pop(ctx, true),
+        decoration: InputDecoration(hintText: widget.hint),
+        onSubmitted: (_) => _submit(),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
+          onPressed: () => Navigator.pop(context),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: Text(okLabel),
-        ),
+        FilledButton(onPressed: _submit, child: Text(widget.okLabel)),
       ],
-    ),
-  );
-  if (ok != true) return null;
-  final text = ctl.text.trim();
-  return (text.isEmpty && !allowEmpty) ? null : text;
+    );
+  }
 }
 
 // centerMsg is the shared muted empty/placeholder state, optionally with a retry.
