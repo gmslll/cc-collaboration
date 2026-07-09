@@ -142,6 +142,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     if (body.isEmpty) return;
     try {
       await _client.postComment(_id, body);
+      if (!mounted) return;
       _commentCtl.clear();
       await reloadComments();
     } catch (e) {
@@ -152,6 +153,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   Future<void> _ack() async {
     try {
       await _client.ack(_id);
+      if (!mounted) return;
       _snack('已标记接收');
       _loadExtras();
       widget.onChanged?.call();
@@ -175,9 +177,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     if (!File(RepoConfig.pathFor(path)).existsSync()) {
       if (!await _confirmInit(p, path)) return;
     }
+    if (!mounted) return;
     setState(() => _picking = true);
     try {
       final r = await Cli.pickup(p.id, path);
+      if (!mounted) return;
       widget.onOpenTerminal?.call(r.worktreeDir, r.agentCmd);
       if (mounted) setState(() => _picking = false);
     } catch (e) {
@@ -235,6 +239,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     if (!mounted) return;
     try {
       await _client.retract(p.id, reason.trim());
+      if (!mounted) return;
       _snack('已撤回');
       _loadExtras();
       widget.onChanged?.call();
@@ -258,6 +263,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     }
     try {
       await _client.reassign(p.id, to, reason);
+      if (!mounted) return;
       _snack('已转交');
       _loadExtras();
       widget.onChanged?.call();

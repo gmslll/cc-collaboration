@@ -942,6 +942,42 @@ void main() {
     expectGuardBefore(
       between(
         'lib/screens/handoff_detail_view.dart',
+        'Future<void> _postComment(',
+        'Future<void> _ack(',
+      ),
+      'await _client.postComment',
+      '_commentCtl.clear',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
+        'Future<void> _ack(',
+        'Future<void> _pickup(',
+      ),
+      'await _client.ack',
+      '_loadExtras',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
+        'Future<void> _pickup(',
+        '// _confirmInit prompts',
+      ),
+      '_confirmInit(p, path)) return;',
+      'setState(() => _picking = true)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
+        'Future<void> _pickup(',
+        '// _confirmInit prompts',
+      ),
+      'final r = await Cli.pickup',
+      'widget.onOpenTerminal',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
         'Future<void> _retract(',
         'Future<void> _reassign(',
       ),
@@ -951,11 +987,29 @@ void main() {
     expectGuardBefore(
       between(
         'lib/screens/handoff_detail_view.dart',
+        'Future<void> _retract(',
+        'Future<void> _reassign(',
+      ),
+      'await _client.retract',
+      'widget.onChanged',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
         'Future<void> _reassign(',
         'Widget _header(',
       ),
       'if (result == null) return;',
       '_client.reassign',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/handoff_detail_view.dart',
+        'Future<void> _reassign(',
+        'Widget _header(',
+      ),
+      'await _client.reassign',
+      'widget.onChanged',
     );
     expectGuardBefore(
       between(
