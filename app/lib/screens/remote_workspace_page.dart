@@ -1194,7 +1194,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                     value: project,
                     items: [
                       for (final r in _orderedRoots())
-                        DropdownMenuItem(value: r, child: Text(r.name)),
+                        DropdownMenuItem(
+                          value: r,
+                          child: Text(
+                            r.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                     ],
                     onChanged: (v) => setLocal(() {
                       if (v == null || v == project) return;
@@ -1210,13 +1217,19 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                     items: [
                       DropdownMenuItem(
                         value: project.path,
-                        child: Text('主仓 (${project.name})'),
+                        child: Text(
+                          '主仓 (${project.name})',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       for (final w in wts)
                         DropdownMenuItem(
                           value: w.path,
                           child: Text(
                             w.branch.isEmpty ? pathBaseName(w.path) : w.branch,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                     ],

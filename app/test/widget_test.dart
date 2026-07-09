@@ -57,6 +57,23 @@ void main() {
     );
   });
 
+  test('remote new-session dropdown labels are width constrained', () {
+    final remote = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+
+    expect(remote, contains('overflow: TextOverflow.ellipsis'));
+    expect(
+      remote,
+      isNot(contains('DropdownMenuItem(value: r, child: Text(r.name))')),
+    );
+    expect(remote, contains("'主仓 (\${project.name})'"));
+    expect(
+      remote,
+      contains('w.branch.isEmpty ? pathBaseName(w.path) : w.branch'),
+    );
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
