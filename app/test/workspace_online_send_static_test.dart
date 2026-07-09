@@ -374,6 +374,8 @@ void main() {
   test('incoming peer message dialog uses responsive session labels', () {
     expect(source, contains('preferred: 460'));
     expect(source, contains('onlineSendSessionMenuMaxHeight'));
+    expect(source, contains('onlineSendIncomingBodyMaxHeight'));
+    expect(source, isNot(contains('BoxConstraints(maxHeight: 220)')));
     expect(source, contains('menuMaxHeight:'));
     expect(source, contains('incomingMessageTargetIsOpen'));
     expect(source, contains('incomingMessageSessionMatchesProject'));

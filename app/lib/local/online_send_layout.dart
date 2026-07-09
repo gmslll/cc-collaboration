@@ -45,6 +45,18 @@ double onlineSendSessionMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double onlineSendIncomingBodyMaxHeight(
+  Size screenSize, {
+  double preferred = 220,
+  double minHeight = 96,
+  double maxFraction = 0.32,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  final capped = available < preferred ? available : preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 double onlineSendParkedListMaxHeight(
   Size screenSize, {
   double preferred = 360,

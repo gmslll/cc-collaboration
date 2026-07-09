@@ -1734,7 +1734,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ),
                   const SizedBox(height: 8),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 220),
+                    constraints: BoxConstraints(
+                      maxHeight: onlineSendIncomingBodyMaxHeight(
+                        MediaQuery.sizeOf(ctx),
+                      ),
+                    ),
                     child: SingleChildScrollView(
                       child: Text(body, style: CcType.code(size: 12)),
                     ),

@@ -44,6 +44,15 @@ void main() {
     expect(onlineSendSessionMenuMaxHeight(const Size(320, 220)), 160);
   });
 
+  test('incoming online message body height is responsive', () {
+    expect(onlineSendIncomingBodyMaxHeight(const Size(1024, 900)), 220);
+    expect(
+      onlineSendIncomingBodyMaxHeight(const Size(320, 420)),
+      closeTo(134.4, 0.001),
+    );
+    expect(onlineSendIncomingBodyMaxHeight(const Size(320, 220)), 96);
+  });
+
   test('online send parked message list height is capped', () {
     expect(onlineSendParkedListMaxHeight(const Size(1024, 900)), 360);
     expect(
