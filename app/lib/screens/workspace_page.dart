@@ -1444,7 +1444,11 @@ class _WorkspacePageState extends State<WorkspacePage>
               horizontal: 16,
               vertical: 24,
             ),
-            title: Text('$from 发来内容'),
+            title: Text(
+              '$from 发来内容',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             content: SizedBox(
               width: dialogWidth,
               child: Column(

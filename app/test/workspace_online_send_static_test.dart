@@ -43,6 +43,9 @@ void main() {
     expect(source, contains('preferred: 460'));
     expect(source, contains('onlineSendSessionMenuMaxHeight'));
     expect(source, contains('menuMaxHeight:'));
+    expect(source, isNot(contains("title: Text('\$from 发来内容')")));
+    expect(source, contains("'\$from 发来内容',\n              maxLines: 1"));
+    expect(source, contains('overflow: TextOverflow.ellipsis'));
     expect(
       source,
       isNot(contains('DropdownMenuItem(value: s, child: Text(s.label))')),
