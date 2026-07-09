@@ -189,6 +189,76 @@ func TestTodoTeamViewerReadOnly(t *testing.T) {
 	}
 }
 
+func TestTodoAssignSessionMustMatchTodoProjectWhenPublished(t *testing.T) {
+	srv, st, _ := todoTestRig(t)
+	mkUser(t, st, "owner@x", "ownerpass1")
+	mkUser(t, st, "member@x", "memberpass1")
+	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
+	memberTok := loginToken(t, srv.URL, "member@x", "memberpass1")
+
+	createProject := func(name string) string {
+		t.Helper()
+		code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": name})
+		if code != http.StatusCreated {
+			t.Fatalf("create project %q = %d %s", name, code, body)
+		}
+		var proj struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(body, &proj); err != nil {
+			t.Fatalf("decode project %q: %v", name, err)
+		}
+		if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
+			map[string]string{"identity": "member@x", "role": "member"}); code != http.StatusOK {
+			t.Fatalf("add member to %q = %d %s", name, code, body)
+		}
+		return proj.ID
+	}
+	projectA := createProject("Project A")
+	projectB := createProject("Project B")
+
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", memberTok, map[string]any{"sessions": []map[string]string{
+		{"id": "same", "label": "same project", "project_id": projectA, "project": "Project A"},
+		{"id": "other", "label": "other project", "project_id": projectB, "project": "Project B"},
+	}}); code != http.StatusOK {
+		t.Fatalf("publish member sessions = %d %s", code, body)
+	}
+
+	td := createTodoHTTP(t, srv.URL, ownerTok, map[string]any{"title": "team task", "project_id": projectA})
+	if code, body := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/assign", ownerTok, map[string]any{
+		"assignee_identity":      "member@x",
+		"assignee_session_id":    "same",
+		"assignee_session_label": "same project",
+	}); code != http.StatusOK {
+		t.Fatalf("assign same-project session = %d %s", code, body)
+	}
+
+	if code, _ := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/assign", ownerTok, map[string]any{
+		"assignee_identity":      "member@x",
+		"assignee_session_id":    "other",
+		"assignee_session_label": "other project",
+	}); code != http.StatusForbidden {
+		t.Fatalf("assign cross-project session = %d, want 403", code)
+	}
+
+	code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID, ownerTok)
+	if code != http.StatusOK {
+		t.Fatalf("get after rejected assign = %d %s", code, body)
+	}
+	got := decodeTodo(t, body)
+	if got.AssigneeSessionID != "same" {
+		t.Fatalf("rejected cross-project assign changed session id to %q", got.AssigneeSessionID)
+	}
+
+	if code, body := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/assign", ownerTok, map[string]any{
+		"assignee_identity":      "member@x",
+		"assignee_session_id":    "legacy-offline-session",
+		"assignee_session_label": "manual resume",
+	}); code != http.StatusOK {
+		t.Fatalf("assign unpublished legacy session = %d %s", code, body)
+	}
+}
+
 func TestTodoMutationsRejectTrailingJSON(t *testing.T) {
 	srv, st, _ := todoTestRig(t)
 	mkUser(t, st, "alice@x", "alicepass1")

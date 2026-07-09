@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -437,6 +438,18 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if strings.TrimSpace(req.AssigneeIdentity) != "" && strings.TrimSpace(req.AssigneeSessionID) != "" {
+		td, err := s.Store.GetTodo(r.Context(), id, identity)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if err := s.validateTodoAssignSession(r.Context(), identity, td, req.AssigneeIdentity, req.AssigneeSessionID); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+
 	updated, err := s.Store.AssignTodo(r.Context(), id, identity, req.AssigneeIdentity, req.AssigneeSessionID, req.AssigneeSessionLabel,
 		req.AssigneeAgentSessionID, req.AssigneeWorkdir, req.AssigneeAgentKind)
 	if err != nil {
@@ -445,6 +458,33 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishTodoEvent(r.Context(), sse.EventTypeTodoAssigned, updated)
 	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) validateTodoAssignSession(ctx context.Context, caller string, todo todoschema.Todo, assigneeIdentity, assigneeSessionID string) error {
+	assigneeIdentity = strings.TrimSpace(assigneeIdentity)
+	assigneeSessionID = strings.TrimSpace(assigneeSessionID)
+	if s.Sessions == nil || assigneeIdentity == "" || assigneeSessionID == "" {
+		return nil
+	}
+	session, ok := publishedSession(s.Sessions.get(assigneeIdentity), assigneeSessionID)
+	if !ok {
+		// Keep legacy/manual CLI assignment working: the durable resume trio can
+		// outlive the transient relay session registry.
+		return nil
+	}
+	visible, err := s.sessionVisibleTo(ctx, caller, assigneeIdentity, session)
+	if err != nil {
+		return err
+	}
+	if !visible {
+		return fmt.Errorf("%w: %s cannot assign todo %s to session %s", store.ErrForbidden, caller, todo.ID, assigneeSessionID)
+	}
+	todoProjectID := strings.TrimSpace(todo.ProjectID)
+	sessionProjectID := strings.TrimSpace(session.ProjectID)
+	if todoProjectID != "" && sessionProjectID != "" && todoProjectID != sessionProjectID {
+		return fmt.Errorf("%w: session %s belongs to project %s, not todo project %s", store.ErrForbidden, assigneeSessionID, sessionProjectID, todoProjectID)
+	}
+	return nil
 }
 
 // recurAdvanceTodo manually forces a due, recurring, done todo back to
