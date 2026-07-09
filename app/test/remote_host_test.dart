@@ -62,6 +62,39 @@ void main() {
     expect(remoteGitFilePathAllowed('dir//file.txt'), isFalse);
   });
 
+  test('remote git ref gates reject revision and pathspec syntax', () {
+    expect(remoteGitRefNameAllowed('main'), isTrue);
+    expect(remoteGitRefNameAllowed('feature/team-1'), isTrue);
+    expect(remoteGitRefNameAllowed('bugfix/foo.bar'), isTrue);
+    expect(remoteGitRefNameAllowed('origin/main'), isTrue);
+    expect(remoteGitRefNameAllowed('feature..x'), isFalse);
+    expect(remoteGitRefNameAllowed('bad@{1}'), isFalse);
+    expect(remoteGitRefNameAllowed('HEAD'), isFalse);
+    expect(remoteGitRefNameAllowed('-bad'), isFalse);
+    expect(remoteGitRefNameAllowed('refs/heads/main'), isFalse);
+    expect(remoteGitRefNameAllowed('.bad'), isFalse);
+    expect(remoteGitRefNameAllowed('foo/.bad'), isFalse);
+    expect(remoteGitRefNameAllowed('bad.lock'), isFalse);
+    expect(remoteGitRefNameAllowed('bad.lock/name'), isFalse);
+    expect(remoteGitRefNameAllowed('bad space'), isFalse);
+    expect(remoteGitRefNameAllowed('bad//name'), isFalse);
+    expect(remoteGitRefNameAllowed('bad:name'), isFalse);
+
+    expect(remoteGitStartRefAllowed(null), isTrue);
+    expect(remoteGitStartRefAllowed(''), isTrue);
+    expect(remoteGitStartRefAllowed('origin/main'), isTrue);
+    expect(remoteGitStartRefAllowed('05c4749'), isTrue);
+    expect(remoteGitStartRefAllowed('HEAD~1'), isFalse);
+    expect(remoteGitStartRefAllowed(r'main^{tree}'), isFalse);
+    expect(remoteGitStartRefAllowed(':(top)x'), isFalse);
+
+    expect(remoteGitStashRefAllowed(r'stash@{0}'), isTrue);
+    expect(remoteGitStashRefAllowed(r'stash@{12}'), isTrue);
+    expect(remoteGitStashRefAllowed(r'stash@{-1}'), isFalse);
+    expect(remoteGitStashRefAllowed(r'stash@{0} --'), isFalse);
+    expect(remoteGitStashRefAllowed('HEAD'), isFalse);
+  });
+
   test(
     'remote fs.write rejects paths escaping root through symlinks',
     () async {
@@ -111,6 +144,55 @@ void main() {
       'from': 8,
       'path': root.path,
       'file': '../outside.txt',
+    });
+    for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(host.sent, [
+      {'t': 'git.err', 'to': 8, 'msg': 'forbidden'},
+    ]);
+  });
+
+  test('remote git.createBranch rejects unsafe refs before git runs', () async {
+    final root = await Directory.systemTemp.createTemp('cc-remote-git-root');
+    addTearDown(() => root.delete(recursive: true));
+    final host = _TestRemoteHost(
+      sessions: const [],
+      roots: [RemoteRoot('repo', root.path, 'ws')],
+    );
+    addTearDown(host.dispose);
+
+    host.onFrame({
+      't': 'git.createBranch',
+      'from': 8,
+      'path': root.path,
+      'branch': 'feature/test',
+      'start': r'HEAD~1',
+    });
+    for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(host.sent, [
+      {'t': 'git.err', 'to': 8, 'msg': 'forbidden'},
+    ]);
+  });
+
+  test('remote git.stashPop rejects unsafe ref before git runs', () async {
+    final root = await Directory.systemTemp.createTemp('cc-remote-git-root');
+    addTearDown(() => root.delete(recursive: true));
+    final host = _TestRemoteHost(
+      sessions: const [],
+      roots: [RemoteRoot('repo', root.path, 'ws')],
+    );
+    addTearDown(host.dispose);
+
+    host.onFrame({
+      't': 'git.stashPop',
+      'from': 8,
+      'path': root.path,
+      'ref': r'stash@{0} --',
     });
     for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 10));

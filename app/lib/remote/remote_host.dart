@@ -37,6 +37,40 @@ bool remoteGitFilePathAllowed(String? file) {
   return true;
 }
 
+bool remoteGitRefNameAllowed(String? value) {
+  final ref = (value ?? '').trim();
+  if (ref.isEmpty || ref.length > 200) return false;
+  if (ref == '@' ||
+      ref == 'HEAD' ||
+      ref.startsWith('-') ||
+      ref.startsWith('/') ||
+      ref.endsWith('/') ||
+      ref.startsWith('refs/')) {
+    return false;
+  }
+  if (ref.contains(r'\') ||
+      ref.contains('..') ||
+      ref.contains('@{') ||
+      ref.contains('//')) {
+    return false;
+  }
+  if (ref.endsWith('.') || ref.endsWith('.lock')) return false;
+  for (final part in ref.split('/')) {
+    if (part.startsWith('.') || part.endsWith('.lock')) return false;
+  }
+  return !RegExp(r'[\x00-\x20\x7f~^:?*\[]').hasMatch(ref);
+}
+
+bool remoteGitStartRefAllowed(String? value) {
+  final ref = (value ?? '').trim();
+  if (ref.isEmpty) return true;
+  return remoteGitRefNameAllowed(ref) ||
+      RegExp(r'^[0-9a-fA-F]{4,40}$').hasMatch(ref);
+}
+
+bool remoteGitStashRefAllowed(String? value) =>
+    RegExp(r'^stash@\{[0-9]+\}$').hasMatch((value ?? '').trim());
+
 // _isHighSurrogate reports whether [u] is the leading half of a UTF-16 surrogate
 // pair, so backlog replay never splits an astral char (emoji) across two frames.
 bool _isHighSurrogate(int u) => u >= 0xd800 && u <= 0xdbff;
@@ -1028,9 +1062,25 @@ class RemoteHost extends RemoteChannel {
     }
     final file = f['file'] as String?;
     final branch = f['branch'] as String?;
+    final start = f['start'] as String?;
+    final stashRef = f['ref'] as String?;
     final isFileOp =
         op == 'git.stage' || op == 'git.unstage' || op == 'git.discard';
     if (isFileOp && !remoteGitFilePathAllowed(file)) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    if (op == 'git.checkout' && !remoteGitRefNameAllowed(branch)) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    if (op == 'git.createBranch' &&
+        (!remoteGitRefNameAllowed(branch) ||
+            !remoteGitStartRefAllowed(start))) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    if (op == 'git.stashPop' && !remoteGitStashRefAllowed(stashRef)) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
       return;
     }
@@ -1073,13 +1123,12 @@ class RemoteHost extends RemoteChannel {
           if (branch != null) await gitCheckout(path, branch);
         case 'git.createBranch':
           if (branch != null) {
-            await gitCreateBranch(path, branch, start: f['start'] as String?);
+            await gitCreateBranch(path, branch, start: start);
           }
         case 'git.stash':
           await gitStashPush(path, (f['message'] as String?) ?? '');
         case 'git.stashPop':
-          final ref = f['ref'] as String?;
-          if (ref != null) await gitStashPop(path, ref);
+          if (stashRef != null) await gitStashPop(path, stashRef);
       }
       send({'t': 'git.op.ok', 'to': to, 'op': op});
     } catch (e) {
