@@ -1584,64 +1584,73 @@ class _WorkspacePageState extends State<WorkspacePage>
                       padding: EdgeInsets.all(8),
                       child: Text('没有待处理的消息'),
                     )
-                  : ListView(
-                      shrinkWrap: true,
-                      children: [
-                        for (final m in List.of(_parked))
-                          ListTile(
-                            dense: true,
-                            title: Text(
-                              '${m.from} → '
-                              '${sessionById(m.sessionId)?.label ?? m.sessionId}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              m.body.split('\n').first,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: SizedBox(
-                              width: 92,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  TextButton(
-                                    onPressed: () {
-                                      _mutateParked(() => _parked.remove(m));
-                                      Navigator.pop(ctx);
-                                      _showIncomingMessage(
-                                        m.from,
-                                        m.sessionId,
-                                        m.body,
-                                      );
-                                    },
-                                    child: const Text('处理'),
-                                  ),
-                                  SizedBox(
-                                    width: 32,
-                                    height: 32,
-                                    child: IconButton(
-                                      padding: EdgeInsets.zero,
-                                      tooltip: '忽略',
-                                      visualDensity: VisualDensity.compact,
-                                      icon: const Icon(
-                                        Icons.close_rounded,
-                                        size: 16,
-                                      ),
+                  : ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: onlineSendParkedListMaxHeight(
+                          MediaQuery.sizeOf(ctx),
+                        ),
+                      ),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final m in List.of(_parked))
+                            ListTile(
+                              dense: true,
+                              title: Text(
+                                '${m.from} → '
+                                '${sessionById(m.sessionId)?.label ?? m.sessionId}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                m.body.split('\n').first,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: SizedBox(
+                                width: 92,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    TextButton(
                                       onPressed: () {
                                         _mutateParked(() => _parked.remove(m));
-                                        setSt(
-                                          () {},
-                                        ); // also refresh this dialog's list
+                                        Navigator.pop(ctx);
+                                        _showIncomingMessage(
+                                          m.from,
+                                          m.sessionId,
+                                          m.body,
+                                        );
                                       },
+                                      child: const Text('处理'),
                                     ),
-                                  ),
-                                ],
+                                    SizedBox(
+                                      width: 32,
+                                      height: 32,
+                                      child: IconButton(
+                                        padding: EdgeInsets.zero,
+                                        tooltip: '忽略',
+                                        visualDensity: VisualDensity.compact,
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          size: 16,
+                                        ),
+                                        onPressed: () {
+                                          _mutateParked(
+                                            () => _parked.remove(m),
+                                          );
+                                          setSt(
+                                            () {},
+                                          ); // also refresh this dialog's list
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
             ),
             actions: [

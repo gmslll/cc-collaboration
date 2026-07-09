@@ -43,4 +43,13 @@ void main() {
     );
     expect(onlineSendSessionMenuMaxHeight(const Size(320, 220)), 160);
   });
+
+  test('online send parked message list height is capped', () {
+    expect(onlineSendParkedListMaxHeight(const Size(1024, 900)), 360);
+    expect(
+      onlineSendParkedListMaxHeight(const Size(320, 420)),
+      closeTo(260.4, 0.001),
+    );
+    expect(onlineSendParkedListMaxHeight(const Size(320, 220)), 160);
+  });
 }
