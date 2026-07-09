@@ -49,6 +49,9 @@ func (s *Store) CreateOrganization(ctx context.Context, id, name, owner string, 
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
 	owner = strings.TrimSpace(owner)
+	if id == "" || name == "" || owner == "" {
+		return ErrInvalid
+	}
 	active, err := s.UserActive(ctx, owner)
 	if err != nil {
 		return err
@@ -76,6 +79,9 @@ func (s *Store) CreateOrganization(ctx context.Context, id, name, owner string, 
 
 func (s *Store) EnsureDefaultOrganization(ctx context.Context, owner string, now time.Time) (Organization, error) {
 	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return Organization{}, ErrInvalid
+	}
 	id := defaultOrganizationID(owner)
 	if org, err := s.GetOrganization(ctx, id); err == nil {
 		return org, nil
@@ -182,6 +188,9 @@ func (s *Store) AddOrganizationMember(ctx context.Context, orgID, identity, role
 	orgID = strings.TrimSpace(orgID)
 	identity = strings.TrimSpace(identity)
 	role = strings.TrimSpace(role)
+	if orgID == "" || identity == "" || !ValidOrgRole(role) {
+		return ErrInvalid
+	}
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return err

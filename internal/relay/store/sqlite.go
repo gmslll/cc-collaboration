@@ -462,6 +462,7 @@ SELECT DISTINCT p.org_id, pm.identity, pm.role
 
 var ErrNotFound = errors.New("handoff not found")
 var ErrLastOwner = errors.New("last owner cannot be removed")
+var ErrInvalid = errors.New("invalid input")
 
 func (s *Store) Insert(ctx context.Context, p *handoffschema.Package) error {
 	tx, err := s.db.BeginTx(ctx, nil)

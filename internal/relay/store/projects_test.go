@@ -175,6 +175,49 @@ func TestProjectStoreNormalizesTeamInputs(t *testing.T) {
 	}
 }
 
+func TestProjectStoreRejectsBlankTeamInputs(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, " ", "Kunlun", "owner@x", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank project id: want ErrInvalid, got %v", err)
+	}
+	if err := st.CreateProject(ctx, "p1", " ", "owner@x", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank project name: want ErrInvalid, got %v", err)
+	}
+	if err := st.CreateProject(ctx, "p1", "Kunlun", " ", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank project owner: want ErrInvalid, got %v", err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", " ", "App", "owner@x", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank project org: want ErrInvalid, got %v", err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "App", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RenameProject(ctx, "p1", " "); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank rename: want ErrInvalid, got %v", err)
+	}
+	if err := st.MapRepo(ctx, " ", "p1"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank repo: want ErrInvalid, got %v", err)
+	}
+	if err := st.MapRepo(ctx, "repo", " "); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank repo project: want ErrInvalid, got %v", err)
+	}
+	if err := st.AddMember(ctx, "p1", " ", RoleMember); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank project member: want ErrInvalid, got %v", err)
+	}
+	if err := st.AddMember(ctx, "p1", "member@x", " "); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank project role: want ErrInvalid, got %v", err)
+	}
+	if err := st.AddMember(ctx, "p1", "member@x", "admin"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid project role: want ErrInvalid, got %v", err)
+	}
+}
+
 func TestListMembersHidesDisabledUsers(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

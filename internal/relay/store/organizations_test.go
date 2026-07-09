@@ -93,6 +93,37 @@ func TestOrganizationStoreNormalizesTeamInputs(t *testing.T) {
 	}
 }
 
+func TestOrganizationStoreRejectsBlankTeamInputs(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateOrganization(ctx, " ", "Acme", "owner@x", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank organization id: want ErrInvalid, got %v", err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", " ", "owner@x", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank organization name: want ErrInvalid, got %v", err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", " ", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank organization owner: want ErrInvalid, got %v", err)
+	}
+	if _, err := st.EnsureDefaultOrganization(ctx, " ", now); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank default organization owner: want ErrInvalid, got %v", err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", " ", OrgRoleMember); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank organization member: want ErrInvalid, got %v", err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "member@x", " "); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank organization role: want ErrInvalid, got %v", err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "member@x", "viewer"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid organization role: want ErrInvalid, got %v", err)
+	}
+}
+
 func TestOrganizationOwnerInvariantIgnoresDisabledOwners(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

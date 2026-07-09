@@ -321,5 +321,9 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 		http.Error(w, "last owner cannot be removed", http.StatusConflict)
 		return
 	}
+	if errors.Is(err, store.ErrInvalid) {
+		http.Error(w, "invalid input", http.StatusBadRequest)
+		return
+	}
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }

@@ -65,6 +65,9 @@ func (s *Store) CreateProject(ctx context.Context, id, name, owner string, now t
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
 	owner = strings.TrimSpace(owner)
+	if id == "" || name == "" || owner == "" {
+		return ErrInvalid
+	}
 	org, err := s.EnsureDefaultOrganization(ctx, owner, now)
 	if err != nil {
 		return err
@@ -79,6 +82,9 @@ func (s *Store) CreateProjectInOrg(ctx context.Context, id, orgID, name, owner s
 	orgID = strings.TrimSpace(orgID)
 	name = strings.TrimSpace(name)
 	owner = strings.TrimSpace(owner)
+	if id == "" || orgID == "" || name == "" || owner == "" {
+		return ErrInvalid
+	}
 	active, err := s.UserActive(ctx, owner)
 	if err != nil {
 		return err
@@ -245,6 +251,9 @@ func scanProjectWithRole(row scanner) (Project, error) {
 func (s *Store) RenameProject(ctx context.Context, id, name string) error {
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
+	if id == "" || name == "" {
+		return ErrInvalid
+	}
 	return s.execAffecting(ctx, `UPDATE projects SET name = ? WHERE id = ?`, name, id)
 }
 
@@ -258,6 +267,9 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 func (s *Store) MapRepo(ctx context.Context, repoName, projectID string) error {
 	repoName = strings.TrimSpace(repoName)
 	projectID = strings.TrimSpace(projectID)
+	if repoName == "" || projectID == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO project_repos(repo_name, project_id) VALUES(?, ?)
 		 ON CONFLICT(repo_name) DO UPDATE SET project_id = excluded.project_id`,
@@ -294,6 +306,9 @@ func (s *Store) AddMember(ctx context.Context, projectID, identity, role string)
 	projectID = strings.TrimSpace(projectID)
 	identity = strings.TrimSpace(identity)
 	role = strings.TrimSpace(role)
+	if projectID == "" || identity == "" || !ValidRole(role) {
+		return ErrInvalid
+	}
 	active, err := s.UserActive(ctx, identity)
 	if err != nil {
 		return err
