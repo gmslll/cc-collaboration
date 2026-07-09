@@ -247,6 +247,23 @@ void main() {
     );
   });
 
+  test('workspace project order sheet labels are width constrained', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final sheet = source.substring(
+      source.indexOf('void _openProjectOrderSheet('),
+      source.indexOf('PopupMenuButton<String> _projectMenu('),
+    );
+
+    expect(sheet, contains("'排序项目 · \${ws.name.isEmpty ? '默认' : ws.name}'"));
+    expect(sheet, isNot(contains('title: Text(p.name),')));
+    expect(sheet, contains('maxLines: 1'));
+    expect(sheet, contains('overflow: TextOverflow.ellipsis'));
+    expect(
+      sheet,
+      contains('p.name,\n                              maxLines: 1'),
+    );
+  });
+
   test('terminal paste guards mounted before writing to the pty', () {
     final source = File('lib/screens/terminal_pane.dart').readAsStringSync();
 

@@ -10832,6 +10832,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Text(
                       '排序项目 · ${ws.name.isEmpty ? '默认' : ws.name}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -10850,7 +10852,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                             key: ObjectKey(p),
                             dense: true,
                             leading: const Icon(Icons.drag_handle, size: 20),
-                            title: Text(p.name),
+                            title: Text(
+                              p.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             subtitle: Text(
                               p.path,
                               maxLines: 1,
