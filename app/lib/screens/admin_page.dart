@@ -9,6 +9,10 @@ import '../widgets.dart';
 String adminFlagLabel(bool isAdmin) => isAdmin ? '系统管理员' : '普通成员';
 String disabledFlagLabel(bool disabled) => disabled ? '已停用' : '已启用';
 String adminToggleLabel(bool isAdmin) => isAdmin ? '取消管理员' : '设为管理员';
+String adminUserTitle(User user) =>
+    user.displayName.isEmpty ? user.identity : user.displayName;
+String? adminUserSubtitle(User user) =>
+    user.displayName.isEmpty ? null : user.identity;
 
 class AdminPage extends StatefulWidget {
   final RelayClient client;
@@ -167,9 +171,14 @@ class _AdminPageState extends State<AdminPage> {
               child: ListTile(
                 title: Row(
                   children: [
-                    Text(
-                      u.identity,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    Expanded(
+                      child: Text(
+                        adminUserTitle(u),
+                        key: ValueKey('admin-user-title-${u.identity}'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                     ),
                     const SizedBox(width: 8),
                     if (u.isAdmin) tag(adminFlagLabel(true), CcColors.accent),
@@ -177,6 +186,14 @@ class _AdminPageState extends State<AdminPage> {
                       tag(disabledFlagLabel(true), CcColors.danger),
                   ],
                 ),
+                subtitle: adminUserSubtitle(u) == null
+                    ? null
+                    : Text(
+                        adminUserSubtitle(u)!,
+                        key: ValueKey('admin-user-subtitle-${u.identity}'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                 trailing: PopupMenuButton<String>(
                   onSelected: (v) {
                     switch (v) {
