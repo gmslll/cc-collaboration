@@ -1658,6 +1658,42 @@ void main() {
     expectGuardBefore(
       between(
         'lib/widgets/todo_property_controls.dart',
+        'class _PriorityControlState',
+        'class StatusControl',
+      ),
+      'await _openBelow<String>',
+      'widget.onChanged(v)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/widgets/todo_property_controls.dart',
+        'class _StatusControlState',
+        'class RecurrenceControl',
+      ),
+      'await _openBelow<TodoStatus>',
+      'widget.onChanged(v)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/widgets/todo_property_controls.dart',
+        'class _RecurrenceControlState',
+        'class DueDatePill',
+      ),
+      'await _openBelow<String>',
+      'widget.onChanged(v)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/widgets/todo_property_controls.dart',
+        'class _WorkspaceRepoControlState',
+        'class GroupControl',
+      ),
+      'final repo = await _openBelow<ProjectCfg>',
+      'widget.onBind',
+    );
+    expectGuardBefore(
+      between(
+        'lib/widgets/todo_property_controls.dart',
         'class _GroupControlState',
         '@override\n  Widget build',
       ),

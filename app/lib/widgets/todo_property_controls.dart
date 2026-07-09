@@ -162,6 +162,7 @@ class _PriorityControlState extends State<PriorityControl> {
           label: priorityLabels[p]!,
         ),
     ]);
+    if (!mounted) return;
     if (v != null) widget.onChanged(v);
   }
 
@@ -213,6 +214,7 @@ class _StatusControlState extends State<StatusControl> {
           label: todoStatusLabel(s),
         ),
     ]);
+    if (!mounted) return;
     if (v != null) widget.onChanged(v);
   }
 
@@ -275,6 +277,7 @@ class _RecurrenceControlState extends State<RecurrenceControl> {
           label: e.value,
         ),
     ]);
+    if (!mounted) return;
     if (v != null) widget.onChanged(v);
   }
 
@@ -430,6 +433,7 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
         ),
     ]);
     if (repo == null) return;
+    if (!mounted) return;
     widget.onBind(ws.name, repo.name);
   }
 
