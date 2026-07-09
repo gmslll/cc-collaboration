@@ -38,6 +38,14 @@ void main() {
     expect(canManageOrganization(orgWithRole('owner'), isAdmin: false), isTrue);
     expect(canManageOrganization(orgWithRole('admin'), isAdmin: false), isTrue);
     expect(
+      canManageOrganization(orgWithRole(' owner '), isAdmin: false),
+      isTrue,
+    );
+    expect(
+      canManageOrganization(orgWithRole(' admin '), isAdmin: false),
+      isTrue,
+    );
+    expect(
       canManageOrganization(orgWithRole('member'), isAdmin: false),
       isFalse,
     );
@@ -54,6 +62,8 @@ void main() {
     expect(organizationRoleLabel('admin', isAdmin: true), '管理员');
     expect(organizationRoleLabel('member', isAdmin: true), '成员');
     expect(organizationRoleLabel('guest', isAdmin: true), '访客');
+    expect(organizationRoleLabel(' owner ', isAdmin: true), '负责人');
+    expect(organizationRoleLabel(' custom ', isAdmin: false), 'custom');
   });
 
   test(
@@ -75,6 +85,8 @@ void main() {
     expect(projectRoleLabel('member'), '成员');
     expect(projectRoleLabel('viewer'), '只读');
     expect(projectRoleLabel('custom'), 'custom');
+    expect(projectRoleLabel(' owner '), '负责人');
+    expect(projectRoleLabel(' custom '), 'custom');
   });
 
   test('project editable role value falls back to a dropdown-safe role', () {
@@ -321,6 +333,24 @@ void main() {
         detail(ownerIdentity: ' owner@x ', members: const []),
         isAdmin: false,
         identity: 'owner@x',
+      ),
+      isTrue,
+    );
+    expect(
+      canManageProjectDetail(
+        ProjectDetail.fromJson({
+          'project': {
+            'id': 'p2',
+            'org_id': 'org-a',
+            'name': 'Frontend',
+            'owner_identity': 'other@x',
+            'role': ' admin ',
+          },
+          'repos': const [],
+          'members': const [],
+        }),
+        isAdmin: false,
+        identity: 'viewer@x',
       ),
       isTrue,
     );

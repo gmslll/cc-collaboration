@@ -5,12 +5,20 @@ import '../api/relay_client.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
+String normalizedRole(String role) => role.trim();
+
+bool isManageRole(String role) {
+  final value = normalizedRole(role);
+  return value == 'owner' || value == 'admin';
+}
+
 bool canManageOrganization(Organization org, {required bool isAdmin}) =>
-    isAdmin || org.role == 'owner' || org.role == 'admin';
+    isAdmin || isManageRole(org.role);
 
 String organizationRoleLabel(String role, {required bool isAdmin}) {
-  if (role.isEmpty && isAdmin) return '系统管理员';
-  switch (role) {
+  final value = normalizedRole(role);
+  if (value.isEmpty && isAdmin) return '系统管理员';
+  switch (value) {
     case 'owner':
       return '负责人';
     case 'admin':
@@ -20,12 +28,12 @@ String organizationRoleLabel(String role, {required bool isAdmin}) {
     case 'guest':
       return '访客';
     default:
-      return role.isEmpty ? '成员' : role;
+      return value.isEmpty ? '成员' : value;
   }
 }
 
 String organizationEditableRoleValue(String role) {
-  final value = role.trim();
+  final value = normalizedRole(role);
   if (value == 'owner' ||
       value == 'admin' ||
       value == 'member' ||
@@ -36,7 +44,8 @@ String organizationEditableRoleValue(String role) {
 }
 
 String projectRoleLabel(String role) {
-  switch (role) {
+  final value = normalizedRole(role);
+  switch (value) {
     case 'admin':
       return '管理员';
     case 'owner':
@@ -46,12 +55,12 @@ String projectRoleLabel(String role) {
     case 'viewer':
       return '只读';
     default:
-      return role.isEmpty ? '成员' : role;
+      return value.isEmpty ? '成员' : value;
   }
 }
 
 String projectEditableRoleValue(String role) {
-  final value = role.trim();
+  final value = normalizedRole(role);
   if (value == 'owner' || value == 'member' || value == 'viewer') return value;
   return 'member';
 }
@@ -61,7 +70,7 @@ String projectListRoleLabel(
   required bool isAdmin,
   required String identity,
 }) {
-  final role = project.role.trim();
+  final role = normalizedRole(project.role);
   if (role.isNotEmpty) return projectRoleLabel(role);
   if (isAdmin) return projectRoleLabel('admin');
   if (identity.trim().isNotEmpty &&
@@ -78,12 +87,14 @@ String organizationMemberPickerLabel(OrganizationMember member) {
 }
 
 int organizationOwnerCount(Iterable<OrganizationMember> members) =>
-    members.where((m) => m.role == 'owner').length;
+    members.where((m) => normalizedRole(m.role) == 'owner').length;
 
 bool canRemoveOrganizationMember(
   OrganizationMember member,
   Iterable<OrganizationMember> members,
-) => member.role != 'owner' || organizationOwnerCount(members) > 1;
+) =>
+    normalizedRole(member.role) != 'owner' ||
+    organizationOwnerCount(members) > 1;
 
 bool canUpsertOrganizationMemberRole(
   String identity,
@@ -91,7 +102,7 @@ bool canUpsertOrganizationMemberRole(
   Iterable<OrganizationMember> members,
 ) {
   final id = identity.trim();
-  final role = nextRole.trim();
+  final role = normalizedRole(nextRole);
   if (id.isEmpty) return false;
   if (role == 'owner') return true;
   for (final member in members) {
@@ -164,11 +175,12 @@ bool canManageProjectDetail(
   required String identity,
 }) {
   if (isAdmin) return true;
-  if (detail.project.role.trim() == 'admin') return true;
+  if (normalizedRole(detail.project.role) == 'admin') return true;
   if (identityMatches(detail.project.ownerIdentity, identity)) return true;
   return detail.members.any(
     (member) =>
-        identityMatches(member.identity, identity) && member.role == 'owner',
+        identityMatches(member.identity, identity) &&
+        normalizedRole(member.role) == 'owner',
   );
 }
 
@@ -179,12 +191,12 @@ String? projectMemberSubtitle(ProjectMember member) =>
     member.displayName.isEmpty ? null : member.identity;
 
 int projectOwnerCount(Iterable<ProjectMember> members) =>
-    members.where((m) => m.role == 'owner').length;
+    members.where((m) => normalizedRole(m.role) == 'owner').length;
 
 bool canRemoveProjectMember(
   ProjectMember member,
   Iterable<ProjectMember> members,
-) => member.role != 'owner' || projectOwnerCount(members) > 1;
+) => normalizedRole(member.role) != 'owner' || projectOwnerCount(members) > 1;
 
 String? projectMemberRoleChangeBlockReason(
   ProjectMember member,
@@ -197,7 +209,7 @@ bool canUpsertProjectMemberRole(
   Iterable<ProjectMember> members,
 ) {
   final id = identity.trim();
-  final role = nextRole.trim();
+  final role = normalizedRole(nextRole);
   if (id.isEmpty) return false;
   if (role == 'owner') return true;
   for (final member in members) {
@@ -214,7 +226,7 @@ Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   final out = <String, List<String>>{};
   for (final detail in details) {
     final owners = detail.members
-        .where((m) => m.role == 'owner')
+        .where((m) => normalizedRole(m.role) == 'owner')
         .map((m) => m.identity.trim())
         .where((id) => id.isNotEmpty)
         .toList();
@@ -323,10 +335,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
           ? orgs.map((org) => org.id).toSet()
           : orgs
                 .where((org) {
-                  final role = org.role.isNotEmpty
+                  final role = normalizedRole(org.role).isNotEmpty
                       ? org.role
                       : meOrgRoles[org.id] ?? '';
-                  return role == 'owner' || role == 'admin';
+                  return isManageRole(role);
                 })
                 .map((org) => org.id)
                 .toSet();
