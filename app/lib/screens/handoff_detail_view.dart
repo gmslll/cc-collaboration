@@ -226,30 +226,13 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _retract(Package p) async {
-    final ctl = TextEditingController();
-    final ok = await showDialog<bool>(
+    final reason = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('撤回 handoff'),
-        content: TextField(
-          controller: ctl,
-          decoration: const InputDecoration(hintText: '原因(可选)'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('撤回'),
-          ),
-        ],
-      ),
+      builder: (_) => const _RetractDialog(),
     );
-    if (ok != true) return;
+    if (reason == null) return;
     try {
-      await _client.retract(p.id, ctl.text.trim());
+      await _client.retract(p.id, reason.trim());
       _snack('已撤回');
       _loadExtras();
       widget.onChanged?.call();
@@ -259,45 +242,19 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Future<void> _reassign(Package p) async {
-    final to = TextEditingController();
-    final reason = TextEditingController();
-    final ok = await showDialog<bool>(
+    final result = await showDialog<_ReassignInput>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('转交 bug'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: to,
-              decoration: const InputDecoration(labelText: '转交给(identity)'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: reason,
-              decoration: const InputDecoration(labelText: '原因'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('转交'),
-          ),
-        ],
-      ),
+      builder: (_) => const _ReassignDialog(),
     );
-    if (ok != true) return;
-    if (to.text.trim().isEmpty || reason.text.trim().isEmpty) {
+    if (result == null) return;
+    final to = result.to.trim();
+    final reason = result.reason.trim();
+    if (to.isEmpty || reason.isEmpty) {
       _snack('需填转交对象和原因');
       return;
     }
     try {
-      await _client.reassign(p.id, to.text.trim(), reason.text.trim());
+      await _client.reassign(p.id, to, reason);
       _snack('已转交');
       _loadExtras();
       widget.onChanged?.call();
@@ -825,5 +782,104 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       default:
         return CcColors.accent;
     }
+  }
+}
+
+class _RetractDialog extends StatefulWidget {
+  const _RetractDialog();
+
+  @override
+  State<_RetractDialog> createState() => _RetractDialogState();
+}
+
+class _RetractDialogState extends State<_RetractDialog> {
+  final _reason = TextEditingController();
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _reason.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('撤回 handoff'),
+      content: TextField(
+        controller: _reason,
+        decoration: const InputDecoration(hintText: '原因(可选)'),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('撤回')),
+      ],
+    );
+  }
+}
+
+class _ReassignInput {
+  final String to;
+  final String reason;
+
+  const _ReassignInput({required this.to, required this.reason});
+}
+
+class _ReassignDialog extends StatefulWidget {
+  const _ReassignDialog();
+
+  @override
+  State<_ReassignDialog> createState() => _ReassignDialogState();
+}
+
+class _ReassignDialogState extends State<_ReassignDialog> {
+  final _to = TextEditingController();
+  final _reason = TextEditingController();
+
+  @override
+  void dispose() {
+    _to.dispose();
+    _reason.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    _ReassignInput(to: _to.text, reason: _reason.text),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('转交 bug'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _to,
+            decoration: const InputDecoration(labelText: '转交给(identity)'),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _reason,
+            decoration: const InputDecoration(labelText: '原因'),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('转交')),
+      ],
+    );
   }
 }
