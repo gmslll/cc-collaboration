@@ -34,6 +34,30 @@ void main() {
     expect(remoteWorkspaceMenuMaxHeight(const Size(320, 220)), 160);
   });
 
+  test('remote workspace dialog width fits compact screens', () {
+    expect(remoteWorkspaceDialogWidth(const Size(320, 760)), 288);
+    expect(remoteWorkspaceDialogWidth(const Size(1024, 760)), 420);
+    expect(
+      remoteWorkspaceDialogWidth(const Size(360, 760), preferred: 460),
+      328,
+    );
+  });
+
+  test('remote new session dialog uses scroll-safe controls', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('  Future<void> _newSessionDialog() async'),
+      source.indexOf('  // Open the supervisor knowledge-base editor'),
+    );
+
+    expect(dialog, contains('remoteWorkspaceDialogWidth'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('scrollableBar(scrolling: [agentPicker])'));
+    expect(dialog, contains('scrollableBar(scrolling: [supervisorPicker])'));
+  });
+
   test('remote terminal screen rebinds client lifecycle on widget update', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',

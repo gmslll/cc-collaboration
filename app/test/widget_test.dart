@@ -222,10 +222,10 @@ void main() {
       isNot(contains('DropdownMenuItem(value: r, child: Text(r.name))')),
     );
     expect(remote, contains("'主仓 (\${project.name})'"));
-    expect(
-      remote,
-      contains('w.branch.isEmpty ? pathBaseName(w.path) : w.branch'),
-    );
+    expect(remote, contains('w.branch.isEmpty'));
+    expect(remote, contains('pathBaseName(w.path)'));
+    expect(remote, contains('scrollableBar(scrolling: [agentPicker])'));
+    expect(remote, contains('SingleChildScrollView'));
   });
 
   test('remote project list titles are width constrained', () {

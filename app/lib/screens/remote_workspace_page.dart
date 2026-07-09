@@ -44,6 +44,16 @@ double remoteWorkspaceMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double remoteWorkspaceDialogWidth(
+  Size screenSize, {
+  double preferred = 420,
+  double horizontalInset = 16,
+}) {
+  final available = screenSize.width - horizontalInset * 2;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 String remoteWorktreeRemoveTarget(RemoteWorktree worktree) {
   final branch = worktree.branch.trim();
   return branch.isEmpty ? worktree.name : branch;
@@ -1336,108 +1346,118 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           content: ListenableBuilder(
             listenable: _c,
             builder: (ctx, _) {
+              final screenSize = MediaQuery.sizeOf(ctx);
               // Worktrees for THIS project only (the list is trusted once
               // wtProject matches); drop the main checkout — it's the '主仓' item.
               final wts = _c.wtProject == project.path
                   ? _c.worktrees.where((w) => w.path != project.path).toList()
                   : const <RemoteWorktree>[];
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButton<RemoteRootInfo>(
-                    isExpanded: true,
-                    menuMaxHeight: remoteWorkspaceMenuMaxHeight(
-                      MediaQuery.sizeOf(ctx),
-                    ),
-                    value: project,
-                    items: [
-                      for (final r in _orderedRoots())
-                        DropdownMenuItem(
-                          value: r,
-                          child: Text(
-                            r.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (v) => setLocal(() {
-                      if (v == null || v == project) return;
-                      project = v;
-                      workdir = v.path; // reset to 主仓 for the new project
-                      _c.loadWorktrees(v.path);
-                    }),
+              final agentPicker = SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: '',
+                    icon: Icon(Icons.terminal_rounded, size: 16),
+                    label: Text('Shell'),
                   ),
-                  const SizedBox(height: 8),
-                  DropdownButton<String>(
-                    isExpanded: true,
-                    menuMaxHeight: remoteWorkspaceMenuMaxHeight(
-                      MediaQuery.sizeOf(ctx),
-                    ),
-                    value: workdir,
-                    items: [
-                      DropdownMenuItem(
-                        value: project.path,
-                        child: Text(
-                          '主仓 (${project.name})',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      for (final w in wts)
-                        DropdownMenuItem(
-                          value: w.path,
-                          child: Text(
-                            w.branch.isEmpty ? pathBaseName(w.path) : w.branch,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (v) => setLocal(() => workdir = v ?? workdir),
+                  ButtonSegment(value: 'claude', label: Text('Claude')),
+                  ButtonSegment(value: 'codex', label: Text('Codex')),
+                  ButtonSegment(
+                    value: 'supervisor',
+                    icon: Icon(Icons.account_tree_outlined, size: 16),
+                    label: Text('总管'),
                   ),
-                  const SizedBox(height: 12),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                        value: '',
-                        icon: Icon(Icons.terminal_rounded, size: 16),
-                        label: Text('Shell'),
-                      ),
-                      ButtonSegment(value: 'claude', label: Text('Claude')),
-                      ButtonSegment(value: 'codex', label: Text('Codex')),
-                      ButtonSegment(
-                        value: 'supervisor',
-                        icon: Icon(Icons.account_tree_outlined, size: 16),
-                        label: Text('总管'),
-                      ),
-                    ],
-                    selected: {agent},
-                    showSelectedIcon: false,
-                    onSelectionChanged: (s) => setLocal(() => agent = s.first),
-                  ),
-                  if (agent == 'supervisor') ...[
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'claude', label: Text('Claude')),
-                        ButtonSegment(value: 'codex', label: Text('Codex')),
-                      ],
-                      selected: {supervisorAgent},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (s) =>
-                          setLocal(() => supervisorAgent = s.first),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: () => _editSupervisorKnowledge(workdir),
-                        icon: const Icon(Icons.menu_book_outlined, size: 18),
-                        label: const Text('编辑知识库'),
-                      ),
-                    ),
-                  ],
                 ],
+                selected: {agent},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) => setLocal(() => agent = s.first),
+              );
+              final supervisorPicker = SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'claude', label: Text('Claude')),
+                  ButtonSegment(value: 'codex', label: Text('Codex')),
+                ],
+                selected: {supervisorAgent},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) =>
+                    setLocal(() => supervisorAgent = s.first),
+              );
+              return SizedBox(
+                width: remoteWorkspaceDialogWidth(screenSize),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButton<RemoteRootInfo>(
+                        isExpanded: true,
+                        menuMaxHeight: remoteWorkspaceMenuMaxHeight(screenSize),
+                        value: project,
+                        items: [
+                          for (final r in _orderedRoots())
+                            DropdownMenuItem(
+                              value: r,
+                              child: Text(
+                                r.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (v) => setLocal(() {
+                          if (v == null || v == project) return;
+                          project = v;
+                          workdir = v.path; // reset to 主仓 for the new project
+                          _c.loadWorktrees(v.path);
+                        }),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        menuMaxHeight: remoteWorkspaceMenuMaxHeight(screenSize),
+                        value: workdir,
+                        items: [
+                          DropdownMenuItem(
+                            value: project.path,
+                            child: Text(
+                              '主仓 (${project.name})',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          for (final w in wts)
+                            DropdownMenuItem(
+                              value: w.path,
+                              child: Text(
+                                w.branch.isEmpty
+                                    ? pathBaseName(w.path)
+                                    : w.branch,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (v) =>
+                            setLocal(() => workdir = v ?? workdir),
+                      ),
+                      const SizedBox(height: 12),
+                      scrollableBar(scrolling: [agentPicker]),
+                      if (agent == 'supervisor') ...[
+                        const SizedBox(height: 8),
+                        scrollableBar(scrolling: [supervisorPicker]),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () => _editSupervisorKnowledge(workdir),
+                            icon: const Icon(
+                              Icons.menu_book_outlined,
+                              size: 18,
+                            ),
+                            label: const Text('编辑知识库'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               );
             },
           ),
