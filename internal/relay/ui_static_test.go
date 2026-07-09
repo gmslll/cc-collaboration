@@ -265,6 +265,42 @@ func TestRelayUIDisplaysDeliveryTarget(t *testing.T) {
 	}
 }
 
+func TestRelayUIProjectCardsShowTeamContext(t *testing.T) {
+	jsBytes, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssBytes, err := os.ReadFile("ui/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(jsBytes)
+	css := string(cssBytes)
+	requiredJS := []string{
+		`const teamName = organizationName(p.org_id);`,
+		`<div class="aux-card project-card" data-project="${escapeAttr(p.id)}">`,
+		`<div class="project-title">`,
+		`<span class="badge soft">${escapeHTML(teamName)}</span>`,
+		`<div class="muted project-meta">团队 · ${escapeHTML(teamName)} · 负责人 · ${escapeHTML(p.owner_identity || "-")} · ${escapeHTML(p.id)}</div>`,
+	}
+	for _, want := range requiredJS {
+		if !strings.Contains(js, want) {
+			t.Fatalf("relay UI project cards are missing team context fragment %q", want)
+		}
+	}
+	requiredCSS := []string{
+		`.project-title,`,
+		`.project-meta {`,
+		`.project-card .aux-card-head {`,
+		`font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;`,
+	}
+	for _, want := range requiredCSS {
+		if !strings.Contains(css, want) {
+			t.Fatalf("relay UI project cards are missing team context CSS %q", want)
+		}
+	}
+}
+
 func TestAdminAccountsUIUsesLocalizedStatusCopy(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {

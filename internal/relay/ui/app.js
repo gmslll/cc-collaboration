@@ -1383,18 +1383,21 @@ function renderProjects() {
   els.projectsList.innerHTML = state.projects.map((p) => {
     const role = projectRole(p.id);
     const canManage = role === "owner" || role === "admin" || state.me?.is_admin;
+    const teamName = organizationName(p.org_id);
     return `
-      <div class="aux-card" data-project="${escapeAttr(p.id)}">
+      <div class="aux-card project-card" data-project="${escapeAttr(p.id)}">
         <div class="aux-card-head">
-          <div>
-            <strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(roleLabel(role, "project"))}</span>
-            ${p.org_id ? `<span class="badge soft">${escapeHTML(organizationName(p.org_id))}</span>` : ""}
+          <div class="project-title">
+            <strong>${escapeHTML(p.name)}</strong>
+            <span class="badge">${escapeHTML(roleLabel(role, "project"))}</span>
+            <span class="badge soft">${escapeHTML(teamName)}</span>
           </div>
           <div class="aux-card-actions">
             <button class="secondary" type="button" data-action="browse">查看 handoff</button>
             ${canManage ? `<button class="secondary" type="button" data-action="manage">管理</button>` : ""}
           </div>
         </div>
+        <div class="muted project-meta">团队 · ${escapeHTML(teamName)} · 负责人 · ${escapeHTML(p.owner_identity || "-")} · ${escapeHTML(p.id)}</div>
         <div class="aux-card-body hidden" data-body></div>
       </div>`;
   }).join("");

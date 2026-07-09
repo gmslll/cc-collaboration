@@ -1049,18 +1049,31 @@ textarea:focus {
 }
 
 .org-title,
-.org-meta {
+.org-meta,
+.project-title,
+.project-meta {
   min-width: 0;
 }
-.org-title {
+.org-title,
+.project-title {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
 .org-title strong,
-.org-meta {
+.org-meta,
+.project-title strong,
+.project-meta {
   overflow-wrap: anywhere;
+}
+.project-card .aux-card-head {
+  align-items: flex-start;
+}
+.project-meta {
+  margin-top: var(--space-2);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
 }
 .org-card .aux-card-body {
   background: color-mix(in oklab, var(--panel-soft) 55%, transparent);
