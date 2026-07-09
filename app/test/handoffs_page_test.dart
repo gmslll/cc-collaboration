@@ -102,6 +102,39 @@ void main() {
     expect(find.text('me@x'), findsOneWidget);
     expect(find.text('old@x'), findsNothing);
   });
+
+  testWidgets('handoff list search matches team recipients', (tester) async {
+    final client = _ImmediateHandoffsClient([
+      _handoff(
+        'team',
+        sender: 'sender@x',
+        headline: 'Team handoff',
+        recipients: const ['dev@x', 'ops@x'],
+      ),
+      _handoff('solo', sender: 'other@x', headline: 'Solo handoff'),
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: HandoffsPage(
+            client: client,
+            config: AppConfig('http://127.0.0.1:1', 'tok', 'dev@x', const {}),
+            showTerminal: false,
+            enableEvents: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'ops@x');
+    await tester.pump();
+
+    expect(find.text('Team handoff'), findsOneWidget);
+    expect(find.text('Solo handoff'), findsNothing);
+  });
 }
 
 class _DelayedHandoffsClient extends RelayClient {
@@ -189,11 +222,13 @@ ListItem _handoff(
   String id, {
   String sender = 'sender@x',
   String headline = 'Review the workspace handoff',
+  List<String> recipients = const [],
 }) => ListItem.fromJson({
   'id': id,
   'kind': 'delivery',
   'sender': sender,
   'recipient': 'dev@x',
+  if (recipients.isNotEmpty) 'recipients': recipients,
   'urgency': 'normal',
   'state': 'pending',
   'repo_name': 'cc-collaboration',

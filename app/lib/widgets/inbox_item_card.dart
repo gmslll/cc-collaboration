@@ -90,28 +90,33 @@ class InboxItemCard extends StatelessWidget {
   }
 }
 
-Widget _miniTag(IconData icon, String label, Color color) => Container(
-  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
-  decoration: BoxDecoration(
-    color: color.withValues(alpha: 0.12),
-    border: Border.all(color: color.withValues(alpha: 0.35)),
-    borderRadius: BorderRadius.circular(CcRadius.sm),
-  ),
-  child: Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 10.5, color: color),
-      const SizedBox(width: 4),
-      Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 10.5,
-          color: color,
-          fontWeight: FontWeight.w600,
+Widget _miniTag(IconData icon, String label, Color color) => ConstrainedBox(
+  constraints: const BoxConstraints(maxWidth: 220),
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      border: Border.all(color: color.withValues(alpha: 0.35)),
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 10.5, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   ),
 );

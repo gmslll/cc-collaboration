@@ -285,7 +285,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
         child: TextField(
           decoration: const InputDecoration(
-            hintText: '搜索 发送人 / repo / 标题',
+            hintText: '搜索 发送人 / 收件人 / repo / 标题',
             isDense: true,
             prefixIcon: Icon(Icons.search_rounded, size: 18),
           ),
@@ -366,9 +366,11 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         ? _inbox
         : _inbox
               .where(
-                (it) => '${it.sender} ${it.repoName} ${it.headline}'
-                    .toLowerCase()
-                    .contains(_query),
+                (it) =>
+                    '${it.sender} ${it.recipient} ${it.recipients.join(' ')} '
+                            '${it.repoName} ${it.headline} ${it.routeLabel}'
+                        .toLowerCase()
+                        .contains(_query),
               )
               .toList();
     if (items.isEmpty) {
