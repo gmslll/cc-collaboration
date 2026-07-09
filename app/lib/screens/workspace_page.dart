@@ -10066,6 +10066,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                   onSelectPath: (p) =>
                       setState(() => _revealedProjectFilePath = p),
                   onDropPaths: fsDrop,
+                  onMenuPosition: (pos) => _lastContextMenuPosition = pos,
                   fileMenuBuilder: fileMenuBuilder,
                   directoryMenuBuilder: directoryMenuBuilder,
                   pathStatusBuilder: pathStatusBuilder,

@@ -1768,6 +1768,7 @@ List<PopupMenuEntry<String>> fileActionSubmenuEntries(
   String group, {
   required bool atRoot,
   required bool includeProjectReveal,
+  bool includeTerminal = true,
 }) => switch (group) {
   fileMenuEdit => [
     ccMenuItem(
@@ -1823,11 +1824,12 @@ List<PopupMenuEntry<String>> fileActionSubmenuEntries(
       icon: Icons.open_in_new_rounded,
       label: 'Open In',
     ),
-    ccMenuItem(
-      value: 'terminal',
-      icon: Icons.terminal_rounded,
-      label: 'Open Terminal Here',
-    ),
+    if (includeTerminal)
+      ccMenuItem(
+        value: 'terminal',
+        icon: Icons.terminal_rounded,
+        label: 'Open Terminal Here',
+      ),
   ],
   fileMenuVersion => [
     ccMenuItem(

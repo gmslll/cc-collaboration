@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -31,6 +32,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     with FsClipboardActions {
   int _refreshToken = 0;
   String? _selectedPath;
+  Offset? _lastContextMenuPosition;
   // 文件树聚焦时才响应 Cmd/Ctrl+C/X/V。
   final FocusNode _treeFocus = FocusNode(debugLabel: 'fileBrowserTree');
 
@@ -261,6 +263,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
       case 'paste':
         fsPaste(isDir ? path : _parentDir(path));
       case 'reveal':
+      case 'revealSystem':
         _revealInSystem(path);
       case 'openExternal':
         _openExternally(path);
@@ -269,86 +272,46 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     }
   }
 
+  Future<void> _selectPathMenu(String value, String path, bool isDir) async {
+    if (value == fileMenuEdit || value == fileMenuLocate) {
+      final pick = await showMenu<String>(
+        context: context,
+        position: menuPosAt(
+          context,
+          _lastContextMenuPosition ?? _fallbackMenuPosition(),
+        ),
+        items: fileActionSubmenuEntries(
+          value,
+          atRoot: path == widget.root,
+          includeProjectReveal: false,
+          includeTerminal: false,
+        ),
+      );
+      if (pick == null || !mounted) return;
+      _handleMenu(pick, path, isDir);
+      return;
+    }
+    _handleMenu(value, path, isDir);
+  }
+
   PopupMenuButton<String> _pathMenu(String path, bool isDir) =>
       PopupMenuButton<String>(
         tooltip: 'File actions',
         icon: const Icon(Icons.more_vert_rounded, size: 16),
         padding: EdgeInsets.zero,
-        onOpened: () => setState(() => _selectedPath = path),
-        onSelected: (v) => _handleMenu(v, path, isDir),
-        itemBuilder: (_) => [
-          ccMenuItem(
-            value: 'open',
-            icon: isDir
-                ? Icons.folder_open_rounded
-                : Icons.description_outlined,
-            label: isDir ? 'Open Folder' : 'Open',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'newFile',
-            icon: Icons.note_add_outlined,
-            label: 'New File',
-          ),
-          ccMenuItem(
-            value: 'newDir',
-            icon: Icons.create_new_folder_outlined,
-            label: 'New Directory',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: path == widget.root ? null : 'rename',
-            icon: Icons.drive_file_rename_outline_rounded,
-            label: 'Rename',
-          ),
-          ccMenuItem(
-            value: path == widget.root ? null : 'delete',
-            icon: Icons.delete_outline_rounded,
-            label: 'Delete',
-            danger: true,
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'copyPath',
-            icon: Icons.content_copy_rounded,
-            label: 'Copy Path',
-          ),
-          ccMenuItem(
-            value: 'copy',
-            icon: Icons.copy_rounded,
-            label: 'Copy',
-            shortcut: '⌘C',
-          ),
-          ccMenuItem(
-            value: path == widget.root ? null : 'cut',
-            icon: Icons.content_cut_rounded,
-            label: 'Cut',
-            shortcut: '⌘X',
-          ),
-          ccMenuItem(
-            value: 'paste',
-            icon: Icons.content_paste_rounded,
-            label: 'Paste',
-            shortcut: '⌘V',
-          ),
-          ccMenuItem(
-            value: 'reveal',
-            icon: Icons.my_location_rounded,
-            label: 'Reveal in System',
-          ),
-          ccMenuItem(
-            value: 'openExternal',
-            icon: Icons.open_in_new_rounded,
-            label: 'Open In',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'refresh',
-            icon: Icons.refresh_rounded,
-            label: 'Reload from Disk',
-          ),
-        ],
+        onOpened: () {
+          _lastContextMenuPosition = null;
+          setState(() => _selectedPath = path);
+        },
+        onSelected: (v) => unawaited(_selectPathMenu(v, path, isDir)),
+        itemBuilder: (_) =>
+            fileActionMenuEntries(isDir: isDir, includeVersionControl: false),
       );
+
+  Offset _fallbackMenuPosition() {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    return overlay.localToGlobal(overlay.size.center(Offset.zero));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -382,6 +345,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
                     selectedPath: _selectedPath,
                     onSelectPath: (p) => setState(() => _selectedPath = p),
                     onDropPaths: fsDrop,
+                    onMenuPosition: (pos) => _lastContextMenuPosition = pos,
                     refreshToken: _refreshToken,
                     fileMenuBuilder: (path) => _pathMenu(path, false),
                     directoryMenuBuilder: (path) => _pathMenu(path, true),
@@ -462,6 +426,7 @@ class FileTree extends StatelessWidget {
   final String? selectedPath;
   final ValueChanged<String>? onSelectPath;
   final void Function(String dir, List<String> paths)? onDropPaths;
+  final ValueChanged<Offset>? onMenuPosition;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
@@ -474,6 +439,7 @@ class FileTree extends StatelessWidget {
     this.selectedPath,
     this.onSelectPath,
     this.onDropPaths,
+    this.onMenuPosition,
     this.fileMenuBuilder,
     this.directoryMenuBuilder,
     this.pathStatusBuilder,
@@ -490,6 +456,7 @@ class FileTree extends StatelessWidget {
     selectedPath: selectedPath,
     onSelectPath: onSelectPath,
     onDropPaths: onDropPaths,
+    onMenuPosition: onMenuPosition,
     fileMenuBuilder: fileMenuBuilder,
     directoryMenuBuilder: directoryMenuBuilder,
     pathStatusBuilder: pathStatusBuilder,
@@ -508,6 +475,7 @@ class DirTile extends StatefulWidget {
   final ValueChanged<String>? onSelectPath;
   // 从访达把文件拖到某个目录行上时回调 (目录路径, 拖入的源路径列表)。
   final void Function(String dir, List<String> paths)? onDropPaths;
+  final ValueChanged<Offset>? onMenuPosition;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
@@ -522,6 +490,7 @@ class DirTile extends StatefulWidget {
     this.selectedPath,
     this.onSelectPath,
     this.onDropPaths,
+    this.onMenuPosition,
     this.fileMenuBuilder,
     this.directoryMenuBuilder,
     this.pathStatusBuilder,
@@ -747,6 +716,7 @@ class _DirTileState extends State<DirTile> {
             selectedPath: widget.selectedPath,
             onSelectPath: widget.onSelectPath,
             onDropPaths: widget.onDropPaths,
+            onMenuPosition: widget.onMenuPosition,
             fileMenuBuilder: widget.fileMenuBuilder,
             directoryMenuBuilder: widget.directoryMenuBuilder,
             pathStatusBuilder: widget.pathStatusBuilder,
@@ -797,6 +767,7 @@ class _DirTileState extends State<DirTile> {
       behavior: HitTestBehavior.translucent,
       onSecondaryTapDown: (d) async {
         menu.onOpened?.call();
+        widget.onMenuPosition?.call(d.globalPosition);
         final overlay =
             Overlay.of(context).context.findRenderObject() as RenderBox;
         final value = await showMenu<String>(

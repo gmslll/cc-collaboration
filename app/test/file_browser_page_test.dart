@@ -29,6 +29,17 @@ void main() {
     expect(source, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('file browser uses shared compact file action menu', () {
+    final source = File(
+      'lib/screens/file_browser_page.dart',
+    ).readAsStringSync();
+
+    expect(source, contains('fileActionMenuEntries('));
+    expect(source, contains('fileActionSubmenuEntries('));
+    expect(source, contains('includeTerminal: false'));
+    expect(source, isNot(contains("value: 'copyPath',")));
+  });
+
   testWidgets('FileNameDialog cancel closes cleanly', (tester) async {
     String? result = 'unchanged';
 

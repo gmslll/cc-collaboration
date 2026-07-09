@@ -212,4 +212,15 @@ void main() {
     expect(values(projectEntries), contains('revealProject'));
     expect(values(worktreeEntries), isNot(contains('revealProject')));
   });
+
+  test('file locate submenu can omit terminal actions', () {
+    final entries = fileActionSubmenuEntries(
+      fileMenuLocate,
+      atRoot: false,
+      includeProjectReveal: false,
+      includeTerminal: false,
+    );
+
+    expect(values(entries), ['copyPath', 'revealSystem', 'openExternal']);
+  });
 }
