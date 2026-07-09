@@ -318,6 +318,70 @@ void main() {
     expect(find.text('ops@x · pending'), findsOneWidget);
     expect(find.text('qa@x → me@x'), findsNothing);
   });
+
+  testWidgets('team handoff detail hides receive actions for non-recipient', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package(
+        'team-readonly',
+        'qa@x',
+        'team handoff',
+        kind: 'bug',
+        recipients: const ['dev@x', 'ops@x'],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'viewer@x', const {}),
+          item: _item('team-readonly', 'qa@x', 'team handoff'),
+          onOpenTerminal: (_, _) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('qa@x → 2 人'), findsOneWidget);
+    expect(find.text('团队接收状态'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '接收并开终端'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, '标记接收'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, '转交'), findsNothing);
+  });
+
+  testWidgets('team handoff detail keeps receive actions for slot recipient', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package(
+        'team-recipient',
+        'qa@x',
+        'team handoff',
+        kind: 'bug',
+        recipients: const ['dev@x', 'ops@x'],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'dev@x', const {}),
+          item: _item('team-recipient', 'qa@x', 'team handoff'),
+          onOpenTerminal: (_, _) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, '接收并开终端'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, '标记接收'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, '转交'), findsOneWidget);
+  });
 }
 
 ListItem _item(String id, String sender, String headline) => ListItem.fromJson({

@@ -48,6 +48,27 @@ class HandoffDetailView extends StatefulWidget {
   State<HandoffDetailView> createState() => HandoffDetailViewState();
 }
 
+bool canCurrentIdentityReceiveHandoff({
+  required Package package,
+  required Status? status,
+  required String identity,
+}) {
+  if (sameIdentity(package.recipient, identity)) return true;
+  if (package.recipients.any(
+    (recipient) => sameIdentity(recipient, identity),
+  )) {
+    return true;
+  }
+  if (status == null) return false;
+  if (sameIdentity(status.recipient, identity)) return true;
+  if (status.recipients.any((recipient) => sameIdentity(recipient, identity))) {
+    return true;
+  }
+  return status.pickupBy.keys.any(
+    (recipient) => sameIdentity(recipient, identity),
+  );
+}
+
 class HandoffDetailViewState extends State<HandoffDetailView> {
   Package? _pkg;
   Status? _status;
@@ -564,6 +585,11 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   Widget _header(Package p) {
+    final canReceive = canCurrentIdentityReceiveHandoff(
+      package: p,
+      status: _status,
+      identity: _cfg.identity,
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -604,7 +630,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (widget.onOpenTerminal != null)
+                if (canReceive && widget.onOpenTerminal != null)
                   FilledButton.icon(
                     onPressed: _picking ? null : () => _pickup(p),
                     icon: _picking
@@ -616,11 +642,12 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                         : const Icon(Icons.download_rounded),
                     label: Text(_picking ? '接收中…' : '接收并开终端'),
                   ),
-                OutlinedButton.icon(
-                  onPressed: _ack,
-                  icon: const Icon(Icons.check_rounded, size: 18),
-                  label: const Text('标记接收'),
-                ),
+                if (canReceive)
+                  OutlinedButton.icon(
+                    onPressed: _ack,
+                    icon: const Icon(Icons.check_rounded, size: 18),
+                    label: const Text('标记接收'),
+                  ),
                 if (sameIdentity(p.sender, _cfg.identity) &&
                     _status?.state == 'pending')
                   OutlinedButton.icon(
@@ -628,7 +655,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                     icon: const Icon(Icons.undo_rounded, size: 18),
                     label: const Text('撤回'),
                   ),
-                if (p.kind == 'bug' && _status?.state == 'pending')
+                if (canReceive &&
+                    p.kind == 'bug' &&
+                    _status?.state == 'pending')
                   OutlinedButton.icon(
                     onPressed: () => _reassign(p),
                     icon: const Icon(Icons.swap_horiz_rounded, size: 18),
