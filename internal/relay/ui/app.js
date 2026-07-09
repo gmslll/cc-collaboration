@@ -1065,13 +1065,13 @@ function renderMemberTable(members, options = {}) {
           : `<button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button>`;
         return `
           <div class="member-table-row" role="row">
-            <span class="member-person" role="cell">
+            <span class="member-person" role="cell" data-label="成员">
               <span class="member-identity">${escapeHTML(m.identity)}</span>
               ${displayName ? `<small>${escapeHTML(displayName)}</small>` : ""}
             </span>
-            <span role="cell">${roleControl}</span>
-            <span class="member-state" role="cell">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>
-            ${canRemove ? `<span class="member-actions" role="cell">${removeButton}</span>` : ""}
+            <span class="member-role" role="cell" data-label="角色">${roleControl}</span>
+            <span class="member-state" role="cell" data-label="状态">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>
+            ${canRemove ? `<span class="member-actions" role="cell" data-label="操作">${removeButton}</span>` : ""}
           </div>`;
       }).join("")}
     </div>`;

@@ -94,6 +94,42 @@ func TestMemberRoleControlsAreRoleGated(t *testing.T) {
 	}
 }
 
+func TestMemberTableKeepsMobileCellLabels(t *testing.T) {
+	jsBytes, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssBytes, err := os.ReadFile("ui/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(jsBytes)
+	css := string(cssBytes)
+	requiredJS := []string{
+		`<span class="member-person" role="cell" data-label="成员">`,
+		`<span class="member-role" role="cell" data-label="角色">${roleControl}</span>`,
+		`<span class="member-state" role="cell" data-label="状态">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>`,
+		`<span class="member-actions" role="cell" data-label="操作">${removeButton}</span>`,
+	}
+	for _, want := range requiredJS {
+		if !strings.Contains(js, want) {
+			t.Fatalf("member table is missing mobile cell label markup %q", want)
+		}
+	}
+	requiredCSS := []string{
+		`.member-table-row [role="cell"][data-label] {`,
+		`grid-template-columns: 72px minmax(0, 1fr);`,
+		`.member-table-row [role="cell"][data-label]::before {`,
+		`content: attr(data-label);`,
+		`.member-person[role="cell"][data-label] .member-identity,`,
+	}
+	for _, want := range requiredCSS {
+		if !strings.Contains(css, want) {
+			t.Fatalf("member table is missing mobile cell label CSS %q", want)
+		}
+	}
+}
+
 func TestRoleLabelsAreLocalizedInManagementUI(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {

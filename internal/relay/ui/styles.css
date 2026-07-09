@@ -1291,6 +1291,34 @@ textarea:focus {
     display: none;
   }
 
+  .member-table-row [role="cell"][data-label] {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--space-2);
+  }
+
+  .member-table-row [role="cell"][data-label]::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .member-person[role="cell"][data-label] {
+    align-items: start;
+  }
+
+  .member-person[role="cell"][data-label]::before {
+    grid-row: 1 / span 2;
+  }
+
+  .member-person[role="cell"][data-label] .member-identity,
+  .member-person[role="cell"][data-label] small {
+    grid-column: 2;
+  }
+
   .member-actions {
     justify-self: start;
   }
