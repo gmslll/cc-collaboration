@@ -480,6 +480,22 @@ void main() {
     expect(find.text('在线'), findsOneWidget);
     expect(find.text('2'), findsNWidgets(2)); // teams + projects
     expect(find.text('1'), findsNWidgets(2)); // manageable + unique online
+
+    FilledButton button(String label) =>
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, label));
+
+    expect(button('新建团队').onPressed, isNull);
+    expect(button('新建项目').onPressed, isNull);
+
+    await tester.enterText(find.byType(TextField).at(0), 'New Team');
+    await tester.pump();
+    expect(button('新建团队').onPressed, isNotNull);
+    expect(button('新建项目').onPressed, isNull);
+
+    await tester.enterText(find.byType(TextField).at(1), 'New Project');
+    await tester.pump();
+    expect(button('新建团队').onPressed, isNotNull);
+    expect(button('新建项目').onPressed, isNotNull);
   });
 }
 

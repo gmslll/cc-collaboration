@@ -246,14 +246,25 @@ class _ProjectsPageState extends State<ProjectsPage> {
   @override
   void initState() {
     super.initState();
+    _name.addListener(_onCreateInputChanged);
+    _orgName.addListener(_onCreateInputChanged);
     _load();
   }
 
   @override
   void dispose() {
+    _name.removeListener(_onCreateInputChanged);
+    _orgName.removeListener(_onCreateInputChanged);
     _name.dispose();
     _orgName.dispose();
     super.dispose();
+  }
+
+  bool get _canCreateProject => _name.text.trim().isNotEmpty;
+  bool get _canCreateOrg => _orgName.text.trim().isNotEmpty;
+
+  void _onCreateInputChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -443,7 +454,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                   ),
                 ),
                 FilledButton.icon(
-                  onPressed: _createOrg,
+                  onPressed: _canCreateOrg ? _createOrg : null,
                   icon: const Icon(Icons.group_add_rounded, size: 18),
                   label: const Text('新建团队'),
                 ),
@@ -482,7 +493,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                     ),
                   ),
                 FilledButton.icon(
-                  onPressed: _create,
+                  onPressed: _canCreateProject ? _create : null,
                   icon: const Icon(Icons.add_rounded, size: 18),
                   label: const Text('新建项目'),
                 ),
