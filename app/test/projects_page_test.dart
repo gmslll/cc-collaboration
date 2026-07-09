@@ -78,6 +78,50 @@ void main() {
     expect(organizationMemberPickerLabel(member), 'ops@x · 访客');
   });
 
+  test('organization member role updates protect the last owner', () {
+    final owner = OrganizationMember.fromJson({
+      'identity': ' owner@x ',
+      'role': 'owner',
+    });
+    final member = OrganizationMember.fromJson({
+      'identity': 'member@x',
+      'role': 'member',
+    });
+    final secondOwner = OrganizationMember.fromJson({
+      'identity': 'owner2@x',
+      'role': 'owner',
+    });
+
+    expect(organizationOwnerCount([owner, member]), 1);
+    expect(canRemoveOrganizationMember(owner, [owner, member]), isFalse);
+    expect(canRemoveOrganizationMember(member, [owner, member]), isTrue);
+    expect(
+      canUpsertOrganizationMemberRole('owner@x', 'admin', [owner, member]),
+      isFalse,
+    );
+    expect(
+      canUpsertOrganizationMemberRole('owner@x', 'guest', [owner, member]),
+      isFalse,
+    );
+    expect(
+      canUpsertOrganizationMemberRole('owner@x', 'owner', [owner, member]),
+      isTrue,
+    );
+    expect(
+      canUpsertOrganizationMemberRole('owner@x', 'member', [
+        owner,
+        secondOwner,
+        member,
+      ]),
+      isTrue,
+    );
+    expect(
+      canUpsertOrganizationMemberRole('new@x', 'admin', [owner, member]),
+      isTrue,
+    );
+    expect(canUpsertOrganizationMemberRole('', 'member', [owner]), isFalse);
+  });
+
   test('project owner label uses localized owner text', () {
     expect(projectOwnerLabel('owner@x'), '负责人 · owner@x');
   });

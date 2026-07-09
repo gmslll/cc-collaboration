@@ -45,6 +45,31 @@ String organizationMemberPickerLabel(OrganizationMember member) {
   return '${member.displayName} · ${member.identity} · $role';
 }
 
+int organizationOwnerCount(Iterable<OrganizationMember> members) =>
+    members.where((m) => m.role == 'owner').length;
+
+bool canRemoveOrganizationMember(
+  OrganizationMember member,
+  Iterable<OrganizationMember> members,
+) => member.role != 'owner' || organizationOwnerCount(members) > 1;
+
+bool canUpsertOrganizationMemberRole(
+  String identity,
+  String nextRole,
+  Iterable<OrganizationMember> members,
+) {
+  final id = identity.trim();
+  final role = nextRole.trim();
+  if (id.isEmpty) return false;
+  if (role == 'owner') return true;
+  for (final member in members) {
+    if (member.identity.trim() == id) {
+      return canRemoveOrganizationMember(member, members);
+    }
+  }
+  return true;
+}
+
 String projectOwnerLabel(String identity) =>
     '${projectRoleLabel('owner')} · $identity';
 
@@ -509,13 +534,19 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   @override
   void initState() {
     super.initState();
+    _identity.addListener(_onIdentityInputChanged);
     _load();
   }
 
   @override
   void dispose() {
+    _identity.removeListener(_onIdentityInputChanged);
     _identity.dispose();
     super.dispose();
+  }
+
+  void _onIdentityInputChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -539,9 +570,6 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
 
   bool _canManage(OrganizationDetail d) =>
       canManageOrganization(d.organization, isAdmin: widget.isAdmin);
-
-  int _ownerCount(OrganizationDetail d) =>
-      d.members.where((m) => m.role == 'owner').length;
 
   Future<void> _removeMember(String identity) async {
     final ok = await confirm(
@@ -569,7 +597,10 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
   Widget build(BuildContext context) {
     final d = _detail;
     final canManage = d != null && _canManage(d);
-    final ownerCount = d == null ? 0 : _ownerCount(d);
+    final memberInput = _identity.text.trim();
+    final canSubmitMember =
+        d != null &&
+        canUpsertOrganizationMemberRole(memberInput, _role, d.members);
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -627,7 +658,10 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                   ),
                   const SizedBox(height: 6),
                   ...d.members.map((m) {
-                    final isLastOwner = m.role == 'owner' && ownerCount <= 1;
+                    final canRemoveMember = canRemoveOrganizationMember(
+                      m,
+                      d.members,
+                    );
                     return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -670,9 +704,8 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                         child: Text('访客'),
                                       ),
                                     ],
-                                    onChanged: isLastOwner
-                                        ? null
-                                        : (role) {
+                                    onChanged: canRemoveMember
+                                        ? (role) {
                                             if (role == null ||
                                                 role == m.role) {
                                               return;
@@ -685,21 +718,22 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                                     role,
                                                   ),
                                             );
-                                          },
+                                          }
+                                        : null,
                                   ),
                                 ),
                                 IconButton(
-                                  tooltip: isLastOwner ? '至少保留一个负责人' : '移除',
+                                  tooltip: canRemoveMember ? '移除' : '至少保留一个负责人',
                                   icon: Icon(
                                     Icons.close_rounded,
                                     size: 18,
-                                    color: isLastOwner
-                                        ? CcColors.subtle
-                                        : CcColors.muted,
+                                    color: canRemoveMember
+                                        ? CcColors.muted
+                                        : CcColors.subtle,
                                   ),
-                                  onPressed: isLastOwner
-                                      ? null
-                                      : () => _removeMember(m.identity),
+                                  onPressed: canRemoveMember
+                                      ? () => _removeMember(m.identity)
+                                      : null,
                                 ),
                               ],
                             )
@@ -725,7 +759,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                               isDense: true,
                               prefixIcon: Icon(Icons.alternate_email_rounded),
                             ),
-                            onSubmitted: (_) => _addMember(),
+                            onSubmitted: (_) {
+                              if (canSubmitMember) _addMember();
+                            },
                           ),
                         ),
                         DropdownButton<String>(
@@ -748,13 +784,18 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                           onChanged: (v) =>
                               setState(() => _role = v ?? 'member'),
                         ),
-                        FilledButton.icon(
-                          onPressed: _addMember,
-                          icon: const Icon(
-                            Icons.person_add_alt_1_rounded,
-                            size: 18,
+                        Tooltip(
+                          message: memberInput.isNotEmpty && !canSubmitMember
+                              ? '至少保留一个负责人'
+                              : '加入团队',
+                          child: FilledButton.icon(
+                            onPressed: canSubmitMember ? _addMember : null,
+                            icon: const Icon(
+                              Icons.person_add_alt_1_rounded,
+                              size: 18,
+                            ),
+                            label: const Text('加入团队'),
                           ),
-                          label: const Text('加入团队'),
                         ),
                       ],
                     ),
