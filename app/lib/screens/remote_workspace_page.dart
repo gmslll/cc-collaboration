@@ -32,6 +32,18 @@ import '../widgets/session_snapshot_view.dart';
 import 'diff_split.dart';
 import '../terminal_theme.dart';
 
+double remoteWorkspaceMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.58,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  final capped = available < preferred ? available : preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
 // desktop must have "cast to phone" enabled (workspace toolbar).
@@ -1195,6 +1207,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 children: [
                   DropdownButton<RemoteRootInfo>(
                     isExpanded: true,
+                    menuMaxHeight: remoteWorkspaceMenuMaxHeight(
+                      MediaQuery.sizeOf(ctx),
+                    ),
                     value: project,
                     items: [
                       for (final r in _orderedRoots())
@@ -1217,6 +1232,9 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                   const SizedBox(height: 8),
                   DropdownButton<String>(
                     isExpanded: true,
+                    menuMaxHeight: remoteWorkspaceMenuMaxHeight(
+                      MediaQuery.sizeOf(ctx),
+                    ),
                     value: workdir,
                     items: [
                       DropdownMenuItem(
