@@ -2502,6 +2502,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // AssignTodo(id, identity, "", ...) so it doesn't collide with the
   // 打开/恢复会话 button (which keys off the resume trio, see todo_detail_view).
   Future<void> _assignToMember() async {
+    if (_submitting) return;
     final picked = (_pickedIdentity ?? '').trim();
     if (picked.isEmpty) {
       snack(context, '请选择要指派的成员');
@@ -2773,6 +2774,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   }
 
   Future<void> _assignToExisting() async {
+    if (_submitting) return;
     final sid = _targetSid;
     if (sid == null) return;
     setState(() => _submitting = true);
@@ -2803,6 +2805,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   }
 
   Future<void> _assignToNew() async {
+    if (_submitting) return;
     final ws = _workspace, proj = _project;
     if (ws == null || proj == null) {
       snack(context, '请选择 workspace / project');
@@ -2853,6 +2856,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // → workspace_page._remoteAssignTodo materializes/dispatches/spawns/binds on
   // its side. Returns null on success; on error keep the dialog open + snack.
   Future<void> _remoteAssignExisting() async {
+    if (_submitting) return;
     final r = _remote;
     final sid = _targetSid;
     if (r == null || sid == null) {
@@ -2875,6 +2879,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   }
 
   Future<void> _remoteAssignNew() async {
+    if (_submitting) return;
     final r = _remote;
     final ws = _workspace, proj = _project;
     if (r == null || ws == null || proj == null) {
