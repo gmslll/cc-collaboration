@@ -1,9 +1,29 @@
+import 'dart:io';
+
 import 'package:app/screens/remote_workspace_page.dart';
 import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('remote key bar button labels are width constrained', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final keyBar = source.substring(
+      source.indexOf('Widget _keyBar()'),
+      source.indexOf('// _openKeyBarEditor lets the user'),
+    );
+
+    expect(keyBar, isNot(contains('child: Text(label),')));
+    expect(
+      keyBar,
+      contains('constraints: const BoxConstraints(maxWidth: 120)'),
+    );
+    expect(keyBar, contains('maxLines: 1'));
+    expect(keyBar, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('remote workspace dropdown menu height is capped', () {
     expect(remoteWorkspaceMenuMaxHeight(const Size(1024, 900)), 320);
     expect(

@@ -3241,7 +3241,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 10),
           visualDensity: VisualDensity.compact,
         ),
-        child: Text(label),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 120),
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
       ),
     );
     // scrollBtn is like btn but hold-to-repeat: Listener (passive) drives the
@@ -3259,7 +3262,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 10),
             visualDensity: VisualDensity.compact,
           ),
-          child: Text(label),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 120),
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
         ),
       ),
     );
