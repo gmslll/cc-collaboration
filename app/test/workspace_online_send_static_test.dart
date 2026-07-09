@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:app/api/models.dart';
+import 'package:app/local/config.dart';
 import 'package:app/screens/terminal_pane.dart';
 import 'package:app/screens/workspace_page.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -105,6 +106,48 @@ void main() {
     );
   });
 
+  test('online send project scope prefers configured relay project id', () {
+    final roles = [
+      ProjectRole.fromJson({
+        'id': 'relay-a',
+        'org_id': 'org-a',
+        'name': 'backend',
+        'role': 'member',
+      }),
+      ProjectRole.fromJson({
+        'id': 'relay-b',
+        'org_id': 'org-b',
+        'name': 'backend',
+        'role': 'member',
+      }),
+    ];
+    const localProject = ProjectCfg('backend', '/repo/backend', '', 'relay-b');
+
+    expect(onlineSendProjectNameIsAmbiguous(roles, 'backend'), isTrue);
+    expect(onlineSendProjectIdForLocalProject(roles, localProject), 'relay-b');
+  });
+
+  test('online send project scope blocks ambiguous project names', () {
+    final roles = [
+      ProjectRole.fromJson({
+        'id': 'relay-a',
+        'org_id': 'org-a',
+        'name': 'backend',
+        'role': 'member',
+      }),
+      ProjectRole.fromJson({
+        'id': 'relay-b',
+        'org_id': 'org-b',
+        'name': 'backend',
+        'role': 'member',
+      }),
+    ];
+    const localProject = ProjectCfg('backend', '/repo/backend');
+
+    expect(onlineSendProjectNameIsAmbiguous(roles, 'backend'), isTrue);
+    expect(onlineSendProjectIdForLocalProject(roles, localProject), isNull);
+  });
+
   test('online send selected user comparison is identity-normalized', () {
     expect(onlineSendIdentitySelected(' Dev@X ', 'dev@x'), isTrue);
     expect(onlineSendIdentitySelected(null, 'dev@x'), isFalse);
@@ -177,6 +220,8 @@ void main() {
     expect(dialog, contains('await _onlineSendAllowedIdentities'));
     expect(dialog, contains('organization = await client.organization(orgId)'));
     expect(dialog, contains('} catch (_) {}'));
+    expect(dialog, contains('on _OnlineSendProjectScopeError'));
+    expect(dialog, contains('当前项目未绑定唯一团队项目,无法选择团队在线用户'));
     expect(dialog, contains('!_isCurrentRelayClient(client) ||'));
     expect(dialog, contains("账号已切换,请重新选择在线用户"));
     expect(

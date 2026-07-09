@@ -92,6 +92,9 @@ type Workspace struct {
 // Project is one project inside a Workspace.
 type Project struct {
 	Name string `toml:"name"`
+	// ProjectID optionally binds this local project to a relay project for
+	// team-scoped app actions when multiple teams use the same repo name.
+	ProjectID string `toml:"project_id,omitempty"`
 	// Path is the project directory: absolute, or relative to the workspace root.
 	Path string `toml:"path,omitempty"`
 	// GitHub records the source URL when the project was added via clone.

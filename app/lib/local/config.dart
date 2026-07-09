@@ -10,7 +10,13 @@ class ProjectCfg {
   final String name;
   final String path; // absolute
   final String github;
-  const ProjectCfg(this.name, this.path, [this.github = '']);
+  final String projectId; // relay project id; optional for team-scoped actions
+  const ProjectCfg(
+    this.name,
+    this.path, [
+    this.github = '',
+    this.projectId = '',
+  ]);
 }
 
 // A workspace from config.toml [[workspace]]: its projects + the resolved agent
@@ -182,8 +188,9 @@ class AppConfig {
         // entries so a doubled config row doesn't show the project twice.
         if (!seenProjects.add(name)) continue;
         final github = (p['github'] ?? '').toString();
+        final projectId = (p['project_id'] ?? '').toString().trim();
         repos.putIfAbsent(name, () => path);
-        projCfgs.add(ProjectCfg(name, path, github));
+        projCfgs.add(ProjectCfg(name, path, github, projectId));
       }
       wsList.add(
         WorkspaceCfg(wsName, wsPath, agent, editor, preLaunch, projCfgs),

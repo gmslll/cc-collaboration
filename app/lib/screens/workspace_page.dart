@@ -148,6 +148,34 @@ Set<String> onlineSendProjectReachableIdentities(
   return identities;
 }
 
+bool onlineSendProjectNameIsAmbiguous(
+  Iterable<ProjectRole> projects,
+  String? name,
+) {
+  final target = (name ?? '').trim();
+  if (target.isEmpty) return false;
+  final ids = <String>{};
+  for (final project in projects) {
+    if (project.name.trim() == target && project.id.trim().isNotEmpty) {
+      ids.add(project.id.trim());
+    }
+  }
+  return ids.length > 1;
+}
+
+String? onlineSendProjectIdForLocalProject(
+  Iterable<ProjectRole> projectRoles,
+  ProjectCfg project,
+) {
+  final configuredProjectId = project.projectId.trim();
+  if (configuredProjectId.isNotEmpty) return configuredProjectId;
+  return uniqueProjectIdByName(projectRoles, project.name);
+}
+
+class _OnlineSendProjectScopeError implements Exception {
+  const _OnlineSendProjectScopeError();
+}
+
 bool incomingMessageTargetIsOpen(
   Iterable<TerminalSession> sessions,
   TerminalSession target,
@@ -1419,18 +1447,29 @@ class _WorkspacePageState extends State<WorkspacePage>
         : null;
   }
 
-  String? _onlineSendProjectIdForSource(String? sourcePath) {
-    if (sourcePath == null || widget.me == null) return null;
+  ({String? projectId, bool ambiguous}) _onlineSendProjectScopeForSource(
+    String? sourcePath,
+  ) {
+    if (sourcePath == null) return (projectId: null, ambiguous: false);
     final project = _projectForFile(sourcePath)?.project;
-    if (project == null) return null;
-    return uniqueProjectIdByName(widget.me!.projects, project.name);
+    if (project == null) return (projectId: null, ambiguous: false);
+    final me = widget.me;
+    if (me == null) return (projectId: null, ambiguous: true);
+    final projectId = onlineSendProjectIdForLocalProject(me.projects, project);
+    if (projectId != null) return (projectId: projectId, ambiguous: false);
+    return (
+      projectId: null,
+      ambiguous: onlineSendProjectNameIsAmbiguous(me.projects, project.name),
+    );
   }
 
   Future<Set<String>?> _onlineSendAllowedIdentities(
     RelayClient client,
     String? sourcePath,
   ) async {
-    final projectId = _onlineSendProjectIdForSource(sourcePath);
+    final scope = _onlineSendProjectScopeForSource(sourcePath);
+    if (scope.ambiguous) throw const _OnlineSendProjectScopeError();
+    final projectId = scope.projectId;
     if (projectId == null) return null;
     final detail = await client.project(projectId);
     OrganizationDetail? organization;
@@ -1814,6 +1853,10 @@ class _WorkspacePageState extends State<WorkspacePage>
         _cfg.identity,
         allowedIdentities: allowedIdentities,
       );
+    } on _OnlineSendProjectScopeError {
+      if (!_isCurrentRelayClient(client)) return;
+      _snack('当前项目未绑定唯一团队项目,无法选择团队在线用户');
+      return;
     } catch (e) {
       if (!_isCurrentRelayClient(client)) return;
       _snack('获取团队在线用户失败:${errorText(e)}');
