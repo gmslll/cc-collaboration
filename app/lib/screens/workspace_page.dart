@@ -149,7 +149,7 @@ class _WorkspaceFieldsDialogState extends State<WorkspaceFieldsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.title),
+      title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -3827,7 +3827,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         content: Text(message),
         actions: [
           TextButton(

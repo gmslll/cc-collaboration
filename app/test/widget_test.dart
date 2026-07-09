@@ -290,6 +290,31 @@ void main() {
     );
   });
 
+  test('workspace management dialog titles are width constrained', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final fieldsDialog = source.substring(
+      source.indexOf('class WorkspaceFieldsDialog'),
+      source.indexOf('class WorkspaceSessionRenameDialog'),
+    );
+    final confirmDialog = source.substring(
+      source.indexOf('@override\n  Future<bool> _confirm('),
+      source.indexOf('void _openTask('),
+    );
+
+    expect(fieldsDialog, isNot(contains('title: Text(widget.title),')));
+    expect(
+      fieldsDialog,
+      contains('widget.title, maxLines: 1, overflow: TextOverflow.ellipsis'),
+    );
+    expect(confirmDialog, isNot(contains('title: Text(title),')));
+    expect(
+      confirmDialog,
+      contains('title, maxLines: 1, overflow: TextOverflow.ellipsis'),
+    );
+    expect(fieldsDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(confirmDialog, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('terminal paste guards mounted before writing to the pty', () {
     final source = File('lib/screens/terminal_pane.dart').readAsStringSync();
 
