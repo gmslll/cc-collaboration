@@ -48,25 +48,25 @@ type TodoListFilter struct {
 
 // ListTodos returns todos visible to the caller under filter.
 func (c *Client) ListTodos(ctx context.Context, f TodoListFilter) ([]todoschema.Todo, error) {
-	var parts []string
+	q := url.Values{}
 	if f.Scope != "" {
-		parts = append(parts, "scope="+f.Scope)
+		q.Set("scope", f.Scope)
 	}
 	if f.ProjectID != "" {
-		parts = append(parts, "project="+f.ProjectID)
+		q.Set("project", f.ProjectID)
 	}
 	if f.Status != "" {
-		parts = append(parts, "status="+f.Status)
+		q.Set("status", f.Status)
 	}
 	if f.GroupName != "" {
-		parts = append(parts, "group="+url.QueryEscape(f.GroupName))
+		q.Set("group", f.GroupName)
 	}
 	if f.Limit > 0 {
-		parts = append(parts, "limit="+strconv.Itoa(f.Limit))
+		q.Set("limit", strconv.Itoa(f.Limit))
 	}
 	path := "/v1/todos"
-	if len(parts) > 0 {
-		path += "?" + strings.Join(parts, "&")
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	var out struct {
 		Items []todoschema.Todo `json:"items"`
@@ -347,8 +347,8 @@ func (c *Client) UploadTodoAttachment(ctx context.Context, todoID, name string, 
 // the same thing either way: the parent resource exists but doesn't carry
 // an attachment with that name.
 func (c *Client) FetchTodoAttachment(ctx context.Context, todoID, name string) ([]byte, error) {
-	url := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + name
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + url.PathEscape(name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
