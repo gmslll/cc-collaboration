@@ -395,6 +395,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
   Set<String> _manageableOrgIds = const <String>{};
   List<OnlineUser> _online = const [];
   bool _isAdmin = false;
+  bool _creatingProject = false;
+  bool _creatingOrg = false;
   String _identity = '';
   String? _error;
   final _name = TextEditingController();
@@ -423,8 +425,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
     super.dispose();
   }
 
-  bool get _canCreateProject => _name.text.trim().isNotEmpty;
-  bool get _canCreateOrg => _orgName.text.trim().isNotEmpty;
+  bool get _canCreateProject =>
+      !_creatingProject && _name.text.trim().isNotEmpty;
+  bool get _canCreateOrg => !_creatingOrg && _orgName.text.trim().isNotEmpty;
 
   void _onCreateInputChanged() {
     if (mounted) setState(() {});
@@ -487,7 +490,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
 
   Future<void> _create() async {
     final name = _name.text.trim();
-    if (name.isEmpty) return;
+    if (name.isEmpty || _creatingProject) return;
+    if (mounted) setState(() => _creatingProject = true);
     try {
       await widget.client.createProject(
         name,
@@ -497,12 +501,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
       await _load();
     } catch (e) {
       if (mounted) snack(context, '创建失败: ${errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _creatingProject = false);
     }
   }
 
   Future<void> _createOrg() async {
     final name = _orgName.text.trim();
-    if (name.isEmpty) return;
+    if (name.isEmpty || _creatingOrg) return;
+    if (mounted) setState(() => _creatingOrg = true);
     try {
       final org = await widget.client.createOrganization(name);
       if (!mounted) return;
@@ -515,6 +522,8 @@ class _ProjectsPageState extends State<ProjectsPage> {
       await _load();
     } catch (e) {
       if (mounted) snack(context, '创建团队失败: ${errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _creatingOrg = false);
     }
   }
 

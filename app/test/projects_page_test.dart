@@ -860,6 +860,60 @@ void main() {
     expect(client.createdOrgId, isNull);
   });
 
+  testWidgets('project creation ignores duplicate submit taps', (tester) async {
+    final client = _CountingCreateProjectFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(1), 'Single Project');
+    await tester.pump();
+
+    final createButton = find.widgetWithText(FilledButton, '新建项目');
+    await tester.tap(createButton);
+    await tester.tap(createButton);
+
+    expect(client.createProjectCalls, 1);
+    expect(client.createdProjectName, 'Single Project');
+
+    client.completeCreateProject();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('organization creation ignores duplicate submit taps', (
+    tester,
+  ) async {
+    final client = _CountingCreateOrganizationFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(0), 'Single Team');
+    await tester.pump();
+
+    final createButton = find.widgetWithText(FilledButton, '新建团队');
+    await tester.tap(createButton);
+    await tester.tap(createButton);
+
+    expect(client.createOrganizationCalls, 1);
+    expect(client.createdOrganizationName, 'Single Team');
+
+    client.completeCreateOrganization();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('project creation refresh ignores stale initial project load', (
     tester,
   ) async {
@@ -1474,6 +1528,51 @@ class _CaptureCreateProjectFakeClient extends _ProjectsPageFakeClient {
       'owner_identity': 'owner@x',
       'role': 'owner',
     });
+  }
+}
+
+class _CountingCreateProjectFakeClient extends _ProjectsPageFakeClient {
+  final _createProjectCompleter = Completer<Project>();
+  int createProjectCalls = 0;
+  String? createdProjectName;
+
+  @override
+  Future<Project> createProject(String name, {String? orgId}) {
+    createProjectCalls++;
+    createdProjectName = name;
+    return _createProjectCompleter.future;
+  }
+
+  void completeCreateProject() {
+    if (_createProjectCompleter.isCompleted) return;
+    _createProjectCompleter.complete(
+      _project(id: 'created-project', name: createdProjectName ?? 'Created'),
+    );
+  }
+}
+
+class _CountingCreateOrganizationFakeClient extends _ProjectsPageFakeClient {
+  final _createOrganizationCompleter = Completer<Organization>();
+  int createOrganizationCalls = 0;
+  String? createdOrganizationName;
+
+  @override
+  Future<Organization> createOrganization(String name) {
+    createOrganizationCalls++;
+    createdOrganizationName = name;
+    return _createOrganizationCompleter.future;
+  }
+
+  void completeCreateOrganization() {
+    if (_createOrganizationCompleter.isCompleted) return;
+    _createOrganizationCompleter.complete(
+      Organization.fromJson({
+        'id': 'created-org',
+        'name': createdOrganizationName ?? 'Created',
+        'owner_identity': 'owner@x',
+        'role': 'owner',
+      }),
+    );
   }
 }
 
