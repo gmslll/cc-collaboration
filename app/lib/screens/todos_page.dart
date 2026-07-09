@@ -230,6 +230,7 @@ class _TodosPageState extends State<TodosPage> {
   String _linearImportProjectId = '';
   String? _linearTokenOverride;
   bool _importingLinear = false;
+  int _accountGeneration = 0;
 
   RelayClient get _client => widget.client;
   AppConfig get _cfg => widget.config;
@@ -310,13 +311,27 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   Future<void> _pullTodoView() async {
+    final generation = _accountGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     Map<String, dynamic>? m;
     try {
-      m = await _client.getSetting(_todoViewKey);
+      m = await client.getSetting(_todoViewKey);
     } catch (_) {
       return; // best-effort: keep the local view
     }
-    if (m == null || !mounted) return;
+    if (m == null ||
+        !_isCurrentAccountContext(
+          generation,
+          client,
+          relayUrl,
+          token,
+          identity,
+        )) {
+      return;
+    }
     final before = _viewSignature;
     final scope = m['scope'];
     final source = m['teamSource'];
@@ -349,6 +364,11 @@ class _TodosPageState extends State<TodosPage> {
   // surfacing an error, since it's a secondary affordance.
   Future<void> _loadGroups() async {
     final seq = ++_groupsLoadSeq;
+    final generation = _accountGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     String? projectId;
     if (_scope == 'personal') {
       projectId = null;
@@ -357,14 +377,41 @@ class _TodosPageState extends State<TodosPage> {
         _projectFilter != null) {
       projectId = _projectFilter;
     } else {
-      if (mounted && seq == _groupsLoadSeq) setState(() => _groups = []);
+      if (_isCurrentAccountContext(
+            generation,
+            client,
+            relayUrl,
+            token,
+            identity,
+          ) &&
+          seq == _groupsLoadSeq) {
+        setState(() => _groups = []);
+      }
       return;
     }
     try {
-      final groups = await _client.todoGroups(projectId: projectId);
-      if (mounted && seq == _groupsLoadSeq) setState(() => _groups = groups);
+      final groups = await client.todoGroups(projectId: projectId);
+      if (_isCurrentAccountContext(
+            generation,
+            client,
+            relayUrl,
+            token,
+            identity,
+          ) &&
+          seq == _groupsLoadSeq) {
+        setState(() => _groups = groups);
+      }
     } catch (_) {
-      if (mounted && seq == _groupsLoadSeq) setState(() => _groups = []);
+      if (_isCurrentAccountContext(
+            generation,
+            client,
+            relayUrl,
+            token,
+            identity,
+          ) &&
+          seq == _groupsLoadSeq) {
+        setState(() => _groups = []);
+      }
     }
   }
 
@@ -389,9 +436,22 @@ class _TodosPageState extends State<TodosPage> {
   // Best-effort re-pull of /v1/me so newly-created relay projects show up in the
   // project filter + the Linear import target. Keeps the old list on error.
   Future<void> _refreshMyProjects() async {
+    final generation = _accountGeneration;
+    final client = widget.client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     try {
-      final m = await widget.client.me();
-      if (mounted) setState(() => _myProjects = m.projects);
+      final m = await client.me();
+      if (_isCurrentAccountContext(
+        generation,
+        client,
+        relayUrl,
+        token,
+        identity,
+      )) {
+        setState(() => _myProjects = m.projects);
+      }
     } catch (_) {
       /* keep the login-time list */
     }
@@ -759,6 +819,70 @@ class _TodosPageState extends State<TodosPage> {
       teamCtl.dispose();
       projectCtl.dispose();
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant TodosPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_onStoreChanged);
+      if (identical(oldWidget.store.onComment, _onComment)) {
+        oldWidget.store.onComment = null;
+      }
+      widget.store.addListener(_onStoreChanged);
+      widget.store.onComment = _onComment;
+    }
+    if (_todoAccountContextChanged(oldWidget)) {
+      _resetForAccountContext();
+      _loadGroups();
+      _refreshMyProjects();
+      _pullTodoView();
+    }
+  }
+
+  bool _todoAccountContextChanged(TodosPage oldWidget) =>
+      oldWidget.client != widget.client ||
+      oldWidget.store != widget.store ||
+      oldWidget.config.relayUrl != _cfg.relayUrl ||
+      oldWidget.config.token != _cfg.token ||
+      oldWidget.config.identity != _cfg.identity ||
+      oldWidget.me.identity != _me.identity;
+
+  bool _isCurrentAccountContext(
+    int generation,
+    RelayClient client,
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      generation == _accountGeneration &&
+      identical(client, _client) &&
+      _cfg.relayUrl == relayUrl &&
+      _cfg.token == token &&
+      _cfg.identity == identity;
+
+  void _resetForAccountContext() {
+    _accountGeneration++;
+    _groupsLoadSeq++;
+    setState(() {
+      _scope = 'personal';
+      _teamSource = 'relay';
+      _statusFilter.clear();
+      _projectFilter = null;
+      _groupFilter = null;
+      _groups = const [];
+      _selected = null;
+      _selectedTodoIds.clear();
+      _deletingSelectedTodos = false;
+      _myProjects = widget.me.projects;
+      _linearTeamKey = '';
+      _linearProjectId = '';
+      _linearImportProjectId = '';
+      _linearTokenOverride = null;
+      _importingLinear = false;
+      _lastPushedView = null;
+    });
   }
 
   @override

@@ -122,10 +122,83 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('account switch ignores stale todo view and project loads', (
+    tester,
+  ) async {
+    final oldClient = _DelayedTodoPageContextClient(
+      setting: const {
+        'scope': 'team',
+        'teamSource': 'relay',
+        'projectFilter': 'old-p',
+      },
+      meValue: _meWithProject('old-p', 'Old Project'),
+    );
+    final newClient = _DelayedTodoPageContextClient(
+      setting: null,
+      meValue: _meWithProject('new-p', 'New Project'),
+    );
+    final oldStore = TodoStore()
+      ..debugSetClient(oldClient)
+      ..all = [
+        Todo.fromJson(_todoJson(id: 'old', title: 'Old todo', projectId: null)),
+      ];
+    final newStore = TodoStore()
+      ..debugSetClient(newClient)
+      ..all = [
+        Todo.fromJson(_todoJson(id: 'new', title: 'New todo', projectId: null)),
+      ];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: oldClient,
+            config: _config(token: 'old', identity: 'old@x'),
+            me: _meWithProject('old-p', 'Old Project'),
+            store: oldStore,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: newClient,
+            config: _config(token: 'new', identity: 'new@x'),
+            me: _meWithProject('new-p', 'New Project'),
+            store: newStore,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    newClient.completeAll();
+    await tester.pumpAndSettle();
+    expect(find.text('New todo'), findsOneWidget);
+
+    oldClient.completeAll();
+    await tester.pumpAndSettle();
+
+    expect(find.text('New todo'), findsOneWidget);
+    expect(find.text('Old todo'), findsNothing);
+    expect(find.text('Old Project'), findsNothing);
+  });
 }
 
-AppConfig _config() =>
-    AppConfig('http://127.0.0.1', 'tok', 'alice@x', const {});
+AppConfig _config({String token = 'tok', String identity = 'alice@x'}) =>
+    AppConfig('http://127.0.0.1', token, identity, const {});
 
 Me _me() => Me.fromJson({
   'identity': 'alice@x',
@@ -143,11 +216,24 @@ Me _adminMe() => Me.fromJson({
   ],
 });
 
-Map<String, dynamic> _todoJson({String? assigneeIdentity}) => {
-  'id': 't1',
-  'project_id': 'p1',
+Me _meWithProject(String projectId, String projectName) => Me.fromJson({
+  'identity': 'alice@x',
+  'is_admin': false,
+  'projects': [
+    {'id': projectId, 'org_id': 'org1', 'name': projectName, 'role': 'member'},
+  ],
+});
+
+Map<String, dynamic> _todoJson({
+  String id = 't1',
+  String title = 'Team todo',
+  String? projectId = 'p1',
+  String? assigneeIdentity,
+}) => {
+  'id': id,
+  'project_id': projectId,
   'owner_identity': 'alice@x',
-  'title': 'Team todo',
+  'title': title,
   'body_md': '',
   'status': 'todo',
   'priority': 'normal',
@@ -273,5 +359,41 @@ class _DelayedDeleteTodoClient extends _DelayedAssignTodoClient {
 
   void completeDelete() {
     _deleteCompleter.complete();
+  }
+}
+
+class _DelayedTodoPageContextClient extends RelayClient {
+  _DelayedTodoPageContextClient({required this.setting, required this.meValue})
+    : super('http://127.0.0.1', 'tok');
+
+  final Map<String, dynamic>? setting;
+  final Me meValue;
+  final _settingCompleter = Completer<Map<String, dynamic>?>();
+  final _meCompleter = Completer<Me>();
+  final _groupsCompleters = <Completer<List<String>>>[];
+
+  @override
+  Future<Map<String, dynamic>?> getSetting(String key) =>
+      _settingCompleter.future;
+
+  @override
+  Future<void> putSetting(String key, Map<String, dynamic> value) async {}
+
+  @override
+  Future<Me> me() => _meCompleter.future;
+
+  @override
+  Future<List<String>> todoGroups({String? projectId}) {
+    final completer = Completer<List<String>>();
+    _groupsCompleters.add(completer);
+    return completer.future;
+  }
+
+  void completeAll() {
+    if (!_settingCompleter.isCompleted) _settingCompleter.complete(setting);
+    if (!_meCompleter.isCompleted) _meCompleter.complete(meValue);
+    for (final completer in _groupsCompleters) {
+      if (!completer.isCompleted) completer.complete(const []);
+    }
   }
 }
