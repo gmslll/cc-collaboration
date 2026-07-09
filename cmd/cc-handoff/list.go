@@ -35,11 +35,12 @@ func runList(ctx context.Context, args []string) error {
 	}
 	client := transport.New(res.RelayURL, res.Token)
 	var listItems []handoffschema.ListItem
-	if *projectID != "" || *allProjects {
-		if *projectID != "" && *allProjects {
-			return fmt.Errorf("--project and --all-projects are mutually exclusive")
-		}
-		listItems, err = client.ListProjectHandoffs(ctx, *projectID, *limit)
+	project, projectMode, err := listProjectTarget(*projectID, *allProjects)
+	if err != nil {
+		return err
+	}
+	if projectMode {
+		listItems, err = client.ListProjectHandoffs(ctx, project, *limit)
 	} else {
 		listItems, err = client.List(ctx, res.Me)
 	}
@@ -64,6 +65,20 @@ func runList(ctx context.Context, args []string) error {
 		)
 	}
 	return nil
+}
+
+func listProjectTarget(projectID string, allProjects bool) (string, bool, error) {
+	projectID = cleanTargetArg(projectID)
+	if projectID != "" && allProjects {
+		return "", false, fmt.Errorf("--project and --all-projects are mutually exclusive")
+	}
+	if allProjects {
+		return "", true, nil
+	}
+	if projectID != "" {
+		return projectID, true, nil
+	}
+	return "", false, nil
 }
 
 // truncRight returns s capped at n runes, appending an ellipsis if truncated.
