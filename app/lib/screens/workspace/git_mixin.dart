@@ -85,6 +85,7 @@ mixin _GitMixin on State<WorkspacePage> {
     final p = _currentGitProject;
     if (p == null) return;
     if (_gitProject == null && mounted) setState(() => _gitProject = p);
+    if (!mounted) return;
     setState(() {
       _gitLoading = true;
       _gitError = null;

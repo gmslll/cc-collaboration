@@ -1852,6 +1852,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   Future<void> _ensureWorktrees(String path) async {
     if (_worktrees.containsKey(path)) return;
+    if (!mounted) return;
     setState(() => _worktrees[path] = null); // mark loading
     final wts = await listWorktrees(path);
     if (mounted) setState(() => _worktrees[path] = wts);
@@ -1871,11 +1872,13 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> _reloadWorktrees(String path) async {
+    if (!mounted) return;
     setState(() => _worktrees.remove(path));
     await _ensureWorktrees(path);
   }
 
   Future<void> _refresh() async {
+    if (!mounted) return;
     setState(() => _worktrees.clear());
     await _reloadConfig();
     await _loadTasks();
@@ -1894,13 +1897,18 @@ class _WorkspacePageState extends State<WorkspacePage>
     String okMsg, {
     Future<void> Function()? after,
   }) async {
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       await action();
-      if (after != null) await after();
+      if (!mounted) return;
+      if (after != null) {
+        await after();
+        if (!mounted) return;
+      }
       _snack(okMsg);
     } catch (e) {
-      _snack(errorText(e));
+      if (mounted) _snack(errorText(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2659,6 +2667,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   @override
   void _openCodeFile(String path, {int? line, bool recordHistory = true}) {
+    if (!mounted) return;
     // Opening a directory as a file throws "Is a directory" (e.g. an untracked
     // dir or a submodule clicked in the change list) — reveal it in the project
     // tree instead of adding a broken editor tab.
@@ -3161,6 +3170,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
     );
     if (raw == null) return null;
+    if (!mounted) return null;
     final name = raw.trim();
     if (!_validEntryName(name)) {
       _snack('$label 不能为空，也不能包含路径分隔符');
@@ -3170,6 +3180,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   void _refreshFileTrees([String? selectedPath]) {
+    if (!mounted) return;
     // Files created/deleted/renamed/formatted → the go-to-definition symbol index
     // may be stale; drop it so the next jump rebuilds from disk.
     _invalidateSymbolIndex();
@@ -3190,6 +3201,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty && !await _confirm('关闭未保存文件?', _previewList(dirty))) {
       return false;
     }
+    if (!mounted) return false;
     if (affected.isEmpty) return true;
     setState(() {
       _codeFiles.removeWhere(
@@ -3260,6 +3272,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (!await _confirm('删除「${_pathBaseName(path)}」?', '此操作会删除磁盘文件。')) {
       return;
     }
+    if (!mounted) return;
     if (!await _closeAffectedOpenFiles(path, isDir)) return;
     try {
       if (isDir) {
@@ -3390,6 +3403,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         ],
       ),
     );
+    if (!mounted) return;
     if (path != null) _openCodeFile(path);
   }
 
@@ -3438,6 +3452,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         ],
       ),
     );
+    if (!mounted) return;
     if (loc != null) _openCodeFile(loc.path, line: loc.line);
   }
 
@@ -3499,6 +3514,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     final next = ctl.text.trim();
     ctl.dispose();
+    if (!mounted) return;
     setState(() => _logPathFilter = next);
     await _refreshGit();
   }
@@ -3604,6 +3620,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       dialogTitle: '选择包含多个项目的目录(将扫描其中的 git 仓库)',
     );
     if (dir == null || dir.trim().isEmpty) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       final out = await Cli.workspaceImport(dir);
@@ -3761,6 +3778,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
     );
     if (raw == null) return null;
+    if (!mounted) return null;
     final vals = [for (final value in raw) value.trim()];
     for (var i = 0; i < fields.length; i++) {
       if (fields[i].required && vals[i].isEmpty) {
@@ -7016,6 +7034,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('分支名不能为空');
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitCreateBranch(p.path, branch, start: c.hash);
@@ -10473,6 +10492,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
     if (raw == null) return;
     final v = raw.trim();
+    if (!mounted) return;
     setState(() => s.name = v.isEmpty ? null : v);
     persistTerms();
   }
@@ -10831,6 +10851,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
     );
     if (draft == null) return;
+    if (!mounted) return;
     await _runCli(
       () => Cli.workspaceSet(
         ws.name,

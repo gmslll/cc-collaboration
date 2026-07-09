@@ -300,6 +300,130 @@ void main() {
     );
   });
 
+  test('workspace async dialogs guard mounted before state changes', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+
+    String between(String start, String end) =>
+        source.substring(source.indexOf(start), source.indexOf(end));
+
+    void expectGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return', afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    expectGuardBefore(
+      between('Future<String?> _nameDialog(', 'void _refreshFileTrees('),
+      'if (raw == null) return null;',
+      "_snack('\$label 不能为空",
+    );
+    expectGuardBefore(
+      between(
+        'Future<bool> _closeAffectedOpenFiles(',
+        'Future<void> _newFileInDir(',
+      ),
+      "await _confirm('关闭未保存文件?'",
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between(
+        'void _refreshFileTrees(',
+        'Future<bool> _closeAffectedOpenFiles(',
+      ),
+      'void _refreshFileTrees',
+      'setState(() {',
+    );
+    expectGuardBefore(
+      between('void _openCodeFile(', '// _openDiffTab opens'),
+      'void _openCodeFile',
+      'setState(',
+    );
+    expectGuardBefore(
+      between('Future<void> _runCli(', 'void _launch('),
+      'Future<void> _runCli',
+      'setState(() => _busy = true)',
+    );
+    expectGuardBefore(
+      between('Future<void> _runCli(', 'void _launch('),
+      'await action();',
+      'if (after != null)',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _showRecentFiles()',
+        'Future<void> _showRecentLocations()',
+      ),
+      'showDialog<String>',
+      '_openCodeFile(path)',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _showRecentLocations()',
+        'Future<void> _setGitLogPathFilter()',
+      ),
+      'showDialog<_CodeLocation>',
+      '_openCodeFile(loc.path',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _setGitLogPathFilter()',
+        'Future<void> _showShortcuts()',
+      ),
+      'ctl.dispose();',
+      'setState(() => _logPathFilter = next)',
+    );
+    expectGuardBefore(
+      between(
+        'Future<List<String>?> _fieldsDialog(',
+        '@override\n  Future<bool> _confirm',
+      ),
+      'if (raw == null) return null;',
+      "_snack('\${fields[i].label} 不能为空')",
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _createBranchFromCommit(',
+        '@override\n  Future<void> _cherryPickCommit',
+      ),
+      "if (branch.isEmpty)",
+      'setState(() => _gitLoading = true)',
+    );
+    expectGuardBefore(
+      between('Future<void> _renameSession(', 'List<Widget> _worktreeNodes('),
+      'final v = raw.trim();',
+      'setState(() => s.name',
+    );
+    expectGuardBefore(
+      between(
+        'Future<void> _workspaceSettings(',
+        'PopupMenuButton<String> _projectMenu(',
+      ),
+      'if (draft == null) return;',
+      'await _runCli(',
+    );
+  });
+
+  test('workspace git refresh guards mounted before loading state', () {
+    final source = File(
+      'lib/screens/workspace/git_mixin.dart',
+    ).readAsStringSync();
+    final refresh = source.substring(
+      source.indexOf('Future<void> _refreshGit() async {'),
+      source.indexOf('/// 懒加载某个附加 worktree'),
+    );
+
+    final guardIndex = refresh.indexOf('if (!mounted) return;');
+    final loadingIndex = refresh.indexOf('setState(() {');
+    expect(guardIndex, isNonNegative);
+    expect(loadingIndex, isNonNegative);
+    expect(guardIndex, lessThan(loadingIndex));
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
