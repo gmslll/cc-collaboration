@@ -68,6 +68,86 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'bulk todo deletion confirmation after account switch is ignored',
+    (tester) async {
+      final oldClient = _DelayedDeleteTodoClient();
+      final newClient = _DelayedDeleteTodoClient();
+      final oldStore = TodoStore()
+        ..debugSetClient(oldClient)
+        ..all = [oldClient.teamTodo];
+      final newStore = TodoStore()
+        ..debugSetClient(newClient)
+        ..all = [
+          Todo.fromJson(
+            _todoJson(
+              id: 'new-todo',
+              title: 'New account todo',
+              projectId: null,
+            ),
+          ),
+        ];
+
+      await tester.binding.setSurfaceSize(const Size(1000, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      Widget page({
+        required RelayClient client,
+        required TodoStore store,
+        required AppConfig config,
+        required Me me,
+      }) => MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: config,
+            me: me,
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(
+        page(
+          client: oldClient,
+          config: _config(token: 'old', identity: 'old@x'),
+          me: _adminMe(identity: 'old@x'),
+          store: oldStore,
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('团队'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('选择当前筛选结果'));
+      await tester.pump();
+      expect(find.text('已选 1'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('删除选中待办'));
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('删除 1 个待办？'), findsOneWidget);
+
+      await tester.pumpWidget(
+        page(
+          client: newClient,
+          config: _config(token: 'new', identity: 'new@x'),
+          me: _adminMe(identity: 'new@x'),
+          store: newStore,
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilledButton, '删除'));
+      await tester.pumpAndSettle();
+
+      expect(oldClient.deleteCalls, 0);
+      expect(newClient.deleteCalls, 0);
+      expect(find.text('New account todo'), findsOneWidget);
+    },
+  );
+
   testWidgets('member assignment ignores duplicate submit taps', (
     tester,
   ) async {
@@ -208,8 +288,8 @@ Me _me() => Me.fromJson({
   ],
 });
 
-Me _adminMe() => Me.fromJson({
-  'identity': 'alice@x',
+Me _adminMe({String identity = 'alice@x'}) => Me.fromJson({
+  'identity': identity,
   'is_admin': true,
   'projects': [
     {'id': 'p1', 'org_id': 'org1', 'name': 'Backend', 'role': 'owner'},

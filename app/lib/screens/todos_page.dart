@@ -443,13 +443,14 @@ class _TodosPageState extends State<TodosPage> {
     final identity = _cfg.identity;
     try {
       final m = await client.me();
-      if (_isCurrentAccountContext(
-        generation,
-        client,
-        relayUrl,
-        token,
-        identity,
-      )) {
+      if (mounted &&
+          _isCurrentAccountContext(
+            generation,
+            client,
+            relayUrl,
+            token,
+            identity,
+          )) {
         setState(() => _myProjects = m.projects);
       }
     } catch (_) {
@@ -930,6 +931,11 @@ class _TodosPageState extends State<TodosPage> {
 
   Future<void> _deleteSelectedTodos() async {
     if (_deletingSelectedTodos) return;
+    final generation = _accountGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     final ids = _selectedTodoIds.where((id) {
       final matches = _store.all.where((t) => t.id == id);
       return matches.isNotEmpty && _accessFor(matches.first).canDelete;
@@ -943,22 +949,55 @@ class _TodosPageState extends State<TodosPage> {
         title: '删除 ${ids.length} 个待办？',
         okLabel: '删除',
       );
-      if (!mounted || ok != true) return;
+      if (ok != true ||
+          !_isCurrentAccountContext(
+            generation,
+            client,
+            relayUrl,
+            token,
+            identity,
+          )) {
+        return;
+      }
       var failed = 0;
       for (final id in ids) {
+        if (!_isCurrentAccountContext(
+          generation,
+          client,
+          relayUrl,
+          token,
+          identity,
+        )) {
+          return;
+        }
         try {
-          await _client.deleteTodo(id);
+          await client.deleteTodo(id);
         } catch (_) {
           failed++;
         }
       }
-      if (!mounted) return;
+      if (!_isCurrentAccountContext(
+        generation,
+        client,
+        relayUrl,
+        token,
+        identity,
+      )) {
+        return;
+      }
       setState(() {
         _selectedTodoIds.clear();
         if (_selected != null && ids.contains(_selected!.id)) _selected = null;
       });
       await _store.refresh();
-      if (mounted) {
+      if (!mounted) return;
+      if (_isCurrentAccountContext(
+        generation,
+        client,
+        relayUrl,
+        token,
+        identity,
+      )) {
         snack(
           context,
           failed == 0
@@ -967,7 +1006,15 @@ class _TodosPageState extends State<TodosPage> {
         );
       }
     } finally {
-      if (mounted) setState(() => _deletingSelectedTodos = false);
+      if (_isCurrentAccountContext(
+        generation,
+        client,
+        relayUrl,
+        token,
+        identity,
+      )) {
+        setState(() => _deletingSelectedTodos = false);
+      }
     }
   }
 
