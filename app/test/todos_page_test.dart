@@ -352,6 +352,84 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('pending member assignment after account switch is ignored', (
+    tester,
+  ) async {
+    final oldClient = _DelayedAssignTodoClient();
+    final newClient = _DelayedAssignTodoClient();
+    final oldStore = TodoStore()
+      ..debugSetClient(oldClient)
+      ..all = [oldClient.teamTodo];
+    final newStore = TodoStore()
+      ..debugSetClient(newClient)
+      ..all = [
+        Todo.fromJson(
+          _todoJson(id: 'new-todo', title: 'New account todo', projectId: null),
+        ),
+      ];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    Widget page({
+      required RelayClient client,
+      required TodoStore store,
+      required AppConfig config,
+      required Me me,
+    }) => MaterialApp(
+      theme: ccTheme(),
+      home: Scaffold(
+        body: TodosPage(
+          client: client,
+          config: config,
+          me: me,
+          store: store,
+          overviewStore: SessionOverviewStore(),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      page(
+        client: oldClient,
+        config: _config(token: 'old', identity: 'alice@x'),
+        me: _me(),
+        store: oldStore,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Team todo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, '指派'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('指派给成员'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '指派'));
+    await tester.pump();
+    expect(oldClient.assignCalls, 1);
+
+    await tester.pumpWidget(
+      page(
+        client: newClient,
+        config: _config(token: 'new', identity: 'new@x'),
+        me: _adminMe(identity: 'new@x'),
+        store: newStore,
+      ),
+    );
+    await tester.pump();
+
+    oldClient.completeAssign();
+    await tester.pumpAndSettle();
+
+    expect(newClient.assignCalls, 0);
+    expect(find.text('指派给成员'), findsNothing);
+    expect(find.text('New account todo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('viewer team todo hides assignment actions', (tester) async {
     final client = _DelayedAssignTodoClient();
     final store = TodoStore()

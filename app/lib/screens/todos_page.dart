@@ -1137,17 +1137,26 @@ class _TodosPageState extends State<TodosPage> {
       snack(context, '你对这条待办没有指派权限');
       return;
     }
+    final generation = _accountGeneration;
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    bool isCurrentContext() =>
+        _isCurrentAccountContext(generation, client, relayUrl, token, identity);
     final changed = await showDialog<bool>(
       context: context,
       builder: (_) => _AssignTodoDialog(
         todo: t,
-        client: _client,
+        client: client,
         overviewStore: _overview,
         config: _cfg,
+        isCurrentContext: isCurrentContext,
       ),
     );
     if (changed == true) {
       if (!mounted) return;
+      if (!isCurrentContext()) return;
       await _store.refresh();
     }
   }
@@ -2525,12 +2534,14 @@ class _AssignTodoDialog extends StatefulWidget {
   final RelayClient client;
   final SessionOverviewStore overviewStore;
   final AppConfig config;
+  final bool Function() isCurrentContext;
 
   const _AssignTodoDialog({
     required this.todo,
     required this.client,
     required this.overviewStore,
     required this.config,
+    required this.isCurrentContext,
   });
 
   @override
@@ -2568,7 +2579,8 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   Map<String, String> _memberRoles = const {};
   Set<String> _onlineIds = const {};
   String? _pickedIdentity;
-  late final String _selfIdentity = cleanedIdentity(widget.config.identity);
+  int _memberLoadGeneration = 0;
+  String get _selfIdentity => cleanedIdentity(widget.config.identity);
 
   // On mobile there are no local sessions (overviewStore is desktop-only), so
   // 已有会话/新建会话 instead drive the paired desktop's sessions over the WS
@@ -2583,6 +2595,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // desktop is online (new-session works even with zero existing sessions).
   bool get _showSessionModes =>
       widget.overviewStore.cards.isNotEmpty || _remoteReady;
+
+  bool _closeIfStaleContext() {
+    if (widget.isCurrentContext()) return false;
+    Navigator.pop(context, false);
+    return true;
+  }
 
   List<SessionCard> get _cards => widget.overviewStore.cards.isNotEmpty
       ? widget.overviewStore.cards
@@ -2666,6 +2684,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // dot; arbitrary online strangers are not added.
   Future<void> _loadMembers() async {
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
+    final generation = ++_memberLoadGeneration;
+    final client = widget.client;
+    final todo = widget.todo;
     setState(() {
       _loadingMembers = true;
       _membersError = null;
@@ -2673,22 +2695,18 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final self = _selfIdentity;
     final online = <String>{};
 
-    final pid = widget.todo.projectId ?? '';
+    final pid = todo.projectId ?? '';
     // onlineUsers is best-effort (dot only). project() is load-bearing for team
     // todos; organization() is best-effort so older relays still show direct
     // project members.
-    final onlineF = widget.client.onlineUsers().catchError(
-      (_) => <OnlineUser>[],
-    );
-    final detailF = pid.isEmpty
-        ? Future.value(null)
-        : widget.client.project(pid);
+    final onlineF = client.onlineUsers().catchError((_) => <OnlineUser>[]);
+    final detailF = pid.isEmpty ? Future.value(null) : client.project(pid);
 
     final ProjectDetail? detail;
     try {
       detail = await detailF;
     } catch (e) {
-      if (mounted) {
+      if (_isCurrentMemberLoad(generation, client, todo, self)) {
         setState(() {
           _membersError = errorText(e);
           _loadingMembers = false;
@@ -2696,15 +2714,15 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       }
       return;
     }
-    if (!mounted) return;
+    if (!_isCurrentMemberLoad(generation, client, todo, self)) return;
     final projectMembers = detail?.members ?? const <ProjectMember>[];
     final orgMembers = detail?.project.orgId.isNotEmpty == true
-        ? await widget.client
+        ? await client
               .organization(detail!.project.orgId)
               .then((d) => d.members)
               .catchError((_) => <OrganizationMember>[])
         : const <OrganizationMember>[];
-    if (!mounted) return;
+    if (!_isCurrentMemberLoad(generation, client, todo, self)) return;
 
     final names = todoMemberDisplayNames(
       projectMembers: projectMembers,
@@ -2721,7 +2739,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       for (final c in candidates) identityLookupKey(c.identity): c.roleLabel,
     };
     online.addAll(normalizedOnlineTodoMemberIds(await onlineF));
-    if (!mounted) return;
+    if (!_isCurrentMemberLoad(generation, client, todo, self)) return;
     final selfCandidate = ids.firstWhere(
       (id) => sameIdentity(id, self),
       orElse: () => '',
@@ -2741,15 +2759,35 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     });
   }
 
+  bool _isCurrentMemberLoad(
+    int generation,
+    RelayClient client,
+    Todo todo,
+    String selfIdentity,
+  ) {
+    if (!mounted) return false;
+    if (_closeIfStaleContext()) return false;
+    return generation == _memberLoadGeneration &&
+        identical(widget.client, client) &&
+        widget.todo.id == todo.id &&
+        widget.todo.projectId == todo.projectId &&
+        sameIdentity(widget.config.identity, selfIdentity);
+  }
+
   // _assignToMember writes assignee_identity only (session trio left empty),
   // the "pure human assignment" shape — matches internal/linear/import.go's
   // AssignTodo(id, identity, "", ...) so it doesn't collide with the
   // 打开/恢复会话 button (which keys off the resume trio, see todo_detail_view).
   Future<void> _assignToMember() async {
     if (_submitting) return;
+    if (_closeIfStaleContext()) return;
     final picked = (_pickedIdentity ?? '').trim();
     if (picked.isEmpty) {
       snack(context, '请选择要指派的成员');
+      return;
+    }
+    if (!_memberIds.any((id) => sameIdentity(id, picked))) {
+      snack(context, '请选择有效的团队成员');
       return;
     }
     setState(() => _submitting = true);
@@ -2757,13 +2795,17 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       await widget.client.assignTodo(widget.todo.id, assigneeIdentity: picked);
     } catch (e) {
       if (mounted) {
+        if (_closeIfStaleContext()) return;
         setState(() => _submitting = false);
         snack(context, '指派失败: ${errorText(e)}');
       }
       return;
     }
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     await _maybeBumpToInProgress(widget.todo.status);
+    if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -2996,11 +3038,13 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     required String repoName,
     bool waitForAgentId = false,
   }) async {
+    if (_closeIfStaleContext()) return;
     var card = _findCard(sessionId);
     if (waitForAgentId && (card?.agentSessionId ?? '').isEmpty) {
       for (var i = 0; i < 15 && (card?.agentSessionId ?? '').isEmpty; i++) {
         await Future.delayed(const Duration(milliseconds: 200));
         if (!mounted) return;
+        if (_closeIfStaleContext()) return;
         card = _findCard(sessionId);
       }
     }
@@ -3022,12 +3066,14 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
         repoName: repoName,
       );
     } catch (e) {
+      if (_closeIfStaleContext()) return;
       if (mounted) snack(context, '同步工作区/库绑定失败: ${errorText(e)}');
     }
   }
 
   Future<void> _assignToExisting() async {
     if (_submitting) return;
+    if (_closeIfStaleContext()) return;
     final sid = _targetSid;
     if (sid == null) return;
     setState(() => _submitting = true);
@@ -3035,6 +3081,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     // agent at that file, so the file must already be on disk when it lands.
     final prep = await _prepareAssignment(sid);
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     final err = widget.overviewStore.dispatch(
       LocalMsg('', sid, prep.taskText, true),
     );
@@ -3053,12 +3100,16 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       repoName: card?.project ?? '',
     );
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     await _maybeBumpToInProgress(prep.statusAtPrep);
+    if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     if (mounted) Navigator.pop(context, true);
   }
 
   Future<void> _assignToNew() async {
     if (_submitting) return;
+    if (_closeIfStaleContext()) return;
     final ws = _workspace, proj = _project;
     if (!todoAssignNewSelectionValid(
       workspace: ws,
@@ -3081,18 +3132,21 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     );
     if (sid == null) {
       if (mounted) {
+        if (_closeIfStaleContext()) return;
         setState(() => _submitting = false);
         snack(context, '新建会话失败: ${err ?? "未知错误"}');
       }
       return;
     }
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     // Prep (materialize) AFTER the session exists but BEFORE dispatch — the
     // pointer text must reference an already-written file. _prepareAssignment
     // polls for the fresh card's workdir since it may not be populated the
     // instant spawn returns; it falls back to a raw paste if it never appears.
     final prep = await _prepareAssignment(sid);
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     final dispatchErr = widget.overviewStore.dispatch(
       LocalMsg('', sid, prep.taskText, true),
     );
@@ -3107,7 +3161,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       waitForAgentId: true,
     );
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     await _maybeBumpToInProgress(prep.statusAtPrep);
+    if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -3117,6 +3174,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // its side. Returns null on success; on error keep the dialog open + snack.
   Future<void> _remoteAssignExisting() async {
     if (_submitting) return;
+    if (_closeIfStaleContext()) return;
     final r = _remote;
     final sid = _targetSid;
     if (r == null || sid == null) {
@@ -3130,6 +3188,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       sid: sid,
     );
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     if (err != null) {
       setState(() => _submitting = false);
       snack(context, err);
@@ -3140,6 +3199,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
 
   Future<void> _remoteAssignNew() async {
     if (_submitting) return;
+    if (_closeIfStaleContext()) return;
     final r = _remote;
     final ws = _workspace, proj = _project;
     if (r == null ||
@@ -3165,6 +3225,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       branch: branch.isEmpty ? null : branch,
     );
     if (!mounted) return;
+    if (_closeIfStaleContext()) return;
     if (err != null) {
       setState(() => _submitting = false);
       snack(context, err);

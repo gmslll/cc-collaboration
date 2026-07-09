@@ -649,12 +649,18 @@ void main() {
     );
 
     expect(loader, contains('if (!mounted) return;'));
+    expect(loader, contains('if (_closeIfStaleContext()) return;'));
+    expect(loader, contains('final generation = ++_memberLoadGeneration;'));
     expect(
       loader.indexOf('if (!mounted) return;'),
       lessThan(loader.indexOf('setState(() {')),
     );
+    expect(
+      loader.indexOf('if (_closeIfStaleContext()) return;'),
+      lessThan(loader.indexOf('setState(() {')),
+    );
     final orgLookup = loader.indexOf('organization(detail!.project.orgId)');
-    final orgGuard = loader.indexOf('if (!mounted) return;', orgLookup);
+    final orgGuard = loader.indexOf('_isCurrentMemberLoad', orgLookup);
     final displayNames = loader.indexOf('todoMemberDisplayNames', orgLookup);
     expect(orgLookup, isNonNegative);
     expect(orgGuard, isNonNegative);
