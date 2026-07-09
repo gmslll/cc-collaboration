@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 // existing name and typing a brand-new one both funnel through the same
 // onSelect callback, and the clear icon bypasses the picker entirely.
 void main() {
+  const longGroupName = '团队协作跨项目超长分组名称-用于验证任务详情属性控件不会撑开布局';
+
   Widget harness({
     String? groupName,
     List<String> existingGroups = const [],
@@ -34,6 +36,33 @@ void main() {
   testWidgets('shows the current group name when set', (tester) async {
     await tester.pumpWidget(harness(groupName: '我的日常', onSelect: (_) {}));
     expect(find.text('我的日常'), findsOneWidget);
+  });
+
+  testWidgets('current and picker group labels are width constrained', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harness(groupName: longGroupName, onSelect: (_) {}),
+    );
+
+    final currentLabel = tester.widget<Text>(find.text(longGroupName));
+    expect(currentLabel.maxLines, 1);
+    expect(currentLabel.overflow, TextOverflow.ellipsis);
+
+    await tester.pumpWidget(
+      harness(
+        groupName: null,
+        existingGroups: const [longGroupName],
+        onSelect: (_) {},
+      ),
+    );
+    await tester.tap(find.text('未分组'));
+    await tester.pumpAndSettle();
+
+    final pickerLabel = tester.widget<Text>(find.text(longGroupName));
+    expect(pickerLabel.maxLines, 1);
+    expect(pickerLabel.overflow, TextOverflow.ellipsis);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('picking an existing group from the list calls onSelect', (

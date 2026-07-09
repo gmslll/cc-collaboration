@@ -20,10 +20,10 @@ const recurrenceLabels = {
 };
 
 Color priorityColor(String p) => switch (p) {
-      'high' => CcColors.danger,
-      'low' => CcColors.subtle,
-      _ => CcColors.muted,
-    };
+  'high' => CcColors.danger,
+  'low' => CcColors.subtle,
+  _ => CcColors.muted,
+};
 
 // todoStatusColor is the single source of truth for status dot/pill colors —
 // shared by the board (todos_page.dart), the detail view's StatusControl
@@ -35,20 +35,28 @@ Color priorityColor(String p) => switch (p) {
 // duplicate gets a distinct violet since it isn't really a pipeline stage at
 // all, just a terminal "merged into another issue" marker.
 Color todoStatusColor(TodoStatus s) => switch (s) {
-      TodoStatus.triage => CcColors.warning,
-      TodoStatus.backlog => CcColors.borderSoft,
-      TodoStatus.todo => CcColors.muted,
-      TodoStatus.inProgress => CcColors.accent,
-      TodoStatus.inReview => CcColors.info,
-      TodoStatus.done => CcColors.ok,
-      TodoStatus.canceled => CcColors.subtle,
-      TodoStatus.duplicate => CcColors.violet,
-    };
+  TodoStatus.triage => CcColors.warning,
+  TodoStatus.backlog => CcColors.borderSoft,
+  TodoStatus.todo => CcColors.muted,
+  TodoStatus.inProgress => CcColors.accent,
+  TodoStatus.inReview => CcColors.info,
+  TodoStatus.done => CcColors.ok,
+  TodoStatus.canceled => CcColors.subtle,
+  TodoStatus.duplicate => CcColors.violet,
+};
 
 // priorityBars is Linear's priority glyph: 3 bars of increasing height,
 // filled up to the level (low=1, normal=2, high=3) in the level's color.
-Widget priorityBars(String priority, {double maxHeight = 11, double barWidth = 3}) {
-  final filled = switch (priority) { 'low' => 1, 'high' => 3, _ => 2 };
+Widget priorityBars(
+  String priority, {
+  double maxHeight = 11,
+  double barWidth = 3,
+}) {
+  final filled = switch (priority) {
+    'low' => 1,
+    'high' => 3,
+    _ => 2,
+  };
   final color = priorityColor(priority);
   final heights = [maxHeight * 0.42, maxHeight * 0.7, maxHeight];
   return Row(
@@ -76,24 +84,31 @@ Widget _pillTap({
   required GlobalKey key,
   required VoidCallback onTap,
   required Widget child,
-}) =>
-    Material(
-      key: key,
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(CcRadius.sm),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: child,
-        ),
-      ),
-    );
+}) => Material(
+  key: key,
+  color: Colors.transparent,
+  child: InkWell(
+    borderRadius: BorderRadius.circular(CcRadius.sm),
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: child,
+    ),
+  ),
+);
 
-Future<T?> _openBelow<T>(BuildContext context, GlobalKey key, List<PopupMenuEntry<T>> items) {
+Future<T?> _openBelow<T>(
+  BuildContext context,
+  GlobalKey key,
+  List<PopupMenuEntry<T>> items,
+) {
   final box = key.currentContext!.findRenderObject() as RenderBox;
   final pos = box.localToGlobal(Offset(0, box.size.height + 4));
-  return showMenu<T>(context: context, position: menuPosAt(context, pos), items: items);
+  return showMenu<T>(
+    context: context,
+    position: menuPosAt(context, pos),
+    items: items,
+  );
 }
 
 PopupMenuItem<T> _checkableRow<T>({
@@ -101,27 +116,32 @@ PopupMenuItem<T> _checkableRow<T>({
   required bool selected,
   required Widget leading,
   required String label,
-}) =>
-    PopupMenuItem<T>(
-      value: value,
-      height: 32,
-      child: Row(children: [
-        leading,
-        const SizedBox(width: 8),
-        Text(label),
-        if (selected) ...[
-          const Spacer(),
-          const Icon(Icons.check_rounded, size: 14, color: CcColors.accentBright),
-        ],
-      ]),
-    );
+}) => PopupMenuItem<T>(
+  value: value,
+  height: 32,
+  child: Row(
+    children: [
+      leading,
+      const SizedBox(width: 8),
+      Text(label),
+      if (selected) ...[
+        const Spacer(),
+        const Icon(Icons.check_rounded, size: 14, color: CcColors.accentBright),
+      ],
+    ],
+  ),
+);
 
 class PriorityControl extends StatefulWidget {
   final String priority;
   final ValueChanged<String> onChanged;
   final bool showLabel;
-  const PriorityControl(
-      {super.key, required this.priority, required this.onChanged, this.showLabel = true});
+  const PriorityControl({
+    super.key,
+    required this.priority,
+    required this.onChanged,
+    this.showLabel = true,
+  });
 
   @override
   State<PriorityControl> createState() => _PriorityControlState();
@@ -145,25 +165,34 @@ class _PriorityControlState extends State<PriorityControl> {
 
   @override
   Widget build(BuildContext context) => _pillTap(
-        key: _key,
-        onTap: _open,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          priorityBars(widget.priority),
-          if (widget.showLabel) ...[
-            const SizedBox(width: 6),
-            Text(priorityLabels[widget.priority] ?? '普通',
-                style: const TextStyle(fontSize: 12.5, color: CcColors.muted)),
-          ],
-        ]),
-      );
+    key: _key,
+    onTap: _open,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        priorityBars(widget.priority),
+        if (widget.showLabel) ...[
+          const SizedBox(width: 6),
+          Text(
+            priorityLabels[widget.priority] ?? '普通',
+            style: const TextStyle(fontSize: 12.5, color: CcColors.muted),
+          ),
+        ],
+      ],
+    ),
+  );
 }
 
 class StatusControl extends StatefulWidget {
   final TodoStatus status;
   final Color Function(TodoStatus) colorOf;
   final ValueChanged<TodoStatus> onChanged;
-  const StatusControl(
-      {super.key, required this.status, required this.colorOf, required this.onChanged});
+  const StatusControl({
+    super.key,
+    required this.status,
+    required this.colorOf,
+    required this.onChanged,
+  });
 
   @override
   State<StatusControl> createState() => _StatusControlState();
@@ -191,12 +220,25 @@ class _StatusControlState extends State<StatusControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        statusDot(color, size: 8, glow: widget.status == TodoStatus.inProgress),
-        const SizedBox(width: 6),
-        Text(todoStatusLabel(widget.status),
-            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: color)),
-      ]),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          statusDot(
+            color,
+            size: 8,
+            glow: widget.status == TodoStatus.inProgress,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            todoStatusLabel(widget.status),
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -204,7 +246,11 @@ class _StatusControlState extends State<StatusControl> {
 class RecurrenceControl extends StatefulWidget {
   final String recurrence;
   final ValueChanged<String> onChanged;
-  const RecurrenceControl({super.key, required this.recurrence, required this.onChanged});
+  const RecurrenceControl({
+    super.key,
+    required this.recurrence,
+    required this.onChanged,
+  });
 
   @override
   State<RecurrenceControl> createState() => _RecurrenceControlState();
@@ -219,7 +265,11 @@ class _RecurrenceControlState extends State<RecurrenceControl> {
         _checkableRow<String>(
           value: e.key,
           selected: e.key == widget.recurrence,
-          leading: const Icon(Icons.repeat_rounded, size: 14, color: CcColors.muted),
+          leading: const Icon(
+            Icons.repeat_rounded,
+            size: 14,
+            color: CcColors.muted,
+          ),
           label: e.value,
         ),
     ]);
@@ -232,13 +282,24 @@ class _RecurrenceControlState extends State<RecurrenceControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.repeat_rounded, size: 14, color: active ? CcColors.accentBright : CcColors.subtle),
-        const SizedBox(width: 6),
-        Text(recurrenceLabels[widget.recurrence] ?? '不重复',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.repeat_rounded,
+            size: 14,
+            color: active ? CcColors.accentBright : CcColors.subtle,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            recurrenceLabels[widget.recurrence] ?? '不重复',
             style: TextStyle(
-                fontSize: 12.5, color: active ? CcColors.text : CcColors.subtle)),
-      ]),
+              fontSize: 12.5,
+              color: active ? CcColors.text : CcColors.subtle,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -247,14 +308,21 @@ class DueDatePill extends StatelessWidget {
   final DateTime? dueAt;
   final VoidCallback onTap;
   final VoidCallback? onClear;
-  const DueDatePill({super.key, required this.dueAt, required this.onTap, this.onClear});
+  const DueDatePill({
+    super.key,
+    required this.dueAt,
+    required this.onTap,
+    this.onClear,
+  });
 
   @override
   Widget build(BuildContext context) {
     final due = dueAt;
     final has = due != null;
     final overdue = has && due.isBefore(DateTime.now());
-    final color = !has ? CcColors.subtle : (overdue ? CcColors.danger : CcColors.muted);
+    final color = !has
+        ? CcColors.subtle
+        : (overdue ? CcColors.danger : CcColors.muted);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -262,26 +330,36 @@ class DueDatePill extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.calendar_today_rounded, size: 13, color: color),
-            const SizedBox(width: 6),
-            Text(has ? commitDate(due) : '截止日期',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.calendar_today_rounded, size: 13, color: color),
+              const SizedBox(width: 6),
+              Text(
+                has ? commitDate(due) : '截止日期',
                 style: TextStyle(
-                    fontSize: 12.5,
-                    color: color,
-                    fontWeight: has ? FontWeight.w600 : FontWeight.w400)),
-            if (has && onClear != null) ...[
-              const SizedBox(width: 2),
-              InkWell(
-                onTap: onClear,
-                borderRadius: BorderRadius.circular(10),
-                child: const Padding(
-                  padding: EdgeInsets.all(2),
-                  child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+                  fontSize: 12.5,
+                  color: color,
+                  fontWeight: has ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
+              if (has && onClear != null) ...[
+                const SizedBox(width: 2),
+                InkWell(
+                  onTap: onClear,
+                  borderRadius: BorderRadius.circular(10),
+                  child: const Padding(
+                    padding: EdgeInsets.all(2),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 12,
+                      color: CcColors.subtle,
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ]),
+          ),
         ),
       ),
     );
@@ -322,7 +400,11 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
         _checkableRow<WorkspaceCfg>(
           value: w,
           selected: w.name == widget.workspaceName,
-          leading: const Icon(Icons.dns_rounded, size: 14, color: CcColors.muted),
+          leading: const Icon(
+            Icons.dns_rounded,
+            size: 14,
+            color: CcColors.muted,
+          ),
           label: w.name,
         ),
     ]);
@@ -335,8 +417,13 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
       for (final p in ws.projects)
         _checkableRow<ProjectCfg>(
           value: p,
-          selected: ws.name == widget.workspaceName && p.name == widget.repoName,
-          leading: const Icon(Icons.source_rounded, size: 14, color: CcColors.muted),
+          selected:
+              ws.name == widget.workspaceName && p.name == widget.repoName,
+          leading: const Icon(
+            Icons.source_rounded,
+            size: 14,
+            color: CcColors.muted,
+          ),
           label: p.name,
         ),
     ]);
@@ -347,29 +434,44 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
   @override
   Widget build(BuildContext context) {
     final bound =
-        (widget.workspaceName ?? '').isNotEmpty && (widget.repoName ?? '').isNotEmpty;
+        (widget.workspaceName ?? '').isNotEmpty &&
+        (widget.repoName ?? '').isNotEmpty;
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.dns_rounded, size: 14, color: bound ? CcColors.accentBright : CcColors.subtle),
-        const SizedBox(width: 6),
-        Text(
-          bound ? '${widget.workspaceName} / ${widget.repoName}' : '未绑定库',
-          style: TextStyle(fontSize: 12.5, color: bound ? CcColors.text : CcColors.subtle),
-        ),
-        if (bound) ...[
-          const SizedBox(width: 2),
-          InkWell(
-            onTap: widget.onClear,
-            borderRadius: BorderRadius.circular(10),
-            child: const Padding(
-              padding: EdgeInsets.all(2),
-              child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.dns_rounded,
+            size: 14,
+            color: bound ? CcColors.accentBright : CcColors.subtle,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            bound ? '${widget.workspaceName} / ${widget.repoName}' : '未绑定库',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: bound ? CcColors.text : CcColors.subtle,
             ),
           ),
+          if (bound) ...[
+            const SizedBox(width: 2),
+            InkWell(
+              onTap: widget.onClear,
+              borderRadius: BorderRadius.circular(10),
+              child: const Padding(
+                padding: EdgeInsets.all(2),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 12,
+                  color: CcColors.subtle,
+                ),
+              ),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 }
@@ -420,26 +522,44 @@ class _GroupControlState extends State<GroupControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.folder_outlined,
-            size: 14, color: has ? CcColors.accentBright : CcColors.subtle),
-        const SizedBox(width: 6),
-        Text(
-          has ? name : '未分组',
-          style: TextStyle(fontSize: 12.5, color: has ? CcColors.text : CcColors.subtle),
-        ),
-        if (has && widget.onClear != null) ...[
-          const SizedBox(width: 2),
-          InkWell(
-            onTap: widget.onClear,
-            borderRadius: BorderRadius.circular(10),
-            child: const Padding(
-              padding: EdgeInsets.all(2),
-              child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.folder_outlined,
+            size: 14,
+            color: has ? CcColors.accentBright : CcColors.subtle,
+          ),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(
+              has ? name : '未分组',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: has ? CcColors.text : CcColors.subtle,
+              ),
             ),
           ),
+          if (has && widget.onClear != null) ...[
+            const SizedBox(width: 2),
+            InkWell(
+              onTap: widget.onClear,
+              borderRadius: BorderRadius.circular(10),
+              child: const Padding(
+                padding: EdgeInsets.all(2),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 12,
+                  color: CcColors.subtle,
+                ),
+              ),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 }
@@ -479,7 +599,8 @@ class _GroupPickerDialogState extends State<_GroupPickerDialog> {
   Widget build(BuildContext context) {
     final q = _ctl.text.trim();
     final matches = _filtered;
-    final isNewName = q.isNotEmpty && !matches.any((g) => g.toLowerCase() == q.toLowerCase());
+    final isNewName =
+        q.isNotEmpty && !matches.any((g) => g.toLowerCase() == q.toLowerCase());
     return AlertDialog(
       title: const Text('分组'),
       content: SizedBox(
@@ -511,7 +632,11 @@ class _GroupPickerDialogState extends State<_GroupPickerDialog> {
                           dense: true,
                           contentPadding: EdgeInsets.zero,
                           leading: const Icon(Icons.folder_outlined, size: 16),
-                          title: Text(g),
+                          title: Text(
+                            g,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                           onTap: () => Navigator.pop(context, g),
                         ),
                     ],
@@ -530,7 +655,10 @@ class _GroupPickerDialogState extends State<_GroupPickerDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
         FilledButton(
           onPressed: q.isEmpty ? null : () => _submit(q),
           child: const Text('确定'),
