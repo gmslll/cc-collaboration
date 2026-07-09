@@ -54,6 +54,11 @@ String todoMemberPrimaryLabel({
   return id.isNotEmpty && id == self ? '$label（我）' : label;
 }
 
+Set<String> normalizedOnlineTodoMemberIds(Iterable<OnlineUser> users) => {
+  for (final user in users)
+    if (user.online && user.identity.trim().isNotEmpty) user.identity.trim(),
+};
+
 double todoDialogWidth(
   Size screenSize, {
   double preferred = 440,
@@ -2394,9 +2399,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     );
     final ids = [for (final c in candidates) c.identity];
     final roles = {for (final c in candidates) c.identity: c.roleLabel};
-    for (final u in await onlineF) {
-      if (u.online) online.add(u.identity);
-    }
+    online.addAll(normalizedOnlineTodoMemberIds(await onlineF));
     if (!mounted) return;
     setState(() {
       _memberIds = ids;

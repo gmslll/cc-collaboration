@@ -162,6 +162,19 @@ void main() {
     );
   });
 
+  test(
+    'online todo member ids trim relay identities and skip offline users',
+    () {
+      final ids = normalizedOnlineTodoMemberIds([
+        OnlineUser.fromJson({'identity': ' member@x ', 'online': true}),
+        OnlineUser.fromJson({'identity': 'offline@x', 'online': false}),
+        OnlineUser.fromJson({'identity': '   ', 'online': true}),
+      ]);
+
+      expect(ids, {'member@x'});
+    },
+  );
+
   test('todo dialogs fit narrow screens while keeping desktop width', () {
     expect(todoDialogWidth(const Size(320, 760)), 288);
     expect(todoDialogWidth(const Size(1024, 760)), 440);
