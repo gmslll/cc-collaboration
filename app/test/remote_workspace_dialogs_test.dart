@@ -49,6 +49,29 @@ void main() {
     );
   });
 
+  test('remote git bulk action availability follows change state', () {
+    const clean = <RemoteGitChange>[];
+    expect(remoteGitHasStageableChanges(clean), isFalse);
+    expect(remoteGitHasStagedChanges(clean), isFalse);
+    expect(remoteGitHasAnyChanges(clean), isFalse);
+
+    final unstaged = [RemoteGitChange('lib/a.dart', 'M', false, false, false)];
+    expect(remoteGitHasStageableChanges(unstaged), isTrue);
+    expect(remoteGitHasStagedChanges(unstaged), isFalse);
+    expect(remoteGitHasAnyChanges(unstaged), isTrue);
+
+    final staged = [RemoteGitChange('lib/a.dart', 'M', true, false, false)];
+    expect(remoteGitHasStageableChanges(staged), isFalse);
+    expect(remoteGitHasStagedChanges(staged), isTrue);
+    expect(remoteGitHasAnyChanges(staged), isTrue);
+
+    final stagedAndModified = [
+      RemoteGitChange('lib/a.dart', 'MM', true, false, false),
+    ];
+    expect(remoteGitHasStageableChanges(stagedAndModified), isTrue);
+    expect(remoteGitHasStagedChanges(stagedAndModified), isTrue);
+  });
+
   testWidgets('RemoteCommitDialog returns trimmed message and push choice', (
     tester,
   ) async {

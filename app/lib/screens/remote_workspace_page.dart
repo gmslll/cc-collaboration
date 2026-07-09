@@ -49,6 +49,18 @@ String remoteWorktreeRemoveTarget(RemoteWorktree worktree) {
   return branch.isEmpty ? worktree.name : branch;
 }
 
+bool remoteGitHasStageableChanges(Iterable<RemoteGitChange> changes) {
+  return changes.any((c) => c.untracked || !c.staged || c.status.length >= 2);
+}
+
+bool remoteGitHasStagedChanges(Iterable<RemoteGitChange> changes) {
+  return changes.any((c) => c.staged);
+}
+
+bool remoteGitHasAnyChanges(Iterable<RemoteGitChange> changes) {
+  return changes.isNotEmpty;
+}
+
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
 // desktop must have "cast to phone" enabled (workspace toolbar).
@@ -1655,7 +1667,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Widget _gitActions() {
     final repo = _gitRepo!;
-    Widget btn(IconData icon, String label, VoidCallback onTap) => Padding(
+    final changes = _c.gitChanges;
+    final canStageAll = remoteGitHasStageableChanges(changes);
+    final canCommit = remoteGitHasStagedChanges(changes);
+    final canDiscardAll = remoteGitHasAnyChanges(changes);
+    Widget btn(IconData icon, String label, VoidCallback? onTap) => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: OutlinedButton.icon(
         onPressed: onTap,
@@ -1673,8 +1689,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         children: [
-          btn(Icons.add_task_rounded, '暂存全部', () => _c.gitStageAll(repo)),
-          btn(Icons.check_circle_outline_rounded, '提交', _commitDialog),
+          btn(
+            Icons.add_task_rounded,
+            '暂存全部',
+            canStageAll ? () => _c.gitStageAll(repo) : null,
+          ),
+          btn(
+            Icons.check_circle_outline_rounded,
+            '提交',
+            canCommit ? _commitDialog : null,
+          ),
           btn(
             Icons.arrow_upward_rounded,
             'Push',
@@ -1687,7 +1711,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           btn(
             Icons.undo_rounded,
             '丢弃全部',
-            () => _confirmThen('丢弃所有改动？不可恢复', () => _c.gitDiscardAll(repo)),
+            canDiscardAll
+                ? () =>
+                      _confirmThen('丢弃所有改动？不可恢复', () => _c.gitDiscardAll(repo))
+                : null,
           ),
         ],
       ),
