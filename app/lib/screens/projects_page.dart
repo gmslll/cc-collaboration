@@ -224,6 +224,26 @@ bool canUpsertProjectMemberRole(
   return true;
 }
 
+List<OrganizationMember> projectMemberCandidates(
+  Iterable<OrganizationMember> organizationMembers,
+  Iterable<ProjectMember> projectMembers,
+) {
+  final projectIdentities = {
+    for (final member in projectMembers)
+      if (member.identity.trim().isNotEmpty) member.identity.trim(),
+  };
+  final candidates = organizationMembers.where((member) {
+    final identity = member.identity.trim();
+    return identity.isNotEmpty && !projectIdentities.contains(identity);
+  }).toList();
+  candidates.sort((a, b) {
+    final an = a.displayName.isEmpty ? a.identity : a.displayName;
+    final bn = b.displayName.isEmpty ? b.identity : b.displayName;
+    return an.compareTo(bn);
+  });
+  return candidates;
+}
+
 double responsiveControlWidth(BoxConstraints constraints, double preferred) {
   final maxWidth = constraints.maxWidth;
   if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
@@ -1452,21 +1472,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     identity: widget.identity,
   );
 
-  List<OrganizationMember> _memberCandidates(ProjectDetail d) {
-    final projectMembers = {
-      for (final member in d.members)
-        if (member.identity.trim().isNotEmpty) member.identity.trim(),
-    };
-    final candidates = _orgMembers
-        .where((m) => !projectMembers.contains(m.identity.trim()))
-        .toList();
-    candidates.sort((a, b) {
-      final an = a.displayName.isEmpty ? a.identity : a.displayName;
-      final bn = b.displayName.isEmpty ? b.identity : b.displayName;
-      return an.compareTo(bn);
-    });
-    return candidates;
-  }
+  List<OrganizationMember> _memberCandidates(ProjectDetail d) =>
+      projectMemberCandidates(_orgMembers, d.members);
 
   String _memberLabel(OrganizationMember m) {
     return organizationMemberPickerLabel(m);

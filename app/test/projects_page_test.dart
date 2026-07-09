@@ -539,6 +539,38 @@ void main() {
     );
   });
 
+  test('project member candidates skip blank and existing members', () {
+    final candidates = projectMemberCandidates(
+      [
+        OrganizationMember.fromJson({
+          'identity': ' existing@x ',
+          'role': 'member',
+          'display_name': 'Existing',
+        }),
+        OrganizationMember.fromJson({
+          'identity': '   ',
+          'role': 'member',
+          'display_name': 'Blank',
+        }),
+        OrganizationMember.fromJson({
+          'identity': ' zed@x ',
+          'role': 'member',
+          'display_name': 'Zed',
+        }),
+        OrganizationMember.fromJson({
+          'identity': ' ann@x ',
+          'role': 'member',
+          'display_name': 'Ann',
+        }),
+      ],
+      [
+        ProjectMember.fromJson({'identity': 'existing@x', 'role': 'member'}),
+      ],
+    );
+
+    expect(candidates.map((m) => m.identity).toList(), ['ann@x', 'zed@x']);
+  });
+
   test('responsive control width never exceeds the available width', () {
     expect(
       responsiveControlWidth(const BoxConstraints(maxWidth: 180), 260),
