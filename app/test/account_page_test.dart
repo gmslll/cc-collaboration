@@ -16,6 +16,17 @@ void main() {
     expect(accountMenuMaxHeight(Size.zero), 320);
   });
 
+  test('account hook event dialog fits compact screens', () {
+    expect(accountDialogWidth(const Size(320, 760)), 288);
+    expect(accountDialogWidth(const Size(1024, 760)), 420);
+    expect(accountHookEventListMaxHeight(const Size(1024, 900)), 460);
+    expect(
+      accountHookEventListMaxHeight(const Size(320, 420)),
+      closeTo(260.4, 0.001),
+    );
+    expect(accountHookEventListMaxHeight(const Size(320, 220)), 160);
+  });
+
   test('local config save is guarded against duplicate submits', () {
     final source = File('lib/screens/account_page.dart').readAsStringSync();
     final saveLocalConfig = source.substring(
@@ -30,6 +41,19 @@ void main() {
       saveLocalConfig.indexOf('if (!mounted) return;'),
       lessThan(saveLocalConfig.indexOf('widget.onConfigSaved?.call();')),
     );
+  });
+
+  test('hook event picker uses responsive dialog bounds', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+    final picker = source.substring(
+      source.indexOf('Future<void> _chooseHookEvents'),
+      source.indexOf('Future<void> _saveLocalConfig'),
+    );
+
+    expect(picker, contains('accountDialogWidth'));
+    expect(picker, contains('accountHookEventListMaxHeight'));
+    expect(picker, isNot(contains('width: 420')));
+    expect(picker, isNot(contains('BoxConstraints(maxHeight: 460)')));
   });
 
   testWidgets('password change completion after unmount is ignored', (

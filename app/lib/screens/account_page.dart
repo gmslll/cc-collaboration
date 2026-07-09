@@ -38,6 +38,29 @@ double accountMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double accountDialogWidth(
+  Size screenSize, {
+  double preferred = 420,
+  double horizontalInset = 16,
+}) {
+  final available = screenSize.width - horizontalInset * 2;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+double accountHookEventListMaxHeight(
+  Size screenSize, {
+  double preferred = 460,
+  double minHeight = 160,
+  double maxFraction = 0.62,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 class AccountPage extends StatefulWidget {
   final RelayClient client;
   final String identity;
@@ -267,9 +290,13 @@ class _AccountPageState extends State<AccountPage> {
               overflow: TextOverflow.ellipsis,
             ),
             content: SizedBox(
-              width: 420,
+              width: accountDialogWidth(MediaQuery.sizeOf(ctx)),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 460),
+                constraints: BoxConstraints(
+                  maxHeight: accountHookEventListMaxHeight(
+                    MediaQuery.sizeOf(ctx),
+                  ),
+                ),
                 child: ListView(
                   shrinkWrap: true,
                   children: [
