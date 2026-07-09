@@ -160,6 +160,19 @@ bool handoffReassignTargetAllowed(
   });
 }
 
+double handoffReassignCandidateListMaxHeight(
+  Size screenSize, {
+  double preferred = 112,
+  double minHeight = 88,
+  double maxFraction = 0.26,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 class HandoffDetailViewState extends State<HandoffDetailView> {
   Package? _pkg;
   Status? _status;
@@ -1435,7 +1448,11 @@ class _ReassignDialogState extends State<_ReassignDialog> {
             ),
             const SizedBox(height: 6),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 112),
+              constraints: BoxConstraints(
+                maxHeight: handoffReassignCandidateListMaxHeight(
+                  MediaQuery.sizeOf(context),
+                ),
+              ),
               child: SingleChildScrollView(
                 child: Wrap(
                   spacing: 6,

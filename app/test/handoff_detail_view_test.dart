@@ -44,6 +44,25 @@ void main() {
     expect(handoffReassignTargetAllowed('outsider@x', const []), isTrue);
   });
 
+  test('handoff reassign candidate list height is responsive', () {
+    expect(handoffReassignCandidateListMaxHeight(const Size(1024, 900)), 112);
+    expect(
+      handoffReassignCandidateListMaxHeight(const Size(320, 420)),
+      closeTo(109.2, 0.001),
+    );
+    expect(handoffReassignCandidateListMaxHeight(const Size(320, 220)), 88);
+  });
+
+  test('handoff reassign dialog avoids fixed candidate height', () {
+    final source = File(
+      'lib/screens/handoff_detail_view.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(source.indexOf('class _ReassignDialog'));
+
+    expect(dialog, contains('handoffReassignCandidateListMaxHeight'));
+    expect(dialog, isNot(contains('BoxConstraints(maxHeight: 112)')));
+  });
+
   test('handoff file tab dynamic labels are width constrained', () {
     final source = File(
       'lib/screens/handoff_detail_view.dart',
