@@ -44,7 +44,7 @@ void main() {
         home: Scaffold(
           body: CapsulePlazaPage(
             client: client,
-            identity: 'me@x',
+            identity: ' Me@X ',
             overviewStore: SessionOverviewStore(),
             config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
             isDesktop: false,

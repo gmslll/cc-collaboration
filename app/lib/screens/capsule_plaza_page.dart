@@ -6,6 +6,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../local/agent_transcript.dart';
 import '../local/config.dart';
+import '../local/identity.dart';
 import '../local/local_bus.dart';
 import '../local/session_overview.dart';
 import '../local/skill_pack.dart';
@@ -37,6 +38,9 @@ class CapsulePlazaPage extends StatefulWidget {
   @override
   State<CapsulePlazaPage> createState() => _CapsulePlazaPageState();
 }
+
+bool capsuleOwnedBy(CapsuleListItem capsule, String identity) =>
+    sameIdentity(capsule.owner, identity);
 
 class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   List<CapsuleListItem>? _items;
@@ -137,7 +141,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   );
 
   Widget _capsuleCard(CapsuleListItem c) {
-    final mine = c.owner == widget.identity;
+    final mine = capsuleOwnedBy(c, widget.identity);
     final isPublic = c.visibility == 'public';
     Text meta(String s) =>
         Text(s, style: CcType.code(size: 11.5, color: CcColors.subtle));
