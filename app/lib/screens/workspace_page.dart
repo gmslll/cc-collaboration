@@ -2145,32 +2145,40 @@ class _WorkspacePageState extends State<WorkspacePage>
                     else if ((sessions ?? const []).isEmpty)
                       const Text('该用户当前没有可发送的会话')
                     else
-                      Flexible(
-                        child: ListView(
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: onlineSendSessionMenuMaxHeight(
+                            MediaQuery.sizeOf(ctx),
+                          ),
+                        ),
+                        child: ListView.separated(
                           shrinkWrap: true,
-                          children: [
-                            for (final s in sessions!)
-                              ListTile(
-                                dense: true,
-                                leading: const Icon(
-                                  Icons.terminal_rounded,
-                                  size: 16,
-                                ),
-                                title: Text(
-                                  s.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                subtitle: s.project.isEmpty
-                                    ? null
-                                    : Text(
-                                        s.project,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                onTap: () => send(s),
+                          padding: EdgeInsets.zero,
+                          itemCount: sessions!.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final s = sessions![i];
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(
+                                Icons.terminal_rounded,
+                                size: 16,
                               ),
-                          ],
+                              title: Text(
+                                s.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: s.project.isEmpty
+                                  ? null
+                                  : Text(
+                                      s.project,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                              onTap: () => send(s),
+                            );
+                          },
                         ),
                       ),
                   ],

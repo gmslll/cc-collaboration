@@ -415,4 +415,15 @@ void main() {
     expect(dialog, contains('project: s.project'));
     expect(dialog, contains('projectId: s.projectId'));
   });
+
+  test('online send remote session list is height-capped', () {
+    final dialog = source.substring(
+      source.indexOf('_showSendToOnlineUser'),
+      source.indexOf('Future<void> _loadTasks()'),
+    );
+
+    expect(dialog, contains('maxHeight: onlineSendSessionMenuMaxHeight'));
+    expect(dialog, contains('ListView.separated'));
+    expect(dialog, contains('separatorBuilder:'));
+  });
 }
