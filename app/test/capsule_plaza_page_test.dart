@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
@@ -10,6 +11,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('capsule load target menus are width constrained', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final loadDialog = source.substring(
+      source.indexOf('class _CapsuleLoadDialogState'),
+      source.indexOf('// bundledSkillNames lists'),
+    );
+
+    expect(loadDialog, contains('menuMaxHeight: 320'));
+    expect(
+      loadDialog,
+      isNot(
+        contains(
+          'DropdownMenuItem(value: x.name as String, child: Text(x.name as String))',
+        ),
+      ),
+    );
+    expect(loadDialog, contains('x.name as String,\n          maxLines: 1'));
+    expect(loadDialog, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   testWidgets('stale capsule plaza load cannot overwrite a newer refresh', (
     tester,
   ) async {

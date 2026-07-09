@@ -544,7 +544,14 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
 
   List<DropdownMenuItem<String>> _nameItems(Iterable<dynamic> xs) => [
     for (final x in xs)
-      DropdownMenuItem(value: x.name as String, child: Text(x.name as String)),
+      DropdownMenuItem(
+        value: x.name as String,
+        child: Text(
+          x.name as String,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
   ];
 
   @override
@@ -638,6 +645,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
               _sectionLabel('目标位置'),
               DropdownButton<String>(
                 isExpanded: true,
+                menuMaxHeight: 320,
                 hint: const Text('workspace'),
                 value: _workspace,
                 items: _nameItems(widget.config.workspaces),
@@ -650,6 +658,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
               const SizedBox(height: 8),
               DropdownButton<String>(
                 isExpanded: true,
+                menuMaxHeight: 320,
                 hint: const Text('project'),
                 value: _project,
                 items: _nameItems(_projects),
