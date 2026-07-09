@@ -492,6 +492,71 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('existing session assignment dispatch failure releases submit', (
+    tester,
+  ) async {
+    final client = _DelayedAssignTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+    var dispatchCalls = 0;
+    final overview = SessionOverviewStore()
+      ..publish([
+        _sessionCard(
+          's1',
+          project: 'Backend',
+          projectId: 'p1',
+        ),
+      ]);
+    overview.dispatchHandler = (_) {
+      dispatchCalls++;
+      throw StateError('boom');
+    };
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _me(),
+            store: store,
+            overviewStore: overview,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Team todo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, '指派'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('一键指派'), findsOneWidget);
+    final submit = find.widgetWithText(FilledButton, '指派并开始');
+    await tester.tap(submit);
+    for (var i = 0; i < 12 && dispatchCalls == 0; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pump();
+
+    expect(dispatchCalls, 1);
+    expect(find.textContaining('投递失败'), findsOneWidget);
+    expect(find.text('一键指派'), findsOneWidget);
+    expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('pending member assignment after account switch is ignored', (
     tester,
   ) async {
@@ -685,6 +750,7 @@ SessionCard _sessionCard(
   String sid, {
   String project = '',
   String projectId = '',
+  String? workdir,
 }) => SessionCard(
   sid: sid,
   label: sid,
@@ -697,6 +763,7 @@ SessionCard _sessionCard(
   status: SessionStatus.idle,
   usageLabel: null,
   preview: '',
+  workdir: workdir,
 );
 
 AppConfig _config({String token = 'tok', String identity = 'alice@x'}) =>

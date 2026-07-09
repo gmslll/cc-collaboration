@@ -3397,12 +3397,27 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     setState(() => _submitting = true);
     // Materialize the todo.md BEFORE dispatching: the pasted text points the
     // agent at that file, so the file must already be on disk when it lands.
-    final prep = await _prepareAssignment(sid);
+    late final _AssignPrep prep;
+    try {
+      prep = await _prepareAssignment(sid);
+    } catch (e) {
+      if (mounted) {
+        if (_closeIfStaleContext()) return;
+        setState(() => _submitting = false);
+        snack(context, '指派失败: ${errorText(e)}');
+      }
+      return;
+    }
     if (!mounted) return;
     if (_closeIfStaleContext()) return;
-    final err = widget.overviewStore.dispatch(
-      LocalMsg('', sid, prep.taskText, true),
-    );
+    String? err;
+    try {
+      err = widget.overviewStore.dispatch(
+        LocalMsg('', sid, prep.taskText, true),
+      );
+    } catch (e) {
+      err = errorText(e);
+    }
     if (err != null) {
       if (mounted) {
         setState(() => _submitting = false);
@@ -3442,13 +3457,26 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final validProject = proj!;
     setState(() => _submitting = true);
     final branch = _branchCtl.text.trim();
-    final (sid, err) = await widget.overviewStore.spawn(
-      workspace: validWorkspace,
-      project: validProject,
-      kind: _kind,
-      projectId: _todoProjectId,
-      newWorktreeBranch: branch.isEmpty ? null : branch,
-    );
+    late final String? sid;
+    late final String? err;
+    try {
+      final result = await widget.overviewStore.spawn(
+        workspace: validWorkspace,
+        project: validProject,
+        kind: _kind,
+        projectId: _todoProjectId,
+        newWorktreeBranch: branch.isEmpty ? null : branch,
+      );
+      sid = result.$1;
+      err = result.$2;
+    } catch (e) {
+      if (mounted) {
+        if (_closeIfStaleContext()) return;
+        setState(() => _submitting = false);
+        snack(context, '新建会话失败: ${errorText(e)}');
+      }
+      return;
+    }
     if (sid == null) {
       if (mounted) {
         if (_closeIfStaleContext()) return;
@@ -3466,9 +3494,14 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final prep = await _prepareAssignment(sid);
     if (!mounted) return;
     if (_closeIfStaleContext()) return;
-    final dispatchErr = widget.overviewStore.dispatch(
-      LocalMsg('', sid, prep.taskText, true),
-    );
+    String? dispatchErr;
+    try {
+      dispatchErr = widget.overviewStore.dispatch(
+        LocalMsg('', sid, prep.taskText, true),
+      );
+    } catch (e) {
+      dispatchErr = errorText(e);
+    }
     if (dispatchErr != null && mounted) {
       snack(context, '会话已创建，但投递失败: $dispatchErr');
     }

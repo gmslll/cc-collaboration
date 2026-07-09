@@ -1785,7 +1785,7 @@ void main() {
     );
     expectGuardBefore(
       assignExisting,
-      'final prep = await _prepareAssignment',
+      'prep = await _prepareAssignment',
       'widget.overviewStore.dispatch',
     );
     expectGuardBefore(
@@ -1800,7 +1800,7 @@ void main() {
     );
     expectGuardBefore(
       assignNew,
-      'await widget.overviewStore.spawn',
+      'final result = await widget.overviewStore.spawn',
       'final prep = await _prepareAssignment',
     );
     expectGuardBefore(
