@@ -826,6 +826,7 @@ void main() {
         projects: [project('p1', 'org-a'), project('p2', 'org-b')],
         onlineUsers: [
           online('alice@x', true),
+          online(' Alice@X ', true),
           online('alice@x', true),
           online('bob@x', false),
           online('   ', true),

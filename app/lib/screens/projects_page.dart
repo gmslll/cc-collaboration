@@ -382,7 +382,9 @@ TeamWorkspaceStats teamWorkspaceStats({
 }) {
   final onlineIdentities = <String>{
     for (final user in onlineUsers)
-      if (user.online && user.identity.trim().isNotEmpty) user.identity.trim(),
+      if (user.online &&
+          identity_utils.identityLookupKey(user.identity).isNotEmpty)
+        identity_utils.identityLookupKey(user.identity),
   };
   return (
     teams: organizations.length,
