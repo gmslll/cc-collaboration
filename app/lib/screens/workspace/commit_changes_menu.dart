@@ -23,7 +23,11 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
   void _showBlameForProjectFile(ProjectCfg p, String relPath);
 
   /// 在 [pos] 弹出改动文件的顶层菜单。[c] 是改动行,[p] 是其所属项目。
-  Future<void> _showCommitFileMenu(Offset pos, ProjectCfg p, GitChange c) async {
+  Future<void> _showCommitFileMenu(
+    Offset pos,
+    ProjectCfg p,
+    GitChange c,
+  ) async {
     final v = await showMenu<String>(
       context: context,
       position: menuPosAt(context, pos),
@@ -100,11 +104,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
       label: 'Shelve Changes…',
     ),
     const PopupMenuDivider(),
-    ccMenuItem(
-      value: 'refresh',
-      icon: Icons.refresh_rounded,
-      label: 'Refresh',
-    ),
+    ccMenuItem(value: 'refresh', icon: Icons.refresh_rounded, label: 'Refresh'),
     const PopupMenuDivider(),
     ccMenuItem(
       value: 'git-more',
@@ -161,11 +161,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
 
   /// 把菜单返回的 value 派发到具体操作。委托给已有方法的分支不重复处理
   /// setState/spinner(那些方法内部已处理);仅本文件新增的写操作自管 loading。
-  Future<void> _runCommitFileAction(
-    String v,
-    ProjectCfg p,
-    GitChange c,
-  ) async {
+  Future<void> _runCommitFileAction(String v, ProjectCfg p, GitChange c) async {
     switch (v) {
       case 'commit':
         await _commitSingleFile(p, c.path);
@@ -208,6 +204,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
   Future<void> _commitSingleFile(ProjectCfg p, String path) async {
     final msg = await _promptCommitMessage(path);
     if (msg == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitUnstageAll(p.path);
@@ -233,6 +230,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitRemoveFile(p.path, c.path, tracked: !c.untracked);
@@ -276,6 +274,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
         fileName: suggested,
       );
       if (dest == null) return; // 用户取消
+      if (!mounted) return;
       final out = dest.endsWith('.patch') ? dest : '$dest.patch';
       await File(out).writeAsString(patch);
       if (mounted) _snack('已保存 patch: ${out.split('/').last}');
@@ -306,6 +305,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
       detail: '将「${c.path}」的改动搁置为一个 git stash(可从 Stash 面板恢复)。',
     );
     if (opts == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitStashPush(

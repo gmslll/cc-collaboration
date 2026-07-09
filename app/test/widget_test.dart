@@ -429,6 +429,151 @@ void main() {
     expect(guardIndex, lessThan(loadingIndex));
   });
 
+  test('workspace git menus guard mounted before git side effects', () {
+    String between(String path, String start, String end) {
+      final source = File(path).readAsStringSync();
+      final startIndex = source.indexOf(start);
+      expect(startIndex, isNonNegative);
+      final endIndex = source.indexOf(end, startIndex);
+      expect(endIndex, isNonNegative);
+      return source.substring(startIndex, endIndex);
+    }
+
+    void expectGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf('if (!mounted) return', afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    void expectMarkerBefore(String body, String marker, String before) {
+      final markerIndex = body.indexOf(marker);
+      final beforeIndex = body.indexOf(before, markerIndex);
+
+      expect(markerIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(markerIndex, lessThan(beforeIndex));
+    }
+
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/git_log_branch_menu.dart',
+        'Future<void> _newBranchFrom(',
+        'Future<void> _newBranchFromTag(',
+      ),
+      'if (name == null) return;',
+      '_createBranchCurrent',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/git_log_branch_menu.dart',
+        'Future<void> _newBranchFromTag(',
+        'Future<void> _pushTagCurrent(',
+      ),
+      'if (name == null) return;',
+      '_createBranchCurrent',
+    );
+    expectMarkerBefore(
+      between(
+        'lib/screens/workspace/git_log_branch_menu.dart',
+        'Future<void> _checkoutTag(',
+        'Future<void> _deleteLocalTag(',
+      ),
+      'if (!ok || !mounted || _gitLoading) return;',
+      'setState(() => _gitLoading = true)',
+    );
+    expectMarkerBefore(
+      between(
+        'lib/screens/workspace/git_log_branch_menu.dart',
+        'Future<void> _deleteLocalTag(',
+        'Future<void> _updateBranch(',
+      ),
+      'if (!ok || !mounted || _gitLoading) return;',
+      'setState(() => _gitLoading = true)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/git_log_branch_menu.dart',
+        'Future<void> _renameBranchPrompt(',
+        '\n}',
+      ),
+      'if (name == null || name == b.name) return;',
+      'setState(() => _gitLoading = true)',
+    );
+
+    for (final method in [
+      'Future<void> _checkoutRevision(',
+      'Future<void> _resetToCommit(',
+      'Future<void> _undoCommit(',
+      'Future<void> _rewordCommit(',
+      'Future<void> _fixupOrSquash(',
+      'Future<void> _dropCommit(',
+      'Future<void> _pushUpToCommit(',
+      'Future<void> _newTagAtCommit(',
+    ]) {
+      final body = between(
+        'lib/screens/workspace/git_log_commit_menu.dart',
+        method,
+        method == 'Future<void> _newTagAtCommit('
+            ? 'Future<void> _goToParent('
+            : '  ///',
+      );
+      expectGuardBefore(body, 'return;', 'setState(() => _gitLoading = true)');
+    }
+
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/commit_changes_menu.dart',
+        'Future<void> _commitSingleFile(',
+        'Future<void> _deleteChangeFile(',
+      ),
+      'if (msg == null) return;',
+      'setState(() => _gitLoading = true)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/commit_changes_menu.dart',
+        'Future<void> _deleteChangeFile(',
+        'Future<String?> _localChangesPatch(',
+      ),
+      'return;',
+      'setState(() => _gitLoading = true)',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/commit_changes_menu.dart',
+        'Future<void> _createPatchFromChanges(',
+        'Future<void> _copyPatchToClipboard(',
+      ),
+      'if (dest == null) return;',
+      'File(out).writeAsString',
+    );
+    expectGuardBefore(
+      between(
+        'lib/screens/workspace/commit_changes_menu.dart',
+        'Future<void> _shelveChange(',
+        'Future<String?> _promptCommitMessage(',
+      ),
+      'if (opts == null) return;',
+      'setState(() => _gitLoading = true)',
+    );
+
+    final branchDialog = File(
+      'lib/screens/workspace/branch_dialog.dart',
+    ).readAsStringSync();
+    expect(
+      branchDialog.substring(
+        branchDialog.indexOf('Future<void> _run('),
+        branchDialog.indexOf('Future<void> _checkout('),
+      ),
+      contains('if (!mounted) return;'),
+    );
+  });
+
   test('remote workspace dialogs guard mounted before remote commands', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',

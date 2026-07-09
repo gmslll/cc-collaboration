@@ -28,7 +28,8 @@ mixin _GitLogCommitMenu on _GitMixin {
     // HEAD 判定(门控 Undo Commit)。用内存里当前分支的 tip(short hash)前缀比对,
     // 避免每次右键都起一个 login-shell 跑 rev-parse 阻塞菜单弹出。
     final current = _gitBranches.where((b) => b.current).firstOrNull;
-    final isHead = current != null &&
+    final isHead =
+        current != null &&
         current.lastHash.isNotEmpty &&
         c.hash.startsWith(current.lastHash);
     final hasParent = c.parents.isNotEmpty;
@@ -232,6 +233,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitCheckout(p.path, c.hash);
@@ -249,6 +251,7 @@ mixin _GitLogCommitMenu on _GitMixin {
   Future<void> _resetToCommit(ProjectCfg p, GitCommit c) async {
     final mode = await _pickResetMode(c);
     if (mode == null) return;
+    if (!mounted) return;
     if (mode == 'hard' &&
         !await _confirm(
           'Hard reset?',
@@ -256,6 +259,7 @@ mixin _GitLogCommitMenu on _GitMixin {
         )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitReset(p.path, c.hash, mode: mode);
@@ -277,6 +281,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitReset(p.path, '${c.hash}^', mode: 'soft');
@@ -299,6 +304,7 @@ mixin _GitLogCommitMenu on _GitMixin {
       initial: c.subject,
     );
     if (msg == null || msg.isEmpty) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       // 走脚本化 rebase 的 reword(--autostash 保留暂存/工作区改动),只改信息;
@@ -328,6 +334,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitFixupIntoParent(p.path, c.hash, keepMessage: keepMessage);
@@ -350,6 +357,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitDropCommit(p.path, c.hash);
@@ -371,6 +379,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitPushUpTo(p.path, c.hash);
@@ -393,6 +402,7 @@ mixin _GitLogCommitMenu on _GitMixin {
       okLabel: 'Create Tag',
     );
     if (name == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitTag(p.path, name, ref: c.hash);
@@ -464,7 +474,9 @@ mixin _GitLogCommitMenu on _GitMixin {
                             ? Icons.radio_button_checked_rounded
                             : Icons.radio_button_unchecked_rounded,
                         size: 18,
-                        color: mode == value ? CcColors.accent : CcColors.subtle,
+                        color: mode == value
+                            ? CcColors.accent
+                            : CcColors.subtle,
                       ),
                       const SizedBox(width: 8),
                       Expanded(

@@ -345,6 +345,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
   }
 
   Future<void> _run(Future<void> Function() action) async {
+    if (!mounted) return;
     try {
       await action();
       if (mounted) await widget.onRefresh();
@@ -371,6 +372,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
       ),
     );
     if (draft == null) return;
+    if (!mounted) return;
     final branch = draft.branch.trim();
     if (branch.isEmpty) {
       if (mounted) snack(context, '分支名不能为空');
@@ -391,6 +393,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
       builder: (_) => WorkspaceBranchRenameDialog(initialName: b.name),
     );
     if (raw == null) return;
+    if (!mounted) return;
     final next = raw.trim();
     if (next.isEmpty || next == b.name) return;
     await _run(() => widget.onRename(b.name, next));
@@ -419,6 +422,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     await _run(() => widget.onDelete(b.name, force));
   }
 
@@ -447,6 +451,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     await _run(() => widget.onDeleteRemote(b));
   }
 
@@ -474,6 +479,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     await _run(() => widget.onPushBranch(b, publish: publish));
   }
 
