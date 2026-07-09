@@ -497,11 +497,17 @@ class _AccountPageState extends State<AccountPage> {
   void _showToken(String raw) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('机器 token(只显示一次)'),
-        content: SelectableText(
-          raw,
-          style: const TextStyle(fontFamily: CcType.mono),
+        content: SizedBox(
+          width: accountDialogWidth(MediaQuery.sizeOf(ctx)),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SelectableText(
+              raw,
+              style: const TextStyle(fontFamily: CcType.mono),
+            ),
+          ),
         ),
         actions: [
           TextButton(

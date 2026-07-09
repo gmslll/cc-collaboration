@@ -56,6 +56,18 @@ void main() {
     expect(picker, isNot(contains('BoxConstraints(maxHeight: 460)')));
   });
 
+  test('machine token reveal dialog keeps long tokens scrollable', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('void _showToken'),
+      source.indexOf('@override\n  Widget build'),
+    );
+
+    expect(dialog, contains('accountDialogWidth'));
+    expect(dialog, contains('scrollDirection: Axis.horizontal'));
+    expect(dialog, contains('SelectableText'));
+  });
+
   testWidgets('password change completion after unmount is ignored', (
     tester,
   ) async {
