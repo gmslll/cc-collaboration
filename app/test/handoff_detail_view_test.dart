@@ -88,6 +88,21 @@ void main() {
     expect(fileRow, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('handoff attachment download path flattens nested unsafe names', () {
+    expect(
+      handoffAttachmentTempPath('/tmp/cc', 'logs/a #1.txt'),
+      '/tmp/cc/logs_a #1.txt',
+    );
+    expect(
+      handoffAttachmentTempPath('/tmp/cc/', '../secrets/../../token?.txt'),
+      '/tmp/cc/secrets_token_.txt',
+    );
+    expect(
+      handoffAttachmentTempPath('/tmp/cc', ' ../.. '),
+      '/tmp/cc/attachment',
+    );
+  });
+
   testWidgets('stale handoff detail load cannot overwrite a newer handoff', (
     tester,
   ) async {

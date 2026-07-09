@@ -173,6 +173,22 @@ double handoffReassignCandidateListMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+String handoffAttachmentTempPath(String tempDirPath, String attachmentName) {
+  final parts = attachmentName
+      .split(RegExp(r'[\\/]+'))
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty && part != '.' && part != '..')
+      .map((part) => part.replaceAll(RegExp(r'[\x00-\x1F<>:"|?*]+'), '_'))
+      .where((part) => part.isNotEmpty)
+      .toList();
+  final safeName = parts.isEmpty ? 'attachment' : parts.join('_');
+  final sep = Platform.pathSeparator;
+  final base = tempDirPath.endsWith('/') || tempDirPath.endsWith('\\')
+      ? tempDirPath.substring(0, tempDirPath.length - 1)
+      : tempDirPath;
+  return base.isEmpty ? safeName : '$base$sep$safeName';
+}
+
 class HandoffDetailViewState extends State<HandoffDetailView> {
   Package? _pkg;
   Status? _status;
@@ -736,7 +752,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
         return;
       }
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/$name');
+      final file = File(handoffAttachmentTempPath(dir.path, name));
+      await file.parent.create(recursive: true);
       await file.writeAsBytes(bytes);
       final res = await OpenFilex.open(file.path);
       if (!mounted) return;
