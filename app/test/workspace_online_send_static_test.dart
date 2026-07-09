@@ -36,4 +36,12 @@ void main() {
     expect(source, contains('maxLines: 1'));
     expect(source, contains('overflow: TextOverflow.ellipsis'));
   });
+
+  test('incoming peer message dialog uses responsive session labels', () {
+    expect(source, contains('preferred: 460'));
+    expect(
+      source,
+      isNot(contains('DropdownMenuItem(value: s, child: Text(s.label))')),
+    );
+  });
 }

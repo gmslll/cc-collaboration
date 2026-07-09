@@ -1128,51 +1128,68 @@ class _WorkspacePageState extends State<WorkspacePage>
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => AlertDialog(
-          title: Text('$from 发来内容'),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('注入到会话:'),
-                DropdownButton<TerminalSession>(
-                  value: target,
-                  isExpanded: true,
-                  items: [
-                    for (final s in terms)
-                      DropdownMenuItem(value: s, child: Text(s.label)),
-                  ],
-                  onChanged: (v) => setSt(() {
-                    if (v != null) target = v;
-                  }),
-                ),
-                const SizedBox(height: 8),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 220),
-                  child: SingleChildScrollView(
-                    child: Text(body, style: CcType.code(size: 12)),
+        builder: (ctx, setSt) {
+          final dialogWidth = onlineSendDialogWidth(
+            MediaQuery.sizeOf(ctx),
+            preferred: 460,
+          );
+          return AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
+            ),
+            title: Text('$from 发来内容'),
+            content: SizedBox(
+              width: dialogWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('注入到会话:'),
+                  DropdownButton<TerminalSession>(
+                    value: target,
+                    isExpanded: true,
+                    items: [
+                      for (final s in terms)
+                        DropdownMenuItem(
+                          value: s,
+                          child: Text(
+                            s.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) => setSt(() {
+                      if (v != null) target = v;
+                    }),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    child: SingleChildScrollView(
+                      child: Text(body, style: CcType.code(size: 12)),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'ignore'),
-              child: const Text('忽略'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'park'),
-              child: const Text('稍后'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, 'inject'),
-              child: const Text('注入'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, 'ignore'),
+                child: const Text('忽略'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, 'park'),
+                child: const Text('稍后'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, 'inject'),
+                child: const Text('注入'),
+              ),
+            ],
+          );
+        },
       ),
     );
     _msgDialogOpen = false;

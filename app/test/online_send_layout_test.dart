@@ -6,6 +6,8 @@ void main() {
   test('online send dialog width fits narrow screens', () {
     expect(onlineSendDialogWidth(const Size(320, 760)), 288);
     expect(onlineSendDialogWidth(const Size(1024, 760)), 440);
+    expect(onlineSendDialogWidth(const Size(360, 760), preferred: 460), 328);
+    expect(onlineSendDialogWidth(const Size(1024, 760), preferred: 460), 460);
   });
 
   test('online send user chip width leaves room for wrapping', () {
