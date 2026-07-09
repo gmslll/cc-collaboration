@@ -1675,47 +1675,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   }
 
   Future<void> _commitDialog() async {
-    final ctl = TextEditingController();
-    var push = false;
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<RemoteCommitDraft>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('提交'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: ctl,
-                autofocus: true,
-                minLines: 1,
-                maxLines: 4,
-                decoration: const InputDecoration(hintText: '提交信息'),
-              ),
-              CheckboxListTile(
-                value: push,
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('提交后 Push'),
-                onChanged: (v) => setLocal(() => push = v ?? false),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('提交'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => const RemoteCommitDialog(),
     );
-    if (ok == true && ctl.text.trim().isNotEmpty) {
-      _c.gitCommit(_gitRepo!, ctl.text.trim(), push: push);
+    if (draft != null) {
+      _c.gitCommit(_gitRepo!, draft.message, push: draft.push);
     }
   }
 
@@ -1884,40 +1849,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   );
 
   Future<void> _newWorkspaceDialog() async {
-    final nameCtl = TextEditingController();
-    final pathCtl = TextEditingController();
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<RemoteWorkspaceDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建工作区'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtl,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: '名称'),
-            ),
-            TextField(
-              controller: pathCtl,
-              decoration: const InputDecoration(hintText: '目录（可选，绝对路径）'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建'),
-          ),
-        ],
-      ),
+      builder: (_) => const RemoteWorkspaceCreateDialog(),
     );
-    if (ok == true && nameCtl.text.trim().isNotEmpty) {
-      _c.newWorkspace(nameCtl.text.trim(), pathCtl.text.trim());
+    if (draft != null) {
+      _c.newWorkspace(draft.name, draft.path);
     }
   }
 
@@ -2022,6 +1959,207 @@ class _ScreenShareViewerPageState extends State<ScreenShareViewerPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class RemoteCommitDraft {
+  final String message;
+  final bool push;
+
+  const RemoteCommitDraft({required this.message, required this.push});
+}
+
+class RemoteCommitDialog extends StatefulWidget {
+  const RemoteCommitDialog({super.key});
+
+  @override
+  State<RemoteCommitDialog> createState() => _RemoteCommitDialogState();
+}
+
+class _RemoteCommitDialogState extends State<RemoteCommitDialog> {
+  final _messageCtl = TextEditingController();
+  bool _push = false;
+
+  @override
+  void dispose() {
+    _messageCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final message = _messageCtl.text.trim();
+    Navigator.pop(
+      context,
+      message.isEmpty ? null : RemoteCommitDraft(message: message, push: _push),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('提交'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _messageCtl,
+            autofocus: true,
+            minLines: 1,
+            maxLines: 4,
+            decoration: const InputDecoration(hintText: '提交信息'),
+          ),
+          CheckboxListTile(
+            value: _push,
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('提交后 Push'),
+            onChanged: (v) => setState(() => _push = v ?? false),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('提交')),
+      ],
+    );
+  }
+}
+
+class RemoteWorkspaceDraft {
+  final String name;
+  final String path;
+
+  const RemoteWorkspaceDraft({required this.name, required this.path});
+}
+
+class RemoteWorkspaceCreateDialog extends StatefulWidget {
+  const RemoteWorkspaceCreateDialog({super.key});
+
+  @override
+  State<RemoteWorkspaceCreateDialog> createState() =>
+      _RemoteWorkspaceCreateDialogState();
+}
+
+class _RemoteWorkspaceCreateDialogState
+    extends State<RemoteWorkspaceCreateDialog> {
+  final _nameCtl = TextEditingController();
+  final _pathCtl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameCtl.dispose();
+    _pathCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _nameCtl.text.trim();
+    Navigator.pop(
+      context,
+      name.isEmpty
+          ? null
+          : RemoteWorkspaceDraft(name: name, path: _pathCtl.text.trim()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新建工作区'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameCtl,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '名称'),
+          ),
+          TextField(
+            controller: _pathCtl,
+            decoration: const InputDecoration(hintText: '目录（可选，绝对路径）'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建')),
+      ],
+    );
+  }
+}
+
+class RemoteWorktreeDraft {
+  final String branch;
+  final String startPoint;
+
+  const RemoteWorktreeDraft({required this.branch, required this.startPoint});
+}
+
+class RemoteWorktreeCreateDialog extends StatefulWidget {
+  const RemoteWorktreeCreateDialog({super.key});
+
+  @override
+  State<RemoteWorktreeCreateDialog> createState() =>
+      _RemoteWorktreeCreateDialogState();
+}
+
+class _RemoteWorktreeCreateDialogState
+    extends State<RemoteWorktreeCreateDialog> {
+  final _branchCtl = TextEditingController();
+  final _startCtl = TextEditingController();
+
+  @override
+  void dispose() {
+    _branchCtl.dispose();
+    _startCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final branch = _branchCtl.text.trim();
+    Navigator.pop(
+      context,
+      branch.isEmpty
+          ? null
+          : RemoteWorktreeDraft(
+              branch: branch,
+              startPoint: _startCtl.text.trim(),
+            ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新建 worktree'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _branchCtl,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '分支名'),
+          ),
+          TextField(
+            controller: _startCtl,
+            decoration: const InputDecoration(hintText: '起点（可选，如 main）'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建')),
+      ],
     );
   }
 }
@@ -4022,44 +4160,16 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
   }
 
   Future<void> _addDialog() async {
-    final branchCtl = TextEditingController();
-    final startCtl = TextEditingController();
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<RemoteWorktreeDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建 worktree'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: branchCtl,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: '分支名'),
-            ),
-            TextField(
-              controller: startCtl,
-              decoration: const InputDecoration(hintText: '起点（可选，如 main）'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建'),
-          ),
-        ],
-      ),
+      builder: (_) => const RemoteWorktreeCreateDialog(),
     );
-    if (ok == true && branchCtl.text.trim().isNotEmpty) {
+    if (draft != null) {
       widget.client.addWorktree(
         widget.project.workspace,
         widget.project.name,
-        branchCtl.text.trim(),
-        startCtl.text.trim(),
+        draft.branch,
+        draft.startPoint,
       );
     }
   }
