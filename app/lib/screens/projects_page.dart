@@ -533,29 +533,32 @@ class _ProjectsPageState extends State<ProjectsPage> {
   Future<void> _create() async {
     final name = _name.text.trim();
     if (name.isEmpty || _creatingProject) return;
+    final client = widget.client;
+    final orgId = createProjectTeamId(_selectedOrgId, _manageableOrgs);
     if (mounted) setState(() => _creatingProject = true);
     try {
-      await widget.client.createProject(
-        name,
-        orgId: createProjectTeamId(_selectedOrgId, _manageableOrgs),
-      );
-      if (!mounted) return;
+      await client.createProject(name, orgId: orgId);
+      if (!mounted || !identical(client, widget.client)) return;
       _name.clear();
       await _load();
     } catch (e) {
-      if (mounted) snack(context, '创建失败: ${errorText(e)}');
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '创建失败: ${errorText(e)}');
     } finally {
-      if (mounted) setState(() => _creatingProject = false);
+      if (mounted && identical(client, widget.client)) {
+        setState(() => _creatingProject = false);
+      }
     }
   }
 
   Future<void> _createOrg() async {
     final name = _orgName.text.trim();
     if (name.isEmpty || _creatingOrg) return;
+    final client = widget.client;
     if (mounted) setState(() => _creatingOrg = true);
     try {
-      final org = await widget.client.createOrganization(name);
-      if (!mounted) return;
+      final org = await client.createOrganization(name);
+      if (!mounted || !identical(client, widget.client)) return;
       _orgName.clear();
       setState(() {
         _orgs = [..._orgs, org];
@@ -564,9 +567,12 @@ class _ProjectsPageState extends State<ProjectsPage> {
       });
       await _load();
     } catch (e) {
-      if (mounted) snack(context, '创建团队失败: ${errorText(e)}');
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '创建团队失败: ${errorText(e)}');
     } finally {
-      if (mounted) setState(() => _creatingOrg = false);
+      if (mounted && identical(client, widget.client)) {
+        setState(() => _creatingOrg = false);
+      }
     }
   }
 

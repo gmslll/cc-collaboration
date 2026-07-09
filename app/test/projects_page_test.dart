@@ -979,6 +979,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project creation completion after account switch is ignored', (
+    tester,
+  ) async {
+    final oldClient = _CountingCreateProjectFakeClient();
+    final newClient = _ProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: oldClient)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(1), 'Old Pending Project');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
+    await tester.pump();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: newClient)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(1), 'New Draft Project');
+    await tester.pump();
+
+    oldClient.completeCreateProject();
+    await tester.pumpAndSettle();
+
+    expect(oldClient.createProjectCalls, 1);
+    expect(find.text('Old Pending Project'), findsNothing);
+    expect(find.text('New Draft Project'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('organization creation ignores duplicate submit taps', (
     tester,
   ) async {
@@ -1013,6 +1051,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'organization creation completion after account switch is ignored',
+    (tester) async {
+      final oldClient = _CountingCreateOrganizationFakeClient();
+      final newClient = _ProjectsPageFakeClient();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: oldClient)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).at(0), 'Old Pending Team');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, '新建团队'));
+      await tester.pump();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: ProjectsPage(client: newClient)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).at(0), 'New Draft Team');
+      await tester.pump();
+
+      oldClient.completeCreateOrganization();
+      await tester.pumpAndSettle();
+
+      expect(oldClient.createOrganizationCalls, 1);
+      expect(find.text('Old Pending Team'), findsNothing);
+      expect(find.text('New Draft Team'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('project creation refresh ignores stale initial project load', (
     tester,
