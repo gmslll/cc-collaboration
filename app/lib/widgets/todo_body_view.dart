@@ -175,7 +175,9 @@ class _InlineImageState extends State<_InlineImage> {
   @override
   void didUpdateWidget(_InlineImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.name != widget.name ||
+    if (!identical(oldWidget.client, widget.client) ||
+        oldWidget.todoId != widget.todoId ||
+        oldWidget.name != widget.name ||
         oldWidget.attachment?.sha256 != widget.attachment?.sha256) {
       _bytes = null;
       _failed = false;
@@ -183,29 +185,44 @@ class _InlineImageState extends State<_InlineImage> {
     }
   }
 
+  bool _isCurrentImage(
+    RelayClient client,
+    String todoId,
+    String name,
+    TodoAttachment? attachment,
+  ) =>
+      mounted &&
+      identical(client, widget.client) &&
+      todoId == widget.todoId &&
+      name == widget.name &&
+      attachment?.name == widget.attachment?.name &&
+      attachment?.sha256 == widget.attachment?.sha256;
+
   Future<void> _load() async {
     final generation = ++_loadGeneration;
+    final client = widget.client;
+    final todoId = widget.todoId;
+    final name = widget.name;
+    final attachment = widget.attachment;
     setState(() => _failed = false);
     try {
-      final att = widget.attachment;
       final Uint8List bytes;
-      if (att != null) {
-        bytes = await fetchTodoAttachmentBytes(
-          widget.client,
-          widget.todoId,
-          att,
-        );
+      if (attachment != null) {
+        bytes = await fetchTodoAttachmentBytes(client, todoId, attachment);
       } else {
-        final data = await widget.client.todoAttachment(
-          widget.todoId,
-          widget.name,
-        );
+        final data = await client.todoAttachment(todoId, name);
         bytes = data is Uint8List ? data : Uint8List.fromList(data);
       }
-      if (!mounted || generation != _loadGeneration) return;
+      if (generation != _loadGeneration ||
+          !_isCurrentImage(client, todoId, name, attachment)) {
+        return;
+      }
       setState(() => _bytes = bytes);
     } catch (_) {
-      if (!mounted || generation != _loadGeneration) return;
+      if (generation != _loadGeneration ||
+          !_isCurrentImage(client, todoId, name, attachment)) {
+        return;
+      }
       setState(() => _failed = true);
     }
   }

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:app/api/relay_client.dart';
 import 'package:app/api/todo_models.dart';
+import 'package:app/widgets/todo_body_view.dart';
 import 'package:app/widgets/todo_attachment_thumb.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -48,6 +49,81 @@ void main() {
       expect(_renderedBytes(tester), _secondPng);
     },
   );
+
+  testWidgets(
+    'attachment image reloads and ignores stale loads after client switch',
+    (tester) async {
+      final firstClient = _DelayedAttachmentClient();
+      final secondClient = _DelayedAttachmentClient();
+      final attachment = _attachment('same.png', 'thumb-test-client-switch');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: TodoAttachmentThumb(
+            client: firstClient,
+            todoId: 'td1',
+            attachment: attachment,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(firstClient.requestedKeys, ['td1/same.png']);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: TodoAttachmentThumb(
+            client: secondClient,
+            todoId: 'td1',
+            attachment: attachment,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(secondClient.requestedKeys, ['td1/same.png']);
+
+      secondClient.completeFor('td1', 'same.png', _secondPng);
+      await tester.pumpAndSettle();
+      expect(_renderedBytes(tester), _secondPng);
+
+      firstClient.completeFor('td1', 'same.png', _firstPng);
+      await tester.pumpAndSettle();
+      expect(_renderedBytes(tester), _secondPng);
+    },
+  );
+
+  testWidgets(
+    'inline todo image reloads and ignores stale loads after client switch',
+    (tester) async {
+      final firstClient = _DelayedAttachmentClient();
+      final secondClient = _DelayedAttachmentClient();
+      final attachment = _attachment('inline.png', 'inline-test-client-switch');
+
+      Widget view(RelayClient client) => MaterialApp(
+        home: TodoBodyView(
+          client: client,
+          todoId: 'td1',
+          bodyMd: '![](inline.png)',
+          attachments: [attachment],
+        ),
+      );
+
+      await tester.pumpWidget(view(firstClient));
+      await tester.pump();
+      expect(firstClient.requestedKeys, ['td1/inline.png']);
+
+      await tester.pumpWidget(view(secondClient));
+      await tester.pump();
+      expect(secondClient.requestedKeys, ['td1/inline.png']);
+
+      secondClient.completeFor('td1', 'inline.png', _secondPng);
+      await tester.pumpAndSettle();
+      expect(_renderedBytes(tester), _secondPng);
+
+      firstClient.completeFor('td1', 'inline.png', _firstPng);
+      await tester.pumpAndSettle();
+      expect(_renderedBytes(tester), _secondPng);
+    },
+  );
 }
 
 TodoAttachment _attachment(String name, String sha256) =>
@@ -62,18 +138,27 @@ class _DelayedAttachmentClient extends RelayClient {
   _DelayedAttachmentClient() : super('http://127.0.0.1', 'tok');
 
   final requested = <String>[];
+  final requestedKeys = <String>[];
   final _requests = <String, Completer<List<int>>>{};
 
   @override
   Future<List<int>> todoAttachment(String id, String name) {
     requested.add(name);
+    requestedKeys.add(_key(id, name));
     final completer = Completer<List<int>>();
-    _requests[name] = completer;
+    _requests[_key(id, name)] = completer;
     return completer.future;
   }
 
+  String _key(String id, String name) => '$id/$name';
+
   void complete(String name, List<int> bytes) {
-    _requests[name]!.complete(bytes);
+    final key = _requests.keys.firstWhere((key) => key.endsWith('/$name'));
+    _requests[key]!.complete(bytes);
+  }
+
+  void completeFor(String id, String name, List<int> bytes) {
+    _requests[_key(id, name)]!.complete(bytes);
   }
 }
 

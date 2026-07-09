@@ -100,19 +100,40 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
   @override
   void didUpdateWidget(TodoAttachmentThumb oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_isImage && oldWidget.attachment.sha256 != widget.attachment.sha256) {
+    if (_isImage &&
+        (!identical(oldWidget.client, widget.client) ||
+            oldWidget.todoId != widget.todoId ||
+            oldWidget.attachment.name != widget.attachment.name ||
+            oldWidget.attachment.sha256 != widget.attachment.sha256)) {
       _bytes = null;
       _failed = false;
       _load();
     }
   }
 
-  Future<Uint8List> _fetch() =>
-      fetchTodoAttachmentBytes(widget.client, widget.todoId, widget.attachment);
+  bool _isCurrentAttachment(
+    RelayClient client,
+    String todoId,
+    TodoAttachment attachment,
+  ) =>
+      mounted &&
+      identical(client, widget.client) &&
+      todoId == widget.todoId &&
+      attachment.name == widget.attachment.name &&
+      attachment.sha256 == widget.attachment.sha256;
+
+  Future<Uint8List> _fetch(
+    RelayClient client,
+    String todoId,
+    TodoAttachment attachment,
+  ) => fetchTodoAttachmentBytes(client, todoId, attachment);
 
   Future<void> _load() async {
     final generation = ++_loadGeneration;
-    final cached = _ThumbCache.get(widget.attachment.sha256);
+    final client = widget.client;
+    final todoId = widget.todoId;
+    final attachment = widget.attachment;
+    final cached = _ThumbCache.get(attachment.sha256);
     if (cached != null) {
       setState(() => _bytes = cached);
       return;
@@ -122,14 +143,20 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
       _failed = false;
     });
     try {
-      final bytes = await _fetch();
-      if (!mounted || generation != _loadGeneration) return;
+      final bytes = await _fetch(client, todoId, attachment);
+      if (generation != _loadGeneration ||
+          !_isCurrentAttachment(client, todoId, attachment)) {
+        return;
+      }
       setState(() {
         _bytes = bytes;
         _loading = false;
       });
     } catch (_) {
-      if (!mounted || generation != _loadGeneration) return;
+      if (generation != _loadGeneration ||
+          !_isCurrentAttachment(client, todoId, attachment)) {
+        return;
+      }
       setState(() {
         _failed = true;
         _loading = false;
@@ -138,17 +165,23 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
   }
 
   Future<void> _downloadAndOpen() async {
+    final client = widget.client;
+    final todoId = widget.todoId;
+    final attachment = widget.attachment;
     try {
-      final bytes = await _fetch();
+      final bytes = await _fetch(client, todoId, attachment);
+      if (!_isCurrentAttachment(client, todoId, attachment)) return;
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/${widget.attachment.name}');
+      final file = File('${dir.path}/${attachment.name}');
       await file.writeAsBytes(bytes);
       final res = await OpenFilex.open(file.path);
-      if (res.type != ResultType.done && mounted) {
+      if (!mounted || !_isCurrentAttachment(client, todoId, attachment)) return;
+      if (res.type != ResultType.done) {
         snack(context, '已保存到 ${file.path}');
       }
     } catch (e) {
-      if (mounted) snack(context, '附件失败: ${errorText(e)}');
+      if (!mounted || !_isCurrentAttachment(client, todoId, attachment)) return;
+      snack(context, '附件失败: ${errorText(e)}');
     }
   }
 
