@@ -139,4 +139,45 @@ void main() {
     expect(canRemoveProjectMember(member, [owner, member]), isTrue);
     expect(canRemoveProjectMember(owner, [owner, secondOwner, member]), isTrue);
   });
+
+  test('project member role updates protect the last project owner', () {
+    final owner = ProjectMember.fromJson({
+      'identity': ' owner@x ',
+      'role': 'owner',
+    });
+    final member = ProjectMember.fromJson({
+      'identity': 'member@x',
+      'role': 'member',
+    });
+    final secondOwner = ProjectMember.fromJson({
+      'identity': 'owner2@x',
+      'role': 'owner',
+    });
+
+    expect(canUpsertProjectMemberRole('', 'member', [owner]), isFalse);
+    expect(
+      canUpsertProjectMemberRole('owner@x', 'member', [owner, member]),
+      isFalse,
+    );
+    expect(
+      canUpsertProjectMemberRole('owner@x', 'viewer', [owner, member]),
+      isFalse,
+    );
+    expect(
+      canUpsertProjectMemberRole('owner@x', 'owner', [owner, member]),
+      isTrue,
+    );
+    expect(
+      canUpsertProjectMemberRole('owner@x', 'member', [
+        owner,
+        secondOwner,
+        member,
+      ]),
+      isTrue,
+    );
+    expect(
+      canUpsertProjectMemberRole('new@x', 'viewer', [owner, member]),
+      isTrue,
+    );
+  });
 }

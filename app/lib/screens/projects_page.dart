@@ -62,6 +62,23 @@ bool canRemoveProjectMember(
   Iterable<ProjectMember> members,
 ) => member.role != 'owner' || projectOwnerCount(members) > 1;
 
+bool canUpsertProjectMemberRole(
+  String identity,
+  String nextRole,
+  Iterable<ProjectMember> members,
+) {
+  final id = identity.trim();
+  final role = nextRole.trim();
+  if (id.isEmpty) return false;
+  if (role == 'owner') return true;
+  for (final member in members) {
+    if (member.identity.trim() == id) {
+      return canRemoveProjectMember(member, members);
+    }
+  }
+  return true;
+}
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -810,14 +827,20 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   @override
   void initState() {
     super.initState();
+    _member.addListener(_onMemberInputChanged);
     _load();
   }
 
   @override
   void dispose() {
+    _member.removeListener(_onMemberInputChanged);
     _repo.dispose();
     _member.dispose();
     super.dispose();
+  }
+
+  void _onMemberInputChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -941,6 +964,9 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     final memberCandidates = d == null
         ? const <OrganizationMember>[]
         : _memberCandidates(d);
+    final memberInput = _member.text.trim();
+    final canSubmitMember =
+        d != null && canUpsertProjectMemberRole(memberInput, _role, d.members);
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -1169,25 +1195,30 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           onChanged: (v) =>
                               setState(() => _role = v ?? 'member'),
                         ),
-                        FilledButton.icon(
-                          onPressed: () {
-                            final m = _member.text.trim();
-                            if (m.isNotEmpty) {
-                              _member.clear();
-                              _do(
-                                () => widget.client.addMember(
-                                  widget.id,
-                                  m,
-                                  _role,
-                                ),
-                              );
-                            }
-                          },
-                          icon: const Icon(
-                            Icons.person_add_alt_1_rounded,
-                            size: 18,
+                        Tooltip(
+                          message: memberInput.isNotEmpty && !canSubmitMember
+                              ? '至少保留一个项目负责人'
+                              : '加成员',
+                          child: FilledButton.icon(
+                            onPressed: canSubmitMember
+                                ? () {
+                                    final m = _member.text.trim();
+                                    _member.clear();
+                                    _do(
+                                      () => widget.client.addMember(
+                                        widget.id,
+                                        m,
+                                        _role,
+                                      ),
+                                    );
+                                  }
+                                : null,
+                            icon: const Icon(
+                              Icons.person_add_alt_1_rounded,
+                              size: 18,
+                            ),
+                            label: const Text('加成员'),
                           ),
-                          label: const Text('加成员'),
                         ),
                       ],
                     ),
