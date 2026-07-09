@@ -8,7 +8,7 @@ String _s(dynamic v) => v?.toString() ?? '';
 // or empty string collapse to Dart null (project_id/assignee_* are all
 // "unset" in that sense — there's no meaningful empty-string state for them).
 String? _sn(dynamic v) {
-  final s = v?.toString() ?? '';
+  final s = (v?.toString() ?? '').trim();
   return s.isEmpty ? null : s;
 }
 

@@ -100,6 +100,24 @@ void main() {
       expect(t.groupName, isNull);
     });
 
+    test('blank nullable strings parse to null', () {
+      final t = Todo.fromJson(
+        baseJson(
+          groupName: '   ',
+          assigneeIdentity: '   ',
+          assigneeDisplayName: '   ',
+          assigneeSessionLabel: '   ',
+        ),
+      );
+
+      expect(t.groupName, isNull);
+      expect(t.assigneeIdentity, isNull);
+      expect(t.assigneeDisplayName, isNull);
+      expect(t.assigneeSessionLabel, isNull);
+      expect(t.assigneeLabel, isNull);
+      expect(t.assigneeTooltip, isNull);
+    });
+
     test('copyWith preserves groupName', () {
       final t = Todo.fromJson(baseJson(groupName: 'sprint-1'));
       final copy = t.copyWith();
