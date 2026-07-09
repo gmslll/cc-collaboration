@@ -1,5 +1,6 @@
 import '../api/models.dart';
 import '../api/todo_models.dart';
+import 'identity.dart';
 
 class TodoAccess {
   final bool canComment;
@@ -37,7 +38,7 @@ class TodoAccess {
 TodoAccess todoAccessFor(Todo todo, Me me) {
   if (me.isAdmin) return TodoAccess.full;
   if (todo.isPersonal) {
-    return todo.ownerIdentity.trim() == me.identity.trim()
+    return sameIdentity(todo.ownerIdentity, me.identity)
         ? TodoAccess.full
         : TodoAccess.none;
   }

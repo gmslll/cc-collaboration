@@ -380,6 +380,7 @@ void main() {
     () {
       expect(identityMatches(' owner@x ', 'owner@x'), isTrue);
       expect(identityMatches('owner@x', ' owner@x '), isTrue);
+      expect(identityMatches('Owner@X', ' owner@x '), isTrue);
       expect(identityMatches(' ', ' '), isFalse);
       expect(identityMatches('', 'owner@x'), isFalse);
     },
@@ -388,10 +389,12 @@ void main() {
   test('online identity lookup trims relay values', () {
     final onlineUsers = [
       OnlineUser.fromJson({'identity': ' owner@x ', 'online': true}),
+      OnlineUser.fromJson({'identity': 'Case@X', 'online': true}),
       OnlineUser.fromJson({'identity': 'viewer@x', 'online': false}),
     ];
 
     expect(isIdentityOnline(onlineUsers, 'owner@x'), isTrue);
+    expect(isIdentityOnline(onlineUsers, ' case@x '), isTrue);
     expect(isIdentityOnline(onlineUsers, ' viewer@x '), isFalse);
   });
 
@@ -416,6 +419,14 @@ void main() {
         detail(ownerIdentity: ' owner@x ', members: const []),
         isAdmin: false,
         identity: 'owner@x',
+      ),
+      isTrue,
+    );
+    expect(
+      canManageProjectDetail(
+        detail(ownerIdentity: 'Owner@X', members: const []),
+        isAdmin: false,
+        identity: ' owner@x ',
       ),
       isTrue,
     );
@@ -762,6 +773,33 @@ void main() {
       'owner@x': ['Solo'],
       'ops@x': ['Ops'],
     });
+  });
+
+  test('project member candidates compare identities case-insensitively', () {
+    final candidates = projectMemberCandidates(
+      [
+        OrganizationMember.fromJson({
+          'identity': 'Dev@X',
+          'display_name': 'Dev',
+          'role': 'member',
+        }),
+        OrganizationMember.fromJson({
+          'identity': 'qa@x',
+          'display_name': 'QA',
+          'role': 'member',
+        }),
+        OrganizationMember.fromJson({
+          'identity': 'QA@X',
+          'display_name': 'QA duplicate',
+          'role': 'member',
+        }),
+      ],
+      [
+        ProjectMember.fromJson({'identity': ' dev@x ', 'role': 'member'}),
+      ],
+    );
+
+    expect([for (final c in candidates) c.identity], ['qa@x']);
   });
 
   test(

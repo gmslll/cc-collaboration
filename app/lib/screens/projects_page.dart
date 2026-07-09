@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../api/relay_client.dart';
+import '../local/identity.dart' as identity_utils;
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -103,12 +104,12 @@ bool canUpsertOrganizationMemberRole(
   String nextRole,
   Iterable<OrganizationMember> members,
 ) {
-  final id = identity.trim();
+  final id = identity_utils.cleanedIdentity(identity);
   final role = normalizedRole(nextRole);
   if (id.isEmpty) return false;
   if (role == 'owner') return true;
   for (final member in members) {
-    if (member.identity.trim() == id) {
+    if (identityMatches(member.identity, id)) {
       return canRemoveOrganizationMember(member, members);
     }
   }
@@ -149,7 +150,8 @@ String projectOwnerGuardMessage(Iterable<String> uncheckedProjectNames) {
   return '项目负责人状态未确认: ${names.join(', ')}';
 }
 
-String identityDisplay(String identity) => identity.trim();
+String identityDisplay(String identity) =>
+    identity_utils.cleanedIdentity(identity);
 
 String projectOwnerLabel(String identity) =>
     '${projectRoleLabel('owner')} · ${identityDisplay(identity)}';
@@ -213,11 +215,8 @@ bool projectVisibleForSearch(
   );
 }
 
-bool identityMatches(String left, String right) {
-  final l = left.trim();
-  final r = right.trim();
-  return l.isNotEmpty && l == r;
-}
+bool identityMatches(String left, String right) =>
+    identity_utils.sameIdentity(left, right);
 
 bool isIdentityOnline(Iterable<OnlineUser> onlineUsers, String identity) =>
     onlineUsers.any(
@@ -270,12 +269,12 @@ bool canUpsertProjectMemberRole(
   String nextRole,
   Iterable<ProjectMember> members,
 ) {
-  final id = identity.trim();
+  final id = identity_utils.cleanedIdentity(identity);
   final role = normalizedRole(nextRole);
   if (id.isEmpty) return false;
   if (role == 'owner') return true;
   for (final member in members) {
-    if (member.identity.trim() == id) {
+    if (identityMatches(member.identity, id)) {
       return canRemoveProjectMember(member, members);
     }
   }
@@ -288,11 +287,12 @@ List<OrganizationMember> projectMemberCandidates(
 ) {
   final projectIdentities = {
     for (final member in projectMembers)
-      if (member.identity.trim().isNotEmpty) member.identity.trim(),
+      if (identity_utils.identityLookupKey(member.identity).isNotEmpty)
+        identity_utils.identityLookupKey(member.identity),
   };
   final seen = <String>{};
   final candidates = organizationMembers.where((member) {
-    final identity = member.identity.trim();
+    final identity = identity_utils.identityLookupKey(member.identity);
     return identity.isNotEmpty &&
         !projectIdentities.contains(identity) &&
         seen.add(identity);
@@ -353,7 +353,7 @@ Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   for (final detail in details) {
     final owners = detail.members
         .where((m) => normalizedRole(m.role) == 'owner')
-        .map((m) => m.identity.trim())
+        .map((m) => identity_utils.identityLookupKey(m.identity))
         .where((id) => id.isNotEmpty)
         .toList();
     if (owners.length != 1) continue;
@@ -1330,7 +1330,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                   const SizedBox(height: 6),
                   ...d.members.map((m) {
                     final soleOwnedProjects =
-                        _soleProjectOwnerNames[m.identity.trim()] ??
+                        _soleProjectOwnerNames[identity_utils.identityLookupKey(
+                          m.identity,
+                        )] ??
                         const <String>[];
                     final roleChangeBlockReason =
                         organizationMemberRoleChangeBlockReason(m, d.members);

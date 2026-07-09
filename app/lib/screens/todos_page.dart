@@ -9,6 +9,7 @@ import '../api/relay_client.dart';
 import '../api/todo_models.dart';
 import '../local/cli_stub.dart' if (dart.library.io) '../local/cli.dart';
 import '../local/config.dart';
+import '../local/identity.dart';
 import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
@@ -46,17 +47,17 @@ String todoMemberPrimaryLabel({
   required String displayName,
   required String selfIdentity,
 }) {
-  final id = identity.trim();
+  final id = cleanedIdentity(identity);
   final name = displayName.trim();
-  final self = selfIdentity.trim();
   final label = name.isEmpty ? id : name;
   if (label.isEmpty) return '';
-  return id.isNotEmpty && id == self ? '$label（我）' : label;
+  return sameIdentity(id, selfIdentity) ? '$label（我）' : label;
 }
 
 Set<String> normalizedOnlineTodoMemberIds(Iterable<OnlineUser> users) => {
   for (final user in users)
-    if (user.online && user.identity.trim().isNotEmpty) user.identity.trim(),
+    if (user.online && identityLookupKey(user.identity).isNotEmpty)
+      identityLookupKey(user.identity),
 };
 
 Map<String, String> todoMemberDisplayNames({
@@ -66,14 +67,14 @@ Map<String, String> todoMemberDisplayNames({
   final names = <String, String>{};
 
   void rememberFallback(String raw, String name) {
-    final id = raw.trim();
+    final id = identityLookupKey(raw);
     final label = name.trim();
     if (id.isEmpty || label.isEmpty) return;
     names.putIfAbsent(id, () => label);
   }
 
   void rememberPreferred(String raw, String name) {
-    final id = raw.trim();
+    final id = identityLookupKey(raw);
     final label = name.trim();
     if (id.isEmpty || label.isEmpty) return;
     names[id] = label;
@@ -2345,7 +2346,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   Map<String, String> _memberRoles = const {};
   Set<String> _onlineIds = const {};
   String? _pickedIdentity;
-  late final String _selfIdentity = widget.config.identity.trim();
+  late final String _selfIdentity = cleanedIdentity(widget.config.identity);
 
   // On mobile there are no local sessions (overviewStore is desktop-only), so
   // 已有会话/新建会话 instead drive the paired desktop's sessions over the WS
@@ -2494,9 +2495,15 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       organizationMembers: orgMembers,
     );
     final ids = [for (final c in candidates) c.identity];
-    final roles = {for (final c in candidates) c.identity: c.roleLabel};
+    final roles = {
+      for (final c in candidates) identityLookupKey(c.identity): c.roleLabel,
+    };
     online.addAll(normalizedOnlineTodoMemberIds(await onlineF));
     if (!mounted) return;
+    final selfCandidate = ids.firstWhere(
+      (id) => sameIdentity(id, self),
+      orElse: () => '',
+    );
     setState(() {
       _memberIds = ids;
       _memberNames = names;
@@ -2505,8 +2512,8 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       // Default to self, never the current assignee — pre-selecting the existing
       // assignee silently re-assigns to them if the user taps 指派 without
       // changing the radio (the "指派错了" report).
-      _pickedIdentity = self.isNotEmpty && ids.contains(self)
-          ? self
+      _pickedIdentity = selfCandidate.isNotEmpty
+          ? selfCandidate
           : (ids.isNotEmpty ? ids.first : null);
       _loadingMembers = false;
     });
@@ -2567,9 +2574,10 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: _memberIds.map((id) {
-            final sel = _pickedIdentity == id;
-            final name = (_memberNames[id] ?? '').trim();
-            final role = (_memberRoles[id] ?? '').trim();
+            final key = identityLookupKey(id);
+            final sel = sameIdentity(_pickedIdentity ?? '', id);
+            final name = (_memberNames[key] ?? '').trim();
+            final role = (_memberRoles[key] ?? '').trim();
             final primary = todoMemberPrimaryLabel(
               identity: id,
               displayName: name,
@@ -2663,7 +2671,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                         ],
                       ),
                     ),
-                    if (_onlineIds.contains(id))
+                    if (_onlineIds.contains(key))
                       const Padding(
                         padding: EdgeInsets.only(left: 6),
                         child: Icon(Icons.circle, size: 9, color: Colors.green),

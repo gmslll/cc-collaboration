@@ -35,6 +35,15 @@ void main() {
     expect(access.canDelete, isTrue);
   });
 
+  test('personal todo owner comparison is case-insensitive', () {
+    final access = todoAccessFor(
+      _todo(owner: ' Alice@X '),
+      _me(identity: 'alice@x'),
+    );
+
+    expect(access.canDelete, isTrue);
+  });
+
   test('personal todo non-owner is read-only/no access in UI', () {
     final access = todoAccessFor(_todo(owner: 'owner@x'), _me());
 

@@ -48,6 +48,26 @@ void main() {
     expect(ids, ['owner@x', 'member@x', 'admin@x']);
   });
 
+  test('deduplicates assignable identities case-insensitively', () {
+    final members = assignableTodoMembers(
+      selfIdentity: '',
+      includeSelf: false,
+      projectMembers: [
+        _projectMember(' Member@X ', 'viewer'),
+        _projectMember('owner@x', 'owner'),
+      ],
+      organizationMembers: [
+        _orgMember('member@x', 'admin'),
+        _orgMember('OWNER@X', 'admin'),
+      ],
+    );
+
+    expect(members, [
+      (identity: 'member@x', roleLabel: '团队管理员'),
+      (identity: 'owner@x', roleLabel: '项目负责人'),
+    ]);
+  });
+
   test('does not keep inaccessible current assignee as assignable', () {
     final ids = assignableTodoMemberIds(
       selfIdentity: 'owner@x',
@@ -138,7 +158,7 @@ void main() {
   test('member primary labels prefer display names and mark self', () {
     expect(
       todoMemberPrimaryLabel(
-        identity: ' self@x ',
+        identity: ' Self@X ',
         displayName: ' Self Display ',
         selfIdentity: 'self@x',
       ),
@@ -198,11 +218,32 @@ void main() {
     expect(names, {'dev@x': 'Project Dev', 'blank@x': 'Team Blank'});
   });
 
+  test('todo member display name lookup keys ignore identity case', () {
+    final names = todoMemberDisplayNames(
+      projectMembers: [
+        ProjectMember.fromJson({
+          'identity': ' Dev@X ',
+          'display_name': 'Project Dev',
+          'role': 'member',
+        }),
+      ],
+      organizationMembers: [
+        OrganizationMember.fromJson({
+          'identity': 'dev@x',
+          'display_name': 'Team Dev',
+          'role': 'member',
+        }),
+      ],
+    );
+
+    expect(names, {'dev@x': 'Project Dev'});
+  });
+
   test(
     'online todo member ids trim relay identities and skip offline users',
     () {
       final ids = normalizedOnlineTodoMemberIds([
-        OnlineUser.fromJson({'identity': ' member@x ', 'online': true}),
+        OnlineUser.fromJson({'identity': ' Member@X ', 'online': true}),
         OnlineUser.fromJson({'identity': 'offline@x', 'online': false}),
         OnlineUser.fromJson({'identity': '   ', 'online': true}),
       ]);

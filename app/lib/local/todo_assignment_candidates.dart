@@ -1,4 +1,5 @@
 import '../api/models.dart';
+import 'identity.dart';
 
 typedef AssignableTodoMember = ({String identity, String roleLabel});
 
@@ -16,16 +17,17 @@ List<AssignableTodoMember> assignableTodoMembers({
   final seen = <String>{};
   final ranks = <String, int>{};
   void add(String raw, String roleLabel, int rank) {
-    final id = raw.trim();
-    if (id.isEmpty) return;
-    if (seen.add(id)) {
-      ranks[id] = rank;
+    final id = cleanedIdentity(raw);
+    final key = identityLookupKey(id);
+    if (key.isEmpty) return;
+    if (seen.add(key)) {
+      ranks[key] = rank;
       members.add((identity: id, roleLabel: roleLabel));
       return;
     }
-    if (rank <= (ranks[id] ?? 0)) return;
-    ranks[id] = rank;
-    final index = members.indexWhere((m) => m.identity == id);
+    if (rank <= (ranks[key] ?? 0)) return;
+    ranks[key] = rank;
+    final index = members.indexWhere((m) => sameIdentity(m.identity, id));
     if (index >= 0) {
       members[index] = (identity: id, roleLabel: roleLabel);
     }
