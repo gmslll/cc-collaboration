@@ -247,6 +247,15 @@ List<OrganizationMember> projectMemberCandidates(
   return candidates;
 }
 
+String? createProjectTeamId(
+  String? selectedOrgId,
+  Iterable<Organization> manageableOrgs,
+) {
+  final id = selectedOrgId?.trim() ?? '';
+  if (id.isEmpty) return null;
+  return manageableOrgs.any((org) => org.id == id) ? id : null;
+}
+
 double responsiveControlWidth(BoxConstraints constraints, double preferred) {
   final maxWidth = constraints.maxWidth;
   if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
@@ -383,11 +392,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
           _identity = me?.identity ?? '';
           _projects = ps;
           _online = online;
-          if (_selectedOrgId != null &&
-              _selectedOrgId!.isNotEmpty &&
-              !manageableOrgIds.contains(_selectedOrgId)) {
-            _selectedOrgId = '';
-          }
+          _selectedOrgId = createProjectTeamId(_selectedOrgId, _manageableOrgs);
           _error = null;
         });
       }
@@ -400,7 +405,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
     final name = _name.text.trim();
     if (name.isEmpty) return;
     try {
-      await widget.client.createProject(name, orgId: _selectedOrgId);
+      await widget.client.createProject(
+        name,
+        orgId: createProjectTeamId(_selectedOrgId, _manageableOrgs),
+      );
       _name.clear();
       await _load();
     } catch (e) {
@@ -521,6 +529,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
                   constraints,
                   240,
                 );
+                final selectedTeamId = createProjectTeamId(
+                  _selectedOrgId,
+                  _manageableOrgs,
+                );
                 return Wrap(
                   runSpacing: 8,
                   spacing: 8,
@@ -560,7 +572,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       SizedBox(
                         width: teamPickerWidth,
                         child: DropdownButton<String>(
-                          value: _selectedOrgId ?? '',
+                          value: selectedTeamId ?? '',
                           isExpanded: true,
                           items: [
                             const DropdownMenuItem(
@@ -579,7 +591,12 @@ class _ProjectsPageState extends State<ProjectsPage> {
                               ),
                             ),
                           ],
-                          onChanged: (v) => setState(() => _selectedOrgId = v),
+                          onChanged: (v) => setState(
+                            () => _selectedOrgId = createProjectTeamId(
+                              v,
+                              _manageableOrgs,
+                            ),
+                          ),
                         ),
                       ),
                     FilledButton.icon(

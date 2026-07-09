@@ -582,6 +582,23 @@ void main() {
     expect(candidates.map((m) => m.identity).toList(), ['ann@x', 'zed@x']);
   });
 
+  test('project creation team id ignores default and stale selections', () {
+    final orgs = [
+      Organization.fromJson({
+        'id': 'org-a',
+        'name': 'Kunlun',
+        'owner_identity': 'owner@x',
+        'role': 'owner',
+      }),
+    ];
+
+    expect(createProjectTeamId(null, orgs), isNull);
+    expect(createProjectTeamId('', orgs), isNull);
+    expect(createProjectTeamId('   ', orgs), isNull);
+    expect(createProjectTeamId('missing-org', orgs), isNull);
+    expect(createProjectTeamId(' org-a ', orgs), 'org-a');
+  });
+
   test('responsive control width never exceeds the available width', () {
     expect(
       responsiveControlWidth(const BoxConstraints(maxWidth: 180), 260),
@@ -714,6 +731,29 @@ void main() {
     await tester.pump();
     expect(button('新建团队').onPressed, isNotNull);
     expect(button('新建项目').onPressed, isNotNull);
+  });
+
+  testWidgets('project creation does not submit empty default team id', (
+    tester,
+  ) async {
+    final client = _CaptureCreateProjectFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(1), 'Default Scoped');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(client.createdName, 'Default Scoped');
+    expect(client.createdOrgId, isNull);
   });
 
   testWidgets('team workspace creation controls shrink on compact widths', (
@@ -1165,6 +1205,24 @@ class _ProjectsPageFakeClient extends RelayClient {
 
   @override
   Future<void> mapRepo(String id, String repoName) async {}
+}
+
+class _CaptureCreateProjectFakeClient extends _ProjectsPageFakeClient {
+  String? createdName;
+  String? createdOrgId;
+
+  @override
+  Future<Project> createProject(String name, {String? orgId}) async {
+    createdName = name;
+    createdOrgId = orgId;
+    return Project.fromJson({
+      'id': 'created',
+      'org_id': orgId ?? '',
+      'name': name,
+      'owner_identity': 'owner@x',
+      'role': 'owner',
+    });
+  }
 }
 
 class _FailingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
