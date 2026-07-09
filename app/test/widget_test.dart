@@ -949,6 +949,20 @@ void main() {
       expect(guardIndex, lessThan(beforeIndex));
     }
 
+    void expectClientGuardBefore(String body, String after, String before) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf(
+        '_isCurrentRelayClient(client)',
+        afterIndex,
+      );
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
     void expectMarkerBefore(String body, String marker, String before) {
       final markerIndex = body.indexOf(marker);
       final beforeIndex = body.indexOf(before, markerIndex);
@@ -1118,7 +1132,13 @@ void main() {
       'Future<String?> _remoteAssignTodo(',
       'SessionCard? _remoteCard(',
     );
+    expect(remoteAssign, contains('账号已切换,请重新指派'));
     expectGuardBefore(
+      remoteAssign,
+      'fallback = await client.todo(todoId);',
+      'final me = widget.me;',
+    );
+    expectClientGuardBefore(
       remoteAssign,
       'fallback = await client.todo(todoId);',
       'final me = widget.me;',
@@ -1128,7 +1148,17 @@ void main() {
       'final (spawnedSid, err) = await _spawnForDispatch',
       'sid = spawnedSid;',
     );
+    expectClientGuardBefore(
+      remoteAssign,
+      'final (spawnedSid, err) = await _spawnForDispatch',
+      'sid = spawnedSid;',
+    );
     expectGuardBefore(
+      remoteAssign,
+      'await Future.delayed(const Duration(milliseconds: 100));',
+      'card = _remoteCard(sid);',
+    );
+    expectClientGuardBefore(
       remoteAssign,
       'await Future.delayed(const Duration(milliseconds: 100));',
       'card = _remoteCard(sid);',
@@ -1138,10 +1168,30 @@ void main() {
       'final prep = await prepareTodoAssignmentText',
       'final dispatchErr = deliverLocalMessage',
     );
+    expectClientGuardBefore(
+      remoteAssign,
+      'final prep = await prepareTodoAssignmentText',
+      'final dispatchErr = deliverLocalMessage',
+    );
     expectGuardBefore(
       remoteAssign,
       'await Future.delayed(const Duration(milliseconds: 200));',
       'card = _remoteCard(sid);',
+    );
+    expectClientGuardBefore(
+      remoteAssign,
+      'await Future.delayed(const Duration(milliseconds: 200));',
+      'card = _remoteCard(sid);',
+    );
+    expectClientGuardBefore(
+      remoteAssign,
+      'await client.assignTodo',
+      'await client.updateTodo',
+    );
+    expectClientGuardBefore(
+      remoteAssign,
+      'await client.updateTodo',
+      'await client.setTodoStatus',
     );
   });
 

@@ -2325,14 +2325,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<String?> _remoteAssignTodo(Map<String, dynamic> req) async {
     final client = widget.client;
     if (client == null) return '需要登录 relay';
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     final todoId = (req['todoId'] as String?)?.trim() ?? '';
     if (todoId.isEmpty) return '缺少 todoId';
     final Todo fallback;
     try {
       fallback = await client.todo(todoId);
     } catch (e) {
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
       return '读取待办失败: ${errorText(e)}';
     }
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     if (!mounted) return '工作区已关闭';
     final me = widget.me;
     if (me != null && !todoAccessFor(fallback, me).canAssign) {
@@ -2349,6 +2352,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         newWorktreeBranch: req['branch'] as String?,
       );
       if (spawnedSid == null) return '新建会话失败: ${err ?? "未知错误"}';
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
       if (!mounted) return '工作区已关闭';
       sid = spawnedSid;
       waitForAgentId = true; // codex mints its id async — poll before binding
@@ -2363,9 +2367,11 @@ class _WorkspacePageState extends State<WorkspacePage>
     var card = _remoteCard(sid);
     for (var i = 0; i < 5 && (card?.workdir ?? '').isEmpty; i++) {
       await Future.delayed(const Duration(milliseconds: 100));
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
       if (!mounted) return '工作区已关闭';
       card = _remoteCard(sid);
     }
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     if (!mounted) return '工作区已关闭';
     final prep = await prepareTodoAssignmentText(
       client: client,
@@ -2373,6 +2379,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       fallbackTodo: fallback,
       workdir: card?.workdir ?? '',
     );
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     if (!mounted) return '工作区已关闭';
     final dispatchErr = deliverLocalMessage(
       LocalMsg('', sid, prep.taskText, true),
@@ -2384,10 +2391,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (waitForAgentId && (card?.agentSessionId ?? '').isEmpty) {
       for (var i = 0; i < 15 && (card?.agentSessionId ?? '').isEmpty; i++) {
         await Future.delayed(const Duration(milliseconds: 200));
+        if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
         if (!mounted) return '工作区已关闭';
         card = _remoteCard(sid);
       }
     }
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     try {
       await client.assignTodo(
         todoId,
@@ -2402,11 +2411,13 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ? 'supervisor:${card.agentKind}'
                   : card.agentKind),
       );
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
       await client.updateTodo(
         todoId,
         workspaceName: card?.workspace ?? '',
         repoName: card?.project ?? '',
       );
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     } catch (_) {}
     // 指派 = 开始处理: bump an unstarted todo to 进行中.
     if (const {
@@ -2416,6 +2427,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     }.contains(prep.full.status)) {
       try {
         await client.setTodoStatus(todoId, TodoStatus.inProgress);
+        if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
       } catch (_) {}
     }
     return null;
