@@ -1034,11 +1034,8 @@ void main() {
       'Future<void> _showSendToOnlineUser(String text)',
       'Future<void> _loadTasks()',
     );
-    expectMarkerBefore(
-      onlineSend,
-      'if (!mounted || !ctx.mounted) return;',
-      'setSt(() {',
-    );
+    expectMarkerBefore(onlineSend, 'if (!mounted ||', 'setSt(() {');
+    expectMarkerBefore(onlineSend, 'seq != loadSeq', 'setSt(() {');
     final remoteAssign = between(
       'Future<String?> _remoteAssignTodo(',
       'SessionCard? _remoteCard(',

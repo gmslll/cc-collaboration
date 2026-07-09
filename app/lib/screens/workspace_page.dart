@@ -1702,9 +1702,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         String? selected;
         List<RemoteSession>? sessions; // null = 未加载
         var loading = false;
+        var loadSeq = 0;
         return StatefulBuilder(
           builder: (ctx, setSt) {
             Future<void> pickUser(String identity) async {
+              final seq = ++loadSeq;
               setSt(() {
                 selected = identity;
                 sessions = null;
@@ -1716,7 +1718,12 @@ class _WorkspacePageState extends State<WorkspacePage>
               } catch (_) {
                 loaded = const [];
               }
-              if (!mounted || !ctx.mounted) return;
+              if (!mounted ||
+                  !ctx.mounted ||
+                  seq != loadSeq ||
+                  selected != identity) {
+                return;
+              }
               setSt(() {
                 sessions = loaded;
                 loading = false;

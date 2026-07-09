@@ -39,6 +39,17 @@ void main() {
     expect(source, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('online send ignores stale session loads after switching users', () {
+    final dialog = source.substring(
+      source.indexOf('Future<void> _showSendToOnlineUser(String text)'),
+      source.indexOf('Future<void> _loadTasks()'),
+    );
+    expect(dialog, contains('var loadSeq = 0;'));
+    expect(dialog, contains('final seq = ++loadSeq;'));
+    expect(dialog, contains('seq != loadSeq'));
+    expect(dialog, contains('selected != identity'));
+  });
+
   test('incoming peer message dialog uses responsive session labels', () {
     expect(source, contains('preferred: 460'));
     expect(source, contains('onlineSendSessionMenuMaxHeight'));
