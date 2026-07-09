@@ -1272,6 +1272,42 @@ void main() {
     expect(find.text('Backend'), findsOneWidget);
   });
 
+  testWidgets('organization sheet uses compact empty project state', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('还没有项目'), findsOneWidget);
+    expect(find.text('在团队工作台新建项目后，会出现在这里。'), findsOneWidget);
+  });
+
+  testWidgets('project sheet uses compact empty repo state', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _ProjectsPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('还没有绑定 repo'), findsOneWidget);
+    expect(find.text('绑定 repo 后团队成员可以按项目查看交接和待办。'), findsOneWidget);
+  });
+
   testWidgets('project sheet disables repo binding until a repo is entered', (
     tester,
   ) async {

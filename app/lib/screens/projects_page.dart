@@ -1762,9 +1762,10 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                   ),
                   const SizedBox(height: 6),
                   if (d.projects.isEmpty)
-                    const Text(
-                      '还没有项目',
-                      style: TextStyle(color: CcColors.muted, fontSize: 13),
+                    const _CompactEmptyState(
+                      icon: Icons.folder_off_rounded,
+                      title: '还没有项目',
+                      detail: '在团队工作台新建项目后，会出现在这里。',
                     )
                   else
                     ...d.projects.map(
@@ -1836,6 +1837,69 @@ class _RoleMenuText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
+  }
+}
+
+class _CompactEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String detail;
+
+  const _CompactEmptyState({
+    required this.icon,
+    required this.title,
+    required this.detail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 420),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: CcColors.bg.withValues(alpha: 0.28),
+          borderRadius: BorderRadius.circular(CcRadius.md),
+          border: Border.all(color: CcColors.borderSoft),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: CcColors.panel.withValues(alpha: 0.82),
+                borderRadius: BorderRadius.circular(CcRadius.sm),
+                border: Border.all(color: CcColors.border),
+              ),
+              child: Icon(icon, size: 16, color: CcColors.muted),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    detail,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: CcColors.muted, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -2158,10 +2222,11 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                     spacing: 8,
                     runSpacing: 8,
                     children: d.repos.isEmpty
-                        ? [
-                            const Text(
-                              '无',
-                              style: TextStyle(color: CcColors.muted),
+                        ? const [
+                            _CompactEmptyState(
+                              icon: Icons.link_off_rounded,
+                              title: '还没有绑定 repo',
+                              detail: '绑定 repo 后团队成员可以按项目查看交接和待办。',
                             ),
                           ]
                         : d.repos
