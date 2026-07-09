@@ -306,6 +306,7 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
+	identity := r.PathValue("id")
 	var req struct {
 		Disabled bool `json:"disabled"`
 	}
@@ -313,9 +314,12 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.SetDisabled(r.Context(), r.PathValue("id"), req.Disabled); err != nil {
+	if err := s.Store.SetDisabled(r.Context(), identity, req.Disabled); err != nil {
 		s.writeStoreErr(w, err)
 		return
+	}
+	if req.Disabled && s.Sessions != nil {
+		s.Sessions.clear(identity)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

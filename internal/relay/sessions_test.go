@@ -327,6 +327,73 @@ func TestSessionRegistryRequiresSharedTeam(t *testing.T) {
 	}
 }
 
+func TestDisableUserClearsPublishedSessions(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	mkUser(t, st, "admin@ops", "adminpass1")
+	mkUser(t, st, "alice@backend", "alicepass1")
+	mkUser(t, st, "bob@frontend", "bobpass123")
+	if err := st.SetAdmin(ctx, "admin@ops", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-shared", "Shared", "alice@backend", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-shared", "bob@frontend", store.OrgRoleOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub()}).Handler())
+	t.Cleanup(srv.Close)
+	adminToken := loginToken(t, srv.URL, "admin@ops", "adminpass1")
+	aliceToken := loginToken(t, srv.URL, "alice@backend", "alicepass1")
+	bobToken := loginToken(t, srv.URL, "bob@frontend", "bobpass123")
+
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", aliceToken, map[string]any{
+		"sessions": []map[string]string{{"id": "ts0", "label": "api"}},
+	}); code != http.StatusOK {
+		t.Fatalf("publish sessions = %d %s", code, body)
+	}
+	code, body := getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("alice@backend")+"/sessions", bobToken)
+	if code != http.StatusOK {
+		t.Fatalf("baseline get sessions = %d %s", code, body)
+	}
+	var got struct {
+		Sessions []handoffschema.SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].ID != "ts0" {
+		t.Fatalf("baseline sessions = %+v, want ts0", got.Sessions)
+	}
+
+	disableURL := srv.URL + "/v1/users/" + url.PathEscape("alice@backend") + "/disable"
+	if code, body := postJSON(t, disableURL, adminToken, map[string]any{"disabled": true}); code != http.StatusOK {
+		t.Fatalf("disable user = %d %s", code, body)
+	}
+	if code, body := postJSON(t, disableURL, adminToken, map[string]any{"disabled": false}); code != http.StatusOK {
+		t.Fatalf("reenable user = %d %s", code, body)
+	}
+
+	code, body = getAuth(t, srv.URL+"/v1/users/"+url.PathEscape("alice@backend")+"/sessions", bobToken)
+	if code != http.StatusOK {
+		t.Fatalf("after reenable get sessions = %d %s", code, body)
+	}
+	got.Sessions = nil
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 0 {
+		t.Fatalf("sessions survived disable/reenable: %+v", got.Sessions)
+	}
+}
+
 func getAuth(t *testing.T, u, bearer string) (int, []byte) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, u, nil)
