@@ -42,42 +42,24 @@ void main() {
     expect(kRemoteShowSessionContentDefault, isFalse);
 
     final account = File('lib/screens/account_page.dart').readAsStringSync();
-    final remote = File(
-      'lib/screens/remote_workspace_page.dart',
-    ).readAsStringSync();
+    final remote = File('lib/screens/remote_workspace_page.dart').readAsStringSync();
     expect(account, contains('def: kRemoteShowSessionContentDefault'));
     expect(remote, contains('def: kRemoteShowSessionContentDefault'));
-    expect(
-      account,
-      isNot(contains('kRemoteShowSessionContentPref,\n    def: true')),
-    );
-    expect(
-      remote,
-      isNot(contains('kRemoteShowSessionContentPref,\n          def: true')),
-    );
+    expect(account, isNot(contains('kRemoteShowSessionContentPref,\n    def: true')));
+    expect(remote, isNot(contains('kRemoteShowSessionContentPref,\n          def: true')));
   });
 
   test('remote new-session dropdown labels are width constrained', () {
-    final remote = File(
-      'lib/screens/remote_workspace_page.dart',
-    ).readAsStringSync();
+    final remote = File('lib/screens/remote_workspace_page.dart').readAsStringSync();
 
     expect(remote, contains('overflow: TextOverflow.ellipsis'));
-    expect(
-      remote,
-      isNot(contains('DropdownMenuItem(value: r, child: Text(r.name))')),
-    );
+    expect(remote, isNot(contains('DropdownMenuItem(value: r, child: Text(r.name))')));
     expect(remote, contains("'主仓 (\${project.name})'"));
-    expect(
-      remote,
-      contains('w.branch.isEmpty ? pathBaseName(w.path) : w.branch'),
-    );
+    expect(remote, contains('w.branch.isEmpty ? pathBaseName(w.path) : w.branch'));
   });
 
   test('remote project list titles are width constrained', () {
-    final remote = File(
-      'lib/screens/remote_workspace_page.dart',
-    ).readAsStringSync();
+    final remote = File('lib/screens/remote_workspace_page.dart').readAsStringSync();
 
     expect(remote, isNot(contains('title: Text(r.name),')));
     expect(remote, contains('maxLines: 1'));
@@ -90,10 +72,7 @@ void main() {
 
   group('splitFileNameDir', () {
     test('splits POSIX paths', () {
-      expect(splitFileNameDir('/tmp/project/lib/main.dart'), (
-        'main.dart',
-        '/tmp/project/lib',
-      ));
+      expect(splitFileNameDir('/tmp/project/lib/main.dart'), ('main.dart', '/tmp/project/lib'));
     });
 
     test('splits Windows paths', () {
@@ -152,22 +131,10 @@ void main() {
   });
 
   test('GitHubClient.parseSlug handles https / git@ / path / non-github', () {
-    expect(
-      GitHubClient.parseSlug('https://github.com/owner/repo.git'),
-      'owner/repo',
-    );
-    expect(
-      GitHubClient.parseSlug('https://github.com/owner/repo'),
-      'owner/repo',
-    );
-    expect(
-      GitHubClient.parseSlug('git@github.com:owner/repo.git'),
-      'owner/repo',
-    );
-    expect(
-      GitHubClient.parseSlug('https://github.com/owner/repo/pull/5'),
-      'owner/repo',
-    );
+    expect(GitHubClient.parseSlug('https://github.com/owner/repo.git'), 'owner/repo');
+    expect(GitHubClient.parseSlug('https://github.com/owner/repo'), 'owner/repo');
+    expect(GitHubClient.parseSlug('git@github.com:owner/repo.git'), 'owner/repo');
+    expect(GitHubClient.parseSlug('https://github.com/owner/repo/pull/5'), 'owner/repo');
     expect(GitHubClient.parseSlug('/just/a/local/path'), isNull);
     expect(GitHubClient.parseSlug(''), isNull);
   });
@@ -196,6 +163,7 @@ void main() {
       'recipient': 'b',
       'summary_md': '# hi',
       'repo': {'name': 'r', 'branch': 'main'},
+      'delivery_target': {'project_id': ' project-1 ', 'org_id': 'org-1', 'member': ' dev@team '},
       'module_paths': ['a/b'],
       'attachments': [
         {'name': 'f.txt', 'size': 12, 'sha256': 'x'},
@@ -213,6 +181,10 @@ void main() {
       },
     });
     expect(p.repo.name, 'r');
+    expect(p.deliveryTarget?.projectId, 'project-1');
+    expect(p.deliveryTarget?.orgId, 'org-1');
+    expect(p.deliveryTarget?.member, 'dev@team');
+    expect(deliveryTargetLabel(p.deliveryTarget!), '项目 project-1 · 团队 org-1 · 成员 dev@team');
     expect(p.modulePaths, ['a/b']);
     expect(p.attachments.single.name, 'f.txt');
     expect(p.attachments.single.size, 12);
@@ -220,6 +192,17 @@ void main() {
     expect(p.git!.changedPaths, ['x.go']);
     expect(p.apiDelta!.added.single.method, 'GET');
     expect(p.apiDelta!.isEmpty, isFalse);
+  });
+
+  test('Package.fromJson ignores blank delivery_target', () {
+    final p = Package.fromJson({
+      'id': 'h_blank_target',
+      'sender': 'a',
+      'recipient': 'b',
+      'repo': {'name': 'r'},
+      'delivery_target': {'project_id': ' ', 'org_id': '', 'member': null},
+    });
+    expect(p.deliveryTarget, isNull);
   });
 
   test('Me.fromJson + ProjectRole', () {
@@ -255,12 +238,7 @@ void main() {
         {'id': ' org-a ', 'name': ' Team A ', 'role': ' admin '},
       ],
       'projects': [
-        {
-          'id': ' p1 ',
-          'org_id': ' org-a ',
-          'name': ' Project A ',
-          'role': ' owner ',
-        },
+        {'id': ' p1 ', 'org_id': ' org-a ', 'name': ' Project A ', 'role': ' owner '},
       ],
     });
     final org = Organization.fromJson({
@@ -277,10 +255,7 @@ void main() {
       'role': ' member ',
     });
     final online = OnlineUser.fromJson({'identity': ' alice ', 'online': true});
-    final user = User.fromJson({
-      'identity': ' alice ',
-      'display_name': ' Alice ',
-    });
+    final user = User.fromJson({'identity': ' alice ', 'display_name': ' Alice '});
 
     expect(me.identity, 'alice');
     expect(me.organizations.single.id, 'org-a');
@@ -325,10 +300,7 @@ void main() {
     final forbidden = DioException(
       requestOptions: RequestOptions(path: '/'),
       type: DioExceptionType.badResponse,
-      response: Response(
-        requestOptions: RequestOptions(path: '/'),
-        statusCode: 403,
-      ),
+      response: Response(requestOptions: RequestOptions(path: '/'), statusCode: 403),
     );
     expect(errorText(forbidden), contains('权限'));
 
@@ -353,13 +325,7 @@ void main() {
         teamKey: 'ENG',
         linearProjectId: 'proj-123',
         types: 'mention',
-        rules: [
-          RuleCfg(
-            whenPathMatches: '^x/',
-            suggestEdit: 'a.ts, b.ts',
-            suggestCreate: true,
-          ),
-        ],
+        rules: [RuleCfg(whenPathMatches: '^x/', suggestEdit: 'a.ts, b.ts', suggestCreate: true)],
       );
       await c.save(dir.path);
       final back = await RepoConfig.load(dir.path);
