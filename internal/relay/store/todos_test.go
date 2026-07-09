@@ -16,6 +16,13 @@ func mustCreateTodo(t *testing.T, st *Store, td *todoschema.Todo) {
 	}
 }
 
+func TestCreateTodoRejectsNil(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.CreateTodo(context.Background(), nil); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("nil todo: want ErrInvalid, got %v", err)
+	}
+}
+
 // --- personal todo visibility: only the owner has any access ---
 
 func TestTodoPersonalVisibility(t *testing.T) {
@@ -187,6 +194,100 @@ func TestTodoTeamVisibilityByRole(t *testing.T) {
 	}
 	if err := st.DeleteTodo(ctx, "td2", "owner@x"); err != nil {
 		t.Fatalf("owner delete: %v", err)
+	}
+}
+
+func TestTodoStoreNormalizesTeamInputs(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateProject(ctx, " p1 ", " Kunlun ", " owner@x ", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "member@x", DisplayName: " Member X "}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, " p1 ", " member@x ", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+
+	td := &todoschema.Todo{
+		ID:               " td-normalized ",
+		ProjectID:        " p1 ",
+		OwnerIdentity:    " owner@x ",
+		Title:            " ship team todo ",
+		Priority:         todoschema.Priority(" high "),
+		Recurrence:       todoschema.Recurrence(" daily "),
+		AssigneeIdentity: " member@x ",
+		WorkspaceName:    " kunlun ",
+		RepoName:         " cc-collaboration ",
+		GroupName:        " sprint-1 ",
+		SourceRef:        " linear:ENG-1 ",
+		SourceProvider:   " linear ",
+		SourceTeamKey:    " ENG ",
+		SourceProjectID:  " relay-p1 ",
+	}
+	if err := st.CreateTodo(ctx, td); err != nil {
+		t.Fatal(err)
+	}
+	if td.ID != "td-normalized" || td.ProjectID != "p1" || td.OwnerIdentity != "owner@x" ||
+		td.Title != "ship team todo" || td.Priority != todoschema.PriorityHigh ||
+		td.Recurrence != todoschema.RecurrenceDaily || td.AssigneeIdentity != "member@x" ||
+		td.WorkspaceName != "kunlun" || td.RepoName != "cc-collaboration" ||
+		td.GroupName != "sprint-1" || td.SourceRef != "linear:ENG-1" {
+		t.Fatalf("todo write model not normalized: %+v", td)
+	}
+
+	got, err := st.GetTodo(ctx, " td-normalized ", " owner@x ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "td-normalized" || got.ProjectID != "p1" || got.AssigneeDisplayName != "Member X" {
+		t.Fatalf("normalized get = %+v", got)
+	}
+
+	listed, err := st.ListTodos(ctx, " member@x ", TodoListFilter{
+		Scope:     " project ",
+		ProjectID: " p1 ",
+		Status:    " todo ",
+		GroupName: " sprint-1 ",
+	})
+	if err != nil || len(listed) != 1 || listed[0].ID != "td-normalized" {
+		t.Fatalf("normalized project list = %+v err=%v", listed, err)
+	}
+	assigned, err := st.ListTodos(ctx, " member@x ", TodoListFilter{Scope: " assigned "})
+	if err != nil || len(assigned) != 1 || assigned[0].ID != "td-normalized" {
+		t.Fatalf("normalized assigned list = %+v err=%v", assigned, err)
+	}
+	found, ok, err := st.FindTodoBySourceRef(ctx, " owner@x ", " linear:ENG-1 ", " p1 ")
+	if err != nil || !ok || found.ID != "td-normalized" {
+		t.Fatalf("normalized source lookup = %+v ok=%v err=%v", found, ok, err)
+	}
+
+	nextGroup := " sprint-2 "
+	patched, err := st.UpdateTodoFields(ctx, " td-normalized ", " owner@x ", TodoPatch{GroupName: &nextGroup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched.GroupName != "sprint-2" {
+		t.Fatalf("patch group not normalized: %+v", patched)
+	}
+	nextPriority := todoschema.Priority(" low ")
+	nextRecurrence := todoschema.Recurrence(" weekly ")
+	patched, err = st.UpdateTodoFields(ctx, " td-normalized ", " owner@x ", TodoPatch{
+		Priority:   &nextPriority,
+		Recurrence: &nextRecurrence,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched.Priority != todoschema.PriorityLow || patched.Recurrence != todoschema.RecurrenceWeekly {
+		t.Fatalf("patch enums not normalized: %+v", patched)
+	}
+	groups, err := st.ListTodoGroups(ctx, " member@x ", " p1 ")
+	if err != nil || len(groups) != 1 || groups[0] != "sprint-2" {
+		t.Fatalf("normalized group list = %+v err=%v", groups, err)
 	}
 }
 
