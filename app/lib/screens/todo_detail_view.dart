@@ -104,6 +104,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // body_md itself never has to represent "is this being edited" state.
   bool _bodyEditing = false;
   bool _resumingSession = false;
+  int _loadGeneration = 0;
   // Height (px) of the top pane (title/properties/body, scrollable) above the
   // 评论/附件 TabBarView — user-draggable via the vertical DragHandle in
   // build(), persisted so it survives switching between todos. Was a fixed
@@ -187,9 +188,11 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _loadFull() async {
+    final generation = ++_loadGeneration;
+    final id = _id;
     try {
-      final t = await _client.todo(_id);
-      if (!mounted) return;
+      final t = await _client.todo(id);
+      if (!_isCurrentLoad(generation, id)) return;
       setState(() {
         _current = t;
         _loadingAttachments = false;
@@ -200,19 +203,25 @@ class TodoDetailViewState extends State<TodoDetailView> {
       });
     } catch (e) {
       if (!mounted) return;
+      if (generation != _loadGeneration || id != _id) return;
       setState(() => _loadingAttachments = false);
       snack(context, '加载待办详情失败: ${errorText(e)}');
     }
   }
+
+  bool _isCurrentLoad(int generation, String id) =>
+      mounted && generation == _loadGeneration && id == _id;
 
   // reloadComments is public so the host can force a refresh when
   // TodoStore.onComment fires for this todo's id (a todo.comment_created SSE
   // event) — the store itself doesn't model comments, it just tells the host
   // which todo needs its comment list reloaded.
   Future<void> reloadComments() async {
+    final generation = _loadGeneration;
+    final id = _id;
     try {
-      final cs = await _client.todoComments(_id);
-      if (mounted) setState(() => _comments = cs);
+      final cs = await _client.todoComments(id);
+      if (_isCurrentLoad(generation, id)) setState(() => _comments = cs);
     } catch (_) {}
   }
 
@@ -244,6 +253,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
 
   void _applyUpdated(Todo t) {
     if (!mounted) return;
+    if (t.id != _id) return;
     // PATCH/status-update responses always carry an empty `attachments`
     // (relay skips that join outside GET-by-id) — if nothing attachment-wise
     // actually changed server-side (count is unchanged), keep the
