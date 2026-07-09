@@ -886,6 +886,28 @@ void main() {
     expect(button('新建项目').onPressed, isNotNull);
   });
 
+  testWidgets('empty project state focuses project creation', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: _NoProjectTeamsFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('还没有项目'), findsOneWidget);
+    expect(find.text('2 个团队已就绪'), findsOneWidget);
+    expect(find.text('可管理'), findsOneWidget);
+    expect(find.text('在线'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '新建项目').last);
+    await tester.pump();
+
+    final projectField = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(projectField.focusNode?.hasFocus, isTrue);
+  });
+
   testWidgets('project creation does not submit empty default team id', (
     tester,
   ) async {
@@ -2114,6 +2136,11 @@ class _ProjectsPageFakeClient extends RelayClient {
 
   @override
   Future<void> mapRepo(String id, String repoName) async {}
+}
+
+class _NoProjectTeamsFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<List<Project>> projects() async => const [];
 }
 
 class _CaptureCreateProjectFakeClient extends _ProjectsPageFakeClient {

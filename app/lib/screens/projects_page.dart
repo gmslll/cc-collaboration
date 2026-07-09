@@ -417,6 +417,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
   final _name = TextEditingController();
   final _orgName = TextEditingController();
   final _search = TextEditingController();
+  final _projectNameFocus = FocusNode();
   String? _selectedOrgId;
   int _loadGeneration = 0;
 
@@ -461,6 +462,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
     _name.dispose();
     _orgName.dispose();
     _search.dispose();
+    _projectNameFocus.dispose();
     super.dispose();
   }
 
@@ -750,6 +752,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       width: fieldWidth,
                       child: TextField(
                         controller: _name,
+                        focusNode: _projectNameFocus,
                         enabled: !_creatingProject,
                         decoration: const InputDecoration(
                           hintText: '新项目名称',
@@ -890,8 +893,16 @@ class _ProjectsPageState extends State<ProjectsPage> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_projects!.isEmpty) {
-      return const Center(
-        child: Text('还没有项目', style: TextStyle(color: CcColors.muted)),
+      return _EmptyProjectsState(
+        stats: teamWorkspaceStats(
+          organizations: _orgs,
+          projects: _projects ?? const <Project>[],
+          onlineUsers: _online,
+          manageableOrgIds: _manageableOrgIds,
+        ),
+        onCreateProject: _creatingProject
+            ? null
+            : () => _projectNameFocus.requestFocus(),
       );
     }
     final projects = _visibleProjects;
@@ -1168,6 +1179,123 @@ class _InlineButtonSpinner extends StatelessWidget {
       width: 18,
       height: 18,
       child: CircularProgressIndicator(strokeWidth: 2),
+    );
+  }
+}
+
+class _EmptyProjectsState extends StatelessWidget {
+  final TeamWorkspaceStats stats;
+  final VoidCallback? onCreateProject;
+
+  const _EmptyProjectsState({
+    required this.stats,
+    required this.onCreateProject,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 230;
+        return SingleChildScrollView(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Material(
+                  color: CcColors.panelHigh,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(CcRadius.md),
+                    side: const BorderSide(color: CcColors.borderSoft),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: compact ? 34 : 46,
+                          height: compact ? 34 : 46,
+                          decoration: BoxDecoration(
+                            color: CcColors.accent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(CcRadius.md),
+                            border: Border.all(
+                              color: CcColors.accent.withValues(alpha: 0.34),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.create_new_folder_rounded,
+                            color: CcColors.accentBright,
+                            size: 22,
+                          ),
+                        ),
+                        SizedBox(height: compact ? 8 : 12),
+                        const Text(
+                          '还没有项目',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(height: compact ? 4 : 6),
+                        Text(
+                          stats.teams > 0 ? '${stats.teams} 个团队已就绪' : '默认团队已就绪',
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: CcColors.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (!compact) ...[
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            alignment: WrapAlignment.center,
+                            children: [
+                              _MetricPill(
+                                icon: Icons.groups_rounded,
+                                label: '团队',
+                                value: '${stats.teams}',
+                              ),
+                              _MetricPill(
+                                icon: Icons.admin_panel_settings_rounded,
+                                label: '可管理',
+                                value: '${stats.manageableTeams}',
+                                color: CcColors.accentBright,
+                              ),
+                              _MetricPill(
+                                icon: Icons.circle_rounded,
+                                label: '在线',
+                                value: '${stats.onlineUsers}',
+                                color: CcColors.ok,
+                              ),
+                            ],
+                          ),
+                        ],
+                        SizedBox(height: compact ? 10 : 16),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(minWidth: 132),
+                          child: FilledButton.icon(
+                            onPressed: onCreateProject,
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            label: const Text('新建项目'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
