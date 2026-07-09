@@ -90,7 +90,8 @@ class TodoBodyView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final base =
-        style ?? const TextStyle(fontSize: 14.5, height: 1.55, color: CcColors.text);
+        style ??
+        const TextStyle(fontSize: 14.5, height: 1.55, color: CcColors.text);
     if (bodyMd.trim().isEmpty) {
       return Text('添加描述…', style: base.copyWith(color: CcColors.subtle));
     }
@@ -99,7 +100,9 @@ class TodoBodyView extends StatelessWidget {
     var block = <String>[];
     void flushBlock() {
       if (block.isEmpty) return;
-      children.add(SelectableText.rich(TextSpan(children: _decorateBlock(block, base))));
+      children.add(
+        SelectableText.rich(TextSpan(children: _decorateBlock(block, base))),
+      );
       block = [];
     }
 
@@ -111,16 +114,18 @@ class TodoBodyView extends StatelessWidget {
       }
       flushBlock();
       final name = m.group(2)!;
-      children.add(Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: _InlineImage(
-          client: client,
-          todoId: todoId,
-          name: name,
-          alt: m.group(1)!,
-          attachment: _byName(name),
+      children.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: _InlineImage(
+            client: client,
+            todoId: todoId,
+            name: name,
+            alt: m.group(1)!,
+            attachment: _byName(name),
+          ),
         ),
-      ));
+      );
     }
     flushBlock();
 
@@ -159,6 +164,7 @@ class _InlineImage extends StatefulWidget {
 class _InlineImageState extends State<_InlineImage> {
   Uint8List? _bytes;
   bool _failed = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -178,20 +184,28 @@ class _InlineImageState extends State<_InlineImage> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     setState(() => _failed = false);
     try {
       final att = widget.attachment;
       final Uint8List bytes;
       if (att != null) {
-        bytes = await fetchTodoAttachmentBytes(widget.client, widget.todoId, att);
+        bytes = await fetchTodoAttachmentBytes(
+          widget.client,
+          widget.todoId,
+          att,
+        );
       } else {
-        final data = await widget.client.todoAttachment(widget.todoId, widget.name);
+        final data = await widget.client.todoAttachment(
+          widget.todoId,
+          widget.name,
+        );
         bytes = data is Uint8List ? data : Uint8List.fromList(data);
       }
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() => _bytes = bytes);
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() => _failed = true);
     }
   }
@@ -219,38 +233,45 @@ class _InlineImageState extends State<_InlineImage> {
   }
 
   Widget _statusBox({required bool broken}) => GestureDetector(
-        onTap: broken ? _load : null,
-        child: Container(
-          width: 200,
-          height: 100,
-          decoration: BoxDecoration(
-            color: CcColors.panelHigh,
-            border: Border.all(color: CcColors.border),
-            borderRadius: BorderRadius.circular(CcRadius.md),
-          ),
-          child: Center(
-            child: broken
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.broken_image_rounded,
-                          size: 16, color: CcColors.danger),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          widget.alt.isEmpty ? widget.name : widget.alt,
-                          style: const TextStyle(fontSize: 11.5, color: CcColors.subtle),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+    onTap: broken ? _load : null,
+    child: Container(
+      width: 200,
+      height: 100,
+      decoration: BoxDecoration(
+        color: CcColors.panelHigh,
+        border: Border.all(color: CcColors.border),
+        borderRadius: BorderRadius.circular(CcRadius.md),
+      ),
+      child: Center(
+        child: broken
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.broken_image_rounded,
+                    size: 16,
+                    color: CcColors.danger,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      widget.alt.isEmpty ? widget.name : widget.alt,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: CcColors.subtle,
                       ),
-                    ],
-                  )
-                : const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2)),
-          ),
-        ),
-      );
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              )
+            : const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+      ),
+    ),
+  );
 }
