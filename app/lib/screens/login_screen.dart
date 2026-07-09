@@ -5,6 +5,14 @@ import '../local/session.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
+String loginModeTitle(bool isRegisterMode) => isRegisterMode ? '注册新账号' : '登录';
+
+String loginModeSubtitle(bool isRegisterMode) =>
+    isRegisterMode ? '注册后会自动创建你的团队工作区' : '使用 relay 账号同步团队、待办和会话';
+
+String loginModeSwitchLabel(bool isRegisterMode) =>
+    isRegisterMode ? '已有账号?去登录' : '没有账号?去注册';
+
 class LoginScreen extends StatefulWidget {
   final String? initialRelayUrl;
   final String? initialIdentity;
@@ -152,9 +160,15 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      _isRegisterMode ? '注册新账号' : '登录',
+                      loginModeTitle(_isRegisterMode),
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: CcColors.muted),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      loginModeSubtitle(_isRegisterMode),
+                      textAlign: TextAlign.center,
+                      style: CcType.code(size: 11.5, color: CcColors.subtle),
                     ),
                     if (_accounts.isNotEmpty && !_isRegisterMode) ...[
                       const SizedBox(height: 16),
@@ -233,6 +247,40 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ],
+                    if (_isRegisterMode) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: CcColors.accent.withValues(alpha: 0.08),
+                          border: Border.all(
+                            color: CcColors.accent.withValues(alpha: 0.22),
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.groups_rounded,
+                              size: 16,
+                              color: CcColors.accent,
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '系统会为你创建一个默认团队。进入后可以在「团队」里改名、建项目、邀请成员。',
+                                style: TextStyle(
+                                  color: CcColors.muted,
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     FilledButton.icon(
                       onPressed: _busy ? null : _submit,
@@ -262,7 +310,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               _isRegisterMode = !_isRegisterMode;
                               _error = null;
                             }),
-                      child: Text(_isRegisterMode ? '已有账号?去登录' : '没有账号?去注册'),
+                      child: Text(loginModeSwitchLabel(_isRegisterMode)),
                     ),
                     if (widget.showCancel) ...[
                       const SizedBox(height: 2),
