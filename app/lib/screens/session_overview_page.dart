@@ -712,36 +712,48 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   }
 
   Future<void> _submit() async {
+    if (_submitting) return;
     setState(() => _submitting = true);
-    // Persist the user's edits back to the draft before shipping.
-    if (_persona.text.trim().isNotEmpty) {
-      await File(
-        '${widget.draft.draftDir}/persona.md',
-      ).writeAsString(_persona.text);
-    }
-    if (_seed.text.trim().isNotEmpty) {
-      await File('${widget.draft.draftDir}/seed.md').writeAsString(_seed.text);
-    }
-    // Zip the skill dirs the user kept checked so they ride with the capsule.
-    final skillZips = <String>[];
-    for (final e in _skillDirs.entries) {
-      if (!e.value) continue;
-      final zip = await packSkillDir(e.key, widget.draft.draftDir);
-      if (zip != null) skillZips.add(zip);
-    }
-    final (ok, err) = await widget.store.submitCapsule(
-      widget.draft,
-      visibility: _public ? 'public' : 'private',
-      summary: _summary.text.trim(),
-      skillZips: skillZips,
-    );
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    if (ok) {
-      Navigator.of(context).pop();
-      snack(context, '胶囊已发出');
-    } else {
-      snack(context, '发送失败: ${err ?? "未知错误"}');
+    var keepSubmitting = false;
+    try {
+      // Persist the user's edits back to the draft before shipping.
+      if (_persona.text.trim().isNotEmpty) {
+        await File(
+          '${widget.draft.draftDir}/persona.md',
+        ).writeAsString(_persona.text);
+      }
+      if (_seed.text.trim().isNotEmpty) {
+        await File(
+          '${widget.draft.draftDir}/seed.md',
+        ).writeAsString(_seed.text);
+      }
+      // Zip the skill dirs the user kept checked so they ride with the capsule.
+      final skillZips = <String>[];
+      for (final e in _skillDirs.entries) {
+        if (!e.value) continue;
+        final zip = await packSkillDir(e.key, widget.draft.draftDir);
+        if (zip != null) skillZips.add(zip);
+      }
+      final (ok, err) = await widget.store.submitCapsule(
+        widget.draft,
+        visibility: _public ? 'public' : 'private',
+        summary: _summary.text.trim(),
+        skillZips: skillZips,
+      );
+      if (!mounted) return;
+      if (ok) {
+        keepSubmitting = true;
+        Navigator.of(context).pop();
+        snack(context, '胶囊已发出');
+      } else {
+        snack(context, '发送失败: ${err ?? "未知错误"}');
+      }
+    } catch (e) {
+      if (mounted) snack(context, '发送失败: ${errorText(e)}');
+    } finally {
+      if (mounted && !keepSubmitting) {
+        setState(() => _submitting = false);
+      }
     }
   }
 

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/local/local_bus.dart';
 import 'package:app/local/session_overview.dart';
 import 'package:app/screens/terminal_pane.dart';
@@ -206,6 +208,22 @@ void main() {
       expect(err, '会话总览未就绪');
     },
   );
+
+  test('capsule review submit is guarded and recovers from failures', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final reviewDialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+      source.indexOf('  // _labeledCodeField'),
+    );
+
+    expect(reviewDialog, contains('if (_submitting) return;'));
+    expect(reviewDialog, contains('try {'));
+    expect(reviewDialog, contains('catch (e)'));
+    expect(reviewDialog, contains("snack(context, '发送失败: \${errorText(e)}');"));
+    expect(reviewDialog, contains('setState(() => _submitting = false);'));
+  });
 
   // The last hop of the "打开/恢复会话" chain: TerminalHost.addTerm mints a
   // fresh uuid for a brand-new claude session, but when the caller already
