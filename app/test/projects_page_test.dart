@@ -1254,6 +1254,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project sheet confirms member removal before request', (
+    tester,
+  ) async {
+    final client = _CountingRemoveProjectMemberProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    Finder removeButton() =>
+        find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '移除');
+
+    await tester.tap(removeButton());
+    await tester.pumpAndSettle();
+    expect(find.text('移除项目成员'), findsOneWidget);
+    expect(client.removeMemberCalls, 0);
+
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('移除项目成员'), findsNothing);
+    expect(client.removeMemberCalls, 0);
+
+    await tester.tap(removeButton());
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '移除'));
+    await tester.pump();
+
+    expect(client.removeMemberCalls, 1);
+    expect(client.removedMemberIdentity, 'dev@x');
+
+    client.completeRemoveMember();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('organization sheet keeps member input when adding fails', (
     tester,
   ) async {
@@ -1912,6 +1954,42 @@ class _CountingDeleteProjectProjectsPageFakeClient
   void completeDeleteProject() {
     if (!_deleteProjectCompleter.isCompleted) {
       _deleteProjectCompleter.complete();
+    }
+  }
+}
+
+class _CountingRemoveProjectMemberProjectsPageFakeClient
+    extends _ProjectsPageFakeClient {
+  final _removeMemberCompleter = Completer<void>();
+  int removeMemberCalls = 0;
+  String? removedMemberIdentity;
+
+  @override
+  Future<ProjectDetail> project(String id) async => ProjectDetail.fromJson({
+    'project': {
+      'id': id,
+      'org_id': 'org-a',
+      'name': id == 'p1' ? 'Backend' : 'Frontend',
+      'owner_identity': 'owner@x',
+      'role': 'owner',
+    },
+    'repos': const [],
+    'members': [
+      {'identity': 'owner@x', 'role': 'owner', 'display_name': 'Owner'},
+      {'identity': 'dev@x', 'role': 'member', 'display_name': 'Dev'},
+    ],
+  });
+
+  @override
+  Future<void> removeMember(String id, String identity) {
+    removeMemberCalls++;
+    removedMemberIdentity = identity;
+    return _removeMemberCompleter.future;
+  }
+
+  void completeRemoveMember() {
+    if (!_removeMemberCompleter.isCompleted) {
+      _removeMemberCompleter.complete();
     }
   }
 }

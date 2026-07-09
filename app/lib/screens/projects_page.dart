@@ -1773,6 +1773,18 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     await _do(() => widget.client.renameProject(widget.id, name));
   }
 
+  Future<void> _removeMember(String identity) async {
+    final ok = await confirm(
+      context,
+      '从项目移除 $identity ? 该用户将失去这个项目的访问权。',
+      title: '移除项目成员',
+      okLabel: '移除',
+    );
+    if (!ok) return;
+    if (!mounted) return;
+    await _do(() => widget.client.removeMember(widget.id, identity));
+  }
+
   Future<void> _delete() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -2087,13 +2099,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                               : CcColors.subtle,
                                           onPressed:
                                               !_mutating && canRemoveMember
-                                              ? () => _do(
-                                                  () => widget.client
-                                                      .removeMember(
-                                                        widget.id,
-                                                        m.identity,
-                                                      ),
-                                                )
+                                              ? () => _removeMember(m.identity)
                                               : null,
                                         ),
                                       ),
