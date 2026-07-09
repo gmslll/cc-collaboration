@@ -71,6 +71,69 @@ bool remoteGitStartRefAllowed(String? value) {
 bool remoteGitStashRefAllowed(String? value) =>
     RegExp(r'^stash@\{[0-9]+\}$').hasMatch((value ?? '').trim());
 
+bool remoteConfigMutationAllowed(String? action, Map<String, dynamic> frame) {
+  switch (action) {
+    case 'wt.add':
+      return _remoteConfigTextAllowed(frame['project'], maxLength: 256) &&
+          _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+          ) &&
+          _remoteConfigGitRefAllowed(frame['branch']) &&
+          _remoteConfigGitStartAllowed(frame['start']);
+    case 'wt.remove':
+      return _remoteConfigTextAllowed(frame['project'], maxLength: 256) &&
+          _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+          ) &&
+          _remoteConfigGitRefAllowed(frame['branch']);
+    case 'ws.new':
+      return _remoteConfigTextAllowed(frame['name'], maxLength: 256) &&
+          _remoteConfigTextAllowed(
+            frame['path'],
+            optional: true,
+            maxLength: 4096,
+          );
+    case 'ws.remove':
+      return _remoteConfigTextAllowed(frame['name'], maxLength: 256);
+    case 'proj.add':
+      return _remoteConfigTextAllowed(frame['workspace'], maxLength: 256) &&
+          _remoteConfigTextAllowed(frame['source'], maxLength: 4096);
+    case 'proj.remove':
+      return _remoteConfigTextAllowed(frame['workspace'], maxLength: 256) &&
+          _remoteConfigTextAllowed(frame['project'], maxLength: 256);
+    default:
+      return false;
+  }
+}
+
+bool _remoteConfigTextAllowed(
+  Object? value, {
+  bool optional = false,
+  bool allowBlank = false,
+  int maxLength = 512,
+}) {
+  if (value == null) return optional;
+  if (value is! String) return false;
+  final text = value.trim();
+  if (text.isEmpty) return optional && allowBlank;
+  if (text.length > maxLength) return false;
+  return !RegExp(r'[\x00-\x1f\x7f]').hasMatch(text);
+}
+
+bool _remoteConfigGitRefAllowed(Object? value) =>
+    value is String && remoteGitRefNameAllowed(value);
+
+bool _remoteConfigGitStartAllowed(Object? value) {
+  if (value == null) return true;
+  return value is String &&
+      value.trim().isNotEmpty &&
+      remoteGitStartRefAllowed(value);
+}
+
 // _isHighSurrogate reports whether [u] is the leading half of a UTF-16 surrogate
 // pair, so backlog replay never splits an astral char (emoji) across two frames.
 bool _isHighSurrogate(int u) => u >= 0xd800 && u <= 0xdbff;
@@ -1173,6 +1236,10 @@ class RemoteHost extends RemoteChannel {
     if (to == null) return;
     if (action == null || onConfigAction == null) {
       send({'t': 'cfg.err', 'to': to, 'msg': '不支持'});
+      return;
+    }
+    if (!remoteConfigMutationAllowed(action, f)) {
+      send({'t': 'cfg.err', 'to': to, 'msg': 'forbidden'});
       return;
     }
     try {

@@ -8,6 +8,7 @@ class _TestRemoteHost extends RemoteHost {
   _TestRemoteHost({
     required List<TerminalSession> sessions,
     List<RemoteRoot> roots = const [],
+    super.onConfigAction,
     super.onAssignTodo,
   }) : _sessions = sessions,
        super(
@@ -93,6 +94,73 @@ void main() {
     expect(remoteGitStashRefAllowed(r'stash@{-1}'), isFalse);
     expect(remoteGitStashRefAllowed(r'stash@{0} --'), isFalse);
     expect(remoteGitStashRefAllowed('HEAD'), isFalse);
+  });
+
+  test('remote config mutation gate validates action-specific fields', () {
+    expect(
+      remoteConfigMutationAllowed('wt.add', {
+        'project': 'backend',
+        'workspace': '',
+        'branch': 'feature/team-1',
+        'start': 'origin/main',
+      }),
+      isTrue,
+    );
+    expect(
+      remoteConfigMutationAllowed('wt.add', {
+        'project': 'backend',
+        'workspace': 'team',
+        'branch': 'feature..bad',
+      }),
+      isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('wt.add', {
+        'project': 'backend',
+        'branch': 'feature/team-1',
+        'start': 'HEAD~1',
+      }),
+      isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('wt.add', {
+        'project': 'backend',
+        'workspace': 'team',
+        'branch': 'feature/team-1',
+        'start': '   ',
+      }),
+      isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('ws.new', {
+        'name': 'mobile',
+        'path': '/Users/me/cc-handoff-workspaces/mobile',
+      }),
+      isTrue,
+    );
+    expect(
+      remoteConfigMutationAllowed('ws.new', {'name': 'bad\u0000name'}),
+      isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('ws.new', {'name': 'mobile', 'path': '   '}),
+      isFalse,
+    );
+    expect(
+      remoteConfigMutationAllowed('proj.add', {
+        'workspace': 'team',
+        'source': 'https://github.com/org/repo.git',
+      }),
+      isTrue,
+    );
+    expect(
+      remoteConfigMutationAllowed('proj.add', {
+        'workspace': 'team',
+        'source': '   ',
+      }),
+      isFalse,
+    );
+    expect(remoteConfigMutationAllowed('unknown', {}), isFalse);
   });
 
   test(
@@ -202,6 +270,62 @@ void main() {
       {'t': 'git.err', 'to': 8, 'msg': 'forbidden'},
     ]);
   });
+
+  test('remote config op rejects unsafe branch before handler runs', () async {
+    var called = false;
+    final host = _TestRemoteHost(
+      sessions: const [],
+      onConfigAction: (action, args) async {
+        called = true;
+      },
+    );
+    addTearDown(host.dispose);
+
+    host.onFrame({
+      't': 'wt.add',
+      'from': 8,
+      'workspace': 'team',
+      'project': 'backend',
+      'branch': r'bad@{1}',
+    });
+    for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(called, isFalse);
+    expect(host.sent, [
+      {'t': 'cfg.err', 'to': 8, 'msg': 'forbidden'},
+    ]);
+  });
+
+  test(
+    'remote config op rejects missing required fields before handler runs',
+    () async {
+      var called = false;
+      final host = _TestRemoteHost(
+        sessions: const [],
+        onConfigAction: (action, args) async {
+          called = true;
+        },
+      );
+      addTearDown(host.dispose);
+
+      host.onFrame({
+        't': 'proj.add',
+        'from': 8,
+        'workspace': 'team',
+        'source': '   ',
+      });
+      for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(called, isFalse);
+      expect(host.sent, [
+        {'t': 'cfg.err', 'to': 8, 'msg': 'forbidden'},
+      ]);
+    },
+  );
 
   test('remote term.open wakes a deferred restored session', () {
     final session = TerminalSession('', '')..deferred = true;
