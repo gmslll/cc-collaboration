@@ -44,6 +44,18 @@ void main() {
     expect(organizationRoleLabel('guest', isAdmin: true), '访客');
   });
 
+  test(
+    'organization editable role value falls back to a dropdown-safe role',
+    () {
+      expect(organizationEditableRoleValue(' owner '), 'owner');
+      expect(organizationEditableRoleValue('admin'), 'admin');
+      expect(organizationEditableRoleValue('member'), 'member');
+      expect(organizationEditableRoleValue('guest'), 'guest');
+      expect(organizationEditableRoleValue(''), 'member');
+      expect(organizationEditableRoleValue('custom'), 'member');
+    },
+  );
+
   test('project role label uses team-facing Chinese labels', () {
     expect(projectRoleLabel(''), '成员');
     expect(projectRoleLabel('admin'), '管理员');

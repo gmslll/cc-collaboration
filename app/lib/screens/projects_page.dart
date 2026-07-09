@@ -24,6 +24,17 @@ String organizationRoleLabel(String role, {required bool isAdmin}) {
   }
 }
 
+String organizationEditableRoleValue(String role) {
+  final value = role.trim();
+  if (value == 'owner' ||
+      value == 'admin' ||
+      value == 'member' ||
+      value == 'guest') {
+    return value;
+  }
+  return 'member';
+}
+
 String projectRoleLabel(String role) {
   switch (role) {
     case 'admin':
@@ -793,7 +804,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                               children: [
                                 DropdownButtonHideUnderline(
                                   child: DropdownButton<String>(
-                                    value: m.role,
+                                    value: organizationEditableRoleValue(
+                                      m.role,
+                                    ),
                                     isDense: true,
                                     items: const [
                                       DropdownMenuItem(
