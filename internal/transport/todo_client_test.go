@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cc-collaboration/pkg/todoschema"
 )
 
 func TestListTodosEncodesEveryQueryParam(t *testing.T) {
@@ -57,7 +59,7 @@ func TestListTodosEncodesEveryQueryParam(t *testing.T) {
 }
 
 func TestFetchTodoAttachmentEscapesAttachmentName(t *testing.T) {
-	seen := make(chan string, 1)
+	seen := make(chan string, 2)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen <- r.RequestURI
 		w.Header().Set("X-Content-Sha256", "")
@@ -67,12 +69,75 @@ func TestFetchTodoAttachmentEscapesAttachmentName(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := New(srv.URL, "tok")
-	if _, err := client.FetchTodoAttachment(context.Background(), "td1", "screenshots/fix #1.png"); err != nil {
+	if err := client.UploadTodoAttachment(context.Background(), "td/1#frag", "screenshots/fix #1.png", []byte("content")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.FetchTodoAttachment(context.Background(), "td/1#frag", "screenshots/fix #1.png"); err != nil {
 		t.Fatal(err)
 	}
 
-	got := <-seen
-	if !strings.Contains(got, "/v1/todos/td1/attachments/screenshots%2Ffix%20%231.png") {
-		t.Fatalf("request URI = %q, want escaped attachment name", got)
+	for i := 0; i < 2; i++ {
+		got := <-seen
+		if !strings.Contains(got, "/v1/todos/td%2F1%23frag/attachments/screenshots%2Ffix%20%231.png") {
+			t.Fatalf("request URI = %q, want escaped todo id and attachment name", got)
+		}
+	}
+}
+
+func TestTodoIDPathSegmentsAreEscaped(t *testing.T) {
+	seen := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.RequestURI
+		w.WriteHeader(http.StatusOK)
+		if strings.HasSuffix(r.URL.Path, "/comments") {
+			_, _ = w.Write([]byte(`{"comments":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	ctx := context.Background()
+	id := "td/team#1"
+	if _, err := client.GetTodo(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PatchTodo(ctx, id, TodoPatch{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SetTodoStatus(ctx, id, todoschema.StatusInProgress); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AssignTodo(ctx, id, "owner@team", "ts1", "label", "agent1", "/tmp/repo", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RecurAdvanceTodo(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteTodo(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CommentTodo(ctx, id, "body"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListTodoComments(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"/v1/todos/td%2Fteam%231",
+		"/v1/todos/td%2Fteam%231",
+		"/v1/todos/td%2Fteam%231/status",
+		"/v1/todos/td%2Fteam%231/assign",
+		"/v1/todos/td%2Fteam%231/recur-advance",
+		"/v1/todos/td%2Fteam%231",
+		"/v1/todos/td%2Fteam%231/comment",
+		"/v1/todos/td%2Fteam%231/comments",
+	}
+	for _, wantURI := range want {
+		if got := <-seen; got != wantURI {
+			t.Fatalf("request URI = %q, want %q", got, wantURI)
+		}
 	}
 }

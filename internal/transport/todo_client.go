@@ -82,7 +82,7 @@ func (c *Client) ListTodos(ctx context.Context, f TodoListFilter) ([]todoschema.
 // pkg/todoschema.Todo).
 func (c *Client) GetTodo(ctx context.Context, id string) (*todoschema.Todo, error) {
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodGet, "/v1/todos/"+id, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, todoPath(id), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -199,7 +199,7 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 		return nil, err
 	}
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPatch, "/v1/todos/"+id, bytes.NewReader(body), &out); err != nil {
+	if err := c.do(ctx, http.MethodPatch, todoPath(id), bytes.NewReader(body), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -210,7 +210,7 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 func (c *Client) SetTodoStatus(ctx context.Context, id string, status todoschema.Status) (*todoschema.Todo, error) {
 	payload, _ := json.Marshal(map[string]string{"status": string(status)})
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/status", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/status", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -233,7 +233,7 @@ func (c *Client) AssignTodo(ctx context.Context, id, assigneeIdentity, assigneeS
 		"assignee_agent_kind":       assigneeAgentKind,
 	})
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/assign", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/assign", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -283,7 +283,7 @@ func (c *Client) ClearTodoGroup(ctx context.Context, projectID, name string) err
 // recurring todo with an elapsed next_occurrence_at. Returns the updated Todo.
 func (c *Client) RecurAdvanceTodo(ctx context.Context, id string) (*todoschema.Todo, error) {
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/recur-advance", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/recur-advance", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -291,14 +291,14 @@ func (c *Client) RecurAdvanceTodo(ctx context.Context, id string) (*todoschema.T
 
 // DeleteTodo removes todo id.
 func (c *Client) DeleteTodo(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/todos/"+id, nil, nil)
+	return c.do(ctx, http.MethodDelete, todoPath(id), nil, nil)
 }
 
 // CommentTodo posts a comment on todo id.
 func (c *Client) CommentTodo(ctx context.Context, id, body string) (*todoschema.Comment, error) {
 	payload, _ := json.Marshal(map[string]string{"body": body})
 	var out todoschema.Comment
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/comment", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/comment", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -309,7 +309,7 @@ func (c *Client) ListTodoComments(ctx context.Context, id string) ([]todoschema.
 	var out struct {
 		Comments []todoschema.Comment `json:"comments"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/todos/"+id+"/comments", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, todoPath(id)+"/comments", nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Comments, nil
@@ -320,7 +320,7 @@ func (c *Client) ListTodoComments(ctx context.Context, id string) ([]todoschema.
 // attachments reuse the handoff attachment byte protocol byte-for-byte (see
 // the feature plan).
 func (c *Client) UploadTodoAttachment(ctx context.Context, todoID, name string, content []byte) error {
-	endpoint := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + url.PathEscape(name)
+	endpoint := c.BaseURL + todoPath(todoID) + "/attachments/" + url.PathEscape(name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(content))
 	if err != nil {
 		return err
@@ -347,7 +347,7 @@ func (c *Client) UploadTodoAttachment(ctx context.Context, todoID, name string, 
 // the same thing either way: the parent resource exists but doesn't carry
 // an attachment with that name.
 func (c *Client) FetchTodoAttachment(ctx context.Context, todoID, name string) ([]byte, error) {
-	endpoint := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + url.PathEscape(name)
+	endpoint := c.BaseURL + todoPath(todoID) + "/attachments/" + url.PathEscape(name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -376,4 +376,8 @@ func (c *Client) FetchTodoAttachment(ctx context.Context, todoID, name string) (
 		}
 	}
 	return body, nil
+}
+
+func todoPath(id string) string {
+	return "/v1/todos/" + url.PathEscape(id)
 }

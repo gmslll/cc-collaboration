@@ -90,7 +90,7 @@ func (c *Client) Submit(ctx context.Context, p *handoffschema.Package, attachmen
 // UploadAttachment posts raw bytes for a previously-submitted handoff. The
 // SHA256 is sent in X-Content-Sha256 so the relay can reject corruption.
 func (c *Client) UploadAttachment(ctx context.Context, handoffID, name string, content []byte) error {
-	endpoint := c.BaseURL + "/v1/handoffs/" + handoffID + "/attachments/" + url.PathEscape(name)
+	endpoint := c.BaseURL + handoffPath(handoffID) + "/attachments/" + url.PathEscape(name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(content))
 	if err != nil {
 		return err
@@ -114,7 +114,7 @@ func (c *Client) UploadAttachment(ctx context.Context, handoffID, name string, c
 // FetchAttachment returns the raw bytes for a handoff attachment, verifying
 // the relay-supplied SHA256 if present.
 func (c *Client) FetchAttachment(ctx context.Context, handoffID, name string) ([]byte, error) {
-	endpoint := c.BaseURL + "/v1/handoffs/" + handoffID + "/attachments/" + url.PathEscape(name)
+	endpoint := c.BaseURL + handoffPath(handoffID) + "/attachments/" + url.PathEscape(name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -165,20 +165,20 @@ func (c *Client) List(ctx context.Context, recipient string) ([]handoffschema.Li
 
 func (c *Client) Get(ctx context.Context, id string) (*handoffschema.Package, error) {
 	var out handoffschema.Package
-	if err := c.do(ctx, http.MethodGet, "/v1/handoffs/"+id, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, handoffPath(id), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
 func (c *Client) Ack(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/handoffs/"+id+"/ack", nil, nil)
+	return c.do(ctx, http.MethodPost, handoffPath(id)+"/ack", nil, nil)
 }
 
 func (c *Client) Comment(ctx context.Context, handoffID, body string) (*handoffschema.Comment, error) {
 	payload, _ := json.Marshal(map[string]string{"body": body})
 	var out handoffschema.Comment
-	if err := c.do(ctx, http.MethodPost, "/v1/handoffs/"+handoffID+"/comment", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, handoffPath(handoffID)+"/comment", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -205,7 +205,7 @@ func (c *Client) ListInboxComments(ctx context.Context, since int64, limit int) 
 // ErrNotImplemented when talking to a pre-multi-agent relay binary.
 func (c *Client) Status(ctx context.Context, id string) (*handoffschema.Status, error) {
 	var out handoffschema.Status
-	if err := c.do(ctx, http.MethodGet, "/v1/handoffs/"+id+"/status", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, handoffPath(id)+"/status", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -263,7 +263,7 @@ type ReassignResult struct {
 func (c *Client) Reassign(ctx context.Context, id, to, reason string) (*ReassignResult, error) {
 	payload, _ := json.Marshal(map[string]string{"to": to, "reason": reason})
 	var out ReassignResult
-	if err := c.do(ctx, http.MethodPost, "/v1/handoffs/"+id+"/reassign", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, handoffPath(id)+"/reassign", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -278,7 +278,7 @@ func (c *Client) Retract(ctx context.Context, id, reason string) error {
 		payload, _ := json.Marshal(map[string]string{"reason": reason})
 		body = bytes.NewReader(payload)
 	}
-	return c.do(ctx, http.MethodPost, "/v1/handoffs/"+id+"/retract", body, nil)
+	return c.do(ctx, http.MethodPost, handoffPath(id)+"/retract", body, nil)
 }
 
 // ListOnlineUsers returns the relay's roster of known identities with a
@@ -299,10 +299,14 @@ func (c *Client) ListComments(ctx context.Context, handoffID string) ([]handoffs
 	var out struct {
 		Comments []handoffschema.Comment `json:"comments"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/handoffs/"+handoffID+"/comments", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, handoffPath(handoffID)+"/comments", nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Comments, nil
+}
+
+func handoffPath(id string) string {
+	return "/v1/handoffs/" + url.PathEscape(id)
 }
 
 // Alert forwards a log alert to the relay, which fans it out to the target

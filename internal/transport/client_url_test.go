@@ -42,17 +42,71 @@ func TestHandoffAttachmentEscapesAttachmentName(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := New(srv.URL, "tok")
-	if err := client.UploadAttachment(context.Background(), "h1", "screenshots/fix #1.png", []byte("content")); err != nil {
+	if err := client.UploadAttachment(context.Background(), "h/1#frag", "screenshots/fix #1.png", []byte("content")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.FetchAttachment(context.Background(), "h1", "screenshots/fix #1.png"); err != nil {
+	if _, err := client.FetchAttachment(context.Background(), "h/1#frag", "screenshots/fix #1.png"); err != nil {
 		t.Fatal(err)
 	}
 
 	for i := 0; i < 2; i++ {
 		got := <-seen
-		if !strings.Contains(got, "/v1/handoffs/h1/attachments/screenshots%2Ffix%20%231.png") {
-			t.Fatalf("request URI = %q, want escaped attachment name", got)
+		if !strings.Contains(got, "/v1/handoffs/h%2F1%23frag/attachments/screenshots%2Ffix%20%231.png") {
+			t.Fatalf("request URI = %q, want escaped handoff id and attachment name", got)
+		}
+	}
+}
+
+func TestHandoffIDPathSegmentsAreEscaped(t *testing.T) {
+	seen := make(chan string, 7)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.RequestURI
+		w.WriteHeader(http.StatusOK)
+		if strings.HasSuffix(r.URL.Path, "/comments") {
+			_, _ = w.Write([]byte(`{"comments":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := New(srv.URL, "tok")
+	ctx := context.Background()
+	id := "h/team#1"
+	if _, err := client.Get(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Ack(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Comment(ctx, id, "body"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Status(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Reassign(ctx, id, "next", "reason"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Retract(ctx, id, "reason"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListComments(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"/v1/handoffs/h%2Fteam%231",
+		"/v1/handoffs/h%2Fteam%231/ack",
+		"/v1/handoffs/h%2Fteam%231/comment",
+		"/v1/handoffs/h%2Fteam%231/status",
+		"/v1/handoffs/h%2Fteam%231/reassign",
+		"/v1/handoffs/h%2Fteam%231/retract",
+		"/v1/handoffs/h%2Fteam%231/comments",
+	}
+	for _, wantURI := range want {
+		if got := <-seen; got != wantURI {
+			t.Fatalf("request URI = %q, want %q", got, wantURI)
 		}
 	}
 }
