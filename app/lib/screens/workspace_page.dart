@@ -2469,6 +2469,34 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  String? _projectNameForTodoProject(String? projectId) {
+    final pid = (projectId ?? '').trim();
+    if (pid.isEmpty) return null;
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (p.projectId.trim() == pid) return p.name;
+      }
+    }
+    final me = widget.me;
+    if (me != null) {
+      for (final p in me.projects) {
+        if (p.id.trim() == pid) return p.name;
+      }
+    }
+    return null;
+  }
+
+  bool _remoteAssignTargetMatchesTodo(
+    Todo todo, {
+    required String? targetProjectId,
+    required String? targetProjectName,
+  }) => todoProjectTargetMatches(
+    todoProjectId: todo.projectId,
+    todoProjectName: _projectNameForTodoProject(todo.projectId),
+    targetProjectId: targetProjectId,
+    targetProjectName: targetProjectName,
+  );
+
   // _remoteAssignTodo runs a phone's remote 一键指派 request on this desktop
   // (RemoteHost.onAssignTodo). The phone has no local session / filesystem /
   // synchronous spawn, so it delegates: we do exactly what the local assign
@@ -2495,6 +2523,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (me != null && !todoAccessFor(fallback, me).canAssign) {
       return '你对这条待办没有指派权限';
     }
+    final requestedProjectId = (req['projectId'] as String?)?.trim() ?? '';
+    final todoProjectId = fallback.projectId?.trim() ?? '';
+    if (todoProjectId.isNotEmpty &&
+        requestedProjectId.isNotEmpty &&
+        requestedProjectId != todoProjectId) {
+      return '待办项目已变化,请刷新后重新指派';
+    }
 
     final String sid;
     var waitForAgentId = false;
@@ -2502,6 +2537,9 @@ class _WorkspacePageState extends State<WorkspacePage>
       final (spawnedSid, err) = await _spawnForDispatch(
         workspace: (req['workspace'] as String?) ?? '',
         project: (req['project'] as String?) ?? '',
+        projectId: todoProjectId.isNotEmpty
+            ? todoProjectId
+            : requestedProjectId,
         kind: (req['kind'] as String?) ?? 'claude',
         newWorktreeBranch: req['branch'] as String?,
       );
@@ -2514,6 +2552,14 @@ class _WorkspacePageState extends State<WorkspacePage>
       sid = (req['sid'] as String?) ?? '';
       if (sid.isEmpty) return '缺少目标会话';
       if (sessionById(sid) == null) return '目标会话不存在(可能已关闭)';
+      final card = _remoteCard(sid);
+      if (!_remoteAssignTargetMatchesTodo(
+        fallback,
+        targetProjectId: card?.projectId,
+        targetProjectName: card?.project,
+      )) {
+        return '目标会话不属于这条团队待办的项目';
+      }
     }
 
     // Resolve the target session's workdir — a just-spawned card may not carry it
@@ -2729,6 +2775,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     required String workspace,
     required String project,
     required String kind,
+    String? projectId,
     String? newWorktreeBranch,
     String? worktreeStart,
     String? resumeAgentSessionId,
@@ -2736,9 +2783,15 @@ class _WorkspacePageState extends State<WorkspacePage>
   }) async {
     WorkspaceCfg? ws;
     ProjectCfg? p;
+    final requestedProjectId = (projectId ?? '').trim();
     for (final w in _cfg.workspaces) {
       if (workspace.isNotEmpty && w.name != workspace) continue;
       for (final proj in w.projects) {
+        if (requestedProjectId.isNotEmpty &&
+            proj.projectId.trim().isNotEmpty &&
+            proj.projectId.trim() != requestedProjectId) {
+          continue;
+        }
         if (proj.name == project) {
           ws = w;
           p = proj;

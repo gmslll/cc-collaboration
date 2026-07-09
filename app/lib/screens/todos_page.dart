@@ -17,6 +17,7 @@ import '../local/todo_assignment_candidates.dart';
 import '../local/todo_materialize.dart';
 import '../local/todo_permissions.dart';
 import '../local/todo_store.dart';
+import '../local/todo_workspace_scope.dart';
 import '../remote/remote_client.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -2544,11 +2545,12 @@ bool sessionCardMatchesTodoProject(
   required String? todoProjectName,
 }) {
   final pid = (todoProjectId ?? '').trim();
-  if (pid.isEmpty) return true;
-  final cardProjectId = card.projectId.trim();
-  if (cardProjectId.isNotEmpty) return cardProjectId == pid;
-  final name = (todoProjectName ?? '').trim();
-  return name.isNotEmpty && card.project.trim() == name;
+  return todoProjectTargetMatches(
+    todoProjectId: pid.isEmpty ? null : pid,
+    todoProjectName: todoProjectName,
+    targetProjectId: card.projectId,
+    targetProjectName: card.project,
+  );
 }
 
 List<SessionCard> assignableSessionCardsForTodoProject(
@@ -2660,12 +2662,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     required String projectId,
     required String projectName,
   }) {
-    final pid = _todoProjectId;
-    if (pid == null) return true;
-    final candidateId = projectId.trim();
-    if (candidateId.isNotEmpty) return candidateId == pid;
-    final name = _todoProjectName?.trim() ?? '';
-    return name.isNotEmpty && projectName.trim() == name;
+    return todoProjectTargetMatches(
+      todoProjectId: _todoProjectId,
+      todoProjectName: _todoProjectName,
+      targetProjectId: projectId,
+      targetProjectName: projectName,
+    );
   }
 
   bool _closeIfStaleContext() {
@@ -3285,6 +3287,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       todoId: widget.todo.id,
       mode: 'existing',
       sid: sid,
+      projectId: _todoProjectId,
     );
     if (!mounted) return;
     if (_closeIfStaleContext()) return;
@@ -3320,6 +3323,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
       mode: 'new',
       workspace: validWorkspace,
       project: validProject,
+      projectId: _todoProjectId,
       kind: _kind,
       branch: branch.isEmpty ? null : branch,
     );

@@ -1148,6 +1148,7 @@ class RemoteClient extends RemoteChannel {
     String? sid,
     String? workspace,
     String? project,
+    String? projectId,
     String? kind,
     String? branch,
   }) {
@@ -1166,6 +1167,7 @@ class RemoteClient extends RemoteChannel {
       'sid': ?sid,
       'workspace': ?workspace,
       'project': ?project,
+      'projectId': ?projectId,
       'kind': ?kind,
       if (branch != null && branch.isNotEmpty) 'branch': branch,
     });

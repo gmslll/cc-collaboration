@@ -1139,6 +1139,10 @@ void main() {
       'SessionCard? _remoteCard(',
     );
     expect(remoteAssign, contains('账号已切换,请重新指派'));
+    expect(remoteAssign, contains('requestedProjectId'));
+    expect(remoteAssign, contains('待办项目已变化,请刷新后重新指派'));
+    expect(remoteAssign, contains('目标会话不属于这条团队待办的项目'));
+    expect(remoteAssign, contains('projectId: todoProjectId.isNotEmpty'));
     expectGuardBefore(
       remoteAssign,
       'fallback = await client.todo(todoId);',

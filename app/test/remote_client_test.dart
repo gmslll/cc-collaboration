@@ -84,6 +84,28 @@ void main() {
     ]);
   });
 
+  testWidgets('remote assign sends relay project id for team scope', (
+    tester,
+  ) async {
+    final client = _TestRemoteClient()..markHostOnline();
+    addTearDown(client.dispose);
+
+    final result = client.requestAssign(
+      todoId: 'todo-1',
+      mode: 'new',
+      workspace: 'Team',
+      project: 'Backend',
+      projectId: 'relay-project',
+      kind: 'claude',
+    );
+    await tester.pump();
+
+    expect(client.sent.single, containsPair('projectId', 'relay-project'));
+    client.onFrame({'t': 'todo.assign.ok', 'todoId': 'todo-1'});
+    await tester.pump();
+    expect(await result, isNull);
+  });
+
   testWidgets('remote assign completes when the client is disposed', (
     tester,
   ) async {

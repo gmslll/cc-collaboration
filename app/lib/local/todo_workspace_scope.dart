@@ -25,6 +25,20 @@ bool todoBoundToWorkspaceProject(
       (todo.repoName ?? '').trim() == project;
 }
 
+bool todoProjectTargetMatches({
+  required String? todoProjectId,
+  required String? todoProjectName,
+  required String? targetProjectId,
+  required String? targetProjectName,
+}) {
+  final pid = (todoProjectId ?? '').trim();
+  if (pid.isEmpty) return true;
+  final targetPid = (targetProjectId ?? '').trim();
+  if (targetPid.isNotEmpty) return targetPid == pid;
+  final name = (todoProjectName ?? '').trim();
+  return name.isNotEmpty && (targetProjectName ?? '').trim() == name;
+}
+
 bool todoInWorkspaceScope(
   Todo todo, {
   required Iterable<ProjectRole> projectRoles,

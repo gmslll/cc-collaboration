@@ -74,6 +74,45 @@ void main() {
     );
   });
 
+  test('todo project target match prefers ids and falls back to names', () {
+    expect(
+      todoProjectTargetMatches(
+        todoProjectId: null,
+        todoProjectName: null,
+        targetProjectId: 'other',
+        targetProjectName: 'Other',
+      ),
+      isTrue,
+    );
+    expect(
+      todoProjectTargetMatches(
+        todoProjectId: 'p1',
+        todoProjectName: 'Backend',
+        targetProjectId: 'p1',
+        targetProjectName: 'Renamed',
+      ),
+      isTrue,
+    );
+    expect(
+      todoProjectTargetMatches(
+        todoProjectId: 'p1',
+        todoProjectName: 'Backend',
+        targetProjectId: '',
+        targetProjectName: 'Backend',
+      ),
+      isTrue,
+    );
+    expect(
+      todoProjectTargetMatches(
+        todoProjectId: 'p1',
+        todoProjectName: 'Backend',
+        targetProjectId: 'p2',
+        targetProjectName: 'Backend',
+      ),
+      isFalse,
+    );
+  });
+
   test('workspace scope does not guess duplicate team project names', () {
     final roles = [
       _project('p1', 'org-a', 'app'),
