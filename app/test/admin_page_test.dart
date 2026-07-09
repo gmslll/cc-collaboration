@@ -239,6 +239,44 @@ void main() {
     expect(find.text('New User'), findsOneWidget);
     expect(find.text('Old User'), findsNothing);
   });
+
+  testWidgets('admin page account switch ignores stale user loads', (
+    tester,
+  ) async {
+    final oldClient = _DelayedUsersAdminPageFakeClient();
+    final newClient = _DelayedUsersAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: oldClient)),
+      ),
+    );
+    await tester.pump();
+    expect(oldClient.userRequestCount, 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: newClient)),
+      ),
+    );
+    await tester.pump();
+    expect(newClient.userRequestCount, 1);
+
+    newClient.completeLatestUsers([
+      _user('new@x', displayName: 'New Account User'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('New Account User'), findsOneWidget);
+    expect(find.text('Old Account User'), findsNothing);
+
+    oldClient.completeLatestUsers([
+      _user('old@x', displayName: 'Old Account User'),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('New Account User'), findsOneWidget);
+    expect(find.text('Old Account User'), findsNothing);
+  });
 }
 
 class _AdminPageFakeClient extends RelayClient {

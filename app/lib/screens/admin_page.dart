@@ -44,6 +44,22 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   @override
+  void didUpdateWidget(covariant AdminPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.client == widget.client) return;
+    _loadGeneration++;
+    _identity.clear();
+    _password.clear();
+    setState(() {
+      _users = null;
+      _error = null;
+      _newAdmin = false;
+      _creating = false;
+    });
+    _load();
+  }
+
+  @override
   void dispose() {
     _identity.removeListener(_onCreateInputChanged);
     _identity.dispose();
@@ -59,21 +75,24 @@ class _AdminPageState extends State<AdminPage> {
 
   Future<void> _load() async {
     final generation = ++_loadGeneration;
+    final client = widget.client;
     try {
-      final u = await widget.client.users();
-      if (_isCurrentLoad(generation)) {
+      final u = await client.users();
+      if (_isCurrentLoad(generation, client)) {
         setState(() {
           _users = u;
           _error = null;
         });
       }
     } catch (e) {
-      if (_isCurrentLoad(generation)) setState(() => _error = '$e');
+      if (_isCurrentLoad(generation, client)) setState(() => _error = '$e');
     }
   }
 
-  bool _isCurrentLoad(int generation) =>
-      mounted && generation == _loadGeneration;
+  bool _isCurrentLoad(int generation, RelayClient client) =>
+      mounted &&
+      generation == _loadGeneration &&
+      identical(client, widget.client);
 
   Future<void> _create() async {
     final id = _identity.text.trim();
