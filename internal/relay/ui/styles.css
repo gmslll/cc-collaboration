@@ -1220,6 +1220,16 @@ textarea:focus {
   color: var(--muted);
   padding: var(--space-3);
 }
+.inline-warning {
+  border: 1px solid color-mix(in oklab, var(--warning) 34%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 10px;
+  margin-bottom: var(--space-2);
+}
 .member-invite-form {
   padding-top: var(--space-2);
 }

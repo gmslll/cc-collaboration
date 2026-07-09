@@ -1027,6 +1027,8 @@ function renderMemberTable(members, options = {}) {
   const roleOptions = options.roles || [];
   const canChangeRole = Boolean(options.canChangeRole && roleAttr && roleOptions.length);
   const ownerCount = members.filter((m) => m.role === "owner").length;
+  const removeBlockReasons = options.removeBlockReasons || {};
+  const removeDisabledReason = options.removeDisabledReason || "";
   return `
     <div class="member-table ${canRemove ? "has-actions" : ""}" role="table" aria-label="${escapeAttr(options.label || "成员")}">
       <div class="member-table-row member-table-head" role="row">
@@ -1039,11 +1041,12 @@ function renderMemberTable(members, options = {}) {
         const displayName = (m.display_name || "").trim();
         const online = isOnlineIdentity(m.identity);
         const isLastOwner = m.role === "owner" && ownerCount <= 1;
+        const removeBlockReason = isLastOwner ? "至少保留一个 owner" : removeDisabledReason || removeBlockReasons[m.identity] || "";
         const roleControl = canChangeRole
           ? `<select class="member-role-select" ${roleAttr}="${escapeAttr(m.identity)}" aria-label="更新成员 ${escapeAttr(m.identity)} 的角色" ${isLastOwner ? `disabled title="至少保留一个 owner"` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`
           : `<span class="role-pill ${roleTone(m.role)}">${escapeHTML(m.role)}</span>`;
-        const removeButton = isLastOwner
-          ? `<button type="button" class="link-danger" disabled title="至少保留一个 owner" aria-label="不能移除最后 owner ${escapeAttr(m.identity)}">保留</button>`
+        const removeButton = removeBlockReason
+          ? `<button type="button" class="link-danger" disabled title="${escapeAttr(removeBlockReason)}" aria-label="不能移除成员 ${escapeAttr(m.identity)}">${escapeHTML(isLastOwner ? "保留" : "受保护")}</button>`
           : `<button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button>`;
         return `
           <div class="member-table-row" role="row">
@@ -1057,6 +1060,43 @@ function renderMemberTable(members, options = {}) {
           </div>`;
       }).join("")}
     </div>`;
+}
+
+function projectOwnerGuardMessage(uncheckedProjectNames = []) {
+  const names = uncheckedProjectNames.map((name) => String(name || "").trim()).filter(Boolean);
+  return names.length ? `项目负责人状态未确认: ${names.join(", ")}` : "项目负责人状态未确认";
+}
+
+async function organizationMemberRemovalGuards(projects = []) {
+  const soleProjectOwnerNames = {};
+  const uncheckedProjectNames = [];
+  for (const project of projects) {
+    try {
+      const detail = await api(`/v1/projects/${encodeURIComponent(project.id)}`);
+      const members = detail.members || [];
+      const owners = members.filter((m) => m.role === "owner");
+      if (owners.length === 1) {
+        const identity = owners[0].identity;
+        if (!soleProjectOwnerNames[identity]) soleProjectOwnerNames[identity] = [];
+        soleProjectOwnerNames[identity].push(project.name || project.id);
+      }
+    } catch {
+      uncheckedProjectNames.push(project.name || project.id);
+    }
+  }
+  const removeBlockReasons = {};
+  for (const [identity, names] of Object.entries(soleProjectOwnerNames)) {
+    removeBlockReasons[identity] = `先转移项目负责人: ${names.join(", ")}`;
+  }
+  return {
+    removeBlockReasons,
+    removeDisabledReason: uncheckedProjectNames.length ? projectOwnerGuardMessage(uncheckedProjectNames) : "",
+  };
+}
+
+function inlineWarning(message) {
+  if (!message) return "";
+  return `<div class="inline-warning" role="status">${escapeHTML(message)}</div>`;
 }
 
 function renderOrganizations() {
@@ -1182,6 +1222,9 @@ async function renderOrganizationManage(id, body) {
     const role = organizationRole(id);
     const canManage = canManageOrganization(role);
     const onlineCount = members.filter((m) => isOnlineIdentity(m.identity)).length;
+    const removalGuards = canManage
+      ? await organizationMemberRemovalGuards(projects)
+      : { removeBlockReasons: {}, removeDisabledReason: "" };
     body.innerHTML = `
       <div class="team-summary-strip">
         ${metricTile("项目", projects.length)}
@@ -1201,7 +1244,8 @@ async function renderOrganizationManage(id, body) {
       </div>
       <div class="manage-block">
         <h4>成员</h4>
-        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", canChangeRole: canManage, roleAttr: "data-org-member-role", roles: ["member", "admin", "guest", "owner"], label: "团队成员" })}
+        ${inlineWarning(removalGuards.removeDisabledReason)}
+        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", canChangeRole: canManage, roleAttr: "data-org-member-role", roles: ["member", "admin", "guest", "owner"], label: "团队成员", removeBlockReasons: removalGuards.removeBlockReasons, removeDisabledReason: removalGuards.removeDisabledReason })}
         ${canManage ? memberCandidateForm("org-member", reachableUserCandidates(members), ["member", "admin", "guest", "owner"]) : ""}
       </div>`;
     body.querySelectorAll("[data-jump-project]").forEach((button) => {
