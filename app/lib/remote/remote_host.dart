@@ -771,17 +771,56 @@ class RemoteHost extends RemoteChannel {
     _watchers.clear();
   }
 
-  String? _safePath(String? path) {
-    if (path == null || path.isEmpty) return null;
+  RemoteRoot? _rootForPath(String path) {
+    RemoteRoot? best;
+    var bestLen = -1;
     for (final r in roots()) {
-      if (pathWithin(path, r.path)) return path;
+      if (pathWithin(path, r.path) && r.path.length > bestLen) {
+        best = r;
+        bestLen = r.path.length;
+      }
     }
-    return null;
+    return best;
+  }
+
+  Future<String?> _safePath(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    final root = _rootForPath(path);
+    if (root == null) return null;
+    if (!await _resolvedPathStaysInRoot(path, root.path)) return null;
+    return path;
+  }
+
+  Future<bool> _resolvedPathStaysInRoot(String path, String rootPath) async {
+    try {
+      final rootReal = Directory(rootPath).resolveSymbolicLinksSync();
+      final rel = pathRelativeTo(rootPath, path);
+      if (rel.isEmpty) return true;
+      var current = rootPath;
+      for (final part in rel.split('/')) {
+        if (part.isEmpty) continue;
+        current = pathJoin(current, part);
+        final type = FileSystemEntity.typeSync(current, followLinks: false);
+        if (type == FileSystemEntityType.notFound) return true;
+        final real = switch (type) {
+          FileSystemEntityType.directory => Directory(
+            current,
+          ).resolveSymbolicLinksSync(),
+          FileSystemEntityType.file => File(current).resolveSymbolicLinksSync(),
+          FileSystemEntityType.link => Link(current).resolveSymbolicLinksSync(),
+          _ => current,
+        };
+        if (!pathWithin(real, rootReal)) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _fsList(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
@@ -817,7 +856,7 @@ class RemoteHost extends RemoteChannel {
 
   Future<void> _fsRead(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
@@ -846,7 +885,7 @@ class RemoteHost extends RemoteChannel {
   // preserving the file's existing line ending like the desktop editor does.
   Future<void> _fsWrite(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     final content = f['content'] as String?;
     if (to == null) return;
     if (path == null || content == null) {
@@ -877,7 +916,7 @@ class RemoteHost extends RemoteChannel {
   // git.status: working-tree changes + recent commits for a (root) repo.
   Future<void> _gitStatus(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
@@ -921,7 +960,7 @@ class RemoteHost extends RemoteChannel {
   // git.diff: unified diff of a file's working-tree changes.
   Future<void> _gitDiff(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     final file = f['file'] as String?;
     if (to == null) return;
     if (path == null || file == null || file.contains('..')) {
@@ -945,7 +984,7 @@ class RemoteHost extends RemoteChannel {
   // git.show: full diff of a commit (hash validated to avoid arg injection).
   Future<void> _gitShow(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     final hash = f['hash'] as String?;
     if (to == null) return;
     if (path == null ||
@@ -968,7 +1007,7 @@ class RemoteHost extends RemoteChannel {
   Future<void> _gitOp(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
     final op = f['t'] as String?;
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
@@ -1031,7 +1070,7 @@ class RemoteHost extends RemoteChannel {
 
   Future<void> _gitBranches(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
@@ -1079,7 +1118,7 @@ class RemoteHost extends RemoteChannel {
   // wt.list: enumerate a project's worktrees (read-only; reuses listWorktrees).
   Future<void> _wtList(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'cfg.err', 'to': to, 'msg': 'forbidden'});

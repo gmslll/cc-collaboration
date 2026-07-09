@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/remote/remote_host.dart';
 import 'package:app/screens/terminal_pane.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -49,6 +51,41 @@ void main() {
     expect(sessions['items'], [containsPair('project_id', 'relay-project')]);
     expect(roots['items'], [containsPair('project_id', 'relay-project')]);
   });
+
+  test(
+    'remote fs.write rejects paths escaping root through symlinks',
+    () async {
+      final root = await Directory.systemTemp.createTemp('cc-remote-root');
+      final outside = await Directory.systemTemp.createTemp(
+        'cc-remote-outside',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      addTearDown(() => outside.delete(recursive: true));
+      await Link('${root.path}/escape').create(outside.path);
+
+      final host = _TestRemoteHost(
+        sessions: const [],
+        roots: [RemoteRoot('repo', root.path, 'ws')],
+      );
+      addTearDown(host.dispose);
+
+      host.onFrame({
+        't': 'fs.write',
+        'from': 7,
+        'path': '${root.path}/escape/owned.txt',
+        'content': 'owned',
+      });
+      for (var i = 0; i < 20 && host.sent.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      expect(host.sent, hasLength(1));
+      expect(host.sent.single['t'], 'fs.write.err');
+      expect(host.sent.single['to'], 7);
+      expect(host.sent.single['msg'], 'forbidden');
+      expect(File('${outside.path}/owned.txt').existsSync(), isFalse);
+    },
+  );
 
   test('remote term.open wakes a deferred restored session', () {
     final session = TerminalSession('', '')..deferred = true;
