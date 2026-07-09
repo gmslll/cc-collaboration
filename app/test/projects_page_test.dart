@@ -414,4 +414,42 @@ void main() {
       'ops@x': ['Ops'],
     });
   });
+
+  test(
+    'team workspace stats count manageable teams and unique online users',
+    () {
+      Organization org(String id) => Organization.fromJson({
+        'id': id,
+        'name': id,
+        'owner_identity': 'owner@x',
+        'role': 'member',
+      });
+      Project project(String id, String orgId) => Project.fromJson({
+        'id': id,
+        'org_id': orgId,
+        'name': id,
+        'owner_identity': 'owner@x',
+        'role': 'member',
+      });
+      OnlineUser online(String identity, bool isOnline) =>
+          OnlineUser.fromJson({'identity': identity, 'online': isOnline});
+
+      final stats = teamWorkspaceStats(
+        organizations: [org('org-a'), org('org-b')],
+        projects: [project('p1', 'org-a'), project('p2', 'org-b')],
+        onlineUsers: [
+          online('alice@x', true),
+          online('alice@x', true),
+          online('bob@x', false),
+          online('   ', true),
+        ],
+        manageableOrgIds: {'org-a', 'missing-org'},
+      );
+
+      expect(stats.teams, 2);
+      expect(stats.manageableTeams, 1);
+      expect(stats.projects, 2);
+      expect(stats.onlineUsers, 1);
+    },
+  );
 }

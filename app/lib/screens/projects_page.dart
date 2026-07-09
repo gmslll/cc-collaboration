@@ -196,6 +196,33 @@ Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   return out;
 }
 
+typedef TeamWorkspaceStats = ({
+  int teams,
+  int manageableTeams,
+  int projects,
+  int onlineUsers,
+});
+
+TeamWorkspaceStats teamWorkspaceStats({
+  required Iterable<Organization> organizations,
+  required Iterable<Project> projects,
+  required Iterable<OnlineUser> onlineUsers,
+  required Set<String> manageableOrgIds,
+}) {
+  final onlineIdentities = <String>{
+    for (final user in onlineUsers)
+      if (user.online && user.identity.trim().isNotEmpty) user.identity.trim(),
+  };
+  return (
+    teams: organizations.length,
+    manageableTeams: organizations
+        .where((org) => manageableOrgIds.contains(org.id))
+        .length,
+    projects: projects.length,
+    onlineUsers: onlineIdentities.length,
+  );
+}
+
 class ProjectsPage extends StatefulWidget {
   final RelayClient client;
   const ProjectsPage({super.key, required this.client});
@@ -344,76 +371,196 @@ class _ProjectsPageState extends State<ProjectsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            runSpacing: 8,
-            spacing: 8,
-            children: [
-              SizedBox(
-                width: 320,
-                child: TextField(
-                  controller: _orgName,
-                  decoration: const InputDecoration(
-                    hintText: '新团队名称',
-                    isDense: true,
-                    prefixIcon: Icon(Icons.groups_rounded),
-                  ),
-                  onSubmitted: (_) => _createOrg(),
-                ),
-              ),
-              FilledButton.icon(
-                onPressed: _createOrg,
-                icon: const Icon(Icons.group_add_rounded, size: 18),
-                label: const Text('新建团队'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
+          _workspaceHeader(),
+          const SizedBox(height: 12),
           _teamPanel(),
           const SizedBox(height: 12),
-          Wrap(
-            runSpacing: 8,
-            spacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              SizedBox(
-                width: 320,
-                child: TextField(
-                  controller: _name,
-                  decoration: const InputDecoration(
-                    hintText: '新项目名称',
-                    isDense: true,
-                    prefixIcon: Icon(Icons.create_new_folder_rounded),
-                  ),
-                  onSubmitted: (_) => _create(),
-                ),
-              ),
-              if (_manageableOrgs.isNotEmpty)
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 260),
-                  child: DropdownButton<String>(
-                    value: _selectedOrgId ?? '',
-                    isExpanded: true,
-                    items: [
-                      const DropdownMenuItem(value: '', child: Text('我的默认团队')),
-                      ..._manageableOrgs.map(
-                        (o) =>
-                            DropdownMenuItem(value: o.id, child: Text(o.name)),
-                      ),
-                    ],
-                    onChanged: (v) => setState(() => _selectedOrgId = v),
-                  ),
-                ),
-              FilledButton.icon(
-                onPressed: _create,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('新建项目'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
           Expanded(child: _body()),
         ],
       ),
+    );
+  }
+
+  Widget _workspaceHeader() {
+    final stats = teamWorkspaceStats(
+      organizations: _orgs,
+      projects: _projects ?? const <Project>[],
+      onlineUsers: _online,
+      manageableOrgIds: _manageableOrgIds,
+    );
+    return Material(
+      color: CcColors.panelHigh,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CcRadius.md),
+        side: const BorderSide(color: CcColors.borderSoft),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final title = _workspaceTitle();
+                final metrics = _workspaceMetrics(stats);
+                if (constraints.maxWidth < 620) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [title, const SizedBox(height: 10), metrics],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: title),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Align(
+                        alignment: Alignment.topRight,
+                        child: metrics,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              runSpacing: 8,
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SizedBox(
+                  width: 260,
+                  child: TextField(
+                    controller: _orgName,
+                    decoration: const InputDecoration(
+                      hintText: '新团队名称',
+                      isDense: true,
+                      prefixIcon: Icon(Icons.groups_rounded),
+                    ),
+                    onSubmitted: (_) => _createOrg(),
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: _createOrg,
+                  icon: const Icon(Icons.group_add_rounded, size: 18),
+                  label: const Text('新建团队'),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 260,
+                  child: TextField(
+                    controller: _name,
+                    decoration: const InputDecoration(
+                      hintText: '新项目名称',
+                      isDense: true,
+                      prefixIcon: Icon(Icons.create_new_folder_rounded),
+                    ),
+                    onSubmitted: (_) => _create(),
+                  ),
+                ),
+                if (_manageableOrgs.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 240),
+                    child: DropdownButton<String>(
+                      value: _selectedOrgId ?? '',
+                      isExpanded: true,
+                      items: [
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('我的默认团队'),
+                        ),
+                        ..._manageableOrgs.map(
+                          (o) => DropdownMenuItem(
+                            value: o.id,
+                            child: Text(o.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: (v) => setState(() => _selectedOrgId = v),
+                    ),
+                  ),
+                FilledButton.icon(
+                  onPressed: _create,
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('新建项目'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _workspaceTitle() {
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: CcColors.accent.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(CcRadius.md),
+            border: Border.all(color: CcColors.accent.withValues(alpha: 0.36)),
+          ),
+          child: const Icon(
+            Icons.hub_rounded,
+            color: CcColors.accentBright,
+            size: 19,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '团队工作台',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              ),
+              SizedBox(height: 2),
+              Text(
+                '团队、项目、成员入口',
+                style: TextStyle(color: CcColors.muted, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _workspaceMetrics(TeamWorkspaceStats stats) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.end,
+      children: [
+        _MetricPill(
+          icon: Icons.groups_rounded,
+          label: '团队',
+          value: '${stats.teams}',
+        ),
+        _MetricPill(
+          icon: Icons.admin_panel_settings_rounded,
+          label: '可管理',
+          value: '${stats.manageableTeams}',
+          color: CcColors.accentBright,
+        ),
+        _MetricPill(
+          icon: Icons.folder_rounded,
+          label: '项目',
+          value: '${stats.projects}',
+        ),
+        _MetricPill(
+          icon: Icons.circle_rounded,
+          label: '在线',
+          value: '${stats.onlineUsers}',
+          color: CcColors.ok,
+        ),
+      ],
     );
   }
 
@@ -587,6 +734,43 @@ class _ProjectsPageState extends State<ProjectsPage> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _MetricPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _MetricPill({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.color = CcColors.muted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 9),
+      decoration: BoxDecoration(
+        color: CcColors.bg.withValues(alpha: 0.32),
+        borderRadius: BorderRadius.circular(CcRadius.pill),
+        border: Border.all(color: CcColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 6),
+          Text(value, style: CcType.code(size: 12, color: CcColors.text)),
+          const SizedBox(width: 4),
+          Text(label, style: CcType.code(size: 11, color: CcColors.muted)),
+        ],
       ),
     );
   }
