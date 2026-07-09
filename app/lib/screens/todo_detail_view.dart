@@ -105,6 +105,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   bool _bodyEditing = false;
   bool _resumingSession = false;
   int _loadGeneration = 0;
+  int _commentLoadGeneration = 0;
   // Height (px) of the top pane (title/properties/body, scrollable) above the
   // 评论/附件 TabBarView — user-draggable via the vertical DragHandle in
   // build(), persisted so it survives switching between todos. Was a fixed
@@ -226,16 +227,19 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // event) — the store itself doesn't model comments, it just tells the host
   // which todo needs its comment list reloaded.
   Future<void> reloadComments() async {
-    final generation = _loadGeneration;
+    final generation = ++_commentLoadGeneration;
     final client = _client;
     final id = _id;
     try {
       final cs = await client.todoComments(id);
-      if (_isCurrentLoad(generation, client, id)) {
+      if (_isCurrentCommentLoad(generation, client, id)) {
         setState(() => _comments = cs);
       }
     } catch (_) {}
   }
+
+  bool _isCurrentCommentLoad(int generation, RelayClient client, String id) =>
+      _isCurrentTodoClient(client, id) && generation == _commentLoadGeneration;
 
   void _markTextDirty() {
     if (_textDirty) return;

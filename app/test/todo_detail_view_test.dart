@@ -87,9 +87,46 @@ void main() {
     expect(find.widgetWithText(TextField, 'new account title'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'old account title'), findsNothing);
   });
+
+  testWidgets('same-todo detail refresh does not cancel comment reload', (
+    tester,
+  ) async {
+    final client = _DelayedTodoClient(delayComments: true);
+    final first = _todo('td1', 'title', updatedAt: '2026-01-01T00:00:00Z');
+    final refreshed = _todo('td1', 'title', updatedAt: '2026-01-01T00:00:01Z');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: client, todo: first),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(client.requestedComments, ['td1']);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: client, todo: refreshed),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    client.completeComments('td1', [_comment('alice@x', 'comment landed')]);
+    await tester.pump();
+    expect(find.text('comment landed'), findsOneWidget);
+  });
 }
 
-Todo _todo(String id, String title) => Todo.fromJson({
+Todo _todo(
+  String id,
+  String title, {
+  String updatedAt = '2026-01-01T00:00:00Z',
+}) => Todo.fromJson({
   'id': id,
   'owner_identity': 'me@x',
   'title': title,
@@ -97,17 +134,28 @@ Todo _todo(String id, String title) => Todo.fromJson({
   'status': 'todo',
   'priority': 'normal',
   'created_at': '2026-01-01T00:00:00Z',
-  'updated_at': '2026-01-01T00:00:00Z',
+  'updated_at': updatedAt,
   'comment_count': 0,
   'attachment_count': 0,
   'attachments': <Map<String, dynamic>>[],
 });
 
+TodoComment _comment(String author, String body) => TodoComment.fromJson({
+  'author_identity': author,
+  'body': body,
+  'created_at': '2026-01-01T00:00:00Z',
+});
+
 class _DelayedTodoClient extends RelayClient {
-  _DelayedTodoClient() : super('http://127.0.0.1', 'tok');
+  _DelayedTodoClient({this.delayComments = false})
+    : super('http://127.0.0.1', 'tok');
+
+  final bool delayComments;
 
   final requestedTodos = <String>[];
+  final requestedComments = <String>[];
   final _todos = <String, Completer<Todo>>{};
+  final _comments = <String, Completer<List<TodoComment>>>{};
 
   @override
   Future<Todo> todo(String id) {
@@ -118,9 +166,19 @@ class _DelayedTodoClient extends RelayClient {
   }
 
   @override
-  Future<List<TodoComment>> todoComments(String id) async => const [];
+  Future<List<TodoComment>> todoComments(String id) {
+    requestedComments.add(id);
+    if (!delayComments) return Future.value(const []);
+    final completer = Completer<List<TodoComment>>();
+    _comments[id] = completer;
+    return completer.future;
+  }
 
   void completeTodo(String id, Todo todo) {
     _todos[id]!.complete(todo);
+  }
+
+  void completeComments(String id, List<TodoComment> comments) {
+    _comments[id]!.complete(comments);
   }
 }
