@@ -94,37 +94,49 @@ class _AdminPageState extends State<AdminPage> {
       generation == _loadGeneration &&
       identical(client, widget.client);
 
+  bool _isCurrentClient(RelayClient client) =>
+      mounted && identical(client, widget.client);
+
   Future<void> _create() async {
     final id = _identity.text.trim();
     if (id.isEmpty || _creating) return;
+    final client = widget.client;
+    final password = _password.text.trim();
+    final isAdmin = _newAdmin;
     setState(() => _creating = true);
     try {
-      final pw = await widget.client.createUser(
+      final pw = await client.createUser(
         id,
-        password: _password.text.trim(),
-        isAdmin: _newAdmin,
+        password: password,
+        isAdmin: isAdmin,
       );
-      if (!mounted) return;
+      if (!_isCurrentClient(client)) return;
       _identity.clear();
       _password.clear();
       setState(() => _newAdmin = false);
       await _load();
-      if (pw != null && pw.isNotEmpty && mounted) {
+      if (pw != null && pw.isNotEmpty && _isCurrentClient(client)) {
         _showSecret('账号 $id 的初始密码', pw);
       }
     } catch (e) {
-      if (mounted) snack(context, '创建失败: ${errorText(e)}');
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '创建失败: ${errorText(e)}');
     } finally {
-      if (mounted) setState(() => _creating = false);
+      if (_isCurrentClient(client)) setState(() => _creating = false);
     }
   }
 
-  Future<void> _act(Future<void> Function() f) async {
+  Future<void> _act(
+    RelayClient client,
+    Future<void> Function(RelayClient client) f,
+  ) async {
     try {
-      await f();
+      await f(client);
+      if (!_isCurrentClient(client)) return;
       await _load();
     } catch (e) {
-      if (mounted) snack(context, errorText(e));
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, errorText(e));
     }
   }
 
@@ -279,24 +291,22 @@ class _AdminPageState extends State<AdminPage> {
                     switch (v) {
                       case 'admin':
                         _act(
-                          () => widget.client.setUserAdmin(
-                            u.identity,
-                            !u.isAdmin,
-                          ),
+                          widget.client,
+                          (client) =>
+                              client.setUserAdmin(u.identity, !u.isAdmin),
                         );
                       case 'disable':
                         _act(
-                          () => widget.client.setUserDisabled(
-                            u.identity,
-                            !u.disabled,
-                          ),
+                          widget.client,
+                          (client) =>
+                              client.setUserDisabled(u.identity, !u.disabled),
                         );
                       case 'reset':
-                        _act(() async {
-                          final pw = await widget.client.resetPassword(
-                            u.identity,
-                          );
-                          if (mounted) _showSecret('${u.identity} 的新密码', pw);
+                        _act(widget.client, (client) async {
+                          final pw = await client.resetPassword(u.identity);
+                          if (_isCurrentClient(client)) {
+                            _showSecret('${u.identity} 的新密码', pw);
+                          }
                         });
                     }
                   },

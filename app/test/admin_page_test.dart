@@ -139,6 +139,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('admin create completion after account switch is ignored', (
+    tester,
+  ) async {
+    final oldClient = _DelayedCreateAdminPageFakeClient();
+    final newClient = _AdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: oldClient)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'old@x');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+    await tester.pump();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: newClient)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'new-draft@x');
+    await tester.pump();
+
+    oldClient.completeCreate('old-secret');
+    await tester.pumpAndSettle();
+
+    expect(oldClient.createCount, 1);
+    expect(find.text('new-draft@x'), findsOneWidget);
+    expect(find.text('old-secret'), findsNothing);
+    expect(find.text('账号 old@x 的初始密码'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('admin create is disabled while request is in flight', (
     tester,
   ) async {
