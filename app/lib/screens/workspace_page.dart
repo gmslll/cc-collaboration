@@ -88,6 +88,12 @@ String _previewList(List<String> items, {int take = 5}) =>
     items.take(take).join('\n') +
     (items.length > take ? '\n...and ${items.length - take} more' : '');
 
+bool workspaceCommitActionEnabled({
+  required bool hasCommitTarget,
+  required String message,
+  required bool loading,
+}) => !loading && hasCommitTarget && message.trim().isNotEmpty;
+
 const _searchSkipDirs = {
   '.git',
   'node_modules',
@@ -9299,11 +9305,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     // the already-staged ones — enabled whenever there's something to commit, so
     // there are no permanently-greyed staged-only buttons.
     final commitChecked = selected > 0;
-    final canCommitAny =
-        (commitChecked || (status?.staged ?? 0) > 0) && !_gitLoading;
     final hasCommitText = _commitCtl.text.trim().isNotEmpty;
+    final canCommitAny = workspaceCommitActionEnabled(
+      hasCommitTarget: commitChecked || (status?.hasStagedChanges ?? false),
+      message: _commitCtl.text,
+      loading: _gitLoading,
+    );
     final canAmend =
-        !_gitLoading && ((status?.staged ?? 0) > 0 || hasCommitText);
+        !_gitLoading && ((status?.hasStagedChanges ?? false) || hasCommitText);
     // Small, dense commit-action buttons (24px tall, 11.5 label, 13px icon) —
     // sizing only, so each button keeps its native colours (filled / tonal /
     // outlined).
