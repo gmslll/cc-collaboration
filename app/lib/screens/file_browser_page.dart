@@ -17,6 +17,12 @@ const double _kRowBaseLeft = 8; // left gutter before depth 0
 const double _kIndentStep = 16; // horizontal step per nesting level
 const double _kChevronW = 16; // column reserved for the disclosure chevron
 
+double fileNameDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 // FileBrowserPage is a lazy file tree of a project root; tapping a file opens it
 // in the editor. Each directory lists its children on first expand.
 class FileBrowserPage extends StatefulWidget {
@@ -397,16 +403,23 @@ class _FileNameDialogState extends State<FileNameDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      content: TextField(
-        controller: _ctl,
-        autofocus: true,
-        decoration: InputDecoration(
-          labelText: widget.label,
-          hintText: widget.hint,
+      content: SizedBox(
+        width: fileNameDialogWidth(size),
+        child: SingleChildScrollView(
+          child: TextField(
+            controller: _ctl,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: widget.label,
+              hintText: widget.hint,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
         ),
-        onSubmitted: (_) => _submit(),
       ),
       actions: [
         TextButton(
