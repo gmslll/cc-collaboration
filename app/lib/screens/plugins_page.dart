@@ -82,7 +82,11 @@ class _PluginsPaneState extends State<_PluginsPane> {
           padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
           child: Text(
             '格式化按类型渲染 / 格式化;代码跳转用语言服务器 (LSP) 精确跳到定义,未装则回退符号索引。都需宿主机装好对应命令(仅桌面本地生效),没检测到可手动指定路径。',
-            style: TextStyle(color: CcColors.muted, fontSize: 12.5, height: 1.4),
+            style: TextStyle(
+              color: CcColors.muted,
+              fontSize: 12.5,
+              height: 1.4,
+            ),
           ),
         ),
         const Divider(height: 1),
@@ -166,10 +170,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
             ),
           ),
           const SizedBox(width: 8),
-          Switch(
-            value: on,
-            onChanged: (v) => _mgr.setEnabled(p.id, v),
-          ),
+          Switch(value: on, onChanged: (v) => _mgr.setEnabled(p.id, v)),
         ],
       ),
     );
@@ -330,56 +331,89 @@ class _PluginsPaneState extends State<_PluginsPane> {
   }
 
   Future<void> _editLspCommand(LspServerPlugin p) async {
-    final ctl = TextEditingController(text: _lsp.commandFor(p));
     final result = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: CcColors.panel,
-        title: Text(
-          '${p.name} · 服务器命令',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '填可执行文件名或绝对路径(启动参数用内置默认)。留空恢复默认命令。',
-              style: TextStyle(color: CcColors.muted, fontSize: 12, height: 1.4),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              style: CcType.code(size: 13),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: p.command,
-                border: const OutlineInputBorder(),
-              ),
-              onSubmitted: (v) => Navigator.pop(ctx, v),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, ''),
-            child: const Text('恢复默认'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctl.text),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+      builder: (_) =>
+          LspCommandDialog(plugin: p, initialCommand: _lsp.commandFor(p)),
     );
-    ctl.dispose();
     if (result == null) return; // 取消
     _lsp.setCommand(p.id, result);
     _lsp.detectAll(force: true); // 立刻按新命令重新检测
+  }
+}
+
+class LspCommandDialog extends StatefulWidget {
+  final LspServerPlugin plugin;
+  final String initialCommand;
+
+  const LspCommandDialog({
+    super.key,
+    required this.plugin,
+    required this.initialCommand,
+  });
+
+  @override
+  State<LspCommandDialog> createState() => _LspCommandDialogState();
+}
+
+class _LspCommandDialogState extends State<LspCommandDialog> {
+  late final TextEditingController _ctl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = TextEditingController(text: widget.initialCommand);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: CcColors.panel,
+      title: Text(
+        '${widget.plugin.name} · 服务器命令',
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '填可执行文件名或绝对路径(启动参数用内置默认)。留空恢复默认命令。',
+            style: TextStyle(color: CcColors.muted, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _ctl,
+            autofocus: true,
+            style: CcType.code(size: 13),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: widget.plugin.command,
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _save(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, ''),
+          child: const Text('恢复默认'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
   }
 }
