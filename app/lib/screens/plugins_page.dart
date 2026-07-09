@@ -337,6 +337,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
           LspCommandDialog(plugin: p, initialCommand: _lsp.commandFor(p)),
     );
     if (result == null) return; // 取消
+    if (!mounted) return;
     _lsp.setCommand(p.id, result);
     _lsp.detectAll(force: true); // 立刻按新命令重新检测
   }

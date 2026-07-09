@@ -313,6 +313,68 @@ void main() {
     expectGuardBefore(edit, 'showDialog<bool>', '_load();');
   });
 
+  test('file browser and plugin dialogs guard mounted before side effects', () {
+    void expectGuardBefore(
+      String body,
+      String after,
+      String before, {
+      String guard = 'if (!mounted) return',
+    }) {
+      final afterIndex = body.indexOf(after);
+      final guardIndex = body.indexOf(guard, afterIndex);
+      final beforeIndex = body.indexOf(before, afterIndex);
+
+      expect(afterIndex, isNonNegative);
+      expect(guardIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(guardIndex, lessThan(beforeIndex));
+    }
+
+    final fileBrowser = File(
+      'lib/screens/file_browser_page.dart',
+    ).readAsStringSync();
+
+    final nameDialog = fileBrowser.substring(
+      fileBrowser.indexOf('Future<String?> _nameDialog('),
+      fileBrowser.indexOf('Future<bool> _confirm('),
+    );
+    expectGuardBefore(
+      nameDialog,
+      'if (raw == null) return null;',
+      'raw.trim()',
+    );
+
+    final confirm = fileBrowser.substring(
+      fileBrowser.indexOf('Future<bool> _confirm('),
+      fileBrowser.indexOf('Future<void> _newFile('),
+    );
+    expectGuardBefore(confirm, 'showDialog<bool>', 'return ok == true;');
+
+    for (final entry in [
+      ('Future<void> _newFile(', 'File(path).create'),
+      ('Future<void> _newDirectory(', 'Directory(path).create'),
+      ('Future<void> _renamePath(', 'Directory(path).rename'),
+      ('Future<void> _deletePath(', 'Directory(path).delete'),
+    ]) {
+      final body = fileBrowser.substring(
+        fileBrowser.indexOf(entry.$1),
+        fileBrowser.indexOf('Future<void>', fileBrowser.indexOf(entry.$1) + 1),
+      );
+      expectGuardBefore(body, 'return;', entry.$2);
+    }
+
+    final plugins = File('lib/screens/plugins_page.dart').readAsStringSync();
+    final editLsp = plugins.substring(
+      plugins.indexOf('Future<void> _editLspCommand('),
+      plugins.indexOf('}\n}\n\nclass LspCommandDialog'),
+    );
+    expectGuardBefore(
+      editLsp,
+      'if (result == null) return;',
+      '_lsp.setCommand',
+    );
+  });
+
   test('workspace git confirmations guard mounted before loading state', () {
     final source = File(
       'lib/screens/workspace/git_mixin.dart',

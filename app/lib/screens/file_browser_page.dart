@@ -83,6 +83,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
       ),
     );
     if (raw == null) return null;
+    if (!mounted) return null;
     final name = raw.trim();
     if (!_validName(name)) {
       if (!mounted) return null;
@@ -111,12 +112,14 @@ class _FileBrowserPageState extends State<FileBrowserPage>
         ],
       ),
     );
+    if (!mounted) return false;
     return ok == true;
   }
 
   Future<void> _newFile(String dir) async {
     final name = await _nameDialog('新建文件', '文件名', hint: 'README.md');
     if (name == null) return;
+    if (!mounted) return;
     final path = _join(dir, name);
     try {
       await File(path).create(exclusive: true);
@@ -134,6 +137,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
   Future<void> _newDirectory(String dir) async {
     final name = await _nameDialog('新建目录', '目录名', hint: 'src');
     if (name == null) return;
+    if (!mounted) return;
     final path = _join(dir, name);
     try {
       await Directory(path).create();
@@ -150,6 +154,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     }
     final name = await _nameDialog('重命名', '名称', initial: _baseName(path));
     if (name == null) return;
+    if (!mounted) return;
     final target = _join(_parentDir(path), name);
     try {
       if (isDir) {
@@ -170,6 +175,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     }
     final ok = await _confirm('删除「${_baseName(path)}」?', '此操作会删除磁盘文件。');
     if (!ok) return;
+    if (!mounted) return;
     try {
       if (isDir) {
         await Directory(path).delete(recursive: true);
