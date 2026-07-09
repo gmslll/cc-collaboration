@@ -2369,6 +2369,7 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
   // to raw identity). The online set is best-effort and drives ONLY the green
   // dot; arbitrary online strangers are not added.
   Future<void> _loadMembers() async {
+    if (!mounted) return;
     setState(() {
       _loadingMembers = true;
       _membersError = null;

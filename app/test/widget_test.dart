@@ -191,6 +191,20 @@ void main() {
     expect(renameHelper, isNot(contains('showDialog<bool>')));
   });
 
+  test('todo assign member loader guards mounted before setState', () {
+    final source = File('lib/screens/todos_page.dart').readAsStringSync();
+    final loader = source.substring(
+      source.indexOf('Future<void> _loadMembers() async {'),
+      source.indexOf('// _assignToMember writes assignee_identity only'),
+    );
+
+    expect(loader, contains('if (!mounted) return;'));
+    expect(
+      loader.indexOf('if (!mounted) return;'),
+      lessThan(loader.indexOf('setState(() {')),
+    );
+  });
+
   test('speech recognizer debug logging is off by default', () {
     expect(kSpeechDebugLogging, isFalse);
   });
