@@ -179,7 +179,7 @@ bool canManageProjectDetail(
   required String identity,
 }) {
   if (isAdmin) return true;
-  if (normalizedRole(detail.project.role) == 'admin') return true;
+  if (isManageRole(detail.project.role)) return true;
   if (identityMatches(detail.project.ownerIdentity, identity)) return true;
   return detail.members.any(
     (member) =>

@@ -371,6 +371,24 @@ void main() {
     );
     expect(
       canManageProjectDetail(
+        ProjectDetail.fromJson({
+          'project': {
+            'id': 'p3',
+            'org_id': 'org-a',
+            'name': 'Ops',
+            'owner_identity': 'other@x',
+            'role': ' owner ',
+          },
+          'repos': const [],
+          'members': const [],
+        }),
+        isAdmin: false,
+        identity: 'viewer@x',
+      ),
+      isTrue,
+    );
+    expect(
+      canManageProjectDetail(
         detail(
           ownerIdentity: 'other@x',
           members: const [
