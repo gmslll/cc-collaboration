@@ -23,6 +23,17 @@ void main() {
     expect(adminToggleLabel(false), '设为管理员');
   });
 
+  test('admin create option width does not exceed constraints', () {
+    expect(
+      adminCreateOptionWidth(const BoxConstraints(maxWidth: 160), 220),
+      160,
+    );
+    expect(
+      adminCreateOptionWidth(const BoxConstraints(maxWidth: 320), 220),
+      220,
+    );
+  });
+
   test('admin user labels prefer display names with identity subtitle', () {
     final named = User.fromJson({
       'identity': 'admin@x',
@@ -66,6 +77,40 @@ void main() {
     expect(subtitle.overflow, TextOverflow.ellipsis);
     expect(find.text('系统管理员'), findsOneWidget);
     expect(find.text('已停用'), findsOneWidget);
+  });
+
+  testWidgets('admin create controls wrap and reflect input state', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(240, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: _AdminPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    FilledButton createButton() =>
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '创建账号'));
+
+    final adminOptionLabel = tester.widget<Text>(
+      find.byKey(const ValueKey('admin-create-admin-label')),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(adminOptionLabel.maxLines, 1);
+    expect(adminOptionLabel.overflow, TextOverflow.ellipsis);
+    expect(createButton().onPressed, isNull);
+
+    await tester.enterText(find.byType(TextField).first, 'new@x');
+    await tester.pump();
+
+    expect(createButton().onPressed, isNotNull);
   });
 }
 

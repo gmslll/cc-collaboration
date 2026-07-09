@@ -13,6 +13,11 @@ String adminUserTitle(User user) =>
     user.displayName.isEmpty ? user.identity : user.displayName;
 String? adminUserSubtitle(User user) =>
     user.displayName.isEmpty ? null : user.identity;
+double adminCreateOptionWidth(BoxConstraints constraints, double preferred) {
+  final maxWidth = constraints.maxWidth;
+  if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
+  return maxWidth < preferred ? maxWidth : preferred;
+}
 
 class AdminPage extends StatefulWidget {
   final RelayClient client;
@@ -32,14 +37,22 @@ class _AdminPageState extends State<AdminPage> {
   @override
   void initState() {
     super.initState();
+    _identity.addListener(_onCreateInputChanged);
     _load();
   }
 
   @override
   void dispose() {
+    _identity.removeListener(_onCreateInputChanged);
     _identity.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  bool get _canCreateUser => _identity.text.trim().isNotEmpty;
+
+  void _onCreateInputChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -145,16 +158,46 @@ class _AdminPageState extends State<AdminPage> {
                     isDense: true,
                   ),
                 ),
-                Row(
-                  children: [
-                    Checkbox(
-                      value: _newAdmin,
-                      onChanged: (v) => setState(() => _newAdmin = v ?? false),
-                    ),
-                    const Text('创建为系统管理员'),
-                    const Spacer(),
-                    FilledButton(onPressed: _create, child: const Text('创建账号')),
-                  ],
+                const SizedBox(height: 8),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final optionWidth = adminCreateOptionWidth(
+                      constraints,
+                      220,
+                    );
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: optionWidth,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Checkbox(
+                                value: _newAdmin,
+                                onChanged: (v) =>
+                                    setState(() => _newAdmin = v ?? false),
+                              ),
+                              const Flexible(
+                                child: Text(
+                                  '创建为系统管理员',
+                                  key: ValueKey('admin-create-admin-label'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        FilledButton(
+                          onPressed: _canCreateUser ? _create : null,
+                          child: const Text('创建账号'),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -169,21 +212,29 @@ class _AdminPageState extends State<AdminPage> {
           ..._users!.map(
             (u) => Card(
               child: ListTile(
-                title: Row(
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        adminUserTitle(u),
-                        key: ValueKey('admin-user-title-${u.identity}'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                    Text(
+                      adminUserTitle(u),
+                      key: ValueKey('admin-user-title-${u.identity}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                    const SizedBox(width: 8),
-                    if (u.isAdmin) tag(adminFlagLabel(true), CcColors.accent),
-                    if (u.disabled)
-                      tag(disabledFlagLabel(true), CcColors.danger),
+                    if (u.isAdmin || u.disabled) ...[
+                      const SizedBox(height: 5),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (u.isAdmin)
+                            tag(adminFlagLabel(true), CcColors.accent),
+                          if (u.disabled)
+                            tag(disabledFlagLabel(true), CcColors.danger),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
                 subtitle: adminUserSubtitle(u) == null
