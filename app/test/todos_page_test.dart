@@ -12,6 +12,62 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('bulk todo deletion locks while request is pending', (
+    tester,
+  ) async {
+    final client = _DelayedDeleteTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _adminMe(),
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('选择当前筛选结果'));
+    await tester.pump();
+    expect(find.text('已选 1'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('删除选中待办'));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('删除 1 个待办？'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+
+    expect(client.deleteCalls, 1);
+    expect(find.text('删除 1 个待办？'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.tap(find.byType(CircularProgressIndicator));
+    await tester.pump();
+    expect(client.deleteCalls, 1);
+    expect(find.text('删除 1 个待办？'), findsNothing);
+
+    client.completeDelete();
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('member assignment ignores duplicate submit taps', (
     tester,
   ) async {
@@ -76,6 +132,14 @@ Me _me() => Me.fromJson({
   'is_admin': false,
   'projects': [
     {'id': 'p1', 'org_id': 'org1', 'name': 'Backend', 'role': 'member'},
+  ],
+});
+
+Me _adminMe() => Me.fromJson({
+  'identity': 'alice@x',
+  'is_admin': true,
+  'projects': [
+    {'id': 'p1', 'org_id': 'org1', 'name': 'Backend', 'role': 'owner'},
   ],
 });
 
@@ -194,5 +258,20 @@ class _DelayedAssignTodoClient extends RelayClient {
     _assignCompleter.complete(
       Todo.fromJson(_todoJson(assigneeIdentity: 'bob@x')),
     );
+  }
+}
+
+class _DelayedDeleteTodoClient extends _DelayedAssignTodoClient {
+  final _deleteCompleter = Completer<void>();
+  int deleteCalls = 0;
+
+  @override
+  Future<void> deleteTodo(String id) {
+    deleteCalls++;
+    return _deleteCompleter.future;
+  }
+
+  void completeDelete() {
+    _deleteCompleter.complete();
   }
 }

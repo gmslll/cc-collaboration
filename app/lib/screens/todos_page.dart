@@ -196,6 +196,7 @@ class _TodosPageState extends State<TodosPage> {
   int _groupsLoadSeq = 0;
   Todo? _selected;
   final Set<String> _selectedTodoIds = {};
+  bool _deletingSelectedTodos = false;
   bool _boardView = true; // board is the default, Linear-flavored view
   final Set<String> _collapsedMobileGroups = {};
   final _detailKey = GlobalKey<TodoDetailViewState>();
@@ -783,39 +784,45 @@ class _TodosPageState extends State<TodosPage> {
   }
 
   Future<void> _deleteSelectedTodos() async {
+    if (_deletingSelectedTodos) return;
     final ids = _selectedTodoIds.where((id) {
       final matches = _store.all.where((t) => t.id == id);
       return matches.isNotEmpty && _accessFor(matches.first).canDelete;
     }).toList();
     if (ids.isEmpty) return;
-    final ok = await confirm(
-      context,
-      '删除后不可恢复，附件和评论也会一起删除。',
-      title: '删除 ${ids.length} 个待办？',
-      okLabel: '删除',
-    );
-    if (ok != true) return;
-    var failed = 0;
-    for (final id in ids) {
-      try {
-        await _client.deleteTodo(id);
-      } catch (_) {
-        failed++;
-      }
-    }
-    if (!mounted) return;
-    setState(() {
-      _selectedTodoIds.clear();
-      if (_selected != null && ids.contains(_selected!.id)) _selected = null;
-    });
-    await _store.refresh();
-    if (mounted) {
-      snack(
+    setState(() => _deletingSelectedTodos = true);
+    try {
+      final ok = await confirm(
         context,
-        failed == 0
-            ? '已删除 ${ids.length} 个待办'
-            : '已删除 ${ids.length - failed} 个，失败 $failed 个',
+        '删除后不可恢复，附件和评论也会一起删除。',
+        title: '删除 ${ids.length} 个待办？',
+        okLabel: '删除',
       );
+      if (!mounted || ok != true) return;
+      var failed = 0;
+      for (final id in ids) {
+        try {
+          await _client.deleteTodo(id);
+        } catch (_) {
+          failed++;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _selectedTodoIds.clear();
+        if (_selected != null && ids.contains(_selected!.id)) _selected = null;
+      });
+      await _store.refresh();
+      if (mounted) {
+        snack(
+          context,
+          failed == 0
+              ? '已删除 ${ids.length} 个待办'
+              : '已删除 ${ids.length - failed} 个，失败 $failed 个',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deletingSelectedTodos = false);
     }
   }
 
@@ -1005,14 +1012,22 @@ class _TodosPageState extends State<TodosPage> {
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                icon: _deletingSelectedTodos
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.delete_outline_rounded, size: 18),
                 tooltip: '删除选中待办',
-                onPressed: _deleteSelectedTodos,
+                onPressed: _deletingSelectedTodos ? null : _deleteSelectedTodos,
               ),
               IconButton(
                 icon: const Icon(Icons.close_rounded, size: 18),
                 tooltip: '取消选择',
-                onPressed: () => setState(_selectedTodoIds.clear),
+                onPressed: _deletingSelectedTodos
+                    ? null
+                    : () => setState(_selectedTodoIds.clear),
               ),
             ] else
               IconButton(
