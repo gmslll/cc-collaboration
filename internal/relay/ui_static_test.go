@@ -108,7 +108,7 @@ func TestMemberTableKeepsMobileCellLabels(t *testing.T) {
 	requiredJS := []string{
 		`<span class="member-person" role="cell" data-label="成员">`,
 		`<span class="member-role" role="cell" data-label="角色">${roleControl}</span>`,
-		`<span class="member-state" role="cell" data-label="状态">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>`,
+		`<span class="member-state" role="cell" data-label="状态">${memberPresence(m.identity)}<span class="member-state-text">${online ? "在线" : "离线"}</span></span>`,
 		`<span class="member-actions" role="cell" data-label="操作">${removeButton}</span>`,
 	}
 	for _, want := range requiredJS {
@@ -121,6 +121,9 @@ func TestMemberTableKeepsMobileCellLabels(t *testing.T) {
 		`grid-template-columns: 72px minmax(0, 1fr);`,
 		`.member-table-row [role="cell"][data-label]::before {`,
 		`content: attr(data-label);`,
+		`.member-state[role="cell"][data-label] {`,
+		`grid-template-columns: 72px auto minmax(0, 1fr);`,
+		`.member-state-text {`,
 		`.member-person[role="cell"][data-label] .member-identity,`,
 	}
 	for _, want := range requiredCSS {

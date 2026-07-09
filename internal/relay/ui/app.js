@@ -1070,7 +1070,7 @@ function renderMemberTable(members, options = {}) {
               ${displayName ? `<small>${escapeHTML(displayName)}</small>` : ""}
             </span>
             <span class="member-role" role="cell" data-label="角色">${roleControl}</span>
-            <span class="member-state" role="cell" data-label="状态">${memberPresence(m.identity)}${online ? "在线" : "离线"}</span>
+            <span class="member-state" role="cell" data-label="状态">${memberPresence(m.identity)}<span class="member-state-text">${online ? "在线" : "离线"}</span></span>
             ${canRemove ? `<span class="member-actions" role="cell" data-label="操作">${removeButton}</span>` : ""}
           </div>`;
       }).join("")}

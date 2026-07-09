@@ -1306,6 +1306,15 @@ textarea:focus {
     letter-spacing: 0.04em;
   }
 
+  .member-state[role="cell"][data-label] {
+    grid-template-columns: 72px auto minmax(0, 1fr);
+    justify-content: start;
+  }
+
+  .member-state-text {
+    min-width: 0;
+  }
+
   .member-person[role="cell"][data-label] {
     align-items: start;
   }
