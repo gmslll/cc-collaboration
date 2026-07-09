@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/widgets/todo_property_controls.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -63,6 +65,25 @@ void main() {
     expect(pickerLabel.maxLines, 1);
     expect(pickerLabel.overflow, TextOverflow.ellipsis);
     expect(tester.takeException(), isNull);
+  });
+
+  test('group picker list height is responsive', () {
+    expect(groupPickerListMaxHeight(const Size(1024, 720)), 180);
+    expect(
+      groupPickerListMaxHeight(const Size(320, 420)),
+      closeTo(142.8, 0.001),
+    );
+    expect(groupPickerListMaxHeight(const Size(320, 240)), 96);
+  });
+
+  test('group picker avoids fixed list height', () {
+    final source = File(
+      'lib/widgets/todo_property_controls.dart',
+    ).readAsStringSync();
+    final picker = source.substring(source.indexOf('class _GroupPickerDialog'));
+
+    expect(picker, contains('groupPickerListMaxHeight'));
+    expect(picker, isNot(contains('BoxConstraints(maxHeight: 180)')));
   });
 
   testWidgets('picking an existing group from the list calls onSelect', (

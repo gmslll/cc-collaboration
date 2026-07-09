@@ -506,6 +506,19 @@ class GroupControl extends StatefulWidget {
   State<GroupControl> createState() => _GroupControlState();
 }
 
+double groupPickerListMaxHeight(
+  Size screenSize, {
+  double preferred = 180,
+  double minHeight = 96,
+  double maxFraction = 0.34,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 class _GroupControlState extends State<GroupControl> {
   final _key = GlobalKey();
 
@@ -629,7 +642,11 @@ class _GroupPickerDialogState extends State<_GroupPickerDialog> {
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 180),
+                  constraints: BoxConstraints(
+                    maxHeight: groupPickerListMaxHeight(
+                      MediaQuery.sizeOf(context),
+                    ),
+                  ),
                   child: ListView(
                     shrinkWrap: true,
                     children: [
