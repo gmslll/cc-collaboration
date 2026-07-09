@@ -42,6 +42,19 @@ class CapsulePlazaPage extends StatefulWidget {
 bool capsuleOwnedBy(CapsuleListItem capsule, String identity) =>
     sameIdentity(capsule.owner, identity);
 
+double capsuleReadonlyPreviewMaxHeight(
+  Size screenSize, {
+  double preferred = 130,
+  double minHeight = 82,
+  double maxFraction = 0.2,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   List<CapsuleListItem>? _items;
   String? _error;
@@ -916,7 +929,11 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
       _sectionLabel(label),
       Container(
         width: double.infinity,
-        constraints: const BoxConstraints(maxHeight: 130),
+        constraints: BoxConstraints(
+          maxHeight: capsuleReadonlyPreviewMaxHeight(
+            MediaQuery.sizeOf(context),
+          ),
+        ),
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           border: Border.all(color: CcColors.subtle),

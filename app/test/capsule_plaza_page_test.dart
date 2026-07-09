@@ -44,6 +44,27 @@ void main() {
     expect(source, isNot(contains('设为公开,就会出现在这里')));
   });
 
+  test('capsule readonly preview height is responsive', () {
+    expect(capsuleReadonlyPreviewMaxHeight(const Size(1200, 900)), 130);
+    expect(
+      capsuleReadonlyPreviewMaxHeight(const Size(320, 480)),
+      closeTo(96, 0.001),
+    );
+    expect(capsuleReadonlyPreviewMaxHeight(const Size(320, 300)), 82);
+  });
+
+  test('capsule readonly previews avoid fixed height', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final editDialog = source.substring(
+      source.indexOf('class _CapsuleEditDialogState'),
+    );
+
+    expect(editDialog, contains('capsuleReadonlyPreviewMaxHeight'));
+    expect(editDialog, isNot(contains('BoxConstraints(maxHeight: 130)')));
+  });
+
   test('capsule load and edit dialogs guard stale plaza context', () {
     final source = File(
       'lib/screens/capsule_plaza_page.dart',
