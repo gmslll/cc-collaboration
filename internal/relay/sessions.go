@@ -122,10 +122,11 @@ func normalizePublishedSessions(in []handoffschema.SessionInfo) []handoffschema.
 			label = defaultSessionLabelPrefix + id
 		}
 		out = append(out, handoffschema.SessionInfo{
-			ID:      id,
-			Label:   label,
-			Project: truncateRunes(strings.TrimSpace(s.Project), maxSessionProjectLen),
-			Workdir: truncateRunes(strings.TrimSpace(s.Workdir), maxSessionWorkdirLen),
+			ID:        id,
+			Label:     label,
+			Project:   truncateRunes(strings.TrimSpace(s.Project), maxSessionProjectLen),
+			ProjectID: truncateRunes(strings.TrimSpace(s.ProjectID), maxSessionProjectLen),
+			Workdir:   truncateRunes(strings.TrimSpace(s.Workdir), maxSessionWorkdirLen),
 		})
 	}
 	return out

@@ -125,6 +125,25 @@ List<OnlineUser> onlineSendSelectableUsers(
 bool onlineSendIdentitySelected(String? selected, String identity) =>
     selected != null && sameIdentity(selected, identity);
 
+List<RemoteSession> onlineSendSessionsForProject(
+  Iterable<RemoteSession> sessions, {
+  String? projectId,
+  String? projectName,
+}) {
+  final pid = (projectId ?? '').trim();
+  final name = (projectName ?? '').trim();
+  if (pid.isEmpty && name.isEmpty) return sessions.toList();
+  return [
+    for (final session in sessions)
+      if (pid.isNotEmpty
+          ? (session.projectId.trim().isNotEmpty
+                ? session.projectId.trim() == pid
+                : name.isNotEmpty && session.project.trim() == name)
+          : session.project.trim() == name)
+        session,
+  ];
+}
+
 Set<String> onlineSendProjectRecipientIdentities(ProjectDetail detail) => {
   if (identityLookupKey(detail.project.ownerIdentity).isNotEmpty)
     detail.project.ownerIdentity,
@@ -1447,29 +1466,38 @@ class _WorkspacePageState extends State<WorkspacePage>
         : null;
   }
 
-  ({String? projectId, bool ambiguous}) _onlineSendProjectScopeForSource(
-    String? sourcePath,
-  ) {
-    if (sourcePath == null) return (projectId: null, ambiguous: false);
+  ({String? projectId, String? projectName, bool ambiguous})
+  _onlineSendProjectScopeForSource(String? sourcePath) {
+    if (sourcePath == null) {
+      return (projectId: null, projectName: null, ambiguous: false);
+    }
     final project = _projectForFile(sourcePath)?.project;
-    if (project == null) return (projectId: null, ambiguous: false);
+    if (project == null) {
+      return (projectId: null, projectName: null, ambiguous: false);
+    }
     final me = widget.me;
-    if (me == null) return (projectId: null, ambiguous: true);
+    if (me == null) {
+      return (projectId: null, projectName: project.name, ambiguous: true);
+    }
     final projectId = onlineSendProjectIdForLocalProject(me.projects, project);
-    if (projectId != null) return (projectId: projectId, ambiguous: false);
+    if (projectId != null) {
+      return (
+        projectId: projectId,
+        projectName: project.name,
+        ambiguous: false,
+      );
+    }
     return (
       projectId: null,
+      projectName: project.name,
       ambiguous: onlineSendProjectNameIsAmbiguous(me.projects, project.name),
     );
   }
 
   Future<Set<String>?> _onlineSendAllowedIdentities(
     RelayClient client,
-    String? sourcePath,
+    String? projectId,
   ) async {
-    final scope = _onlineSendProjectScopeForSource(sourcePath);
-    if (scope.ambiguous) throw const _OnlineSendProjectScopeError();
-    final projectId = scope.projectId;
     if (projectId == null) return null;
     final detail = await client.project(projectId);
     OrganizationDetail? organization;
@@ -1539,6 +1567,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                 'id': s.id,
                 'label': s.label,
                 'project': _projectForFile(s.workdir)?.project.name ?? '',
+                'project_id':
+                    _projectForFile(s.workdir)?.project.projectId.trim() ?? '',
                 'workdir': s.workdir,
               },
           ]
@@ -1841,11 +1871,13 @@ class _WorkspacePageState extends State<WorkspacePage>
       return;
     }
     final client = widget.client!;
+    final scope = _onlineSendProjectScopeForSource(sourcePath);
     List<OnlineUser> users;
     try {
+      if (scope.ambiguous) throw const _OnlineSendProjectScopeError();
       final allowedIdentities = await _onlineSendAllowedIdentities(
         client,
-        sourcePath,
+        scope.projectId,
       );
       if (!_isCurrentRelayClient(client)) return;
       users = onlineSendSelectableUsers(
@@ -1897,8 +1929,13 @@ class _WorkspacePageState extends State<WorkspacePage>
                   !onlineSendIdentitySelected(selected, identity)) {
                 return;
               }
+              final scoped = onlineSendSessionsForProject(
+                loaded,
+                projectId: scope.projectId,
+                projectName: scope.projectName,
+              );
               setSt(() {
-                sessions = loaded;
+                sessions = scoped;
                 loading = false;
               });
             }

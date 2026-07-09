@@ -544,10 +544,11 @@ type LogAlert struct {
 // peer can target a specific remote session (POST /v1/sessions). Transient
 // presence-level data — the relay holds it in memory with a TTL, not the DB.
 type SessionInfo struct {
-	ID      string `json:"id"`                // the app's local session id (e.g. ts0)
-	Label   string `json:"label"`             // human label (name or derived title)
-	Project string `json:"project,omitempty"` // owning project name, for grouping
-	Workdir string `json:"workdir,omitempty"` // session working dir
+	ID        string `json:"id"`                   // the app's local session id (e.g. ts0)
+	Label     string `json:"label"`                // human label (name or derived title)
+	Project   string `json:"project,omitempty"`    // owning project name, for grouping
+	ProjectID string `json:"project_id,omitempty"` // relay project id, for exact team scoping
+	Workdir   string `json:"workdir,omitempty"`    // session working dir
 }
 
 // Message is a short text sent to a specific session on another user's machine

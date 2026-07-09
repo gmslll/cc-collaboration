@@ -155,7 +155,7 @@ func TestSessionRegistryNormalizesPublishedSessions(t *testing.T) {
 
 	sessions := []map[string]string{
 		{"id": "   ", "label": "drop me"},
-		{"id": " ts0 ", "label": "   ", "project": " Team ", "workdir": " /tmp/work "},
+		{"id": " ts0 ", "label": "   ", "project": " Team ", "project_id": " relay-team ", "workdir": " /tmp/work "},
 		{
 			"id":      strings.Repeat("x", 120),
 			"label":   strings.Repeat("l", 200),
@@ -190,7 +190,8 @@ func TestSessionRegistryNormalizesPublishedSessions(t *testing.T) {
 		t.Fatalf("session count = %d, want 64", len(got.Sessions))
 	}
 	if got.Sessions[0].ID != "ts0" || got.Sessions[0].Label != "Session ts0" ||
-		got.Sessions[0].Project != "Team" || got.Sessions[0].Workdir != "/tmp/work" {
+		got.Sessions[0].Project != "Team" || got.Sessions[0].ProjectID != "relay-team" ||
+		got.Sessions[0].Workdir != "/tmp/work" {
 		t.Fatalf("trim/default mismatch: %+v", got.Sessions[0])
 	}
 	if len(got.Sessions[1].ID) != 96 || len(got.Sessions[1].Label) != 160 ||

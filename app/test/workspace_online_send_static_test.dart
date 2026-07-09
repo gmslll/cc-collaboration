@@ -148,6 +148,50 @@ void main() {
     expect(onlineSendProjectIdForLocalProject(roles, localProject), isNull);
   });
 
+  test('online send sessions prefer relay project id and fallback to name', () {
+    final sessions = [
+      RemoteSession.fromJson({
+        'id': 's1',
+        'label': 'Backend exact',
+        'project': 'backend',
+        'project_id': 'relay-backend',
+      }),
+      RemoteSession.fromJson({
+        'id': 's2',
+        'label': 'Backend legacy',
+        'project': 'backend',
+      }),
+      RemoteSession.fromJson({
+        'id': 's3',
+        'label': 'Frontend',
+        'project': 'frontend',
+        'project_id': 'relay-frontend',
+      }),
+    ];
+
+    expect(
+      [
+        for (final s in onlineSendSessionsForProject(
+          sessions,
+          projectId: 'relay-backend',
+          projectName: 'backend',
+        ))
+          s.id,
+      ],
+      ['s1', 's2'],
+    );
+    expect(
+      [
+        for (final s in onlineSendSessionsForProject(
+          sessions,
+          projectName: 'backend',
+        ))
+          s.id,
+      ],
+      ['s1', 's2'],
+    );
+  });
+
   test('online send selected user comparison is identity-normalized', () {
     expect(onlineSendIdentitySelected(' Dev@X ', 'dev@x'), isTrue);
     expect(onlineSendIdentitySelected(null, 'dev@x'), isFalse);
@@ -221,6 +265,7 @@ void main() {
     expect(dialog, contains('organization = await client.organization(orgId)'));
     expect(dialog, contains('} catch (_) {}'));
     expect(dialog, contains('on _OnlineSendProjectScopeError'));
+    expect(dialog, contains('onlineSendSessionsForProject'));
     expect(dialog, contains('当前项目未绑定唯一团队项目,无法选择团队在线用户'));
     expect(dialog, contains('!_isCurrentRelayClient(client) ||'));
     expect(dialog, contains("账号已切换,请重新选择在线用户"));
