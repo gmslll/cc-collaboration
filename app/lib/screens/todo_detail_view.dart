@@ -690,10 +690,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
       const Icon(Icons.person_outline_rounded, size: 14, color: CcColors.muted),
       const SizedBox(width: 6),
       Expanded(
-        child: Text(
-          '指派给 ${_assigneeLabel ?? "未知"}',
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, color: CcColors.muted),
+        child: Tooltip(
+          message: _current.assigneeTooltip ?? _assigneeLabel ?? '未知',
+          child: Text(
+            '指派给 ${_assigneeLabel ?? "未知"}',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, color: CcColors.muted),
+          ),
         ),
       ),
       if (_hasSessionBinding &&

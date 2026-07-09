@@ -16,6 +16,8 @@ Map<String, dynamic> _todoJson({
   String? projectId,
   String status = 'todo',
   String title = 'title',
+  String? assigneeIdentity,
+  String? assigneeDisplayName,
 }) => {
   'id': id,
   'project_id': projectId,
@@ -24,7 +26,8 @@ Map<String, dynamic> _todoJson({
   'body_md': '',
   'status': status,
   'priority': 'normal',
-  'assignee_identity': null,
+  'assignee_identity': assigneeIdentity,
+  'assignee_display_name': assigneeDisplayName,
   'assignee_session_id': null,
   'assignee_session_label': null,
   'recurrence': '',
@@ -197,10 +200,15 @@ void main() {
         // Assignee and status are unrelated dimensions (see AssignTodo's doc in
         // internal/relay/store/todos.go) — a todo.assigned event can carry any
         // status at all, not a dedicated "assigned" one.
-        final json = _todoJson(id: 'x1', status: 'in_progress')
-          ..['assignee_identity'] = 'bob';
+        final json = _todoJson(
+          id: 'x1',
+          status: 'in_progress',
+          assigneeIdentity: 'bob',
+          assigneeDisplayName: 'Bob',
+        );
         store.onSseEvent(SseEvent('todo.assigned', jsonEncode(json)));
         expect(store.all.single.assigneeIdentity, 'bob');
+        expect(store.all.single.assigneeDisplayName, 'Bob');
         expect(store.all.single.status, TodoStatus.inProgress);
       },
     );
