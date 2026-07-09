@@ -10,6 +10,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('handoff reassign candidates follow project and team scope', () {
+    final package = _package(
+      'team-bug',
+      'qa@x',
+      'team bug',
+      kind: 'bug',
+      deliveryTarget: const {'project_id': 'proj1', 'org_id': 'org1'},
+    );
+    final candidates = handoffReassignCandidates(
+      package: package,
+      currentIdentity: 'dev@x',
+      project: _projectDetail('proj1', 'org1'),
+      organization: _organizationDetail('org1'),
+    );
+
+    expect(candidates, [
+      (identity: 'owner@x', label: 'owner@x'),
+      (identity: 'ops@x', label: 'Ops · ops@x'),
+      (identity: 'admin@x', label: 'Admin · admin@x'),
+    ]);
+  });
+
   test('handoff file tab dynamic labels are width constrained', () {
     final source = File(
       'lib/screens/handoff_detail_view.dart',
@@ -245,6 +267,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('handoff reassign dialog can pick a team member candidate', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package(
+        'team-bug',
+        'qa@x',
+        'team bug',
+        kind: 'bug',
+        deliveryTarget: const {'project_id': 'proj1', 'org_id': 'org1'},
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('team-bug', 'qa@x', 'team bug'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '转交'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('团队候选'), findsOneWidget);
+    await tester.tap(find.text('Ops · ops@x'));
+    await tester.enterText(find.widgetWithText(TextField, '原因'), '  fix it  ');
+    await tester.tap(find.widgetWithText(FilledButton, '转交'));
+    await tester.pumpAndSettle();
+
+    expect(client.reassignedTo, 'ops@x');
+    expect(client.reassignedReason, 'fix it');
+    await tester.pump(const Duration(seconds: 5));
+    expect(tester.takeException(), isNull);
+  });
+
   test('pickup init and terminal launch guard host context', () {
     final source = File(
       'lib/screens/handoff_detail_view.dart',
@@ -473,6 +535,37 @@ Package _package(
   return Package.fromJson(json);
 }
 
+ProjectDetail _projectDetail(String id, String orgId) =>
+    ProjectDetail.fromJson({
+      'project': {
+        'id': id,
+        'org_id': orgId,
+        'name': 'svc',
+        'owner_identity': 'owner@x',
+        'role': 'member',
+      },
+      'members': [
+        {'identity': 'dev@x', 'role': 'member', 'display_name': 'Dev'},
+        {'identity': 'ops@x', 'role': 'member', 'display_name': 'Ops'},
+      ],
+    });
+
+OrganizationDetail _organizationDetail(String id) =>
+    OrganizationDetail.fromJson({
+      'organization': {
+        'id': id,
+        'name': 'Team',
+        'owner_identity': 'owner@x',
+        'role': 'member',
+      },
+      'members': [
+        {'identity': 'owner@x', 'role': 'owner', 'display_name': 'Owner'},
+        {'identity': 'admin@x', 'role': 'admin', 'display_name': 'Admin'},
+        {'identity': 'team-member@x', 'role': 'member', 'display_name': 'Team'},
+      ],
+      'projects': const [],
+    });
+
 Me _me(
   String identity, {
   bool isAdmin = false,
@@ -552,6 +645,13 @@ class _ActionDetailClient extends RelayClient {
     'created_at': '2026-01-01T00:00:00Z',
     'comment_count': 0,
   });
+
+  @override
+  Future<ProjectDetail> project(String id) async => _projectDetail(id, 'org1');
+
+  @override
+  Future<OrganizationDetail> organization(String id) async =>
+      _organizationDetail(id);
 
   @override
   Future<void> retract(String id, String reason) async {

@@ -100,6 +100,54 @@ bool canCurrentIdentityCommentOnHandoff({
   return false;
 }
 
+typedef HandoffReassignCandidate = ({String identity, String label});
+
+List<HandoffReassignCandidate> handoffReassignCandidates({
+  required Package package,
+  required String currentIdentity,
+  ProjectDetail? project,
+  OrganizationDetail? organization,
+}) {
+  final candidates = <HandoffReassignCandidate>[];
+  final seen = <String>{};
+  final currentKey = identityLookupKey(currentIdentity);
+  final senderKey = identityLookupKey(package.sender);
+
+  void add(String raw, String displayName) {
+    final identity = cleanedIdentity(raw);
+    final key = identityLookupKey(identity);
+    if (key.isEmpty || key == currentKey || key == senderKey) return;
+    if (!seen.add(key)) return;
+    final name = displayName.trim();
+    candidates.add((
+      identity: identity,
+      label: name.isEmpty ? identity : '$name · $identity',
+    ));
+  }
+
+  final projectDetail = project;
+  if (projectDetail != null) {
+    add(projectDetail.project.ownerIdentity, '');
+    for (final member in projectDetail.members) {
+      add(member.identity, member.displayName);
+    }
+  }
+
+  final organizationDetail = organization;
+  if (organizationDetail != null) {
+    final hasProjectScope = projectDetail != null;
+    add(organizationDetail.organization.ownerIdentity, '');
+    for (final member in organizationDetail.members) {
+      final role = member.role.trim().toLowerCase();
+      if (!hasProjectScope || role == 'owner' || role == 'admin') {
+        add(member.identity, member.displayName);
+      }
+    }
+  }
+
+  return candidates;
+}
+
 class HandoffDetailViewState extends State<HandoffDetailView> {
   Package? _pkg;
   Status? _status;
@@ -499,9 +547,23 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final token = _cfg.token;
     final identity = _cfg.identity;
     final id = p.id;
+    final candidates = await _loadReassignCandidates(
+      p,
+      generation: generation,
+      client: client,
+      id: id,
+      relayUrl: relayUrl,
+      token: token,
+      identity: identity,
+    );
+    if (candidates == null) return;
+    if (!mounted) return;
+    if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+      return;
+    }
     final result = await showDialog<_ReassignInput>(
       context: context,
-      builder: (_) => const _ReassignDialog(),
+      builder: (_) => _ReassignDialog(candidates: candidates),
     );
     if (result == null) return;
     if (!mounted) return;
@@ -537,6 +599,63 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       }
       _snack('转交失败: ${errorText(e)}');
     }
+  }
+
+  Future<List<HandoffReassignCandidate>?> _loadReassignCandidates(
+    Package p, {
+    required int generation,
+    required RelayClient client,
+    required String id,
+    required String relayUrl,
+    required String token,
+    required String identity,
+  }) async {
+    final target = p.deliveryTarget;
+    if (target == null || target.isEmpty) return const [];
+    ProjectDetail? project;
+    OrganizationDetail? organization;
+    try {
+      final projectId = target.projectId.trim();
+      if (projectId.isNotEmpty) {
+        project = await client.project(projectId);
+        if (!_isCurrentLoad(
+          generation,
+          client,
+          id,
+          relayUrl,
+          token,
+          identity,
+        )) {
+          return null;
+        }
+      }
+      final orgId = target.orgId.trim().isNotEmpty
+          ? target.orgId.trim()
+          : (project?.project.orgId ?? '');
+      if (orgId.isNotEmpty) {
+        organization = await client.organization(orgId);
+        if (!_isCurrentLoad(
+          generation,
+          client,
+          id,
+          relayUrl,
+          token,
+          identity,
+        )) {
+          return null;
+        }
+      }
+    } catch (_) {
+      if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {
+        return null;
+      }
+    }
+    return handoffReassignCandidates(
+      package: p,
+      currentIdentity: identity,
+      project: project,
+      organization: organization,
+    );
   }
 
   Future<void> _downloadAttachment(String name) async {
@@ -1242,7 +1361,8 @@ class _ReassignInput {
 }
 
 class _ReassignDialog extends StatefulWidget {
-  const _ReassignDialog();
+  final List<HandoffReassignCandidate> candidates;
+  const _ReassignDialog({required this.candidates});
 
   @override
   State<_ReassignDialog> createState() => _ReassignDialogState();
@@ -1274,13 +1394,55 @@ class _ReassignDialogState extends State<_ReassignDialog> {
     if (_error != null) setState(() => _error = null);
   }
 
+  void _selectCandidate(HandoffReassignCandidate candidate) {
+    setState(() {
+      _to.text = candidate.identity;
+      _error = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('转交 bug'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.candidates.isNotEmpty) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '团队候选',
+                style: TextStyle(fontSize: 12, color: CcColors.muted),
+              ),
+            ),
+            const SizedBox(height: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 112),
+              child: SingleChildScrollView(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final candidate in widget.candidates)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: ActionChip(
+                          label: Text(
+                            candidate.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onPressed: () => _selectCandidate(candidate),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           TextField(
             controller: _to,
             decoration: const InputDecoration(labelText: '转交给(identity)'),
