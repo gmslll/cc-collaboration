@@ -434,3 +434,43 @@ func TestOrganizationRolePrefersFreshOrganizationListRole(t *testing.T) {
 		t.Fatal("organizationRole checks stale me.organizations before fresh state.organizations")
 	}
 }
+
+func TestRelayUIBuildsHandoffListQueryWithURLSearchParams(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	start := strings.Index(js, "async function loadList() {")
+	if start < 0 {
+		t.Fatal("could not locate loadList function body")
+	}
+	end := strings.Index(js[start:], "\nasync function loadOnline()")
+	if end < 0 {
+		t.Fatal("could not locate loadList function body")
+	}
+	body := js[start : start+end]
+	required := []string{
+		`const q = new URLSearchParams({ limit: els.limitSelect.value });`,
+		`q.set("scope", "project");`,
+		`q.set("project", state.projectID);`,
+		`q.set("scope", "all");`,
+		`q.set("as", state.view);`,
+		"await api(`/v1/handoffs?${q.toString()}`);",
+	}
+	for _, want := range required {
+		if !strings.Contains(body, want) {
+			t.Fatalf("loadList is missing structured query fragment %q", want)
+		}
+	}
+	forbidden := []string{
+		"`scope=project&project=${encodeURIComponent(state.projectID)}`",
+		"`as=${encodeURIComponent(state.view)}`",
+		"`/v1/handoffs?${q}&limit=${limit}`",
+	}
+	for _, bad := range forbidden {
+		if strings.Contains(body, bad) {
+			t.Fatalf("loadList still contains hand-built query fragment %q", bad)
+		}
+	}
+}

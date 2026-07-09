@@ -357,16 +357,16 @@ async function refreshAll() {
 
 async function loadList() {
   try {
-    const limit = encodeURIComponent(els.limitSelect.value);
-    let q;
+    const q = new URLSearchParams({ limit: els.limitSelect.value });
     if (state.view === "project" && state.projectID) {
-      q = `scope=project&project=${encodeURIComponent(state.projectID)}`;
+      q.set("scope", "project");
+      q.set("project", state.projectID);
     } else if (state.view === "all") {
-      q = "scope=all";
+      q.set("scope", "all");
     } else {
-      q = `as=${encodeURIComponent(state.view)}`;
+      q.set("as", state.view);
     }
-    const data = await api(`/v1/handoffs?${q}&limit=${limit}`);
+    const data = await api(`/v1/handoffs?${q.toString()}`);
     state.items = data.items || [];
     renderList();
   } catch (err) {
