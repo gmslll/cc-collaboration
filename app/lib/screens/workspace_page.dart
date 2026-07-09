@@ -1693,13 +1693,17 @@ class _WorkspacePageState extends State<WorkspacePage>
                 sessions = null;
                 loading = true;
               });
+              List<RemoteSession> loaded;
               try {
-                sessions = await client.userSessions(identity);
+                loaded = await client.userSessions(identity);
               } catch (_) {
-                sessions = const [];
-              } finally {
-                setSt(() => loading = false);
+                loaded = const [];
               }
+              if (!mounted || !ctx.mounted) return;
+              setSt(() {
+                sessions = loaded;
+                loading = false;
+              });
             }
 
             Future<void> send(RemoteSession s) async {
@@ -2216,6 +2220,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     } catch (e) {
       return '读取待办失败: ${errorText(e)}';
     }
+    if (!mounted) return '工作区已关闭';
     final me = widget.me;
     if (me != null && !todoAccessFor(fallback, me).canAssign) {
       return '你对这条待办没有指派权限';
@@ -2231,6 +2236,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         newWorktreeBranch: req['branch'] as String?,
       );
       if (spawnedSid == null) return '新建会话失败: ${err ?? "未知错误"}';
+      if (!mounted) return '工作区已关闭';
       sid = spawnedSid;
       waitForAgentId = true; // codex mints its id async — poll before binding
     } else {
@@ -2244,14 +2250,17 @@ class _WorkspacePageState extends State<WorkspacePage>
     var card = _remoteCard(sid);
     for (var i = 0; i < 5 && (card?.workdir ?? '').isEmpty; i++) {
       await Future.delayed(const Duration(milliseconds: 100));
+      if (!mounted) return '工作区已关闭';
       card = _remoteCard(sid);
     }
+    if (!mounted) return '工作区已关闭';
     final prep = await prepareTodoAssignmentText(
       client: client,
       todoId: todoId,
       fallbackTodo: fallback,
       workdir: card?.workdir ?? '',
     );
+    if (!mounted) return '工作区已关闭';
     final dispatchErr = deliverLocalMessage(
       LocalMsg('', sid, prep.taskText, true),
     );
@@ -2262,6 +2271,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (waitForAgentId && (card?.agentSessionId ?? '').isEmpty) {
       for (var i = 0; i < 15 && (card?.agentSessionId ?? '').isEmpty; i++) {
         await Future.delayed(const Duration(milliseconds: 200));
+        if (!mounted) return '工作区已关闭';
         card = _remoteCard(sid);
       }
     }

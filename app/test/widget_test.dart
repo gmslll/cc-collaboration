@@ -499,6 +499,15 @@ void main() {
       expect(guardIndex, lessThan(beforeIndex));
     }
 
+    void expectMarkerBefore(String body, String marker, String before) {
+      final markerIndex = body.indexOf(marker);
+      final beforeIndex = body.indexOf(before, markerIndex);
+
+      expect(markerIndex, isNonNegative);
+      expect(beforeIndex, isNonNegative);
+      expect(markerIndex, lessThan(beforeIndex));
+    }
+
     expectGuardBefore(
       between('Future<String?> _nameDialog(', 'void _refreshFileTrees('),
       'if (raw == null) return null;',
@@ -587,6 +596,44 @@ void main() {
       ),
       'if (draft == null) return;',
       'await _runCli(',
+    );
+    final onlineSend = between(
+      'Future<void> _showSendToOnlineUser(String text)',
+      'Future<void> _loadTasks()',
+    );
+    expectMarkerBefore(
+      onlineSend,
+      'if (!mounted || !ctx.mounted) return;',
+      'setSt(() {',
+    );
+    final remoteAssign = between(
+      'Future<String?> _remoteAssignTodo(',
+      'SessionCard? _remoteCard(',
+    );
+    expectGuardBefore(
+      remoteAssign,
+      'fallback = await client.todo(todoId);',
+      'final me = widget.me;',
+    );
+    expectGuardBefore(
+      remoteAssign,
+      'final (spawnedSid, err) = await _spawnForDispatch',
+      'sid = spawnedSid;',
+    );
+    expectGuardBefore(
+      remoteAssign,
+      'await Future.delayed(const Duration(milliseconds: 100));',
+      'card = _remoteCard(sid);',
+    );
+    expectGuardBefore(
+      remoteAssign,
+      'final prep = await prepareTodoAssignmentText',
+      'final dispatchErr = deliverLocalMessage',
+    );
+    expectGuardBefore(
+      remoteAssign,
+      'await Future.delayed(const Duration(milliseconds: 200));',
+      'card = _remoteCard(sid);',
     );
   });
 
