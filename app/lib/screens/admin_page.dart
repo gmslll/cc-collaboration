@@ -33,6 +33,7 @@ class _AdminPageState extends State<AdminPage> {
   final _identity = TextEditingController();
   final _password = TextEditingController();
   bool _newAdmin = false;
+  bool _creating = false;
   int _loadGeneration = 0;
 
   @override
@@ -50,7 +51,7 @@ class _AdminPageState extends State<AdminPage> {
     super.dispose();
   }
 
-  bool get _canCreateUser => _identity.text.trim().isNotEmpty;
+  bool get _canCreateUser => !_creating && _identity.text.trim().isNotEmpty;
 
   void _onCreateInputChanged() {
     if (mounted) setState(() {});
@@ -76,7 +77,8 @@ class _AdminPageState extends State<AdminPage> {
 
   Future<void> _create() async {
     final id = _identity.text.trim();
-    if (id.isEmpty) return;
+    if (id.isEmpty || _creating) return;
+    setState(() => _creating = true);
     try {
       final pw = await widget.client.createUser(
         id,
@@ -93,6 +95,8 @@ class _AdminPageState extends State<AdminPage> {
       }
     } catch (e) {
       if (mounted) snack(context, '创建失败: ${errorText(e)}');
+    } finally {
+      if (mounted) setState(() => _creating = false);
     }
   }
 
@@ -199,7 +203,7 @@ class _AdminPageState extends State<AdminPage> {
                         ),
                         FilledButton(
                           onPressed: _canCreateUser ? _create : null,
-                          child: const Text('创建账号'),
+                          child: Text(_creating ? '创建中...' : '创建账号'),
                         ),
                       ],
                     );

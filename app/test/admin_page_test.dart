@@ -139,6 +139,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('admin create is disabled while request is in flight', (
+    tester,
+  ) async {
+    final client = _DelayedCreateAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'new@x');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+    await tester.pump();
+
+    expect(client.createCount, 1);
+    expect(find.widgetWithText(FilledButton, '创建中...'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '创建中...'))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, '创建中...'));
+    await tester.pump();
+    expect(client.createCount, 1);
+
+    client.completeCreate(null);
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, '创建账号'), findsOneWidget);
+    expect(client.createCount, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('admin generated password dialog title is width constrained', (
     tester,
   ) async {
@@ -219,13 +257,17 @@ class _AdminPageFakeClient extends RelayClient {
 
 class _DelayedCreateAdminPageFakeClient extends _AdminPageFakeClient {
   final _createCompleter = Completer<String?>();
+  int createCount = 0;
 
   @override
   Future<String?> createUser(
     String identity, {
     String? password,
     bool isAdmin = false,
-  }) => _createCompleter.future;
+  }) {
+    createCount += 1;
+    return _createCompleter.future;
+  }
 
   void completeCreate(String? password) {
     if (!_createCompleter.isCompleted) {
