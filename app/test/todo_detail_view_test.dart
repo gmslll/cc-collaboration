@@ -278,6 +278,63 @@ void main() {
     expect(find.text('高'), findsOneWidget);
     expect(find.text('普通'), findsNothing);
   });
+
+  testWidgets('stale text save response cannot overwrite a newer save', (
+    tester,
+  ) async {
+    final client = _DelayedTodoClient(delayUpdate: true);
+    final todo = _todo('td-save-race', 'initial title');
+    final changed = <Todo>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(
+            client: client,
+            todo: todo,
+            onChanged: changed.add,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    client.completeTodo('td-save-race', todo);
+    await tester.pumpAndSettle();
+
+    final titleField = find.byType(TextField).first;
+    await tester.enterText(titleField, 'older title');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await tester.enterText(titleField, 'newer title');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+
+    final firstOlderSave = client.updatedTitles.indexOf('older title');
+    final latestNewerSave = client.updatedTitles.lastIndexOf('newer title');
+    expect(firstOlderSave, isNot(-1));
+    expect(latestNewerSave, isNot(-1));
+    expect(latestNewerSave, greaterThan(firstOlderSave));
+
+    client.completeUpdate(
+      _todo('td-save-race', 'newer title'),
+      index: latestNewerSave,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextField, 'newer title'), findsOneWidget);
+    expect(changed.map((t) => t.title), ['newer title']);
+
+    client.completeUpdate(
+      _todo('td-save-race', 'older title'),
+      index: firstOlderSave,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextField, 'newer title'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'older title'), findsNothing);
+    expect(changed.map((t) => t.title), ['newer title']);
+  });
 }
 
 Todo _todo(
@@ -321,13 +378,14 @@ class _DelayedTodoClient extends RelayClient {
   final requestedTodos = <String>[];
   final requestedComments = <String>[];
   final postedComments = <String>[];
+  final updatedTitles = <String>[];
   int deleteCalls = 0;
   int updateCalls = 0;
   final _todos = <String, Completer<Todo>>{};
   final _comments = <String, Completer<List<TodoComment>>>{};
   final _posts = <String, Completer<TodoComment>>{};
   final _delete = Completer<void>();
-  final _update = Completer<Todo>();
+  final _updates = <Completer<Todo>>[];
 
   @override
   Future<Todo> todo(String id) {
@@ -376,7 +434,12 @@ class _DelayedTodoClient extends RelayClient {
     String? groupName,
   }) {
     updateCalls++;
-    if (delayUpdate) return _update.future;
+    updatedTitles.add(title ?? '');
+    if (delayUpdate) {
+      final completer = Completer<Todo>();
+      _updates.add(completer);
+      return completer.future;
+    }
     return Future.value(
       _todo(id, title ?? 'updated', priority: priority ?? 'normal'),
     );
@@ -398,7 +461,7 @@ class _DelayedTodoClient extends RelayClient {
     if (!_delete.isCompleted) _delete.complete();
   }
 
-  void completeUpdate(Todo todo) {
-    if (!_update.isCompleted) _update.complete(todo);
+  void completeUpdate(Todo todo, {int index = 0}) {
+    if (!_updates[index].isCompleted) _updates[index].complete(todo);
   }
 }

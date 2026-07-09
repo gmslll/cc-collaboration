@@ -107,6 +107,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // body_md itself never has to represent "is this being edited" state.
   bool _bodyEditing = false;
   bool _resumingSession = false;
+  int _textSaveGeneration = 0;
   int _loadGeneration = 0;
   int _commentLoadGeneration = 0;
   // Height (px) of the top pane (title/properties/body, scrollable) above the
@@ -146,6 +147,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
       }
       _bodyDebounce?.cancel();
       setState(() {
+        _textSaveGeneration++;
         _current = widget.todo;
         _titleCtl.text = widget.todo.title;
         _bodyCtl.text = widget.todo.bodyMd;
@@ -295,6 +297,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
       return;
     }
     _bodyDebounce?.cancel();
+    final saveGeneration = ++_textSaveGeneration;
     setState(() => _saving = true);
     final client = _client;
     final id = _id;
@@ -307,6 +310,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
         bodyMd: sentBody,
       );
       if (!_isCurrentTodoClient(client, id)) return;
+      if (saveGeneration != _textSaveGeneration) return;
       // If the field(s) changed again while this request was in flight, the
       // just-saved snapshot is already stale — keep _textDirty set (and
       // re-arm the debounce) instead of clearing it, so those newer
@@ -325,6 +329,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
       _applyUpdated(updated);
     } catch (e) {
       if (!_isCurrentTodoClient(client, id)) return;
+      if (saveGeneration != _textSaveGeneration) return;
       setState(() => _saving = false);
       if (!mounted) return;
       snack(context, '保存失败: ${errorText(e)}');
