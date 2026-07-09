@@ -29,4 +29,11 @@ void main() {
       isTrue,
     );
   });
+
+  test('online send dialog constrains long users and session labels', () {
+    expect(source, contains('onlineSendDialogWidth'));
+    expect(source, contains('onlineSendUserChipWidth'));
+    expect(source, contains('maxLines: 1'));
+    expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
 }

@@ -23,6 +23,7 @@ import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
+import '../local/online_send_layout.dart';
 import '../local/lsp/lsp_client.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
@@ -1365,27 +1366,46 @@ class _WorkspacePageState extends State<WorkspacePage>
               }
             }
 
+            final dialogWidth = onlineSendDialogWidth(MediaQuery.sizeOf(ctx));
             return AlertDialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
               title: const Text('发送到在线用户'),
               content: SizedBox(
-                width: 440,
+                width: dialogWidth,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('在线用户:'),
                     const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final u in users)
-                          ChoiceChip(
-                            label: Text(u.identity),
-                            selected: selected == u.identity,
-                            onSelected: (_) => pickUser(u.identity),
-                          ),
-                      ],
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final chipWidth = onlineSendUserChipWidth(constraints);
+                        return Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            for (final u in users)
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: chipWidth,
+                                ),
+                                child: ChoiceChip(
+                                  label: Text(
+                                    u.identity,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  selected: selected == u.identity,
+                                  onSelected: (_) => pickUser(u.identity),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
                     ),
                     const Divider(),
                     if (selected == null)
@@ -1409,10 +1429,18 @@ class _WorkspacePageState extends State<WorkspacePage>
                                   Icons.terminal_rounded,
                                   size: 16,
                                 ),
-                                title: Text(s.label),
+                                title: Text(
+                                  s.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                                 subtitle: s.project.isEmpty
                                     ? null
-                                    : Text(s.project),
+                                    : Text(
+                                        s.project,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                 onTap: () => send(s),
                               ),
                           ],
