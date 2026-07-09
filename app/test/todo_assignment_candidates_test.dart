@@ -121,6 +121,13 @@ void main() {
         80,
       );
       expect(
+        todoMemberRolePillMaxWidth(
+          const BoxConstraints(maxWidth: 80),
+          maxFraction: 0.45,
+        ),
+        36,
+      );
+      expect(
         todoMemberRolePillMaxWidth(const BoxConstraints(maxWidth: 240)),
         128,
       );

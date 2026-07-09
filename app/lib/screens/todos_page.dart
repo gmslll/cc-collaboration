@@ -33,10 +33,12 @@ const double _wideBreakpoint = 720;
 double todoMemberRolePillMaxWidth(
   BoxConstraints constraints, {
   double preferred = 128,
+  double maxFraction = 1,
 }) {
   final maxWidth = constraints.maxWidth;
   if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
-  return maxWidth < preferred ? maxWidth : preferred;
+  final available = maxWidth * maxFraction.clamp(0, 1);
+  return available < preferred ? available : preferred;
 }
 
 // _BoardColumnDef drives both the kanban board's columns and the mobile
@@ -2461,34 +2463,40 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                           if (name.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: 2),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      id,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: CcColors.muted,
-                                      ),
-                                    ),
-                                  ),
-                                  if (role.isNotEmpty) ...[
-                                    const SizedBox(width: 6),
-                                    ConstrainedBox(
-                                      constraints: BoxConstraints(
-                                        maxWidth: todoMemberRolePillMaxWidth(
-                                          const BoxConstraints(),
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  return Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          id,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: CcColors.muted,
+                                          ),
                                         ),
                                       ),
-                                      child: _MemberRolePill(
-                                        label: role,
-                                        selected: sel,
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                                      if (role.isNotEmpty) ...[
+                                        const SizedBox(width: 6),
+                                        ConstrainedBox(
+                                          constraints: BoxConstraints(
+                                            maxWidth:
+                                                todoMemberRolePillMaxWidth(
+                                                  constraints,
+                                                  maxFraction: 0.45,
+                                                ),
+                                          ),
+                                          child: _MemberRolePill(
+                                            label: role,
+                                            selected: sel,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  );
+                                },
                               ),
                             ),
                           if (name.isEmpty && role.isNotEmpty)
