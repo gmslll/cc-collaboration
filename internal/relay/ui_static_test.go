@@ -13,7 +13,7 @@ func TestProjectManageUIActionsAreRoleGated(t *testing.T) {
 	}
 	js := string(src)
 	required := []string{
-		`const canManage = role === "owner" || role === "admin" || state.me?.is_admin;`,
+		`const canManage = canManageOrganization(role);`,
 		"${canManage ? `<button type=\"button\" data-unmap=",
 		"${canManage ? `<form class=\"inline-form\" data-form=\"repo\">",
 		`renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", canChangeRole: canManage, roleAttr: "data-member-role", roles: ["member", "viewer", "owner"], label: "项目成员" })`,
@@ -52,11 +52,11 @@ func TestMemberTableDoesNotRenderLastOwnerAsRemovable(t *testing.T) {
 	}
 	body := js[start : start+end]
 	required := []string{
-		`const ownerCount = members.filter((m) => m.role === "owner").length;`,
-		`const isLastOwner = m.role === "owner" && ownerCount <= 1;`,
+		`const ownerCount = members.filter((m) => roleKey(m.role) === "owner").length;`,
+		`const isLastOwner = roleKey(m.role) === "owner" && ownerCount <= 1;`,
 		`const removeBlockReasons = options.removeBlockReasons || {};`,
 		`const removeDisabledReason = options.removeDisabledReason || "";`,
-		`const removeBlockReason = isLastOwner ? "至少保留一个负责人" : removeDisabledReason || removeBlockReasons[m.identity] || "";`,
+		`const removeBlockReason = isLastOwner ? "至少保留一个负责人" : removeDisabledReason || removeBlockReasons[identityKey(m.identity)] || "";`,
 		`${isLastOwner ? ` + "`disabled title=\"至少保留一个负责人\"`" + ` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`,
 		`disabled title="${escapeAttr(removeBlockReason)}"`,
 		`aria-label="不能移除成员 ${escapeAttr(m.identity)}"`,
@@ -133,6 +133,30 @@ func TestMemberTableKeepsMobileCellLabels(t *testing.T) {
 	}
 }
 
+func TestRelayUIIdentityComparisonsAreTrimmed(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	required := []string{
+		`function identityKey(identity) {`,
+		`return String(identity || "").trim();`,
+		`return Boolean(id && state.online.some((user) => identityKey(user.identity) === id && user.online));`,
+		`const existing = new Set(existingMembers.map((m) => identityKey(m.identity)).filter(Boolean));`,
+		`return identity && !existing.has(identity);`,
+		`identity: identityKey(user.identity), display_name: user.online ? "在线" : "离线"`,
+		`removeBlockReasons[identityKey(m.identity)]`,
+		`const identity = identityKey(owners[0].identity);`,
+		`const projectMemberIDs = new Set(members.map((m) => identityKey(m.identity)).filter(Boolean));`,
+	}
+	for _, want := range required {
+		if !strings.Contains(js, want) {
+			t.Fatalf("relay UI identity comparison is missing trim fragment %q", want)
+		}
+	}
+}
+
 func TestRoleLabelsAreLocalizedInManagementUI(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {
@@ -140,11 +164,15 @@ func TestRoleLabelsAreLocalizedInManagementUI(t *testing.T) {
 	}
 	js := string(src)
 	required := []string{
+		`function roleKey(role) {`,
+		`return String(role || "").trim();`,
 		`function roleLabel(role, scope = "team") {`,
-		`if (role === "owner") return "负责人";`,
-		`if (role === "admin") return "管理员";`,
-		`if (role === "viewer") return "只读";`,
-		`if (role === "guest") return "访客";`,
+		`const value = roleKey(role);`,
+		`if (value === "owner") return "负责人";`,
+		`if (value === "admin") return "管理员";`,
+		`if (value === "viewer") return "只读";`,
+		`if (value === "guest") return "访客";`,
+		`const current = roleKey(currentRole);`,
 		`${escapeHTML(roleLabel(role, "team"))}`,
 		`${metricTile("你的角色", roleLabel(role, "team"))}`,
 		`${escapeHTML(roleLabel(role, "project"))}`,
@@ -333,7 +361,7 @@ func TestOrganizationManageUIProtectsProjectSoleOwners(t *testing.T) {
 	js := string(src)
 	required := []string{
 		`async function organizationMemberRemovalGuards(projects = []) {`,
-		`const owners = members.filter((m) => m.role === "owner");`,
+		`const owners = members.filter((m) => roleKey(m.role) === "owner");`,
 		`if (owners.length === 1) {`,
 		`removeBlockReasons[identity] = ` + "`先转移项目负责人: ${names.join(\", \")}`" + `;`,
 		`removeDisabledReason: uncheckedProjectNames.length ? projectOwnerGuardMessage(uncheckedProjectNames) : "",`,
@@ -363,7 +391,7 @@ func TestProjectRolePrefersFreshProjectListRole(t *testing.T) {
 	body := js[start : start+end]
 	required := []string{
 		`const project = (state.projects || []).find((pr) => pr.id === id);`,
-		`if (project?.role) return project.role;`,
+		`if (roleKey(project?.role)) return roleKey(project.role);`,
 		`const p = (state.me?.projects || []).find((pr) => pr.id === id);`,
 		`return state.me?.is_admin ? "admin" : "viewer";`,
 	}
@@ -394,7 +422,7 @@ func TestOrganizationRolePrefersFreshOrganizationListRole(t *testing.T) {
 	body := js[start : start+end]
 	required := []string{
 		`const fresh = (state.organizations || []).find((o) => o.id === id);`,
-		`if (fresh?.role) return fresh.role;`,
+		`if (roleKey(fresh?.role)) return roleKey(fresh.role);`,
 		`const org = (state.me?.organizations || []).find((o) => o.id === id);`,
 	}
 	for _, want := range required {

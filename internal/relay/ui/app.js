@@ -979,9 +979,9 @@ async function loadOrganizations() {
 
 function organizationRole(id) {
   const fresh = (state.organizations || []).find((o) => o.id === id);
-  if (fresh?.role) return fresh.role;
+  if (roleKey(fresh?.role)) return roleKey(fresh.role);
   const org = (state.me?.organizations || []).find((o) => o.id === id);
-  if (org) return org.role;
+  if (org) return roleKey(org.role);
   return state.me?.is_admin ? "admin" : "member";
 }
 
@@ -991,11 +991,21 @@ function organizationName(id) {
 }
 
 function canManageOrganization(role) {
-  return state.me?.is_admin || role === "owner" || role === "admin";
+  const value = roleKey(role);
+  return state.me?.is_admin || value === "owner" || value === "admin";
+}
+
+function identityKey(identity) {
+  return String(identity || "").trim();
+}
+
+function roleKey(role) {
+  return String(role || "").trim();
 }
 
 function isOnlineIdentity(identity) {
-  return state.online.some((user) => user.identity === identity && user.online);
+  const id = identityKey(identity);
+  return Boolean(id && state.online.some((user) => identityKey(user.identity) === id && user.online));
 }
 
 function memberPresence(identity) {
@@ -1004,25 +1014,28 @@ function memberPresence(identity) {
 }
 
 function roleTone(role) {
-  return ["owner", "admin", "member", "viewer", "guest"].includes(role) ? `role-${role}` : "role-member";
+  const value = roleKey(role);
+  return ["owner", "admin", "member", "viewer", "guest"].includes(value) ? `role-${value}` : "role-member";
 }
 
 function roleLabel(role, scope = "team") {
+  const value = roleKey(role);
   if (scope === "project") {
-    if (role === "owner") return "负责人";
-    if (role === "admin") return "管理员";
-    if (role === "viewer") return "只读";
-    if (role === "member") return "成员";
+    if (value === "owner") return "负责人";
+    if (value === "admin") return "管理员";
+    if (value === "viewer") return "只读";
+    if (value === "member") return "成员";
   }
-  if (role === "owner") return "负责人";
-  if (role === "admin") return "管理员";
-  if (role === "guest") return "访客";
-  if (role === "member") return "成员";
-  return role || "成员";
+  if (value === "owner") return "负责人";
+  if (value === "admin") return "管理员";
+  if (value === "guest") return "访客";
+  if (value === "member") return "成员";
+  return value || "成员";
 }
 
 function roleSelectOptions(roles, currentRole) {
-  return roles.map((role) => `<option value="${escapeAttr(role)}" ${role === currentRole ? "selected" : ""}>${escapeHTML(roleLabel(role, role === "viewer" ? "project" : "team"))}</option>`).join("");
+  const current = roleKey(currentRole);
+  return roles.map((role) => `<option value="${escapeAttr(role)}" ${role === current ? "selected" : ""}>${escapeHTML(roleLabel(role, role === "viewer" ? "project" : "team"))}</option>`).join("");
 }
 
 function metricTile(label, value) {
@@ -1045,10 +1058,13 @@ function memberCandidateOptions(candidates) {
 }
 
 function reachableUserCandidates(existingMembers = []) {
-  const existing = new Set(existingMembers.map((m) => m.identity));
+  const existing = new Set(existingMembers.map((m) => identityKey(m.identity)).filter(Boolean));
   return state.online
-    .filter((user) => user.identity && !existing.has(user.identity))
-    .map((user) => ({ identity: user.identity, display_name: user.online ? "在线" : "离线" }));
+    .filter((user) => {
+      const identity = identityKey(user.identity);
+      return identity && !existing.has(identity);
+    })
+    .map((user) => ({ identity: identityKey(user.identity), display_name: user.online ? "在线" : "离线" }));
 }
 
 function memberCandidateForm(kind, candidates, roles) {
@@ -1076,7 +1092,7 @@ function renderMemberTable(members, options = {}) {
   const roleAttr = options.roleAttr || "";
   const roleOptions = options.roles || [];
   const canChangeRole = Boolean(options.canChangeRole && roleAttr && roleOptions.length);
-  const ownerCount = members.filter((m) => m.role === "owner").length;
+  const ownerCount = members.filter((m) => roleKey(m.role) === "owner").length;
   const removeBlockReasons = options.removeBlockReasons || {};
   const removeDisabledReason = options.removeDisabledReason || "";
   return `
@@ -1090,8 +1106,8 @@ function renderMemberTable(members, options = {}) {
       ${members.map((m) => {
         const displayName = (m.display_name || "").trim();
         const online = isOnlineIdentity(m.identity);
-        const isLastOwner = m.role === "owner" && ownerCount <= 1;
-        const removeBlockReason = isLastOwner ? "至少保留一个负责人" : removeDisabledReason || removeBlockReasons[m.identity] || "";
+        const isLastOwner = roleKey(m.role) === "owner" && ownerCount <= 1;
+        const removeBlockReason = isLastOwner ? "至少保留一个负责人" : removeDisabledReason || removeBlockReasons[identityKey(m.identity)] || "";
         const roleControl = canChangeRole
           ? `<select class="member-role-select" ${roleAttr}="${escapeAttr(m.identity)}" aria-label="更新成员 ${escapeAttr(m.identity)} 的角色" ${isLastOwner ? `disabled title="至少保留一个负责人"` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`
           : `<span class="role-pill ${roleTone(m.role)}">${escapeHTML(roleLabel(m.role, roleOptions.includes("viewer") ? "project" : "team"))}</span>`;
@@ -1124,9 +1140,9 @@ async function organizationMemberRemovalGuards(projects = []) {
     try {
       const detail = await api(`/v1/projects/${encodeURIComponent(project.id)}`);
       const members = detail.members || [];
-      const owners = members.filter((m) => m.role === "owner");
+      const owners = members.filter((m) => roleKey(m.role) === "owner");
       if (owners.length === 1) {
-        const identity = owners[0].identity;
+        const identity = identityKey(owners[0].identity);
         if (!soleProjectOwnerNames[identity]) soleProjectOwnerNames[identity] = [];
         soleProjectOwnerNames[identity].push(project.name || project.id);
       }
@@ -1369,9 +1385,9 @@ function renderProjectOrgOptions() {
 
 function projectRole(id) {
   const project = (state.projects || []).find((pr) => pr.id === id);
-  if (project?.role) return project.role;
+  if (roleKey(project?.role)) return roleKey(project.role);
   const p = (state.me?.projects || []).find((pr) => pr.id === id);
-  if (p) return p.role;
+  if (p) return roleKey(p.role);
   return state.me?.is_admin ? "admin" : "viewer";
 }
 
@@ -1382,7 +1398,7 @@ function renderProjects() {
   }
   els.projectsList.innerHTML = state.projects.map((p) => {
     const role = projectRole(p.id);
-    const canManage = role === "owner" || role === "admin" || state.me?.is_admin;
+    const canManage = canManageOrganization(role);
     const teamName = organizationName(p.org_id);
     return `
       <div class="aux-card project-card" data-project="${escapeAttr(p.id)}">
@@ -1508,7 +1524,7 @@ async function renderProjectManage(id, body) {
     const members = data.members || [];
     const project = data.project || {};
     const role = projectRole(id);
-    const canManage = role === "owner" || role === "admin" || state.me?.is_admin;
+    const canManage = canManageOrganization(role);
     let orgMembers = [];
     if (project.org_id) {
       try {
@@ -1518,8 +1534,11 @@ async function renderProjectManage(id, body) {
         orgMembers = [];
       }
     }
-    const projectMemberIDs = new Set(members.map((m) => m.identity));
-    const memberCandidates = orgMembers.filter((m) => !projectMemberIDs.has(m.identity));
+    const projectMemberIDs = new Set(members.map((m) => identityKey(m.identity)).filter(Boolean));
+    const memberCandidates = orgMembers.filter((m) => {
+      const identity = identityKey(m.identity);
+      return identity && !projectMemberIDs.has(identity);
+    });
     const onlineCount = members.filter((m) => isOnlineIdentity(m.identity)).length;
     body.innerHTML = `
       <div class="team-summary-strip">
