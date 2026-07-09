@@ -221,6 +221,56 @@ void main() {
     expect(org.role, 'owner');
   });
 
+  test('multi-tenant models trim ids identities names and roles', () {
+    final me = Me.fromJson({
+      'identity': ' alice ',
+      'organizations': [
+        {'id': ' org-a ', 'name': ' Team A ', 'role': ' admin '},
+      ],
+      'projects': [
+        {
+          'id': ' p1 ',
+          'org_id': ' org-a ',
+          'name': ' Project A ',
+          'role': ' owner ',
+        },
+      ],
+    });
+    final org = Organization.fromJson({
+      'id': ' org-a ',
+      'name': ' Team A ',
+      'owner_identity': ' alice ',
+      'role': ' owner ',
+    });
+    final project = Project.fromJson({
+      'id': ' p1 ',
+      'org_id': ' org-a ',
+      'name': ' Project A ',
+      'owner_identity': ' alice ',
+      'role': ' member ',
+    });
+    final online = OnlineUser.fromJson({'identity': ' alice ', 'online': true});
+
+    expect(me.identity, 'alice');
+    expect(me.organizations.single.id, 'org-a');
+    expect(me.organizations.single.name, 'Team A');
+    expect(me.organizations.single.role, 'admin');
+    expect(me.projects.single.id, 'p1');
+    expect(me.projects.single.orgId, 'org-a');
+    expect(me.projects.single.name, 'Project A');
+    expect(me.projects.single.role, 'owner');
+    expect(org.id, 'org-a');
+    expect(org.name, 'Team A');
+    expect(org.ownerIdentity, 'alice');
+    expect(org.role, 'owner');
+    expect(project.id, 'p1');
+    expect(project.orgId, 'org-a');
+    expect(project.name, 'Project A');
+    expect(project.ownerIdentity, 'alice');
+    expect(project.role, 'member');
+    expect(online.identity, 'alice');
+  });
+
   test('Status.fromJson handles null picked_at', () {
     final s = Status.fromJson({
       'state': 'pending',

@@ -162,18 +162,18 @@ class Comment {
 class ProjectRole {
   final String id, orgId, name, role;
   ProjectRole.fromJson(Map<String, dynamic> j)
-      : id = _s(j['id']),
-        orgId = _s(j['org_id']),
-        name = _s(j['name']),
-        role = _s(j['role']);
+      : id = _trimmed(j['id']),
+        orgId = _trimmed(j['org_id']),
+        name = _trimmed(j['name']),
+        role = _trimmed(j['role']);
 }
 
 class OrganizationRole {
   final String id, name, role;
   OrganizationRole.fromJson(Map<String, dynamic> j)
-      : id = _s(j['id']),
-        name = _s(j['name']),
-        role = _s(j['role']);
+      : id = _trimmed(j['id']),
+        name = _trimmed(j['name']),
+        role = _trimmed(j['role']);
 }
 
 class Me {
@@ -182,7 +182,7 @@ class Me {
   final List<OrganizationRole> organizations;
   final List<ProjectRole> projects;
   Me.fromJson(Map<String, dynamic> j)
-      : identity = _s(j['identity']),
+      : identity = _trimmed(j['identity']),
         isAdmin = j['is_admin'] == true,
         organizations = (j['organizations'] as List?)
                 ?.map((e) => OrganizationRole.fromJson(e as Map<String, dynamic>))
@@ -205,10 +205,10 @@ class Me {
 class Organization {
   final String id, name, ownerIdentity, role;
   Organization.fromJson(Map<String, dynamic> j)
-      : id = _s(j['id']),
-        name = _s(j['name']),
-        ownerIdentity = _s(j['owner_identity']),
-        role = _s(j['role']);
+      : id = _trimmed(j['id']),
+        name = _trimmed(j['name']),
+        ownerIdentity = _trimmed(j['owner_identity']),
+        role = _trimmed(j['role']);
 }
 
 class OrganizationMember {
@@ -239,11 +239,11 @@ class OrganizationDetail {
 class Project {
   final String id, orgId, name, ownerIdentity, role;
   Project.fromJson(Map<String, dynamic> j)
-      : id = _s(j['id']),
-        orgId = _s(j['org_id']),
-        name = _s(j['name']),
-        ownerIdentity = _s(j['owner_identity']),
-        role = _s(j['role']);
+      : id = _trimmed(j['id']),
+        orgId = _trimmed(j['org_id']),
+        name = _trimmed(j['name']),
+        ownerIdentity = _trimmed(j['owner_identity']),
+        role = _trimmed(j['role']);
 }
 
 class ProjectMember {
@@ -273,7 +273,7 @@ class OnlineUser {
   final String identity;
   final bool online;
   OnlineUser.fromJson(Map<String, dynamic> j)
-      : identity = _s(j['identity']),
+      : identity = _trimmed(j['identity']),
         online = j['online'] == true;
 }
 
