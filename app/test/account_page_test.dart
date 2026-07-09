@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
@@ -13,6 +14,17 @@ void main() {
     expect(accountMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));
     expect(accountMenuMaxHeight(const Size(320, 220)), 160);
     expect(accountMenuMaxHeight(Size.zero), 320);
+  });
+
+  test('local config save is guarded against duplicate submits', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+    final saveLocalConfig = source.substring(
+      source.indexOf('Future<void> _saveLocalConfig() async'),
+      source.indexOf('Future<void> _loadTokens() async'),
+    );
+
+    expect(saveLocalConfig, contains('if (_savingCfg) return;'));
+    expect(saveLocalConfig, contains('setState(() => _savingCfg = true);'));
   });
 
   testWidgets('password change completion after unmount is ignored', (

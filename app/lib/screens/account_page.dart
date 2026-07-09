@@ -315,6 +315,7 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _saveLocalConfig() async {
+    if (_savingCfg) return;
     setState(() => _savingCfg = true);
     try {
       await Cli.configSet(
