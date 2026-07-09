@@ -140,10 +140,10 @@ class RelayClient {
     final r = await _dio.get(
       '/v1/todos',
       queryParameters: {
-        'scope': scope,
-        'project': ?project,
-        'status': ?status,
-        'group': ?group,
+        'scope': scope.trim(),
+        'project': ?_trimOrNull(project),
+        'status': ?_trimOrNull(status),
+        'group': ?_trimOrNull(group),
         'limit': ?limit,
       },
     );
@@ -174,13 +174,13 @@ class RelayClient {
       data: {
         'title': title,
         'body_md': bodyMd,
-        'priority': priority,
-        'project_id': ?projectId,
-        'recurrence': recurrence,
+        'priority': priority.trim(),
+        'project_id': ?_trimOrNull(projectId),
+        'recurrence': recurrence.trim(),
         if (dueAt != null) 'due_at': dueAt.toUtc().toIso8601String(),
-        'workspace_name': ?workspaceName,
-        'repo_name': ?repoName,
-        'group_name': ?groupName,
+        'workspace_name': ?_trimOrNull(workspaceName),
+        'repo_name': ?_trimOrNull(repoName),
+        'group_name': ?_trimOrNull(groupName),
       },
     );
     return Todo.fromJson(r.data as Map<String, dynamic>);
@@ -208,15 +208,15 @@ class RelayClient {
       data: {
         'title': ?title,
         'body_md': ?bodyMd,
-        'priority': ?priority,
-        'recurrence': ?recurrence,
+        'priority': ?_trimOptional(priority),
+        'recurrence': ?_trimOptional(recurrence),
         if (clearDueAt)
           'due_at': null
         else if (dueAt != null)
           'due_at': dueAt.toUtc().toIso8601String(),
-        'workspace_name': ?workspaceName,
-        'repo_name': ?repoName,
-        'group_name': ?groupName,
+        'workspace_name': ?_trimOptional(workspaceName),
+        'repo_name': ?_trimOptional(repoName),
+        'group_name': ?_trimOptional(groupName),
       },
     );
     return Todo.fromJson(r.data as Map<String, dynamic>);
@@ -231,7 +231,7 @@ class RelayClient {
   Future<List<String>> todoGroups({String? projectId}) async {
     final r = await _dio.get(
       '/v1/todos/groups',
-      queryParameters: {'project': ?projectId},
+      queryParameters: {'project': ?_trimOrNull(projectId)},
     );
     return _asList(r.data, 'groups').cast<String>();
   }
@@ -243,15 +243,15 @@ class RelayClient {
   }) => _dio.post(
     '/v1/todos/groups/rename',
     data: {
-      'project_id': projectId ?? '',
-      'old_name': oldName,
-      'new_name': newName,
+      'project_id': _trimOptional(projectId) ?? '',
+      'old_name': oldName.trim(),
+      'new_name': newName.trim(),
     },
   );
 
   Future<void> clearTodoGroup(String name, {String? projectId}) => _dio.post(
     '/v1/todos/groups/clear',
-    data: {'project_id': projectId ?? '', 'name': name},
+    data: {'project_id': _trimOptional(projectId) ?? '', 'name': name.trim()},
   );
 
   Future<Todo> setTodoStatus(String id, TodoStatus status) async {
@@ -284,15 +284,26 @@ class RelayClient {
     String? assigneeWorkdir,
     String? assigneeAgentKind,
   }) async {
+    final identity = _trimOptional(assigneeIdentity);
+    final clearAssignment = identity == null || identity.isEmpty;
+    final sessionId = clearAssignment ? null : _trimOrNull(assigneeSessionId);
+    final sessionLabel = clearAssignment
+        ? null
+        : _trimOrNull(assigneeSessionLabel);
+    final agentSessionId = clearAssignment
+        ? null
+        : _trimOrNull(assigneeAgentSessionId);
+    final workdir = clearAssignment ? null : _trimOrNull(assigneeWorkdir);
+    final agentKind = clearAssignment ? null : _trimOrNull(assigneeAgentKind);
     final r = await _dio.post(
       '/v1/todos/${_pathSegment(id)}/assign',
       data: {
-        'assignee_identity': ?assigneeIdentity,
-        'assignee_session_id': ?assigneeSessionId,
-        'assignee_session_label': ?assigneeSessionLabel,
-        'assignee_agent_session_id': ?assigneeAgentSessionId,
-        'assignee_workdir': ?assigneeWorkdir,
-        'assignee_agent_kind': ?assigneeAgentKind,
+        'assignee_identity': ?identity,
+        'assignee_session_id': ?sessionId,
+        'assignee_session_label': ?sessionLabel,
+        'assignee_agent_session_id': ?agentSessionId,
+        'assignee_workdir': ?workdir,
+        'assignee_agent_kind': ?agentKind,
       },
     );
     return Todo.fromJson(r.data as Map<String, dynamic>);
@@ -620,6 +631,14 @@ String _authErrText(DioException e) {
       return e.message ?? '请求失败';
   }
 }
+
+String? _trimOrNull(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return trimmed;
+}
+
+String? _trimOptional(String? value) => value?.trim();
 
 // _asList tolerates either a bare JSON array or a wrapped object
 // ({"items":[...]} / {"comments":[...]}); falls back to the first list value.

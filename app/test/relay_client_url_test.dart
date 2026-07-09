@@ -124,4 +124,142 @@ void main() {
       'project_id': 'project-1',
     });
   });
+
+  test('normalizes todo team fields before sending requests', () async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final seen = <Map<String, dynamic>>[];
+    server.listen((req) async {
+      Map<String, dynamic> body = const {};
+      if (req.method != 'GET') {
+        final raw = await utf8.decoder.bind(req).join();
+        body = raw.isEmpty ? const {} : jsonDecode(raw) as Map<String, dynamic>;
+      }
+      seen.add({
+        'method': req.method,
+        'path': req.uri.path,
+        'query': req.uri.queryParameters,
+        'body': body,
+      });
+      req.response.headers.contentType = ContentType.json;
+      if (req.uri.path == '/v1/todos' && req.method == 'GET') {
+        req.response.write(jsonEncode({'items': []}));
+      } else if (req.uri.path == '/v1/todos/groups') {
+        req.response.write(jsonEncode({'groups': []}));
+      } else if (req.uri.path.contains('/groups/')) {
+        req.response.write(jsonEncode({'ok': true}));
+      } else {
+        req.response.write(jsonEncode(_todoResponse()));
+      }
+      await req.response.close();
+    });
+
+    final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
+    await client.todos(
+      scope: ' project ',
+      project: ' project-1 ',
+      status: ' in_review ',
+      group: ' Sprint ',
+    );
+    await client.createTodo(
+      title: '  keep title padding  ',
+      bodyMd: '  keep body padding  ',
+      priority: ' high ',
+      projectId: ' project-1 ',
+      recurrence: ' weekly ',
+      workspaceName: ' Workspace ',
+      repoName: ' Repo ',
+      groupName: ' Sprint ',
+    );
+    await client.updateTodo(
+      'td1',
+      priority: ' low ',
+      recurrence: ' ',
+      workspaceName: ' ',
+      repoName: ' Repo ',
+      groupName: ' Sprint ',
+    );
+    await client.todoGroups(projectId: ' project-1 ');
+    await client.renameTodoGroup(' Old ', ' New ', projectId: ' project-1 ');
+    await client.clearTodoGroup(' Old ', projectId: ' project-1 ');
+    await client.assignTodo(
+      'td1',
+      assigneeIdentity: ' dev@x ',
+      assigneeSessionId: ' ts1 ',
+      assigneeSessionLabel: ' codex ',
+      assigneeAgentSessionId: ' agent-1 ',
+      assigneeWorkdir: ' /tmp/repo ',
+      assigneeAgentKind: ' codex ',
+    );
+    await client.assignTodo(
+      'td1',
+      assigneeIdentity: '   ',
+      assigneeSessionId: ' ts1 ',
+      assigneeSessionLabel: ' codex ',
+      assigneeAgentSessionId: ' agent-1 ',
+      assigneeWorkdir: ' /tmp/repo ',
+      assigneeAgentKind: ' codex ',
+    );
+
+    expect(seen[0]['query'], {
+      'scope': 'project',
+      'project': 'project-1',
+      'status': 'in_review',
+      'group': 'Sprint',
+    });
+    expect(seen[1]['body'], {
+      'title': '  keep title padding  ',
+      'body_md': '  keep body padding  ',
+      'priority': 'high',
+      'project_id': 'project-1',
+      'recurrence': 'weekly',
+      'workspace_name': 'Workspace',
+      'repo_name': 'Repo',
+      'group_name': 'Sprint',
+    });
+    expect(seen[2]['body'], {
+      'priority': 'low',
+      'recurrence': '',
+      'workspace_name': '',
+      'repo_name': 'Repo',
+      'group_name': 'Sprint',
+    });
+    expect(seen[3]['query'], {'project': 'project-1'});
+    expect(seen[4]['body'], {
+      'project_id': 'project-1',
+      'old_name': 'Old',
+      'new_name': 'New',
+    });
+    expect(seen[5]['body'], {'project_id': 'project-1', 'name': 'Old'});
+    expect(seen[6]['body'], {
+      'assignee_identity': 'dev@x',
+      'assignee_session_id': 'ts1',
+      'assignee_session_label': 'codex',
+      'assignee_agent_session_id': 'agent-1',
+      'assignee_workdir': '/tmp/repo',
+      'assignee_agent_kind': 'codex',
+    });
+    expect(seen[7]['body'], {'assignee_identity': ''});
+  });
 }
+
+Map<String, dynamic> _todoResponse() => {
+  'id': 'td1',
+  'project_id': 'project-1',
+  'owner_identity': 'owner@x',
+  'title': 'todo',
+  'body_md': '',
+  'status': 'todo',
+  'priority': 'normal',
+  'assignee_identity': null,
+  'assignee_display_name': null,
+  'assignee_session_id': null,
+  'assignee_session_label': null,
+  'recurrence': '',
+  'due_at': null,
+  'next_occurrence_at': null,
+  'completed_at': null,
+  'created_at': '2026-01-01T00:00:00Z',
+  'updated_at': '2026-01-01T00:00:00Z',
+  'comment_count': 0,
+  'attachment_count': 0,
+};
