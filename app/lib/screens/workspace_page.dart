@@ -32,6 +32,7 @@ import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
 import '../local/todo_permissions.dart';
 import '../local/todo_store.dart';
+import '../local/todo_workspace_scope.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
 import '../remote/file_transfer.dart';
@@ -6749,26 +6750,33 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  // _todosSidebarItems: personal todos always show; team todos only for the
-  // workspace's currently active project (_currentGitProject, resolved to a
-  // relay project id via Me.projects) — the sidebar has no room for the
-  // top-level 待办 page's scope/project filter UI.
+  // _todosSidebarItems: personal todos always show; team todos show when they
+  // are bound to this exact workspace/project, or when the current project name
+  // resolves to one unambiguous relay project id. Duplicate project names across
+  // teams are deliberately not guessed — SaaS teams can share names.
   List<Todo> get _todosSidebarItems {
     if (widget.client == null || widget.me == null) return const [];
-    final projectId = _currentTodosSidebarProjectId;
+    final currentProject = _currentGitProject;
+    final currentWorkspaceName = _currentGitWorkspaceName;
     final items = widget.store.all.where((t) {
-      if (t.isPersonal) return true;
-      return projectId != null && t.projectId == projectId;
+      return todoInWorkspaceScope(
+        t,
+        projectRoles: widget.me!.projects,
+        workspaceName: currentWorkspaceName,
+        projectName: currentProject?.name,
+      );
     }).toList();
     items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return items;
   }
 
-  String? get _currentTodosSidebarProjectId {
-    final name = _currentGitProject?.name;
-    if (name == null) return null;
-    for (final p in widget.me?.projects ?? const []) {
-      if (p.name == name) return p.id;
+  String? get _currentGitWorkspaceName {
+    final current = _currentGitProject;
+    if (current == null) return null;
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (p.path == current.path && p.name == current.name) return ws.name;
+      }
     }
     return null;
   }
