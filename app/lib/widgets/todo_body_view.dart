@@ -19,6 +19,19 @@ import 'todo_attachment_thumb.dart' show fetchTodoAttachmentBytes;
 // of needing WidgetSpan-in-TextSpan plumbing.
 final _imageLineRe = RegExp(r'^!\[([^\]]*)\]\(([^)]+)\)$');
 
+double todoInlineImageMaxHeight(
+  Size screenSize, {
+  double preferred = 360,
+  double minHeight = 160,
+  double maxFraction = 0.48,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 // TodoBodyView is the read-only counterpart to MarkdownLiteEditor: same
 // body_md literal-markdown-string contract, same decorateMarkdownLine/
 // inlineMarkdownSpans styling for text lines, but a line that's exactly
@@ -235,7 +248,10 @@ class _InlineImageState extends State<_InlineImage> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(CcRadius.md),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 360, maxWidth: 520),
+            constraints: BoxConstraints(
+              maxHeight: todoInlineImageMaxHeight(MediaQuery.sizeOf(context)),
+              maxWidth: 520,
+            ),
             child: Image.memory(
               _bytes!,
               fit: BoxFit.contain,

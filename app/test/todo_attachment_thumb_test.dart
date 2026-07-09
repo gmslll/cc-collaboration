@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:app/api/relay_client.dart';
@@ -9,6 +10,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('inline todo image height is responsive', () {
+    expect(todoInlineImageMaxHeight(const Size(1440, 900)), 360);
+    expect(
+      todoInlineImageMaxHeight(const Size(390, 640)),
+      closeTo(307.2, 0.001),
+    );
+    expect(todoInlineImageMaxHeight(const Size(320, 300)), 160);
+  });
+
+  test('inline todo image avoids fixed height', () {
+    final source = File('lib/widgets/todo_body_view.dart').readAsStringSync();
+    final inlineImage = source.substring(source.indexOf('class _InlineImage'));
+
+    expect(inlineImage, contains('todoInlineImageMaxHeight'));
+    expect(inlineImage, isNot(contains('BoxConstraints(maxHeight: 360')));
+  });
+
   testWidgets(
     'stale attachment image load cannot overwrite a newer attachment',
     (tester) async {
