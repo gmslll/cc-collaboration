@@ -8,6 +8,24 @@ void main() {
       if (e is PopupMenuItem<String>) e.value,
   ];
 
+  String? textOf(Widget? widget) {
+    if (widget == null) return null;
+    if (widget is Text) return widget.data;
+    if (widget is Expanded) return textOf(widget.child);
+    if (widget is Row) {
+      for (final child in widget.children) {
+        final text = textOf(child);
+        if (text != null) return text;
+      }
+    }
+    return null;
+  }
+
+  List<String> labels(List<PopupMenuEntry<String>> entries) => [
+    for (final e in entries)
+      if (e is PopupMenuItem<String>) textOf(e.child) ?? '',
+  ];
+
   SendTarget target(int i) => (id: 'ts$i', label: 'session $i');
 
   test('short same-project send targets stay inline', () {
@@ -21,12 +39,15 @@ void main() {
     final entries = sendMenuEntries(same, const []);
 
     expect(values(entries), ['send-same']);
+    expect(labels(entries), ['当前项目会话 (3) ▸']);
+    expect(labels(entries), isNot(contains('发送到「session 0」')));
   });
 
   test('other-project send targets collapse behind their own submenu row', () {
     final entries = sendMenuEntries([target(1)], [target(2), target(3)]);
 
     expect(values(entries), ['send:ts1', 'send-others']);
+    expect(labels(entries), ['发送到「session 1」', '其他会话 (2) ▸']);
   });
 
   test('interject targets use the same grouped peer menu shape', () {
