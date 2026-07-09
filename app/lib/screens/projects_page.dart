@@ -1697,6 +1697,9 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                     Icons.alternate_email_rounded,
                                   ),
                                 ),
+                                onEditingComplete: () {
+                                  if (canSubmitMember) _addMember();
+                                },
                                 onSubmitted: (_) {
                                   if (canSubmitMember) _addMember();
                                 },
@@ -2075,6 +2078,20 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     if (!ok) return;
     if (!mounted) return;
     await _do(() => widget.client.removeMember(widget.id, identity));
+  }
+
+  Future<void> _addMember() async {
+    final member = _member.text.trim();
+    if (member.isEmpty) return;
+    final d = _d;
+    if (d == null || !canUpsertProjectMemberRole(member, _role, d.members)) {
+      return;
+    }
+    final ok = await _do(
+      () => widget.client.addMember(widget.id, member, _role),
+      actionKey: 'addProjectMember',
+    );
+    if (ok) _member.clear();
   }
 
   Future<void> _delete() async {
@@ -2471,10 +2488,17 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                               child: TextField(
                                 controller: _member,
                                 enabled: !_mutating,
+                                textInputAction: TextInputAction.done,
                                 decoration: const InputDecoration(
                                   hintText: 'identity',
                                   isDense: true,
+                                  prefixIcon: Icon(
+                                    Icons.alternate_email_rounded,
+                                  ),
                                 ),
+                                onSubmitted: (_) {
+                                  if (canSubmitMember) _addMember();
+                                },
                               ),
                             ),
                             DropdownButton<String>(
@@ -2507,20 +2531,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                   ? '至少保留一个项目负责人'
                                   : '加成员',
                               child: FilledButton.icon(
-                                onPressed: canSubmitMember
-                                    ? () async {
-                                        final m = _member.text.trim();
-                                        final ok = await _do(
-                                          () => widget.client.addMember(
-                                            widget.id,
-                                            m,
-                                            _role,
-                                          ),
-                                          actionKey: 'addProjectMember',
-                                        );
-                                        if (ok) _member.clear();
-                                      }
-                                    : null,
+                                onPressed: canSubmitMember ? _addMember : null,
                                 icon: _mutationAction == 'addProjectMember'
                                     ? const _InlineButtonSpinner()
                                     : const Icon(

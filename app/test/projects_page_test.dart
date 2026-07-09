@@ -1432,6 +1432,7 @@ void main() {
     final memberField = find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == 'identity',
     );
+    await tester.tap(memberField);
     await tester.enterText(memberField, 'dev@x');
     await tester.pump();
 
@@ -1444,6 +1445,41 @@ void main() {
     await tester.pump();
     expect(find.text('添加中'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(tester.widget<TextField>(memberField).enabled, isFalse);
+
+    client.completeAddMember();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('project sheet member input submits from keyboard', (
+    tester,
+  ) async {
+    final client = _CountingProjectMemberProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'identity',
+    );
+    await tester.showKeyboard(memberField);
+    await tester.enterText(memberField, 'dev@x');
+    await tester.pump();
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+
+    expect(client.addMemberCalls, 1);
+    expect(client.addedMemberIdentity, 'dev@x');
+    expect(find.text('添加中'), findsOneWidget);
     expect(tester.widget<TextField>(memberField).enabled, isFalse);
 
     client.completeAddMember();
