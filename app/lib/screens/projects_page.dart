@@ -510,6 +510,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
         name,
         orgId: createProjectTeamId(_selectedOrgId, _manageableOrgs),
       );
+      if (!mounted) return;
       _name.clear();
       await _load();
     } catch (e) {

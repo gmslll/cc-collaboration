@@ -906,6 +906,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project creation completion after unmount is ignored', (
+    tester,
+  ) async {
+    final client = _CountingCreateProjectFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(1), 'Unmounted Project');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
+    await tester.pump();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: const Scaffold(body: SizedBox()),
+      ),
+    );
+    client.completeCreateProject();
+    await tester.pumpAndSettle();
+
+    expect(client.createProjectCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('organization creation ignores duplicate submit taps', (
     tester,
   ) async {
