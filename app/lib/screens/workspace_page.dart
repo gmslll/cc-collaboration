@@ -790,8 +790,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         });
       }
     };
-    // Right-click "发送到在线用户…" in any terminal routes the selection here.
-    onSendToOnline = _showSendToOnlineUser;
+    // Right-click "发送到在线用户…" in any terminal routes the selection here
+    // only when relay is actually configured.
+    _syncOnlineSendAction();
     // When the active session changes (any path: switch/add/close/restore),
     // re-arm TTS so it reads the now-front session's future turns, not its
     // backlog or another tab's.
@@ -934,6 +935,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (!relayChanged && oldWidget.config == widget.config) return;
 
     _cfg = widget.config;
+    _syncOnlineSendAction();
     if (relayChanged) {
       _remoteHost.removeListener(_onRemoteChange);
       _remoteHost.dispose();
@@ -1030,6 +1032,11 @@ class _WorkspacePageState extends State<WorkspacePage>
       widget.client != null &&
       _cfg.relayUrl.isNotEmpty &&
       _cfg.token.isNotEmpty;
+  bool get _canSendToOnline => _relayConfigured;
+
+  void _syncOnlineSendAction() {
+    onSendToOnline = _canSendToOnline ? _showSendToOnlineUser : null;
+  }
 
   void _connectRelayPresence() {
     if (!_relayConfigured || _cfg.identity.isEmpty) return;
@@ -1479,7 +1486,10 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _reloadConfig() async {
     final cfg = await AppConfig.load();
     if (cfg != null && mounted) {
-      setState(() => _cfg = _mergeReloadedLocalConfig(cfg));
+      setState(() {
+        _cfg = _mergeReloadedLocalConfig(cfg);
+        _syncOnlineSendAction();
+      });
       // Desktop-initiated workspace/project/worktree changes must reach connected
       // phones too — otherwise they only see config edits the phone itself made.
       _remoteHost.broadcastRoots();
@@ -2232,7 +2242,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     final cfg = await AppConfig.load();
     if (cfg != null && mounted) {
-      setState(() => _cfg = _mergeReloadedLocalConfig(cfg));
+      setState(() {
+        _cfg = _mergeReloadedLocalConfig(cfg);
+        _syncOnlineSendAction();
+      });
     }
     _remoteHost.broadcastRoots();
   }
@@ -3752,11 +3765,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       same: g.same,
       others: g.others,
       extraBottom: [
-        ccMenuItem(
-          value: 'online',
-          icon: Icons.cloud_upload_rounded,
-          label: '发送到在线用户…',
-        ),
+        if (_canSendToOnline)
+          ccMenuItem(
+            value: 'online',
+            icon: Icons.cloud_upload_rounded,
+            label: '发送到在线用户…',
+          ),
       ],
     );
     if (v == null || !mounted) return;
@@ -10005,11 +10019,12 @@ class _WorkspacePageState extends State<WorkspacePage>
                   icon: Icons.send_rounded,
                   label: '发送到会话…',
                 ),
-              ccMenuItem(
-                value: 'send-online',
-                icon: Icons.cloud_upload_rounded,
-                label: '发送到在线用户…',
-              ),
+              if (_canSendToOnline)
+                ccMenuItem(
+                  value: 'send-online',
+                  icon: Icons.cloud_upload_rounded,
+                  label: '发送到在线用户…',
+                ),
             ];
           },
         );
