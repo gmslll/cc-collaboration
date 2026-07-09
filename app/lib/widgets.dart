@@ -1670,7 +1670,11 @@ PopupMenuItem<String> ccMenuItem({
 // SendTarget is one "send to session" menu target: a session id + its label.
 typedef SendTarget = ({String id, String label});
 
+const int groupedPeerInlineLimit = 2;
 const int peerPickerInlineLimit = 12;
+
+int normalizedPeerInlineLimit(int inlineLimit, int fallback) =>
+    inlineLimit < 1 ? fallback : inlineLimit;
 
 String peerPickerRangeLabel(int start, int end) =>
     start == end ? '会话 $start ▸' : '会话 $start-$end ▸';
@@ -1682,31 +1686,34 @@ List<PopupMenuEntry<String>> groupedPeerMenuEntries(
   required IconData icon,
   required String Function(SendTarget t) label,
   bool enabled = true,
-  int inlineLimit = 2,
-}) => [
-  if (same.length > inlineLimit)
-    ccMenuItem(
-      value: '$prefix-same',
-      icon: Icons.folder_rounded,
-      label: '当前项目会话 (${same.length}) ▸',
-      enabled: enabled,
-    )
-  else
-    for (final t in same)
+  int inlineLimit = groupedPeerInlineLimit,
+}) {
+  final limit = normalizedPeerInlineLimit(inlineLimit, groupedPeerInlineLimit);
+  return [
+    if (same.length > limit)
       ccMenuItem(
-        value: '$prefix:${t.id}',
-        icon: icon,
-        label: label(t),
+        value: '$prefix-same',
+        icon: Icons.folder_rounded,
+        label: '当前项目会话 (${same.length}) ▸',
+        enabled: enabled,
+      )
+    else
+      for (final t in same)
+        ccMenuItem(
+          value: '$prefix:${t.id}',
+          icon: icon,
+          label: label(t),
+          enabled: enabled,
+        ),
+    if (others.isNotEmpty)
+      ccMenuItem(
+        value: '$prefix-others',
+        icon: Icons.more_horiz_rounded,
+        label: '其他会话 (${others.length}) ▸',
         enabled: enabled,
       ),
-  if (others.isNotEmpty)
-    ccMenuItem(
-      value: '$prefix-others',
-      icon: Icons.more_horiz_rounded,
-      label: '其他会话 (${others.length}) ▸',
-      enabled: enabled,
-    ),
-];
+  ];
+}
 
 // sendMenuEntries builds the first-level "发送到会话" rows: same-project targets
 // inline while the list is short. Long same-project lists collapse behind
@@ -1717,7 +1724,7 @@ List<PopupMenuEntry<String>> sendMenuEntries(
   List<SendTarget> same,
   List<SendTarget> others, {
   bool enabled = true,
-  int inlineLimit = 2,
+  int inlineLimit = groupedPeerInlineLimit,
 }) => groupedPeerMenuEntries(
   same,
   others,
@@ -1784,7 +1791,7 @@ List<PopupMenuEntry<String>> peerPickerMenuEntries(
   String Function(SendTarget t)? label,
   int inlineLimit = peerPickerInlineLimit,
 }) {
-  final limit = inlineLimit < 1 ? peerPickerInlineLimit : inlineLimit;
+  final limit = normalizedPeerInlineLimit(inlineLimit, peerPickerInlineLimit);
   if (peers.length <= limit) {
     return [
       for (final t in peers)
@@ -1819,7 +1826,7 @@ Future<String?> showPeerPicker(
   String Function(SendTarget t)? label,
   int inlineLimit = peerPickerInlineLimit,
 }) async {
-  final limit = inlineLimit < 1 ? peerPickerInlineLimit : inlineLimit;
+  final limit = normalizedPeerInlineLimit(inlineLimit, peerPickerInlineLimit);
   final v = await showMenu<String>(
     context: context,
     position: menuPosAt(context, globalPos),

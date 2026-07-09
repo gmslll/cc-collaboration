@@ -50,6 +50,16 @@ void main() {
     expect(labels(entries), ['发送到「session 1」', '其他会话 (2) ▸']);
   });
 
+  test('grouped send menu rejects invalid inline limits', () {
+    final entries = sendMenuEntries(
+      [target(1), target(2)],
+      const [],
+      inlineLimit: 0,
+    );
+
+    expect(values(entries), ['send:ts1', 'send:ts2']);
+  });
+
   test('short peer picker targets stay selectable directly', () {
     final entries = peerPickerMenuEntries([target(1), target(2)], 'send');
 
