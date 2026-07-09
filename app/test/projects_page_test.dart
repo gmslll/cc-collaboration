@@ -11,6 +11,8 @@ const _longProjectName =
     'Backend Freight Control Surface For Multi Team Dispatch Coordination';
 const _longOwnerIdentity =
     'owner.with.a.very.long.identity.for.layout.regression@kunlun.example.com';
+const _longRepoName =
+    'kunlun/dispatch-coordination-platform-with-very-long-repository-name';
 
 void main() {
   test('global admin can manage organizations without an org role', () {
@@ -648,6 +650,57 @@ void main() {
     expect(subtitle.maxLines, 1);
     expect(subtitle.overflow, TextOverflow.ellipsis);
   });
+
+  testWidgets('project sheet clamps long title chips and repo labels', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: ProjectsPage(client: _LongNameProjectsPageFakeClient()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(_longProjectName));
+    await tester.pumpAndSettle();
+
+    final projectTitles = tester.widgetList<Text>(find.text(_longProjectName));
+    final teamLabels = tester.widgetList<Text>(find.text(_longTeamName));
+    final ownerLabels = tester.widgetList<Text>(
+      find.text(projectOwnerLabel(_longOwnerIdentity)),
+    );
+    final repoLabel = tester.widget<Text>(find.text(_longRepoName));
+
+    expect(tester.takeException(), isNull);
+    expect(
+      projectTitles.any(
+        (text) => text.maxLines == 1 && text.overflow == TextOverflow.ellipsis,
+      ),
+      isTrue,
+    );
+    expect(
+      teamLabels.any(
+        (text) => text.maxLines == 1 && text.overflow == TextOverflow.ellipsis,
+      ),
+      isTrue,
+    );
+    expect(
+      ownerLabels.any(
+        (text) => text.maxLines == 1 && text.overflow == TextOverflow.ellipsis,
+      ),
+      isTrue,
+    );
+    expect(repoLabel.maxLines, 1);
+    expect(repoLabel.overflow, TextOverflow.ellipsis);
+  });
 }
 
 class _ProjectsPageFakeClient extends RelayClient {
@@ -794,4 +847,23 @@ class _LongNameProjectsPageFakeClient extends _ProjectsPageFakeClient {
   Future<List<OnlineUser>> onlineUsers() async => [
     OnlineUser.fromJson({'identity': _longOwnerIdentity, 'online': true}),
   ];
+
+  @override
+  Future<ProjectDetail> project(String id) async => ProjectDetail.fromJson({
+    'project': {
+      'id': id,
+      'org_id': 'org-a',
+      'name': _longProjectName,
+      'owner_identity': _longOwnerIdentity,
+      'role': 'owner',
+    },
+    'repos': [_longRepoName],
+    'members': [
+      {
+        'identity': _longOwnerIdentity,
+        'role': 'owner',
+        'display_name': 'Owner With A Long Display Name',
+      },
+    ],
+  });
 }

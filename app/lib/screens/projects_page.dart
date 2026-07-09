@@ -1430,6 +1430,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                       Expanded(
                         child: Text(
                           d.project.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -1459,15 +1461,13 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      Chip(
-                        avatar: const Icon(Icons.groups_rounded, size: 16),
-                        label: Text(widget.teamName),
+                      _CompactProjectChip(
+                        icon: Icons.groups_rounded,
+                        label: widget.teamName,
                       ),
-                      Chip(
-                        avatar: const Icon(Icons.person_rounded, size: 16),
-                        label: Text(
-                          '${projectRoleLabel('owner')} · ${d.project.ownerIdentity}',
-                        ),
+                      _CompactProjectChip(
+                        icon: Icons.person_rounded,
+                        label: projectOwnerLabel(d.project.ownerIdentity),
                       ),
                     ],
                   ),
@@ -1489,8 +1489,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                           ]
                         : d.repos
                               .map(
-                                (r) => Chip(
-                                  label: Text(r),
+                                (r) => _CompactProjectChip(
+                                  label: r,
                                   onDeleted: canManage
                                       ? () => _do(
                                           () => widget.client.unmapRepo(
@@ -1716,6 +1716,26 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                 ],
               ),
             ),
+    );
+  }
+}
+
+class _CompactProjectChip extends StatelessWidget {
+  final IconData? icon;
+  final String label;
+  final VoidCallback? onDeleted;
+
+  const _CompactProjectChip({this.icon, required this.label, this.onDeleted});
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Chip(
+        avatar: icon == null ? null : Icon(icon, size: 16),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        onDeleted: onDeleted,
+      ),
     );
   }
 }
