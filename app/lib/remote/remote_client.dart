@@ -524,6 +524,7 @@ class RemoteClient extends RemoteChannel {
       shareLoading = false;
       shareError = '连接已断开';
     }
+    _completeAllAssigns('连接已断开');
     unawaited(_shareViewer?.stop(closeRenderer: false));
   }
 
@@ -595,11 +596,12 @@ class RemoteClient extends RemoteChannel {
         _setHostOnline(true);
         notifyListeners();
       case 'todo.assign.ok':
-        _assignWaiters.remove(f['todoId'] as String?)?.complete(null);
+        _completeAssign(f['todoId'] as String?, null);
       case 'todo.assign.err':
-        _assignWaiters
-            .remove(f['todoId'] as String?)
-            ?.complete((f['msg'] as String?) ?? '远程指派失败');
+        _completeAssign(
+          f['todoId'] as String?,
+          (f['msg'] as String?) ?? '远程指派失败',
+        );
       case 'overview':
         final ov = <String, SessionCard>{};
         for (final m in (f['items'] as List? ?? [])) {
@@ -1078,6 +1080,7 @@ class RemoteClient extends RemoteChannel {
     _shareSourcesTimer?.cancel();
     _shareViewer?.removeListener(_onShareViewerChanged);
     unawaited(_shareViewer?.stop());
+    _completeAllAssigns('连接已关闭');
     super.dispose();
   }
 
@@ -1102,6 +1105,26 @@ class RemoteClient extends RemoteChannel {
   // returned future: null on success, an error string otherwise. Times out if
   // the host never answers (old desktop version / dropped link).
   final Map<String, Completer<String?>> _assignWaiters = {};
+  final Map<String, Timer> _assignTimeouts = {};
+
+  void _completeAssign(String? todoId, String? result) {
+    if (todoId == null) return;
+    _assignTimeouts.remove(todoId)?.cancel();
+    final waiter = _assignWaiters.remove(todoId);
+    if (waiter != null && !waiter.isCompleted) waiter.complete(result);
+  }
+
+  void _completeAllAssigns(String result) {
+    for (final timer in _assignTimeouts.values) {
+      timer.cancel();
+    }
+    _assignTimeouts.clear();
+    final waiters = _assignWaiters.values.toList();
+    _assignWaiters.clear();
+    for (final waiter in waiters) {
+      if (!waiter.isCompleted) waiter.complete(result);
+    }
+  }
 
   Future<String?> requestAssign({
     required String todoId,
@@ -1112,7 +1135,11 @@ class RemoteClient extends RemoteChannel {
     String? kind,
     String? branch,
   }) {
+    if (!_hostOnline) {
+      return Future.value('电脑端未在线，请先在电脑端开启「共享工作区」');
+    }
     // Supersede any in-flight request for the same todo.
+    _assignTimeouts.remove(todoId)?.cancel();
     _assignWaiters.remove(todoId)?.complete('已被新的指派请求取代');
     final c = Completer<String?>();
     _assignWaiters[todoId] = c;
@@ -1126,8 +1153,8 @@ class RemoteClient extends RemoteChannel {
       'kind': ?kind,
       if (branch != null && branch.isNotEmpty) 'branch': branch,
     });
-    Timer(const Duration(seconds: 30), () {
-      _assignWaiters.remove(todoId)?.complete('桌面无响应(请确认桌面 App 在线)');
+    _assignTimeouts[todoId] = Timer(const Duration(seconds: 30), () {
+      _completeAssign(todoId, '桌面无响应(请确认桌面 App 在线)');
     });
     return c.future;
   }
