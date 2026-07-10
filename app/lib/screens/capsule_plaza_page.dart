@@ -61,6 +61,25 @@ double capsuleDeleteDialogWidth(Size size, {double preferred = 420}) {
   return available < preferred ? available : preferred;
 }
 
+double capsuleDialogDimension(
+  double available,
+  double preferred, {
+  double min = 160,
+}) {
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < min) return available;
+  return available < preferred ? available : preferred;
+}
+
+Size capsuleEditDialogSize(
+  Size viewport, {
+  double preferredWidth = 460,
+  double preferredHeight = 640,
+}) => Size(
+  capsuleDialogDimension(viewport.width - 32, preferredWidth),
+  capsuleDialogDimension(viewport.height - 48, preferredHeight, min: 260),
+);
+
 class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   List<CapsuleListItem>? _items;
   String? _error;
@@ -1005,9 +1024,14 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final dialogSize = capsuleEditDialogSize(MediaQuery.sizeOf(context));
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460, maxHeight: 640),
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: SingleChildScrollView(

@@ -60,6 +60,12 @@ void main() {
     expect(capsuleDeleteDialogWidth(const Size(20, 700)), 420);
   });
 
+  test('capsule edit dialog size fits compact screens', () {
+    expect(capsuleEditDialogSize(const Size(1200, 900)), const Size(460, 640));
+    expect(capsuleEditDialogSize(const Size(360, 420)), const Size(328, 372));
+    expect(capsuleEditDialogSize(const Size(220, 220)), const Size(188, 172));
+  });
+
   test('capsule delete confirmation uses responsive content', () {
     final source = File(
       'lib/screens/capsule_plaza_page.dart',
@@ -88,6 +94,22 @@ void main() {
 
     expect(editDialog, contains('capsuleReadonlyPreviewMaxHeight'));
     expect(editDialog, isNot(contains('BoxConstraints(maxHeight: 130)')));
+  });
+
+  test('capsule edit dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final editDialog = source.substring(
+      source.indexOf('class _CapsuleEditDialogState'),
+      source.length,
+    );
+
+    expect(editDialog, contains('capsuleEditDialogSize'));
+    expect(editDialog, contains('MediaQuery.sizeOf(context)'));
+    expect(editDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(editDialog, isNot(contains('maxWidth: 460')));
+    expect(editDialog, isNot(contains('maxHeight: 640')));
   });
 
   test('capsule load and edit dialogs guard stale plaza context', () {
