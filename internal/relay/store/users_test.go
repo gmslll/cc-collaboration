@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -401,6 +402,29 @@ func TestDeleteUserPreservesMembershipAndHistoricalAttribution(t *testing.T) {
 		if member.Identity == "owner@x" {
 			t.Fatalf("deleted membership leaked into active member list: %+v", members)
 		}
+	}
+	projectMembers, err := st.ListMembers(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range projectMembers {
+		if member.Identity == "owner@x" {
+			t.Fatalf("deleted membership leaked into active project member list: %+v", projectMembers)
+		}
+	}
+	todoTargets, err := st.ListProjectTodoTargets(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(todoTargets, "owner@x") {
+		t.Fatalf("deleted identity leaked into active todo targets: %+v", todoTargets)
+	}
+	known, err := st.KnownIdentities(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(known, "owner@x") {
+		t.Fatalf("deleted identity leaked into active known identities: %+v", known)
 	}
 
 	assertCount := func(label, query string, want int) {

@@ -204,6 +204,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'admin create secret is dropped when account switches during reload',
+    (tester) async {
+      final oldClient = _DelayedUsersAdminPageFakeClient();
+      final newClient = _AdminPageFakeClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: AdminPage(client: oldClient)),
+        ),
+      );
+      await tester.pump();
+      oldClient.completeLatestUsers([
+        _user('old-admin@x', displayName: 'Old Admin'),
+      ]);
+      await tester.pumpAndSettle();
+
+      await _submitCreate(tester, 'created-on-old@x');
+      oldClient.completeCreate('old-generated-secret');
+      await tester.pump();
+      expect(oldClient.userRequestCount, 2);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(body: AdminPage(client: newClient)),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(AlertDialog), findsNothing);
+
+      oldClient.completeLatestUsers([
+        _user('created-on-old@x', displayName: 'Old Created User'),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(find.text('old-generated-secret'), findsNothing);
+      expect(find.text('账号 created-on-old@x 的初始密码'), findsNothing);
+      expect(find.text('Old Created User'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('admin create is disabled while request is in flight', (
     tester,
   ) async {

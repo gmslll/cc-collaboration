@@ -26,6 +26,11 @@ double adminSecretDialogWidth(Size size, {double preferred = 420}) {
   return available < preferred ? available : preferred;
 }
 
+class _OwnedAdminDialog {
+  NavigatorState? navigator;
+  Route<dynamic>? route;
+}
+
 class AdminPage extends StatefulWidget {
   final RelayClient client;
   final String currentIdentity;
@@ -46,6 +51,7 @@ class _AdminPageState extends State<AdminPage> {
   bool _showDeleted = false;
   String _statusFilter = 'all';
   final Set<String> _pendingUserActions = {};
+  final List<_OwnedAdminDialog> _ownedDialogs = [];
   int _loadGeneration = 0;
 
   @override
@@ -59,6 +65,8 @@ class _AdminPageState extends State<AdminPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.client == widget.client) return;
     _loadGeneration++;
+    final staleDialogs = _ownedDialogs.reversed.toList();
+    _ownedDialogs.clear();
     setState(() {
       _users = null;
       _error = null;
@@ -70,7 +78,18 @@ class _AdminPageState extends State<AdminPage> {
     });
     final client = widget.client;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_isCurrentClient(client)) return;
+      if (!mounted) return;
+      for (final dialog in staleDialogs) {
+        final navigator = dialog.navigator;
+        final route = dialog.route;
+        if (navigator != null &&
+            navigator.mounted &&
+            route != null &&
+            route.isActive) {
+          navigator.removeRoute(route);
+        }
+      }
+      if (!identical(client, widget.client)) return;
       _identity.clear();
       _password.clear();
       _search.clear();
@@ -148,6 +167,9 @@ class _AdminPageState extends State<AdminPage> {
       _password.clear();
       setState(() => _newAdmin = false);
       await _load();
+      if (!_isCurrentClient(client)) {
+        return (success: false, password: null, identity: id);
+      }
       return (success: true, password: pw, identity: id);
     } catch (e) {
       if (mounted && identical(client, widget.client)) {
@@ -180,51 +202,60 @@ class _AdminPageState extends State<AdminPage> {
     }
   }
 
-  void _showSecret(String title, String secret) {
-    showDialog(
+  Future<T?> _showOwnedDialog<T>(WidgetBuilder builder) {
+    final ownedDialog = _OwnedAdminDialog();
+    _ownedDialogs.add(ownedDialog);
+    return showDialog<T>(
       context: context,
-      builder: (ctx) {
-        final size = MediaQuery.sizeOf(ctx);
-        return AlertDialog(
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 24,
-          ),
-          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          content: SizedBox(
-            width: adminSecretDialogWidth(size),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SelectableText(
-                secret,
-                style: const TextStyle(fontFamily: CcType.mono),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Clipboard.setData(ClipboardData(text: secret)),
-              child: const Text('复制'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('关闭'),
-            ),
-          ],
-        );
+      builder: (dialogContext) {
+        ownedDialog.navigator = Navigator.of(dialogContext);
+        ownedDialog.route = ModalRoute.of(dialogContext);
+        return builder(dialogContext);
       },
-    );
+    ).whenComplete(() {
+      _ownedDialogs.remove(ownedDialog);
+    });
+  }
+
+  void _showSecret(String title, String secret) {
+    _showOwnedDialog<void>((dialogContext) {
+      final size = MediaQuery.sizeOf(dialogContext);
+      return AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        content: SizedBox(
+          width: adminSecretDialogWidth(size),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SelectableText(
+              secret,
+              style: const TextStyle(fontFamily: CcType.mono),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Clipboard.setData(ClipboardData(text: secret)),
+            child: const Text('复制'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+        ],
+      );
+    });
   }
 
   void _showCreateDialog() {
     if (_creating) return;
+    final client = widget.client;
     _identity.clear();
     _password.clear();
     _newAdmin = false;
     var submitting = false;
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
+    _showOwnedDialog<void>(
+      (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           final canSubmit = !submitting && _identity.text.trim().isNotEmpty;
 
@@ -232,7 +263,7 @@ class _AdminPageState extends State<AdminPage> {
             if (!canSubmit) return;
             setDialogState(() => submitting = true);
             final result = await _create();
-            if (!dialogContext.mounted) return;
+            if (!dialogContext.mounted || !_isCurrentClient(client)) return;
             if (!result.success) {
               setDialogState(() => submitting = false);
               return;
@@ -240,7 +271,7 @@ class _AdminPageState extends State<AdminPage> {
             Navigator.pop(dialogContext);
             if (result.password != null &&
                 result.password!.isNotEmpty &&
-                mounted) {
+                _isCurrentClient(client)) {
               _showSecret('账号 ${result.identity} 的初始密码', result.password!);
             }
           }
@@ -331,9 +362,8 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Future<bool> _confirmDelete(User user) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
+    final confirmed = await _showOwnedDialog<bool>(
+      (ctx) => AlertDialog(
         title: const Text('删除账号？'),
         content: Text(
           '确定删除 ${user.identity}？删除后无法恢复，该 identity 不能重新注册，所有登录和机器 token 会立即失效。',

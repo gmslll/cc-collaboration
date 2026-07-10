@@ -13,6 +13,7 @@ if (typeof window.ccHandoffPickup === "function") {
 // stays hidden — it degrades cleanly.
 const state = {
   token: localStorage.getItem("cc-handoff-token") || "",
+  authEpoch: 0,
   defaultRepo: localStorage.getItem("cc-handoff-default-repo") || "",
   me: null, // { identity, is_admin, organizations: [{id,name,role}], projects: [{id,name,role}] }
   organizations: [], // loaded in the Teams pane (GET /v1/orgs)
@@ -183,6 +184,13 @@ function wireEvents() {
   els.orgsList.addEventListener("change", onOrganizationsListChange);
   els.tokensList.addEventListener("click", onTokensListClick);
   els.usersList.addEventListener("click", onUsersListClick);
+  els.usersList.addEventListener("toggle", onAdminUserMenuToggle, true);
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest?.(".admin-user-menu")) closeAdminUserMenus();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAdminUserMenus();
+  });
   els.adminUserTabs.addEventListener("click", (event) => {
     const button = event.target.closest("[data-admin-user-view]");
     if (!button) return;
@@ -487,6 +495,15 @@ async function copyToClipboard(text, message) {
     toast(message);
   } catch (err) {
     toast(`复制失败：${err.message || err}`);
+  }
+}
+
+async function copyToClipboardForAuth(text, message, authEpoch) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (authRequestCurrent(authEpoch)) toast(message);
+  } catch (err) {
+    if (authRequestCurrent(authEpoch)) toast(`复制失败：${err.message || err}`);
   }
 }
 
@@ -863,12 +880,29 @@ function escapeAttr(value) {
 // --- auth: login / token / signout ---
 
 function setToken(tok) {
-  state.token = tok || "";
+  const next = tok || "";
+  if (next !== state.token) invalidateAuthContext();
+  state.token = next;
   if (state.token) {
     localStorage.setItem("cc-handoff-token", state.token);
   } else {
     localStorage.removeItem("cc-handoff-token");
   }
+}
+
+function invalidateAuthContext() {
+  state.authEpoch += 1;
+  state.adminUsers = [];
+  state.pendingUserActions.clear();
+  state.creatingUser = false;
+  if (els.createUserDialog.open) els.createUserDialog.close();
+  setCreateUserPending(false);
+  closeAdminUserMenus();
+  els.usersList.innerHTML = "";
+}
+
+function authRequestCurrent(epoch) {
+  return epoch === state.authEpoch;
 }
 
 async function onLogin(event) {
@@ -943,6 +977,7 @@ function onUseToken() {
 }
 
 async function onSignout() {
+  invalidateAuthContext();
   try {
     if (state.token) await api("/v1/logout", { method: "POST" });
   } catch {
@@ -965,9 +1000,13 @@ async function onSignout() {
 // onConnected runs once a token is established (login or paste): learn who we
 // are, reveal role-appropriate tabs, then load the default view.
 async function onConnected(options = {}) {
+  const authEpoch = state.authEpoch;
   try {
-    state.me = await api("/v1/me");
+    const me = await api("/v1/me");
+    if (!authRequestCurrent(authEpoch)) return;
+    state.me = me;
   } catch (err) {
+    if (!authRequestCurrent(authEpoch)) return;
     state.me = null;
     setupRoleTabs();
     setConnectedLabel();
@@ -1708,11 +1747,26 @@ async function onChangePassword(event) {
 
 async function loadAdmin() {
   if (!state.token) return;
+  const authEpoch = state.authEpoch;
   try {
     const data = await api("/v1/users");
+    if (!authRequestCurrent(authEpoch)) return;
     renderUsers(data.users || []);
   } catch (err) {
-    toast(err.message);
+    if (authRequestCurrent(authEpoch)) toast(err.message);
+  }
+}
+
+function closeAdminUserMenus(except = null) {
+  els.usersList.querySelectorAll("details.admin-user-menu[open]").forEach((menu) => {
+    if (menu !== except) menu.open = false;
+  });
+}
+
+function onAdminUserMenuToggle(event) {
+  const menu = event.target;
+  if (menu.matches?.("details.admin-user-menu") && menu.open) {
+    closeAdminUserMenus(menu);
   }
 }
 
@@ -1800,6 +1854,7 @@ async function onUsersListClick(event) {
   if (!card || !action) return;
   const id = card.dataset.user;
   if (state.pendingUserActions.has(id) || card.dataset.deleted === "1") return;
+  const authEpoch = state.authEpoch;
   if (action === "delete") {
     const confirmed = window.confirm(`确定删除账号 ${id}？\n\n删除后无法恢复，该 identity 不能重新注册，所有登录和机器 token 会立即失效。`);
     if (!confirmed) return;
@@ -1809,27 +1864,34 @@ async function onUsersListClick(event) {
   try {
     if (action === "admin") {
       await api(`/v1/users/${encodeURIComponent(id)}/admin`, { method: "POST", body: JSON.stringify({ is_admin: card.dataset.admin !== "1" }) });
+      if (!authRequestCurrent(authEpoch)) return;
       toast("已更新");
     } else if (action === "disable") {
       await api(`/v1/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: JSON.stringify({ disabled: card.dataset.disabled !== "1" }) });
+      if (!authRequestCurrent(authEpoch)) return;
       toast("已更新");
     } else if (action === "reset") {
       const data = await api(`/v1/users/${encodeURIComponent(id)}/reset-password`, { method: "POST" });
-      await copyToClipboard(data.password, `新密码已复制（只显示这一次）：${data.password}`);
+      if (!authRequestCurrent(authEpoch)) return;
+      await copyToClipboardForAuth(data.password, `新密码已复制（只显示这一次）：${data.password}`, authEpoch);
     } else if (action === "delete") {
       await api(`/v1/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!authRequestCurrent(authEpoch)) return;
       state.adminUsers = state.adminUsers.map((u) => u.identity === id
         ? { ...u, is_admin: false, disabled: true, deleted: true }
         : u);
       renderUsers(state.adminUsers);
       toast("账号已删除");
     }
+    if (!authRequestCurrent(authEpoch)) return;
     await loadAdmin();
   } catch (err) {
-    toast(err.message);
+    if (authRequestCurrent(authEpoch)) toast(err.message);
   } finally {
-    state.pendingUserActions.delete(id);
-    renderUsers(state.adminUsers);
+    if (authRequestCurrent(authEpoch)) {
+      state.pendingUserActions.delete(id);
+      renderUsers(state.adminUsers);
+    }
   }
 }
 
@@ -1862,25 +1924,28 @@ async function onCreateUser(event) {
     els.newUserIdentity.focus();
     return;
   }
+  const authEpoch = state.authEpoch;
   setCreateUserPending(true);
   try {
     const body = { identity, is_admin: els.newUserAdmin.checked };
     const pw = els.newUserPassword.value.trim();
     if (pw) body.password = pw;
     const data = await api("/v1/users", { method: "POST", body: JSON.stringify(body) });
+    if (!authRequestCurrent(authEpoch)) return;
     els.newUserIdentity.value = "";
     els.newUserPassword.value = "";
     els.newUserAdmin.checked = false;
     els.createUserDialog.close();
     if (data.password) {
-      await copyToClipboard(data.password, `账号已建，初始密码已复制（只显示这一次）：${data.password}`);
+      await copyToClipboardForAuth(data.password, `账号已建，初始密码已复制（只显示这一次）：${data.password}`, authEpoch);
     } else {
       toast("账号已创建");
     }
+    if (!authRequestCurrent(authEpoch)) return;
     await loadAdmin();
   } catch (err) {
-    toast(err.message);
+    if (authRequestCurrent(authEpoch)) toast(err.message);
   } finally {
-    setCreateUserPending(false);
+    if (authRequestCurrent(authEpoch)) setCreateUserPending(false);
   }
 }

@@ -476,6 +476,38 @@ func TestAdminAccountsUIFiltersTombstoneArchive(t *testing.T) {
 	}
 }
 
+func TestAdminAccountsUIInvalidatesStaleAuthAndManagesActionMenus(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	for _, want := range []string{
+		`authEpoch: 0`,
+		`if (next !== state.token) invalidateAuthContext();`,
+		`function invalidateAuthContext() {`,
+		`state.authEpoch += 1;`,
+		`state.pendingUserActions.clear();`,
+		`if (els.createUserDialog.open) els.createUserDialog.close();`,
+		`function authRequestCurrent(epoch) {`,
+		`if (!authRequestCurrent(authEpoch)) return;`,
+		`async function copyToClipboardForAuth(text, message, authEpoch) {`,
+		`if (authRequestCurrent(authEpoch)) toast(message);`,
+		`await copyToClipboardForAuth(data.password,`,
+		`if (authRequestCurrent(authEpoch)) setCreateUserPending(false);`,
+		`els.usersList.addEventListener("toggle", onAdminUserMenuToggle, true);`,
+		`if (!event.target.closest?.(".admin-user-menu")) closeAdminUserMenus();`,
+		`if (event.key === "Escape") closeAdminUserMenus();`,
+		`function closeAdminUserMenus(except = null) {`,
+		`details.admin-user-menu[open]`,
+		`closeAdminUserMenus(menu);`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("relay admin account UI is missing stale-auth/menu guard %q", want)
+		}
+	}
+}
+
 func TestOrganizationManageUIProtectsProjectSoleOwners(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {
