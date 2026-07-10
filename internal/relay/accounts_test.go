@@ -125,14 +125,19 @@ func TestRegisterFlow(t *testing.T) {
 		t.Fatalf("register status=%d body=%s", code, body)
 	}
 	var rr struct {
-		Token   string `json:"token"`
-		IsAdmin bool   `json:"is_admin"`
+		Token          string `json:"token"`
+		MachineToken   string `json:"machine_token"`
+		MachineTokenID string `json:"machine_token_id"`
+		IsAdmin        bool   `json:"is_admin"`
 	}
 	if err := json.Unmarshal(body, &rr); err != nil {
 		t.Fatal(err)
 	}
 	if rr.Token == "" {
 		t.Fatal("no session token returned")
+	}
+	if rr.MachineToken == "" || rr.MachineTokenID == "" {
+		t.Fatalf("no default machine token returned: %+v", rr)
 	}
 	if rr.IsAdmin {
 		t.Error("self-registered account must not be admin")
@@ -156,6 +161,9 @@ func TestRegisterFlow(t *testing.T) {
 	}
 	if len(me.Organizations) != 1 || me.Organizations[0].Role != "owner" {
 		t.Fatalf("registered default organization = %+v", me.Organizations)
+	}
+	if code, body = getAuthed(t, srv.URL+"/v1/me", rr.MachineToken); code != http.StatusOK {
+		t.Fatalf("default machine token should authenticate: status=%d body=%s", code, body)
 	}
 
 	// Duplicate identity → 409.
@@ -210,6 +218,16 @@ func TestRegisterRejectsReservedTokenIdentities(t *testing.T) {
 	}
 	if code, body := getAuthed(t, srv.URL+"/v1/me", "tok-legacy"); code != http.StatusOK {
 		t.Fatalf("legacy token should still authenticate: status=%d body=%s", code, body)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/orgs", "tok-legacy",
+		map[string]string{"name": "Legacy Team"}); code != http.StatusUnauthorized {
+		t.Fatalf("legacy token create org: status=%d, want 401", code)
+	}
+	if code, _ := getAuthed(t, srv.URL+"/v1/projects", "tok-legacy"); code != http.StatusUnauthorized {
+		t.Fatalf("legacy token list projects: status=%d, want 401", code)
+	}
+	if code, _ := getAuthed(t, srv.URL+"/v1/tokens", "tok-legacy"); code != http.StatusUnauthorized {
+		t.Fatalf("legacy token list machine tokens: status=%d, want 401", code)
 	}
 }
 

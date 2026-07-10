@@ -11,6 +11,9 @@ import (
 )
 
 func (s *Server) requireOrgRole(w http.ResponseWriter, r *http.Request, orgID string, ok func(role string) bool) bool {
+	if _, accountOK := s.requireAccount(w, r); !accountOK {
+		return false
+	}
 	identity := auth.Identity(r.Context())
 	if s.isAdmin(r.Context(), identity) {
 		return true
@@ -31,6 +34,9 @@ func (s *Server) requireOrgManager(w http.ResponseWriter, r *http.Request, orgID
 }
 
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAccount(w, r); !ok {
+		return
+	}
 	identity := auth.Identity(r.Context())
 	var req struct {
 		Name string `json:"name"`
@@ -54,6 +60,9 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAccount(w, r); !ok {
+		return
+	}
 	identity := auth.Identity(r.Context())
 	var (
 		orgs []store.Organization

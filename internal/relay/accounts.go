@@ -47,6 +47,28 @@ func (b *bearerResolver) active(ctx context.Context, identity string) (string, b
 	return "", false
 }
 
+// requireAccount gates SaaS/team-account features to real DB accounts.
+// Legacy tokens.json identities can still authenticate for backwards-compatible
+// automation, but they must register/login before owning teams or minting
+// account-scoped machine tokens.
+func (s *Server) requireAccount(w http.ResponseWriter, r *http.Request) (store.User, bool) {
+	identity := auth.Identity(r.Context())
+	u, err := s.Store.GetUser(r.Context(), identity)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "请先注册或登录账号", http.StatusUnauthorized)
+		return store.User{}, false
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return store.User{}, false
+	}
+	if u.Disabled {
+		http.Error(w, "账号已停用", http.StatusForbidden)
+		return store.User{}, false
+	}
+	return u, true
+}
+
 // isAdmin reports whether identity is an effective admin: an operator-seeded
 // admin (SeedAdmins) or a DB-flagged one (users.is_admin). A disabled DB user
 // is never effective, even if it also appears in SeedAdmins; missing DB users
@@ -141,7 +163,19 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.issueSession(w, r, identity, http.StatusCreated)
+	machineToken, machineTokenID, err := s.createMachineToken(r.Context(), identity, "default", time.Now())
+	if err != nil {
+		http.Error(w, "create machine token: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp, err := s.newSessionResponse(r, identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp["machine_token"] = machineToken
+	resp["machine_token_id"] = machineTokenID
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) identityReserved(ctx context.Context, identity string) (bool, error) {
@@ -164,21 +198,28 @@ func (s *Server) identityReserved(ctx context.Context, identity string) (bool, e
 // standard auth body ({token, identity, is_admin}) with status. Shared by login
 // and register so both hand back an immediately-usable session.
 func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, identity string, status int) {
+	resp, err := s.newSessionResponse(r, identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, status, resp)
+}
+
+func (s *Server) newSessionResponse(r *http.Request, identity string) (map[string]any, error) {
 	raw, err := auth.NewToken()
 	if err != nil {
-		http.Error(w, "mint session: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, errors.New("mint session: " + err.Error())
 	}
 	now := time.Now()
 	if err := s.Store.CreateSession(r.Context(), auth.HashToken(raw), identity, now, now.Add(sessionTTL)); err != nil {
-		http.Error(w, "create session: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, errors.New("create session: " + err.Error())
 	}
-	writeJSON(w, status, map[string]any{
+	return map[string]any{
 		"token":    raw,
 		"identity": identity,
 		"is_admin": s.isAdmin(r.Context(), identity),
-	})
+	}, nil
 }
 
 // logout revokes the caller's current session (if the presented bearer is one).

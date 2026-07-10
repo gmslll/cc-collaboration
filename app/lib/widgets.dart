@@ -48,17 +48,28 @@ String errorText(Object e) {
         final msg = body is Map
             ? (body['error'] ?? body['message'])?.toString()
             : body?.toString();
+        final cleanMsg = msg?.trim();
+        final hasUsefulMsg =
+            cleanMsg != null &&
+            cleanMsg.isNotEmpty &&
+            cleanMsg != 'missing bearer token' &&
+            cleanMsg != 'invalid token' &&
+            cleanMsg != '404 page not found' &&
+            cleanMsg != 'not found';
         switch (code) {
           case 401:
+            if (hasUsefulMsg) return cleanMsg!;
             return '未授权(登录可能失效)';
           case 403:
+            if (hasUsefulMsg) return cleanMsg!;
             return '没有权限';
           case 404:
+            if (hasUsefulMsg) return cleanMsg!;
             return '不存在';
           case 409:
-            return (msg?.isNotEmpty ?? false) ? msg! : '冲突(可能已被处理)';
+            return hasUsefulMsg ? cleanMsg! : '冲突(可能已被处理)';
         }
-        return (msg?.isNotEmpty ?? false) ? msg! : '请求失败($code)';
+        return hasUsefulMsg ? cleanMsg! : '请求失败($code)';
       default:
         return e.message ?? '网络错误';
     }

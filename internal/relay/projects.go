@@ -23,6 +23,9 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 // requireProjectRole gates a handler to a global admin, or a project member
 // whose role satisfies ok(role). Writes a 403 and returns false otherwise.
 func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, projectID string, ok func(role string) bool) bool {
+	if _, accountOK := s.requireAccount(w, r); !accountOK {
+		return false
+	}
 	identity := auth.Identity(r.Context())
 	if s.isAdmin(r.Context(), identity) {
 		return true
@@ -50,6 +53,9 @@ func (s *Server) requireProjectMember(w http.ResponseWriter, r *http.Request, pr
 // createProject is self-service: any authenticated user creates a project and
 // becomes its owner.
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAccount(w, r); !ok {
+		return
+	}
 	identity := auth.Identity(r.Context())
 	var req struct {
 		Name  string `json:"name"`
@@ -100,6 +106,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 
 // listProjects returns all projects for an admin, else the caller's projects.
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAccount(w, r); !ok {
+		return
+	}
 	identity := auth.Identity(r.Context())
 	var (
 		ps  []store.Project
