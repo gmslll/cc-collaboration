@@ -142,7 +142,7 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                   _rulesCard(c),
                   _triggersCard(c),
                   _legacyIdentityCard(c),
-                  _card('收件箱', [
+                  _card('任务接收', [
                     _text(
                       'inbox dir(物化输出目录,可空)',
                       c.inboxDir,

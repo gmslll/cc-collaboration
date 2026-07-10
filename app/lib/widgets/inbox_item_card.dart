@@ -4,7 +4,7 @@ import '../api/models.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-// InboxItemCard is a compact Handoff row for the workspace's 收件箱 sidebar —
+// InboxItemCard is a compact work-package row for the workspace's queue sidebar —
 // same visual register as TodoCard (top row + two-line title + tag row +
 // footer) but built off ListItem's fields (repoName/sender/recipient/
 // urgency/state/kind) instead of Todo's (priority/assigneeIdentity/recurrence).

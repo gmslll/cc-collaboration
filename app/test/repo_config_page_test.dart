@@ -33,6 +33,8 @@ void main() {
     );
 
     expect(source, contains("'项目配置 · \${widget.projectName}'"));
+    expect(source, contains("_card('任务接收', ["));
+    expect(source, isNot(contains("_card('收件箱', [")));
     expect(source, contains('maxLines: 1'));
     expect(source, contains('overflow: TextOverflow.ellipsis'));
     expect(dropdown, contains('repoConfigDropdownWidth(constraints)'));
