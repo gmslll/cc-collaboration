@@ -77,6 +77,18 @@ Size remoteSupervisorKnowledgeDialogSize(
   ),
 );
 
+double remoteActivitySheetHeight(
+  Size screenSize, {
+  double preferred = 360,
+  double verticalInset = 48,
+  double minHeight = 180,
+}) {
+  final available = screenSize.height - verticalInset;
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minHeight) return available;
+  return available < preferred ? available : preferred;
+}
+
 String remoteWorktreeRemoveTarget(RemoteWorktree worktree) {
   final branch = worktree.branch.trim();
   return branch.isEmpty ? worktree.name : branch;
@@ -3159,7 +3171,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       builder: (ctx) => SafeArea(
         top: false,
         child: SizedBox(
-          height: 360,
+          height: remoteActivitySheetHeight(MediaQuery.sizeOf(ctx)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

@@ -74,6 +74,13 @@ void main() {
     );
   });
 
+  test('remote activity sheet height fits compact screens', () {
+    expect(remoteActivitySheetHeight(const Size(1024, 900)), 360);
+    expect(remoteActivitySheetHeight(const Size(360, 420)), 360);
+    expect(remoteActivitySheetHeight(const Size(320, 260)), 212);
+    expect(remoteActivitySheetHeight(const Size(320, 160)), 112);
+  });
+
   test('remote new session dialog uses scroll-safe controls', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',
@@ -119,6 +126,20 @@ void main() {
     expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
     expect(dialog, isNot(contains('maxWidth: 520')));
     expect(dialog, isNot(contains('maxHeight: 600')));
+  });
+
+  test('remote activity sheet uses viewport based height', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final sheet = source.substring(
+      source.indexOf('  void _showActivitySheet()'),
+      source.indexOf('  void _onPointerMove('),
+    );
+
+    expect(sheet, contains('remoteActivitySheetHeight'));
+    expect(sheet, contains('MediaQuery.sizeOf(ctx)'));
+    expect(sheet, isNot(contains('height: 360')));
   });
 
   test('remote incoming file offer dialog uses scroll-safe content', () {
