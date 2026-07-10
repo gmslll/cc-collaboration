@@ -79,6 +79,27 @@ func TestConfigSet_TerminalApp(t *testing.T) {
 	}
 }
 
+func TestConfigSet_PublishSessions(t *testing.T) {
+	seedUser(t)
+	if err := runConfigSet(context.Background(),
+		[]string{"--publish-sessions=true"}); err != nil {
+		t.Fatal(err)
+	}
+	u := reload(t)
+	if !u.PublishSessions {
+		t.Fatalf("publish_sessions not set: %+v", u)
+	}
+
+	if err := runConfigSet(context.Background(),
+		[]string{"--publish-sessions=false"}); err != nil {
+		t.Fatal(err)
+	}
+	u = reload(t)
+	if u.PublishSessions {
+		t.Fatalf("publish_sessions not cleared: %+v", u)
+	}
+}
+
 func TestConfigSet_InvalidTerminalApp(t *testing.T) {
 	seedUser(t)
 	if err := runConfigSet(context.Background(),

@@ -1,0 +1,530 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:app/api/models.dart';
+import 'package:app/api/relay_client.dart';
+import 'package:app/screens/account_page.dart';
+import 'package:app/theme.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+const _longAccountIdentity =
+    'developer.with.a.very.long.identity.for.account.settings@kunlun.example.com';
+
+void main() {
+  test('account dropdown menus are capped for compact screens', () {
+    expect(accountMenuMaxHeight(const Size(1024, 900)), 320);
+    expect(accountMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));
+    expect(accountMenuMaxHeight(const Size(320, 220)), 160);
+    expect(accountMenuMaxHeight(Size.zero), 320);
+  });
+
+  test('account hook event dialog fits compact screens', () {
+    expect(accountDialogWidth(const Size(320, 760)), 288);
+    expect(accountDialogWidth(const Size(1024, 760)), 420);
+    expect(accountHookEventListMaxHeight(const Size(1024, 900)), 460);
+    expect(
+      accountHookEventListMaxHeight(const Size(320, 420)),
+      closeTo(260.4, 0.001),
+    );
+    expect(accountHookEventListMaxHeight(const Size(320, 220)), 160);
+  });
+
+  test('local config save is guarded against duplicate submits', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+    final saveLocalConfig = source.substring(
+      source.indexOf('Future<void> _saveLocalConfig() async'),
+      source.indexOf('bool _isCurrentClient'),
+    );
+
+    expect(saveLocalConfig, contains('if (_savingCfg) return;'));
+    expect(saveLocalConfig, contains('setState(() => _savingCfg = true);'));
+    expect(saveLocalConfig, contains('if (!mounted) return;'));
+    expect(
+      saveLocalConfig.indexOf('if (!mounted) return;'),
+      lessThan(saveLocalConfig.indexOf('widget.onConfigSaved?.call();')),
+    );
+  });
+
+  test('hook event picker uses responsive dialog bounds', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+    final picker = source.substring(
+      source.indexOf('Future<void> _chooseHookEvents'),
+      source.indexOf('Future<void> _saveLocalConfig'),
+    );
+
+    expect(picker, contains('accountDialogWidth'));
+    expect(picker, contains('accountHookEventListMaxHeight'));
+    expect(picker, isNot(contains('width: 420')));
+    expect(picker, isNot(contains('BoxConstraints(maxHeight: 460)')));
+  });
+
+  test('machine token reveal dialog keeps long tokens scrollable', () {
+    final source = File('lib/screens/account_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('void _showToken'),
+      source.indexOf('@override\n  Widget build'),
+    );
+
+    expect(dialog, contains('accountDialogWidth'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('maxLines: 1'));
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(dialog, contains('scrollDirection: Axis.horizontal'));
+    expect(dialog, contains('SelectableText'));
+  });
+
+  testWidgets('account title clamps long identities', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(
+            client: _DelayedAccountPageFakeClient(),
+            identity: _longAccountIdentity,
+            hookStatusLoader: () async => const [],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final title = tester.widget<Text>(find.text('账号 · $_longAccountIdentity'));
+
+    expect(tester.takeException(), isNull);
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+  });
+
+  testWidgets('hook status rows fit compact screens', (tester) async {
+    tester.view.physicalSize = const Size(260, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(
+            client: _DelayedAccountPageFakeClient(),
+            identity: 'dev@x',
+            hookStatusLoader: () async => [
+              (
+                name: 'codex-with-a-long-agent-name',
+                path:
+                    '/Users/developer/.codex/hooks/very/deeply/nested/settings.json',
+                ok: false,
+                availableEvents: const [
+                  'SessionStart',
+                  'Stop',
+                  'Notification',
+                  'UserPromptSubmit',
+                ],
+                installedEvents: const ['Stop'],
+                missingEvents: const [
+                  'SessionStart',
+                  'Notification',
+                  'UserPromptSubmit',
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final name = tester.widget<Text>(find.text('codex-with-a-long-agent-name'));
+    final path = tester.widget<Text>(
+      find.text(
+        '/Users/developer/.codex/hooks/very/deeply/nested/settings.json',
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(name.maxLines, 1);
+    expect(name.overflow, TextOverflow.ellipsis);
+    expect(path.maxLines, 1);
+    expect(path.overflow, TextOverflow.ellipsis);
+    expect(find.widgetWithText(TextButton, '选择安装'), findsOneWidget);
+  });
+
+  testWidgets('password change completion after unmount is ignored', (
+    tester,
+  ) async {
+    final client = _DelayedAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(_fieldWithLabel('当前密码'), 'old-password');
+    await tester.enterText(_fieldWithLabel('新密码(≥8 位)'), 'new-password');
+    await tester.tap(find.widgetWithText(FilledButton, '更新密码'));
+    await tester.pump();
+    expect(client.passwordChangeStarted, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    client.completePasswordChange();
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('password change ignores duplicate submit taps', (tester) async {
+    final client = _DelayedAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(_fieldWithLabel('当前密码'), 'old-password');
+    await tester.enterText(_fieldWithLabel('新密码(≥8 位)'), 'new-password');
+    final button = find.widgetWithText(FilledButton, '更新密码');
+    await tester.tap(button);
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(client.passwordChangeCalls, 1);
+    expect(find.text('更新中'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton).first).onPressed,
+      isNull,
+    );
+
+    client.completePasswordChange();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 5));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('token creation completion after unmount is ignored', (
+    tester,
+  ) async {
+    final client = _DelayedAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(_fieldWithHint('标签(如 laptop)'), 'laptop');
+    final generateButton = find.widgetWithText(TextButton, '生成');
+    await tester.ensureVisible(generateButton);
+    await tester.tap(generateButton);
+    await tester.pump();
+    expect(client.tokenCreateStarted, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    client.completeTokenCreate('raw-token');
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('token creation ignores duplicate submit taps', (tester) async {
+    final client = _DelayedAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(_fieldWithHint('标签(如 laptop)'), 'laptop');
+    final button = find.widgetWithText(TextButton, '生成');
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(client.tokenCreateCalls, 1);
+    expect(find.text('生成中'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, '生成中'))
+          .onPressed,
+      isNull,
+    );
+
+    client.completeTokenCreate('raw-token');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('token list ignores stale loads after account switch', (
+    tester,
+  ) async {
+    final oldClient = _DelayedTokenListAccountPageFakeClient();
+    final newClient = _DelayedTokenListAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: oldClient, identity: 'old@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(oldClient.tokenLoadCalls, 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: newClient, identity: 'new@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(newClient.tokenLoadCalls, 1);
+
+    newClient.completeTokenLoad(0, 'new laptop');
+    await tester.pump();
+    expect(find.text('new laptop'), findsOneWidget);
+
+    oldClient.completeTokenLoad(0, 'old laptop');
+    await tester.pump();
+    expect(find.text('new laptop'), findsOneWidget);
+    expect(find.text('old laptop'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('machine token deletion requires confirmation', (tester) async {
+    final client = _TokenDeleteAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    final deleteButton = find.byWidgetPredicate(
+      (w) => w is IconButton && w.tooltip == '删除机器 token',
+    );
+    tester.widget<IconButton>(deleteButton).onPressed!();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('删除机器 token'), findsOneWidget);
+    expect(client.deleteTokenCalls, 0);
+    expect(tester.widget<IconButton>(deleteButton).onPressed, isNull);
+
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('删除机器 token'), findsNothing);
+    expect(client.deleteTokenCalls, 0);
+    expect(tester.widget<IconButton>(deleteButton).onPressed, isNotNull);
+
+    tester.widget<IconButton>(deleteButton).onPressed!();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(client.deleteTokenCalls, 1);
+    expect(client.deletedTokenId, 'tok-1');
+    expect(find.text('laptop'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('machine token deletion locks while request is pending', (
+    tester,
+  ) async {
+    final client = _DelayedTokenDeleteAccountPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(client: client, identity: 'dev@x'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    final deleteButton = find.byWidgetPredicate(
+      (w) => w is IconButton && w.tooltip == '删除机器 token',
+    );
+    tester.widget<IconButton>(deleteButton).onPressed!();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+
+    expect(client.deleteTokenCalls, 1);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(tester.widget<IconButton>(deleteButton).onPressed, isNull);
+
+    client.completeDeleteToken();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('laptop'), findsNothing);
+    expect(client.deleteTokenCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Finder _fieldWithLabel(String label) => find.byWidgetPredicate(
+  (widget) => widget is TextField && widget.decoration?.labelText == label,
+);
+
+Finder _fieldWithHint(String hint) => find.byWidgetPredicate(
+  (widget) => widget is TextField && widget.decoration?.hintText == hint,
+);
+
+class _DelayedAccountPageFakeClient extends RelayClient {
+  _DelayedAccountPageFakeClient() : super('http://127.0.0.1', 'tok');
+
+  final _passwordCompleter = Completer<void>();
+  final _tokenCompleter = Completer<String>();
+  bool passwordChangeStarted = false;
+  bool tokenCreateStarted = false;
+  int passwordChangeCalls = 0;
+  int tokenCreateCalls = 0;
+
+  @override
+  Future<List<MachineToken>> tokens() async => const [];
+
+  @override
+  Future<void> changePassword(String oldPw, String newPw) {
+    passwordChangeStarted = true;
+    passwordChangeCalls++;
+    return _passwordCompleter.future;
+  }
+
+  @override
+  Future<String> createToken(String label) {
+    tokenCreateStarted = true;
+    tokenCreateCalls++;
+    return _tokenCompleter.future;
+  }
+
+  void completePasswordChange() {
+    if (!_passwordCompleter.isCompleted) {
+      _passwordCompleter.complete();
+    }
+  }
+
+  void completeTokenCreate(String token) {
+    if (!_tokenCompleter.isCompleted) {
+      _tokenCompleter.complete(token);
+    }
+  }
+}
+
+class _DelayedTokenListAccountPageFakeClient extends RelayClient {
+  _DelayedTokenListAccountPageFakeClient() : super('http://127.0.0.1', 'tok');
+
+  final _tokenLoads = <Completer<List<MachineToken>>>[];
+
+  int get tokenLoadCalls => _tokenLoads.length;
+
+  @override
+  Future<List<MachineToken>> tokens() {
+    final completer = Completer<List<MachineToken>>();
+    _tokenLoads.add(completer);
+    return completer.future;
+  }
+
+  void completeTokenLoad(int index, String label) {
+    final completer = _tokenLoads[index];
+    if (completer.isCompleted) return;
+    completer.complete([
+      MachineToken.fromJson({
+        'id': 'tok-$label',
+        'label': label,
+        'created_at': '2026-01-01T00:00:00Z',
+      }),
+    ]);
+  }
+}
+
+class _TokenDeleteAccountPageFakeClient extends RelayClient {
+  _TokenDeleteAccountPageFakeClient() : super('http://127.0.0.1', 'tok');
+
+  bool _deleted = false;
+  int deleteTokenCalls = 0;
+  String? deletedTokenId;
+
+  @override
+  Future<List<MachineToken>> tokens() async => _deleted
+      ? const []
+      : [
+          MachineToken.fromJson({
+            'id': 'tok-1',
+            'label': 'laptop',
+            'created_at': '2026-01-01T00:00:00Z',
+          }),
+        ];
+
+  @override
+  Future<void> deleteToken(String id) async {
+    deleteTokenCalls++;
+    deletedTokenId = id;
+    _deleted = true;
+  }
+}
+
+class _DelayedTokenDeleteAccountPageFakeClient extends RelayClient {
+  _DelayedTokenDeleteAccountPageFakeClient() : super('http://127.0.0.1', 'tok');
+
+  final _deleteCompleter = Completer<void>();
+  bool _deleted = false;
+  int deleteTokenCalls = 0;
+
+  @override
+  Future<List<MachineToken>> tokens() async => _deleted
+      ? const []
+      : [
+          MachineToken.fromJson({
+            'id': 'tok-1',
+            'label': 'laptop',
+            'created_at': '2026-01-01T00:00:00Z',
+          }),
+        ];
+
+  @override
+  Future<void> deleteToken(String id) async {
+    deleteTokenCalls++;
+    await _deleteCompleter.future;
+    _deleted = true;
+  }
+
+  void completeDeleteToken() {
+    if (!_deleteCompleter.isCompleted) {
+      _deleteCompleter.complete();
+    }
+  }
+}

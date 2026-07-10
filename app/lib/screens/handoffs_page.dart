@@ -7,6 +7,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/sse.dart';
 import '../local/config.dart';
+import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../notifications.dart';
 import '../theme.dart';
@@ -14,38 +15,72 @@ import '../widgets.dart';
 import 'handoff_detail_view.dart';
 import 'terminal_deck.dart';
 
-// HandoffsPage is the coordination queue: list (assigned/sent/audit) → delivery
-// package detail (HandoffDetailView) → pickup → embedded agent terminals.
+// HandoffsPage is the inbox cockpit: list (inbox/sent/history) → 对接文档
+// (HandoffDetailView) → pickup → embedded agent terminals (TerminalDeck).
 // Desktop-focused; on mobile the terminal column simply isn't shown.
 class HandoffsPage extends StatefulWidget {
   final RelayClient client;
   final AppConfig config;
+  final Me? me;
   final bool showTerminal;
+  final bool enableEvents;
   const HandoffsPage({
     super.key,
     required this.client,
     required this.config,
+    this.me,
     this.showTerminal = true,
+    this.enableEvents = true,
   });
 
   @override
   State<HandoffsPage> createState() => _HandoffsPageState();
 }
 
+ListItem? refreshedSelectedHandoff(
+  ListItem? selected,
+  Iterable<ListItem> items,
+) {
+  if (selected == null) return null;
+  for (final item in items) {
+    if (item.id == selected.id) return item;
+  }
+  return null;
+}
+
+double handoffOnlineRosterMaxHeight(
+  Size screenSize, {
+  double preferred = 130,
+  double minHeight = 82,
+  double maxFraction = 0.22,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   String? _error;
   bool _loading = true;
-  String _view = 'recipient'; // recipient | sender | history
+  String _view = 'recipient'; // recipient | project | sender | history
   String _query = '';
   List<ListItem> _inbox = const [];
   ListItem? _selected;
   StreamSubscription<SseEvent>? _sse;
   Set<String> _online = {};
+  int _refreshGeneration = 0;
+  int _onlineGeneration = 0;
+  int _eventGeneration = 0;
   bool _listCollapsed = Prefs.getBool('inbox.list');
   bool _termCollapsed = Prefs.getBool('inbox.term');
   double _listWidth = Prefs.getDouble('inbox.listWidth', def: 340);
   double _termWidth = Prefs.getDouble('inbox.termWidth', def: 560);
   final _detailKey = GlobalKey<HandoffDetailViewState>();
+  late final LocalBus _localBusArtifacts = LocalBus.artifactCleanup(
+    registry: localBusRegistry,
+  );
 
   RelayClient get _client => widget.client;
   AppConfig get _cfg => widget.config;
@@ -53,19 +88,54 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   @override
   void initState() {
     super.initState();
+    // This page does not own the bus watcher/registry publisher, but pickup
+    // terminals still create hook artifacts. Route every real close through the
+    // same guarded cleanup as WorkspacePage; hide/app-dispose remain untouched.
+    onTermClosed = (sid) {
+      unawaited(_localBusArtifacts.cleanupSessionArtifacts(sid));
+    };
     _refresh();
     _loadOnline();
-    _sse = subscribeEvents(
-      _cfg.relayUrl,
-      _cfg.token,
-      _cfg.identity,
-    ).listen(_onSse, onError: (_) {});
+    _connectEvents();
+  }
+
+  @override
+  void didUpdateWidget(covariant HandoffsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_relayContextChanged(oldWidget)) {
+      _refreshGeneration++;
+      _onlineGeneration++;
+      _eventGeneration++;
+      _sse?.cancel();
+      _sse = null;
+      setState(() {
+        _error = null;
+        _loading = true;
+        _inbox = const [];
+        _selected = null;
+        _online = {};
+      });
+      _refresh();
+      _loadOnline();
+      _connectEvents();
+      return;
+    }
+    if (oldWidget.enableEvents != widget.enableEvents) {
+      _eventGeneration++;
+      _sse?.cancel();
+      _sse = null;
+      _connectEvents();
+    }
   }
 
   Future<void> _loadOnline() async {
+    final generation = ++_onlineGeneration;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     try {
       final users = await _client.onlineUsers();
-      if (mounted) {
+      if (_isCurrentOnlineLoad(generation, relayUrl, token, identity)) {
         setState(
           () => _online = users
               .where((u) => u.online)
@@ -76,14 +146,61 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     } catch (_) {}
   }
 
+  void _connectEvents() {
+    _sse?.cancel();
+    _sse = null;
+    final generation = ++_eventGeneration;
+    if (!widget.enableEvents) return;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    _sse = subscribeEvents(relayUrl, token, identity).listen((ev) {
+      if (!_isCurrentEventStream(generation, relayUrl, token, identity)) return;
+      _onSse(ev);
+    }, onError: (_) {});
+  }
+
+  bool _relayContextChanged(HandoffsPage oldWidget) =>
+      oldWidget.client != widget.client ||
+      oldWidget.config.relayUrl != _cfg.relayUrl ||
+      oldWidget.config.token != _cfg.token ||
+      oldWidget.config.identity != _cfg.identity;
+
+  bool _isCurrentOnlineLoad(
+    int generation,
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      generation == _onlineGeneration &&
+      _cfg.relayUrl == relayUrl &&
+      _cfg.token == token &&
+      _cfg.identity == identity;
+
+  bool _isCurrentEventStream(
+    int generation,
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      widget.enableEvents &&
+      generation == _eventGeneration &&
+      _cfg.relayUrl == relayUrl &&
+      _cfg.token == token &&
+      _cfg.identity == identity;
+
   @override
   void dispose() {
     _sse?.cancel();
+    _localBusArtifacts.dispose();
     disposeTerms();
     super.dispose();
   }
 
   void _onSse(SseEvent ev) {
+    if (!mounted) return;
     Map<String, dynamic> data() {
       try {
         return jsonDecode(ev.data) as Map<String, dynamic>;
@@ -129,23 +246,33 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   }
 
   Future<void> _refresh() async {
+    final generation = ++_refreshGeneration;
+    final view = _view;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final items = await _client.handoffs(as: _view);
+      final items = view == 'project'
+          ? await _client.projectHandoffs()
+          : await _client.handoffs(as: view);
+      if (!_isCurrentRefresh(generation, view)) return;
       setState(() {
         _inbox = items;
+        _selected = refreshedSelectedHandoff(_selected, items);
         _loading = false;
       });
     } catch (e) {
+      if (!_isCurrentRefresh(generation, view)) return;
       setState(() {
         _loading = false;
         _error = '加载失败: ${errorText(e)}';
       });
     }
   }
+
+  bool _isCurrentRefresh(int generation, String view) =>
+      mounted && generation == _refreshGeneration && view == _view;
 
   @override
   Widget build(BuildContext context) {
@@ -219,14 +346,25 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     if (sel == null) {
       return centerMsg('从左侧选择一个协作任务,查看交付文档与执行入口');
     }
+    final client = _client;
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
     return HandoffDetailView(
       key: _detailKey,
-      client: _client,
+      client: client,
       config: _cfg,
+      me: widget.me,
       item: sel,
       onOpenTerminal: widget.showTerminal ? addTerm : null,
       onSendToTerminal: sendToTerminal,
       onChanged: _refresh,
+      isCurrentContext: () =>
+          mounted &&
+          identical(client, widget.client) &&
+          _cfg.relayUrl == relayUrl &&
+          _cfg.token == token &&
+          _cfg.identity == identity,
     );
   }
 
@@ -246,9 +384,10 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
             Expanded(
               child: SegmentedButton<String>(
                 segments: const [
-                  ButtonSegment(value: 'recipient', label: Text('待处理')),
-                  ButtonSegment(value: 'sender', label: Text('我发起')),
-                  ButtonSegment(value: 'history', label: Text('审计历史')),
+                  ButtonSegment(value: 'recipient', label: Text('收件')),
+                  ButtonSegment(value: 'project', label: Text('团队')),
+                  ButtonSegment(value: 'sender', label: Text('已发')),
+                  ButtonSegment(value: 'history', label: Text('历史')),
                 ],
                 selected: {_view},
                 showSelectedIcon: false,
@@ -272,7 +411,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
         child: TextField(
           decoration: const InputDecoration(
-            hintText: '搜索 发起人 / repo / 标题',
+            hintText: '搜索 发送人 / 收件人 / repo / 标题',
             isDense: true,
             prefixIcon: Icon(Icons.search_rounded, size: 18),
           ),
@@ -286,7 +425,9 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   );
 
   Widget _onlineRoster() => Container(
-    constraints: const BoxConstraints(maxHeight: 130),
+    constraints: BoxConstraints(
+      maxHeight: handoffOnlineRosterMaxHeight(MediaQuery.sizeOf(context)),
+    ),
     margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
     decoration: BoxDecoration(
       color: CcColors.panelHigh.withValues(alpha: 0.45),
@@ -353,13 +494,20 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
         ? _inbox
         : _inbox
               .where(
-                (it) => '${it.sender} ${it.repoName} ${it.headline}'
-                    .toLowerCase()
-                    .contains(_query),
+                (it) =>
+                    '${it.sender} ${it.recipient} ${it.recipients.join(' ')} '
+                            '${it.repoName} ${it.headline} ${it.routeLabel}'
+                        .toLowerCase()
+                        .contains(_query),
               )
               .toList();
     if (items.isEmpty) {
-      return centerMsg(_inbox.isEmpty ? '空' : '无匹配', onRetry: _refresh);
+      return _HandoffListEmptyState(
+        icon: _inbox.isEmpty ? _emptyIconForView(_view) : Icons.search_off,
+        title: _inbox.isEmpty ? _emptyTitleForView(_view) : '没有匹配结果',
+        detail: _inbox.isEmpty ? _emptyDetailForView(_view) : '换一个关键词或清空搜索后再看。',
+        onRetry: _refresh,
+      );
     }
     return RefreshIndicator(
       onRefresh: _refresh,
@@ -370,50 +518,54 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
           final it = items[i];
           final sel = _selected?.id == it.id;
           final urgent = it.urgency == 'urgent';
-          return Container(
-            decoration: BoxDecoration(
-              color: sel ? CcColors.accent.withValues(alpha: 0.07) : null,
-              border: Border(
-                left: BorderSide(
-                  color: sel ? CcColors.accent : Colors.transparent,
-                  width: 2.5,
+          return Material(
+            color: sel
+                ? CcColors.accent.withValues(alpha: 0.07)
+                : Colors.transparent,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: sel ? CcColors.accent : Colors.transparent,
+                    width: 2.5,
+                  ),
                 ),
               ),
-            ),
-            child: ListTile(
-              selected: sel,
-              leading: statusDot(
-                urgent ? CcColors.danger : _kindColor(it.kind),
-                size: 9,
-                glow: urgent,
-              ),
-              title: Text(
-                it.sender,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              subtitle: Text(
-                it.headline.isNotEmpty ? it.headline : it.repoName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: CcColors.muted),
-              ),
-              trailing: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    relativeTime(it.createdAt),
-                    style: const TextStyle(
-                      fontFamily: CcType.mono,
-                      color: CcColors.subtle,
-                      fontSize: 11,
+              child: ListTile(
+                selected: sel,
+                leading: statusDot(
+                  urgent ? CcColors.danger : _kindColor(it.kind),
+                  size: 9,
+                  glow: urgent,
+                ),
+                title: Text(
+                  it.sender,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  it.headline.isNotEmpty ? it.headline : it.repoName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: CcColors.muted),
+                ),
+                trailing: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      relativeTime(it.createdAt),
+                      style: const TextStyle(
+                        fontFamily: CcType.mono,
+                        color: CcColors.subtle,
+                        fontSize: 11,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  kindBadge(it.kind),
-                ],
+                    const SizedBox(height: 4),
+                    kindBadge(it.kind),
+                  ],
+                ),
+                onTap: () => setState(() => _selected = it),
               ),
-              onTap: () => setState(() => _selected = it),
             ),
           );
         },
@@ -425,5 +577,119 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
     if (kind == 'bug') return CcColors.danger;
     if (kind == 'request') return CcColors.warning;
     return CcColors.accent;
+  }
+
+  IconData _emptyIconForView(String view) {
+    switch (view) {
+      case 'project':
+        return Icons.groups_2_rounded;
+      case 'sender':
+        return Icons.outbox_rounded;
+      case 'history':
+        return Icons.history_rounded;
+      default:
+        return Icons.inbox_rounded;
+    }
+  }
+
+  String _emptyTitleForView(String view) {
+    switch (view) {
+      case 'project':
+        return '还没有团队协作任务';
+      case 'sender':
+        return '还没有发出的协作任务';
+      case 'history':
+        return '还没有历史记录';
+      default:
+        return '任务队列为空';
+    }
+  }
+
+  String _emptyDetailForView(String view) {
+    switch (view) {
+      case 'project':
+        return '项目成员共享的协作任务会出现在这里。';
+      case 'sender':
+        return '从会话或命令发起协作任务后会出现在这里。';
+      case 'history':
+        return '已完成或归档的协作任务会出现在这里。';
+      default:
+        return '收到新的协作交接后会自动刷新。';
+    }
+  }
+}
+
+class _HandoffListEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String detail;
+  final VoidCallback onRetry;
+
+  const _HandoffListEmptyState({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 300),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: CcColors.panelHigh.withValues(alpha: 0.58),
+              borderRadius: BorderRadius.circular(CcRadius.md),
+              border: Border.all(color: CcColors.borderSoft),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: CcColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(CcRadius.md),
+                      border: Border.all(
+                        color: CcColors.accent.withValues(alpha: 0.28),
+                      ),
+                    ),
+                    child: Icon(icon, color: CcColors.accentBright, size: 20),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    detail,
+                    textAlign: TextAlign.center,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: CcColors.muted, fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('刷新'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

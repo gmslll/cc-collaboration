@@ -20,6 +20,9 @@ func runAlert(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("alert", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient identity whose watch should surface this alert")
 	project := fs.String("project", "", "workspace project name the receiver launches the agent in")
+	teamProjectID := fs.String("team-project", "", "cc-handoff project id whose direct owners/members plus team owners/admins should receive this alert")
+	orgID := fs.String("org", "", "cc-handoff organization id whose actionable members should receive this alert")
+	member := fs.String("member", "", "with --team-project/--org, alert only this team member")
 	level := fs.String("level", "", "severity tag for the notification subtitle (e.g. error, fatal)")
 	message := fs.String("message", "", "log body / excerpt to triage")
 	file := fs.String("file", "", "read the log body from this file instead of --message ('-' for stdin)")
@@ -27,8 +30,19 @@ func runAlert(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *to == "" {
-		return fmt.Errorf("usage: cc-handoff alert --to <identity> --project <name> [--message TEXT | --file PATH] [--level LVL]")
+	toID := cleanTargetArg(*to)
+	projectName := cleanTargetArg(*project)
+	teamProject := cleanTargetArg(*teamProjectID)
+	org := cleanTargetArg(*orgID)
+	targetMember := cleanTargetArg(*member)
+	if toID == "" && teamProject == "" && org == "" {
+		return fmt.Errorf("usage: cc-handoff alert [--to <identity> | --team-project <id> | --org <id>] [--member ID] --project <name> [--message TEXT | --file PATH] [--level LVL]")
+	}
+	if toID != "" && (teamProject != "" || org != "" || targetMember != "") {
+		return fmt.Errorf("--to cannot be combined with --team-project/--org/--member")
+	}
+	if targetMember != "" && teamProject == "" && org == "" {
+		return fmt.Errorf("--member requires --team-project or --org")
 	}
 
 	msg := *message
@@ -58,6 +72,9 @@ func runAlert(ctx context.Context, args []string) error {
 	if u.RelayURL == "" || u.Token == "" {
 		return fmt.Errorf("relay_url/token missing in user config; run `cc-handoff init`")
 	}
+	if (teamProject != "" || org != "") && u.Identity == "" {
+		return fmt.Errorf("identity missing in user config; run `cc-handoff config set --identity <you>` before using team alert targets")
+	}
 
 	lvl := *level
 	if *grade && lvl == "" {
@@ -68,17 +85,32 @@ func runAlert(ctx context.Context, args []string) error {
 	}
 
 	client := transport.New(u.RelayURL, u.Token)
-	if err := client.Alert(ctx, &handoffschema.LogAlert{
-		Recipient: *to,
-		Project:   *project,
-		Level:     lvl,
-		Message:   msg,
-	}); err != nil {
-		return err
+	recipients := []string{toID}
+	if teamProject != "" || org != "" {
+		recipients, err = client.ResolveTeamRecipients(ctx, teamProject, org, u.Identity, targetMember)
+		if err != nil {
+			return err
+		}
+		if len(recipients) == 0 {
+			if teamProject != "" {
+				return fmt.Errorf("project %s has no actionable alert recipients (direct owners/members or team owners/admins)", teamProject)
+			}
+			return fmt.Errorf("organization %s has no actionable alert recipients", org)
+		}
 	}
-	fmt.Printf("alert sent to %s", *to)
-	if *project != "" {
-		fmt.Printf(" (project %s)", *project)
+	for _, recipient := range recipients {
+		if err := client.Alert(ctx, &handoffschema.LogAlert{
+			Recipient: recipient,
+			Project:   projectName,
+			Level:     lvl,
+			Message:   msg,
+		}); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("alert sent to %s", formatRecipientTarget(recipients))
+	if projectName != "" {
+		fmt.Printf(" (project %s)", projectName)
 	}
 	fmt.Println()
 	return nil

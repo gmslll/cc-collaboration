@@ -24,6 +24,7 @@ class TodoStore extends ChangeNotifier {
 
   RelayClient? _client;
   StreamSubscription<SseEvent>? _sse;
+  int _epoch = 0;
 
   // onComment fires on todo.comment_created so a (future) detail page can
   // reload its comment list — TodoStore itself doesn't model comments.
@@ -34,18 +35,38 @@ class TodoStore extends ChangeNotifier {
     required Me me,
     required AppConfig config,
   }) async {
+    final epoch = ++_epoch;
     _client = client;
     this.me = me;
     await _sse?.cancel();
-    await refresh();
+    if (epoch != _epoch) return;
+    await _refreshForEpoch(epoch);
+    if (epoch != _epoch) return;
     _sse = subscribeEvents(config.relayUrl, config.token, config.identity)
-        .listen(onSseEvent, onError: (_) {});
+        .listen((ev) {
+          if (epoch == _epoch) onSseEvent(ev);
+        }, onError: (_) {});
+  }
+
+  Future<void> stop() async {
+    _epoch++;
+    final sse = _sse;
+    _sse = null;
+    _client = null;
+    me = null;
+    all = const [];
+    loading = false;
+    error = null;
+    notifyListeners();
+    await sse?.cancel();
   }
 
   // refresh issues the personal + team-union requests concurrently (both
   // futures start before Future.wait is even called, since the list literal
   // evaluates them eagerly) and merges the results into one list.
-  Future<void> refresh() async {
+  Future<void> refresh() => _refreshForEpoch(_epoch);
+
+  Future<void> _refreshForEpoch(int epoch) async {
     final client = _client;
     if (client == null) return;
     loading = true;
@@ -56,10 +77,13 @@ class TodoStore extends ChangeNotifier {
         client.todos(scope: 'personal'),
         client.todos(scope: 'project'),
       ]);
-      all = [...results[0], ...results[1]];
+      if (epoch != _epoch || client != _client) return;
+      all = mergeTodoRefreshResults(results[0], results[1]);
     } catch (e) {
+      if (epoch != _epoch || client != _client) return;
       error = '加载待办失败: $e';
     }
+    if (epoch != _epoch || client != _client) return;
     loading = false;
     notifyListeners();
   }
@@ -117,4 +141,21 @@ class TodoStore extends ChangeNotifier {
     _sse?.cancel();
     super.dispose();
   }
+}
+
+@visibleForTesting
+List<Todo> mergeTodoRefreshResults(List<Todo> personal, List<Todo> project) {
+  final merged = <Todo>[];
+  final byId = <String, int>{};
+  for (final todo in [...personal, ...project]) {
+    if (todo.id.isEmpty) continue;
+    final index = byId[todo.id];
+    if (index == null) {
+      byId[todo.id] = merged.length;
+      merged.add(todo);
+    } else {
+      merged[index] = todo;
+    }
+  }
+  return merged;
 }

@@ -120,11 +120,15 @@ func (r *Result) HasDrift() bool {
 // `cc-handoff submit --amends ...` — agents reading this through MCP can
 // substitute their preferred invocation.
 func (r *Result) Summary(recipient string) string {
+	target := strings.TrimSpace(recipient)
+	if target == "" {
+		target = "any recipient"
+	}
 	if r.BaselineID == "" {
 		return fmt.Sprintf(
 			"no prior handoff to `%s` with a swagger snapshot found in the scanned window.\n"+
 				"send a regular `cc-handoff submit` first to establish a baseline.",
-			recipient,
+			target,
 		)
 	}
 	b := r.Baseline

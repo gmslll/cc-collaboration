@@ -22,14 +22,19 @@ import '../local/config.dart';
 import '../local/diff_parse.dart';
 import '../local/git.dart';
 import '../local/hook_activity.dart';
+import '../local/identity.dart';
 import '../local/local_bus.dart';
+import '../local/online_send_layout.dart';
 import '../local/lsp/lsp_client.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/project_order.dart';
+import '../local/session_manager.dart';
 import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
+import '../local/todo_permissions.dart';
 import '../local/todo_store.dart';
+import '../local/todo_workspace_scope.dart';
 import '../local/worktrees.dart';
 import '../plugins/plugin_manager.dart';
 import '../remote/file_transfer.dart';
@@ -37,6 +42,7 @@ import '../remote/remote_host.dart';
 import '../theme.dart';
 import '../voice/voice.dart';
 import '../widgets.dart';
+import '../widgets/history_commit_tile.dart';
 import '../widgets/inbox_item_card.dart';
 import '../widgets/split_pane.dart';
 import '../widgets/todo_card.dart';
@@ -50,6 +56,7 @@ import 'github_pr_page.dart';
 import 'handoff_detail_view.dart';
 import 'plugins_page.dart';
 import 'repo_config_page.dart';
+import 'session_manager.dart';
 import 'terminal_deck.dart';
 import 'terminal_pane.dart';
 import 'todo_detail_view.dart';
@@ -58,6 +65,7 @@ import 'workspace/git_graph.dart';
 part 'workspace/branch_dialog.dart';
 part 'workspace/navigation_dialogs.dart';
 part 'workspace/search_dialogs.dart';
+part 'workspace/team_project_pull.dart';
 part 'workspace/git_history_dialogs.dart';
 part 'workspace/git_mixin.dart';
 part 'workspace/search_mixin.dart';
@@ -79,10 +87,231 @@ enum _BranchFilter { all, local, remote, current, unpublished, diverged }
 
 const _workingTreeDiffSelection = '__working_tree_diff__';
 
+double workspaceConfirmDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+double workspaceOutgoingDialogWidth(Size size, {double preferred = 460}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+// Keeps the tree-wide context menu on genuine empty space. Wrapping the whole
+// scroll view in a secondary-tap detector makes both that detector and a row's
+// own detector receive onSecondaryTapDown, opening two overlapping menus.
+class WorkspaceTreeScrollSurface extends StatelessWidget {
+  final List<Widget> children;
+  final Widget empty;
+  final GestureTapDownCallback onBackgroundSecondaryTapDown;
+
+  const WorkspaceTreeScrollSurface({
+    super.key,
+    required this.children,
+    required this.empty,
+    required this.onBackgroundSecondaryTapDown,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (children.isEmpty) {
+      return GestureDetector(
+        key: const ValueKey('workspace-tree-empty-context-region'),
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown: onBackgroundSecondaryTapDown,
+        child: empty,
+      );
+    }
+    return CustomScrollView(
+      key: const ValueKey('workspace-project-tree'),
+      slivers: [
+        SliverList(delegate: SliverChildListDelegate(children)),
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: GestureDetector(
+            key: const ValueKey('workspace-tree-blank-context-region'),
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: onBackgroundSecondaryTapDown,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+Size workspaceCompareWithHeadDialogSize(
+  Size viewport, {
+  double preferredWidth = 1040,
+  double preferredHeight = 720,
+}) => Size(
+  workspaceNavigationDialogDimension(viewport.width - 32, preferredWidth),
+  workspaceNavigationDialogDimension(
+    viewport.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
 // 取前 take 行拼成预览,超出部分加 "...and N more"(用于确认对话框)。
 String _previewList(List<String> items, {int take = 5}) =>
     items.take(take).join('\n') +
     (items.length > take ? '\n...and ${items.length - take} more' : '');
+
+bool workspaceCommitActionEnabled({
+  required bool hasCommitTarget,
+  required String message,
+  required bool loading,
+}) => !loading && hasCommitTarget && message.trim().isNotEmpty;
+
+double workspaceLogFilterMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.46,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
+List<OnlineUser> onlineSendSelectableUsers(
+  Iterable<OnlineUser> users,
+  String selfIdentity, {
+  Iterable<String>? allowedIdentities,
+}) {
+  final seen = <String>{};
+  final allowed = allowedIdentities == null
+      ? null
+      : {
+          for (final identity in allowedIdentities)
+            if (identityLookupKey(identity).isNotEmpty)
+              identityLookupKey(identity),
+        };
+  final selectable = <OnlineUser>[];
+  for (final user in users) {
+    final key = identityLookupKey(user.identity);
+    if (!user.online ||
+        key.isEmpty ||
+        sameIdentity(user.identity, selfIdentity) ||
+        (allowed != null && !allowed.contains(key))) {
+      continue;
+    }
+    if (seen.add(key)) selectable.add(user);
+  }
+  return selectable;
+}
+
+bool onlineSendIdentitySelected(String? selected, String identity) =>
+    selected != null && sameIdentity(selected, identity);
+
+String onlineSendDialogTitle(String? projectName) {
+  final name = (projectName ?? '').trim();
+  return name.isEmpty ? '发送到在线用户' : '发送到团队用户 · $name';
+}
+
+List<RemoteSession> onlineSendSessionsForProject(
+  Iterable<RemoteSession> sessions, {
+  String? projectId,
+  String? projectName,
+}) {
+  final pid = (projectId ?? '').trim();
+  final name = (projectName ?? '').trim();
+  if (pid.isEmpty && name.isEmpty) return sessions.toList();
+  return [
+    for (final session in sessions)
+      if (pid.isNotEmpty
+          ? (session.projectId.trim().isNotEmpty
+                ? session.projectId.trim() == pid
+                : name.isNotEmpty && session.project.trim() == name)
+          : session.project.trim() == name)
+        session,
+  ];
+}
+
+Set<String> onlineSendProjectRecipientIdentities(ProjectDetail detail) => {
+  if (identityLookupKey(detail.project.ownerIdentity).isNotEmpty)
+    detail.project.ownerIdentity,
+  for (final member in detail.members)
+    if (identityLookupKey(member.identity).isNotEmpty) member.identity,
+};
+
+Set<String> onlineSendProjectReachableIdentities(
+  ProjectDetail detail, {
+  OrganizationDetail? organization,
+}) {
+  final identities = onlineSendProjectRecipientIdentities(detail);
+  if (organization == null) return identities;
+  for (final member in organization.members) {
+    final role = member.role.trim().toLowerCase();
+    if ((role == 'owner' || role == 'admin') &&
+        identityLookupKey(member.identity).isNotEmpty) {
+      identities.add(member.identity);
+    }
+  }
+  return identities;
+}
+
+bool onlineSendProjectNameIsAmbiguous(
+  Iterable<ProjectRole> projects,
+  String? name,
+) {
+  final target = (name ?? '').trim();
+  if (target.isEmpty) return false;
+  final ids = <String>{};
+  for (final project in projects) {
+    if (project.name.trim() == target && project.id.trim().isNotEmpty) {
+      ids.add(project.id.trim());
+    }
+  }
+  return ids.length > 1;
+}
+
+String? onlineSendProjectIdForLocalProject(
+  Iterable<ProjectRole> projectRoles,
+  ProjectCfg project,
+) {
+  final configuredProjectId = project.projectId.trim();
+  if (configuredProjectId.isNotEmpty) return configuredProjectId;
+  return uniqueProjectIdByName(projectRoles, project.name);
+}
+
+bool remoteSpawnProjectMatchesRequestedId(
+  ProjectCfg project,
+  String? requestedProjectId,
+) {
+  final requested = (requestedProjectId ?? '').trim();
+  if (requested.isEmpty) return true;
+  return project.projectId.trim() == requested;
+}
+
+class _OnlineSendProjectScopeError implements Exception {
+  const _OnlineSendProjectScopeError();
+}
+
+bool incomingMessageTargetIsOpen(
+  Iterable<TerminalSession> sessions,
+  TerminalSession target,
+) => sessions.any((session) => session.id == target.id);
+
+bool incomingMessageSessionMatchesProject({
+  required String sessionProjectId,
+  required String sessionProjectName,
+  required String messageProjectId,
+  required String messageProjectName,
+}) {
+  final msgPid = messageProjectId.trim();
+  final msgProject = messageProjectName.trim();
+  if (msgPid.isEmpty && msgProject.isEmpty) return true;
+  final sessionPid = sessionProjectId.trim();
+  if (msgPid.isNotEmpty && sessionPid.isNotEmpty) return sessionPid == msgPid;
+  final sessionProject = sessionProjectName.trim();
+  return msgProject.isNotEmpty && sessionProject == msgProject;
+}
 
 const _searchSkipDirs = {
   '.git',
@@ -99,6 +328,404 @@ const _searchSkipDirs = {
   '__pycache__',
   '.venv',
 };
+
+class WorkspaceFieldSpec {
+  final String label;
+  final String? hint;
+  final bool required;
+
+  const WorkspaceFieldSpec({
+    required this.label,
+    this.hint,
+    this.required = false,
+  });
+}
+
+class WorkspaceFieldsDialog extends StatefulWidget {
+  final String title;
+  final String okLabel;
+  final List<WorkspaceFieldSpec> fields;
+
+  const WorkspaceFieldsDialog({
+    super.key,
+    required this.title,
+    required this.okLabel,
+    required this.fields,
+  });
+
+  @override
+  State<WorkspaceFieldsDialog> createState() => _WorkspaceFieldsDialogState();
+}
+
+class _WorkspaceFieldsDialogState extends State<WorkspaceFieldsDialog> {
+  late final List<TextEditingController> _ctls = [
+    for (final _ in widget.fields) TextEditingController(),
+  ];
+
+  @override
+  void dispose() {
+    for (final ctl in _ctls) {
+      ctl.dispose();
+    }
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, [for (final ctl in _ctls) ctl.text]);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < widget.fields.length; i++)
+            Padding(
+              padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
+              child: TextField(
+                controller: _ctls[i],
+                autofocus: i == 0,
+                decoration: InputDecoration(
+                  labelText: widget.fields[i].label,
+                  hintText: widget.fields[i].hint,
+                ),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: Text(widget.okLabel)),
+      ],
+    );
+  }
+}
+
+class WorkspaceSessionRenameDialog extends StatefulWidget {
+  final String initialName;
+  final String hint;
+
+  const WorkspaceSessionRenameDialog({
+    super.key,
+    this.initialName = '',
+    required this.hint,
+  });
+
+  @override
+  State<WorkspaceSessionRenameDialog> createState() =>
+      _WorkspaceSessionRenameDialogState();
+}
+
+class _WorkspaceSessionRenameDialogState
+    extends State<WorkspaceSessionRenameDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重命名会话'),
+      content: TextField(
+        controller: _ctl,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: '名称(留空 = 默认)',
+          hintText: widget.hint,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
+class WorkspacePathFilterDialog extends StatefulWidget {
+  final String initial;
+  final String? activeRel;
+
+  const WorkspacePathFilterDialog({
+    super.key,
+    this.initial = '',
+    this.activeRel,
+  });
+
+  @override
+  State<WorkspacePathFilterDialog> createState() =>
+      _WorkspacePathFilterDialogState();
+}
+
+class _WorkspacePathFilterDialogState extends State<WorkspacePathFilterDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final width = workspaceConfirmDialogWidth(size);
+    final activeRel = widget.activeRel;
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text(
+        'Filter Log by Path',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: width,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _ctl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'File or directory path',
+                  hintText: 'app/lib/screens/workspace_page.dart',
+                ),
+                onSubmitted: (_) => _submit(),
+              ),
+              if (activeRel != null && activeRel.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Tooltip(
+                    message: activeRel,
+                    child: TextButton.icon(
+                      onPressed: () => _ctl.text = activeRel,
+                      icon: const Icon(Icons.my_location_rounded, size: 14),
+                      label: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: width > 72 ? width - 72 : width,
+                        ),
+                        child: Text(
+                          'Use active file: $activeRel',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Apply')),
+      ],
+    );
+  }
+}
+
+class WorkspaceCommitBranchDialog extends StatefulWidget {
+  final String initialBranch;
+  final String shortHash;
+  final String subject;
+
+  const WorkspaceCommitBranchDialog({
+    super.key,
+    required this.initialBranch,
+    required this.shortHash,
+    required this.subject,
+  });
+
+  @override
+  State<WorkspaceCommitBranchDialog> createState() =>
+      _WorkspaceCommitBranchDialogState();
+}
+
+class _WorkspaceCommitBranchDialogState
+    extends State<WorkspaceCommitBranchDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initialBranch,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New Branch from Commit'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${widget.shortHash} · ${widget.subject}',
+            style: CcType.code(size: 12, color: CcColors.muted),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _ctl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Branch name'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Create and Checkout'),
+        ),
+      ],
+    );
+  }
+}
+
+class WorkspaceSettingsDraft {
+  final String preLaunch;
+  final String editor;
+  final String agent;
+
+  const WorkspaceSettingsDraft({
+    required this.preLaunch,
+    required this.editor,
+    required this.agent,
+  });
+}
+
+class WorkspaceSettingsDialog extends StatefulWidget {
+  final String workspaceName;
+  final String initialPreLaunch;
+  final String initialEditor;
+  final String initialAgent;
+
+  const WorkspaceSettingsDialog({
+    super.key,
+    required this.workspaceName,
+    this.initialPreLaunch = '',
+    this.initialEditor = '',
+    this.initialAgent = 'claude',
+  });
+
+  @override
+  State<WorkspaceSettingsDialog> createState() =>
+      _WorkspaceSettingsDialogState();
+}
+
+class _WorkspaceSettingsDialogState extends State<WorkspaceSettingsDialog> {
+  late final TextEditingController _preCtl = TextEditingController(
+    text: widget.initialPreLaunch,
+  );
+  late final TextEditingController _editorCtl = TextEditingController(
+    text: widget.initialEditor,
+  );
+  late String _agent = _safeAgent(widget.initialAgent);
+
+  static String _safeAgent(String value) =>
+      value == 'codex' || value == 'manual' ? value : 'claude';
+
+  @override
+  void dispose() {
+    _preCtl.dispose();
+    _editorCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    WorkspaceSettingsDraft(
+      preLaunch: _preCtl.text,
+      editor: _editorCtl.text,
+      agent: _agent,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        '「${widget.workspaceName.isEmpty ? '默认' : widget.workspaceName}」工作区设置',
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _preCtl,
+            decoration: const InputDecoration(
+              labelText: 'pre_launch(起 agent 前跑)',
+              hintText: 'nvm use 18',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _editorCtl,
+            decoration: const InputDecoration(
+              labelText: 'editor(编辑器命令)',
+              hintText: 'code .',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Text('agent', style: TextStyle(color: CcColors.muted)),
+              const Spacer(),
+              DropdownButton<String>(
+                value: _agent,
+                items: const [
+                  DropdownMenuItem(value: 'claude', child: Text('claude')),
+                  DropdownMenuItem(value: 'codex', child: Text('codex')),
+                  DropdownMenuItem(value: 'manual', child: Text('manual')),
+                ],
+                onChanged: (v) => setState(() => _agent = _safeAgent(v ?? '')),
+              ),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
+      ],
+    );
+  }
+}
 
 // _DiffTreeNode is one node of the directory tree built from a commit's changed
 // files (the right pane of the 3-pane Log).
@@ -180,17 +807,27 @@ class _CodeLocation {
 // (and persisted) until injected later, manually or when the target session
 // next goes idle. [sessionId] is the local session the sender targeted.
 class _ParkedMessage {
-  final String from, sessionId, body;
-  _ParkedMessage(this.from, this.sessionId, this.body);
+  final String from, sessionId, body, project, projectId;
+  _ParkedMessage(
+    this.from,
+    this.sessionId,
+    this.body, {
+    this.project = '',
+    this.projectId = '',
+  });
   Map<String, dynamic> toJson() => {
     'from': from,
     'session_id': sessionId,
     'body': body,
+    'project': project,
+    'project_id': projectId,
   };
   _ParkedMessage.fromJson(Map j)
     : from = (j['from'] ?? '').toString(),
       sessionId = (j['session_id'] ?? '').toString(),
-      body = (j['body'] ?? '').toString();
+      body = (j['body'] ?? '').toString(),
+      project = (j['project'] ?? '').toString(),
+      projectId = (j['project_id'] ?? '').toString();
 }
 
 // WorkspacePage is the project-centric cockpit (desktop only): a terminal deck
@@ -199,7 +836,7 @@ class _ParkedMessage {
 // 对接文档; create/remove workspaces, projects and worktrees (shells the CLI).
 // Open agent sessions persist and reopen next launch (TerminalHost.persistKey).
 class WorkspacePage extends StatefulWidget {
-  final RelayClient client;
+  final RelayClient? client;
   final AppConfig config;
   // overviewStore is the shared 会话总览 projection: WorkspacePage produces into
   // it, the top-level SessionOverviewPage renders from it (created + injected by
@@ -208,7 +845,7 @@ class WorkspacePage extends StatefulWidget {
   // me + store back the 待办 sidebar (_todosSidebarPanel) — same TodoStore
   // instance HomeShell hands the top-level TodosPage, so both stay in sync
   // off one SSE subscription.
-  final Me me;
+  final Me? me;
   final TodoStore store;
   const WorkspacePage({
     super.key,
@@ -239,13 +876,21 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // Shares this workspace (terminals + project files) to the user's phone via
   // the relay. Opt-in — off until the toolbar "cast" toggle. See lib/remote.
-  late final RemoteHost _remoteHost = RemoteHost(
+  late RemoteHost _remoteHost = _newRemoteHost();
+  bool _remoteWasConnected = false;
+  int _remoteLastClients = 0;
+  String? _remoteShownErr;
+  // The most recent desktop→phone send batch, shown live in the progress dialog.
+  List<FileXfer> _sendBatch = const [];
+
+  RemoteHost _newRemoteHost() => RemoteHost(
     relayUrl: _cfg.relayUrl,
     token: _cfg.token,
     sessions: () => terms,
     roots: () => [
       for (final ws in _cfg.workspaces)
-        for (final p in ws.projects) RemoteRoot(p.name, p.path, ws.name),
+        for (final p in ws.projects)
+          RemoteRoot(p.name, p.path, ws.name, p.projectId),
     ],
     // All workspace names (incl. empty ones) so the phone can see + add projects
     // to a workspace that has no projects yet.
@@ -256,11 +901,6 @@ class _WorkspacePageState extends State<WorkspacePage>
     onConfigAction: _remoteConfigAction,
     onAssignTodo: _remoteAssignTodo,
   );
-  bool _remoteWasConnected = false;
-  int _remoteLastClients = 0;
-  String? _remoteShownErr;
-  // The most recent desktop→phone send batch, shown live in the progress dialog.
-  List<FileXfer> _sendBatch = const [];
 
   // Local session message bus: lets sibling sessions (and the agents inside
   // them) forward point-to-point messages to each other without the relay. The
@@ -284,6 +924,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   Timer? _overviewTicker;
   Timer? _hookActivityTicker;
   final Map<String, String> _hookActivityFingerprints = {};
+  Offset? _lastContextMenuPosition;
 
   // Parked ("稍后") cross-user messages: persisted across restarts, surfaced as a
   // toolbar badge, injected later (manually, or auto when the target session
@@ -337,22 +978,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   // prefix match; the worktree comes from the <project>/.worktrees/<name>
   // layout), the derived status, current usage, and the cached preview.
   SessionCard _cardFor(TerminalSession s) {
-    final hit = _projectForFile(s.workdir);
+    final membership = resolveSessionProject(s.workdir, _cfg.workspaces);
     String workspace = '', project = '';
     String? worktree;
-    if (hit != null) {
-      project = hit.project.name;
-      final rel = hit.rel;
+    if (membership != null) {
+      workspace = membership.workspace.name;
+      project = membership.project.name;
+      final rel = membership.relativePath;
       if (rel.startsWith('.worktrees/')) {
         worktree = rel.substring('.worktrees/'.length).split('/').first;
       } else if (rel.isNotEmpty) {
         worktree = rel.split('/').first;
-      }
-      for (final w in _cfg.workspaces) {
-        if (w.projects.any((p) => p.path == hit.project.path)) {
-          workspace = w.name;
-          break;
-        }
       }
     }
     final activities = _recentHookActivities(s, limit: 4);
@@ -366,6 +1002,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       isAgent: s.isAgent,
       workspace: workspace,
       project: project,
+      projectId: membership?.project.projectId ?? '',
       worktree: worktree,
       status: status,
       statusDetail: detail,
@@ -375,6 +1012,66 @@ class _WorkspacePageState extends State<WorkspacePage>
       workdir: s.workdir,
       recentActivity: [for (final a in activities) a.overviewSummary()],
       isSupervisor: s.supervisor,
+    );
+  }
+
+  ManagedSession _managedSessionFor(TerminalSession session) {
+    final membership = resolveSessionProject(session.workdir, _cfg.workspaces);
+    final activities = _recentHookActivities(session, limit: 8);
+    final latest = _latestHookActivityFrom(activities);
+    final status = _statusFor(session, latest);
+    final rel = membership?.relativePath ?? '';
+    var worktree = '';
+    if (rel.startsWith('.worktrees/')) {
+      worktree = rel.substring('.worktrees/'.length).split('/').first;
+    }
+    var branch = '';
+    final project = membership?.project;
+    if (project != null) {
+      final known = resolveSessionWorktree(
+        session.workdir,
+        _worktrees[project.path] ?? const <Worktree>[],
+      );
+      if (known != null && known.path != project.path) {
+        branch = known.branch;
+        if (worktree.isEmpty) worktree = known.name;
+      }
+    }
+    final recentlyCompleted =
+        !session.busy &&
+        !session.needsReview &&
+        (latest?.event == 'Stop' || latest?.event == 'SubagentStop');
+    return ManagedSession(
+      id: session.id,
+      name: session.label,
+      agent: session.isAgent ? session.agentKind : 'shell',
+      workspace: membership?.workspace.name ?? '',
+      project: project?.name ?? '',
+      projectPath: project?.path ?? '',
+      worktree: worktree,
+      branch: branch,
+      status: status,
+      statusDetail: _statusDetailFor(session, status, latest),
+      lastActivity: activities.isEmpty ? null : activities.first.at,
+      preview: session.overviewPreview ?? '',
+      recentlyCompleted: recentlyCompleted,
+    );
+  }
+
+  List<ManagedSession> get _managedSessions => [
+    for (final session in terms) _managedSessionFor(session),
+  ];
+
+  TopSessionWorkset get _topSessionWorkset {
+    final hidden = {
+      for (final session in terms)
+        if (isTabHidden(session.id)) session.id,
+    };
+    return topSessionWorkset(
+      sessions: _managedSessions,
+      activeId: terms.isEmpty ? null : terms[activeTerm].id,
+      pinnedIds: _pinnedSessionIds,
+      explicitlyHiddenIds: hidden,
     );
   }
 
@@ -543,6 +1240,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (changed) {
       unawaited(_localBus.syncRegistry());
       if (overviewChanged) _publishOverview();
+      if (mounted) setState(() {});
     }
   }
 
@@ -615,6 +1313,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Map<String, List<ListItem>> _tasksByRepo = const {};
+  int _taskLoadGeneration = 0;
   // project path -> worktrees. Key absent = not loaded; value null = loading;
   // value list = loaded (possibly empty).
   final Map<String, List<Worktree>?> _worktrees = {};
@@ -622,6 +1321,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   // expansion controllers per project path, so launching a session can expand
   // its project to reveal the new session node.
   final Map<String, ExpansibleController> _proj = {};
+  final Map<String, ExpansibleController> _workspaceControllers = {};
+  // Temporary tree focus: null shows every workspace. Deliberately not stored
+  // in Prefs — restarting the app always returns to the full project tree.
+  String? _focusedWorkspaceName;
+  bool _sessionManagerOpening = false;
+  final Set<String> _pinnedSessionIds = sessionManagerSetFromPref(
+    Prefs.getString('ws.sessionManager.pinned', def: '[]'),
+  );
+  final Set<String> _sessionManagerCollapsed = sessionManagerSetFromPref(
+    Prefs.getString('ws.sessionManager.collapsed', def: '[]'),
+  );
   bool _busy = false;
   ListItem? _detailItem;
   @override
@@ -742,11 +1452,18 @@ class _WorkspacePageState extends State<WorkspacePage>
       _publishOverview(); // membership changed → refresh the 会话总览 snapshot
       unawaited(_refreshAllPreviews()); // pull a preview for any new session
     };
+    // A real close (including supervisor kill and bulk close) removes only this
+    // sid's local-bus cache. Hide-only tab closes and app shutdown do not fire
+    // this hook because those sessions remain live/persisted for restoration.
+    onTermClosed = (sid) {
+      unawaited(_localBus.cleanupSessionArtifacts(sid));
+    };
     // A session's busy state flipped (turn start/finish) → keep the overview's
     // 思考中/待 review state live on both the desktop page and connected phones.
     onAgentBusyChanged = (s) {
       unawaited(_localBus.syncRegistry());
       _publishOverview();
+      if (mounted) setState(() {});
     };
     // An agent finishing a turn pops a desktop banner (TerminalHost) and pushes
     // the same "任务通知" to any connected phone (reuses the shared copy helper).
@@ -786,8 +1503,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         });
       }
     };
-    // Right-click "发送到在线用户…" in any terminal routes the selection here.
-    onSendToOnline = _showSendToOnlineUser;
+    // Right-click "发送到在线用户…" in any terminal routes the selection here
+    // only when relay is actually configured.
+    _syncOnlineSendAction();
     // When the active session changes (any path: switch/add/close/restore),
     // re-arm TTS so it reads the now-front session's future turns, not its
     // backlog or another tab's.
@@ -831,7 +1549,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     };
     widget.overviewStore.previewHandler = (sid) async => sessionById(
       sid,
-    )?.snapshotAnsi(60); // coloured live screen (incl. prompt)
+    )?.snapshotSized(); // coloured live screen + geometry (incl. prompt)
     // Opening a session's quick-reply preview in the overview = viewing it → clear
     // its 待 review (the overview can't reach `terms`, so it routes through here).
     widget.overviewStore.reviewedHandler = markSessionReviewed;
@@ -866,7 +1584,11 @@ class _WorkspacePageState extends State<WorkspacePage>
       m.showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('收到手机文件：$name'),
+          content: Text(
+            '收到手机文件：$name',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
           action: SnackBarAction(
             label: '在 Finder 中显示',
             onPressed: () => Process.run('open', ['-R', path]),
@@ -887,7 +1609,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (mounted) setState(() => _listening = v);
     };
     _voice.init();
-    _localBus.start();
     _hookActivityTicker = Timer.periodic(
       const Duration(seconds: 1),
       (_) => _publishHookActivities(),
@@ -901,23 +1622,78 @@ class _WorkspacePageState extends State<WorkspacePage>
     // Any newly spawned session surfaces the bottom terminal panel (even if it
     // was showing Git) so the launched agent is visible. Restore doesn't go
     // through addTerm, so a restored Git view isn't hijacked on startup.
-    onTermAdded = () => _setBottomTool(_BottomTool.terminal);
+    onTermAdded = () {
+      if (terms.isNotEmpty && _focusedWorkspaceName != null) {
+        final membership = resolveSessionProject(
+          terms.last.workdir,
+          _cfg.workspaces,
+        );
+        if (membership == null ||
+            membership.workspace.name != _focusedWorkspaceName) {
+          _setWorkspaceFocus(null);
+        }
+      }
+      _setBottomTool(_BottomTool.terminal);
+    };
     _remoteHost.addListener(_onRemoteChange);
     PluginManager.instance.detectAll();
     PluginManager.instance.addListener(_onPluginsChanged);
     _loadTasks();
+    // Restore persisted tabs before LocalBus publishes sessions.json or runs its
+    // startup orphan prune. Starting the bus against the initial empty `terms`
+    // list would briefly declare old-but-restorable tabs orphaned and could
+    // delete their cache before restoreTerms had a chance to protect them.
+    unawaited(_restoreTermsThenStartLocalBus());
+  }
+
+  Future<void> _restoreTermsThenStartLocalBus() async {
+    await restoreTerms();
+    if (!mounted) return;
+    await _localBus.start();
+    if (!mounted) return;
     // After restoring persisted sessions, expand the projects that own them so
     // the session tabs are visible in the tree.
-    restoreTerms().then((_) {
-      if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _expandWithSessions(),
-      );
-    });
+    _pruneRestoredSessionPins();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _expandWithSessions());
   }
 
   ExpansibleController _ctlFor(String path) =>
       _proj.putIfAbsent(path, ExpansibleController.new);
+
+  @override
+  void didUpdateWidget(covariant WorkspacePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final relayChanged =
+        oldWidget.config.relayUrl != widget.config.relayUrl ||
+        oldWidget.config.token != widget.config.token ||
+        oldWidget.config.identity != widget.config.identity ||
+        (oldWidget.client == null) != (widget.client == null);
+    if (!relayChanged && oldWidget.config == widget.config) return;
+
+    _cfg = widget.config;
+    _syncOnlineSendAction();
+    if (relayChanged) {
+      _remoteHost.removeListener(_onRemoteChange);
+      _remoteHost.dispose();
+      _remoteHost = _newRemoteHost();
+      _remoteHost.addListener(_onRemoteChange);
+      _relaySse?.cancel();
+      _relaySse = null;
+      _sessionHeartbeat?.cancel();
+      _sessionHeartbeat = null;
+      if (widget.client == null) {
+        _tasksByRepo = const {};
+        _detailItem = null;
+        _inboxSidebarSelected = null;
+        _todosSidebarSelected = null;
+      }
+      _connectRelayPresence();
+    } else {
+      _publishSessions();
+    }
+    _loadTasks();
+    _publishOverview();
+  }
 
   // Format-plugin availability/enable changes (detection finishing, toggles in
   // the plugins dialog) repaint the editor toolbar's 格式化 / 预览 affordances.
@@ -989,15 +1765,78 @@ class _WorkspacePageState extends State<WorkspacePage>
   // peer can target a specific one. No-op when the relay isn't configured.
   // _relayConfigured is true when we have a relay URL + token to talk to.
   bool get _relayConfigured =>
-      _cfg.relayUrl.isNotEmpty && _cfg.token.isNotEmpty;
+      widget.client != null &&
+      _cfg.relayUrl.isNotEmpty &&
+      _cfg.token.isNotEmpty;
+  bool get _canSendToOnline => _relayConfigured;
+
+  void _syncOnlineSendAction() {
+    onSendToOnline = _canSendToOnline
+        ? (text) => _showSendToOnlineUser(
+            text,
+            sourcePath: activeTerm >= 0 && activeTerm < terms.length
+                ? terms[activeTerm].workdir
+                : null,
+          )
+        : null;
+  }
+
+  ({String? projectId, String? projectName, bool ambiguous})
+  _onlineSendProjectScopeForSource(String? sourcePath) {
+    if (sourcePath == null) {
+      return (projectId: null, projectName: null, ambiguous: false);
+    }
+    final project = _projectForFile(sourcePath)?.project;
+    if (project == null) {
+      return (projectId: null, projectName: null, ambiguous: false);
+    }
+    final me = widget.me;
+    if (me == null) {
+      return (projectId: null, projectName: project.name, ambiguous: true);
+    }
+    final projectId = onlineSendProjectIdForLocalProject(me.projects, project);
+    if (projectId != null) {
+      return (
+        projectId: projectId,
+        projectName: project.name,
+        ambiguous: false,
+      );
+    }
+    return (
+      projectId: null,
+      projectName: project.name,
+      ambiguous: onlineSendProjectNameIsAmbiguous(me.projects, project.name),
+    );
+  }
+
+  Future<Set<String>?> _onlineSendAllowedIdentities(
+    RelayClient client,
+    String? projectId,
+  ) async {
+    if (projectId == null) return null;
+    final detail = await client.project(projectId);
+    OrganizationDetail? organization;
+    final orgId = detail.project.orgId;
+    if (orgId.isNotEmpty) {
+      try {
+        organization = await client.organization(orgId);
+      } catch (_) {}
+    }
+    return onlineSendProjectReachableIdentities(
+      detail,
+      organization: organization,
+    );
+  }
 
   void _connectRelayPresence() {
     if (!_relayConfigured || _cfg.identity.isEmpty) return;
-    _relaySse = subscribeEvents(
-      _cfg.relayUrl,
-      _cfg.token,
-      _cfg.identity,
-    ).listen(_onRelayEvent, onError: (_) {});
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    _relaySse = subscribeEvents(relayUrl, token, identity).listen((ev) {
+      if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;
+      _onRelayEvent(ev);
+    }, onError: (_) {});
     _publishSessions();
     _sessionHeartbeat = Timer.periodic(
       const Duration(seconds: 30),
@@ -1005,20 +1844,51 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  // _publishSessions advertises our open sessions (with their project) so peers
-  // can pick a specific one. Fire-and-forget; best-effort presence.
+  bool _isCurrentRelayIdentity(
+    String relayUrl,
+    String token,
+    String identity,
+  ) =>
+      mounted &&
+      _relayConfigured &&
+      _cfg.relayUrl == relayUrl &&
+      _cfg.token == token &&
+      _cfg.identity == identity;
+
+  bool _isCurrentRelayClient(RelayClient client) =>
+      mounted && _relayConfigured && identical(client, widget.client);
+
+  // _publishSessions advertises our open sessions only when publish_sessions is
+  // enabled. Disabled still posts an empty list, clearing any older public list.
   void _publishSessions() {
     if (!_relayConfigured) return;
-    final list = [
-      for (final s in terms)
-        {
-          'id': s.id,
-          'label': s.label,
-          'project': _projectForFile(s.workdir)?.project.name ?? '',
-          'workdir': s.workdir,
-        },
-    ];
-    unawaited(widget.client.publishSessions(list).catchError((_) {}));
+    unawaited(_publishSessionsNow().catchError((_) {}));
+  }
+
+  Future<void> _publishSessionsNow() async {
+    final relayUrl = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;
+    var publish = _cfg.publishSessions;
+    try {
+      publish = (await AppConfig.load())?.publishSessions ?? publish;
+    } catch (_) {}
+    if (!_isCurrentRelayIdentity(relayUrl, token, identity)) return;
+    final list = publish
+        ? [
+            for (final s in terms)
+              {
+                'id': s.id,
+                'label': s.label,
+                'project': _projectForFile(s.workdir)?.project.name ?? '',
+                'project_id':
+                    _projectForFile(s.workdir)?.project.projectId.trim() ?? '',
+                'workdir': s.workdir,
+              },
+          ]
+        : const <Map<String, dynamic>>[];
+    await widget.client!.publishSessions(list);
   }
 
   // _onRelayEvent acts on the cross-user message.deliver event (other relay
@@ -1035,12 +1905,20 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (body.isEmpty) return;
     final from = (m['from'] ?? '').toString();
     final sid = (m['session_id'] ?? '').toString();
+    final project = (m['project'] ?? '').toString();
+    final projectId = (m['project_id'] ?? '').toString();
     // Don't stack popups: if one is already open, park the new arrival straight
     // into the badge instead.
     if (_msgDialogOpen) {
-      _park(from, sid, body);
+      _park(from, sid, body, project: project, projectId: projectId);
     } else {
-      _showIncomingMessage(from, sid, body);
+      _showIncomingMessage(
+        from,
+        sid,
+        body,
+        project: project,
+        projectId: projectId,
+      );
     }
   }
 
@@ -1050,80 +1928,178 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _showIncomingMessage(
     String from,
     String sid,
-    String body,
-  ) async {
+    String body, {
+    String project = '',
+    String projectId = '',
+  }) async {
     if (!mounted) return;
     if (terms.isEmpty) {
       _snack('$from 发来内容,但当前没有会话可注入');
       return;
     }
+    final candidates = [
+      for (final s in terms)
+        if (_incomingMessageSessionMatchesProject(
+          s,
+          project: project,
+          projectId: projectId,
+        ))
+          s,
+    ];
+    if (candidates.isEmpty) {
+      _park(
+        from,
+        sid,
+        body,
+        project: project,
+        projectId: projectId,
+        message: '没有匹配项目的会话,已挂起',
+      );
+      return;
+    }
+    final active = activeTerm >= 0 && activeTerm < terms.length
+        ? terms[activeTerm]
+        : null;
     var target =
-        sessionById(sid) ?? terms[activeTerm.clamp(0, terms.length - 1)];
+        candidates.where((s) => s.id == sid).firstOrNull ??
+        candidates.where((s) => s == active).firstOrNull ??
+        candidates.first;
     _msgDialogOpen = true;
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => AlertDialog(
-          title: Text('$from 发来内容'),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('注入到会话:'),
-                DropdownButton<TerminalSession>(
-                  value: target,
-                  isExpanded: true,
-                  items: [
-                    for (final s in terms)
-                      DropdownMenuItem(value: s, child: Text(s.label)),
-                  ],
-                  onChanged: (v) => setSt(() {
-                    if (v != null) target = v;
-                  }),
-                ),
-                const SizedBox(height: 8),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 220),
-                  child: SingleChildScrollView(
-                    child: Text(body, style: CcType.code(size: 12)),
+        builder: (ctx, setSt) {
+          final dialogWidth = onlineSendDialogWidth(
+            MediaQuery.sizeOf(ctx),
+            preferred: 460,
+          );
+          return AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
+            ),
+            title: Text(
+              '$from 发来内容',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            content: SizedBox(
+              width: dialogWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('注入到会话:'),
+                  DropdownButton<TerminalSession>(
+                    value: target,
+                    isExpanded: true,
+                    menuMaxHeight: onlineSendSessionMenuMaxHeight(
+                      MediaQuery.sizeOf(ctx),
+                    ),
+                    items: [
+                      for (final s in candidates)
+                        DropdownMenuItem(
+                          value: s,
+                          child: Text(
+                            s.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) => setSt(() {
+                      if (v != null) target = v;
+                    }),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: onlineSendIncomingBodyMaxHeight(
+                        MediaQuery.sizeOf(ctx),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Text(body, style: CcType.code(size: 12)),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'ignore'),
-              child: const Text('忽略'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'park'),
-              child: const Text('稍后'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, 'inject'),
-              child: const Text('注入'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, 'ignore'),
+                child: const Text('忽略'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, 'park'),
+                child: const Text('稍后'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, 'inject'),
+                child: const Text('注入'),
+              ),
+            ],
+          );
+        },
       ),
     );
     _msgDialogOpen = false;
     switch (result) {
       case 'inject':
-        target.pasteText('[来自 $from · 远程] $body', submit: false);
-        _snack('已注入到 ${target.label}');
+        final liveTarget = sessionById(target.id);
+        if (liveTarget == null ||
+            !incomingMessageTargetIsOpen(terms, liveTarget) ||
+            !_incomingMessageSessionMatchesProject(
+              liveTarget,
+              project: project,
+              projectId: projectId,
+            )) {
+          _park(
+            from,
+            sid,
+            body,
+            project: project,
+            projectId: projectId,
+            message: '目标会话已关闭或项目不匹配,已挂起',
+          );
+          return;
+        }
+        liveTarget.pasteText('[来自 $from · 远程] $body', submit: false);
+        _snack('已注入到 ${liveTarget.label}');
       case 'park':
-        _park(from, sid, body);
+        _park(from, sid, body, project: project, projectId: projectId);
     }
   }
 
+  bool _incomingMessageSessionMatchesProject(
+    TerminalSession session, {
+    required String project,
+    required String projectId,
+  }) {
+    final hit = _projectForFile(session.workdir)?.project;
+    return incomingMessageSessionMatchesProject(
+      sessionProjectId: hit?.projectId ?? '',
+      sessionProjectName: hit?.name ?? '',
+      messageProjectId: projectId,
+      messageProjectName: project,
+    );
+  }
+
   // _park stashes a cross-user message for later; surfaced via the toolbar badge.
-  void _park(String from, String sid, String body) {
-    _mutateParked(() => _parked.add(_ParkedMessage(from, sid, body)));
-    _snack('已挂起,稍后处理');
+  void _park(
+    String from,
+    String sid,
+    String body, {
+    String project = '',
+    String projectId = '',
+    String? message,
+  }) {
+    _mutateParked(
+      () => _parked.add(
+        _ParkedMessage(from, sid, body, project: project, projectId: projectId),
+      ),
+    );
+    _snack(message ?? '已挂起,稍后处理');
   }
 
   // _mutateParked applies [fn] to the parked list (rebuilds the toolbar badge)
@@ -1166,7 +2142,13 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (i < 0) return;
     final m = _parked[i];
     _mutateParked(() => _parked.removeAt(i));
-    _showIncomingMessage(m.from, m.sessionId, m.body);
+    _showIncomingMessage(
+      m.from,
+      m.sessionId,
+      m.body,
+      project: m.project,
+      projectId: m.projectId,
+    );
   }
 
   // _showParkedList lets the user inject (处理) or discard (忽略) parked messages
@@ -1175,76 +2157,110 @@ class _WorkspacePageState extends State<WorkspacePage>
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => AlertDialog(
-          title: Text('待处理 (${_parked.length})'),
-          content: SizedBox(
-            width: 460,
-            child: _parked.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Text('没有待处理的消息'),
-                  )
-                : ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (final m in List.of(_parked))
-                        ListTile(
-                          dense: true,
-                          title: Text(
-                            '${m.from} → '
-                            '${sessionById(m.sessionId)?.label ?? m.sessionId}',
-                          ),
-                          subtitle: Text(
-                            m.body.split('\n').first,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              TextButton(
-                                onPressed: () {
-                                  _mutateParked(() => _parked.remove(m));
-                                  Navigator.pop(ctx);
-                                  _showIncomingMessage(
-                                    m.from,
-                                    m.sessionId,
-                                    m.body,
-                                  );
-                                },
-                                child: const Text('处理'),
-                              ),
-                              IconButton(
-                                tooltip: '忽略',
-                                visualDensity: VisualDensity.compact,
-                                icon: const Icon(Icons.close_rounded, size: 16),
-                                onPressed: () {
-                                  _mutateParked(() => _parked.remove(m));
-                                  setSt(
-                                    () {},
-                                  ); // also refresh this dialog's list
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('关闭'),
+        builder: (ctx, setSt) {
+          final dialogWidth = onlineSendDialogWidth(
+            MediaQuery.sizeOf(ctx),
+            preferred: 460,
+          );
+          return AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
             ),
-          ],
-        ),
+            title: Text('待处理 (${_parked.length})'),
+            content: SizedBox(
+              width: dialogWidth,
+              child: _parked.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Text('没有待处理的消息'),
+                    )
+                  : ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: onlineSendParkedListMaxHeight(
+                          MediaQuery.sizeOf(ctx),
+                        ),
+                      ),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final m in List.of(_parked))
+                            ListTile(
+                              dense: true,
+                              title: Text(
+                                '${m.from} → '
+                                '${sessionById(m.sessionId)?.label ?? m.sessionId}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                m.body.split('\n').first,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: SizedBox(
+                                width: 92,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    TextButton(
+                                      onPressed: () {
+                                        _mutateParked(() => _parked.remove(m));
+                                        Navigator.pop(ctx);
+                                        _showIncomingMessage(
+                                          m.from,
+                                          m.sessionId,
+                                          m.body,
+                                          project: m.project,
+                                          projectId: m.projectId,
+                                        );
+                                      },
+                                      child: const Text('处理'),
+                                    ),
+                                    SizedBox(
+                                      width: 32,
+                                      height: 32,
+                                      child: IconButton(
+                                        padding: EdgeInsets.zero,
+                                        tooltip: '忽略',
+                                        visualDensity: VisualDensity.compact,
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          size: 16,
+                                        ),
+                                        onPressed: () {
+                                          _mutateParked(
+                                            () => _parked.remove(m),
+                                          );
+                                          setSt(
+                                            () {},
+                                          ); // also refresh this dialog's list
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('关闭'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
   // _showSendToOnlineUser sends [text] to a specific session of a chosen online
   // user: pick a user → load their published sessions → pick one → send.
-  Future<void> _showSendToOnlineUser(String text) async {
+  Future<void> _showSendToOnlineUser(String text, {String? sourcePath}) async {
     if (text.trim().isEmpty) {
       _snack('没有可发送的内容');
       return;
@@ -1253,18 +2269,34 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('未配置 relay,无法发给在线用户');
       return;
     }
+    final client = widget.client!;
+    final scope = _onlineSendProjectScopeForSource(sourcePath);
     List<OnlineUser> users;
     try {
-      users = (await widget.client.onlineUsers())
-          .where((u) => u.online && u.identity != _cfg.identity)
-          .toList();
+      if (scope.ambiguous) throw const _OnlineSendProjectScopeError();
+      final allowedIdentities = await _onlineSendAllowedIdentities(
+        client,
+        scope.projectId,
+      );
+      if (!_isCurrentRelayClient(client)) return;
+      users = onlineSendSelectableUsers(
+        await client.onlineUsers(),
+        _cfg.identity,
+        allowedIdentities: allowedIdentities,
+      );
+    } on _OnlineSendProjectScopeError {
+      if (!_isCurrentRelayClient(client)) return;
+      _snack('当前项目未绑定唯一团队项目,无法选择团队在线用户');
+      return;
     } catch (e) {
-      _snack('获取在线用户失败:${errorText(e)}');
+      if (!_isCurrentRelayClient(client)) return;
+      _snack('获取团队在线用户失败:${errorText(e)}');
       return;
     }
     if (!mounted) return;
+    if (!_isCurrentRelayClient(client)) return;
     if (users.isEmpty) {
-      _snack('当前没有其它在线用户');
+      _snack('当前没有可发送的团队在线用户');
       return;
     }
     await showDialog<void>(
@@ -1273,54 +2305,121 @@ class _WorkspacePageState extends State<WorkspacePage>
         String? selected;
         List<RemoteSession>? sessions; // null = 未加载
         var loading = false;
+        var loadSeq = 0;
         return StatefulBuilder(
           builder: (ctx, setSt) {
             Future<void> pickUser(String identity) async {
+              final seq = ++loadSeq;
               setSt(() {
                 selected = identity;
                 sessions = null;
                 loading = true;
               });
+              List<RemoteSession> loaded;
               try {
-                sessions = await widget.client.userSessions(identity);
+                loaded = await client.userSessions(identity);
               } catch (_) {
-                sessions = const [];
-              } finally {
-                setSt(() => loading = false);
+                loaded = const [];
               }
+              if (!mounted ||
+                  !ctx.mounted ||
+                  !_isCurrentRelayClient(client) ||
+                  seq != loadSeq ||
+                  !onlineSendIdentitySelected(selected, identity)) {
+                return;
+              }
+              final scoped = onlineSendSessionsForProject(
+                loaded,
+                projectId: scope.projectId,
+                projectName: scope.projectName,
+              );
+              setSt(() {
+                sessions = scoped;
+                loading = false;
+              });
             }
 
             Future<void> send(RemoteSession s) async {
+              if (!_isCurrentRelayClient(client)) {
+                Navigator.pop(ctx);
+                _snack('账号已切换,请重新选择在线用户');
+                return;
+              }
               Navigator.pop(ctx);
               try {
-                await widget.client.sendMessage(selected!, s.id, text);
+                await client.sendMessage(
+                  selected!,
+                  s.id,
+                  text,
+                  project: s.project,
+                  projectId: s.projectId,
+                );
+                if (!_isCurrentRelayClient(client)) return;
                 _snack('已发送到 $selected · ${s.label},等待对方确认');
               } catch (e) {
+                if (!_isCurrentRelayClient(client)) return;
                 _snack('发送失败:${errorText(e)}');
               }
             }
 
+            final dialogWidth = onlineSendDialogWidth(MediaQuery.sizeOf(ctx));
             return AlertDialog(
-              title: const Text('发送到在线用户'),
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
+              title: Text(
+                onlineSendDialogTitle(scope.projectName),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               content: SizedBox(
-                width: 440,
+                width: dialogWidth,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('在线用户:'),
                     const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final u in users)
-                          ChoiceChip(
-                            label: Text(u.identity),
-                            selected: selected == u.identity,
-                            onSelected: (_) => pickUser(u.identity),
-                          ),
-                      ],
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: onlineSendUserListMaxHeight(
+                          MediaQuery.sizeOf(ctx),
+                        ),
+                      ),
+                      child: SingleChildScrollView(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final chipWidth = onlineSendUserChipWidth(
+                              constraints,
+                            );
+                            return Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final u in users)
+                                  ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: chipWidth,
+                                    ),
+                                    child: ChoiceChip(
+                                      label: Text(
+                                        u.identity,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      selected: onlineSendIdentitySelected(
+                                        selected,
+                                        u.identity,
+                                      ),
+                                      onSelected: (_) => pickUser(u.identity),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
                     ),
                     const Divider(),
                     if (selected == null)
@@ -1333,24 +2432,40 @@ class _WorkspacePageState extends State<WorkspacePage>
                     else if ((sessions ?? const []).isEmpty)
                       const Text('该用户当前没有可发送的会话')
                     else
-                      Flexible(
-                        child: ListView(
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: onlineSendSessionMenuMaxHeight(
+                            MediaQuery.sizeOf(ctx),
+                          ),
+                        ),
+                        child: ListView.separated(
                           shrinkWrap: true,
-                          children: [
-                            for (final s in sessions!)
-                              ListTile(
-                                dense: true,
-                                leading: const Icon(
-                                  Icons.terminal_rounded,
-                                  size: 16,
-                                ),
-                                title: Text(s.label),
-                                subtitle: s.project.isEmpty
-                                    ? null
-                                    : Text(s.project),
-                                onTap: () => send(s),
+                          padding: EdgeInsets.zero,
+                          itemCount: sessions!.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final s = sessions![i];
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(
+                                Icons.terminal_rounded,
+                                size: 16,
                               ),
-                          ],
+                              title: Text(
+                                s.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: s.project.isEmpty
+                                  ? null
+                                  : Text(
+                                      s.project,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                              onTap: () => send(s),
+                            );
+                          },
                         ),
                       ),
                   ],
@@ -1371,11 +2486,36 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   // ---------------------------------------------------------------- data ----
 
+  AppConfig _mergeReloadedLocalConfig(AppConfig loaded) => AppConfig(
+    _cfg.relayUrl,
+    _cfg.token,
+    _cfg.identity,
+    loaded.repos,
+    loaded.workspaces,
+    loaded.agent,
+    loaded.workspaceRoot,
+    loaded.gradeCommand,
+    loaded.linearToken,
+    loaded.githubToken,
+    loaded.terminalApp,
+    loaded.claudeCommand,
+    loaded.codexCommand,
+    loaded.publishSessions,
+  );
+
   Future<void> _loadTasks() async {
+    final generation = ++_taskLoadGeneration;
+    final client = widget.client;
+    if (client == null) {
+      if (_isCurrentTaskLoad(generation, client)) {
+        setState(() => _tasksByRepo = const {});
+      }
+      return;
+    }
     try {
       final lists = await Future.wait([
-        widget.client.handoffs(as: 'recipient'),
-        widget.client.handoffs(as: 'sender'),
+        client.handoffs(as: 'recipient'),
+        client.handoffs(as: 'sender'),
       ]);
       final byId = <String, ListItem>{};
       for (final it in [...lists[0], ...lists[1]]) {
@@ -1385,12 +2525,20 @@ class _WorkspacePageState extends State<WorkspacePage>
       for (final it in byId.values) {
         (byRepo[it.repoName] ??= []).add(it);
       }
-      if (mounted) setState(() => _tasksByRepo = byRepo);
+      if (_isCurrentTaskLoad(generation, client)) {
+        setState(() => _tasksByRepo = byRepo);
+      }
     } catch (_) {}
   }
 
+  bool _isCurrentTaskLoad(int generation, RelayClient? client) =>
+      mounted &&
+      generation == _taskLoadGeneration &&
+      identical(client, widget.client);
+
   Future<void> _ensureWorktrees(String path) async {
     if (_worktrees.containsKey(path)) return;
+    if (!mounted) return;
     setState(() => _worktrees[path] = null); // mark loading
     final wts = await listWorktrees(path);
     if (mounted) setState(() => _worktrees[path] = wts);
@@ -1399,7 +2547,14 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<void> _reloadConfig() async {
     final cfg = await AppConfig.load();
     if (cfg != null && mounted) {
-      setState(() => _cfg = cfg);
+      setState(() {
+        _cfg = _mergeReloadedLocalConfig(cfg);
+        if (_focusedWorkspaceName != null &&
+            !_cfg.workspaces.any((ws) => ws.name == _focusedWorkspaceName)) {
+          _focusedWorkspaceName = null;
+        }
+        _syncOnlineSendAction();
+      });
       // Desktop-initiated workspace/project/worktree changes must reach connected
       // phones too — otherwise they only see config edits the phone itself made.
       _remoteHost.broadcastRoots();
@@ -1407,11 +2562,13 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> _reloadWorktrees(String path) async {
+    if (!mounted) return;
     setState(() => _worktrees.remove(path));
     await _ensureWorktrees(path);
   }
 
   Future<void> _refresh() async {
+    if (!mounted) return;
     setState(() => _worktrees.clear());
     await _reloadConfig();
     await _loadTasks();
@@ -1430,13 +2587,18 @@ class _WorkspacePageState extends State<WorkspacePage>
     String okMsg, {
     Future<void> Function()? after,
   }) async {
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       await action();
-      if (after != null) await after();
+      if (!mounted) return;
+      if (after != null) {
+        await after();
+        if (!mounted) return;
+      }
       _snack(okMsg);
     } catch (e) {
-      _snack(errorText(e));
+      if (mounted) _snack(errorText(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1535,9 +2697,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     showDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         backgroundColor: CcColors.panel,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
+          constraints: BoxConstraints(
+            maxWidth: workspaceOutgoingDialogWidth(MediaQuery.sizeOf(ctx)),
+          ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
             child: ListenableBuilder(
@@ -1726,6 +2891,34 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  String? _projectNameForTodoProject(String? projectId) {
+    final pid = (projectId ?? '').trim();
+    if (pid.isEmpty) return null;
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (p.projectId.trim() == pid) return p.name;
+      }
+    }
+    final me = widget.me;
+    if (me != null) {
+      for (final p in me.projects) {
+        if (p.id.trim() == pid) return p.name;
+      }
+    }
+    return null;
+  }
+
+  bool _remoteAssignTargetMatchesTodo(
+    Todo todo, {
+    required String? targetProjectId,
+    required String? targetProjectName,
+  }) => todoProjectTargetMatches(
+    todoProjectId: todo.projectId,
+    todoProjectName: _projectNameForTodoProject(todo.projectId),
+    targetProjectId: targetProjectId,
+    targetProjectName: targetProjectName,
+  );
+
   // _remoteAssignTodo runs a phone's remote 一键指派 request on this desktop
   // (RemoteHost.onAssignTodo). The phone has no local session / filesystem /
   // synchronous spawn, so it delegates: we do exactly what the local assign
@@ -1734,13 +2927,30 @@ class _WorkspacePageState extends State<WorkspacePage>
   // spawned session), then bind the todo's assignee + resume trio. Returns null
   // on success or a user-facing error the phone shows.
   Future<String?> _remoteAssignTodo(Map<String, dynamic> req) async {
+    final client = widget.client;
+    if (client == null) return '需要登录 relay';
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     final todoId = (req['todoId'] as String?)?.trim() ?? '';
     if (todoId.isEmpty) return '缺少 todoId';
     final Todo fallback;
     try {
-      fallback = await widget.client.todo(todoId);
+      fallback = await client.todo(todoId);
     } catch (e) {
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
       return '读取待办失败: ${errorText(e)}';
+    }
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
+    if (!mounted) return '工作区已关闭';
+    final me = widget.me;
+    if (me != null && !todoAccessFor(fallback, me).canAssign) {
+      return '你对这条待办没有指派权限';
+    }
+    final requestedProjectId = (req['projectId'] as String?)?.trim() ?? '';
+    final todoProjectId = fallback.projectId?.trim() ?? '';
+    if (todoProjectId.isNotEmpty &&
+        requestedProjectId.isNotEmpty &&
+        requestedProjectId != todoProjectId) {
+      return '待办项目已变化,请刷新后重新指派';
     }
 
     final String sid;
@@ -1749,16 +2959,29 @@ class _WorkspacePageState extends State<WorkspacePage>
       final (spawnedSid, err) = await _spawnForDispatch(
         workspace: (req['workspace'] as String?) ?? '',
         project: (req['project'] as String?) ?? '',
+        projectId: todoProjectId.isNotEmpty
+            ? todoProjectId
+            : requestedProjectId,
         kind: (req['kind'] as String?) ?? 'claude',
         newWorktreeBranch: req['branch'] as String?,
       );
       if (spawnedSid == null) return '新建会话失败: ${err ?? "未知错误"}';
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
+      if (!mounted) return '工作区已关闭';
       sid = spawnedSid;
       waitForAgentId = true; // codex mints its id async — poll before binding
     } else {
       sid = (req['sid'] as String?) ?? '';
       if (sid.isEmpty) return '缺少目标会话';
       if (sessionById(sid) == null) return '目标会话不存在(可能已关闭)';
+      final card = _remoteCard(sid);
+      if (!_remoteAssignTargetMatchesTodo(
+        fallback,
+        targetProjectId: card?.projectId,
+        targetProjectName: card?.project,
+      )) {
+        return '目标会话不属于这条团队待办的项目';
+      }
     }
 
     // Resolve the target session's workdir — a just-spawned card may not carry it
@@ -1766,14 +2989,20 @@ class _WorkspacePageState extends State<WorkspacePage>
     var card = _remoteCard(sid);
     for (var i = 0; i < 5 && (card?.workdir ?? '').isEmpty; i++) {
       await Future.delayed(const Duration(milliseconds: 100));
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
+      if (!mounted) return '工作区已关闭';
       card = _remoteCard(sid);
     }
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
+    if (!mounted) return '工作区已关闭';
     final prep = await prepareTodoAssignmentText(
-      client: widget.client,
+      client: client,
       todoId: todoId,
       fallbackTodo: fallback,
       workdir: card?.workdir ?? '',
     );
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
+    if (!mounted) return '工作区已关闭';
     final dispatchErr = deliverLocalMessage(
       LocalMsg('', sid, prep.taskText, true),
     );
@@ -1784,11 +3013,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (waitForAgentId && (card?.agentSessionId ?? '').isEmpty) {
       for (var i = 0; i < 15 && (card?.agentSessionId ?? '').isEmpty; i++) {
         await Future.delayed(const Duration(milliseconds: 200));
+        if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
+        if (!mounted) return '工作区已关闭';
         card = _remoteCard(sid);
       }
     }
+    if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     try {
-      await widget.client.assignTodo(
+      await client.assignTodo(
         todoId,
         assigneeIdentity: _cfg.identity,
         assigneeSessionId: sid,
@@ -1801,11 +3033,13 @@ class _WorkspacePageState extends State<WorkspacePage>
                   ? 'supervisor:${card.agentKind}'
                   : card.agentKind),
       );
-      await widget.client.updateTodo(
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
+      await client.updateTodo(
         todoId,
         workspaceName: card?.workspace ?? '',
         repoName: card?.project ?? '',
       );
+      if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
     } catch (_) {}
     // 指派 = 开始处理: bump an unstarted todo to 进行中.
     if (const {
@@ -1814,7 +3048,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       TodoStatus.todo,
     }.contains(prep.full.status)) {
       try {
-        await widget.client.setTodoStatus(todoId, TodoStatus.inProgress);
+        await client.setTodoStatus(todoId, TodoStatus.inProgress);
+        if (!_isCurrentRelayClient(client)) return '账号已切换,请重新指派';
       } catch (_) {}
     }
     return null;
@@ -1836,6 +3071,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     SessionCard card, {
     required bool preferSelfDistill,
   }) async {
+    if (widget.client == null) return (null, '请先登录 relay 后再发布胶囊');
     final workdir = card.workdir;
     if (card.agentKind.isEmpty) return (null, '只有 agent 会话能打成胶囊');
     if (workdir == null || workdir.isEmpty) return (null, '会话没有工作目录');
@@ -1872,6 +3108,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       },
       runProc: systemProcRunner,
     );
+    if (!outcome.personaWritten) {
+      try {
+        await Directory(draftDir).delete(recursive: true);
+      } catch (_) {}
+      return (null, '后台蒸馏未产出角色 persona.md,请稍后重试或改用「让它自己蒸馏」');
+    }
 
     return (
       CapsuleDraft(
@@ -1955,6 +3197,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     required String workspace,
     required String project,
     required String kind,
+    String? projectId,
     String? newWorktreeBranch,
     String? worktreeStart,
     String? resumeAgentSessionId,
@@ -1962,9 +3205,13 @@ class _WorkspacePageState extends State<WorkspacePage>
   }) async {
     WorkspaceCfg? ws;
     ProjectCfg? p;
+    final requestedProjectId = (projectId ?? '').trim();
     for (final w in _cfg.workspaces) {
       if (workspace.isNotEmpty && w.name != workspace) continue;
       for (final proj in w.projects) {
+        if (!remoteSpawnProjectMatchesRequestedId(proj, requestedProjectId)) {
+          continue;
+        }
         if (proj.name == project) {
           ws = w;
           p = proj;
@@ -2139,15 +3386,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
     final cfg = await AppConfig.load();
     if (cfg != null && mounted) {
-      setState(
-        () => _cfg = AppConfig(
-          _cfg.relayUrl,
-          _cfg.token,
-          _cfg.identity,
-          cfg.repos,
-          cfg.workspaces,
-        ),
-      );
+      setState(() {
+        _cfg = _mergeReloadedLocalConfig(cfg);
+        _syncOnlineSendAction();
+      });
     }
     _remoteHost.broadcastRoots();
   }
@@ -2187,6 +3429,7 @@ class _WorkspacePageState extends State<WorkspacePage>
 
   @override
   void _openCodeFile(String path, {int? line, bool recordHistory = true}) {
+    if (!mounted) return;
     // Opening a directory as a file throws "Is a directory" (e.g. an untracked
     // dir or a submodule clicked in the change list) — reveal it in the project
     // tree instead of adding a broken editor tab.
@@ -2419,6 +3662,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         '${f.path}\n\n未保存修改会保留在编辑器里,关闭后需要重新打开。',
       );
       if (!ok) return;
+      if (!mounted) return;
     }
     setState(() {
       _codeFiles.removeAt(i);
@@ -2505,6 +3749,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭其他未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     final keepPath = _codeFiles[keep].path;
     setState(() {
@@ -2530,6 +3775,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭右侧未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     final keepPath = _codeFiles[keep].path;
     setState(() {
@@ -2555,6 +3801,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭左侧未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     final keepPath = _codeFiles[keep].path;
     setState(() {
@@ -2592,6 +3839,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭所有未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     setState(() {
       _codeFiles.clear();
@@ -2624,6 +3872,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty) {
       final ok = await _confirm('关闭此分屏未保存文件?', _previewList(dirty));
       if (!ok) return;
+      if (!mounted) return;
     }
     setState(() {
       _codeFiles.removeWhere((f) => closePaths.contains(f.path));
@@ -2679,31 +3928,18 @@ class _WorkspacePageState extends State<WorkspacePage>
     String initial = '',
     String hint = '',
   }) async {
-    final ctl = TextEditingController(text: initial);
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: InputDecoration(labelText: label, hintText: hint),
-          onSubmitted: (_) => Navigator.pop(ctx, true),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确定'),
-          ),
-        ],
+      builder: (_) => FileNameDialog(
+        title: title,
+        label: label,
+        initial: initial,
+        hint: hint,
       ),
     );
-    if (ok != true) return null;
-    final name = ctl.text.trim();
+    if (raw == null) return null;
+    if (!mounted) return null;
+    final name = raw.trim();
     if (!_validEntryName(name)) {
       _snack('$label 不能为空，也不能包含路径分隔符');
       return null;
@@ -2712,6 +3948,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   void _refreshFileTrees([String? selectedPath]) {
+    if (!mounted) return;
     // Files created/deleted/renamed/formatted → the go-to-definition symbol index
     // may be stale; drop it so the next jump rebuilds from disk.
     _invalidateSymbolIndex();
@@ -2732,6 +3969,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (dirty.isNotEmpty && !await _confirm('关闭未保存文件?', _previewList(dirty))) {
       return false;
     }
+    if (!mounted) return false;
     if (affected.isEmpty) return true;
     setState(() {
       _codeFiles.removeWhere(
@@ -2802,6 +4040,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (!await _confirm('删除「${_pathBaseName(path)}」?', '此操作会删除磁盘文件。')) {
       return;
     }
+    if (!mounted) return;
     if (!await _closeAffectedOpenFiles(path, isDir)) return;
     try {
       if (isDir) {
@@ -2932,6 +4171,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         ],
       ),
     );
+    if (!mounted) return;
     if (path != null) _openCodeFile(path);
   }
 
@@ -2980,6 +4220,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         ],
       ),
     );
+    if (!mounted) return;
     if (loc != null) _openCodeFile(loc.path, line: loc.line);
   }
 
@@ -2989,58 +4230,20 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('没有可过滤的项目');
       return;
     }
-    final ctl = TextEditingController(text: _logPathFilter);
     final active = _activeFile >= 0 && _activeFile < _codeFiles.length
         ? _projectForFile(_codeFiles[_activeFile].path)
         : null;
     final activeRel = active?.project.path == p.path ? active?.rel : null;
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Filter Log by Path'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'File or directory path',
-                hintText: 'app/lib/screens/workspace_page.dart',
-              ),
-              onSubmitted: (_) => Navigator.pop(ctx, true),
-            ),
-            if (activeRel != null && activeRel.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => ctl.text = activeRel,
-                  icon: const Icon(Icons.my_location_rounded, size: 14),
-                  label: Text('Use active file: $activeRel'),
-                ),
-              ),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Apply'),
-          ),
-        ],
+      builder: (_) => WorkspacePathFilterDialog(
+        initial: _logPathFilter,
+        activeRel: activeRel,
       ),
     );
-    if (ok != true) {
-      ctl.dispose();
-      return;
-    }
-    final next = ctl.text.trim();
-    ctl.dispose();
+    if (raw == null) return;
+    if (!mounted) return;
+    final next = raw.trim();
     setState(() => _logPathFilter = next);
     await _refreshGit();
   }
@@ -3077,34 +4280,53 @@ class _WorkspacePageState extends State<WorkspacePage>
     ];
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('快捷键'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final r in rows)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Row(
-                    children: [
-                      SizedBox(width: 112, child: chip(r.$1)),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(r.$2)),
-                    ],
-                  ),
-                ),
-            ],
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('关闭'),
+          title: const Text(
+            '快捷键',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final r in rows)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          SizedBox(width: 112, child: chip(r.$1)),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              r.$2,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -3146,6 +4368,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       dialogTitle: '选择包含多个项目的目录(将扫描其中的 git 仓库)',
     );
     if (dir == null || dir.trim().isEmpty) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       final out = await Cli.workspaceImport(dir);
@@ -3164,6 +4387,105 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack(msg);
     } catch (e) {
       _snack(errorText(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _teamProjectDefaultParent() {
+    var root = _cfg.workspaceRoot.trim();
+    if (root.isEmpty) root = '~/cc-handoff-workspaces';
+    if (root == '~') return Platform.environment['HOME'] ?? root;
+    if (root.startsWith('~/')) {
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) return '$home${root.substring(1)}';
+    }
+    return root;
+  }
+
+  Future<void> _pullTeamProject() async {
+    if (_busy) {
+      _snack('请等待当前工作区操作完成');
+      return;
+    }
+    final client = widget.client;
+    if (client == null || _cfg.token.trim().isEmpty) {
+      _snack('请先登录 relay，再拉取团队项目');
+      return;
+    }
+    final relayURL = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    bool contextStillCurrent() =>
+        mounted &&
+        teamProjectPullContextMatches(
+          expectedClient: client,
+          currentClient: widget.client,
+          expectedRelay: relayURL,
+          currentRelay: _cfg.relayUrl,
+          expectedToken: token,
+          currentToken: _cfg.token,
+          expectedIdentity: identity,
+          currentIdentity: _cfg.identity,
+        );
+    final draft = await showDialog<TeamProjectPullDraft>(
+      context: context,
+      builder: (_) => TeamProjectPullDialog(
+        loadProjects: client.cloneableProjectDetails,
+        initialParentDirectory: _teamProjectDefaultParent(),
+        pickDirectory: () => FilePicker.platform.getDirectoryPath(
+          dialogTitle: '选择团队项目 workspace 的父目录',
+        ),
+      ),
+    );
+    if (draft == null || !mounted) return;
+    if (!contextStillCurrent()) {
+      _snack('账号或 relay 已切换，请重新打开“拉取团队项目”');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final results = await showDialog<List<TeamProjectPullResult>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => TeamProjectPullProgressDialog(
+          draft: draft,
+          clone:
+              ({
+                required workspaceName,
+                required workspacePath,
+                required repoName,
+                required cloneUrl,
+                required projectId,
+              }) {
+                if (!contextStillCurrent()) {
+                  return Future.error(CliException('账号或 relay 已切换，已停止后续仓库'));
+                }
+                return Cli.workspacePullTeamRepo(
+                  workspaceName: workspaceName,
+                  workspacePath: workspacePath,
+                  repoName: repoName,
+                  cloneUrl: cloneUrl,
+                  projectId: projectId,
+                );
+              },
+        ),
+      );
+      if (!mounted) return;
+      try {
+        await _reloadConfig();
+        await _loadTasks();
+      } catch (e) {
+        _snack('仓库结果已保留，但刷新工作区失败: ${errorText(e)}');
+        return;
+      }
+      final succeeded = results?.where((result) => result.success).length ?? 0;
+      final failed = results?.where((result) => !result.success).length ?? 0;
+      _snack(
+        failed == 0
+            ? '拉取团队项目完成：$succeeded 个仓库'
+            : '拉取团队项目完成：$succeeded 个成功，$failed 个失败',
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -3287,42 +4609,24 @@ class _WorkspacePageState extends State<WorkspacePage>
     String okLabel,
     List<({String label, String? hint, bool required})> fields,
   ) async {
-    final ctls = [for (final _ in fields) TextEditingController()];
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<List<String>>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < fields.length; i++)
-              Padding(
-                padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
-                child: TextField(
-                  controller: ctls[i],
-                  autofocus: i == 0,
-                  decoration: InputDecoration(
-                    labelText: fields[i].label,
-                    hintText: fields[i].hint,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(okLabel),
-          ),
+      builder: (_) => WorkspaceFieldsDialog(
+        title: title,
+        okLabel: okLabel,
+        fields: [
+          for (final field in fields)
+            WorkspaceFieldSpec(
+              label: field.label,
+              hint: field.hint,
+              required: field.required,
+            ),
         ],
       ),
     );
-    if (ok != true) return null;
-    final vals = [for (final c in ctls) c.text.trim()];
+    if (raw == null) return null;
+    if (!mounted) return null;
+    final vals = [for (final value in raw) value.trim()];
     for (var i = 0; i < fields.length; i++) {
       if (fields[i].required && vals[i].isEmpty) {
         _snack('${fields[i].label} 不能为空');
@@ -3336,21 +4640,33 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<bool> _confirm(String title, String message) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确定'),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: SelectableText(message, style: CcType.code(size: 12)),
+            ),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确定'),
+            ),
+          ],
+        );
+      },
     );
     return ok == true;
   }
@@ -3369,12 +4685,197 @@ class _WorkspacePageState extends State<WorkspacePage>
     Prefs.setBool('ws.inboxSidebarCollapsed', true);
   }
 
+  ExpansibleController _workspaceCtlFor(String name) =>
+      _workspaceControllers.putIfAbsent(name, ExpansibleController.new);
+
+  void _persistSessionManagerSets() {
+    Prefs.setString(
+      'ws.sessionManager.pinned',
+      sessionManagerSetPrefValue(_pinnedSessionIds),
+    );
+    Prefs.setString(
+      'ws.sessionManager.collapsed',
+      sessionManagerSetPrefValue(_sessionManagerCollapsed),
+    );
+  }
+
+  void _pruneRestoredSessionPins() {
+    final liveIds = {for (final session in terms) session.id};
+    final before = _pinnedSessionIds.length;
+    _pinnedSessionIds.removeWhere((id) => !liveIds.contains(id));
+    if (_pinnedSessionIds.length != before) _persistSessionManagerSets();
+  }
+
+  void _setWorkspaceFocus(String? workspace) {
+    final names = [for (final item in _cfg.workspaces) item.name];
+    final next =
+        names.length <= 1 || (workspace != null && !names.contains(workspace))
+        ? null
+        : workspace;
+    if (_focusedWorkspaceName == next) return;
+    setState(() => _focusedWorkspaceName = next);
+  }
+
+  void _toggleWorkspaceFocus(String workspace) {
+    final next = workspaceFocusAfterDoubleClick(
+      workspaceNames: [for (final item in _cfg.workspaces) item.name],
+      currentFocus: _focusedWorkspaceName,
+      tappedWorkspace: workspace,
+    );
+    _setWorkspaceFocus(next);
+  }
+
+  void _exitWorkspaceFocus() {
+    if (_focusedWorkspaceName != null) _setWorkspaceFocus(null);
+  }
+
+  Future<String?> _renameManagedSession(String id) async {
+    final session = sessionById(id);
+    if (session == null) return null;
+    return _renameSession(session);
+  }
+
+  Future<bool> _requestCloseSession(String id) async {
+    final index = terms.indexWhere((session) => session.id == id);
+    if (index < 0) return false;
+    final session = terms[index];
+    if (session.busy) {
+      final ok = await _confirm(
+        '结束运行中的会话',
+        '「${session.label}」仍在运行。结束会话会停止当前任务，确定继续吗？',
+      );
+      if (!ok || !mounted) return false;
+    }
+    final current = terms.indexWhere((item) => item.id == id);
+    if (current < 0) return false;
+    closeTerm(current);
+    if (_pinnedSessionIds.remove(id)) {
+      _persistSessionManagerSets();
+      if (mounted) setState(() {});
+    }
+    return true;
+  }
+
+  Future<Set<String>> _closeCompletedSessions(Set<String> requested) async {
+    final completed = {
+      for (final item in _managedSessions)
+        if (requested.contains(item.id) && item.recentlyCompleted) item.id,
+    };
+    if (completed.isEmpty) return {};
+    final ok = await _confirm(
+      '关闭已完成会话',
+      '将结束 ${completed.length} 个最近已完成的会话。此操作不会影响运行中或需要处理的会话。',
+    );
+    if (!ok || !mounted) return {};
+    final indices = [
+      for (var i = 0; i < terms.length; i++)
+        if (completed.contains(terms[i].id)) i,
+    ]..sort((a, b) => b.compareTo(a));
+    final closed = <String>{};
+    for (final index in indices) {
+      final id = terms[index].id;
+      // Re-evaluate immediately before the existing close entry: a session may
+      // have started a new turn while the confirmation dialog was open.
+      final item = _managedSessionFor(terms[index]);
+      if (!item.recentlyCompleted ||
+          terms[index].busy ||
+          sessionNeedsAttention(item)) {
+        continue;
+      }
+      closeTerm(index);
+      closed.add(id);
+    }
+    final hadPinned = _pinnedSessionIds.any(closed.contains);
+    _pinnedSessionIds.removeAll(closed);
+    if (hadPinned) {
+      _persistSessionManagerSets();
+      if (mounted) setState(() {});
+    }
+    return closed;
+  }
+
+  void _activateManagedSession(String id) {
+    final index = terms.indexWhere((session) => session.id == id);
+    if (index < 0) return;
+    final membership = resolveSessionProject(
+      terms[index].workdir,
+      _cfg.workspaces,
+    );
+    if (_focusedWorkspaceName != null &&
+        (membership == null ||
+            _focusedWorkspaceName != membership.workspace.name)) {
+      _setWorkspaceFocus(null);
+    }
+    reopenTermView(index);
+    _setBottomTool(_BottomTool.terminal);
+    if (membership == null) return;
+    _selectGitProject(membership.project);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _workspaceCtlFor(membership.workspace.name).expand();
+      _ctlFor(membership.project.path).expand();
+      final rel = membership.relativePath;
+      if (rel.startsWith('.worktrees/')) {
+        final worktreeName = rel
+            .substring('.worktrees/'.length)
+            .split('/')
+            .first;
+        _ctlFor('${membership.project.path}/.worktrees/$worktreeName').expand();
+      }
+    });
+  }
+
+  Future<void> _showSessionManager() async {
+    if (_sessionManagerOpening) return;
+    _sessionManagerOpening = true;
+    try {
+      await _refreshAllPreviews();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => SessionManagerDialog(
+          sessions: _managedSessions,
+          sessionProvider: () => _managedSessions,
+          activeId: terms.isEmpty ? null : terms[activeTerm].id,
+          pinnedIds: _pinnedSessionIds,
+          collapsedKeys: _sessionManagerCollapsed,
+          onOpen: _activateManagedSession,
+          onPinnedChanged: (id, pinned) {
+            setState(() {
+              if (pinned) {
+                _pinnedSessionIds.add(id);
+              } else {
+                _pinnedSessionIds.remove(id);
+              }
+            });
+            _persistSessionManagerSets();
+          },
+          onRename: _renameManagedSession,
+          onClose: _requestCloseSession,
+          onCloseCompleted: _closeCompletedSessions,
+          onCollapsedChanged: (key, collapsed) {
+            if (collapsed) {
+              _sessionManagerCollapsed.add(key);
+            } else {
+              _sessionManagerCollapsed.remove(key);
+            }
+            _persistSessionManagerSets();
+          },
+        ),
+      );
+    } finally {
+      _sessionManagerOpening = false;
+    }
+  }
+
   // ---------------------------------------------------------------- view ----
 
   @override
   Widget build(BuildContext context) {
     return CallbackShortcuts(
       bindings: {
+        if (_focusedWorkspaceName != null)
+          const SingleActivator(LogicalKeyboardKey.escape): _exitWorkspaceFocus,
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true):
             _showQuickOpen,
         const SingleActivator(LogicalKeyboardKey.keyO, control: true):
@@ -3601,17 +5102,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   ({ProjectCfg project, String rel})? _projectForFile(String path) {
-    ProjectCfg? best;
-    for (final ws in _cfg.workspaces) {
-      for (final p in ws.projects) {
-        if (pathWithin(path, p.path)) {
-          if (best == null || p.path.length > best.path.length) best = p;
-        }
-      }
-    }
-    if (best == null) return null;
-    final rel = pathRelativeTo(best.path, path);
-    return (project: best, rel: rel);
+    final membership = resolveSessionProject(path, _cfg.workspaces);
+    if (membership == null) return null;
+    return (project: membership.project, rel: membership.relativePath);
   }
 
   // _sendGroupsFor splits live sessions into same-project vs other-project,
@@ -3667,16 +5160,17 @@ class _WorkspacePageState extends State<WorkspacePage>
       same: g.same,
       others: g.others,
       extraBottom: [
-        ccMenuItem(
-          value: 'online',
-          icon: Icons.cloud_upload_rounded,
-          label: '发送到在线用户…',
-        ),
+        if (_canSendToOnline)
+          ccMenuItem(
+            value: 'online',
+            icon: Icons.cloud_upload_rounded,
+            label: '发送到在线用户…',
+          ),
       ],
     );
     if (v == null || !mounted) return;
     if (v == 'online') {
-      _showSendToOnlineUser(text);
+      _showSendToOnlineUser(text, sourcePath: f.path);
       return;
     }
     if (!v.startsWith('send:')) return;
@@ -3835,61 +5329,72 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!mounted) return;
       await showDialog<void>(
         context: context,
-        builder: (_) => Dialog(
-          child: SizedBox(
-            width: 1040,
-            height: 720,
-            child: Column(
-              children: [
-                Container(
-                  height: 42,
-                  padding: const EdgeInsets.only(left: 14, right: 6),
-                  decoration: const BoxDecoration(
-                    color: CcColors.panel,
-                    border: Border(bottom: BorderSide(color: CcColors.border)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.compare_arrows_rounded,
-                        size: 17,
-                        color: CcColors.muted,
+        builder: (ctx) {
+          final dialogSize = workspaceCompareWithHeadDialogSize(
+            MediaQuery.sizeOf(ctx),
+          );
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
+            ),
+            child: SizedBox(
+              width: dialogSize.width,
+              height: dialogSize.height,
+              child: Column(
+                children: [
+                  Container(
+                    height: 42,
+                    padding: const EdgeInsets.only(left: 14, right: 6),
+                    decoration: const BoxDecoration(
+                      color: CcColors.panel,
+                      border: Border(
+                        bottom: BorderSide(color: CcColors.border),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Compare with HEAD · $relPath',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.compare_arrows_rounded,
+                          size: 17,
+                          color: CcColors.muted,
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 18),
-                        tooltip: '关闭',
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Compare with HEAD · $relPath',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          tooltip: '关闭',
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: DiffView(
-                    files: files,
-                    editRoot: project.path,
-                    onChanged: _refreshGit,
-                    onReloadContext: (ctx) async => parseUnifiedDiff(
-                      await gitDiffFileWorking(
-                        project.path,
-                        relPath,
-                        context: ctx,
+                  Expanded(
+                    child: DiffView(
+                      files: files,
+                      editRoot: project.path,
+                      onChanged: _refreshGit,
+                      onReloadContext: (ctx) async => parseUnifiedDiff(
+                        await gitDiffFileWorking(
+                          project.path,
+                          relPath,
+                          context: ctx,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       );
     } catch (e) {
       _snack(errorText(e));
@@ -3987,6 +5492,8 @@ class _WorkspacePageState extends State<WorkspacePage>
               if (_remoteHost.sharing) {
                 _remoteHost.disable();
                 _remoteSnack('已停止共享');
+              } else if (!_relayConfigured) {
+                _remoteSnack('请先登录 relay 后再共享给手机', error: true);
               } else {
                 _remoteHost.enable();
                 _remoteSnack('已开启共享 · 正在连接 relay…');
@@ -4035,9 +5542,9 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
           ],
           const SizedBox(width: 12),
-          Text(
-            '${terms.length} sessions',
-            style: CcType.code(size: 11.5, color: CcColors.subtle),
+          SessionManagerEntry(
+            count: terms.length,
+            onPressed: _showSessionManager,
           ),
           if (_parked.isNotEmpty) ...[const SizedBox(width: 4), _parkedBadge()],
           const SizedBox(width: 4),
@@ -4290,37 +5797,53 @@ class _WorkspacePageState extends State<WorkspacePage>
   ) async {
     final choice = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('总管'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.play_arrow_rounded),
-              title: const Text('Claude 总管'),
-              onTap: () => Navigator.of(ctx).pop('claude'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: const Text('总管', maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.play_arrow_rounded),
+                    title: const Text('Claude 总管'),
+                    onTap: () => Navigator.of(ctx).pop('claude'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.smart_toy_outlined),
+                    title: const Text('Codex 总管'),
+                    onTap: () => Navigator.of(ctx).pop('codex'),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.menu_book_outlined),
+                    title: const Text('编辑知识库'),
+                    subtitle: const Text(
+                      '.cc-handoff/supervisor',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => Navigator.of(ctx).pop('edit'),
+                  ),
+                ],
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.smart_toy_outlined),
-              title: const Text('Codex 总管'),
-              onTap: () => Navigator.of(ctx).pop('codex'),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.menu_book_outlined),
-              title: const Text('编辑知识库'),
-              subtitle: const Text('.cc-handoff/supervisor'),
-              onTap: () => Navigator.of(ctx).pop('edit'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-        ],
-      ),
+        );
+      },
     );
     if (choice == null || !mounted) return;
     if (choice == 'edit') {
@@ -4371,10 +5894,9 @@ class _WorkspacePageState extends State<WorkspacePage>
               status.modified +
               status.untracked +
               status.conflicted;
-    final canStageAll =
-        status == null || status.modified > 0 || status.untracked > 0;
-    final canUnstageAll = status == null || status.staged > 0;
-    final canRollbackAll = status == null || dirtyTotal > 0;
+    final canStageAll = status?.hasStageableChanges ?? false;
+    final canUnstageAll = status?.hasStagedChanges ?? false;
+    final canRollbackAll = status?.hasAnyChanges ?? false;
     final mod = _shortcutModLabel();
     return PopupMenuButton<String>(
       tooltip: p == null ? 'VCS Operations · 没有项目' : 'VCS Operations',
@@ -5594,10 +7116,16 @@ class _WorkspacePageState extends State<WorkspacePage>
     final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
     if (hasActiveFile) return _editorCanvasFor(_codeFiles[_activeFile]);
     if (_aiChatFocused) {
+      final workset = _topSessionWorkset;
       return terminalDeck(
         hideClosedTabs: true,
         enableSplit: true,
         onNewShell: _newShellTerminal,
+        visibleIds: workset.allIds.toSet(),
+        displayOrderIds: workset.allIds,
+        pinnedIds: workset.pinnedIds.toSet(),
+        attentionIds: workset.attentionIds.toSet(),
+        onShowAllSessions: _showSessionManager,
       );
     }
     return _workspaceWelcome();
@@ -5736,7 +7264,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                                   ),
                                 ),
                                 Text(
-                                  'Project tool window · Terminal · Queue',
+                                  'Project tool window · Terminal · Handoff',
                                   style: CcType.code(
                                     size: 12,
                                     color: CcColors.subtle,
@@ -6150,7 +7678,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     child: scrollableBar(scrolling: leading, pinnedTrailing: trailing),
   );
 
-  // _detailPanel hosts a task's delivery document inside the right tool window.
+  // _detailPanel hosts a task's 对接文档 inside the right tool window.
   Widget _detailPanel(ListItem it) => Column(
     children: [
       _panelHeader(
@@ -6180,8 +7708,9 @@ class _WorkspacePageState extends State<WorkspacePage>
       ),
       Expanded(
         child: HandoffDetailView(
-          client: widget.client,
+          client: widget.client!,
           config: _cfg,
+          me: widget.me,
           item: it,
           onOpenTerminal: (wt, cmd) {
             addTerm(wt, cmd);
@@ -6244,32 +7773,40 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  // _todosSidebarItems: personal todos always show; team todos only for the
-  // workspace's currently active project (_currentGitProject, resolved to a
-  // relay project id via Me.projects) — the sidebar has no room for the
-  // top-level 待办 page's scope/project filter UI.
+  // _todosSidebarItems: personal todos always show; team todos show when they
+  // are bound to this exact workspace/project, or when the current project name
+  // resolves to one unambiguous relay project id. Duplicate project names across
+  // teams are deliberately not guessed — SaaS teams can share names.
   List<Todo> get _todosSidebarItems {
-    final projectId = _currentTodosSidebarProjectId;
+    if (widget.client == null || widget.me == null) return const [];
+    final currentProject = _currentGitProject;
+    final currentWorkspaceName = _currentGitWorkspaceName;
     final items = widget.store.all.where((t) {
-      if (t.isPersonal) return true;
-      return projectId != null && t.projectId == projectId;
+      return todoInWorkspaceScope(
+        t,
+        projectRoles: widget.me!.projects,
+        workspaceName: currentWorkspaceName,
+        projectName: currentProject?.name,
+      );
     }).toList();
     items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return items;
   }
 
-  String? get _currentTodosSidebarProjectId {
-    final name = _currentGitProject?.name;
-    if (name == null) return null;
-    for (final p in widget.me.projects) {
-      if (p.name == name) return p.id;
+  String? get _currentGitWorkspaceName {
+    final current = _currentGitProject;
+    if (current == null) return null;
+    for (final ws in _cfg.workspaces) {
+      for (final p in ws.projects) {
+        if (p.path == current.path && p.name == current.name) return ws.name;
+      }
     }
     return null;
   }
 
   String? _todoProjectName(Todo t) {
     if (t.projectId == null) return null;
-    for (final p in widget.me.projects) {
+    for (final p in widget.me?.projects ?? const []) {
       if (p.id == t.projectId) return p.name;
     }
     return null;
@@ -6285,6 +7822,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         onRetry: store.refresh,
         child: () {
           final items = _todosSidebarItems;
+          if (widget.client == null || widget.me == null) {
+            return centerMsg('登录后使用待办');
+          }
           if (items.isEmpty) return centerMsg('暂无待办');
           return RefreshIndicator(
             onRefresh: store.refresh,
@@ -6308,10 +7848,11 @@ class _WorkspacePageState extends State<WorkspacePage>
   );
 
   Widget _todosSidebarDetail(Todo t) => TodoDetailView(
-    client: widget.client,
+    client: widget.client!,
     todo: t,
     overviewStore: widget.overviewStore,
     config: _cfg,
+    access: widget.me == null ? TodoAccess.none : todoAccessFor(t, widget.me!),
     // No onOpenSession: this panel lives inside WorkspacePage itself, so
     // overviewStore.requestOpen (TodoDetailView's fallback) is already
     // enough — there's no separate top-level tab to switch away from.
@@ -6325,9 +7866,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     },
   );
 
-  // _inboxSidebarPanel hosts a flattened coordination queue (list ↔ detail swap in
+  // _inboxSidebarPanel hosts a flattened Handoff inbox (list ↔ detail swap in
   // place via _inboxSidebarSelected, no Navigator) inside the right tool
-  // window — lets the user triage work packages without leaving the workspace.
+  // window — lets the user triage handoffs without leaving the workspace.
   // Mutually exclusive with _detailPanel/_todosSidebarPanel (see
   // _setInboxSidebarCollapsed/_setDetailCollapsed/_setTodosSidebarCollapsed).
   Widget _inboxSidebarPanel() {
@@ -6399,8 +7940,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Widget _inboxSidebarDetail(ListItem it) => HandoffDetailView(
-    client: widget.client,
+    client: widget.client!,
     config: _cfg,
+    me: widget.me,
     item: it,
     onOpenTerminal: (wt, cmd) {
       addTerm(wt, cmd);
@@ -6550,49 +8092,24 @@ class _WorkspacePageState extends State<WorkspacePage>
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
         .replaceAll(RegExp(r'^-+|-+$'), '');
-    final ctl = TextEditingController(
-      text: safeSubject.isEmpty
-          ? 'branch-${c.shortHash}'
-          : '${safeSubject.length > 32 ? safeSubject.substring(0, 32) : safeSubject}-${c.shortHash}',
-    );
-    final ok = await showDialog<bool>(
+    final initialBranch = safeSubject.isEmpty
+        ? 'branch-${c.shortHash}'
+        : '${safeSubject.length > 32 ? safeSubject.substring(0, 32) : safeSubject}-${c.shortHash}';
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New Branch from Commit'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${c.shortHash} · ${c.subject}',
-              style: CcType.code(size: 12, color: CcColors.muted),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Branch name'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Create and Checkout'),
-          ),
-        ],
+      builder: (_) => WorkspaceCommitBranchDialog(
+        initialBranch: initialBranch,
+        shortHash: c.shortHash,
+        subject: c.subject,
       ),
     );
-    if (ok != true) return;
-    final branch = ctl.text.trim();
+    if (raw == null) return;
+    final branch = raw.trim();
     if (branch.isEmpty) {
       _snack('分支名不能为空');
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitCreateBranch(p.path, branch, start: c.hash);
@@ -6613,6 +8130,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       '${c.shortHash} · ${c.subject}\n\n这会把该提交应用到当前分支。',
     );
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitCherryPick(p.path, c.hash);
@@ -6633,6 +8151,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       '${c.shortHash} · ${c.subject}\n\n这会创建一个反向提交。',
     );
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitRevertCommit(p.path, c.hash);
@@ -7110,7 +8629,13 @@ class _WorkspacePageState extends State<WorkspacePage>
                             : Colors.transparent,
                       ),
                       const SizedBox(width: 8),
-                      Expanded(child: Text(e.value)),
+                      Expanded(
+                        child: Text(
+                          e.value,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                       const SizedBox(width: 12),
                       Text(
                         '${countOf(e.key)}',
@@ -7652,6 +9177,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         isExpanded: true,
         value: value,
         iconSize: 16,
+        menuMaxHeight: workspaceLogFilterMenuMaxHeight(
+          MediaQuery.sizeOf(context),
+        ),
         style: CcType.code(size: 11.5, color: CcColors.text),
         items: items,
         onChanged: onChanged,
@@ -7676,7 +9204,11 @@ class _WorkspacePageState extends State<WorkspacePage>
             child: Text('All branches'),
           ),
           const DropdownMenuItem(value: '', child: Text('Current branch')),
-          for (final r in logRefs) DropdownMenuItem(value: r, child: Text(r)),
+          for (final r in logRefs)
+            DropdownMenuItem(
+              value: r,
+              child: Text(r, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
         ],
         onChanged: (v) {
           setState(() {
@@ -7705,7 +9237,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         value: effectiveAuthor,
         items: [
           const DropdownMenuItem(value: '', child: Text('All users')),
-          for (final a in authors) DropdownMenuItem(value: a, child: Text(a)),
+          for (final a in authors)
+            DropdownMenuItem(
+              value: a,
+              child: Text(a, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
         ],
         onChanged: (v) => setState(() => _logAuthorFilter = v ?? ''),
       ),
@@ -8783,11 +10319,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     // the already-staged ones — enabled whenever there's something to commit, so
     // there are no permanently-greyed staged-only buttons.
     final commitChecked = selected > 0;
-    final canCommitAny =
-        (commitChecked || (status?.staged ?? 0) > 0) && !_gitLoading;
     final hasCommitText = _commitCtl.text.trim().isNotEmpty;
+    final canCommitAny = workspaceCommitActionEnabled(
+      hasCommitTarget: commitChecked || (status?.hasStagedChanges ?? false),
+      message: _commitCtl.text,
+      loading: _gitLoading,
+    );
     final canAmend =
-        !_gitLoading && ((status?.staged ?? 0) > 0 || hasCommitText);
+        !_gitLoading && ((status?.hasStagedChanges ?? false) || hasCommitText);
     // Small, dense commit-action buttons (24px tall, 11.5 label, 13px icon) —
     // sizing only, so each button keeps its native colours (filled / tonal /
     // outlined).
@@ -9084,13 +10623,15 @@ class _WorkspacePageState extends State<WorkspacePage>
             icon: const Icon(Icons.add_task_rounded, size: 16),
             tooltip: 'Stage All',
             visualDensity: VisualDensity.compact,
-            onPressed: _gitLoading ? null : () => _gitStageAllCurrent(p),
+            onPressed: _gitLoading || !(status?.hasStageableChanges ?? false)
+                ? null
+                : () => _gitStageAllCurrent(p),
           ),
           IconButton(
             icon: const Icon(Icons.remove_done_rounded, size: 16),
             tooltip: 'Unstage All',
             visualDensity: VisualDensity.compact,
-            onPressed: _gitLoading || (status?.staged ?? 0) == 0
+            onPressed: _gitLoading || !(status?.hasStagedChanges ?? false)
                 ? null
                 : () => _gitUnstageAllCurrent(p),
           ),
@@ -9260,7 +10801,14 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Widget _sidebar() {
-    final wss = _cfg.workspaces;
+    final allWss = _cfg.workspaces;
+    final visibleNames = visibleWorkspaceNames([
+      for (final workspace in allWss) workspace.name,
+    ], _focusedWorkspaceName).toSet();
+    final wss = [
+      for (final workspace in allWss)
+        if (visibleNames.contains(workspace.name)) workspace,
+    ];
     return Column(
       children: [
         _panelHeader(
@@ -9282,11 +10830,21 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
             const SizedBox(width: 8),
             Text(
-              '${wss.length}',
+              _focusedWorkspaceName == null
+                  ? '${allWss.length}'
+                  : '${wss.length}/${allWss.length}',
               style: CcType.code(size: 11.5, color: CcColors.subtle),
             ),
           ],
           trailing: [
+            if (_focusedWorkspaceName != null)
+              IconButton(
+                key: const ValueKey('workspace-focus-exit'),
+                onPressed: _exitWorkspaceFocus,
+                tooltip: '显示全部工作区 (Esc)',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.filter_alt_off_rounded, size: 17),
+              ),
             IconButton(
               onPressed: _activeFile >= 0 && _activeFile < _codeFiles.length
                   ? _selectOpenedFileInProject
@@ -9349,54 +10907,70 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
         if (_busy) const LinearProgressIndicator(minHeight: 2),
         Expanded(
-          child: wss.isEmpty
-              ? centerMsg(
-                  'config.toml 里没有 workspace —— 点右上 + 新建,或 `cc-handoff workspace create`',
-                )
-              : ListView(
-                  children: wss
-                      .map(
-                        (ws) => ExpansionTile(
-                          // Stable identity so the tile's expansion State isn't
-                          // reassigned if workspaces reorder.
-                          key: ValueKey('ws:${ws.name}'),
-                          title: _ctxMenu(
-                            Align(
-                              alignment: Alignment.centerLeft,
+          child: WorkspaceFocusSurface(
+            focused: _focusedWorkspaceName != null,
+            onExit: _exitWorkspaceFocus,
+            child: WorkspaceTreeScrollSurface(
+              onBackgroundSecondaryTapDown: (details) =>
+                  _showWorkspaceAreaMenu(details.globalPosition),
+              empty: centerMsg(
+                'config.toml 里没有 workspace —— 右键“拉取团队项目”,或点右上 + 新建',
+              ),
+              children: wss
+                  .map(
+                    (ws) => ExpansionTile(
+                      // Stable identity so the tile's expansion State isn't
+                      // reassigned if workspaces reorder.
+                      key: ValueKey('ws:${ws.name}'),
+                      controller: _workspaceCtlFor(ws.name),
+                      tilePadding: const EdgeInsets.only(left: 12, right: 6),
+                      childrenPadding: EdgeInsets.zero,
+                      minTileHeight: 42,
+                      title: _ctxMenu(
+                        WorkspaceFocusTitle(
+                          key: ValueKey('workspace-focus-${ws.name}'),
+                          enabled: allWss.length > 1,
+                          onToggle: () => _toggleWorkspaceFocus(ws.name),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Tooltip(
+                              message: ws.name.isEmpty ? '(默认)' : ws.name,
                               child: Text(
                                 ws.name.isEmpty ? '(默认)' : ws.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontSize: 15.5,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ),
-                            _workspaceMenu(ws),
                           ),
-                          leading: const Icon(
-                            Icons.workspaces_rounded,
-                            size: 20,
-                          ),
-                          // Persist collapse across rebuilds: switching the left
-                          // panel to git/another view disposes this tree, and it
-                          // used to come back all-expanded (initiallyExpanded:true).
-                          // Mirror the section-collapse pattern (_secCollapsed) so a
-                          // collapsed workspace stays collapsed. Default expanded.
-                          initiallyExpanded: !Prefs.getBool(
-                            'ws.wsCollapsed.${ws.name}',
-                          ),
-                          onExpansionChanged: (open) =>
-                              Prefs.setBool('ws.wsCollapsed.${ws.name}', !open),
-                          shape: const Border(),
-                          children: applyOrder(
-                            ws.projects,
-                            loadOrder(desktopProjectOrderKey(ws.name)),
-                            (p) => p.name,
-                          ).map((p) => _projectTile(ws, p)).toList(),
                         ),
-                      )
-                      .toList(),
-                ),
+                        _workspaceMenu(ws, workspaceCount: allWss.length),
+                      ),
+                      leading: const Icon(Icons.workspaces_rounded, size: 20),
+                      // Persist collapse across rebuilds: switching the left
+                      // panel to git/another view disposes this tree, and it
+                      // used to come back all-expanded (initiallyExpanded:true).
+                      // Mirror the section-collapse pattern (_secCollapsed) so a
+                      // collapsed workspace stays collapsed. Default expanded.
+                      initiallyExpanded: !Prefs.getBool(
+                        'ws.wsCollapsed.${ws.name}',
+                      ),
+                      onExpansionChanged: (open) =>
+                          Prefs.setBool('ws.wsCollapsed.${ws.name}', !open),
+                      shape: const Border(),
+                      children: applyOrder(
+                        ws.projects,
+                        loadOrder(desktopProjectOrderKey(ws.name)),
+                        (p) => p.name,
+                      ).map((p) => _projectTile(ws, p)).toList(),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
         ),
       ],
     );
@@ -9409,14 +10983,17 @@ class _WorkspacePageState extends State<WorkspacePage>
           builder: (h) => Row(
             children: [
               Expanded(
-                child: Text(
-                  p.name,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
+                child: Tooltip(
+                  message: p.name,
+                  child: Text(
+                    p.name,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               _rowActions(
@@ -9429,10 +11006,12 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
         _projectMenu(ws, p),
       ),
-      leading: const Icon(Icons.folder_rounded, size: 19),
+      leading: const Icon(Icons.folder_rounded, size: 15),
       controller: _ctlFor(p.path),
-      tilePadding: const EdgeInsets.only(left: 16, right: 8),
-      childrenPadding: const EdgeInsets.only(left: 14),
+      tilePadding: const EdgeInsets.only(left: 30, right: 8),
+      childrenPadding: const EdgeInsets.only(left: 16),
+      visualDensity: const VisualDensity(vertical: -2),
+      minTileHeight: 36,
       shape: const Border(),
       onExpansionChanged: (open) {
         if (open) {
@@ -9549,6 +11128,7 @@ class _WorkspacePageState extends State<WorkspacePage>
                   onSelectPath: (p) =>
                       setState(() => _revealedProjectFilePath = p),
                   onDropPaths: fsDrop,
+                  onMenuPosition: (pos) => _lastContextMenuPosition = pos,
                   fileMenuBuilder: fileMenuBuilder,
                   directoryMenuBuilder: directoryMenuBuilder,
                   pathStatusBuilder: pathStatusBuilder,
@@ -9662,6 +11242,47 @@ class _WorkspacePageState extends State<WorkspacePage>
     }
   }
 
+  Future<void> _selectFsMenu(
+    String value,
+    String path, {
+    required String rootPath,
+    required bool isDir,
+    ProjectCfg? project,
+  }) async {
+    if (value == fileMenuEdit ||
+        value == fileMenuLocate ||
+        value == fileMenuVersion) {
+      final pick = await showMenu<String>(
+        context: context,
+        position: menuPosAt(
+          context,
+          _lastContextMenuPosition ?? _fallbackMenuPosition(),
+        ),
+        items: fileActionSubmenuEntries(
+          value,
+          atRoot: path == rootPath,
+          includeProjectReveal: project != null,
+        ),
+      );
+      if (pick == null || !mounted) return;
+      _handleFsMenu(
+        pick,
+        path,
+        rootPath: rootPath,
+        isDir: isDir,
+        project: project,
+      );
+      return;
+    }
+    _handleFsMenu(
+      value,
+      path,
+      rootPath: rootPath,
+      isDir: isDir,
+      project: project,
+    );
+  }
+
   PopupMenuButton<String> _projectFileMenu(
     ProjectCfg project,
     String path, {
@@ -9674,110 +11295,23 @@ class _WorkspacePageState extends State<WorkspacePage>
       tooltip: 'File actions',
       icon: const Icon(Icons.more_vert_rounded, size: 16),
       padding: EdgeInsets.zero,
-      onOpened: () => setState(() => _revealedProjectFilePath = path),
-      onSelected: (v) => _handleFsMenu(
-        v,
-        path,
-        rootPath: project.path,
-        isDir: isDir,
-        project: project,
+      onOpened: () {
+        _lastContextMenuPosition = null;
+        setState(() => _revealedProjectFilePath = path);
+      },
+      onSelected: (v) => unawaited(
+        _selectFsMenu(
+          v,
+          path,
+          rootPath: project.path,
+          isDir: isDir,
+          project: project,
+        ),
       ),
-      itemBuilder: (_) => [
-        ccMenuItem(
-          value: 'open',
-          icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
-          label: isDir ? 'Open Folder' : 'Open',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'newFile',
-          icon: Icons.note_add_outlined,
-          label: 'New File',
-        ),
-        ccMenuItem(
-          value: 'newDir',
-          icon: Icons.create_new_folder_outlined,
-          label: 'New Directory',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: path == project.path ? null : 'rename',
-          icon: Icons.drive_file_rename_outline_rounded,
-          label: 'Rename',
-        ),
-        ccMenuItem(
-          value: path == project.path ? null : 'delete',
-          icon: Icons.delete_outline_rounded,
-          label: 'Delete',
-          danger: true,
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'copyPath',
-          icon: Icons.content_copy_rounded,
-          label: 'Copy Path',
-        ),
-        ccMenuItem(
-          value: 'copy',
-          icon: Icons.copy_rounded,
-          label: 'Copy',
-          shortcut: '⌘C',
-        ),
-        ccMenuItem(
-          value: path == project.path ? null : 'cut',
-          icon: Icons.content_cut_rounded,
-          label: 'Cut',
-          shortcut: '⌘X',
-        ),
-        ccMenuItem(
-          value: 'paste',
-          icon: Icons.content_paste_rounded,
-          label: 'Paste',
-          shortcut: '⌘V',
-        ),
-        ccMenuItem(
-          value: 'revealProject',
-          icon: Icons.my_location_rounded,
-          label: 'Reveal in Project',
-        ),
-        ccMenuItem(
-          value: 'revealSystem',
-          icon: Icons.folder_open_rounded,
-          label: 'Reveal in System',
-        ),
-        ccMenuItem(
-          value: 'openExternal',
-          icon: Icons.open_in_new_rounded,
-          label: 'Open In',
-        ),
-        ccMenuItem(
-          value: 'terminal',
-          icon: Icons.terminal_rounded,
-          label: 'Open Terminal Here',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: !isDir && rel.isNotEmpty ? 'compare' : null,
-          icon: Icons.difference_rounded,
-          label: 'Compare with HEAD',
-        ),
-        ccMenuItem(
-          value: !isDir && rel.isNotEmpty ? 'history' : null,
-          icon: Icons.history_rounded,
-          label: 'File History',
-        ),
-        ccMenuItem(
-          value: !isDir && rel.isNotEmpty ? 'annotate' : null,
-          icon: Icons.format_align_left_rounded,
-          label: 'Annotate / Blame',
-        ),
-        const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'refresh',
-          icon: Icons.refresh_rounded,
-          label: 'Reload from Disk',
-        ),
-      ],
+      itemBuilder: (_) => fileActionMenuEntries(
+        isDir: isDir,
+        includeVersionControl: !isDir && rel.isNotEmpty,
+      ),
     );
   }
 
@@ -9798,21 +11332,35 @@ class _WorkspacePageState extends State<WorkspacePage>
   List<({int idx, TerminalSession s})> _sessionsFor(ProjectCfg p) {
     final out = <({int idx, TerminalSession s})>[];
     for (var i = 0; i < terms.length; i++) {
-      final wd = terms[i].workdir;
-      if (wd == p.path || wd.startsWith('${p.path}/.worktrees/')) {
+      final membership = resolveSessionProject(
+        terms[i].workdir,
+        _cfg.workspaces,
+      );
+      if (membership?.project.path == p.path) {
         out.add((idx: i, s: terms[i]));
       }
     }
     return out;
   }
 
-  // _sessionsForDir returns the open terminal sessions launched in EXACTLY [dir]
-  // (a project root OR a worktree path), paired with their index in `terms`.
-  // Exact match is correct: _openAgent always launches at p.path or w.path.
+  // _sessionsForDir uses the same resolver as the manager/top workset. Project
+  // roots own every non-worktree descendant; a worktree row owns descendants of
+  // that worktree. Normal launch paths are exact roots, while this also keeps a
+  // restored/externally spawned session in a project subdirectory from vanishing.
   List<({int idx, TerminalSession s})> _sessionsForDir(String dir) {
     final out = <({int idx, TerminalSession s})>[];
+    final target = resolveSessionProject(dir, _cfg.workspaces);
+    final isProjectRoot = target?.project.path == dir;
     for (var i = 0; i < terms.length; i++) {
-      if (terms[i].workdir == dir) out.add((idx: i, s: terms[i]));
+      final membership = resolveSessionProject(
+        terms[i].workdir,
+        _cfg.workspaces,
+      );
+      final matches = isProjectRoot
+          ? membership?.project.path == dir &&
+                !membership!.relativePath.startsWith('.worktrees/')
+          : pathWithin(terms[i].workdir, dir);
+      if (matches) out.add((idx: i, s: terms[i]));
     }
     return out;
   }
@@ -9823,13 +11371,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     String dir, {
     ProjectCfg? project,
     String preLaunch = '',
+    bool showHeader = true,
   }) {
     final ss = _sessionsForDir(dir);
     if (ss.isEmpty) return const [];
     final header = _sectionHeader(dir, 'sessions', '会话 (${ss.length})');
-    if (_secCollapsed(dir, 'sessions')) return [header];
+    if (showHeader && _secCollapsed(dir, 'sessions')) return [header];
     return [
-      header,
+      if (showHeader) header,
       ...ss.map((e) {
         final active = e.idx == activeTerm;
         // hidden = the session keeps running but its tab was closed ("close
@@ -9846,10 +11395,13 @@ class _WorkspacePageState extends State<WorkspacePage>
         // Other live sessions this node can forward its selection to. This menu
         // lives in the tree (not the terminal surface), so a full-screen TUI
         // can't grab the click the way it intercepts an in-terminal right-click.
-        final peers = peersExcluding(e.s.id);
+        final sendGroups = _sendGroupsFor(e.s.workdir, excludeId: e.s.id);
+        final hasSendTargets =
+            sendGroups.same.isNotEmpty || sendGroups.others.isNotEmpty;
         final sessionMenu = PopupMenuButton<String>(
           tooltip: '会话操作',
-          onSelected: (v) {
+          onOpened: () => _lastContextMenuPosition = null,
+          onSelected: (v) async {
             if (v == 'supervisor') {
               if (project != null) {
                 unawaited(_supervisorFlow(project, dir, preLaunch));
@@ -9857,11 +11409,24 @@ class _WorkspacePageState extends State<WorkspacePage>
             } else if (v == 'rename') {
               _renameSession(e.s);
             } else if (v == 'close') {
-              closeTerm(e.idx);
+              unawaited(_requestCloseSession(e.s.id));
             } else if (v == 'send-online') {
               _showSendToOnlineUser(
                 e.s.selectedText ?? e.s.renderSnapshot(_kForwardLines),
+                sourcePath: e.s.workdir,
               );
+            } else if (v == 'send-session') {
+              final pick = await showGroupedSendMenu(
+                context,
+                _lastContextMenuPosition ?? _fallbackMenuPosition(),
+                same: sendGroups.same,
+                others: sendGroups.others,
+              );
+              if (pick == null || !mounted || !pick.startsWith('send:')) {
+                return;
+              }
+              final to = sessionById(pick.substring('send:'.length));
+              if (to != null) _forwardSelection(e.s, to);
             } else if (v.startsWith('send:')) {
               final to = sessionById(v.substring(5));
               if (to != null) _forwardSelection(e.s, to);
@@ -9887,112 +11452,122 @@ class _WorkspacePageState extends State<WorkspacePage>
                 icon: Icons.power_settings_new_rounded,
                 label: '结束会话',
               ),
-              if (peers.isNotEmpty) const PopupMenuDivider(),
+              const PopupMenuDivider(),
               // Always enabled — sends the selection if there is one, else this
               // session's recent output (renderSnapshot). No need to first make a
               // mouse selection inside a TUI.
-              for (final q in peers)
+              if (hasSendTargets)
                 ccMenuItem(
-                  value: 'send:${q.id}',
+                  value: 'send-session',
                   icon: Icons.send_rounded,
-                  label: '发送到「${q.label}」',
+                  label: '发送到会话…',
                 ),
-              const PopupMenuDivider(),
-              ccMenuItem(
-                value: 'send-online',
-                icon: Icons.cloud_upload_rounded,
-                label: '发送到在线用户…',
-              ),
+              if (_canSendToOnline)
+                ccMenuItem(
+                  value: 'send-online',
+                  icon: Icons.cloud_upload_rounded,
+                  label: '发送到在线用户…',
+                ),
             ];
           },
         );
         return _ctxMenu(
-          Container(
-            decoration: BoxDecoration(
-              color: active ? CcColors.accent.withValues(alpha: 0.08) : null,
-              border: Border(
-                left: BorderSide(
-                  color: active ? CcColors.accent : Colors.transparent,
-                  width: 2.5,
+          Material(
+            color: active
+                ? CcColors.accent.withValues(alpha: 0.08)
+                : Colors.transparent,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: active ? CcColors.accent : Colors.transparent,
+                    width: 2.5,
+                  ),
                 ),
               ),
-            ),
-            child: ListTile(
-              visualDensity: _tileDensity,
-              contentPadding: const EdgeInsets.only(left: 12, right: 2),
-              horizontalTitleGap: 8,
-              selected: active,
-              // Live status avatar: rebuilds on the session's activity transitions
-              // (busy / needs-review, via activityRev) so it pulses while working
-              // and shows a status-coloured badge (working / done / idle) at rest.
-              // Coarse status is derived from the session's own in-memory flags —
-              // NOT _statusFor(_latestHookActivity(...)): that reads the hook-event
-              // dir off disk on every rebuild, and its fine-grained sub-states only
-              // refresh on the busy/needs-review flips activityRev fires on (so a
-              // 12-colour badge would go stale mid-turn). The coarse set is exactly
-              // what the trigger reliably covers; the 会话总览 keeps the rich status.
-              leading: ValueListenableBuilder<int>(
-                valueListenable: e.s.activityRev,
-                builder: (_, _, _) => SessionActivityAvatar(
-                  seed: e.s.id,
-                  isAgent: e.s.isAgent,
-                  status: !e.s.isAgent
-                      ? SessionStatus.shell
-                      : e.s.needsReview
-                      ? SessionStatus.needsReview
-                      : e.s.busy
-                      ? SessionStatus.working
-                      : SessionStatus.idle,
-                  size: 20,
+              child: ListTile(
+                visualDensity: _tileDensity,
+                contentPadding: EdgeInsets.only(
+                  left: showHeader ? 28 : 14,
+                  right: 2,
                 ),
-              ),
-              title: Text(
-                display,
-                style: TextStyle(
-                  fontFamily: CcType.mono,
-                  fontSize: 13.5,
-                  color: active
-                      ? CcColors.text
-                      : (notLoaded ? CcColors.subtle : CcColors.muted),
-                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                horizontalTitleGap: 8,
+                selected: active,
+                // Live status avatar: rebuilds on the session's activity transitions
+                // (busy / needs-review, via activityRev) so it pulses while working
+                // and shows a status-coloured badge (working / done / idle) at rest.
+                // Coarse status is derived from the session's own in-memory flags —
+                // NOT _statusFor(_latestHookActivity(...)): that reads the hook-event
+                // dir off disk on every rebuild, and its fine-grained sub-states only
+                // refresh on the busy/needs-review flips activityRev fires on (so a
+                // 12-colour badge would go stale mid-turn). The coarse set is exactly
+                // what the trigger reliably covers; the 会话总览 keeps the rich status.
+                leading: ValueListenableBuilder<int>(
+                  valueListenable: e.s.activityRev,
+                  builder: (_, _, _) => SessionActivityAvatar(
+                    seed: e.s.id,
+                    isAgent: e.s.isAgent,
+                    status: !e.s.isAgent
+                        ? SessionStatus.shell
+                        : e.s.needsReview
+                        ? SessionStatus.needsReview
+                        : e.s.busy
+                        ? SessionStatus.working
+                        : SessionStatus.idle,
+                    size: 20,
+                  ),
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              onTap: () {
-                // Reopen the session's tab (un-hide it if its view was closed)
-                // and make it active, then surface the terminal panel so the
-                // reopened session is visible. reopenTermView re-arms TTS.
-                reopenTermView(e.idx);
-                _setBottomTool(_BottomTool.terminal);
-              },
-              trailing: active
-                  ? Padding(
-                      padding: const EdgeInsets.only(right: 2),
-                      child: statusDot(CcColors.ok, size: 7, glow: true),
-                    )
-                  : notLoaded
-                  ? Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Tooltip(
-                        message: '未加载 · 点击启动',
-                        child: Icon(
-                          Icons.bedtime_outlined,
-                          size: 13,
-                          color: CcColors.subtle,
+                title: Tooltip(
+                  message: display,
+                  child: Text(
+                    display,
+                    style: TextStyle(
+                      fontFamily: CcType.mono,
+                      fontSize: 12.5,
+                      color: active
+                          ? CcColors.text
+                          : (notLoaded ? CcColors.subtle : CcColors.muted),
+                      fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                onTap: () {
+                  // Reopen the session's tab (un-hide it if its view was closed)
+                  // and make it active, then surface the terminal panel so the
+                  // reopened session is visible. reopenTermView re-arms TTS.
+                  reopenTermView(e.idx);
+                  _setBottomTool(_BottomTool.terminal);
+                },
+                trailing: active
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 2),
+                        child: statusDot(CcColors.ok, size: 7, glow: true),
+                      )
+                    : notLoaded
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Tooltip(
+                          message: '未加载 · 点击启动',
+                          child: Icon(
+                            Icons.bedtime_outlined,
+                            size: 13,
+                            color: CcColors.subtle,
+                          ),
                         ),
-                      ),
-                    )
-                  : (hidden
-                        ? Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: Icon(
-                              Icons.visibility_off_outlined,
-                              size: 13,
-                              color: CcColors.muted,
-                            ),
-                          )
-                        : null),
+                      )
+                    : (hidden
+                          ? Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Icon(
+                                Icons.visibility_off_outlined,
+                                size: 13,
+                                color: CcColors.muted,
+                              ),
+                            )
+                          : null),
+              ),
             ),
           ),
           sessionMenu,
@@ -10022,36 +11597,20 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  Future<void> _renameSession(TerminalSession s) async {
-    final ctl = TextEditingController(text: s.name ?? '');
-    final ok = await showDialog<bool>(
+  Future<String?> _renameSession(TerminalSession s) async {
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重命名会话'),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: '名称(留空 = 默认)',
-            hintText: s.title,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存'),
-          ),
-        ],
+      builder: (_) => WorkspaceSessionRenameDialog(
+        initialName: s.name ?? '',
+        hint: s.title,
       ),
     );
-    if (ok != true) return;
-    final v = ctl.text.trim();
+    if (raw == null) return null;
+    final v = raw.trim();
+    if (!mounted) return null;
     setState(() => s.name = v.isEmpty ? null : v);
     persistTerms();
+    return s.label;
   }
 
   List<Widget> _worktreeNodes(WorkspaceCfg ws, ProjectCfg p) {
@@ -10071,25 +11630,20 @@ class _WorkspacePageState extends State<WorkspacePage>
     // 主工作树的 path == 项目根,已由项目节点自身表示,这里只列附加 worktree。
     final linked = wts.where((w) => w.path != p.path).toList();
     if (linked.isEmpty) return const [];
-    final header = _sectionHeader(
-      p.path,
-      'worktrees',
-      'WORKTREES (${linked.length})',
-    );
-    if (_secCollapsed(p.path, 'worktrees')) return [header];
     return [
-      header,
       ...linked.map((w) {
         final title = w.branch.isEmpty ? w.name : w.branch;
         return ExpansionTile(
           leading: Icon(
             Icons.account_tree_rounded,
-            size: 18,
+            size: 15,
             color: w.isHandoff ? CcColors.accent : CcColors.muted,
           ),
           controller: _ctlFor(w.path),
-          tilePadding: const EdgeInsets.only(left: 10, right: 2),
-          childrenPadding: const EdgeInsets.only(left: 12),
+          tilePadding: const EdgeInsets.only(left: 18, right: 2),
+          childrenPadding: const EdgeInsets.only(left: 14),
+          visualDensity: const VisualDensity(vertical: -2),
+          minTileHeight: 36,
           shape: const Border(),
           onExpansionChanged: (open) {
             if (open) _ensureWorktreeChanges(w.path);
@@ -10099,28 +11653,31 @@ class _WorkspacePageState extends State<WorkspacePage>
               builder: (h) => Row(
                 children: [
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          title,
-                          style: const TextStyle(
-                            fontFamily: CcType.mono,
-                            fontSize: 13.5,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (w.isHandoff)
-                          const Text(
-                            'handoff',
-                            style: TextStyle(
-                              color: CcColors.accent,
-                              fontSize: 11,
+                    child: Tooltip(
+                      message: title,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontFamily: CcType.mono,
+                              fontSize: 12.5,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                      ],
+                          if (w.isHandoff)
+                            const Text(
+                              'handoff',
+                              style: TextStyle(
+                                color: CcColors.accent,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                   _rowActions(
@@ -10135,7 +11692,12 @@ class _WorkspacePageState extends State<WorkspacePage>
             _worktreeMenu(ws, p, w),
           ),
           children: [
-            ..._sessionNodesForDir(w.path, project: p, preLaunch: ws.preLaunch),
+            ..._sessionNodesForDir(
+              w.path,
+              project: p,
+              preLaunch: ws.preLaunch,
+              showHeader: false,
+            ),
             _filesNode(
               w.path,
               title,
@@ -10166,65 +11728,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     tooltip: 'File actions',
     icon: const Icon(Icons.more_vert_rounded, size: 16),
     padding: EdgeInsets.zero,
-    onOpened: () => setState(() => _revealedProjectFilePath = path),
-    onSelected: (v) => _handleFsMenu(v, path, rootPath: rootPath, isDir: isDir),
-    itemBuilder: (_) => [
-      ccMenuItem(
-        value: 'open',
-        icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
-        label: isDir ? 'Open Folder' : 'Open',
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: 'newFile',
-        icon: Icons.note_add_outlined,
-        label: 'New File',
-      ),
-      ccMenuItem(
-        value: 'newDir',
-        icon: Icons.create_new_folder_outlined,
-        label: 'New Directory',
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: path == rootPath ? null : 'rename',
-        icon: Icons.drive_file_rename_outline_rounded,
-        label: 'Rename',
-      ),
-      ccMenuItem(
-        value: path == rootPath ? null : 'delete',
-        icon: Icons.delete_outline_rounded,
-        label: 'Delete',
-        danger: true,
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: 'copyPath',
-        icon: Icons.content_copy_rounded,
-        label: 'Copy Path',
-      ),
-      ccMenuItem(
-        value: 'revealSystem',
-        icon: Icons.folder_open_rounded,
-        label: 'Reveal in System',
-      ),
-      ccMenuItem(
-        value: 'openExternal',
-        icon: Icons.open_in_new_rounded,
-        label: 'Open In',
-      ),
-      ccMenuItem(
-        value: 'terminal',
-        icon: Icons.terminal_rounded,
-        label: 'Open Terminal Here',
-      ),
-      const PopupMenuDivider(),
-      ccMenuItem(
-        value: 'refresh',
-        icon: Icons.refresh_rounded,
-        label: 'Reload from Disk',
-      ),
-    ],
+    onOpened: () {
+      _lastContextMenuPosition = null;
+      setState(() => _revealedProjectFilePath = path);
+    },
+    onSelected: (v) =>
+        unawaited(_selectFsMenu(v, path, rootPath: rootPath, isDir: isDir)),
+    itemBuilder: (_) =>
+        fileActionMenuEntries(isDir: isDir, includeVersionControl: false),
   );
 
   List<Widget> _taskNodes(ProjectCfg p) {
@@ -10277,54 +11788,112 @@ class _WorkspacePageState extends State<WorkspacePage>
     ),
   ];
 
-  PopupMenuButton<String> _workspaceMenu(WorkspaceCfg ws) =>
-      PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert_rounded, size: 18),
-        tooltip: '工作区操作',
-        onSelected: (v) {
-          switch (v) {
-            case 'new':
-              _newEmptyProject(ws);
-            case 'add':
-              _addProject(ws);
-            case 'reorder':
-              _openProjectOrderSheet(ws);
-            case 'settings':
-              _workspaceSettings(ws);
-            case 'remove':
-              _removeWorkspace(ws);
-          }
-        },
-        itemBuilder: (_) => [
-          ccMenuItem(
-            value: 'new',
-            icon: Icons.create_new_folder_rounded,
-            label: 'New Empty Project',
-          ),
-          ccMenuItem(
-            value: 'add',
-            icon: Icons.create_new_folder_outlined,
-            label: 'Add Existing / Clone Project',
-          ),
-          ccMenuItem(
-            value: ws.projects.length > 1 ? 'reorder' : null,
-            icon: Icons.swap_vert_rounded,
-            label: '排序项目',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'settings',
-            icon: Icons.settings_rounded,
-            label: '工作区设置',
-          ),
-          ccMenuItem(
-            value: 'remove',
-            icon: Icons.delete_outline_rounded,
-            label: '删除工作区',
-            danger: true,
-          ),
-        ],
-      );
+  PopupMenuButton<String> _workspaceMenu(
+    WorkspaceCfg ws, {
+    required int workspaceCount,
+  }) => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert_rounded, size: 18),
+    tooltip: '工作区操作',
+    onSelected: (v) {
+      switch (v) {
+        case 'pull-team':
+          _pullTeamProject();
+        case 'new':
+          _newEmptyProject(ws);
+        case 'add':
+          _addProject(ws);
+        case 'reorder':
+          _openProjectOrderSheet(ws);
+        case 'focus':
+          _setWorkspaceFocus(ws.name);
+        case 'focus-exit':
+          _exitWorkspaceFocus();
+        case 'settings':
+          _workspaceSettings(ws);
+        case 'remove':
+          _removeWorkspace(ws);
+      }
+    },
+    itemBuilder: (_) => [
+      ccMenuItem(
+        value: 'pull-team',
+        icon: Icons.cloud_download_outlined,
+        label: '拉取团队项目',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'new',
+        icon: Icons.create_new_folder_rounded,
+        label: 'New Empty Project',
+      ),
+      ccMenuItem(
+        value: 'add',
+        icon: Icons.create_new_folder_outlined,
+        label: 'Add Existing / Clone Project',
+      ),
+      ccMenuItem(
+        value: ws.projects.length > 1 ? 'reorder' : null,
+        icon: Icons.swap_vert_rounded,
+        label: '排序项目',
+      ),
+      if (workspaceCount > 1) ...[
+        const PopupMenuDivider(),
+        ccMenuItem(
+          value: _focusedWorkspaceName == null ? 'focus' : 'focus-exit',
+          icon: _focusedWorkspaceName == null
+              ? Icons.filter_alt_rounded
+              : Icons.filter_alt_off_rounded,
+          label: _focusedWorkspaceName == null ? '专注此工作区' : '退出工作区专注',
+          shortcut: _focusedWorkspaceName == null ? null : 'Esc',
+        ),
+      ],
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'settings',
+        icon: Icons.settings_rounded,
+        label: '工作区设置',
+      ),
+      ccMenuItem(
+        value: 'remove',
+        icon: Icons.delete_outline_rounded,
+        label: '删除工作区',
+        danger: true,
+      ),
+    ],
+  );
+
+  Future<void> _showWorkspaceAreaMenu(Offset position) async {
+    final value = await showMenu<String>(
+      context: context,
+      position: menuPosAt(context, position),
+      items: [
+        ccMenuItem(
+          value: 'pull-team',
+          icon: Icons.cloud_download_outlined,
+          label: '拉取团队项目',
+        ),
+        ccMenuItem(
+          value: 'new',
+          icon: Icons.create_new_folder_rounded,
+          label: '新建工作区',
+        ),
+        ccMenuItem(
+          value: 'import',
+          icon: Icons.drive_folder_upload_outlined,
+          label: '从文件夹导入工作区',
+        ),
+      ],
+    );
+    if (!mounted || value == null) return;
+    switch (value) {
+      case 'pull-team':
+        _pullTeamProject();
+      case 'new':
+        _newWorkspace();
+      case 'import':
+        _importWorkspace();
+    }
+  }
 
   // 拖拽给某工作区的项目排序。顺序是本设备的表现层偏好，存进 Prefs（不改 config.toml），
   // 侧栏与会话总览都读同一份覆盖。镜像 remote_workspace_page 的 _openKeyBarEditor。
@@ -10356,6 +11925,8 @@ class _WorkspacePageState extends State<WorkspacePage>
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Text(
                       '排序项目 · ${ws.name.isEmpty ? '默认' : ws.name}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -10374,7 +11945,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                             key: ObjectKey(p),
                             dense: true,
                             leading: const Icon(Icons.drag_handle, size: 20),
-                            title: Text(p.name),
+                            title: Text(
+                              p.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             subtitle: Text(
                               p.path,
                               maxLines: 1,
@@ -10398,73 +11973,23 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> _workspaceSettings(WorkspaceCfg ws) async {
-    final pre = TextEditingController(text: ws.preLaunch);
-    final editor = TextEditingController(text: ws.editor);
-    var agent = (ws.agent == 'codex' || ws.agent == 'manual')
-        ? ws.agent
-        : 'claude';
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<WorkspaceSettingsDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('「${ws.name.isEmpty ? '默认' : ws.name}」工作区设置'),
-        content: StatefulBuilder(
-          builder: (ctx, setLocal) => Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: pre,
-                decoration: const InputDecoration(
-                  labelText: 'pre_launch(起 agent 前跑)',
-                  hintText: 'nvm use 18',
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: editor,
-                decoration: const InputDecoration(
-                  labelText: 'editor(编辑器命令)',
-                  hintText: 'code .',
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Text('agent', style: TextStyle(color: CcColors.muted)),
-                  const Spacer(),
-                  DropdownButton<String>(
-                    value: agent,
-                    items: const [
-                      DropdownMenuItem(value: 'claude', child: Text('claude')),
-                      DropdownMenuItem(value: 'codex', child: Text('codex')),
-                      DropdownMenuItem(value: 'manual', child: Text('manual')),
-                    ],
-                    onChanged: (v) => setLocal(() => agent = v ?? 'claude'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存'),
-          ),
-        ],
+      builder: (_) => WorkspaceSettingsDialog(
+        workspaceName: ws.name,
+        initialPreLaunch: ws.preLaunch,
+        initialEditor: ws.editor,
+        initialAgent: ws.agent,
       ),
     );
-    if (ok != true) return;
+    if (draft == null) return;
+    if (!mounted) return;
     await _runCli(
       () => Cli.workspaceSet(
         ws.name,
-        preLaunch: pre.text.trim(),
-        editor: editor.text.trim(),
-        agent: agent,
+        preLaunch: draft.preLaunch.trim(),
+        editor: draft.editor.trim(),
+        agent: draft.agent,
       ),
       '已保存',
       after: _reloadConfig,
@@ -10707,6 +12232,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         behavior: HitTestBehavior.translucent,
         onSecondaryTapDown: (d) async {
           menu.onOpened?.call();
+          _lastContextMenuPosition = d.globalPosition;
           final overlay =
               Overlay.of(context).context.findRenderObject() as RenderBox;
           final value = await showMenu<String>(
@@ -10721,6 +12247,11 @@ class _WorkspacePageState extends State<WorkspacePage>
         },
         child: child,
       );
+
+  Offset _fallbackMenuPosition() {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    return overlay.localToGlobal(overlay.size.center(Offset.zero));
+  }
 }
 
 // _DialogHeader is the shared 42px title bar used by the workspace dialogs:

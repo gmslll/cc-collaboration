@@ -1,34 +1,31 @@
 # Infinite Agent Platform 部署文档
 
-完整的端到端部署指南：从企业 VPS 起一个自托管 relay，到桌面 / Web / 移动客户端接入，再到账号、机器 token、项目、任务队列和日常运维。
+完整的端到端部署指南：从企业 VPS 起一个自托管 relay，到桌面 / Web / 移动客户端接入，再到账号、Agent 工作流和日常运维。
 
-按章节顺序做下来，约 30 分钟可以从零跑通一个最小内部 Agent 开发平台。
-
-兼容说明:部署脚本、systemd unit、CLI、MCP server 和配置目录仍使用 legacy 名称
-`cc-handoff` / `cc-relay` / `cc-handoff-mcp`。这些名称保证现有安装可滚动升级;
-面向用户的产品名是 Infinite Agent Platform。
+按章节顺序做下来，约 30 分钟可以从零跑通。
 
 ---
 
 ## 总览
 
-最小生产拓扑包含一个企业 relay 和若干员工客户端：
+三个进程，分别跑在三台机器上：
 
 ```
-员工桌面 / 手机 / Web              企业 VPS / 内网主机             员工 Agent 会话
-──────────────────              ─────────────────             ───────────────
-Flutter App / Web UI  ──HTTPS──►  TLS reverse proxy  ◄──SSE──  cc-handoff watch
-Claude / Codex MCP    ──HTTPS──►        │                     cc-handoff-mcp
-cc-handoff CLI        ──HTTPS──►  cc-relay:8080
-                                        │
-                              /var/lib/cc-handoff/relay.db
-                              accounts + projects + queue + todos
+后端开发者 Mac                   你的 VPS                  前端开发者 Mac
+────────────────                ─────────                ─────────────────
+Claude Code (后端)                                        Claude Code (前端)
+  ↓ /handoff                                                ↑ /pickup
+cc-handoff-mcp ────HTTPS────►   caddy:443                 ────► cc-handoff-mcp
+                                  ↓                                ↑
+                                cc-relay:8080 ◄────SSE────  cc-handoff watch (launchd)
+                                  ↓
+                                /var/lib/cc-handoff/relay.db
+                                  + comments + attachments
 ```
 
-- **企业 VPS / 内网主机** 上跑 `cc-relay`（systemd 守护，监听 127.0.0.1:8080），caddy/nginx/Nginx Proxy Manager 终结 TLS。
-- **员工桌面** 安装 Flutter 客户端和兼容 CLI，使用同一个 `~/.config/cc-handoff/config.toml` 保存 relay、identity、机器 token 和 workspace/project 映射。
-- **Agent 会话** 通过 `cc-handoff-mcp` 或 `cc-handoff` CLI 创建 / 接收协作任务，watch 守护进程通过 SSE 接收事件、落盘、通知并按策略唤起 Agent。
-- **Web UI** 提供队列查看、项目、账号、机器 token 和管理入口；生产可在反向代理层按公司策略限制注册与访问。
+- **VPS** 上跑 `cc-relay`（systemd 守护，默认监听 0.0.0.0:8080），caddy/nginx 终结 TLS
+- **Mac** 上每个仓库装一份 `cc-handoff` CLI + 一份 `cc-handoff-mcp`（被 Claude Code / OpenAI Codex CLI / 其他 agent 通过 stdio 拉起的 MCP server）
+- **接收侧 Mac** 额外起一个 `cc-handoff watch` 守护进程（launchd），SSE 长连接拉服务端事件、落盘到 `.cc-handoff/inbox/`（老仓库已有 `.claude/handoff-inbox/` 时继续沿用）、必要时弹通知或开新终端
 
 ---
 
@@ -39,7 +36,7 @@ cc-handoff CLI        ──HTTPS──►  cc-relay:8080
 | VPS | 一台 Linux（amd64 或 arm64），有 sudo；80/443 端口开放 |
 | 域名 | 给 relay 一个二级域名，比如 `handoff.your-domain.com` |
 | 反向代理 | VPS 上预装 caddy 或 nginx 之一 |
-| 员工客户端 | macOS / Windows / Linux / iOS / Android；桌面端需要 git、目标 Agent CLI（如 `claude` / `codex`）和必要语言工具 |
+| Mac (两端) | macOS、Go 1.22+、Flutter 3.44+（relay 内嵌 `/app/`）、git、`claude` CLI 已装并能登录 |
 | 网络 | Mac → VPS 能走 HTTPS |
 
 ---
@@ -59,17 +56,17 @@ make deploy HOST=user@your-vps SSH_OPTS="-p 2222 -i ~/.ssh/id_ed25519"
 `scripts/deploy.sh` 自动做的事：
 
 1. ssh 探测 VPS 架构（amd64 / arm64）
-2. 用对应 GOARCH 跨编译静态 `cc-relay`（CGO_ENABLED=0）
-3. scp 二进制 + `install.sh` + `uninstall.sh` + `rotate-token.sh` + `backup.sh` + systemd unit 到 VPS:`/tmp/cc-handoff-deploy/`
-4. 远端执行 `install.sh`：
+2. 构建 Flutter Web 客户端并校验 `index.html` / `main.dart.js`
+3. 用对应 GOARCH 跨编译静态 `cc-relay`（CGO_ENABLED=0），将 Web 客户端内嵌进二进制
+4. scp 二进制 + `install.sh` + `uninstall.sh` + `rotate-token.sh` + `backup.sh` + systemd unit 到 VPS:`/tmp/cc-handoff-deploy/`
+5. 远端执行 `install.sh`：
    - 创建 `cc-handoff` 系统用户（无 home、无 shell）
    - `cc-relay` 装到 `/usr/local/bin/`
    - `/var/lib/cc-handoff/`（SQLite 数据目录，权限 cc-handoff:cc-handoff 0755）
-   - `/etc/cc-handoff/tokens.json`（初始示例 token，权限 root:cc-handoff 0640）
    - systemd unit 装到 `/etc/systemd/system/cc-handoff-relay.service`
    - `systemctl enable --now cc-handoff-relay`
-5. 把 `uninstall.sh` / `rotate-token.sh` / `backup.sh` 安装到 `/usr/local/sbin/cc-handoff-{uninstall,rotate-token,backup}` 方便后续运维
-6. `systemctl restart cc-handoff-relay` 并验证 active
+6. 把 `uninstall.sh` / `backup.sh` 安装到 `/usr/local/sbin/cc-handoff-{uninstall,backup}` 方便后续运维
+7. `systemctl restart cc-handoff-relay` 并验证 active
 
 **应该看到**：
 
@@ -79,11 +76,10 @@ make deploy HOST=user@your-vps SSH_OPTS="-p 2222 -i ~/.ssh/id_ed25519"
      Active: active (running) ...
 
 binary  : /usr/local/bin/cc-relay
-tokens  : /etc/cc-handoff/tokens.json
 data    : /var/lib/cc-handoff/relay.db
 
 ops:
-  sudo cc-handoff-rotate-token <identity>
+  sudo -u cc-handoff /usr/local/bin/cc-relay useradd -db /var/lib/cc-handoff/relay.db -identity <you@example.com> -admin
   sudo cc-handoff-backup
   sudo cc-handoff-uninstall [--purge]
 ```
@@ -146,12 +142,12 @@ curl -i https://handoff.your-domain.com/healthz
 
 三处改动:
 
-**1. relay 监听地址放开**
+**1. 确认 relay 监听地址**
 
-`scripts/systemd/cc-handoff-relay.service` 默认 `-addr 127.0.0.1:8080`(只 loopback,留给反代用)。改成 `0.0.0.0:8080`(所有网卡)或具体 IP(`10.0.0.5:8080`、Tailscale IP 等):
+`scripts/systemd/cc-handoff-relay.service` 默认 `-addr 0.0.0.0:8080`(所有网卡)。部署前必须用防火墙或云安全组限制 8080 的来源；如果只给本机反代使用，可改为 `127.0.0.1:8080`，也可以绑定具体 IP(`10.0.0.5:8080`、Tailscale IP 等):
 
 ```bash
-sudo sed -i 's|-addr 127.0.0.1:8080|-addr 0.0.0.0:8080|' /etc/systemd/system/cc-handoff-relay.service
+sudo sed -i 's|-addr 0.0.0.0:8080|-addr 127.0.0.1:8080|' /etc/systemd/system/cc-handoff-relay.service
 sudo systemctl daemon-reload
 sudo systemctl restart cc-handoff-relay
 ```
@@ -202,34 +198,18 @@ curl -i http://203.0.113.42:8080/healthz
 
 这俩比"裸 0.0.0.0:8080"安全得多,代价是搭一次 VPN —— 但既然链路已受信,应用层用 HTTP 就够了。
 
-### 1.3 生成真实 token
+### 1.3 引导管理员账号
 
-`install.sh` 写的是占位 token。VPS 上替换：
+全新部署后先在 VPS 上建第一个管理员账号：
 
 ```bash
 ssh your-vps
-TOK_BACK=$(openssl rand -hex 32)
-TOK_FRONT=$(openssl rand -hex 32)
-
-sudo tee /etc/cc-handoff/tokens.json >/dev/null <<JSON
-[
-  {"token": "$TOK_BACK",  "identity": "user@backend"},
-  {"token": "$TOK_FRONT", "identity": "alex@frontend"}
-]
-JSON
-
-sudo chown root:cc-handoff /etc/cc-handoff/tokens.json
-sudo chmod 0640 /etc/cc-handoff/tokens.json
-
-# 把这两个 token 各自记下来，下面客户端配置要用
-echo "BACKEND : $TOK_BACK"
-echo "FRONTEND: $TOK_FRONT"
-
-sudo systemctl restart cc-handoff-relay
+sudo -u cc-handoff /usr/local/bin/cc-relay useradd \
+  -db /var/lib/cc-handoff/relay.db -identity you@backend -admin
 sudo journalctl -u cc-handoff-relay -n 20
 ```
 
-> identity 字符串想叫什么都行（`user@backend`、`alex@frontend`、`team-a`、`team-b`），只要客户端 `~/.config/cc-handoff/config.toml` 里的 `identity` 与 `tokens.json` 一致即可。
+后续让成员在 App / UI 注册账号、加入团队和项目。CLI / watch / MCP 需要的 bearer token 使用注册返回的默认 DB machine token，或在账号页重新生成；不再需要手工维护 `tokens.json`。
 
 ### 1.4 验证
 
@@ -237,8 +217,9 @@ sudo journalctl -u cc-handoff-relay -n 20
 # 1. healthz 走得通（且经 TLS）
 curl https://handoff.your-domain.com/healthz
 
-# 2. 用真 token 验证 auth + 路由
-curl -H "Authorization: Bearer $TOK_BACK" \
+# 2. 用账号生成的 DB machine token 验证 auth + 路由
+MACHINE_TOKEN='<从注册响应或账号页复制的一次性 token>'
+curl -H "Authorization: Bearer $MACHINE_TOKEN" \
   "https://handoff.your-domain.com/v1/handoffs?recipient=user@backend"
 # 期望: {"items":null}
 
@@ -248,7 +229,7 @@ curl -i -H "Authorization: Bearer wrong" \
 # 期望: HTTP 401 invalid token
 
 # 4. SSE 真实推送（建议另开一终端，按 Ctrl-C 退）
-curl -N -H "Authorization: Bearer $TOK_BACK" \
+curl -N -H "Authorization: Bearer $MACHINE_TOKEN" \
   "https://handoff.your-domain.com/v1/events?recipient=user@backend"
 # 期望: 立刻看到 ": connected"，每 20s 一行 ": ping"
 ```
@@ -257,7 +238,7 @@ curl -N -H "Authorization: Bearer $TOK_BACK" \
 
 ### 1.5 多用户 / 账号 / 角色（共享 relay,可选)
 
-如果这台 relay 是**多团队 / 多人共享**,relay 支持**账号 + 密码登录 + 角色 + 项目**(单租户的纯 token 用法不受影响,可继续用 1.3 的 `tokens.json`)。三种身份解析在中间件里统一:**UI 登录会话** + **DB 机器 token**(UI 自助生成)+ **`tokens.json`**(运维管理,向后兼容),都映射到同一个 identity。
+如果这台 relay 是**多团队 / 多人共享**,relay 支持**账号 + 密码登录 + 团队 + 项目角色**。身份解析在中间件里统一:**UI 登录会话** + **DB 机器 token**(注册默认生成或账号页自助生成)，旧 `tokens.json` 仅作为 legacy 兼容入口，不再是默认部署方式。
 
 > ⚠️ **必须走 HTTPS**:登录会传密码、会话 token。务必在 1.2 的 TLS 反代之后使用,别用 1.2.alt 的明文直连。
 
@@ -272,16 +253,14 @@ sudo -u cc-handoff /usr/local/bin/cc-relay useradd \
 
 **种子管理员**(可选,永不被锁死):给 relay 的 systemd 单元 `ExecStart` 加 `-admins you@backend`(逗号分隔多个),或设环境变量 `RELAY_ADMINS=you@backend`。`isAdmin = 种子 ∪ DB 里 is_admin`。
 
-**关闭公开注册**(企业部署推荐):给 relay 的 systemd 单元 `ExecStart` 加
-`-disable-register`,或设环境变量 `RELAY_DISABLE_REGISTER=1`。这样 `/v1/register`
-会在 relay 内部直接返回 403;反向代理层仍可继续加一层拦截。
+**关闭公开注册**(企业部署推荐):给 relay 的 systemd 单元 `ExecStart` 加 `-disable-register`,或设环境变量 `RELAY_DISABLE_REGISTER=1`。这样 `/v1/register` 会直接返回 403，由管理员在 App / Web UI 或 `cc-relay useradd` 创建账号。
 
 **之后全在 Web UI 里**(`https://handoff.your-domain.com/ui/`):
 
 - 用账密登录(`you@backend` + 上面的密码);
-- **Admin** 标签:建其他账号(初始密码生成后回显一次)、设/取消 admin、停用、重置密码;账号停用后已有 UI session、机器 token、legacy file token 都会立即失效;
+- **Admin** 标签:建其他账号(初始密码生成后回显一次)、设/取消 admin、停用、重置密码或删除账号;删除采用 tombstone，identity 不可重新注册且历史署名保留;
 - **Projects** 标签:任何人可自助建项目(自己成 owner)、绑定 repo、加成员并配角色(`owner`/`member`/`viewer`);成员能看到所属项目的**所有** handoff,admin 看全部,viewer 只读不可评论;
-- **Account** 标签:改密码、**自助生成机器 token**(只回显一次)粘进客户端的 `cc-handoff init`(取代手改 `tokens.json`)、随时吊销。
+- **Account** 标签:改密码、**自助生成 DB machine token**(只回显一次)粘进客户端的 `cc-handoff init`、随时吊销。
 
 **角色与可见性**(读授权;ack/撤回/转交仍只限当事人):
 
@@ -293,7 +272,7 @@ sudo -u cc-handoff /usr/local/bin/cc-relay useradd \
 | viewer | 本项目全部 | ✗ | ✗ | ✗ |
 | 参与者(sender/recipient) | 该 handoff | ✓ | ✗ | ✗ |
 
-**迁移 / 兼容**:新表全部 `CREATE TABLE IF NOT EXISTS`,旧 `relay.db` 原地升级;旧 `tokens.json` 的 bearer token 继续认。不用账号体系的话,什么都不配,relay 行为与升级前逐字一致。
+**迁移 / 兼容**:新表全部 `CREATE TABLE IF NOT EXISTS`,旧 `relay.db` 原地升级;旧 `tokens.json` 的 bearer token 仍可识别,但新部署默认走账号、团队、项目和 DB machine token。
 
 ---
 
@@ -636,16 +615,9 @@ ls /path/to/test-frontend/.cc-handoff/inbox/<id>/
 
 ## 日常运维
 
-### 轮换 token
+### DB machine token
 
-```bash
-ssh your-vps
-sudo cc-handoff-rotate-token alex@frontend
-# 或自带 token：
-sudo cc-handoff-rotate-token user@backend --token "$(openssl rand -hex 32)"
-```
-
-输出会打印新 token。把这条新 token 同步到对应客户端的 `~/.config/cc-handoff/config.toml`：
+新部署默认不再维护 `/etc/cc-handoff/tokens.json`。CLI / watch / MCP 需要的 bearer token 从注册响应里的默认 DB machine token 复制，或在账号页重新生成并同步到对应客户端的 `~/.config/cc-handoff/config.toml`。
 
 ```toml
 token = "<new>"
@@ -733,7 +705,7 @@ tail -f /tmp/cc-handoff.watch.err.log     # 警告 / 错误
 VPS 上：
 
 ```bash
-sudo cc-handoff-uninstall              # 默认保留 DB 与 tokens.json
+sudo cc-handoff-uninstall              # 默认保留 DB
 sudo cc-handoff-uninstall --purge      # 一并清掉 /var/lib/cc-handoff、/etc/cc-handoff、cc-handoff 用户
 ```
 
@@ -766,8 +738,8 @@ rm -rf ~/.config/cc-handoff
 
 | 现象 | 检查 |
 |---|---|
-| `cc-handoff submit` 返回 401 | token 不对 / `tokens.json` 里 identity 拼错 / 客户端 `~/.config/cc-handoff/config.toml` 与 VPS `tokens.json` 不一致 |
-| `cc-handoff submit` 报 `no recipient` | `.cc-handoff.toml` 漏了 `[identity] partner = ...` |
+| `cc-handoff submit` 返回 401 | 客户端 token 不对 / 账号已停用 / `~/.config/cc-handoff/config.toml` 里的 identity 与 DB machine token 所属账号不一致 |
+| `cc-handoff submit` 报 `no recipient` | 当前 workspace/repo 没绑定团队项目,也没有传 `--project` / `--org` / `--to`;优先在 App 里把项目绑定到团队 Project |
 | `cc-handoff submit` 报 `swagger delta: parse...` | swagger 文件解析失败，把出错文件片段贴出来 |
 | `cc-handoff submit` 报 `base ref ... unreachable` | 默认 base 是 `origin/main`，本地没 fetch / 仓库用的 master/develop。改 `.cc-handoff.toml` 的 `[paths] base = "..."` |
 | 前端 watch 没收到通知 | (1) `journalctl -u cc-handoff-relay` 看 submit 的请求是不是 201；(2) `/tmp/cc-handoff.watch.err.log` 看 SSE 连接状态；(3) 反向代理 SSE 缓冲是不是关了（章节 1.2） |
@@ -848,8 +820,7 @@ cc-handoff-mcp.submit_handoff
 ### 安全姿态
 
 - 传输层：TLS 终结在 caddy/nginx，原始流量永不裸跑
-- 应用层：每个请求要 `Authorization: Bearer <token>`。身份来源包括 UI session、DB 机器 token、legacy `tokens.json`;三者都会映射到同一个 identity，并在每次请求时检查账号是否已停用。
-- 注册策略：企业部署建议启用 `-disable-register` / `RELAY_DISABLE_REGISTER=1`，由管理员在 Web UI 或 `cc-relay useradd` 创建账号。
+- 应用层：每个请求要 `Authorization: Bearer <token>`，token 与 identity 多对一映射存 `tokens.json`，relay 启动时一次性载入内存（hash 后比对）
 - 存储层：handoffs / comments / attachments 都按 `recipient` / `sender` 限制读取（postComment、listComments、attachments 端点只允许 sender 或 recipient）
 - 审计层：每个请求一条结构化 JSON 日志到 stderr（journald 自动收）
 - **没做**：端到端加密。relay 看得到全部 payload。如果你的对接信息含敏感数据（生产凭据、内部 IP），把 relay 部到你完全控制的机器，或者开 issue 推动 M6 的 libsodium sealed box
@@ -858,7 +829,7 @@ cc-handoff-mcp.submit_handoff
 
 | 项 | 值 | 在哪改 |
 |---|---|---|
-| relay 监听 | 127.0.0.1:8080 | systemd unit `ExecStart` `-addr` |
+| relay 监听 | 0.0.0.0:8080 | systemd unit `ExecStart` `-addr`；必须限制 8080 来源 |
 | 反向代理 | :443 | caddy/nginx 配置 |
 | SSE keepalive ping | 20s | server.go 写死，需要的话改 server.go events() |
 | watch SSE 重连 backoff | 500ms → 30s 指数 | sse_client.go |

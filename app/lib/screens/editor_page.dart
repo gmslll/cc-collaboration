@@ -11,17 +11,25 @@ import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_view.dart';
 
+double editorDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class CodeEditorPane extends StatefulWidget {
   final String path;
   final int? initialLine;
   final ValueChanged<bool>? onDirtyChanged;
   final VoidCallback? onLoaded;
+  final Future<String> Function(String path)? readFile;
   const CodeEditorPane({
     super.key,
     required this.path,
     this.initialLine,
     this.onDirtyChanged,
     this.onLoaded,
+    this.readFile,
   });
 
   @override
@@ -41,6 +49,7 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   bool _loading = true;
   bool _saving = false;
   String? _error;
+  int _loadGeneration = 0;
 
   bool get dirty => _dirty;
   bool get saving => _saving;
@@ -83,6 +92,7 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
     if (sel.extentIndex < 0) return null;
     return (line: sel.extentIndex, character: sel.extentOffset);
   }
+
   int get lineCount => text.isEmpty ? 0 : text.split('\n').length;
   String get eol => _crlf ? 'CRLF' : 'LF';
   String get languageLabel => _languageLabelForExt(fileExtOf(widget.path));
@@ -119,8 +129,10 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     try {
-      final content = await File(widget.path).readAsString();
+      final content = await _readFile(widget.path);
+      if (!mounted || generation != _loadGeneration) return;
       _crlf = content.contains('\r\n');
       _usedTabs = RegExp(r'(^|\n)\t').hasMatch(content);
       _ctl = CodeLineEditingController.fromText(
@@ -129,20 +141,20 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
       // re_editor normalises EOLs to LF internally; baseline against that so a
       // CRLF file doesn't open already-dirty.
       _original = _ctl!.text;
-      if (mounted) {
-        setState(() => _loading = false);
-        _jumpToInitialLine();
-        widget.onLoaded?.call();
-      }
+      setState(() => _loading = false);
+      _jumpToInitialLine();
+      widget.onLoaded?.call();
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = errorText(e);
-          _loading = false;
-        });
-      }
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _error = errorText(e);
+        _loading = false;
+      });
     }
   }
+
+  Future<String> _readFile(String path) =>
+      widget.readFile?.call(path) ?? File(path).readAsString();
 
   void _jumpToInitialLine() {
     final ctl = _ctl;
@@ -196,9 +208,11 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
   // Re-read the file from disk into a fresh controller (after an external tool
   // such as a formatter rewrote it), keeping the cursor near the same line.
   Future<void> reloadFromDisk() async {
+    final generation = ++_loadGeneration;
     final keepLine = _ctl?.selection.startIndex;
     try {
-      final content = await File(widget.path).readAsString();
+      final content = await _readFile(widget.path);
+      if (!mounted || generation != _loadGeneration) return;
       _crlf = content.contains('\r\n');
       _usedTabs = RegExp(r'(^|\n)\t').hasMatch(content);
       _ctl?.removeListener(_onChange);
@@ -208,7 +222,6 @@ class CodeEditorPaneState extends State<CodeEditorPane> {
       )..addListener(_onChange);
       _original = _ctl!.text;
       _dirty = false;
-      if (!mounted) return;
       setState(() {});
       widget.onDirtyChanged?.call(false);
       if (keepLine != null && lineCount > 0) {
@@ -303,21 +316,35 @@ class _EditorPageState extends State<EditorPage> {
   Future<bool> _confirmDiscard() async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('未保存的修改'),
-        content: const Text('放弃修改并离开?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('放弃'),
+          title: const Text(
+            '未保存的修改',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: editorDialogWidth(size),
+            child: const SingleChildScrollView(child: Text('放弃修改并离开?')),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('放弃'),
+            ),
+          ],
+        );
+      },
     );
     return ok ?? false;
   }

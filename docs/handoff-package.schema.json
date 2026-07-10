@@ -7,9 +7,10 @@
   "properties": {
     "id":             {"type": "string", "pattern": "^h_[0-9]{8}_[A-Z0-9]+$"},
     "schema_version": {"type": "integer", "const": 1},
-    "kind":           {"type": "string", "enum": ["", "delivery", "request"], "description": "Direction/intent of the package. Empty (omitted) is treated as 'delivery' for backward compatibility with v0.1 payloads. 'request' is the reverse flow: sender (typically frontend) is asking the recipient (typically backend) to add/change something — no diff, no swagger; the summary IS the request body."},
+    "kind":           {"type": "string", "enum": ["", "delivery", "request", "bug", "capsule"], "description": "Direction/intent of the package. Empty (omitted) is treated as 'delivery' for backward compatibility with v0.1 payloads."},
     "sender":         {"type": "string"},
     "recipient":      {"type": "string"},
+    "recipients":     {"type": "array", "items": {"type": "string"}},
     "urgency":        {"type": "string", "enum": ["normal", "urgent"]},
     "created_at":     {"type": "string", "format": "date-time"},
     "repo": {
@@ -68,7 +69,18 @@
         }
       }
     },
+    "delivery_target": {
+      "type": "object",
+      "description": "Original team-scoped delivery intent before project/org/member was expanded into concrete recipients.",
+      "properties": {
+        "project_id": {"type": "string"},
+        "org_id":     {"type": "string"},
+        "member":     {"type": "string"}
+      }
+    },
     "note_md":     {"type": "string"},
+    "prd_md":      {"type": "string"},
+    "amends_handoff": {"type": "string"},
     "replaces_id": {"type": "string"},
     "responds_to": {"type": "string", "description": "When this package is a delivery answering a prior 'request' package, the original request id. The receiver-side prompt and summary.md render an '↩️ 回应' banner so the original requester can trace the loop. Should not be set on kind='request' packages."}
   },

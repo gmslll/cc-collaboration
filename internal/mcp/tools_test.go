@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/handoff"
+	"github.com/cc-collaboration/pkg/todoschema"
 )
 
 // TestReadAttachments_DedupeBasename: two files with the same basename land
@@ -127,6 +129,116 @@ func TestUniqueAttachmentName_NoExt(t *testing.T) {
 	taken := map[string][]byte{"Makefile": nil}
 	if got := uniqueAttachmentName("Makefile", taken); got != "Makefile-2" {
 		t.Errorf("got %q, want Makefile-2", got)
+	}
+}
+
+func TestFormatTodoSummaryUsesAssigneeDisplayName(t *testing.T) {
+	out := formatTodoSummary(&todoschema.Todo{
+		Status:              todoschema.StatusTodo,
+		Priority:            todoschema.PriorityNormal,
+		AssigneeIdentity:    "dev@x",
+		AssigneeDisplayName: "Dev",
+	})
+	if !strings.Contains(out, "- assignee: Dev <dev@x>") {
+		t.Fatalf("assignee display missing from summary:\n%s", out)
+	}
+}
+
+func TestDeliveryTargetTrimAndSummary(t *testing.T) {
+	target := deliveryTarget(" project-1 ", "", " dev@team ")
+	if target == nil {
+		t.Fatal("expected delivery target")
+	}
+	if target.ProjectID != "project-1" || target.OrgID != "" || target.Member != "dev@team" {
+		t.Fatalf("delivery target = %+v", target)
+	}
+	var sb strings.Builder
+	writeDeliveryTargetSummary(&sb, target)
+	if got := sb.String(); got != "- delivery_target: project=project-1 member=dev@team\n" {
+		t.Fatalf("summary = %q", got)
+	}
+	if empty := deliveryTarget(" ", "", ""); empty != nil {
+		t.Fatalf("blank delivery target should be nil: %+v", empty)
+	}
+}
+
+func TestResolveToolRecipientsTrimsDirectTargets(t *testing.T) {
+	got, recipient, err := resolveToolRecipients(
+		context.Background(),
+		nil,
+		" sender@x ",
+		" partner@x ",
+		" receiver@x ",
+		" ",
+		"",
+		" ",
+	)
+	if err != nil {
+		t.Fatalf("resolveToolRecipients returned error: %v", err)
+	}
+	if want := []string{"receiver@x"}; !slices.Equal(got, want) || recipient != "receiver@x" {
+		t.Fatalf("recipients = %v recipient = %q, want %v / receiver@x", got, recipient, want)
+	}
+}
+
+func TestResolveToolRecipientsRejectsTrimmedSelfTarget(t *testing.T) {
+	_, _, err := resolveToolRecipients(
+		context.Background(),
+		nil,
+		" sender@x ",
+		" partner@x ",
+		" sender@x ",
+		"",
+		"",
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), "cannot send to yourself") {
+		t.Fatalf("expected trimmed self-send rejection, got %v", err)
+	}
+}
+
+func TestResolveToolRecipientsMemberRequiresTrimmedTeamTarget(t *testing.T) {
+	_, _, err := resolveToolRecipients(
+		context.Background(),
+		nil,
+		"sender@x",
+		"partner@x",
+		"",
+		" ",
+		"",
+		" member@x ",
+	)
+	if err == nil || !strings.Contains(err.Error(), "member requires project or org") {
+		t.Fatalf("expected member/team target error, got %v", err)
+	}
+}
+
+func TestInferredToolProjectPrefersWorkspaceBinding(t *testing.T) {
+	got, err := inferredToolProject(
+		context.Background(),
+		nil,
+		&config.Resolved{WorkspaceProjectID: " relay-project ", RepoName: "repo"},
+		"",
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "relay-project" {
+		t.Fatalf("project = %q, want relay-project", got)
+	}
+}
+
+func TestShouldInferToolProjectKeepsExplicitTargets(t *testing.T) {
+	if shouldInferToolProject("receiver@x", "", "") {
+		t.Fatal("direct receiver should not infer project")
+	}
+	if shouldInferToolProject("", "", "org1") {
+		t.Fatal("explicit org should not infer project")
+	}
+	if !shouldInferToolProject("", "", "") {
+		t.Fatal("missing explicit target should infer current project")
 	}
 }
 

@@ -43,6 +43,12 @@ class DiffView extends StatefulWidget {
   State<DiffView> createState() => _DiffViewState();
 }
 
+double diffDiscardDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class _DiffViewState extends State<DiffView> {
   FileDiff? _selected;
   String? _lang; // re_highlight language id of the selected file (null = plain)
@@ -206,23 +212,43 @@ class _DiffViewState extends State<DiffView> {
     if (f == null || root == null) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('丢弃改动?'),
-        content: Text('${f.path}\n\ngit checkout -- 丢弃未提交改动,不可撤销。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('丢弃'),
+          title: const Text(
+            '丢弃改动?',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: diffDiscardDialogWidth(size),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                '${f.path}\n\ngit checkout -- 丢弃未提交改动,不可撤销。',
+                style: CcType.code(size: 12),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('丢弃'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true) return;
+    if (!mounted) return;
     try {
       await gitRestore(root, f.path);
       widget.onChanged?.call();
@@ -308,46 +334,48 @@ class _DiffViewState extends State<DiffView> {
   Widget _fileTile(FileDiff f, String fname, int depth) {
     final sel = identical(_selected, f);
     final c = _statusColor(f.status);
-    return Container(
-      decoration: BoxDecoration(
-        color: sel ? CcColors.accent.withValues(alpha: 0.10) : null,
-        border: Border(
-          left: BorderSide(
-            color: sel ? CcColors.accent : Colors.transparent,
-            width: 2.5,
+    return Material(
+      color: sel ? CcColors.accent.withValues(alpha: 0.10) : Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: sel ? CcColors.accent : Colors.transparent,
+              width: 2.5,
+            ),
           ),
         ),
-      ),
-      child: ListTile(
-        dense: true,
-        visualDensity: const VisualDensity(vertical: -2),
-        selected: sel,
-        contentPadding: EdgeInsets.only(left: 8.0 + depth * 12, right: 8),
-        horizontalTitleGap: 6,
-        leading: Text(
-          _statusChar(f.status),
-          style: TextStyle(
-            fontFamily: CcType.mono,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: c,
+        child: ListTile(
+          dense: true,
+          visualDensity: const VisualDensity(vertical: -2),
+          selected: sel,
+          contentPadding: EdgeInsets.only(left: 8.0 + depth * 12, right: 8),
+          horizontalTitleGap: 6,
+          leading: Text(
+            _statusChar(f.status),
+            style: TextStyle(
+              fontFamily: CcType.mono,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: c,
+            ),
           ),
-        ),
-        title: Text(
-          fname,
-          style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Text(
-          '+${f.adds} −${f.dels}',
-          style: const TextStyle(
-            fontFamily: CcType.mono,
-            fontSize: 11,
-            color: CcColors.muted,
+          title: Text(
+            fname,
+            style: const TextStyle(fontFamily: CcType.mono, fontSize: 12.5),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
+          trailing: Text(
+            '+${f.adds} −${f.dels}',
+            style: const TextStyle(
+              fontFamily: CcType.mono,
+              fontSize: 11,
+              color: CcColors.muted,
+            ),
+          ),
+          onTap: () => _select(f),
         ),
-        onTap: () => _select(f),
       ),
     );
   }
@@ -498,7 +526,12 @@ class _DiffViewState extends State<DiffView> {
         r.newNo != null &&
         r.rightKind != DiffKind.empty;
     if (!editable) {
-      return diffCell(r.right, r.rightKind, langId: _lang, wordSpans: wordSpans);
+      return diffCell(
+        r.right,
+        r.rightKind,
+        langId: _lang,
+        wordSpans: wordSpans,
+      );
     }
     return _EditableCell(
       text: r.right,

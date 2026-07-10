@@ -35,8 +35,13 @@ const ccTerminalTheme = TerminalTheme(
 
 int _terminalRgb(Color color) => color.toARGB32() & 0x00ffffff;
 
-Terminal ccTerminal({int maxLines = 1000}) => Terminal(
-  maxLines: maxLines,
-  defaultForegroundColor: _terminalRgb(ccTerminalTheme.foreground),
-  defaultBackgroundColor: _terminalRgb(ccTerminalTheme.background),
-);
+Terminal ccTerminal({int maxLines = 1000, bool answerColorQueries = true}) =>
+    Terminal(
+      maxLines: maxLines,
+      defaultForegroundColor: answerColorQueries
+          ? _terminalRgb(ccTerminalTheme.foreground)
+          : null,
+      defaultBackgroundColor: answerColorQueries
+          ? _terminalRgb(ccTerminalTheme.background)
+          : null,
+    );

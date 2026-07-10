@@ -53,8 +53,13 @@ void main() {
     });
   });
 
-  group('Todo.fromJson group_name', () {
-    Map<String, dynamic> baseJson({dynamic groupName = _omit}) {
+  group('Todo.fromJson', () {
+    Map<String, dynamic> baseJson({
+      dynamic groupName = _omit,
+      dynamic assigneeIdentity,
+      dynamic assigneeDisplayName,
+      dynamic assigneeSessionLabel,
+    }) {
       final j = <String, dynamic>{
         'id': 'x1',
         'project_id': null,
@@ -63,9 +68,10 @@ void main() {
         'body_md': '',
         'status': 'todo',
         'priority': 'normal',
-        'assignee_identity': null,
+        'assignee_identity': assigneeIdentity,
+        'assignee_display_name': assigneeDisplayName,
         'assignee_session_id': null,
-        'assignee_session_label': null,
+        'assignee_session_label': assigneeSessionLabel,
         'recurrence': '',
         'due_at': null,
         'next_occurrence_at': null,
@@ -94,11 +100,60 @@ void main() {
       expect(t.groupName, isNull);
     });
 
+    test('blank nullable strings parse to null', () {
+      final t = Todo.fromJson(
+        baseJson(
+          groupName: '   ',
+          assigneeIdentity: '   ',
+          assigneeDisplayName: '   ',
+          assigneeSessionLabel: '   ',
+        ),
+      );
+
+      expect(t.groupName, isNull);
+      expect(t.assigneeIdentity, isNull);
+      expect(t.assigneeDisplayName, isNull);
+      expect(t.assigneeSessionLabel, isNull);
+      expect(t.assigneeLabel, isNull);
+      expect(t.assigneeTooltip, isNull);
+    });
+
     test('copyWith preserves groupName', () {
       final t = Todo.fromJson(baseJson(groupName: 'sprint-1'));
       final copy = t.copyWith();
       expect(copy.groupName, 'sprint-1');
     });
+
+    test('assignee display name parses and copyWith preserves it', () {
+      final t = Todo.fromJson(
+        baseJson(assigneeIdentity: 'dev@x', assigneeDisplayName: 'Dev'),
+      );
+
+      expect(t.assigneeDisplayName, 'Dev');
+      expect(t.copyWith().assigneeDisplayName, 'Dev');
+    });
+
+    test(
+      'assigneeLabel prefers session label, then display name, then identity',
+      () {
+        final session = Todo.fromJson(
+          baseJson(
+            assigneeIdentity: 'dev@x',
+            assigneeDisplayName: 'Dev',
+            assigneeSessionLabel: 'codex',
+          ),
+        );
+        final named = Todo.fromJson(
+          baseJson(assigneeIdentity: 'dev@x', assigneeDisplayName: 'Dev'),
+        );
+        final unnamed = Todo.fromJson(baseJson(assigneeIdentity: 'dev@x'));
+
+        expect(session.assigneeLabel, 'codex');
+        expect(named.assigneeLabel, 'Dev');
+        expect(named.assigneeTooltip, 'Dev · dev@x');
+        expect(unnamed.assigneeLabel, 'dev@x');
+      },
+    );
   });
 }
 

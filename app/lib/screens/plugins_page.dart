@@ -8,22 +8,49 @@ import '../plugins/plugin_manager.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
+double pluginsDialogDimension(
+  double available,
+  double preferred, {
+  double min = 160,
+}) {
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < min) return available;
+  return available < preferred ? available : preferred;
+}
+
+Size pluginsDialogSize(
+  Size viewport, {
+  double preferredWidth = 580,
+  double preferredHeight = 620,
+}) => Size(
+  pluginsDialogDimension(viewport.width - 32, preferredWidth),
+  pluginsDialogDimension(viewport.height - 48, preferredHeight, min: 260),
+);
+
 // Plugins management dialog: list the format plugins, show whether each tool is
 // installed on the host, let the user enable/disable them, and surface the
 // install command for missing tools.
 Future<void> showPluginsDialog(BuildContext context) => showDialog<void>(
   context: context,
-  builder: (_) => Dialog(
-    backgroundColor: CcColors.panel,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 580, maxHeight: 620),
-      child: const _PluginsPane(),
-    ),
-  ),
+  builder: (ctx) {
+    final dialogSize = pluginsDialogSize(MediaQuery.sizeOf(ctx));
+    return Dialog(
+      backgroundColor: CcColors.panel,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: SizedBox(
+        width: dialogSize.width,
+        height: dialogSize.height,
+        child: const _PluginsPane(),
+      ),
+    );
+  },
 );
 
+Widget pluginsPaneForTest() => const _PluginsPane(detectOnOpen: false);
+
 class _PluginsPane extends StatefulWidget {
-  const _PluginsPane();
+  final bool detectOnOpen;
+  const _PluginsPane({this.detectOnOpen = true});
 
   @override
   State<_PluginsPane> createState() => _PluginsPaneState();
@@ -36,6 +63,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
   @override
   void initState() {
     super.initState();
+    if (!widget.detectOnOpen) return;
     _mgr.detectAll(); // refresh availability when the page opens
     _lsp.detectAll();
   }
@@ -82,7 +110,11 @@ class _PluginsPaneState extends State<_PluginsPane> {
           padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
           child: Text(
             '格式化按类型渲染 / 格式化;代码跳转用语言服务器 (LSP) 精确跳到定义,未装则回退符号索引。都需宿主机装好对应命令(仅桌面本地生效),没检测到可手动指定路径。',
-            style: TextStyle(color: CcColors.muted, fontSize: 12.5, height: 1.4),
+            style: TextStyle(
+              color: CcColors.muted,
+              fontSize: 12.5,
+              height: 1.4,
+            ),
           ),
         ),
         const Divider(height: 1),
@@ -145,7 +177,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
               children: [
                 Row(
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
                         p.name,
                         style: const TextStyle(
@@ -157,7 +189,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _extChips(p.exts),
+                    Flexible(child: _extChips(p.exts)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -166,10 +198,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
             ),
           ),
           const SizedBox(width: 8),
-          Switch(
-            value: on,
-            onChanged: (v) => _mgr.setEnabled(p.id, v),
-          ),
+          Switch(value: on, onChanged: (v) => _mgr.setEnabled(p.id, v)),
         ],
       ),
     );
@@ -181,11 +210,33 @@ class _PluginsPaneState extends State<_PluginsPane> {
     return Wrap(
       spacing: 4,
       children: [
-        for (final e in shown) chip(e),
-        if (extra > 0) chip('+$extra'),
+        for (final e in shown) _extChip(e),
+        if (extra > 0) _extChip('+$extra'),
       ],
     );
   }
+
+  Widget _extChip(String text) => ConstrainedBox(
+    constraints: const BoxConstraints(maxWidth: 72),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: CcColors.panelHigh,
+        border: Border.all(color: CcColors.border),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontFamily: CcType.mono,
+          fontSize: 12,
+          color: CcColors.text,
+        ),
+      ),
+    ),
+  );
 
   Widget _status(FormatPlugin p, bool avail) {
     if (p.builtIn) {
@@ -193,9 +244,13 @@ class _PluginsPaneState extends State<_PluginsPane> {
         children: [
           statusDot(CcColors.ok, size: 7),
           const SizedBox(width: 6),
-          const Text(
-            '内置 · 渲染预览',
-            style: TextStyle(color: CcColors.muted, fontSize: 12),
+          const Flexible(
+            child: Text(
+              '内置 · 渲染预览',
+              style: TextStyle(color: CcColors.muted, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       );
@@ -205,9 +260,13 @@ class _PluginsPaneState extends State<_PluginsPane> {
         children: [
           statusDot(CcColors.ok, size: 7),
           const SizedBox(width: 6),
-          Text(
-            '已检测到 ${p.tool}',
-            style: const TextStyle(color: CcColors.muted, fontSize: 12),
+          Flexible(
+            child: Text(
+              '已检测到 ${p.tool}',
+              style: const TextStyle(color: CcColors.muted, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       );
@@ -241,7 +300,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
               children: [
                 Row(
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
                         p.name,
                         style: const TextStyle(
@@ -253,7 +312,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _extChips(p.exts),
+                    Flexible(child: _extChips(p.exts)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -330,56 +389,109 @@ class _PluginsPaneState extends State<_PluginsPane> {
   }
 
   Future<void> _editLspCommand(LspServerPlugin p) async {
-    final ctl = TextEditingController(text: _lsp.commandFor(p));
     final result = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: CcColors.panel,
-        title: Text(
-          '${p.name} · 服务器命令',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '填可执行文件名或绝对路径(启动参数用内置默认)。留空恢复默认命令。',
-              style: TextStyle(color: CcColors.muted, fontSize: 12, height: 1.4),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              style: CcType.code(size: 13),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: p.command,
-                border: const OutlineInputBorder(),
-              ),
-              onSubmitted: (v) => Navigator.pop(ctx, v),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, ''),
-            child: const Text('恢复默认'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctl.text),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+      builder: (_) =>
+          LspCommandDialog(plugin: p, initialCommand: _lsp.commandFor(p)),
     );
-    ctl.dispose();
     if (result == null) return; // 取消
+    if (!mounted) return;
     _lsp.setCommand(p.id, result);
     _lsp.detectAll(force: true); // 立刻按新命令重新检测
+  }
+}
+
+class LspCommandDialog extends StatefulWidget {
+  final LspServerPlugin plugin;
+  final String initialCommand;
+
+  const LspCommandDialog({
+    super.key,
+    required this.plugin,
+    required this.initialCommand,
+  });
+
+  @override
+  State<LspCommandDialog> createState() => _LspCommandDialogState();
+}
+
+double lspCommandDialogWidth(Size size, {double preferred = 440}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+class _LspCommandDialogState extends State<LspCommandDialog> {
+  late final TextEditingController _ctl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = TextEditingController(text: widget.initialCommand);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      backgroundColor: CcColors.panel,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: Text(
+        '${widget.plugin.name} · 服务器命令',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+      ),
+      content: SizedBox(
+        width: lspCommandDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '填可执行文件名或绝对路径(启动参数用内置默认)。留空恢复默认命令。',
+                style: TextStyle(
+                  color: CcColors.muted,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _ctl,
+                autofocus: true,
+                style: CcType.code(size: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: widget.plugin.command,
+                  border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => _save(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, ''),
+          child: const Text('恢复默认'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
   }
 }

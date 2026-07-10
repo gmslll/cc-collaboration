@@ -1,10 +1,129 @@
+import 'dart:io';
+
 import 'package:app/local/local_bus.dart';
 import 'package:app/local/session_overview.dart';
+import 'package:app/screens/session_overview_page.dart';
 import 'package:app/screens/terminal_pane.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('capsule choice dialog width fits compact screens', () {
+    expect(capsuleChoiceDialogWidth(const Size(320, 760)), 288);
+    expect(capsuleChoiceDialogWidth(const Size(1024, 760)), 440);
+    expect(capsuleChoiceDialogWidth(const Size(20, 760)), 440);
+  });
+
+  test('capsule review loading height fits compact screens', () {
+    expect(capsuleReviewLoadingHeight(const Size(1024, 900)), 120);
+    expect(
+      capsuleReviewLoadingHeight(const Size(320, 500)),
+      closeTo(90, 0.001),
+    );
+    expect(capsuleReviewLoadingHeight(const Size(320, 300)), 80);
+  });
+
+  test('capsule review dialog size fits compact screens', () {
+    expect(
+      capsuleReviewDialogSize(const Size(1200, 900)),
+      const Size(620, 760),
+    );
+    expect(capsuleReviewDialogSize(const Size(360, 420)), const Size(328, 372));
+    expect(capsuleReviewDialogSize(const Size(220, 220)), const Size(188, 172));
+  });
+
+  test('session quick reply dialog size fits compact screens', () {
+    expect(
+      sessionQuickReplyDialogSize(const Size(1024, 800), 560),
+      const Size(560, 640),
+    );
+    expect(
+      sessionQuickReplyDialogSize(const Size(360, 420), 1400),
+      const Size(328, 372),
+    );
+    expect(
+      sessionQuickReplyDialogSize(const Size(220, 220), 1400),
+      const Size(188, 172),
+    );
+  });
+
+  test('session quick reply preview height fits compact screens', () {
+    expect(sessionQuickReplyPreviewHeight(const Size(1024, 900), 280), 280);
+    expect(
+      sessionQuickReplyPreviewHeight(const Size(1024, 900), 900),
+      closeTo(378, 0.001),
+    );
+    expect(
+      sessionQuickReplyPreviewHeight(const Size(360, 420), 900),
+      closeTo(176.4, 0.001),
+    );
+    expect(
+      sessionQuickReplyPreviewHeight(const Size(320, 260), 900),
+      closeTo(109.2, 0.001),
+    );
+  });
+
+  test('capsule choice dialog uses responsive content', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<void> startCapsuleFlow('),
+      source.indexOf('if (!context.mounted) return;'),
+    );
+
+    expect(dialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('maxLines: 1'));
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(dialog, contains('capsuleChoiceDialogWidth(size)'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, isNot(contains('content: const Text(')));
+  });
+
+  test('capsule review dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+    );
+
+    expect(dialog, contains('capsuleReviewDialogSize'));
+    expect(dialog, contains('MediaQuery.sizeOf(context)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('maxWidth: dialogSize.width'));
+    expect(dialog, contains('maxHeight: dialogSize.height'));
+    expect(dialog, isNot(contains('maxWidth: 620')));
+  });
+
+  test('session quick reply dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _QuickReplyDialogState'),
+      source.indexOf('// startCapsuleFlow runs'),
+    );
+
+    expect(dialog, contains('sessionQuickReplyDialogSize'));
+    expect(dialog, contains('sessionQuickReplyPreviewHeight'));
+    expect(dialog, contains('MediaQuery.sizeOf(context)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('scrollableActions(['));
+    expect(dialog, contains('scrollableBar('));
+    expect(dialog, contains('alignScrollEnd: true'));
+    expect(dialog, contains('maxWidth: dialogSize.width'));
+    expect(dialog, contains('maxHeight: dialogSize.height'));
+    expect(dialog, contains('width: dialogSize.width'));
+    expect(dialog, contains('height: previewHeight'));
+    expect(dialog, isNot(contains('width: _dialogW')));
+    expect(dialog, isNot(contains('height: _previewH')));
+    expect(dialog, isNot(contains('const Spacer()')));
+  });
 
   test('SessionStatus parses hook-derived overview states', () {
     expect(sessionStatusFromName('runningTool'), SessionStatus.runningTool);
@@ -89,12 +208,19 @@ void main() {
     'spawn forwards args to spawnHandler and returns its (sid, error) tuple',
     () async {
       final store = SessionOverviewStore();
-      String? gotWs, gotProj, gotKind, gotBranch, gotStart, gotResume;
+      String? gotWs,
+          gotProj,
+          gotKind,
+          gotProjectId,
+          gotBranch,
+          gotStart,
+          gotResume;
       store.spawnHandler =
           ({
             required workspace,
             required project,
             required kind,
+            projectId,
             newWorktreeBranch,
             worktreeStart,
             resumeAgentSessionId,
@@ -103,6 +229,7 @@ void main() {
             gotWs = workspace;
             gotProj = project;
             gotKind = kind;
+            gotProjectId = projectId;
             gotBranch = newWorktreeBranch;
             gotStart = worktreeStart;
             gotResume = resumeAgentSessionId;
@@ -112,6 +239,7 @@ void main() {
         workspace: 'kunlun',
         project: 'cc-collaboration',
         kind: 'claude',
+        projectId: 'relay-project',
         newWorktreeBranch: 'feat/x',
         worktreeStart: 'main',
       );
@@ -120,6 +248,7 @@ void main() {
       expect(gotWs, 'kunlun');
       expect(gotProj, 'cc-collaboration');
       expect(gotKind, 'claude');
+      expect(gotProjectId, 'relay-project');
       expect(gotBranch, 'feat/x');
       expect(gotStart, 'main');
       expect(gotResume, isNull);
@@ -142,6 +271,7 @@ void main() {
           required workspace,
           required project,
           required kind,
+          projectId,
           newWorktreeBranch,
           worktreeStart,
           resumeAgentSessionId,
@@ -175,6 +305,7 @@ void main() {
           required workspace,
           required project,
           required kind,
+          projectId,
           newWorktreeBranch,
           worktreeStart,
           resumeAgentSessionId,
@@ -204,6 +335,50 @@ void main() {
       );
       expect(sid, isNull);
       expect(err, '会话总览未就绪');
+    },
+  );
+
+  test('capsule review submit is guarded and recovers from failures', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final reviewDialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+      source.indexOf('  // _labeledCodeField'),
+    );
+    final fullReviewDialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+    );
+
+    expect(reviewDialog, contains('if (_submitting) return;'));
+    expect(reviewDialog, contains('try {'));
+    expect(reviewDialog, contains('catch (e)'));
+    expect(reviewDialog, contains("snack(context, '发送失败: \${errorText(e)}');"));
+    expect(reviewDialog, contains('setState(() => _submitting = false);'));
+    expect(fullReviewDialog, contains('capsuleReviewLoadingHeight'));
+    expect(fullReviewDialog, isNot(contains('height: 120')));
+  });
+
+  test(
+    'capsule review keeps default private and labels public as team shared',
+    () {
+      final source = File(
+        'lib/screens/session_overview_page.dart',
+      ).readAsStringSync();
+      final reviewDialog = source.substring(
+        source.indexOf('class _CapsuleReviewDialogState'),
+        source.indexOf('  // _labeledCodeField'),
+      );
+
+      expect(reviewDialog, contains('bool _public = false;'));
+      expect(
+        reviewDialog,
+        contains("visibility: _public ? 'public' : 'private'"),
+      );
+      expect(source, contains('个人 / 团队共享'));
+      expect(source, contains("label: Text('团队')"));
+      expect(source, contains('同团队成员能在广场看到'));
+      expect(source, isNot(contains('团队所有人能在广场看到')));
     },
   );
 

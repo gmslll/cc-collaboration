@@ -4,7 +4,7 @@ import '../api/models.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-// InboxItemCard is a compact work-package row for the workspace's queue sidebar —
+// InboxItemCard is a compact Handoff row for the workspace's 收件箱 sidebar —
 // same visual register as TodoCard (top row + two-line title + tag row +
 // footer) but built off ListItem's fields (repoName/sender/recipient/
 // urgency/state/kind) instead of Todo's (priority/assigneeIdentity/recurrence).
@@ -29,7 +29,7 @@ class InboxItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final urgent = item.urgency == 'urgent';
-    final hasRoute = item.sender.isNotEmpty && item.recipient.isNotEmpty;
+    final route = item.routeLabel;
     return HoverLift(
       onTap: onTap,
       padding: padding,
@@ -58,7 +58,7 @@ class InboxItemCard extends StatelessWidget {
               height: 1.3,
             ),
           ),
-          if (item.repoName.isNotEmpty || hasRoute) ...[
+          if (item.repoName.isNotEmpty || route.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
@@ -66,10 +66,10 @@ class InboxItemCard extends StatelessWidget {
               children: [
                 if (item.repoName.isNotEmpty)
                   _miniTag(Icons.source_rounded, item.repoName, CcColors.muted),
-                if (hasRoute)
+                if (route.isNotEmpty)
                   _miniTag(
                     Icons.swap_horiz_rounded,
-                    '${item.sender} → ${item.recipient}',
+                    route,
                     CcColors.accentBright,
                   ),
               ],
@@ -90,28 +90,33 @@ class InboxItemCard extends StatelessWidget {
   }
 }
 
-Widget _miniTag(IconData icon, String label, Color color) => Container(
-  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
-  decoration: BoxDecoration(
-    color: color.withValues(alpha: 0.12),
-    border: Border.all(color: color.withValues(alpha: 0.35)),
-    borderRadius: BorderRadius.circular(CcRadius.sm),
-  ),
-  child: Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 10.5, color: color),
-      const SizedBox(width: 4),
-      Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 10.5,
-          color: color,
-          fontWeight: FontWeight.w600,
+Widget _miniTag(IconData icon, String label, Color color) => ConstrainedBox(
+  constraints: const BoxConstraints(maxWidth: 220),
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      border: Border.all(color: color.withValues(alpha: 0.35)),
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 10.5, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   ),
 );

@@ -49,17 +49,9 @@ mixin _GitLogBranchMenu on _GitMixin {
           ),
         ],
         const PopupMenuDivider(),
-        ccMenuItem(
-          value: 'update',
-          icon: Icons.sync_rounded,
-          label: 'Update',
-        ),
+        ccMenuItem(value: 'update', icon: Icons.sync_rounded, label: 'Update'),
         if (!b.remote) ...[
-          ccMenuItem(
-            value: 'push',
-            icon: Icons.upload_rounded,
-            label: 'Push…',
-          ),
+          ccMenuItem(value: 'push', icon: Icons.upload_rounded, label: 'Push…'),
           if (b.upstream.isEmpty)
             ccMenuItem(
               value: 'publish',
@@ -167,6 +159,7 @@ mixin _GitLogBranchMenu on _GitMixin {
       okLabel: 'Create and Checkout',
     );
     if (name == null) return;
+    if (!mounted) return;
     await _createBranchCurrent(p, name, start: b.name);
   }
 
@@ -178,6 +171,7 @@ mixin _GitLogBranchMenu on _GitMixin {
       okLabel: 'Create and Checkout',
     );
     if (name == null) return;
+    if (!mounted) return;
     await _createBranchCurrent(p, name, start: t.ref);
   }
 
@@ -201,7 +195,7 @@ mixin _GitLogBranchMenu on _GitMixin {
       'Checkout tag?',
       '${t.name}\n\n这会进入 detached HEAD。需要继续开发时，通常应该从 tag 创建新分支。',
     );
-    if (!ok || _gitLoading) return;
+    if (!ok || !mounted || _gitLoading) return;
     setState(() => _gitLoading = true);
     try {
       await gitCheckout(p.path, t.ref);
@@ -220,7 +214,7 @@ mixin _GitLogBranchMenu on _GitMixin {
       'Delete local tag?',
       '${t.name}\n\n只删除本地 tag；不会删除远端 origin 上的 tag。',
     );
-    if (!ok || _gitLoading) return;
+    if (!ok || !mounted || _gitLoading) return;
     setState(() => _gitLoading = true);
     try {
       await gitDeleteTag(p.path, t.name);
@@ -254,6 +248,7 @@ mixin _GitLogBranchMenu on _GitMixin {
       okLabel: 'Rename',
     );
     if (name == null || name == b.name) return;
+    if (!mounted) return;
     if (_gitLoading) return;
     setState(() => _gitLoading = true);
     try {

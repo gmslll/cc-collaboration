@@ -1,29 +1,25 @@
 # Infinite Agent Platform 架构
 
 读完这份文档,你会知道 Infinite Agent Platform 的每个组件做什么、数据怎么流、配置在哪、出错时该看哪里。
-**面向想理解或扩展企业内部 Agent 平台的开发者 / 运维人员**;部署和日常运维看 [`deployment.md`](deployment.md),
-协作任务包 schema 看 [`handoff-package.schema.json`](handoff-package.schema.json) 与
+内部二进制和配置路径继续沿用 `cc-handoff`、`cc-relay`、`cc-handoff-mcp` 兼容名称。
+**面向想理解或扩展企业内部 Agent 平台的开发者**;部署和日常运维看 [`deployment.md`](deployment.md),
+跨端 schema 看 [`handoff-package.schema.json`](handoff-package.schema.json) 与
 [`pkg/handoffschema/package.go`](../pkg/handoffschema/package.go)。
-
-兼容说明:当前内部二进制和配置路径仍叫 `cc-handoff`、`cc-relay`、`cc-handoff-mcp`。
-这些名字是为了兼容既有 CLI、MCP、systemd、launchd、更新器和脚本;产品层面的名称是
-Infinite Agent Platform。
 
 ---
 
 ## 1. Components
 
-三个 Go 二进制 + 桌面 / Web / 移动客户端 + 团队里的 Claude Code / Codex / 其它 Agent 进程。
+三个 Go 二进制 + 两端的 Claude Code 进程。
 
 | 组件 | 跑在哪 | 协议入口 | 主要职责 |
 |---|---|---|---|
-| `cc-relay` | 企业 VPS / 内网 Linux,systemd service | HTTP+SSE on `127.0.0.1:8080` | 自托管控制面:账号、机器 token、项目成员、协作任务、评论、附件、待办、在线状态、Web UI、SSE 广播 |
-| Flutter App | 员工桌面 / 手机 | Relay HTTP+SSE、本地 shell / PTY | 企业 Agent 工作台:项目、worktree、Agent 会话、git、编辑器、任务队列、待办、Agent 库、远程工作区 |
-| `cc-handoff` (CLI) | 员工开发机 / CI 辅助环境 | argv | 兼容 CLI:`init` / `submit` / `list` / `pickup` / `watch` / `comment` / `todo` / `workspace` 等 |
-| `cc-handoff-mcp` | 员工开发机,Claude Code / Codex 通过 stdio 拉起 | MCP / stdio | 把协作任务和 relay 操作暴露为 MCP 工具。legacy 工具名仍包含 `handoff`,语义上是 Agent work package |
-| `cc-handoff watch` (常驻) | 接收侧开发机,launchd / systemd user | SSE 长连接 | 拉企业 relay 事件、把任务包落到 `.cc-handoff/inbox/<id>/`、弹通知、按策略唤起 Agent |
+| `cc-relay` | VPS,systemd service | HTTP+SSE on `0.0.0.0:8080` | 收 / 发 handoff、广播 SSE 事件、按 recipient 鉴权 |
+| `cc-handoff` (CLI) | 两端开发者 Mac | argv | `init` / `submit` / `list` / `pickup` / `watch` / `comment` / `watch print-unit` |
+| `cc-handoff-mcp` | 两端开发者 Mac,Claude Code 通过 stdio 拉起 | MCP / stdio | 把 CLI 动作全部暴露为 MCP 工具,共 13 个:`submit_handoff` / `submit_request` / `list_inbox` / `pickup_handoff` / `comment_handoff` / `status_handoff` / `list_sent` / `list_history` / `retract_handoff` / `list_local_inbox` / `list_online_users` / `check_drift` / `link_linear`(最后一个走可选 Linear 集成,见 §11)。给 Claude Code 内的 `/handoff` `/pickup` `/request` `/handoff-from-linear` slash command 用 |
+| `cc-handoff watch` (常驻) | 接收侧 Mac,launchd / systemd user | SSE 长连接 | 拉服务端事件、把 handoff 落到 `.claude/handoff-inbox/<id>/`、必要时弹通知 / `claude -p` |
 
-生产环境一定挂反向代理(caddy / nginx / NPM)终结 TLS,relay 自己只听 loopback。
+VPS 生产环境应挂反向代理(caddy / nginx)终结 TLS。部署单元默认监听 `0.0.0.0:8080`,必须用防火墙/安全组限制来源;仅本机反代时可改为 loopback。
 `flush_interval -1` 是 SSE 必须的反向代理配置。
 
 ---
@@ -95,9 +91,9 @@ Infinite Agent Platform。
 **wake-on-comment(可选,Claude Code 才有)**:接收端在 `.cc-handoff.toml` 设置
 `[triggers].wake_on_comment = true` 后,watch 收到 partner comment 会额外落一份
 `<inbox>/<id>/unread/<commentID>.json` marker;Claude Code 的 Stop hook 调用
-`cc-handoff stop-hook`,在 Claude 试图结束 turn 时把 marker 内容塞进
-`hookSpecificOutput.additionalContext` 并返回 `{"decision":"block"}`,Claude 会被
-拉回下一 turn,reply 直接进 context;hook 在输出 JSON 前清掉 marker 防止循环。
+`cc-handoff stop-hook`,在 Claude 试图结束 turn 时把 marker 内容放进标准
+`{"decision":"block","reason":"..."}` 的 `reason`,Claude 会被拉回下一 turn,
+reply 直接成为 continuation 指令;hook 成功写出 JSON 后清掉 marker 防止循环。
 `cc-handoff init --with-wake-on-comment` 会幂等地把这个 hook 写进
 `.claude/settings.json`。
 
@@ -108,16 +104,25 @@ Infinite Agent Platform。
 - **目标空闲** → 直接 paste 进对方 PTY(`pasteText(submit:true)`,立即起 turn)。
 - **目标正忙(mid-turn)** → 写一份 `$CC_BUS_DIR/inbox/<session-id>/<seq>.json`
   (`internal/localbus`,原子 tmp+rename、FIFO),由目标会话的 **Stop hook**
-  在当前 turn 结束时兜底(`{"decision":"block"}` 拉一个新 turn)。
+  在当前 turn 结束时兜底(只返回标准 `{"decision":"block","reason":"..."}` 拉一个新 turn)。
   `PostToolUse` 只记录活动,不 drain inbox:Codex 的 PostToolUse feedback 会替换刚完成的工具输出,
-  不适合做 peer-message 投递。`Stop` 且 `stop_hook_active` 时直接 bail(不 drain,留给下一次)以免丢消息。
+  不适合做 peer-message 投递。
+
+Stop handler 在共享 inbox lock 内列出消息,成功写出经过强类型约束的两字段 JSON 后才删除
+本轮 marker;本地 stdout 失败会保留 marker 供后续重试。command-hook 协议没有“宿主完成 JSON
+validation”的回执,因此不能安全地延迟到 `stop_hook_active` 再确认(多个 Stop hook 并发时该字段
+也不标识是哪一个 hook 触发 continuation)。精确 schema 回归是防止宿主拒绝后丢消息的关键。
+`Stop` 且 `stop_hook_active:true` 时返回 `{}` 且不 drain,避免无限 continuation,期间新到的
+inbox 消息留给下一次普通 Stop 或 App 兜底。
 
 忙/闲由 App 的 BEL「完成」检测推导(agent 停下才响铃):起 turn 置 `busy`,铃落清除。
 
-**门控**:hook command 是 `[ -n "$CC_BUS_DIR" ] && cc-handoff bus-hook || true`。只有
-App 唤起的会话才有 `CC_BUS_DIR`,所以这条装在用户级配置(Claude `~/.claude/settings.json`、
-Codex `~/.codex/hooks.json`)里也只在 App 会话里真正干活,别处亚毫秒 no-op。两端 hook 字段
-Stop 契约一致(`additionalContext`/`decision:block`),同一个 `cc-handoff bus-hook` 通吃;App 启动时
+**门控**:普通事件的 hook command 是 `[ -n "$CC_BUS_DIR" ] && cc-handoff bus-hook || true`;
+要求 JSON stdout 的 `Stop`/`SubagentStop`(以及 Claude `StopFailure`)使用同样的 env gate,并在
+handler 空输出/异常时兜底打印 `{}`。只有 App 唤起的会话才有 `CC_BUS_DIR`,所以这些命令装在
+用户级配置(Claude `~/.claude/settings.json`、Codex `~/.codex/hooks.json`)里也只在 App 会话里
+真正干活,别处亚毫秒 no-op。两端 Stop continuation 契约一致(顶层 `decision:block` + `reason`,
+不带 `hookSpecificOutput`),同一个 `cc-handoff bus-hook` 通吃;App 启动时
 `cc-handoff bus-hook install` 幂等写入。Codex 的 `features.hooks` 默认开,首次可能需对该 hook
 授信一次(或启动加 `--dangerously-bypass-hook-trust`)。
 
@@ -195,14 +200,16 @@ Claude 通用字段:
 
 ---
 
-## 3. Agent work package schema
+## 3. Handoff package schema
 
 完整定义见 `pkg/handoffschema/package.go`,JSON schema 见
 [`handoff-package.schema.json`](handoff-package.schema.json)。要点:
 
 - **diff 模式 vs module-brief 模式 vs request 模式**(见 §6)
-- **`Kind`**:`""` / `"delivery"`(默认,正向 /handoff)或 `"request"`(反向 /request)。
+- **`Kind`**:`""` / `"delivery"`(默认,正向 /handoff)、`"request"`(反向 /request)、`"bug"` 或 `"capsule"`。
   空字符串通过 `Package.EffectiveKind()` 解释为 delivery,保证旧 payload 兼容
+- **`DeliveryTarget`**:可选;记录发送时选择的团队定向(`project_id` / `org_id` / `member`),
+  在 relay 已展开成具体 `Recipients` 后仍保留原始团队边界,方便接收端区分团队包和普通多收件包
 - **`RespondsTo`**:request 模式不携带;delivery 模式可以携带原 request id,
   接收端 prompt / summary.md 会渲染「↩️ 回应 r_xxx」banner 闭环
 - **附件分离**:`Attachments` 只存元信息(name / sha256 / size),字节通过单独的
@@ -319,6 +326,7 @@ cc-handoff 有四种发送场景,通过 `Package.Kind` + `Package.Git` 字段区
 | **`ModulePaths`** | 空 | 用户给的模块路径数组 | 空(reject 非空) | 空(reject 非空) |
 | **`APIDelta`** | 有(若 swagger 配置) | 无 | 无 | 无 |
 | **`TargetingHints`** | 有(rules 跑 changed_paths) | 有(rules 跑模块 *.go 文件) | 无 | 无 |
+| **`DeliveryTarget`** | 可选,团队定向发送时记录 project/org/member | 同左 | 同左 | 同左 |
 | **`SummaryMD`** | Claude 写的对接说明 | Claude 读 routes/dto 后整理的完整 API 契约 brief | Claude 写的需求描述(what's needed / why / acceptance) | 测试端写的 bug 描述(symptom / repro / expected / actual / 怀疑归属) |
 | **接收端 prompt 模板** | "读 diff 配 INTEGRATION.md" | "按 brief 调对应客户端、注意契约一致" | "读需求 → 设计响应方案到 `docs/requests/<id>.md` → 等 review;实现完跑 /handoff 时带 `responds_to`" | "判定归属决策树:是我的 → 修复 + `docs/bugs/<id>.md`;不是我的 → `reassign_bug`;不确定 → `comment_handoff` 协商" |
 | **`RespondsTo`** | 可选,关联到 request 触发的回送 | 可选,同 diff | 不携带(API 阻止) | 不携带 |
@@ -332,7 +340,7 @@ bug 模式特有的多收件人和 reassign 链由 store 层的两个表协作:
 - `handoffs.recipients` (JSON 数组) + `handoffs.bug_group_id` —— 多收件人元数据
 - `handoff_recipients` —— 每个收件人一行(handoff_id, recipient, state ∈ {pending, picked, reassigned}, picked_at);
   `Ack` 只翻调用方那一行,所有行都 terminal 时才把 `handoffs.state` 推到 `picked`
-- `Reassign(id, from, newPkg, reason)` —— 在事务里把 caller 那一行翻 `reassigned`、给原 handoff 分配/继承 `bug_group_id`、把新 handoff 写进 group(`ReassignedFrom`、`ReassignedReason` 都进 payload)
+- `Reassign(id, from, newPkg, reason)` —— 在事务里把 caller 那一行翻 `reassigned`、给原 handoff 分配/继承 `bug_group_id`、把新 handoff 写进 group(`ReassignedFrom`、`ReassignedReason` 都进 payload)。若原 bug 携带 `DeliveryTarget`,新包继承 `project_id` / `org_id`,并把 `member` 重定向为新的接收人
 - **环路防护**:`Reassign` 拒绝把 bug 转给同一 group 内**已经出现过的任何身份**(不论该身份现在是 pending/picked/reassigned),让回旋只能通过 `comment_handoff` 协商
 - **评论可见性 SQL**:`ListCommentsSince` 走一个 CTE 收集"我参与过的全部 bug_group_id",再 union 出"我是 sender/recipient" 的 handoff —— 旧 2 方 handoff 的 `bug_group_id` 为空,CTE 跑出来是空集,语义和老查询一致
 
@@ -354,7 +362,7 @@ MVP 安全姿态有意保守。明确防的 / 不防的:
 - **TLS + Bearer token 防的**:
   - 公网窃听(TLS)
   - 误把别人 inbox 的 handoff 拿走(token-bound identity 校验)
-  - VPS 公开监听(loopback-only,反代终结 TLS)
+  - VPS 监听端口必须受防火墙/安全组限制,公网流量由反向代理终结 TLS
 - **不防的**:
   - VPS 沦陷 → 攻击者能读全部 handoff payload 与 comment(plaintext at rest)
   - token 泄漏 → 等价于该 identity 的全部权限,直到 rotate
@@ -400,12 +408,12 @@ MVP 安全姿态有意保守。明确防的 / 不防的:
 
 ## 10. Identity & repo resolution
 
-`me` / `partner` / `repo_name` 在多个来源之间合并,优先级从高到低:
+团队/项目模式下,发送者身份由登录态或 machine token 决定,relay 会覆盖客户端包里的 `sender`。项目配置里的 `[identity]` 只作为旧点对点兼容入口保留。
 
 | 字段 | 1. CLI flag | 2. repo `.cc-handoff.toml` | 3. user `~/.config/cc-handoff/config.toml` | 4. 默认 |
 |---|---|---|---|---|
-| `Me` | (无 flag) | `[identity].me` | `identity` | — (必须有) |
-| `Partner` | `--to ID` (submit) | `[identity].partner` | — | — (必须有) |
+| `Me` | (无 flag) | `[identity].me` (legacy override) | `identity` | — (必须有) |
+| `Recipient` | `--to ID` (legacy) / `--project` / `--org` / `--member` | `[identity].partner` (legacy only) | — | bound team project |
 | `RelayURL` / `Token` | — | — | `relay_url` / `token` | — (必须有) |
 | `RepoName` | `--repo NAME` (init) | `[paths].repo` | — | `basename(repoRoot)` |
 | `Base` | `--base REF` | `[paths].base` | — | `origin/main` |

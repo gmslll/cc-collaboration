@@ -25,8 +25,8 @@ import (
 //   - `cc-handoff bus-hook` (no args) is the hook handler itself. The agent
 //     pipes the hook event on stdin; we drain this session's bus inbox
 //     ($CC_BUS_DIR/inbox/$CC_SESSION_ID) and hand the messages back as
-//     additionalContext at turn end (Stop), without replacing a just-completed
-//     tool result.
+//     a standard decision:block/reason continuation at turn end (Stop), without
+//     replacing a just-completed tool result.
 //
 // Same hook contract on Claude Code and Codex, so this one binary serves both.
 func runBusHook(ctx context.Context, args []string) error {
@@ -162,6 +162,27 @@ type busHookEvent struct {
 	Cwd       string `json:"cwd"`
 }
 
+// stopHookDecision is deliberately the complete Stop continuation schema used
+// by both Claude Code and Codex. Stop does not support
+// hookSpecificOutput.additionalContext; the reason itself becomes the next
+// instruction. Keeping this typed prevents an unrelated hook-specific field
+// from silently making the whole response invalid again.
+type stopHookDecision struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+func writeStopHookDecision(w io.Writer, reason string) error {
+	return json.NewEncoder(w).Encode(stopHookDecision{
+		Decision: "block",
+		Reason:   reason,
+	})
+}
+
+// Indirection lets the inbox regression test fail the local stdout write and
+// verify markers remain retryable. Production always uses the typed writer.
+var busHookWriteStopDecision = writeStopHookDecision
+
 // busHookDrainLockTimeout bounds how long the hook waits for the inbox drain
 // lock (localbus.AcquireDrainLock) before giving up and leaving messages
 // parked for the next hook. A var, not a const, so tests can shrink it rather
@@ -207,7 +228,7 @@ func runBusHookDrain() error {
 	// which is wrong for peer-message delivery; keep messages parked until Stop
 	// can pull a clean continuation turn.
 	//
-	// Other events either do not support additionalContext for this purpose
+	// Other events either do not support a continuation decision for this purpose
 	// (PermissionRequest, PreCompact, PostCompact), would be surprising delivery
 	// points, or would replace useful tool output (PostToolUse). Leave messages
 	// parked for Stop instead of
@@ -217,13 +238,13 @@ func runBusHookDrain() error {
 	}
 
 	// A Stop already inside a hook-driven continuation must not re-block (a
-	// wake-loop). Bail BEFORE draining so the messages stay parked for a later
-	// top-level Stop — clearing them here would silently drop them.
+	// wake-loop). Bail BEFORE draining so messages that arrived during the
+	// continuation stay parked for a later top-level Stop or the app's idle sweep.
 	if ev.HookEventName == "Stop" && ev.StopHookActive {
 		return writeEmptyStopHookJSON(ev)
 	}
 
-	// Hold the inbox drain lock for the whole list-render-clear sequence below,
+	// Hold the inbox drain lock for the whole list-render-write-clear sequence below,
 	// so the desktop app's escalate-timeout path (which force-delivers a parked
 	// message this hook hasn't drained in time — see terminal_deck.dart) can
 	// never act on the same marker file at the same time (double delivery). A
@@ -255,13 +276,15 @@ func runBusHookDrain() error {
 	}
 	fmt.Fprintf(&b, "\n↩ 回复发件人(用方括号里的 id):cc-handoff msg send %s \"<内容>\"\n", entries[0].Msg.From)
 
-	// Clear before printing so a stdout failure can't strand markers and re-fire
-	// the same messages next hook (a wake-loop), matching runStopHook.
-	localbus.ClearMsgs(entries)
-
-	if err := json.NewEncoder(os.Stdout).Encode(busHookResponse(ev, b.String(), len(entries))); err != nil {
+	if err := busHookWriteStopDecision(os.Stdout, b.String()); err != nil {
 		fmt.Fprintf(os.Stderr, "bus-hook: encode JSON: %v\n", err)
+		return nil
 	}
+	// There is no post-validation acknowledgement in the Claude/Codex command
+	// hook protocol. The typed two-field response above is the local schema gate;
+	// clear only after it was encoded and written successfully so local stdout
+	// failures remain retryable without risking an endless successful re-block.
+	localbus.ClearMsgs(entries)
 	return nil
 }
 
@@ -543,34 +566,6 @@ func pruneHookActivities(dir string, keep int) {
 	sort.Strings(names)
 	for _, n := range names[:len(names)-keep] {
 		_ = os.Remove(filepath.Join(dir, n))
-	}
-}
-
-// busHookResponse shapes the Stop-hook output. Stop blocks to pull the agent
-// into a fresh turn with the messages (the cross-machine wake-on-comment
-// pattern). The "Stop already inside a continuation" case is handled upstream in
-// runBusHookDrain (it bails before draining so messages stay parked), so this is
-// only reached when a response is wanted.
-func busHookResponse(ev busHookEvent, ctxText string, n int) map[string]any {
-	if ev.HookEventName == "Stop" {
-		return map[string]any{
-			"decision": "block",
-			"reason":   ctxText,
-			"hookSpecificOutput": map[string]any{
-				"hookEventName":     ev.HookEventName,
-				"additionalContext": ctxText,
-			},
-		}
-	}
-	name := ev.HookEventName
-	if name == "" {
-		name = "PostToolUse"
-	}
-	return map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     name,
-			"additionalContext": ctxText,
-		},
 	}
 }
 

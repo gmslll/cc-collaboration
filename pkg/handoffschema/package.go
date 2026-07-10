@@ -129,10 +129,9 @@ func (p *Package) RequiresRecipient() bool {
 	return p.EffectiveKind() != KindCapsule
 }
 
-// CapsuleVisibleTo reports whether this capsule is visible to viewer: a public
-// capsule to anyone, a private one only to its owner. The single source of the
-// plaza's visibility rule — shared by the plaza list (store.ListCapsules) and
-// the per-capsule read authz (server.canViewPackage) so they never drift.
+// CapsuleVisibleTo reports the package-local visibility rule: public capsules
+// pass, private capsules are owner-only. Relay/store code layers team
+// reachability on top; use Store.CapsuleVisibleTo for tenant-scoped checks.
 func (p *Package) CapsuleVisibleTo(viewer string) bool {
 	return p.CapsuleOrEmpty().EffectiveVisibility() == CapsulePublic || p.Sender == viewer
 }
@@ -167,10 +166,10 @@ func (p *Package) ApplyCapsuleEdit(visibility, summary *string) {
 // callers can iterate uniformly.
 func (p *Package) EffectiveRecipients() []string {
 	if len(p.Recipients) > 0 {
-		return p.Recipients
+		return DedupeIdentities(p.Recipients)
 	}
 	if p.Recipient != "" {
-		return []string{p.Recipient}
+		return DedupeIdentities([]string{p.Recipient})
 	}
 	return nil
 }
@@ -190,6 +189,10 @@ type Package struct {
 	APIDelta       *APIDelta       `json:"api_delta,omitempty"`
 	ModulePaths    []string        `json:"module_paths,omitempty"`
 	TargetingHints []TargetingHint `json:"targeting_hints,omitempty"`
+	// DeliveryTarget records the user's team delivery intent before it was
+	// expanded into concrete Recipients. It lets receivers distinguish a
+	// project/org/member-scoped package from an ordinary multi-recipient send.
+	DeliveryTarget *DeliveryTarget `json:"delivery_target,omitempty"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
 	NoteMD         string          `json:"note_md,omitempty"`
 	PrdMD          string          `json:"prd_md,omitempty"`
@@ -219,6 +222,12 @@ type Package struct {
 	Capsule *Capsule `json:"capsule,omitempty"`
 }
 
+type DeliveryTarget struct {
+	ProjectID string `json:"project_id,omitempty"`
+	OrgID     string `json:"org_id,omitempty"`
+	Member    string `json:"member,omitempty"`
+}
+
 // Capsule is the metadata for a KindCapsule package — a frozen session context
 // shared to a team so a teammate can spin up a specialized session from it. The
 // actual payloads (transcript.jsonl / transcript.txt / persona.md / seed.md)
@@ -242,6 +251,10 @@ type Capsule struct {
 	// HasPersona is true when a distilled persona payload is present, so the
 	// pickup UI can offer the "② distilled role" form.
 	HasPersona bool `json:"has_persona,omitempty"`
+	// UpdatedAt tracks the last metadata edit (summary / visibility). Capsules
+	// created before this field was added fall back to Package.CreatedAt in the
+	// plaza projection.
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
 // EffectiveVisibility returns the capsule's visibility, defaulting empty to
@@ -265,14 +278,27 @@ type CapsuleListItem struct {
 	OriginSessionID string    `json:"origin_session_id,omitempty"`
 	HasTranscript   bool      `json:"has_transcript"`
 	HasPersona      bool      `json:"has_persona"`
+	SkillPackCount  int       `json:"skill_pack_count"`
 	Headline        string    `json:"headline,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
 	RepoName        string    `json:"repo_name,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // NewCapsuleListItem projects a stored capsule Package into its plaza row.
 func NewCapsuleListItem(p *Package) CapsuleListItem {
 	c := p.CapsuleOrEmpty()
+	updatedAt := c.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = p.CreatedAt
+	}
+	skillPackCount := 0
+	for _, attachment := range p.Attachments {
+		if IsCapsuleSkillPack(attachment.Name) {
+			skillPackCount++
+		}
+	}
 	return CapsuleListItem{
 		ID:              p.ID,
 		Owner:           p.Sender,
@@ -281,9 +307,12 @@ func NewCapsuleListItem(p *Package) CapsuleListItem {
 		OriginSessionID: c.OriginSessionID,
 		HasTranscript:   c.HasTranscript,
 		HasPersona:      c.HasPersona,
+		SkillPackCount:  skillPackCount,
 		Headline:        p.Headline(),
+		Summary:         p.SummaryMD,
 		RepoName:        p.Repo.Name,
 		CreatedAt:       p.CreatedAt,
+		UpdatedAt:       updatedAt,
 	}
 }
 
@@ -460,6 +489,7 @@ func DedupeIdentities(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
 	for _, s := range in {
+		s = strings.TrimSpace(s)
 		if s == "" {
 			continue
 		}
@@ -534,10 +564,11 @@ type LogAlert struct {
 // peer can target a specific remote session (POST /v1/sessions). Transient
 // presence-level data — the relay holds it in memory with a TTL, not the DB.
 type SessionInfo struct {
-	ID      string `json:"id"`                // the app's local session id (e.g. ts0)
-	Label   string `json:"label"`             // human label (name or derived title)
-	Project string `json:"project,omitempty"` // owning project name, for grouping
-	Workdir string `json:"workdir,omitempty"` // session working dir
+	ID        string `json:"id"`                   // the app's local session id (e.g. ts0)
+	Label     string `json:"label"`                // human label (name or derived title)
+	Project   string `json:"project,omitempty"`    // owning project name, for grouping
+	ProjectID string `json:"project_id,omitempty"` // relay project id, for exact team scoping
+	Workdir   string `json:"workdir,omitempty"`    // session working dir
 }
 
 // Message is a short text sent to a specific session on another user's machine
@@ -549,4 +580,6 @@ type Message struct {
 	SessionID string `json:"session_id,omitempty"` // target session id on the recipient
 	Body      string `json:"body"`                 // the text to deliver
 	From      string `json:"from,omitempty"`       // sender identity (server-set)
+	Project   string `json:"project,omitempty"`    // target session's project name context
+	ProjectID string `json:"project_id,omitempty"` // target session's relay project id
 }

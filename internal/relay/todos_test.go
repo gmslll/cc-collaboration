@@ -44,6 +44,16 @@ func patchJSON(t *testing.T, url, bearer string, payload any) (int, []byte) {
 	return do(t, req)
 }
 
+func patchRawJSON(t *testing.T, url, bearer, payload string) (int, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPatch, url, bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	return do(t, req)
+}
+
 // waitForEventType reads from sub until it sees an event of type wantType,
 // skipping anything else — subscribing itself fans out user.online/offline
 // presence events to every other subscriber (see Hub.OnPresenceChange), so a
@@ -132,14 +142,7 @@ func TestTodoTeamViewerReadOnly(t *testing.T) {
 	memberTok := loginToken(t, srv.URL, "member@x", "memberpass1")
 	viewerTok := loginToken(t, srv.URL, "viewer@x", "viewerpass1")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Kunlun"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(body, &proj)
+	proj := createProjectHTTP(t, srv.URL, ownerTok, "Kunlun")
 
 	for _, m := range []struct{ identity, role string }{
 		{"member@x", "member"}, {"viewer@x", "viewer"},
@@ -179,52 +182,170 @@ func TestTodoTeamViewerReadOnly(t *testing.T) {
 	}
 }
 
-// --- SSE fan-out: team todo events reach every project member; personal
-// todo events reach only the owner ---
+func TestTodoAssignSessionMustMatchTodoProjectWhenPublished(t *testing.T) {
+	srv, st, _ := todoTestRig(t)
+	mkUser(t, st, "owner@x", "ownerpass1")
+	mkUser(t, st, "member@x", "memberpass1")
+	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
+	memberTok := loginToken(t, srv.URL, "member@x", "memberpass1")
+
+	createProject := func(name string) string {
+		t.Helper()
+		proj := createProjectHTTP(t, srv.URL, ownerTok, name)
+		if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
+			map[string]string{"identity": "member@x", "role": "member"}); code != http.StatusOK {
+			t.Fatalf("add member to %q = %d %s", name, code, body)
+		}
+		return proj.ID
+	}
+	projectA := createProject("Project A")
+	projectB := createProject("Project B")
+
+	if code, body := postJSON(t, srv.URL+"/v1/sessions", memberTok, map[string]any{"sessions": []map[string]string{
+		{"id": "same", "label": "same project", "project_id": projectA, "project": "Project A"},
+		{"id": "other", "label": "other project", "project_id": projectB, "project": "Project B"},
+	}}); code != http.StatusOK {
+		t.Fatalf("publish member sessions = %d %s", code, body)
+	}
+
+	td := createTodoHTTP(t, srv.URL, ownerTok, map[string]any{"title": "team task", "project_id": projectA})
+	if code, body := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/assign", ownerTok, map[string]any{
+		"assignee_identity":      "member@x",
+		"assignee_session_id":    "same",
+		"assignee_session_label": "same project",
+	}); code != http.StatusOK {
+		t.Fatalf("assign same-project session = %d %s", code, body)
+	}
+
+	if code, _ := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/assign", ownerTok, map[string]any{
+		"assignee_identity":      "member@x",
+		"assignee_session_id":    "other",
+		"assignee_session_label": "other project",
+	}); code != http.StatusForbidden {
+		t.Fatalf("assign cross-project session = %d, want 403", code)
+	}
+
+	code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID, ownerTok)
+	if code != http.StatusOK {
+		t.Fatalf("get after rejected assign = %d %s", code, body)
+	}
+	got := decodeTodo(t, body)
+	if got.AssigneeSessionID != "same" {
+		t.Fatalf("rejected cross-project assign changed session id to %q", got.AssigneeSessionID)
+	}
+
+	if code, body := postJSON(t, srv.URL+"/v1/todos/"+td.ID+"/assign", ownerTok, map[string]any{
+		"assignee_identity":      "member@x",
+		"assignee_session_id":    "legacy-offline-session",
+		"assignee_session_label": "manual resume",
+	}); code != http.StatusOK {
+		t.Fatalf("assign unpublished legacy session = %d %s", code, body)
+	}
+}
+
+func TestTodoMutationsRejectTrailingJSON(t *testing.T) {
+	srv, st, _ := todoTestRig(t)
+	mkUser(t, st, "alice@x", "alicepass1")
+	aliceTok := loginToken(t, srv.URL, "alice@x", "alicepass1")
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/todos", aliceTok,
+		`{"title":"bad first"} {"title":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("create todo trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos", aliceTok); code != http.StatusOK || bytes.Contains(body, []byte("bad first")) {
+		t.Fatalf("trailing create mutated list: code=%d body=%s", code, body)
+	}
+
+	td := createTodoHTTP(t, srv.URL, aliceTok, map[string]any{"title": "baseline"})
+	if code, body := patchRawJSON(t, srv.URL+"/v1/todos/"+td.ID, aliceTok,
+		`{"title":"bad patch"} {"title":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("patch todo trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID, aliceTok); code != http.StatusOK {
+		t.Fatalf("get todo after trailing patch = %d %s", code, body)
+	} else if got := decodeTodo(t, body); got.Title != "baseline" {
+		t.Fatalf("trailing patch changed title: %+v", got)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/todos/"+td.ID+"/status", aliceTok,
+		`{"status":"done"} {"status":"todo"}`); code != http.StatusBadRequest {
+		t.Fatalf("status trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID, aliceTok); code != http.StatusOK {
+		t.Fatalf("get todo after trailing status = %d %s", code, body)
+	} else if got := decodeTodo(t, body); got.Status != todoschema.StatusTodo {
+		t.Fatalf("trailing status changed todo: %+v", got)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/todos/"+td.ID+"/comment", aliceTok,
+		`{"body":"bad comment"} {"body":"bad second"}`); code != http.StatusBadRequest {
+		t.Fatalf("comment trailing json = %d %s", code, body)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/todos/"+td.ID+"/comments", aliceTok); code != http.StatusOK || bytes.Contains(body, []byte("bad comment")) {
+		t.Fatalf("trailing comment inserted comment: code=%d body=%s", code, body)
+	}
+}
+
+// --- SSE fan-out: team todo events reach project members plus team managers;
+// personal todo events reach only the owner ---
 
 func TestTodoSSEFanOut(t *testing.T) {
 	srv, st, hub := todoTestRig(t)
 	mkUser(t, st, "owner@x", "ownerpass1")
 	mkUser(t, st, "member@x", "memberpass1")
+	mkUser(t, st, "org-admin@x", "adminpass1")
+	mkUser(t, st, "disabled-admin@x", "disabledpass1")
 	mkUser(t, st, "outsider@x", "outsiderpass1")
 	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Kunlun"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(body, &proj)
+	proj := createProjectHTTP(t, srv.URL, ownerTok, "Kunlun")
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
 		map[string]string{"identity": "member@x", "role": "member"}); code != http.StatusOK {
 		t.Fatalf("add member: %d", code)
+	}
+	p, err := st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(t.Context(), p.OrgID, "org-admin@x", store.OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(t.Context(), p.OrgID, "disabled-admin@x", store.OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(t.Context(), "disabled-admin@x", true); err != nil {
+		t.Fatal(err)
 	}
 
 	ownerSub, cancelOwner := hub.Subscribe("owner@x")
 	defer cancelOwner()
 	memberSub, cancelMember := hub.Subscribe("member@x")
 	defer cancelMember()
+	orgAdminSub, cancelOrgAdmin := hub.Subscribe("org-admin@x")
+	defer cancelOrgAdmin()
+	disabledAdminSub, cancelDisabledAdmin := hub.Subscribe("disabled-admin@x")
+	defer cancelDisabledAdmin()
 	outsiderSub, cancelOutsider := hub.Subscribe("outsider@x")
 	defer cancelOutsider()
 
 	td := createTodoHTTP(t, srv.URL, ownerTok, map[string]any{"title": "ship the release", "project_id": proj.ID})
 
-	for name, sub := range map[string]*sse.Subscriber{"owner": ownerSub, "member": memberSub} {
+	for name, sub := range map[string]*sse.Subscriber{"owner": ownerSub, "member": memberSub, "team admin": orgAdminSub} {
 		ev := waitForEventType(t, sub, sse.EventTypeTodoCreated, 2*time.Second)
 		got := decodeTodo(t, ev.Data)
 		if got.ID != td.ID {
 			t.Errorf("%s got todo id %q, want %q", name, got.ID, td.ID)
 		}
 	}
-	select {
-	case ev := <-outsiderSub.C():
-		if ev.Type == sse.EventTypeTodoCreated {
-			t.Errorf("outsider unexpectedly received %q", ev.Type)
+	for name, sub := range map[string]*sse.Subscriber{"outsider": outsiderSub, "disabled team admin": disabledAdminSub} {
+		select {
+		case ev := <-sub.C():
+			if ev.Type == sse.EventTypeTodoCreated {
+				t.Errorf("%s unexpectedly received %q", name, ev.Type)
+			}
+		case <-time.After(100 * time.Millisecond):
+			// expected: no event for inaccessible identities
 		}
-	case <-time.After(100 * time.Millisecond):
-		// expected: no event for a non-member
 	}
 
 	// Personal todo: only its owner is targeted.
@@ -445,16 +566,7 @@ func TestFindTodoBySourceRefHTTPScopesToProject(t *testing.T) {
 	mkUser(t, st, "alice@x", "alicepass1")
 	aliceTok := loginToken(t, srv.URL, "alice@x", "alicepass1")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", aliceTok, map[string]string{"name": "Kunlun"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(body, &proj); err != nil {
-		t.Fatalf("decode project: %v", err)
-	}
+	proj := createProjectHTTP(t, srv.URL, aliceTok, "Kunlun")
 
 	personal := createTodoHTTP(t, srv.URL, aliceTok, map[string]any{
 		"title":      "Personal copy",
@@ -470,7 +582,7 @@ func TestFindTodoBySourceRefHTTPScopesToProject(t *testing.T) {
 		Found bool            `json:"found"`
 		Todo  todoschema.Todo `json:"todo"`
 	}
-	code, body = getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", aliceTok)
+	code, body := getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", aliceTok)
 	if code != http.StatusOK {
 		t.Fatalf("personal by-source = %d %s", code, body)
 	}

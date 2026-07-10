@@ -4,6 +4,33 @@ import '../local/repo_config.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
+double repoConfigMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.58,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
+double repoConfigDropdownWidth(
+  BoxConstraints constraints, {
+  double preferred = 180,
+  double minWidth = 120,
+  double maxFraction = 0.48,
+}) {
+  final maxWidth = constraints.maxWidth;
+  if (!maxWidth.isFinite || maxWidth <= 0) return preferred;
+  final capped = maxWidth * maxFraction.clamp(0, 1);
+  final width = capped < preferred ? capped : preferred;
+  if (width >= minWidth) return width;
+  return maxWidth < minWidth ? maxWidth : minWidth;
+}
+
 // RepoConfigPage edits a project's repo-level `.cc-handoff.toml` (all fields).
 // Pure Dart read/write via RepoConfig; opened from the workspace tree's project
 // ⋮ menu. Form bindings write straight into the RepoConfig model (onChanged),
@@ -58,7 +85,11 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
     final c = _c;
     return Scaffold(
       appBar: AppBar(
-        title: Text('项目配置 · ${widget.projectName}'),
+        title: Text(
+          '项目配置 · ${widget.projectName}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           if (c != null)
             Padding(
@@ -93,15 +124,6 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _card('身份', [
-                    _text('me(覆盖用户 identity,可空)', c.me, (v) => c.me = v),
-                    _text('partner(主接收人)', c.partner, (v) => c.partner = v),
-                    _text(
-                      'partners(多接收人,逗号分隔)',
-                      c.partners,
-                      (v) => c.partners = v,
-                    ),
-                  ]),
                   _card('路径', [
                     _text(
                       'base(git base ref)',
@@ -119,7 +141,8 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                   ]),
                   _rulesCard(c),
                   _triggersCard(c),
-                  _card('任务接收', [
+                  _legacyIdentityCard(c),
+                  _card('收件箱', [
                     _text(
                       'inbox dir(物化输出目录,可空)',
                       c.inboxDir,
@@ -158,6 +181,30 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
     ),
   );
 
+  Widget _legacyIdentityCard(RepoConfig c) => Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Card(
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        title: const Text(
+          '旧点对点兼容',
+          style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700),
+        ),
+        subtitle: const Text(
+          '团队项目通信不需要项目级身份',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        children: [
+          _text('me(旧覆盖用户 identity,可空)', c.me, (v) => c.me = v),
+          _text('partner(旧点对点,可空)', c.partner, (v) => c.partner = v),
+          _text('partners(旧 bug 别名,逗号分隔)', c.partners, (v) => c.partners = v),
+        ],
+      ),
+    ),
+  );
+
   Widget _text(
     String label,
     String initial,
@@ -191,29 +238,44 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
   ) {
     final all = ['', ...opts];
     final v = all.contains(value) ? value : '';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 13, color: CcColors.muted),
+    return LayoutBuilder(
+      builder: (context, constraints) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: CcColors.muted),
+              ),
             ),
-          ),
-          DropdownButton<String>(
-            value: v,
-            items: all
-                .map(
-                  (o) => DropdownMenuItem(
-                    value: o,
-                    child: Text(o.isEmpty ? '(默认)' : o),
-                  ),
-                )
-                .toList(),
-            onChanged: (x) => onChanged(x ?? ''),
-          ),
-        ],
+            SizedBox(
+              width: repoConfigDropdownWidth(constraints),
+              child: DropdownButton<String>(
+                value: v,
+                isExpanded: true,
+                menuMaxHeight: repoConfigMenuMaxHeight(
+                  MediaQuery.sizeOf(context),
+                ),
+                items: all
+                    .map(
+                      (o) => DropdownMenuItem(
+                        value: o,
+                        child: Text(
+                          o.isEmpty ? '(默认)' : o,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (x) => onChanged(x ?? ''),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

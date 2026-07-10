@@ -51,6 +51,7 @@ This is the **inbound** half of the Linear integration:
    - `summary`: the markdown from step 4
    - `prd`: from step 5 if user provided one
    - `note`: from step 5 if user provided one
+   - `project` / `org` / `member`: only if the user explicitly wants this Linear request sent to a cc-handoff team or one specific identity inside that team; if you pass these, do not pass `to`
    - `urgent: true`: only if the Linear issue is `Urgent` priority AND the user confirms (don't auto-promote based on priority alone)
 
    Capture the returned `handoff_id` (looks like `h_20260512_ABCD1234`).

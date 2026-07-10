@@ -1,0 +1,64 @@
+import 'package:app/local/online_send_layout.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('online send dialog width fits narrow screens', () {
+    expect(onlineSendDialogWidth(const Size(320, 760)), 288);
+    expect(onlineSendDialogWidth(const Size(1024, 760)), 440);
+    expect(onlineSendDialogWidth(const Size(360, 760), preferred: 460), 328);
+    expect(onlineSendDialogWidth(const Size(1024, 760), preferred: 460), 460);
+  });
+
+  test('online send user chip width leaves room for wrapping', () {
+    expect(
+      onlineSendUserChipWidth(const BoxConstraints(maxWidth: 240)),
+      closeTo(115.2, 0.001),
+    );
+    expect(onlineSendUserChipWidth(const BoxConstraints(maxWidth: 640)), 180);
+    expect(
+      onlineSendUserChipWidth(
+        const BoxConstraints(maxWidth: 300),
+        preferred: 220,
+        maxFraction: 0.4,
+      ),
+      120,
+    );
+  });
+
+  test('online send user list height is capped for many users', () {
+    expect(onlineSendUserListMaxHeight(const Size(390, 844)), 132);
+    expect(
+      onlineSendUserListMaxHeight(const Size(320, 320)),
+      closeTo(102.4, 0.001),
+    );
+    expect(onlineSendUserListMaxHeight(const Size(320, 120)), 72);
+  });
+
+  test('online send session menu height is capped for many sessions', () {
+    expect(onlineSendSessionMenuMaxHeight(const Size(1024, 900)), 320);
+    expect(
+      onlineSendSessionMenuMaxHeight(const Size(320, 420)),
+      closeTo(243.6, 0.001),
+    );
+    expect(onlineSendSessionMenuMaxHeight(const Size(320, 220)), 160);
+  });
+
+  test('incoming online message body height is responsive', () {
+    expect(onlineSendIncomingBodyMaxHeight(const Size(1024, 900)), 220);
+    expect(
+      onlineSendIncomingBodyMaxHeight(const Size(320, 420)),
+      closeTo(134.4, 0.001),
+    );
+    expect(onlineSendIncomingBodyMaxHeight(const Size(320, 220)), 96);
+  });
+
+  test('online send parked message list height is capped', () {
+    expect(onlineSendParkedListMaxHeight(const Size(1024, 900)), 360);
+    expect(
+      onlineSendParkedListMaxHeight(const Size(320, 420)),
+      closeTo(260.4, 0.001),
+    );
+    expect(onlineSendParkedListMaxHeight(const Size(320, 220)), 160);
+  });
+}

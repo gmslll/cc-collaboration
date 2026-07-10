@@ -14,6 +14,12 @@ part of '../workspace_page.dart';
 /// 与 `_GitMixin`/`_SearchMixin` 同构:`on _GitMixin` 拿到 git 状态/操作,主类里的
 /// 视图方法(`_openCodeFile` 等)按桥接模式声明为 abstract,由 `_WorkspacePageState`
 /// 提供。
+double workspaceCommitFileDialogWidth(Size size, {double preferred = 440}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
   // ---- 主类 (_WorkspacePageState) 提供的视图桥接 ----
   // (_openCodeFile 已由 _SearchMixin 声明,这里 on _SearchMixin 直接复用。)
@@ -23,7 +29,11 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
   void _showBlameForProjectFile(ProjectCfg p, String relPath);
 
   /// 在 [pos] 弹出改动文件的顶层菜单。[c] 是改动行,[p] 是其所属项目。
-  Future<void> _showCommitFileMenu(Offset pos, ProjectCfg p, GitChange c) async {
+  Future<void> _showCommitFileMenu(
+    Offset pos,
+    ProjectCfg p,
+    GitChange c,
+  ) async {
     final v = await showMenu<String>(
       context: context,
       position: menuPosAt(context, pos),
@@ -100,11 +110,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
       label: 'Shelve Changes…',
     ),
     const PopupMenuDivider(),
-    ccMenuItem(
-      value: 'refresh',
-      icon: Icons.refresh_rounded,
-      label: 'Refresh',
-    ),
+    ccMenuItem(value: 'refresh', icon: Icons.refresh_rounded, label: 'Refresh'),
     const PopupMenuDivider(),
     ccMenuItem(
       value: 'git-more',
@@ -161,11 +167,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
 
   /// 把菜单返回的 value 派发到具体操作。委托给已有方法的分支不重复处理
   /// setState/spinner(那些方法内部已处理);仅本文件新增的写操作自管 loading。
-  Future<void> _runCommitFileAction(
-    String v,
-    ProjectCfg p,
-    GitChange c,
-  ) async {
+  Future<void> _runCommitFileAction(String v, ProjectCfg p, GitChange c) async {
     switch (v) {
       case 'commit':
         await _commitSingleFile(p, c.path);
@@ -208,6 +210,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
   Future<void> _commitSingleFile(ProjectCfg p, String path) async {
     final msg = await _promptCommitMessage(path);
     if (msg == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitUnstageAll(p.path);
@@ -233,6 +236,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitRemoveFile(p.path, c.path, tracked: !c.untracked);
@@ -268,6 +272,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     try {
       final patch = await _localChangesPatch(p, changes);
       if (patch == null) return;
+      if (!mounted) return;
       final suggested = changes.length == 1
           ? '${changes.first.path.split('/').last}.patch'
           : 'local-changes.patch';
@@ -276,6 +281,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
         fileName: suggested,
       );
       if (dest == null) return; // 用户取消
+      if (!mounted) return;
       final out = dest.endsWith('.patch') ? dest : '$dest.patch';
       await File(out).writeAsString(patch);
       if (mounted) _snack('已保存 patch: ${out.split('/').last}');
@@ -292,6 +298,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     try {
       final patch = await _localChangesPatch(p, changes);
       if (patch == null) return;
+      if (!mounted) return;
       await Clipboard.setData(ClipboardData(text: patch));
       if (mounted) _snack('Patch 已复制到剪贴板');
     } catch (e) {
@@ -306,6 +313,7 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
       detail: '将「${c.path}」的改动搁置为一个 git stash(可从 Stash 面板恢复)。',
     );
     if (opts == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitStashPush(
@@ -330,36 +338,62 @@ mixin _CommitChangesMenu on _GitMixin, _SearchMixin {
     final ctl = TextEditingController(text: _commitCtl.text);
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Commit File'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('只提交此文件:', style: TextStyle(color: CcColors.muted)),
-            const SizedBox(height: 4),
-            Text(path, style: CcType.code(size: 12)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              minLines: 2,
-              maxLines: 5,
-              decoration: const InputDecoration(labelText: 'Commit message'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: const Text(
+            'Commit File',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          content: SizedBox(
+            width: workspaceCommitFileDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '只提交此文件:',
+                    style: TextStyle(color: CcColors.muted),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    path,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 12),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: ctl,
+                    autofocus: true,
+                    minLines: 2,
+                    maxLines: 5,
+                    decoration: const InputDecoration(
+                      labelText: 'Commit message',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Commit'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Commit'),
-          ),
-        ],
-      ),
+        );
+      },
     );
     final text = ctl.text.trim();
     ctl.dispose();

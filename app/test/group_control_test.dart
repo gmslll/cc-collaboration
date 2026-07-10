@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/widgets/todo_property_controls.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 // existing name and typing a brand-new one both funnel through the same
 // onSelect callback, and the clear icon bypasses the picker entirely.
 void main() {
+  const longGroupName = '团队协作跨项目超长分组名称-用于验证任务详情属性控件不会撑开布局';
+
   Widget harness({
     String? groupName,
     List<String> existingGroups = const [],
@@ -34,6 +38,94 @@ void main() {
   testWidgets('shows the current group name when set', (tester) async {
     await tester.pumpWidget(harness(groupName: '我的日常', onSelect: (_) {}));
     expect(find.text('我的日常'), findsOneWidget);
+  });
+
+  testWidgets('current and picker group labels are width constrained', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harness(groupName: longGroupName, onSelect: (_) {}),
+    );
+
+    final currentLabel = tester.widget<Text>(find.text(longGroupName));
+    expect(currentLabel.maxLines, 1);
+    expect(currentLabel.overflow, TextOverflow.ellipsis);
+
+    await tester.pumpWidget(
+      harness(
+        groupName: null,
+        existingGroups: const [longGroupName],
+        onSelect: (_) {},
+      ),
+    );
+    await tester.tap(find.text('未分组'));
+    await tester.pumpAndSettle();
+
+    final pickerLabel = tester.widget<Text>(find.text(longGroupName));
+    expect(pickerLabel.maxLines, 1);
+    expect(pickerLabel.overflow, TextOverflow.ellipsis);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('group picker list height is responsive', () {
+    expect(groupPickerListMaxHeight(const Size(1024, 720)), 180);
+    expect(
+      groupPickerListMaxHeight(const Size(320, 420)),
+      closeTo(142.8, 0.001),
+    );
+    expect(groupPickerListMaxHeight(const Size(320, 240)), 96);
+  });
+
+  test('group picker dialog width fits compact screens', () {
+    expect(groupPickerDialogWidth(const Size(320, 760)), 288);
+    expect(groupPickerDialogWidth(const Size(1024, 760)), 360);
+    expect(groupPickerDialogWidth(const Size(360, 760), preferred: 420), 328);
+  });
+
+  test('group picker avoids fixed list height', () {
+    final source = File(
+      'lib/widgets/todo_property_controls.dart',
+    ).readAsStringSync();
+    final picker = source.substring(source.indexOf('class _GroupPickerDialog'));
+
+    expect(picker, contains('groupPickerListMaxHeight'));
+    expect(picker, contains('groupPickerDialogWidth'));
+    expect(picker, contains('SingleChildScrollView'));
+    expect(picker, isNot(contains('BoxConstraints(maxHeight: 180)')));
+    expect(picker, isNot(contains('width: 320')));
+  });
+
+  testWidgets('group picker dialog fits compact screens', (tester) async {
+    tester.view.physicalSize = const Size(320, 360);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      harness(
+        groupName: null,
+        existingGroups: const [longGroupName, '我的日常', 'xxx项目', '团队任务'],
+        onSelect: (_) {},
+      ),
+    );
+
+    await tester.tap(find.text('未分组'));
+    await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(contentScroll.scrollDirection, Axis.vertical);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('picking an existing group from the list calls onSelect', (

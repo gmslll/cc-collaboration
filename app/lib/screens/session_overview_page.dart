@@ -1,17 +1,78 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:xterm/xterm.dart';
 
-import '../local/local_bus.dart';
+import '../local/prefs.dart';
 import '../local/project_order.dart';
 import '../local/session_overview.dart';
 import '../local/skill_pack.dart';
-import '../terminal_theme.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../widgets/session_snapshot_view.dart';
+
+double capsuleChoiceDialogWidth(Size size, {double preferred = 440}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+Size capsuleReviewDialogSize(
+  Size viewport, {
+  double preferredWidth = 620,
+  double preferredHeight = 760,
+}) {
+  final availableWidth = viewport.width - 32;
+  final availableHeight = viewport.height - 48;
+  final width = !availableWidth.isFinite || availableWidth <= 0
+      ? preferredWidth
+      : (availableWidth < preferredWidth ? availableWidth : preferredWidth);
+  final height = !availableHeight.isFinite || availableHeight <= 0
+      ? preferredHeight
+      : (availableHeight < preferredHeight ? availableHeight : preferredHeight);
+  return Size(width, height);
+}
+
+double capsuleReviewLoadingHeight(
+  Size screenSize, {
+  double preferred = 120,
+  double minHeight = 80,
+  double maxFraction = 0.18,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
+Size sessionQuickReplyDialogSize(
+  Size viewport,
+  double preferredWidth, {
+  double preferredHeight = 640,
+}) {
+  final availableWidth = viewport.width - 32;
+  final availableHeight = viewport.height - 48;
+  final width = !availableWidth.isFinite || availableWidth <= 0
+      ? preferredWidth
+      : (availableWidth < preferredWidth ? availableWidth : preferredWidth);
+  final height = !availableHeight.isFinite || availableHeight <= 0
+      ? preferredHeight
+      : (availableHeight < preferredHeight ? availableHeight : preferredHeight);
+  return Size(width, height);
+}
+
+double sessionQuickReplyPreviewHeight(
+  Size viewport,
+  double preferred, {
+  double minHeight = 120,
+  double maxFraction = 0.42,
+}) {
+  final available = viewport.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minHeight) return available;
+  return available < preferred ? available : preferred;
+}
 
 // SessionOverviewPage is the desktop top-level "会话总览": every open session
 // laid out flat, grouped by 工作区 → 项目 → worktree, each as a card showing the
@@ -116,61 +177,12 @@ class _SessionOverviewPageState extends State<SessionOverviewPage> {
           '$total 个会话',
           style: CcType.code(size: 12.5, color: CcColors.muted),
         ),
-        const SizedBox(width: 8),
-        // TEMP build marker — confirms this (capsule) build is the one running.
-        // Remove once verified.
-        tag('capsule ✦', CcColors.accent),
         const Spacer(),
         if (reviewCount > 0)
           tag('待 review $reviewCount', CcColors.warning, bold: true),
-        if (kDebugMode) ..._debugDispatchActions(),
       ],
     ),
   );
-
-  // TEMP debug entry (Track G manual verification of
-  // SessionOverviewStore.dispatchHandler/spawnHandler) — kDebugMode-only, so it
-  // never ships in a release build. Exercises both handlers against a real
-  // session without waiting for the 待办 page's (Track I) assign dialog. Safe to
-  // delete once that dialog lands and supersedes it.
-  List<Widget> _debugDispatchActions() => [
-    const SizedBox(width: 8),
-    IconButton(
-      tooltip: '调试: 投递测试消息到第一个会话 (dispatchHandler)',
-      icon: const Icon(Icons.bug_report_outlined, size: 18),
-      onPressed: _store.cards.isEmpty ? null : _debugDispatch,
-    ),
-    IconButton(
-      tooltip: '调试: 在第一个会话所在项目新建一个 shell 会话 (spawnHandler)',
-      icon: const Icon(Icons.add_box_outlined, size: 18),
-      onPressed: _store.cards.isEmpty ? null : _debugSpawn,
-    ),
-  ];
-
-  void _debugDispatch() {
-    final target = _store.cards.first;
-    final err = _store.dispatch(
-      LocalMsg('', target.sid, '[调试] Track G dispatchHandler 测试消息', true),
-    );
-    _debugToast(err == null ? '已投递到 ${target.label}' : '投递失败: $err');
-  }
-
-  Future<void> _debugSpawn() async {
-    final ref = _store.cards.first;
-    final (sid, err) = await _store.spawn(
-      workspace: ref.workspace,
-      project: ref.project,
-      kind: 'shell',
-    );
-    _debugToast(err == null ? '已新建会话 $sid' : '新建失败: $err');
-  }
-
-  void _debugToast(String text) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(text)));
-  }
 
   // _grouped lays out cards under 工作区 → 项目 → worktree headers, preserving the
   // snapshot's order (newest sessions last). Orphan (unmapped) sessions fall
@@ -365,17 +377,45 @@ class _QuickReplyDialog extends StatefulWidget {
   State<_QuickReplyDialog> createState() => _QuickReplyDialogState();
 }
 
+// Preview zoom + popup-size prefs — persisted so a size/zoom set on one session's
+// popup carries to every other session's popup (and across app restarts), per the
+// user's "set once, applies everywhere".
+const _kPrevFontKey = 'overviewPreview.fontSize';
+const _kPrevWidthKey = 'overviewPreview.width';
+const _kPrevHeightKey = 'overviewPreview.previewH';
+const _kPrevFontMin = 6.0;
+const _kPrevFontMax = 28.0;
+const _kPrevWidthMin = 380.0;
+const _kPrevWidthMax = 1400.0;
+const _kPrevHeightMin = 140.0;
+const _kPrevHeightMax = 900.0;
+
 class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
-  // A throwaway terminal we paint the session's coloured screen snapshot into —
-  // a real xterm view, not stripped text. Independent of the live session's
-  // Terminal so it never fights it for PTY size; small buffer = cheap rewrites.
-  final Terminal _term = ccTerminal(maxLines: 200);
+  // Latest coloured screen snapshot (ansi + source geometry); rendered by
+  // SessionSnapshotView at the source width so TUI chrome doesn't reflow.
+  ScreenSnapshot? _snap;
   Timer? _timer;
+  // Persisted preview zoom + popup dimensions (shared across all popups).
+  late double _fontSize;
+  late double _dialogW;
+  late double _previewH;
 
   @override
   void initState() {
     super.initState();
+    _fontSize = Prefs.getDouble(
+      _kPrevFontKey,
+      def: 12,
+    ).clamp(_kPrevFontMin, _kPrevFontMax);
+    _dialogW = Prefs.getDouble(
+      _kPrevWidthKey,
+      def: 560,
+    ).clamp(_kPrevWidthMin, _kPrevWidthMax);
+    _previewH = Prefs.getDouble(
+      _kPrevHeightKey,
+      def: 280,
+    ).clamp(_kPrevHeightMin, _kPrevHeightMax);
     // Opening the preview = the user is looking at this session → clear its
     // 待 review flag (mirrors local foregrounding / a phone watching it), so a
     // reviewed-from-here session stops showing as "完成待查看".
@@ -395,10 +435,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   }
 
   Future<void> _refresh() async {
-    final ansi = await widget.store.loadPreview(widget.card.sid);
-    if (!mounted || ansi == null) return;
-    _term.write('\x1b[3J\x1b[2J\x1b[H'); // clear scrollback + screen, home
-    _term.write(ansi);
+    final snap = await widget.store.loadPreview(widget.card.sid);
+    // Records compare structurally → an unchanged screen skips the rebuild.
+    if (!mounted || snap == null || snap == _snap) return;
+    setState(() => _snap = snap);
   }
 
   // _bump re-reads the screen shortly after a send so the agent's reaction shows
@@ -432,136 +472,193 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     child: Text(label, style: CcType.code(size: 12.5)),
   );
 
+  void _zoom(double delta) {
+    setState(
+      () => _fontSize = (_fontSize + delta).clamp(_kPrevFontMin, _kPrevFontMax),
+    );
+    Prefs.setDouble(_kPrevFontKey, _fontSize);
+  }
+
+  void _resizeBy(Offset delta) {
+    setState(() {
+      _dialogW = (_dialogW + delta.dx).clamp(_kPrevWidthMin, _kPrevWidthMax);
+      _previewH = (_previewH + delta.dy).clamp(
+        _kPrevHeightMin,
+        _kPrevHeightMax,
+      );
+    });
+    Prefs.setDouble(_kPrevWidthKey, _dialogW);
+    Prefs.setDouble(_kPrevHeightKey, _previewH);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.card;
+    final screenSize = MediaQuery.sizeOf(context);
+    final dialogSize = sessionQuickReplyDialogSize(screenSize, _dialogW);
+    final previewHeight = sessionQuickReplyPreviewHeight(screenSize, _previewH);
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
+        child: SingleChildScrollView(
+          child: SizedBox(
+            width: dialogSize.width,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SessionActivityAvatar(
-                    seed: c.sid,
-                    isAgent: c.isAgent,
-                    status: c.status,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      c.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
+                  Row(
+                    children: [
+                      SessionActivityAvatar(
+                        seed: c.sid,
+                        isAgent: c.isAgent,
+                        status: c.status,
+                        size: 24,
                       ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '刷新',
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    onPressed: _refresh,
-                  ),
-                  IconButton(
-                    tooltip: '关闭',
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              sessionStatusRow(
-                c.status,
-                c.usageLabel,
-                statusDetail: c.statusDetail,
-              ),
-              const SizedBox(height: 10),
-              Container(
-                height: 280,
-                width: double.infinity,
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(
-                  color: ccTerminalTheme.background,
-                  borderRadius: BorderRadius.circular(CcRadius.sm),
-                  border: Border.all(color: CcColors.border),
-                ),
-                child: TerminalView(
-                  _term,
-                  theme: ccTerminalTheme,
-                  textStyle: const TerminalStyle(
-                    fontFamily: 'JetBrainsMono',
-                    fontSize: 12,
-                  ),
-                  padding: const EdgeInsets.all(8),
-                  readOnly: true,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _quick('↵ 确认', _confirm),
-                  _quick('1', () => _keys('1')),
-                  _quick('2', () => _keys('2')),
-                  _quick('3', () => _keys('3')),
-                  _quick('y', () => _keys('y')),
-                  _quick('n', () => _keys('n')),
-                  _quick('Esc', () => _keys('\x1b')),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _ctl,
-                      autofocus: true,
-                      maxLines: 1,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _sendText(),
-                      decoration: const InputDecoration(
-                        hintText: '快捷回复…（回车发送）',
-                        isDense: true,
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          c.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                        ),
                       ),
+                      scrollableActions([
+                        IconButton(
+                          tooltip: '缩小字体',
+                          icon: const Icon(
+                            Icons.text_decrease_rounded,
+                            size: 18,
+                          ),
+                          onPressed: () => _zoom(-1),
+                        ),
+                        IconButton(
+                          tooltip: '放大字体',
+                          icon: const Icon(
+                            Icons.text_increase_rounded,
+                            size: 18,
+                          ),
+                          onPressed: () => _zoom(1),
+                        ),
+                        IconButton(
+                          tooltip: '刷新',
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          onPressed: _refresh,
+                        ),
+                        IconButton(
+                          tooltip: '关闭',
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ]),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  sessionStatusRow(
+                    c.status,
+                    c.usageLabel,
+                    statusDetail: c.statusDetail,
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: previewHeight,
+                    child: SessionSnapshotView(
+                      snapshot: _snap,
+                      fontSize: _fontSize,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton(onPressed: _sendText, child: const Text('发送')),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  TextButton.icon(
-                    onPressed: widget.onOpenInWorkspace,
-                    icon: const Icon(Icons.open_in_full_rounded, size: 16),
-                    label: const Text('在工作区打开'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _quick('↵ 确认', _confirm),
+                      _quick('1', () => _keys('1')),
+                      _quick('2', () => _keys('2')),
+                      _quick('3', () => _keys('3')),
+                      _quick('y', () => _keys('y')),
+                      _quick('n', () => _keys('n')),
+                      _quick('Esc', () => _keys('\x1b')),
+                    ],
                   ),
-                  const Spacer(),
-                  // Only agent sessions with a working dir can be frozen into a
-                  // capsule (a shell session has no transcript to distill).
-                  if (c.isAgent && (c.workdir?.isNotEmpty ?? false))
-                    TextButton.icon(
-                      onPressed: () => startCapsuleFlow(context, widget.store, c),
-                      icon: const Icon(Icons.science_rounded, size: 16),
-                      label: const Text('打成胶囊'),
-                    ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _ctl,
+                          autofocus: true,
+                          maxLines: 1,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _sendText(),
+                          decoration: const InputDecoration(
+                            hintText: '快捷回复…（回车发送）',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: _sendText,
+                        child: const Text('发送'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  scrollableBar(
+                    alignScrollEnd: true,
+                    scrolling: [
+                      TextButton.icon(
+                        onPressed: widget.onOpenInWorkspace,
+                        icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                        label: const Text('在工作区打开'),
+                      ),
+                      // Only agent sessions with a working dir can be frozen into a
+                      // capsule (a shell session has no transcript to distill).
+                      if (c.isAgent && (c.workdir?.isNotEmpty ?? false))
+                        TextButton.icon(
+                          onPressed: () =>
+                              startCapsuleFlow(context, widget.store, c),
+                          icon: const Icon(Icons.science_rounded, size: 16),
+                          label: const Text('打成胶囊'),
+                        ),
+                      const SizedBox(width: 4),
+                      _resizeHandle(),
+                    ],
+                  ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  // Drag grip at the footer's right edge — resizes the popup width + preview
+  // height (persisted). Placed inline (not a corner overlay) so it never blocks
+  // the footer buttons.
+  Widget _resizeHandle() => MouseRegion(
+    cursor: SystemMouseCursors.resizeUpLeftDownRight,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: (d) => _resizeBy(d.delta),
+      child: const Padding(
+        padding: EdgeInsets.all(4),
+        child: Icon(Icons.south_east_rounded, size: 15, color: CcColors.subtle),
+      ),
+    ),
+  );
 }
 
 // startCapsuleFlow runs the whole "打成胶囊" UX from either entry point (the
@@ -580,22 +677,36 @@ Future<void> startCapsuleFlow(
   if (!sessionStatusIsActive(card.status)) {
     final choice = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('怎么蒸馏这个会话?'),
-        content: const Text(
-          '「让它自己蒸馏」更懂上下文,但会占用该会话一会儿;「后台蒸馏」不打扰它,读转录来做。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('后台蒸馏'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('让它自己蒸馏'),
+          title: const Text(
+            '怎么蒸馏这个会话?',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: capsuleChoiceDialogWidth(size),
+            child: const SingleChildScrollView(
+              child: Text('「让它自己蒸馏」更懂上下文,但会占用该会话一会儿;「后台蒸馏」不打扰它,读转录来做。'),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('后台蒸馏'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('让它自己蒸馏'),
+            ),
+          ],
+        );
+      },
     );
     if (choice == null) return; // cancelled
     preferSelf = choice;
@@ -609,17 +720,20 @@ Future<void> startCapsuleFlow(
   store.markCapsuleInFlight(card.sid);
   snack(
     context,
-    preferSelf
-        ? '已让会话 ${card.sid} 自己蒸馏胶囊,完成后自动弹出复查'
-        : '正在后台蒸馏胶囊,完成后自动弹出复查',
+    preferSelf ? '已让会话 ${card.sid} 自己蒸馏胶囊,完成后自动弹出复查' : '正在后台蒸馏胶囊,完成后自动弹出复查',
   );
 
   CapsuleDraft? draft;
   String? err;
   try {
-    (draft, err) = await store.captureCapsule(card, preferSelfDistill: preferSelf);
+    (draft, err) = await store.captureCapsule(
+      card,
+      preferSelfDistill: preferSelf,
+    );
   } finally {
-    store.clearCapsuleInFlight(card.sid); // distill done → stop the card spinner
+    store.clearCapsuleInFlight(
+      card.sid,
+    ); // distill done → stop the card spinner
   }
   if (!context.mounted) return;
   final ready = draft;
@@ -637,7 +751,7 @@ Future<void> startCapsuleFlow(
 
 // _CapsuleReviewDialog previews the distilled persona/seed, lets the user edit
 // them in place (the user's "先落草稿供编辑再发" choice), pick a visibility
-// (个人 / 公开), and publish the capsule to the plaza.
+// (个人 / 团队共享), and publish the capsule to the plaza.
 class _CapsuleReviewDialog extends StatefulWidget {
   final SessionOverviewStore store;
   final CapsuleDraft draft;
@@ -700,34 +814,48 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   }
 
   Future<void> _submit() async {
+    if (_submitting) return;
     setState(() => _submitting = true);
-    // Persist the user's edits back to the draft before shipping.
-    if (_persona.text.trim().isNotEmpty) {
-      await File('${widget.draft.draftDir}/persona.md').writeAsString(_persona.text);
-    }
-    if (_seed.text.trim().isNotEmpty) {
-      await File('${widget.draft.draftDir}/seed.md').writeAsString(_seed.text);
-    }
-    // Zip the skill dirs the user kept checked so they ride with the capsule.
-    final skillZips = <String>[];
-    for (final e in _skillDirs.entries) {
-      if (!e.value) continue;
-      final zip = await packSkillDir(e.key, widget.draft.draftDir);
-      if (zip != null) skillZips.add(zip);
-    }
-    final (ok, err) = await widget.store.submitCapsule(
-      widget.draft,
-      visibility: _public ? 'public' : 'private',
-      summary: _summary.text.trim(),
-      skillZips: skillZips,
-    );
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    if (ok) {
-      Navigator.of(context).pop();
-      snack(context, '胶囊已发出');
-    } else {
-      snack(context, '发送失败: ${err ?? "未知错误"}');
+    var keepSubmitting = false;
+    try {
+      // Persist the user's edits back to the draft before shipping.
+      if (_persona.text.trim().isNotEmpty) {
+        await File(
+          '${widget.draft.draftDir}/persona.md',
+        ).writeAsString(_persona.text);
+      }
+      if (_seed.text.trim().isNotEmpty) {
+        await File(
+          '${widget.draft.draftDir}/seed.md',
+        ).writeAsString(_seed.text);
+      }
+      // Zip the skill dirs the user kept checked so they ride with the capsule.
+      final skillZips = <String>[];
+      for (final e in _skillDirs.entries) {
+        if (!e.value) continue;
+        final zip = await packSkillDir(e.key, widget.draft.draftDir);
+        if (zip != null) skillZips.add(zip);
+      }
+      final (ok, err) = await widget.store.submitCapsule(
+        widget.draft,
+        visibility: _public ? 'public' : 'private',
+        summary: _summary.text.trim(),
+        skillZips: skillZips,
+      );
+      if (!mounted) return;
+      if (ok) {
+        keepSubmitting = true;
+        Navigator.of(context).pop();
+        snack(context, '胶囊已发出');
+      } else {
+        snack(context, '发送失败: ${err ?? "未知错误"}');
+      }
+    } catch (e) {
+      if (mounted) snack(context, '发送失败: ${errorText(e)}');
+    } finally {
+      if (mounted && !keepSubmitting) {
+        setState(() => _submitting = false);
+      }
     }
   }
 
@@ -764,14 +892,21 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final d = widget.draft;
+    final dialogSize = capsuleReviewDialogSize(MediaQuery.sizeOf(context));
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 620),
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: _loading
-              ? const SizedBox(
-                  height: 120,
+              ? SizedBox(
+                  height: capsuleReviewLoadingHeight(
+                    MediaQuery.sizeOf(context),
+                  ),
                   child: Center(child: CircularProgressIndicator()),
                 )
               : SingleChildScrollView(
@@ -829,20 +964,28 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                       ),
                       const SizedBox(height: 12),
                       if (_skillDirs.isNotEmpty) ...[
-                        const Text('带上技能 / 脚本(勾选随胶囊发;缺技能的队友也能用。蒸馏检测到的已勾选)',
-                            style: TextStyle(fontWeight: FontWeight.w600)),
+                        const Text(
+                          '带上技能 / 脚本(勾选随胶囊发;缺技能的队友也能用。蒸馏检测到的已勾选)',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
                         for (final dir in _skillDirs.keys)
                           CheckboxListTile(
                             value: _skillDirs[dir],
                             onChanged: (v) =>
                                 setState(() => _skillDirs[dir] = v ?? false),
-                            title: Text(dir.split('/').last,
-                                style: CcType.code(size: 12)),
-                            subtitle: Text(dir,
-                                style: CcType.code(
-                                    size: 10.5, color: CcColors.subtle),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
+                            title: Text(
+                              dir.split('/').last,
+                              style: CcType.code(size: 12),
+                            ),
+                            subtitle: Text(
+                              dir,
+                              style: CcType.code(
+                                size: 10.5,
+                                color: CcColors.subtle,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             controlAffinity: ListTileControlAffinity.leading,
                             dense: true,
                             contentPadding: EdgeInsets.zero,
@@ -856,11 +999,14 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                               ButtonSegment(
                                 value: false,
                                 label: Text('个人'),
-                                icon: Icon(Icons.lock_outline_rounded, size: 16),
+                                icon: Icon(
+                                  Icons.lock_outline_rounded,
+                                  size: 16,
+                                ),
                               ),
                               ButtonSegment(
                                 value: true,
-                                label: Text('公开'),
+                                label: Text('团队'),
                                 icon: Icon(Icons.public_rounded, size: 16),
                               ),
                             ],
@@ -871,10 +1017,11 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              _public
-                                  ? '团队所有人能在广场看到'
-                                  : '只有你自己能在广场看到',
-                              style: CcType.code(size: 11.5, color: CcColors.subtle),
+                              _public ? '同团队成员能在广场看到' : '只有你自己能在广场看到',
+                              style: CcType.code(
+                                size: 11.5,
+                                color: CcColors.subtle,
+                              ),
                             ),
                           ),
                         ],

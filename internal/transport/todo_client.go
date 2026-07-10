@@ -25,7 +25,12 @@ import (
 // handling for handoffs — see server.go's submit handler), so those fields
 // on the input are ignored. Returns the relay-assigned Todo.
 func (c *Client) CreateTodo(ctx context.Context, t *todoschema.Todo) (*todoschema.Todo, error) {
-	body, err := json.Marshal(t)
+	if t == nil {
+		t = &todoschema.Todo{}
+	}
+	wire := *t
+	normalizeTodoWire(&wire)
+	body, err := json.Marshal(&wire)
 	if err != nil {
 		return nil, err
 	}
@@ -48,25 +53,29 @@ type TodoListFilter struct {
 
 // ListTodos returns todos visible to the caller under filter.
 func (c *Client) ListTodos(ctx context.Context, f TodoListFilter) ([]todoschema.Todo, error) {
-	var parts []string
+	f.Scope = strings.TrimSpace(f.Scope)
+	f.ProjectID = strings.TrimSpace(f.ProjectID)
+	f.Status = strings.TrimSpace(f.Status)
+	f.GroupName = strings.TrimSpace(f.GroupName)
+	q := url.Values{}
 	if f.Scope != "" {
-		parts = append(parts, "scope="+f.Scope)
+		q.Set("scope", f.Scope)
 	}
 	if f.ProjectID != "" {
-		parts = append(parts, "project="+f.ProjectID)
+		q.Set("project", f.ProjectID)
 	}
 	if f.Status != "" {
-		parts = append(parts, "status="+f.Status)
+		q.Set("status", f.Status)
 	}
 	if f.GroupName != "" {
-		parts = append(parts, "group="+url.QueryEscape(f.GroupName))
+		q.Set("group", f.GroupName)
 	}
 	if f.Limit > 0 {
-		parts = append(parts, "limit="+strconv.Itoa(f.Limit))
+		q.Set("limit", strconv.Itoa(f.Limit))
 	}
 	path := "/v1/todos"
-	if len(parts) > 0 {
-		path += "?" + strings.Join(parts, "&")
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	var out struct {
 		Items []todoschema.Todo `json:"items"`
@@ -82,7 +91,7 @@ func (c *Client) ListTodos(ctx context.Context, f TodoListFilter) ([]todoschema.
 // pkg/todoschema.Todo).
 func (c *Client) GetTodo(ctx context.Context, id string) (*todoschema.Todo, error) {
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodGet, "/v1/todos/"+id, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, todoPath(id), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -92,6 +101,8 @@ func (c *Client) GetTodo(ctx context.Context, id string) (*todoschema.Todo, erro
 // in the destination scope: projectID empty = caller's personal todos,
 // non-empty = that relay project.
 func (c *Client) FindTodoBySourceRef(ctx context.Context, sourceRef, projectID string) (*todoschema.Todo, bool, error) {
+	sourceRef = strings.TrimSpace(sourceRef)
+	projectID = strings.TrimSpace(projectID)
 	var out struct {
 		Found bool             `json:"found"`
 		Todo  *todoschema.Todo `json:"todo"`
@@ -199,7 +210,7 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 		return nil, err
 	}
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPatch, "/v1/todos/"+id, bytes.NewReader(body), &out); err != nil {
+	if err := c.do(ctx, http.MethodPatch, todoPath(id), bytes.NewReader(body), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -210,7 +221,7 @@ func (c *Client) PatchTodo(ctx context.Context, id string, patch TodoPatch) (*to
 func (c *Client) SetTodoStatus(ctx context.Context, id string, status todoschema.Status) (*todoschema.Todo, error) {
 	payload, _ := json.Marshal(map[string]string{"status": string(status)})
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/status", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/status", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -224,6 +235,19 @@ func (c *Client) SetTodoStatus(ctx context.Context, id string, status todoschema
 // with --resume long after the bus session id itself has gone stale.
 // Returns the updated Todo.
 func (c *Client) AssignTodo(ctx context.Context, id, assigneeIdentity, assigneeSessionID, assigneeSessionLabel, assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind string) (*todoschema.Todo, error) {
+	assigneeIdentity = strings.TrimSpace(assigneeIdentity)
+	assigneeSessionID = strings.TrimSpace(assigneeSessionID)
+	assigneeSessionLabel = strings.TrimSpace(assigneeSessionLabel)
+	assigneeAgentSessionID = strings.TrimSpace(assigneeAgentSessionID)
+	assigneeWorkdir = strings.TrimSpace(assigneeWorkdir)
+	assigneeAgentKind = strings.TrimSpace(assigneeAgentKind)
+	if assigneeIdentity == "" {
+		assigneeSessionID = ""
+		assigneeSessionLabel = ""
+		assigneeAgentSessionID = ""
+		assigneeWorkdir = ""
+		assigneeAgentKind = ""
+	}
 	payload, _ := json.Marshal(map[string]string{
 		"assignee_identity":         assigneeIdentity,
 		"assignee_session_id":       assigneeSessionID,
@@ -233,7 +257,7 @@ func (c *Client) AssignTodo(ctx context.Context, id, assigneeIdentity, assigneeS
 		"assignee_agent_kind":       assigneeAgentKind,
 	})
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/assign", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/assign", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -243,6 +267,7 @@ func (c *Client) AssignTodo(ctx context.Context, id, assigneeIdentity, assigneeS
 // personal-scoped when projectID is empty or scoped to that one team
 // project otherwise — mirrors store.Store.ListTodoGroups' scoping exactly.
 func (c *Client) ListTodoGroups(ctx context.Context, projectID string) ([]string, error) {
+	projectID = strings.TrimSpace(projectID)
 	path := "/v1/todos/groups"
 	if projectID != "" {
 		path += "?project=" + url.QueryEscape(projectID)
@@ -259,6 +284,9 @@ func (c *Client) ListTodoGroups(ctx context.Context, projectID string) ([]string
 // RenameTodoGroup bulk-renames every todo in oldName (within the same scope
 // as ListTodoGroups) to newName.
 func (c *Client) RenameTodoGroup(ctx context.Context, projectID, oldName, newName string) error {
+	projectID = strings.TrimSpace(projectID)
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
 	payload, _ := json.Marshal(map[string]string{
 		"project_id": projectID,
 		"old_name":   oldName,
@@ -270,11 +298,39 @@ func (c *Client) RenameTodoGroup(ctx context.Context, projectID, oldName, newNam
 // ClearTodoGroup bulk-clears group_name back to ungrouped on every todo in
 // name (within the same scope as ListTodoGroups), without deleting them.
 func (c *Client) ClearTodoGroup(ctx context.Context, projectID, name string) error {
+	projectID = strings.TrimSpace(projectID)
+	name = strings.TrimSpace(name)
 	payload, _ := json.Marshal(map[string]string{
 		"project_id": projectID,
 		"name":       name,
 	})
 	return c.do(ctx, http.MethodPost, "/v1/todos/groups/clear", bytes.NewReader(payload), nil)
+}
+
+func normalizeTodoWire(t *todoschema.Todo) {
+	t.ID = strings.TrimSpace(t.ID)
+	t.ProjectID = strings.TrimSpace(t.ProjectID)
+	t.OwnerIdentity = strings.TrimSpace(t.OwnerIdentity)
+	t.Status = todoschema.Status(strings.TrimSpace(string(t.Status)))
+	t.Priority = todoschema.Priority(strings.TrimSpace(string(t.Priority)))
+	t.Recurrence = todoschema.Recurrence(strings.TrimSpace(string(t.Recurrence)))
+	t.AssigneeIdentity = strings.TrimSpace(t.AssigneeIdentity)
+	t.AssigneeSessionID = strings.TrimSpace(t.AssigneeSessionID)
+	t.AssigneeSessionLabel = strings.TrimSpace(t.AssigneeSessionLabel)
+	t.AssigneeAgentSessionID = strings.TrimSpace(t.AssigneeAgentSessionID)
+	t.AssigneeWorkdir = strings.TrimSpace(t.AssigneeWorkdir)
+	t.AssigneeAgentKind = strings.TrimSpace(t.AssigneeAgentKind)
+	t.WorkspaceName = strings.TrimSpace(t.WorkspaceName)
+	t.RepoName = strings.TrimSpace(t.RepoName)
+	t.GroupName = strings.TrimSpace(t.GroupName)
+	t.SourceRef = strings.TrimSpace(t.SourceRef)
+	t.SourceURL = strings.TrimSpace(t.SourceURL)
+	t.SourceProvider = strings.TrimSpace(t.SourceProvider)
+	t.SourceTeamKey = strings.TrimSpace(t.SourceTeamKey)
+	t.SourceProjectID = strings.TrimSpace(t.SourceProjectID)
+	t.SourceUpdatedAt = strings.TrimSpace(t.SourceUpdatedAt)
+	t.SourceAssigneeName = strings.TrimSpace(t.SourceAssigneeName)
+	t.SourceAssigneeAvatarURL = strings.TrimSpace(t.SourceAssigneeAvatarURL)
 }
 
 // RecurAdvanceTodo manually forces the recurrence sweep's effect on todo id
@@ -283,7 +339,7 @@ func (c *Client) ClearTodoGroup(ctx context.Context, projectID, name string) err
 // recurring todo with an elapsed next_occurrence_at. Returns the updated Todo.
 func (c *Client) RecurAdvanceTodo(ctx context.Context, id string) (*todoschema.Todo, error) {
 	var out todoschema.Todo
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/recur-advance", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/recur-advance", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -291,14 +347,14 @@ func (c *Client) RecurAdvanceTodo(ctx context.Context, id string) (*todoschema.T
 
 // DeleteTodo removes todo id.
 func (c *Client) DeleteTodo(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/todos/"+id, nil, nil)
+	return c.do(ctx, http.MethodDelete, todoPath(id), nil, nil)
 }
 
 // CommentTodo posts a comment on todo id.
 func (c *Client) CommentTodo(ctx context.Context, id, body string) (*todoschema.Comment, error) {
 	payload, _ := json.Marshal(map[string]string{"body": body})
 	var out todoschema.Comment
-	if err := c.do(ctx, http.MethodPost, "/v1/todos/"+id+"/comment", bytes.NewReader(payload), &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, todoPath(id)+"/comment", bytes.NewReader(payload), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -309,7 +365,7 @@ func (c *Client) ListTodoComments(ctx context.Context, id string) ([]todoschema.
 	var out struct {
 		Comments []todoschema.Comment `json:"comments"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/todos/"+id+"/comments", nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, todoPath(id)+"/comments", nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Comments, nil
@@ -320,7 +376,7 @@ func (c *Client) ListTodoComments(ctx context.Context, id string) ([]todoschema.
 // attachments reuse the handoff attachment byte protocol byte-for-byte (see
 // the feature plan).
 func (c *Client) UploadTodoAttachment(ctx context.Context, todoID, name string, content []byte) error {
-	endpoint := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + url.PathEscape(name)
+	endpoint := c.BaseURL + todoPath(todoID) + "/attachments/" + url.PathEscape(name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(content))
 	if err != nil {
 		return err
@@ -347,8 +403,8 @@ func (c *Client) UploadTodoAttachment(ctx context.Context, todoID, name string, 
 // the same thing either way: the parent resource exists but doesn't carry
 // an attachment with that name.
 func (c *Client) FetchTodoAttachment(ctx context.Context, todoID, name string) ([]byte, error) {
-	url := c.BaseURL + "/v1/todos/" + todoID + "/attachments/" + name
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := c.BaseURL + todoPath(todoID) + "/attachments/" + url.PathEscape(name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -376,4 +432,8 @@ func (c *Client) FetchTodoAttachment(ctx context.Context, todoID, name string) (
 		}
 	}
 	return body, nil
+}
+
+func todoPath(id string) string {
+	return "/v1/todos/" + url.PathEscape(id)
 }

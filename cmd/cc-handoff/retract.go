@@ -25,7 +25,7 @@ func runRetract(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return err
 	}

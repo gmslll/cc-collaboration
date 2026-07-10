@@ -13,7 +13,18 @@ import 'diff_view.dart';
 class DiffPage extends StatefulWidget {
   final String path;
   final String name;
-  const DiffPage({super.key, required this.path, required this.name});
+  final Future<String> Function(String path)? loadBaseRef;
+  final Future<String> Function(String path, {int context})? loadWorkingDiff;
+  final Future<String> Function(String path, String base, {int context})?
+  loadBaseDiff;
+  const DiffPage({
+    super.key,
+    required this.path,
+    required this.name,
+    this.loadBaseRef,
+    this.loadWorkingDiff,
+    this.loadBaseDiff,
+  });
 
   @override
   State<DiffPage> createState() => _DiffPageState();
@@ -25,6 +36,7 @@ class _DiffPageState extends State<DiffPage> {
   List<FileDiff> _files = const [];
   String? _error;
   bool _loading = true;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -33,33 +45,51 @@ class _DiffPageState extends State<DiffPage> {
   }
 
   Future<void> _resolveBase() async {
-    final cfg = await RepoConfig.load(widget.path);
-    final b = cfg.base.trim();
+    final b =
+        (widget.loadBaseRef == null
+                ? (await RepoConfig.load(widget.path)).base
+                : await widget.loadBaseRef!(widget.path))
+            .trim();
     if (mounted && b.isNotEmpty) setState(() => _base = b);
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final mode = _mode;
+    final path = widget.path;
+    final base = _base;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final diff = _mode == 0
-          ? await gitDiffWorking(widget.path)
-          : await gitDiffBase(widget.path, _base);
-      if (!mounted) return;
+      final diff = mode == 0
+          ? await _loadWorking(path)
+          : await _loadBase(path, base);
+      if (!_isCurrentLoad(generation)) return;
       setState(() {
         _files = parseUnifiedDiff(diff);
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation)) return;
       setState(() {
         _error = errorText(e);
         _loading = false;
       });
     }
   }
+
+  bool _isCurrentLoad(int generation) =>
+      mounted && generation == _loadGeneration;
+
+  Future<String> _loadWorking(String path, {int context = 3}) =>
+      widget.loadWorkingDiff?.call(path, context: context) ??
+      gitDiffWorking(path, context: context);
+
+  Future<String> _loadBase(String path, String base, {int context = 3}) =>
+      widget.loadBaseDiff?.call(path, base, context: context) ??
+      gitDiffBase(path, base, context: context);
 
   void _setMode(int m) {
     if (m == _mode) return;
@@ -71,14 +101,19 @@ class _DiffPageState extends State<DiffPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('变动 · ${widget.name}'),
+        title: Text(
+          '变动 · ${widget.name}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton(
-                icon: const Icon(Icons.refresh_rounded),
-                tooltip: '刷新',
-                onPressed: _load),
+              icon: const Icon(Icons.refresh_rounded),
+              tooltip: '刷新',
+              onPressed: _load,
+            ),
           ),
         ],
         bottom: PreferredSize(
@@ -105,21 +140,22 @@ class _DiffPageState extends State<DiffPage> {
   }
 
   Widget _body() => asyncBody(
-        loading: _loading,
-        error: _error,
-        onRetry: _load,
-        child: () => _files.isEmpty
-            ? centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异')
-            // edit/discard only in uncommitted mode — there the new side IS the
-            // working file, so line numbers + git checkout/apply line up.
-            : DiffView(
-                files: _files,
-                editRoot: _mode == 0 ? widget.path : null,
-                onChanged: _load,
-                onReloadContext: (ctx) async => parseUnifiedDiff(
-                      await (_mode == 0
-                          ? gitDiffWorking(widget.path, context: ctx)
-                          : gitDiffBase(widget.path, _base, context: ctx)),
-                    )),
-      );
+    loading: _loading,
+    error: _error,
+    onRetry: _load,
+    child: () => _files.isEmpty
+        ? centerMsg(_mode == 0 ? '没有未提交改动' : '与 $_base 无差异')
+        // edit/discard only in uncommitted mode — there the new side IS the
+        // working file, so line numbers + git checkout/apply line up.
+        : DiffView(
+            files: _files,
+            editRoot: _mode == 0 ? widget.path : null,
+            onChanged: _load,
+            onReloadContext: (ctx) async => parseUnifiedDiff(
+              await (_mode == 0
+                  ? _loadWorking(widget.path, context: ctx)
+                  : _loadBase(widget.path, _base, context: ctx)),
+            ),
+          ),
+  );
 }

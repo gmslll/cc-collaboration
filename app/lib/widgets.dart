@@ -48,17 +48,28 @@ String errorText(Object e) {
         final msg = body is Map
             ? (body['error'] ?? body['message'])?.toString()
             : body?.toString();
+        final cleanMsg = msg?.trim();
+        final hasUsefulMsg =
+            cleanMsg != null &&
+            cleanMsg.isNotEmpty &&
+            cleanMsg != 'missing bearer token' &&
+            cleanMsg != 'invalid token' &&
+            cleanMsg != '404 page not found' &&
+            cleanMsg != 'not found';
         switch (code) {
           case 401:
+            if (hasUsefulMsg) return cleanMsg;
             return '未授权(登录可能失效)';
           case 403:
+            if (hasUsefulMsg) return cleanMsg;
             return '没有权限';
           case 404:
+            if (hasUsefulMsg) return cleanMsg;
             return '不存在';
           case 409:
-            return (msg?.isNotEmpty ?? false) ? msg! : '冲突(可能已被处理)';
+            return hasUsefulMsg ? cleanMsg : '冲突(可能已被处理)';
         }
-        return (msg?.isNotEmpty ?? false) ? msg! : '请求失败($code)';
+        return hasUsefulMsg ? cleanMsg : '请求失败($code)';
       default:
         return e.message ?? '网络错误';
     }
@@ -183,7 +194,9 @@ Future<bool> confirm(
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: title == null ? null : Text(title),
+      title: title == null
+          ? null
+          : Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: Text(message),
       actions: [
         TextButton(
@@ -210,37 +223,78 @@ Future<String?> textPrompt(
   String okLabel = '确定',
   bool allowEmpty = false,
 }) async {
-  final ctl = TextEditingController(text: initial);
-  final ok = await showDialog<bool>(
+  final raw = await showDialog<String>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
+    builder: (ctx) => _TextPromptDialog(
+      title: title,
+      hint: hint,
+      initial: initial,
+      okLabel: okLabel,
+    ),
+  );
+  if (raw == null) return null;
+  final text = raw.trim();
+  return (text.isEmpty && !allowEmpty) ? null : text;
+}
+
+class _TextPromptDialog extends StatefulWidget {
+  final String title;
+  final String? hint;
+  final String initial;
+  final String okLabel;
+
+  const _TextPromptDialog({
+    required this.title,
+    required this.hint,
+    required this.initial,
+    required this.okLabel,
+  });
+
+  @override
+  State<_TextPromptDialog> createState() => _TextPromptDialogState();
+}
+
+class _TextPromptDialogState extends State<_TextPromptDialog> {
+  late final TextEditingController _ctl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: TextField(
-        controller: ctl,
+        controller: _ctl,
         autofocus: true,
-        decoration: InputDecoration(hintText: hint),
-        onSubmitted: (_) => Navigator.pop(ctx, true),
+        decoration: InputDecoration(hintText: widget.hint),
+        onSubmitted: (_) => _submit(),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
+          onPressed: () => Navigator.pop(context),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: Text(okLabel),
-        ),
+        FilledButton(onPressed: _submit, child: Text(widget.okLabel)),
       ],
-    ),
-  );
-  if (ok != true) return null;
-  final text = ctl.text.trim();
-  return (text.isEmpty && !allowEmpty) ? null : text;
+    );
+  }
 }
 
 // centerMsg is the shared muted empty/placeholder state, optionally with a retry.
 Widget centerMsg(String text, {VoidCallback? onRetry}) => Center(
-  child: Padding(
+  child: SingleChildScrollView(
     padding: const EdgeInsets.all(24),
     child: Column(
       mainAxisSize: MainAxisSize.min,
@@ -861,11 +915,7 @@ Widget _sessionActivityPanel(
       children: [
         Row(
           children: [
-            const Icon(
-              Icons.bolt_rounded,
-              size: 12,
-              color: CcColors.subtle,
-            ),
+            const Icon(Icons.bolt_rounded, size: 12, color: CcColors.subtle),
             const SizedBox(width: 5),
             Text(
               '执行记录 $total',
@@ -1040,7 +1090,9 @@ class _SessionActivityAvatarState extends State<SessionActivityAvatar>
   @override
   Widget build(BuildContext context) {
     final st = sessionStatusStyle(widget.status);
-    final active = sessionStatusIsActive(widget.status); // working / running / …
+    final active = sessionStatusIsActive(
+      widget.status,
+    ); // working / running / …
     final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final animate = active && !reduce;
     // Start/stop the repeat in build (same pattern as BreathingGlow) so the pulse
@@ -1458,8 +1510,7 @@ class _DragHandleState extends State<DragHandle> {
   Widget build(BuildContext context) {
     final noMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final line = AnimatedContainer(
-      duration:
-          noMotion ? Duration.zero : const Duration(milliseconds: 120),
+      duration: noMotion ? Duration.zero : const Duration(milliseconds: 120),
       width: widget.vertical ? null : (_active ? 2 : 1),
       height: widget.vertical ? (_active ? 2 : 1) : null,
       color: _active ? CcColors.accent : CcColors.border,
@@ -1472,14 +1523,16 @@ class _DragHandleState extends State<DragHandle> {
       onExit: (_) => setState(() => _active = false),
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onHorizontalDragUpdate:
-            widget.vertical ? null : (d) => widget.onDelta(d.delta.dx),
-        onHorizontalDragEnd:
-            widget.vertical ? null : (_) => widget.onEnd?.call(),
-        onVerticalDragUpdate:
-            widget.vertical ? (d) => widget.onDelta(d.delta.dy) : null,
-        onVerticalDragEnd:
-            widget.vertical ? (_) => widget.onEnd?.call() : null,
+        onHorizontalDragUpdate: widget.vertical
+            ? null
+            : (d) => widget.onDelta(d.delta.dx),
+        onHorizontalDragEnd: widget.vertical
+            ? null
+            : (_) => widget.onEnd?.call(),
+        onVerticalDragUpdate: widget.vertical
+            ? (d) => widget.onDelta(d.delta.dy)
+            : null,
+        onVerticalDragEnd: widget.vertical ? (_) => widget.onEnd?.call() : null,
         child: widget.vertical
             ? SizedBox(height: 8, child: Center(child: line))
             : SizedBox(width: 8, child: Center(child: line)),
@@ -1652,11 +1705,16 @@ PopupMenuItem<String> ccMenuItem({
         Icon(icon, size: 13, color: color),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(
-            label,
-            style: danger && on
-                ? const TextStyle(color: CcColors.danger)
-                : null,
+          child: Tooltip(
+            message: label,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: danger && on
+                  ? const TextStyle(color: CcColors.danger)
+                  : null,
+            ),
           ),
         ),
         if (shortcut != null) ...[
@@ -1668,39 +1726,216 @@ PopupMenuItem<String> ccMenuItem({
   );
 }
 
+const String fileMenuEdit = 'file-edit';
+const String fileMenuLocate = 'file-locate';
+const String fileMenuVersion = 'file-version';
+
+List<PopupMenuEntry<String>> fileActionMenuEntries({
+  required bool isDir,
+  required bool includeVersionControl,
+}) => [
+  ccMenuItem(
+    value: 'open',
+    icon: isDir ? Icons.folder_open_rounded : Icons.description_outlined,
+    label: isDir ? 'Open Folder' : 'Open',
+  ),
+  const PopupMenuDivider(),
+  ccMenuItem(
+    value: 'newFile',
+    icon: Icons.note_add_outlined,
+    label: 'New File',
+  ),
+  ccMenuItem(
+    value: 'newDir',
+    icon: Icons.create_new_folder_outlined,
+    label: 'New Directory',
+  ),
+  const PopupMenuDivider(),
+  ccMenuItem(
+    value: fileMenuEdit,
+    icon: Icons.edit_note_rounded,
+    label: 'Edit Actions ▸',
+  ),
+  ccMenuItem(
+    value: fileMenuLocate,
+    icon: Icons.travel_explore_rounded,
+    label: 'Locate / Open ▸',
+  ),
+  if (includeVersionControl)
+    ccMenuItem(
+      value: fileMenuVersion,
+      icon: Icons.history_edu_rounded,
+      label: 'Version Control ▸',
+    ),
+  const PopupMenuDivider(),
+  ccMenuItem(
+    value: 'refresh',
+    icon: Icons.refresh_rounded,
+    label: 'Reload from Disk',
+  ),
+];
+
+List<PopupMenuEntry<String>> fileActionSubmenuEntries(
+  String group, {
+  required bool atRoot,
+  required bool includeProjectReveal,
+  bool includeTerminal = true,
+}) => switch (group) {
+  fileMenuEdit => [
+    ccMenuItem(
+      value: atRoot ? null : 'rename',
+      icon: Icons.drive_file_rename_outline_rounded,
+      label: 'Rename',
+    ),
+    ccMenuItem(
+      value: atRoot ? null : 'delete',
+      icon: Icons.delete_outline_rounded,
+      label: 'Delete',
+      danger: true,
+    ),
+    const PopupMenuDivider(),
+    ccMenuItem(
+      value: 'copy',
+      icon: Icons.copy_rounded,
+      label: 'Copy',
+      shortcut: '⌘C',
+    ),
+    ccMenuItem(
+      value: atRoot ? null : 'cut',
+      icon: Icons.content_cut_rounded,
+      label: 'Cut',
+      shortcut: '⌘X',
+    ),
+    ccMenuItem(
+      value: 'paste',
+      icon: Icons.content_paste_rounded,
+      label: 'Paste',
+      shortcut: '⌘V',
+    ),
+  ],
+  fileMenuLocate => [
+    ccMenuItem(
+      value: 'copyPath',
+      icon: Icons.content_copy_rounded,
+      label: 'Copy Path',
+    ),
+    if (includeProjectReveal)
+      ccMenuItem(
+        value: 'revealProject',
+        icon: Icons.my_location_rounded,
+        label: 'Reveal in Project',
+      ),
+    ccMenuItem(
+      value: 'revealSystem',
+      icon: Icons.folder_open_rounded,
+      label: 'Reveal in System',
+    ),
+    ccMenuItem(
+      value: 'openExternal',
+      icon: Icons.open_in_new_rounded,
+      label: 'Open In',
+    ),
+    if (includeTerminal)
+      ccMenuItem(
+        value: 'terminal',
+        icon: Icons.terminal_rounded,
+        label: 'Open Terminal Here',
+      ),
+  ],
+  fileMenuVersion => [
+    ccMenuItem(
+      value: 'compare',
+      icon: Icons.difference_rounded,
+      label: 'Compare with HEAD',
+    ),
+    ccMenuItem(
+      value: 'history',
+      icon: Icons.history_rounded,
+      label: 'File History',
+    ),
+    ccMenuItem(
+      value: 'annotate',
+      icon: Icons.format_align_left_rounded,
+      label: 'Annotate / Blame',
+    ),
+  ],
+  _ => const <PopupMenuEntry<String>>[],
+};
+
 // SendTarget is one "send to session" menu target: a session id + its label.
 typedef SendTarget = ({String id, String label});
 
+const int groupedPeerInlineLimit = 2;
+const int peerPickerInlineLimit = 12;
+
+int normalizedPeerInlineLimit(int inlineLimit, int fallback) =>
+    inlineLimit < 1 ? fallback : inlineLimit;
+
+String peerPickerRangeLabel(int start, int end) =>
+    start == end ? '会话 $start ▸' : '会话 $start-$end ▸';
+
+List<PopupMenuEntry<String>> groupedPeerMenuEntries(
+  List<SendTarget> same,
+  List<SendTarget> others, {
+  required String prefix,
+  required IconData icon,
+  required String Function(SendTarget t) label,
+  bool enabled = true,
+  int inlineLimit = groupedPeerInlineLimit,
+}) {
+  final limit = normalizedPeerInlineLimit(inlineLimit, groupedPeerInlineLimit);
+  return [
+    if (same.length > limit)
+      ccMenuItem(
+        value: '$prefix-same',
+        icon: Icons.folder_rounded,
+        label: '当前项目会话 (${same.length}) ▸',
+        enabled: enabled,
+      )
+    else
+      for (final t in same)
+        ccMenuItem(
+          value: '$prefix:${t.id}',
+          icon: icon,
+          label: label(t),
+          enabled: enabled,
+        ),
+    if (others.isNotEmpty)
+      ccMenuItem(
+        value: '$prefix-others',
+        icon: Icons.more_horiz_rounded,
+        label: '其他会话 (${others.length}) ▸',
+        enabled: enabled,
+      ),
+  ];
+}
+
 // sendMenuEntries builds the first-level "发送到会话" rows: same-project targets
-// inline, then a "其他会话 ▸" row (value 'send-others') when there are
-// other-project targets. Each target is value 'send:<id>'.
+// inline while the list is short. Long same-project lists collapse behind
+// "当前项目会话 ▸" (value 'send-same'), then a "其他会话 ▸" row (value
+// 'send-others') when there are other-project targets. Each inline target is
+// value 'send:<id>'.
 List<PopupMenuEntry<String>> sendMenuEntries(
   List<SendTarget> same,
   List<SendTarget> others, {
   bool enabled = true,
-}) => [
-  for (final t in same)
-    ccMenuItem(
-      value: 'send:${t.id}',
-      icon: Icons.send_rounded,
-      label: '发送到「${t.label}」',
-      enabled: enabled,
-    ),
-  if (others.isNotEmpty)
-    ccMenuItem(
-      value: 'send-others',
-      icon: Icons.more_horiz_rounded,
-      label: '其他会话 ▸',
-      enabled: enabled,
-    ),
-];
+  int inlineLimit = groupedPeerInlineLimit,
+}) => groupedPeerMenuEntries(
+  same,
+  others,
+  prefix: 'send',
+  icon: Icons.send_rounded,
+  label: (t) => '发送到「${t.label}」',
+  enabled: enabled,
+  inlineLimit: inlineLimit,
+);
 
 // showGroupedSendMenu shows the grouped send picker at [globalPos] and returns
 // the chosen session id as 'send:<id>' (or one of [extraTop]'s values, or null).
-// Same-project targets are inline; picking "其他会话" cascades a second menu of
-// other-project targets — Flutter's showMenu has no native submenu. [extraTop]
-// rows (e.g. the terminal's copy/paste/全选) render above a divider; [extraBottom]
-// rows (e.g. "发送到在线用户…") render below the local targets.
+// Same-project targets are inline while short; long lists and "其他会话" cascade a
+// second menu — Flutter's showMenu has no native submenu. [extraTop] rows (e.g.
+// the terminal's copy/paste/全选) render above a divider; [extraBottom] rows
+// (e.g. "发送到在线用户…") render below the local targets.
 Future<String?> showGroupedSendMenu(
   BuildContext context,
   Offset globalPos, {
@@ -1724,6 +1959,10 @@ Future<String?> showGroupedSendMenu(
       ...extraBottom,
     ],
   );
+  if (v == 'send-same') {
+    if (!context.mounted) return null;
+    return showPeerPicker(context, globalPos, same, 'send');
+  }
   if (v != 'send-others') return v; // 'send:<id>', an extraTop value, or null
   if (!context.mounted) return null;
   return showPeerPicker(context, globalPos, others, 'send');
@@ -1740,10 +1979,39 @@ RelativeRect menuPosAt(BuildContext context, Offset globalPos) {
   );
 }
 
-// showPeerPicker shows a flat menu of [peers] at [globalPos], each returning
-// '<prefix>:<id>' (or null). Backs both the "其他会话" send cascade and the
-// "插话到会话" cascade — Flutter's showMenu has no native submenu, so a chosen
-// parent row reopens a menu of targets here.
+List<PopupMenuEntry<String>> peerPickerMenuEntries(
+  List<SendTarget> peers,
+  String prefix, {
+  IconData icon = Icons.send_rounded,
+  String Function(SendTarget t)? label,
+  int inlineLimit = peerPickerInlineLimit,
+}) {
+  final limit = normalizedPeerInlineLimit(inlineLimit, peerPickerInlineLimit);
+  if (peers.length <= limit) {
+    return [
+      for (final t in peers)
+        ccMenuItem(
+          value: '$prefix:${t.id}',
+          icon: icon,
+          label: label?.call(t) ?? '发送到「${t.label}」',
+        ),
+    ];
+  }
+  return [
+    for (var start = 0; start < peers.length; start += limit)
+      ccMenuItem(
+        value: '$prefix-page:$start',
+        icon: Icons.view_list_rounded,
+        label: peerPickerRangeLabel(
+          start + 1,
+          (start + limit).clamp(0, peers.length).toInt(),
+        ),
+      ),
+  ];
+}
+
+// showPeerPicker opens either a direct peer list or, for long lists, a compact
+// range picker first. The selected peer always returns '<prefix>:<id>'.
 Future<String?> showPeerPicker(
   BuildContext context,
   Offset globalPos,
@@ -1751,19 +2019,79 @@ Future<String?> showPeerPicker(
   String prefix, {
   IconData icon = Icons.send_rounded,
   String Function(SendTarget t)? label,
-}) {
-  return showMenu<String>(
+  int inlineLimit = peerPickerInlineLimit,
+}) async {
+  final limit = normalizedPeerInlineLimit(inlineLimit, peerPickerInlineLimit);
+  final v = await showMenu<String>(
     context: context,
     position: menuPosAt(context, globalPos),
-    items: [
-      for (final t in peers)
-        ccMenuItem(
-          value: '$prefix:${t.id}',
-          icon: icon,
-          label: label?.call(t) ?? '发送到「${t.label}」',
-        ),
-    ],
+    items: peerPickerMenuEntries(
+      peers,
+      prefix,
+      icon: icon,
+      label: label,
+      inlineLimit: limit,
+    ),
   );
+  if (v == null || !v.startsWith('$prefix-page:')) return v;
+  if (!context.mounted) return null;
+  final start = int.tryParse(v.substring('$prefix-page:'.length));
+  if (start == null || start < 0 || start >= peers.length) return null;
+  final end = (start + limit).clamp(0, peers.length).toInt();
+  return showPeerPicker(
+    context,
+    globalPos,
+    peers.sublist(start, end),
+    prefix,
+    icon: icon,
+    label: label,
+    inlineLimit: limit,
+  );
+}
+
+Future<String?> showGroupedPeerMenu(
+  BuildContext context,
+  Offset globalPos, {
+  required List<SendTarget> same,
+  required List<SendTarget> others,
+  required String prefix,
+  required IconData icon,
+  required String Function(SendTarget t) label,
+}) async {
+  final v = await showMenu<String>(
+    context: context,
+    position: menuPosAt(context, globalPos),
+    items: groupedPeerMenuEntries(
+      same,
+      others,
+      prefix: prefix,
+      icon: icon,
+      label: label,
+    ),
+  );
+  if (v == '$prefix-same') {
+    if (!context.mounted) return null;
+    return showPeerPicker(
+      context,
+      globalPos,
+      same,
+      prefix,
+      icon: icon,
+      label: label,
+    );
+  }
+  if (v == '$prefix-others') {
+    if (!context.mounted) return null;
+    return showPeerPicker(
+      context,
+      globalPos,
+      others,
+      prefix,
+      icon: icon,
+      label: label,
+    );
+  }
+  return v;
 }
 
 // fileNameDirLabel renders a path as filename (left) + small gray directory —

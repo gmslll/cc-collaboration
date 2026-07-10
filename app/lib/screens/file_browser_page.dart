@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -16,6 +17,18 @@ const double _kRowBaseLeft = 8; // left gutter before depth 0
 const double _kIndentStep = 16; // horizontal step per nesting level
 const double _kChevronW = 16; // column reserved for the disclosure chevron
 
+double fileNameDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+double fileConfirmDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 // FileBrowserPage is a lazy file tree of a project root; tapping a file opens it
 // in the editor. Each directory lists its children on first expand.
 class FileBrowserPage extends StatefulWidget {
@@ -31,6 +44,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     with FsClipboardActions {
   int _refreshToken = 0;
   String? _selectedPath;
+  Offset? _lastContextMenuPosition;
   // 文件树聚焦时才响应 Cmd/Ctrl+C/X/V。
   final FocusNode _treeFocus = FocusNode(debugLabel: 'fileBrowserTree');
 
@@ -73,31 +87,18 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     String initial = '',
     String hint = '',
   }) async {
-    final ctl = TextEditingController(text: initial);
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: InputDecoration(labelText: label, hintText: hint),
-          onSubmitted: (_) => Navigator.pop(ctx, true),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确定'),
-          ),
-        ],
+      builder: (_) => FileNameDialog(
+        title: title,
+        label: label,
+        initial: initial,
+        hint: hint,
       ),
     );
-    if (ok != true) return null;
-    final name = ctl.text.trim();
+    if (raw == null) return null;
+    if (!mounted) return null;
+    final name = raw.trim();
     if (!_validName(name)) {
       if (!mounted) return null;
       snack(context, '名称不能为空，也不能包含路径分隔符');
@@ -109,28 +110,42 @@ class _FileBrowserPageState extends State<FileBrowserPage>
   Future<bool> _confirm(String title, String message) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: fileConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: SelectableText(message, style: CcType.code(size: 12)),
+            ),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
     );
+    if (!mounted) return false;
     return ok == true;
   }
 
   Future<void> _newFile(String dir) async {
     final name = await _nameDialog('新建文件', '文件名', hint: 'README.md');
     if (name == null) return;
+    if (!mounted) return;
     final path = _join(dir, name);
     try {
       await File(path).create(exclusive: true);
@@ -148,6 +163,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
   Future<void> _newDirectory(String dir) async {
     final name = await _nameDialog('新建目录', '目录名', hint: 'src');
     if (name == null) return;
+    if (!mounted) return;
     final path = _join(dir, name);
     try {
       await Directory(path).create();
@@ -164,6 +180,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     }
     final name = await _nameDialog('重命名', '名称', initial: _baseName(path));
     if (name == null) return;
+    if (!mounted) return;
     final target = _join(_parentDir(path), name);
     try {
       if (isDir) {
@@ -184,6 +201,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     }
     final ok = await _confirm('删除「${_baseName(path)}」?', '此操作会删除磁盘文件。');
     if (!ok) return;
+    if (!mounted) return;
     try {
       if (isDir) {
         await Directory(path).delete(recursive: true);
@@ -269,6 +287,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
       case 'paste':
         fsPaste(isDir ? path : _parentDir(path));
       case 'reveal':
+      case 'revealSystem':
         _revealInSystem(path);
       case 'openExternal':
         _openExternally(path);
@@ -277,91 +296,57 @@ class _FileBrowserPageState extends State<FileBrowserPage>
     }
   }
 
+  Future<void> _selectPathMenu(String value, String path, bool isDir) async {
+    if (value == fileMenuEdit || value == fileMenuLocate) {
+      final pick = await showMenu<String>(
+        context: context,
+        position: menuPosAt(
+          context,
+          _lastContextMenuPosition ?? _fallbackMenuPosition(),
+        ),
+        items: fileActionSubmenuEntries(
+          value,
+          atRoot: path == widget.root,
+          includeProjectReveal: false,
+          includeTerminal: false,
+        ),
+      );
+      if (pick == null || !mounted) return;
+      _handleMenu(pick, path, isDir);
+      return;
+    }
+    _handleMenu(value, path, isDir);
+  }
+
   PopupMenuButton<String> _pathMenu(String path, bool isDir) =>
       PopupMenuButton<String>(
         tooltip: 'File actions',
         icon: const Icon(Icons.more_vert_rounded, size: 16),
         padding: EdgeInsets.zero,
-        onOpened: () => setState(() => _selectedPath = path),
-        onSelected: (v) => _handleMenu(v, path, isDir),
-        itemBuilder: (_) => [
-          ccMenuItem(
-            value: 'open',
-            icon: isDir
-                ? Icons.folder_open_rounded
-                : Icons.description_outlined,
-            label: isDir ? 'Open Folder' : 'Open',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'newFile',
-            icon: Icons.note_add_outlined,
-            label: 'New File',
-          ),
-          ccMenuItem(
-            value: 'newDir',
-            icon: Icons.create_new_folder_outlined,
-            label: 'New Directory',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: path == widget.root ? null : 'rename',
-            icon: Icons.drive_file_rename_outline_rounded,
-            label: 'Rename',
-          ),
-          ccMenuItem(
-            value: path == widget.root ? null : 'delete',
-            icon: Icons.delete_outline_rounded,
-            label: 'Delete',
-            danger: true,
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'copyPath',
-            icon: Icons.content_copy_rounded,
-            label: 'Copy Path',
-          ),
-          ccMenuItem(
-            value: 'copy',
-            icon: Icons.copy_rounded,
-            label: 'Copy',
-            shortcut: '⌘C',
-          ),
-          ccMenuItem(
-            value: path == widget.root ? null : 'cut',
-            icon: Icons.content_cut_rounded,
-            label: 'Cut',
-            shortcut: '⌘X',
-          ),
-          ccMenuItem(
-            value: 'paste',
-            icon: Icons.content_paste_rounded,
-            label: 'Paste',
-            shortcut: '⌘V',
-          ),
-          ccMenuItem(
-            value: 'reveal',
-            icon: Icons.my_location_rounded,
-            label: 'Reveal in System',
-          ),
-          ccMenuItem(
-            value: 'openExternal',
-            icon: Icons.open_in_new_rounded,
-            label: 'Open In',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'refresh',
-            icon: Icons.refresh_rounded,
-            label: 'Reload from Disk',
-          ),
-        ],
+        onOpened: () {
+          _lastContextMenuPosition = null;
+          setState(() => _selectedPath = path);
+        },
+        onSelected: (v) => unawaited(_selectPathMenu(v, path, isDir)),
+        itemBuilder: (_) =>
+            fileActionMenuEntries(isDir: isDir, includeVersionControl: false),
       );
+
+  Offset _fallbackMenuPosition() {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    return overlay.localToGlobal(overlay.size.center(Offset.zero));
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('文件 · ${widget.name}')),
+      appBar: AppBar(
+        title: Text(
+          '文件 · ${widget.name}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: DecoratedBox(
         decoration: appGradient,
         // CallbackShortcuts 在外、聚焦节点在内：点进树使其聚焦后才响应 Cmd/Ctrl+C/X/V。
@@ -384,6 +369,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
                     selectedPath: _selectedPath,
                     onSelectPath: (p) => setState(() => _selectedPath = p),
                     onDropPaths: fsDrop,
+                    onMenuPosition: (pos) => _lastContextMenuPosition = pos,
                     refreshToken: _refreshToken,
                     fileMenuBuilder: (path) => _pathMenu(path, false),
                     directoryMenuBuilder: (path) => _pathMenu(path, true),
@@ -398,6 +384,72 @@ class _FileBrowserPageState extends State<FileBrowserPage>
   }
 }
 
+class FileNameDialog extends StatefulWidget {
+  final String title;
+  final String label;
+  final String initial;
+  final String hint;
+
+  const FileNameDialog({
+    super.key,
+    required this.title,
+    required this.label,
+    this.initial = '',
+    this.hint = '',
+  });
+
+  @override
+  State<FileNameDialog> createState() => _FileNameDialogState();
+}
+
+class _FileNameDialogState extends State<FileNameDialog> {
+  late final TextEditingController _ctl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: fileNameDialogWidth(size),
+        child: SingleChildScrollView(
+          child: TextField(
+            controller: _ctl,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: widget.label,
+              hintText: widget.hint,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('确定')),
+      ],
+    );
+  }
+}
+
 class FileTree extends StatelessWidget {
   final String root;
   final String label;
@@ -405,6 +457,7 @@ class FileTree extends StatelessWidget {
   final String? selectedPath;
   final ValueChanged<String>? onSelectPath;
   final void Function(String dir, List<String> paths)? onDropPaths;
+  final ValueChanged<Offset>? onMenuPosition;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
@@ -417,6 +470,7 @@ class FileTree extends StatelessWidget {
     this.selectedPath,
     this.onSelectPath,
     this.onDropPaths,
+    this.onMenuPosition,
     this.fileMenuBuilder,
     this.directoryMenuBuilder,
     this.pathStatusBuilder,
@@ -433,6 +487,7 @@ class FileTree extends StatelessWidget {
     selectedPath: selectedPath,
     onSelectPath: onSelectPath,
     onDropPaths: onDropPaths,
+    onMenuPosition: onMenuPosition,
     fileMenuBuilder: fileMenuBuilder,
     directoryMenuBuilder: directoryMenuBuilder,
     pathStatusBuilder: pathStatusBuilder,
@@ -451,6 +506,7 @@ class DirTile extends StatefulWidget {
   final ValueChanged<String>? onSelectPath;
   // 从访达把文件拖到某个目录行上时回调 (目录路径, 拖入的源路径列表)。
   final void Function(String dir, List<String> paths)? onDropPaths;
+  final ValueChanged<Offset>? onMenuPosition;
   final PopupMenuButton<String>? Function(String path)? fileMenuBuilder;
   final PopupMenuButton<String>? Function(String path)? directoryMenuBuilder;
   final Widget Function(String path)? pathStatusBuilder;
@@ -465,6 +521,7 @@ class DirTile extends StatefulWidget {
     this.selectedPath,
     this.onSelectPath,
     this.onDropPaths,
+    this.onMenuPosition,
     this.fileMenuBuilder,
     this.directoryMenuBuilder,
     this.pathStatusBuilder,
@@ -690,6 +747,7 @@ class _DirTileState extends State<DirTile> {
             selectedPath: widget.selectedPath,
             onSelectPath: widget.onSelectPath,
             onDropPaths: widget.onDropPaths,
+            onMenuPosition: widget.onMenuPosition,
             fileMenuBuilder: widget.fileMenuBuilder,
             directoryMenuBuilder: widget.directoryMenuBuilder,
             pathStatusBuilder: widget.pathStatusBuilder,
@@ -740,6 +798,7 @@ class _DirTileState extends State<DirTile> {
       behavior: HitTestBehavior.translucent,
       onSecondaryTapDown: (d) async {
         menu.onOpened?.call();
+        widget.onMenuPosition?.call(d.globalPosition);
         final overlay =
             Overlay.of(context).context.findRenderObject() as RenderBox;
         final value = await showMenu<String>(

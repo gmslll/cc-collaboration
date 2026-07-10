@@ -130,7 +130,9 @@ func runUserAdd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *identity == "" {
+	normalizedIdentity := strings.TrimSpace(*identity)
+	displayName := strings.TrimSpace(*display)
+	if normalizedIdentity == "" {
 		return fmt.Errorf("--identity is required (e.g. --identity you@backend)")
 	}
 
@@ -154,24 +156,24 @@ func runUserAdd(args []string) error {
 	}
 
 	ctx := context.Background()
-	switch _, err := st.GetUser(ctx, *identity); {
+	switch _, err := st.GetUser(ctx, normalizedIdentity); {
 	case errors.Is(err, store.ErrNotFound):
 		if err := st.CreateUser(ctx, store.User{
-			Identity: *identity, PasswordHash: hash, DisplayName: *display, IsAdmin: *admin,
+			Identity: normalizedIdentity, PasswordHash: hash, DisplayName: displayName, IsAdmin: *admin,
 		}, time.Now()); err != nil {
 			return err
 		}
-		fmt.Printf("created account %q (admin=%v)\n", *identity, *admin)
+		fmt.Printf("created account %q (admin=%v)\n", normalizedIdentity, *admin)
 	case err != nil:
 		return err
 	default:
-		if err := st.SetPasswordHash(ctx, *identity, hash); err != nil {
+		if err := st.SetPasswordHash(ctx, normalizedIdentity, hash); err != nil {
 			return err
 		}
-		if err := st.SetAdmin(ctx, *identity, *admin); err != nil {
+		if err := st.SetAdmin(ctx, normalizedIdentity, *admin); err != nil {
 			return err
 		}
-		fmt.Printf("updated account %q (admin=%v)\n", *identity, *admin)
+		fmt.Printf("updated account %q (admin=%v)\n", normalizedIdentity, *admin)
 	}
 	if generated {
 		fmt.Printf("password: %s\n", pw)

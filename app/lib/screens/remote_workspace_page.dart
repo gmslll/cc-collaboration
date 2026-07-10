@@ -28,8 +28,185 @@ import '../theme.dart';
 import '../voice/speaker.dart';
 import '../voice/stt.dart';
 import '../widgets.dart';
+import '../widgets/session_snapshot_view.dart';
 import 'diff_split.dart';
 import '../terminal_theme.dart';
+
+double remoteWorkspaceMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.58,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  final capped = available < preferred ? available : preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
+double remoteWorkspaceDialogWidth(
+  Size screenSize, {
+  double preferred = 420,
+  double horizontalInset = 16,
+}) {
+  final available = screenSize.width - horizontalInset * 2;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+double remoteWorkspaceDialogDimension(
+  double available,
+  double preferred, {
+  double min = 160,
+}) {
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < min) return available;
+  return available < preferred ? available : preferred;
+}
+
+Size remoteSupervisorKnowledgeDialogSize(
+  Size screenSize, {
+  double preferredWidth = 520,
+  double preferredHeight = 600,
+}) => Size(
+  remoteWorkspaceDialogDimension(screenSize.width - 32, preferredWidth),
+  remoteWorkspaceDialogDimension(
+    screenSize.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
+double remoteActivitySheetHeight(
+  Size screenSize, {
+  double preferred = 360,
+  double verticalInset = 48,
+  double minHeight = 180,
+}) {
+  final available = screenSize.height - verticalInset;
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minHeight) return available;
+  return available < preferred ? available : preferred;
+}
+
+Size remoteQuickReplyDialogSize(
+  Size screenSize, {
+  double preferredWidth = 520,
+  double preferredHeight = 520,
+}) => Size(
+  remoteWorkspaceDialogDimension(screenSize.width - 32, preferredWidth),
+  remoteWorkspaceDialogDimension(
+    screenSize.height - 32,
+    preferredHeight,
+    min: 240,
+  ),
+);
+
+double remoteQuickReplySnapshotHeight(
+  Size screenSize, {
+  double preferred = 220,
+  double minHeight = 120,
+  double maxFraction = 0.42,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minHeight) return available;
+  return available < preferred ? available : preferred;
+}
+
+String remoteWorktreeRemoveTarget(RemoteWorktree worktree) {
+  final branch = worktree.branch.trim();
+  return branch.isEmpty ? worktree.name : branch;
+}
+
+bool remoteGitHasStageableChanges(Iterable<RemoteGitChange> changes) {
+  return changes.any((c) => c.untracked || !c.staged || c.status.length >= 2);
+}
+
+bool remoteGitHasStagedChanges(Iterable<RemoteGitChange> changes) {
+  return changes.any((c) => c.staged);
+}
+
+bool remoteGitHasAnyChanges(Iterable<RemoteGitChange> changes) {
+  return changes.isNotEmpty;
+}
+
+class _RemoteBranchCreateDraft {
+  final String branch;
+  final String startRef;
+
+  const _RemoteBranchCreateDraft({
+    required this.branch,
+    required this.startRef,
+  });
+}
+
+class _RemoteBranchCreateDialog extends StatefulWidget {
+  final String initialStartRef;
+
+  const _RemoteBranchCreateDialog({this.initialStartRef = ''});
+
+  @override
+  State<_RemoteBranchCreateDialog> createState() =>
+      _RemoteBranchCreateDialogState();
+}
+
+class _RemoteBranchCreateDialogState extends State<_RemoteBranchCreateDialog> {
+  late final TextEditingController _branchCtl = TextEditingController();
+  late final TextEditingController _startCtl = TextEditingController(
+    text: widget.initialStartRef,
+  );
+
+  @override
+  void dispose() {
+    _branchCtl.dispose();
+    _startCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    _RemoteBranchCreateDraft(branch: _branchCtl.text, startRef: _startCtl.text),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('新建分支'),
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _branchCtl,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: '分支名'),
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _startCtl,
+                decoration: const InputDecoration(labelText: '起点 ref(可选)'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建并切换')),
+      ],
+    );
+  }
+}
 
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
@@ -56,10 +233,7 @@ class RemoteWorkspacePage extends StatefulWidget {
 
 class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     with WidgetsBindingObserver {
-  late final RemoteClient _c = RemoteClient(
-    relayUrl: widget.relayUrl,
-    token: widget.token,
-  );
+  late RemoteClient _c;
   int _tab = 0; // 0 = 会话, 1 = 代码, 2 = Git
   // Collapsed project groups in the sessions tab, keyed by project path.
   final Set<String> _collapsedProjects = <String>{};
@@ -79,26 +253,61 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     WidgetsBinding.instance.addObserver(this);
     final focus = Prefs.getString('remote.focusProject', def: '');
     if (focus.isNotEmpty) _focusedProjectPath = focus;
-    _c.addListener(_onClientChange);
-    _c.onFileReceived = (name, path) {
-      if (!mounted) return;
-      snack(context, '📁 收到文件：$name（在「⇅」里打开）', background: CcColors.ok);
-    };
-    // A desktop file offer → prompt 接受/拒绝 (one dialog at a time).
-    _c.onIncomingOffer = (_) => _pumpOffers();
-    _c.connect();
-    // Publish this connection so TodosPage's 一键指派 can reach the paired
-    // desktop's sessions/roots + send a remote assign (see phoneRemoteClient).
-    phoneRemoteClient = _c;
+    _c = _newRemoteClient();
+    _attachRemoteClient(_c);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _c.removeListener(_onClientChange);
-    if (identical(phoneRemoteClient, _c)) phoneRemoteClient = null;
-    _c.dispose();
+    _disposeRemoteClient(_c);
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant RemoteWorkspacePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.relayUrl == widget.relayUrl &&
+        oldWidget.token == widget.token) {
+      return;
+    }
+    final oldClient = _c;
+    final historyMode = oldClient.historyMode;
+    _disposeRemoteClient(oldClient);
+    _c = _newRemoteClient()..historyMode = historyMode;
+    _dirStack.clear();
+    _gitRepo = null;
+    _collapsedProjects.clear();
+    _focusedProjectPath = null;
+    Prefs.setString('remote.focusProject', '');
+    _attachRemoteClient(_c);
+    if (mounted) setState(() {});
+  }
+
+  RemoteClient _newRemoteClient() =>
+      RemoteClient(relayUrl: widget.relayUrl, token: widget.token);
+
+  void _attachRemoteClient(RemoteClient client) {
+    client.addListener(_onClientChange);
+    client.onFileReceived = (name, path) {
+      if (!mounted || !identical(client, _c)) return;
+      snack(context, '📁 收到文件：$name（在「⇅」里打开）', background: CcColors.ok);
+    };
+    // A desktop file offer → prompt 接受/拒绝 (one dialog at a time).
+    client.onIncomingOffer = (_) {
+      if (!mounted || !identical(client, _c)) return;
+      _pumpOffers();
+    };
+    client.connect();
+    // Publish this connection so TodosPage's 一键指派 can reach the paired
+    // desktop's sessions/roots + send a remote assign (see phoneRemoteClient).
+    phoneRemoteClient = client;
+  }
+
+  void _disposeRemoteClient(RemoteClient client) {
+    client.removeListener(_onClientChange);
+    if (identical(phoneRemoteClient, client)) phoneRemoteClient = null;
+    client.dispose();
   }
 
   @override
@@ -167,10 +376,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                       ),
                       title: Text(
                         n.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.text),
                       ),
                       subtitle: Text(
                         '${n.body} · ${relativeTime(n.at)}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.muted),
                       ),
                     ),
@@ -209,24 +422,41 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: CcColors.panel,
-        title: const Text('收到文件', style: TextStyle(color: CcColors.text)),
-        content: Text(
-          '${o.peerName ?? '电脑'} 想发送\n${o.name}（${_fmtBytes(o.size)}）',
-          style: const TextStyle(color: CcColors.muted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('拒绝', style: TextStyle(color: CcColors.danger)),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          backgroundColor: CcColors.panel,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('接受'),
+          title: const Text(
+            '收到文件',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: CcColors.text),
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: remoteWorkspaceDialogWidth(size),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                '${o.peerName ?? '电脑'} 想发送\n${o.name}（${_fmtBytes(o.size)}）',
+                style: const TextStyle(color: CcColors.muted),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('拒绝', style: TextStyle(color: CcColors.danger)),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('接受'),
+            ),
+          ],
+        );
+      },
     ).then((accepted) {
       _offerDialogOpen = false;
       if (!mounted) return;
@@ -354,10 +584,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                       ),
                       title: Text(
                         source.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.text),
                       ),
                       subtitle: Text(
                         source.type,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: CcColors.muted),
                       ),
                       onTap: () {
@@ -380,8 +614,8 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Future<void> _openScreenShare(ShareSource source) async {
     await _c.shareViewer.init();
-    _c.startShare(source);
     if (!mounted) return;
+    _c.startShare(source);
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ScreenShareViewerPage(client: _c, source: source),
@@ -398,7 +632,12 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         sending ? Icons.upload_rounded : Icons.download_rounded,
         color: CcColors.accentBright,
       ),
-      title: Text(x.name, style: const TextStyle(color: CcColors.text)),
+      title: Text(
+        x.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: CcColors.text),
+      ),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 6),
         child: Column(
@@ -462,9 +701,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       Icons.insert_drive_file_outlined,
       color: CcColors.muted,
     ),
-    title: Text(name, style: const TextStyle(color: CcColors.text)),
+    title: Text(
+      name,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(color: CcColors.text),
+    ),
     subtitle: Text(
       relativeTime(at),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
       style: const TextStyle(color: CcColors.muted),
     ),
     trailing: Row(
@@ -511,7 +757,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       builder: (context, _) {
         final showSessionContent = Prefs.getBool(
           kRemoteShowSessionContentPref,
-          def: true,
+          def: kRemoteShowSessionContentDefault,
         );
         return Scaffold(
           appBar: AppBar(
@@ -745,7 +991,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                             key: ObjectKey(r),
                             dense: true,
                             leading: const Icon(Icons.drag_handle, size: 20),
-                            title: Text(r.name),
+                            title: Text(
+                              r.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             subtitle: Text(
                               r.workspace.isEmpty
                                   ? r.path
@@ -1170,7 +1420,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     var supervisorAgent = 'claude';
     var workdir = project.path; // '主仓' by default; a worktree path otherwise
     _c.loadWorktrees(project.path); // populate the worktree dropdown
-    await showDialog<void>(
+    final draft = await showDialog<RemoteSessionDraft>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
@@ -1180,89 +1430,118 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           content: ListenableBuilder(
             listenable: _c,
             builder: (ctx, _) {
+              final screenSize = MediaQuery.sizeOf(ctx);
               // Worktrees for THIS project only (the list is trusted once
               // wtProject matches); drop the main checkout — it's the '主仓' item.
               final wts = _c.wtProject == project.path
                   ? _c.worktrees.where((w) => w.path != project.path).toList()
                   : const <RemoteWorktree>[];
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButton<RemoteRootInfo>(
-                    isExpanded: true,
-                    value: project,
-                    items: [
-                      for (final r in _orderedRoots())
-                        DropdownMenuItem(value: r, child: Text(r.name)),
-                    ],
-                    onChanged: (v) => setLocal(() {
-                      if (v == null || v == project) return;
-                      project = v;
-                      workdir = v.path; // reset to 主仓 for the new project
-                      _c.loadWorktrees(v.path);
-                    }),
+              final agentPicker = SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: '',
+                    icon: Icon(Icons.terminal_rounded, size: 16),
+                    label: Text('Shell'),
                   ),
-                  const SizedBox(height: 8),
-                  DropdownButton<String>(
-                    isExpanded: true,
-                    value: workdir,
-                    items: [
-                      DropdownMenuItem(
-                        value: project.path,
-                        child: Text('主仓 (${project.name})'),
+                  ButtonSegment(value: 'claude', label: Text('Claude')),
+                  ButtonSegment(value: 'codex', label: Text('Codex')),
+                  ButtonSegment(
+                    value: 'supervisor',
+                    icon: Icon(Icons.account_tree_outlined, size: 16),
+                    label: Text('总管'),
+                  ),
+                ],
+                selected: {agent},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) => setLocal(() => agent = s.first),
+              );
+              final supervisorPicker = SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'claude', label: Text('Claude')),
+                  ButtonSegment(value: 'codex', label: Text('Codex')),
+                ],
+                selected: {supervisorAgent},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) =>
+                    setLocal(() => supervisorAgent = s.first),
+              );
+              return SizedBox(
+                width: remoteWorkspaceDialogWidth(screenSize),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButton<RemoteRootInfo>(
+                        isExpanded: true,
+                        menuMaxHeight: remoteWorkspaceMenuMaxHeight(screenSize),
+                        value: project,
+                        items: [
+                          for (final r in _orderedRoots())
+                            DropdownMenuItem(
+                              value: r,
+                              child: Text(
+                                r.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (v) => setLocal(() {
+                          if (v == null || v == project) return;
+                          project = v;
+                          workdir = v.path; // reset to 主仓 for the new project
+                          _c.loadWorktrees(v.path);
+                        }),
                       ),
-                      for (final w in wts)
-                        DropdownMenuItem(
-                          value: w.path,
-                          child: Text(
-                            w.branch.isEmpty ? pathBaseName(w.path) : w.branch,
+                      const SizedBox(height: 8),
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        menuMaxHeight: remoteWorkspaceMenuMaxHeight(screenSize),
+                        value: workdir,
+                        items: [
+                          DropdownMenuItem(
+                            value: project.path,
+                            child: Text(
+                              '主仓 (${project.name})',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          for (final w in wts)
+                            DropdownMenuItem(
+                              value: w.path,
+                              child: Text(
+                                w.branch.isEmpty
+                                    ? pathBaseName(w.path)
+                                    : w.branch,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (v) =>
+                            setLocal(() => workdir = v ?? workdir),
+                      ),
+                      const SizedBox(height: 12),
+                      scrollableBar(scrolling: [agentPicker]),
+                      if (agent == 'supervisor') ...[
+                        const SizedBox(height: 8),
+                        scrollableBar(scrolling: [supervisorPicker]),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () => _editSupervisorKnowledge(workdir),
+                            icon: const Icon(
+                              Icons.menu_book_outlined,
+                              size: 18,
+                            ),
+                            label: const Text('编辑知识库'),
                           ),
                         ),
-                    ],
-                    onChanged: (v) => setLocal(() => workdir = v ?? workdir),
-                  ),
-                  const SizedBox(height: 12),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                        value: '',
-                        icon: Icon(Icons.terminal_rounded, size: 16),
-                        label: Text('Shell'),
-                      ),
-                      ButtonSegment(value: 'claude', label: Text('Claude')),
-                      ButtonSegment(value: 'codex', label: Text('Codex')),
-                      ButtonSegment(
-                        value: 'supervisor',
-                        icon: Icon(Icons.account_tree_outlined, size: 16),
-                        label: Text('总管'),
-                      ),
-                    ],
-                    selected: {agent},
-                    showSelectedIcon: false,
-                    onSelectionChanged: (s) => setLocal(() => agent = s.first),
-                  ),
-                  if (agent == 'supervisor') ...[
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'claude', label: Text('Claude')),
-                        ButtonSegment(value: 'codex', label: Text('Codex')),
                       ],
-                      selected: {supervisorAgent},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (s) =>
-                          setLocal(() => supervisorAgent = s.first),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: () => _editSupervisorKnowledge(workdir),
-                        icon: const Icon(Icons.menu_book_outlined, size: 18),
-                        label: const Text('编辑知识库'),
-                      ),
-                    ),
-                  ],
-                ],
+                    ],
+                  ),
+                ),
               );
             },
           ),
@@ -1276,8 +1555,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 final selectedAgent = agent == 'supervisor'
                     ? 'supervisor:$supervisorAgent'
                     : agent;
-                _c.newSession(project.path, selectedAgent, workdir: workdir);
-                Navigator.pop(ctx);
+                Navigator.pop(
+                  ctx,
+                  RemoteSessionDraft(
+                    projectPath: project.path,
+                    agent: selectedAgent,
+                    workdir: workdir,
+                  ),
+                );
               },
               child: const Text('启动'),
             ),
@@ -1285,6 +1570,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         ),
       ),
     );
+    if (!mounted) return;
+    if (draft != null) {
+      _c.newSession(draft.projectPath, draft.agent, workdir: draft.workdir);
+    }
   }
 
   // Open the supervisor knowledge-base editor scoped to a workdir. Targets
@@ -1306,6 +1595,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       initial: s.title,
       allowEmpty: true,
     );
+    if (!mounted) return;
     if (name != null) _c.renameSession(s.sid, name);
   }
 
@@ -1317,7 +1607,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           for (final r in _orderedRoots())
             ListTile(
               leading: const Icon(Icons.folder_rounded),
-              title: Text(r.name),
+              title: Text(r.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                 r.path,
                 maxLines: 1,
@@ -1410,7 +1700,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           for (final r in _orderedRoots())
             ListTile(
               leading: const Icon(Icons.source_rounded),
-              title: Text(r.name),
+              title: Text(r.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                 r.path,
                 maxLines: 1,
@@ -1583,7 +1873,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
 
   Widget _gitActions() {
     final repo = _gitRepo!;
-    Widget btn(IconData icon, String label, VoidCallback onTap) => Padding(
+    final changes = _c.gitChanges;
+    final canStageAll = remoteGitHasStageableChanges(changes);
+    final canCommit = remoteGitHasStagedChanges(changes);
+    final canDiscardAll = remoteGitHasAnyChanges(changes);
+    Widget btn(IconData icon, String label, VoidCallback? onTap) => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: OutlinedButton.icon(
         onPressed: onTap,
@@ -1601,8 +1895,16 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         children: [
-          btn(Icons.add_task_rounded, '暂存全部', () => _c.gitStageAll(repo)),
-          btn(Icons.check_circle_outline_rounded, '提交', _commitDialog),
+          btn(
+            Icons.add_task_rounded,
+            '暂存全部',
+            canStageAll ? () => _c.gitStageAll(repo) : null,
+          ),
+          btn(
+            Icons.check_circle_outline_rounded,
+            '提交',
+            canCommit ? _commitDialog : null,
+          ),
           btn(
             Icons.arrow_upward_rounded,
             'Push',
@@ -1615,7 +1917,10 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
           btn(
             Icons.undo_rounded,
             '丢弃全部',
-            () => _confirmThen('丢弃所有改动？不可恢复', () => _c.gitDiscardAll(repo)),
+            canDiscardAll
+                ? () =>
+                      _confirmThen('丢弃所有改动？不可恢复', () => _c.gitDiscardAll(repo))
+                : null,
           ),
         ],
       ),
@@ -1653,51 +1958,19 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   );
 
   Future<void> _confirmThen(String msg, VoidCallback action) async {
-    if (await confirm(context, msg)) action();
+    final ok = await confirm(context, msg);
+    if (!mounted) return;
+    if (ok) action();
   }
 
   Future<void> _commitDialog() async {
-    final ctl = TextEditingController();
-    var push = false;
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<RemoteCommitDraft>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('提交'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: ctl,
-                autofocus: true,
-                minLines: 1,
-                maxLines: 4,
-                decoration: const InputDecoration(hintText: '提交信息'),
-              ),
-              CheckboxListTile(
-                value: push,
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('提交后 Push'),
-                onChanged: (v) => setLocal(() => push = v ?? false),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('提交'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => const RemoteCommitDialog(),
     );
-    if (ok == true && ctl.text.trim().isNotEmpty) {
-      _c.gitCommit(_gitRepo!, ctl.text.trim(), push: push);
+    if (!mounted) return;
+    if (draft != null) {
+      _c.gitCommit(_gitRepo!, draft.message, push: draft.push);
     }
   }
 
@@ -1709,6 +1982,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       okLabel: 'Stash',
       allowEmpty: true,
     );
+    if (!mounted) return;
     if (msg != null) _c.gitStash(_gitRepo!, msg);
   }
 
@@ -1748,7 +2022,11 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                           size: 18,
                           color: b.current ? CcColors.ok : CcColors.muted,
                         ),
-                        title: Text(b.name),
+                        title: Text(
+                          b.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         onTap: b.current
                             ? null
                             : () {
@@ -1767,13 +2045,26 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   }
 
   Future<void> _newBranchDialog() async {
-    final b = await textPrompt(
-      context,
-      title: '新建分支',
-      hint: '分支名',
-      okLabel: '创建',
+    final current = _c.branches
+        .where((b) => b.current)
+        .map((b) => b.name)
+        .firstOrNull;
+    final draft = await showDialog<_RemoteBranchCreateDraft>(
+      context: context,
+      builder: (_) => _RemoteBranchCreateDialog(initialStartRef: current ?? ''),
     );
-    if (b != null) _c.gitCreateBranch(_gitRepo!, b);
+    if (!mounted) return;
+    if (draft == null) return;
+    final branch = draft.branch.trim();
+    if (branch.isEmpty) {
+      snack(context, '分支名不能为空');
+      return;
+    }
+    _c.gitCreateBranch(
+      _gitRepo!,
+      branch,
+      start: draft.startRef.trim().isEmpty ? null : draft.startRef.trim(),
+    );
   }
 
   // --- 管理 (workspace / project / worktree) ---
@@ -1805,7 +2096,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 size: 18,
                 color: CcColors.accentBright,
               ),
-              title: Text(p.name),
+              title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               trailing: PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert_rounded, size: 18),
                 onSelected: (v) {
@@ -1834,14 +2125,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
-            child: Row(
-              children: [
+            child: scrollableBar(
+              alignScrollEnd: true,
+              scrolling: [
                 TextButton.icon(
                   onPressed: () => _addProjectDialog(entry.key),
                   icon: const Icon(Icons.add, size: 15),
                   label: const Text('添加项目'),
                 ),
-                const Spacer(),
                 if (entry.key.isNotEmpty)
                   TextButton.icon(
                     onPressed: () => _confirmThen(
@@ -1866,40 +2157,13 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   );
 
   Future<void> _newWorkspaceDialog() async {
-    final nameCtl = TextEditingController();
-    final pathCtl = TextEditingController();
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<RemoteWorkspaceDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建工作区'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtl,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: '名称'),
-            ),
-            TextField(
-              controller: pathCtl,
-              decoration: const InputDecoration(hintText: '目录（可选，绝对路径）'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建'),
-          ),
-        ],
-      ),
+      builder: (_) => const RemoteWorkspaceCreateDialog(),
     );
-    if (ok == true && nameCtl.text.trim().isNotEmpty) {
-      _c.newWorkspace(nameCtl.text.trim(), pathCtl.text.trim());
+    if (!mounted) return;
+    if (draft != null) {
+      _c.newWorkspace(draft.name, draft.path);
     }
   }
 
@@ -1910,6 +2174,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
       hint: 'GitHub URL 或本地路径',
       okLabel: '添加',
     );
+    if (!mounted) return;
     if (src != null) _c.addProject(ws, src);
   }
 }
@@ -1943,7 +2208,11 @@ class _ScreenShareViewerPageState extends State<ScreenShareViewerPage> {
       listenable: _c,
       builder: (context, _) => Scaffold(
         appBar: AppBar(
-          title: Text(widget.source.name),
+          title: Text(
+            widget.source.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           actions: [
             IconButton(
               tooltip: '停止共享',
@@ -2004,6 +2273,248 @@ class _ScreenShareViewerPageState extends State<ScreenShareViewerPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class RemoteCommitDraft {
+  final String message;
+  final bool push;
+
+  const RemoteCommitDraft({required this.message, required this.push});
+}
+
+class RemoteSessionDraft {
+  final String projectPath;
+  final String agent;
+  final String workdir;
+
+  const RemoteSessionDraft({
+    required this.projectPath,
+    required this.agent,
+    required this.workdir,
+  });
+}
+
+class RemoteCommitDialog extends StatefulWidget {
+  const RemoteCommitDialog({super.key});
+
+  @override
+  State<RemoteCommitDialog> createState() => _RemoteCommitDialogState();
+}
+
+class _RemoteCommitDialogState extends State<RemoteCommitDialog> {
+  final _messageCtl = TextEditingController();
+  bool _push = false;
+
+  @override
+  void dispose() {
+    _messageCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final message = _messageCtl.text.trim();
+    Navigator.pop(
+      context,
+      message.isEmpty ? null : RemoteCommitDraft(message: message, push: _push),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('提交', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _messageCtl,
+                autofocus: true,
+                minLines: 1,
+                maxLines: 4,
+                decoration: const InputDecoration(hintText: '提交信息'),
+              ),
+              CheckboxListTile(
+                value: _push,
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('提交后 Push'),
+                onChanged: (v) => setState(() => _push = v ?? false),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('提交')),
+      ],
+    );
+  }
+}
+
+class RemoteWorkspaceDraft {
+  final String name;
+  final String path;
+
+  const RemoteWorkspaceDraft({required this.name, required this.path});
+}
+
+class RemoteWorkspaceCreateDialog extends StatefulWidget {
+  const RemoteWorkspaceCreateDialog({super.key});
+
+  @override
+  State<RemoteWorkspaceCreateDialog> createState() =>
+      _RemoteWorkspaceCreateDialogState();
+}
+
+class _RemoteWorkspaceCreateDialogState
+    extends State<RemoteWorkspaceCreateDialog> {
+  final _nameCtl = TextEditingController();
+  final _pathCtl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameCtl.dispose();
+    _pathCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _nameCtl.text.trim();
+    Navigator.pop(
+      context,
+      name.isEmpty
+          ? null
+          : RemoteWorkspaceDraft(name: name, path: _pathCtl.text.trim()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('新建工作区', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _nameCtl,
+                autofocus: true,
+                decoration: const InputDecoration(hintText: '名称'),
+                textInputAction: TextInputAction.next,
+              ),
+              TextField(
+                controller: _pathCtl,
+                decoration: const InputDecoration(hintText: '目录（可选，绝对路径）'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建')),
+      ],
+    );
+  }
+}
+
+class RemoteWorktreeDraft {
+  final String branch;
+  final String startPoint;
+
+  const RemoteWorktreeDraft({required this.branch, required this.startPoint});
+}
+
+class RemoteWorktreeCreateDialog extends StatefulWidget {
+  const RemoteWorktreeCreateDialog({super.key});
+
+  @override
+  State<RemoteWorktreeCreateDialog> createState() =>
+      _RemoteWorktreeCreateDialogState();
+}
+
+class _RemoteWorktreeCreateDialogState
+    extends State<RemoteWorktreeCreateDialog> {
+  final _branchCtl = TextEditingController();
+  final _startCtl = TextEditingController();
+
+  @override
+  void dispose() {
+    _branchCtl.dispose();
+    _startCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final branch = _branchCtl.text.trim();
+    Navigator.pop(
+      context,
+      branch.isEmpty
+          ? null
+          : RemoteWorktreeDraft(
+              branch: branch,
+              startPoint: _startCtl.text.trim(),
+            ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text(
+        '新建 worktree',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: remoteWorkspaceDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _branchCtl,
+                autofocus: true,
+                decoration: const InputDecoration(hintText: '分支名'),
+                textInputAction: TextInputAction.next,
+              ),
+              TextField(
+                controller: _startCtl,
+                decoration: const InputDecoration(hintText: '起点（可选，如 main）'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建')),
+      ],
     );
   }
 }
@@ -2239,6 +2750,26 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
   @override
   void initState() {
     super.initState();
+    _attachRemoteClient(showRefreshSnack: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _RemoteTerminalScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.client, widget.client) &&
+        oldWidget.session.sid == widget.session.sid) {
+      return;
+    }
+    _detachRemoteClient(oldWidget.client, oldWidget.session);
+    _usageLabel = null;
+    if (_laStarted) {
+      _laStarted = false;
+      LiveActivity.end();
+    }
+    _attachRemoteClient(showRefreshSnack: false);
+  }
+
+  void _attachRemoteClient({required bool showRefreshSnack}) {
     // History replay mode ('text'/'ansi') lives on the client and rides every
     // term.open; load the saved pref before the first _term access (build →
     // terminalFor → term.open) so the initial replay uses it.
@@ -2262,13 +2793,28 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) widget.client.adoptSize(widget.session.sid);
     });
-    if (refreshed) {
+    if (showRefreshSnack && refreshed) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           snack(context, '已从电脑拉取最新（本地旧历史已清理）', clearPrevious: true);
         }
       });
     }
+  }
+
+  void _detachRemoteClient(RemoteClient client, RemoteSession session) {
+    if (client.onReplyText == _onReplyText) {
+      client.onReplyText = null;
+    }
+    if (client.onAgentStatus == _onAgentStatus) {
+      client.onAgentStatus = null;
+    }
+    if (client.onTerminalReset == _onTerminalReset) {
+      client.onTerminalReset = null;
+    }
+    client.removeListener(_onClientChange);
+    // Stop guarding this session from eviction; its idle TTL counts from now.
+    client.leaveViewedSession(session.sid);
   }
 
   // After a reconnect-driven resync the client recreates this session's Terminal
@@ -2345,18 +2891,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 
   @override
   void dispose() {
-    if (widget.client.onReplyText == _onReplyText) {
-      widget.client.onReplyText = null;
-    }
-    if (widget.client.onAgentStatus == _onAgentStatus) {
-      widget.client.onAgentStatus = null;
-    }
-    if (widget.client.onTerminalReset == _onTerminalReset) {
-      widget.client.onTerminalReset = null;
-    }
-    widget.client.removeListener(_onClientChange);
-    // Stop guarding this session from eviction; its idle TTL counts from now.
-    widget.client.leaveViewedSession(widget.session.sid);
+    _detachRemoteClient(widget.client, widget.session);
     if (_laStarted) LiveActivity.end();
     _stopScroll();
     _wheelFlushTimer?.cancel();
@@ -2476,6 +3011,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
 
   Future<void> _paste() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
     final text = data?.text;
     // term.paste routes through term.onOutput → term.input, so it reaches the host.
     if (text != null && text.isNotEmpty) _term.paste(text);
@@ -2660,7 +3196,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       builder: (ctx) => SafeArea(
         top: false,
         child: SizedBox(
-          height: 360,
+          height: remoteActivitySheetHeight(MediaQuery.sizeOf(ctx)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3030,7 +3566,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 10),
           visualDensity: VisualDensity.compact,
         ),
-        child: Text(label),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 120),
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
       ),
     );
     // scrollBtn is like btn but hold-to-repeat: Listener (passive) drives the
@@ -3048,7 +3587,10 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 10),
             visualDensity: VisualDensity.compact,
           ),
-          child: Text(label),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 120),
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
         ),
       ),
     );
@@ -3149,9 +3691,15 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                             key: ObjectKey(kb),
                             dense: true,
                             leading: const Icon(Icons.drag_handle, size: 20),
-                            title: Text(kb.label),
+                            title: Text(
+                              kb.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             subtitle: Text(
                               _encodeSeq(kb.data),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontFamily: 'JetBrainsMono',
                                 fontSize: 11,
@@ -3159,6 +3707,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                             ),
                             onTap: () async {
                               final r = await _editKeyDialog(kb);
+                              if (!mounted || !sheetCtx.mounted) return;
                               if (r != null) {
                                 apply(() {
                                   kb.label = r.label;
@@ -3179,6 +3728,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
                   FilledButton.icon(
                     onPressed: () async {
                       final r = await _editKeyDialog(null);
+                      if (!mounted || !sheetCtx.mounted) return;
                       if (r != null) apply(() => _keys.add(r));
                     },
                     icon: const Icon(Icons.add),
@@ -3620,12 +4170,14 @@ class _SupervisorKnowledgeDialogState
         ),
       ),
     );
+    if (!mounted) return;
     // Refresh so "已存在" reflects files just created/saved.
     widget.client.openDir(_cwd);
   }
 
   Future<void> _newFile() async {
     final name = await textPrompt(context, title: '新建文件', hint: '文件名.md');
+    if (!mounted) return;
     if (name == null || name.trim().isEmpty) return;
     final n = name.trim();
     _openFile(n.endsWith('.md') ? n : '$n.md', initial: '');
@@ -3652,10 +4204,17 @@ class _SupervisorKnowledgeDialogState
 
   @override
   Widget build(BuildContext context) {
+    final dialogSize = remoteSupervisorKnowledgeDialogSize(
+      MediaQuery.sizeOf(context),
+    );
     return Dialog(
       backgroundColor: CcColors.panel,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 600),
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
         child: ListenableBuilder(
           listenable: widget.client,
           builder: (BuildContext context, Widget? _) {
@@ -3778,9 +4337,16 @@ class _SupervisorKnowledgeDialogState
     return ListTile(
       leading: Icon(icon, size: 20, color: CcColors.muted),
       minLeadingWidth: 24,
-      title: Text(name, style: const TextStyle(fontSize: 14)),
+      title: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 14),
+      ),
       subtitle: Text(
         desc,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 12, color: CcColors.muted),
       ),
       trailing: exists
@@ -4000,59 +4566,47 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
   @override
   void initState() {
     super.initState();
+    _loadWorktrees();
+  }
+
+  @override
+  void didUpdateWidget(covariant _WorktreeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.client, widget.client) ||
+        oldWidget.project.path != widget.project.path) {
+      _loadWorktrees();
+    }
+  }
+
+  void _loadWorktrees() {
     widget.client.loadWorktrees(widget.project.path);
   }
 
   Future<void> _addDialog() async {
-    final branchCtl = TextEditingController();
-    final startCtl = TextEditingController();
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<RemoteWorktreeDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建 worktree'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: branchCtl,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: '分支名'),
-            ),
-            TextField(
-              controller: startCtl,
-              decoration: const InputDecoration(hintText: '起点（可选，如 main）'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建'),
-          ),
-        ],
-      ),
+      builder: (_) => const RemoteWorktreeCreateDialog(),
     );
-    if (ok == true && branchCtl.text.trim().isNotEmpty) {
+    if (!mounted) return;
+    if (draft != null) {
       widget.client.addWorktree(
         widget.project.workspace,
         widget.project.name,
-        branchCtl.text.trim(),
-        startCtl.text.trim(),
+        draft.branch,
+        draft.startPoint,
       );
     }
   }
 
   Future<void> _remove(RemoteWorktree w) async {
-    final label = w.branch.isEmpty ? w.name : w.branch;
-    if (await confirm(context, '删除 worktree $label？', okLabel: '删除')) {
+    final target = remoteWorktreeRemoveTarget(w);
+    final ok = await confirm(context, '删除 worktree $target？', okLabel: '删除');
+    if (!mounted) return;
+    if (ok) {
       widget.client.removeWorktree(
         widget.project.workspace,
         widget.project.name,
-        w.branch,
+        target,
       );
     }
   }
@@ -4065,7 +4619,11 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
         final wts = widget.client.worktrees;
         return Scaffold(
           appBar: AppBar(
-            title: Text('${widget.project.name} · Worktrees'),
+            title: Text(
+              '${widget.project.name} · Worktrees',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             actions: [
               IconButton(
                 icon: const Icon(Icons.add),
@@ -4087,6 +4645,8 @@ class _WorktreeScreenState extends State<_WorktreeScreen> {
                         ),
                         title: Text(
                           w.branch.isEmpty ? w.name : w.branch,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: CcType.code(size: 13),
                         ),
                         subtitle: Text(
@@ -4136,11 +4696,12 @@ class _QuickReplyDialog extends StatefulWidget {
 
 class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   final _ctl = TextEditingController();
-  // A throwaway terminal we paint the host's coloured screen snapshot into — a
-  // real xterm view, not stripped text.
-  final Terminal _term = ccTerminal(maxLines: 200);
-  String? _lastScreen;
   Timer? _timer;
+  // Last values build() actually consumes, so unrelated client notifications
+  // (other sessions, mirror output, heartbeats) don't re-lay-out the preview —
+  // mirrors the desktop popup's snap-equality guard.
+  ScreenSnapshot? _lastScreen;
+  SessionCard? _lastOverview;
 
   String get _sid => widget.session.sid;
 
@@ -4163,15 +4724,18 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     super.dispose();
   }
 
+  // Rebuild only when one of the two things build() reads actually changed:
+  // the screen snapshot (SessionSnapshotView) or this session's overview card
+  // (status/usage row). overview is replaced wholesale per frame, so identity
+  // is enough; screens are ScreenSnapshot records (structural equality).
   void _onChange() {
     if (!mounted) return;
-    final scr = widget.client.screens[_sid];
-    if (scr != null && scr != _lastScreen) {
-      _lastScreen = scr;
-      _term.write('\x1b[3J\x1b[2J\x1b[H'); // clear scrollback + screen, home
-      _term.write(scr);
-    }
-    setState(() {}); // status/usage may have changed
+    final screen = widget.client.screens[_sid];
+    final overview = widget.client.overview[_sid];
+    if (screen == _lastScreen && identical(overview, _lastOverview)) return;
+    _lastScreen = screen;
+    _lastOverview = overview;
+    setState(() {});
   }
 
   // _bump re-reads the screen shortly after a send so the reaction shows without
@@ -4214,113 +4778,110 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
         (widget.session.agent.isNotEmpty
             ? SessionStatus.idle
             : SessionStatus.shell);
+    final screenSize = MediaQuery.sizeOf(context);
+    final dialogSize = remoteQuickReplyDialogSize(screenSize);
     return Dialog(
       insetPadding: const EdgeInsets.all(16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SessionActivityAvatar(
-                  seed: _sid,
-                  isAgent: widget.session.agent.isNotEmpty,
-                  status: status,
-                  size: 24,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    widget.session.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
+                Row(
+                  children: [
+                    SessionActivityAvatar(
+                      seed: _sid,
+                      isAgent: widget.session.agent.isNotEmpty,
+                      status: status,
+                      size: 24,
                     ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        widget.session.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                if (ov != null) ...[
+                  const SizedBox(height: 4),
+                  sessionStatusRow(
+                    ov.status,
+                    ov.usageLabel,
+                    statusDetail: ov.statusDetail,
+                  ),
+                ],
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: remoteQuickReplySnapshotHeight(screenSize),
+                  child: SessionSnapshotView(
+                    snapshot: widget.client.screens[_sid],
+                    fontSize: 11,
                   ),
                 ),
-                IconButton(
-                  tooltip: '关闭',
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  onPressed: () => Navigator.of(context).pop(),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _quick('↵ 确认', _confirm),
+                    _quick('1', () => _keys('1')),
+                    _quick('2', () => _keys('2')),
+                    _quick('3', () => _keys('3')),
+                    _quick('y', () => _keys('y')),
+                    _quick('n', () => _keys('n')),
+                    _quick('Esc', () => _keys('\x1b')),
+                  ],
                 ),
-              ],
-            ),
-            if (ov != null) ...[
-              const SizedBox(height: 4),
-              sessionStatusRow(
-                ov.status,
-                ov.usageLabel,
-                statusDetail: ov.statusDetail,
-              ),
-            ],
-            const SizedBox(height: 10),
-            Container(
-              height: 220,
-              width: double.infinity,
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: ccTerminalTheme.background,
-                borderRadius: BorderRadius.circular(CcRadius.sm),
-                border: Border.all(color: CcColors.border),
-              ),
-              child: TerminalView(
-                _term,
-                theme: ccTerminalTheme,
-                textStyle: const TerminalStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 11,
-                ),
-                padding: const EdgeInsets.all(8),
-                readOnly: true,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _quick('↵ 确认', _confirm),
-                _quick('1', () => _keys('1')),
-                _quick('2', () => _keys('2')),
-                _quick('3', () => _keys('3')),
-                _quick('y', () => _keys('y')),
-                _quick('n', () => _keys('n')),
-                _quick('Esc', () => _keys('\x1b')),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _ctl,
-                    maxLines: 1,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _sendText(),
-                    decoration: const InputDecoration(
-                      hintText: '快捷回复…',
-                      isDense: true,
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _ctl,
+                        maxLines: 1,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _sendText(),
+                        decoration: const InputDecoration(
+                          hintText: '快捷回复…',
+                          isDense: true,
+                        ),
+                      ),
                     ),
+                    const SizedBox(width: 8),
+                    FilledButton(onPressed: _sendText, child: const Text('发送')),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: widget.onOpenTerminal,
+                    icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                    label: const Text('打开终端'),
                   ),
                 ),
-                const SizedBox(width: 8),
-                FilledButton(onPressed: _sendText, child: const Text('发送')),
               ],
             ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: widget.onOpenTerminal,
-                icon: const Icon(Icons.open_in_full_rounded, size: 16),
-                label: const Text('打开终端'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

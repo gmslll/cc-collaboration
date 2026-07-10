@@ -10,15 +10,7 @@ import '../api/todo_models.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-const _imageExts = {
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.bmp',
-  '.heic',
-};
+const _imageExts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.heic'};
 
 bool isImageAttachmentName(String name) {
   final dot = name.lastIndexOf('.');
@@ -55,7 +47,10 @@ class _ThumbCache {
 // loading/failed-state widget lifecycle) should use this directly instead of
 // duplicating RelayClient.todoAttachment + cache bookkeeping.
 Future<Uint8List> fetchTodoAttachmentBytes(
-    RelayClient client, String todoId, TodoAttachment attachment) async {
+  RelayClient client,
+  String todoId,
+  TodoAttachment attachment,
+) async {
   final cached = _ThumbCache.get(attachment.sha256);
   if (cached != null) return cached;
   final data = await client.todoAttachment(todoId, attachment.name);
@@ -92,6 +87,7 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
   Uint8List? _bytes;
   bool _loading = false;
   bool _failed = false;
+  int _loadGeneration = 0;
 
   bool get _isImage => isImageAttachmentName(widget.attachment.name);
 
@@ -104,18 +100,40 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
   @override
   void didUpdateWidget(TodoAttachmentThumb oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_isImage && oldWidget.attachment.sha256 != widget.attachment.sha256) {
+    if (_isImage &&
+        (!identical(oldWidget.client, widget.client) ||
+            oldWidget.todoId != widget.todoId ||
+            oldWidget.attachment.name != widget.attachment.name ||
+            oldWidget.attachment.sha256 != widget.attachment.sha256)) {
       _bytes = null;
       _failed = false;
       _load();
     }
   }
 
-  Future<Uint8List> _fetch() =>
-      fetchTodoAttachmentBytes(widget.client, widget.todoId, widget.attachment);
+  bool _isCurrentAttachment(
+    RelayClient client,
+    String todoId,
+    TodoAttachment attachment,
+  ) =>
+      mounted &&
+      identical(client, widget.client) &&
+      todoId == widget.todoId &&
+      attachment.name == widget.attachment.name &&
+      attachment.sha256 == widget.attachment.sha256;
+
+  Future<Uint8List> _fetch(
+    RelayClient client,
+    String todoId,
+    TodoAttachment attachment,
+  ) => fetchTodoAttachmentBytes(client, todoId, attachment);
 
   Future<void> _load() async {
-    final cached = _ThumbCache.get(widget.attachment.sha256);
+    final generation = ++_loadGeneration;
+    final client = widget.client;
+    final todoId = widget.todoId;
+    final attachment = widget.attachment;
+    final cached = _ThumbCache.get(attachment.sha256);
     if (cached != null) {
       setState(() => _bytes = cached);
       return;
@@ -125,14 +143,20 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
       _failed = false;
     });
     try {
-      final bytes = await _fetch();
-      if (!mounted) return;
+      final bytes = await _fetch(client, todoId, attachment);
+      if (generation != _loadGeneration ||
+          !_isCurrentAttachment(client, todoId, attachment)) {
+        return;
+      }
       setState(() {
         _bytes = bytes;
         _loading = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (generation != _loadGeneration ||
+          !_isCurrentAttachment(client, todoId, attachment)) {
+        return;
+      }
       setState(() {
         _failed = true;
         _loading = false;
@@ -141,17 +165,23 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
   }
 
   Future<void> _downloadAndOpen() async {
+    final client = widget.client;
+    final todoId = widget.todoId;
+    final attachment = widget.attachment;
     try {
-      final bytes = await _fetch();
+      final bytes = await _fetch(client, todoId, attachment);
+      if (!_isCurrentAttachment(client, todoId, attachment)) return;
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/${widget.attachment.name}');
+      final file = File('${dir.path}/${attachment.name}');
       await file.writeAsBytes(bytes);
       final res = await OpenFilex.open(file.path);
-      if (res.type != ResultType.done && mounted) {
+      if (!mounted || !_isCurrentAttachment(client, todoId, attachment)) return;
+      if (res.type != ResultType.done) {
         snack(context, '已保存到 ${file.path}');
       }
     } catch (e) {
-      if (mounted) snack(context, '附件失败: ${errorText(e)}');
+      if (!mounted || !_isCurrentAttachment(client, todoId, attachment)) return;
+      snack(context, '附件失败: ${errorText(e)}');
     }
   }
 
@@ -166,10 +196,7 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
         child: Stack(
           alignment: Alignment.topRight,
           children: [
-            InteractiveViewer(
-              maxScale: 6,
-              child: Image.memory(bytes),
-            ),
+            InteractiveViewer(maxScale: 6, child: Image.memory(bytes)),
             IconButton(
               icon: const Icon(Icons.close_rounded, color: Colors.white),
               onPressed: () => Navigator.of(context).pop(),
@@ -200,22 +227,32 @@ class _TodoAttachmentThumbState extends State<TodoAttachmentThumb> {
     if (!_isImage) {
       return _box(
         onTap: _downloadAndOpen,
-        child: Icon(Icons.insert_drive_file_rounded,
-            size: widget.size * 0.5, color: CcColors.muted),
+        child: Icon(
+          Icons.insert_drive_file_rounded,
+          size: widget.size * 0.5,
+          color: CcColors.muted,
+        ),
       );
     }
     if (_bytes != null) {
       return _box(
         onTap: _openPreview,
-        child: Image.memory(_bytes!,
-            fit: BoxFit.cover, width: widget.size, height: widget.size),
+        child: Image.memory(
+          _bytes!,
+          fit: BoxFit.cover,
+          width: widget.size,
+          height: widget.size,
+        ),
       );
     }
     if (_failed) {
       return _box(
         onTap: _load,
-        child: Icon(Icons.broken_image_rounded,
-            size: widget.size * 0.5, color: CcColors.danger),
+        child: Icon(
+          Icons.broken_image_rounded,
+          size: widget.size * 0.5,
+          color: CcColors.danger,
+        ),
       );
     }
     return _box(

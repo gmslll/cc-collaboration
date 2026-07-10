@@ -3,9 +3,13 @@ package relay
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/cc-collaboration/internal/relay/auth"
 )
+
+const maxSettingBodyBytes = 64 << 10
+const maxSettingKeyBytes = 128
 
 // Per-identity synced settings: a tiny key -> opaque-JSON store scoped to the
 // caller's identity. Used so a user's own devices (same identity) show an
@@ -18,8 +22,7 @@ import (
 func (s *Server) getSetting(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	key := r.PathValue("key")
-	if key == "" {
-		http.Error(w, "missing key", http.StatusBadRequest)
+	if !validSettingKey(w, key) {
 		return
 	}
 	value, found, err := s.Store.GetSetting(r.Context(), identity, key)
@@ -42,15 +45,14 @@ func (s *Server) getSetting(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	key := r.PathValue("key")
-	if key == "" {
-		http.Error(w, "missing key", http.StatusBadRequest)
+	if !validSettingKey(w, key) {
 		return
 	}
 	var body struct {
 		Value json.RawMessage `json:"value"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+	if err := decodeJSONBody(w, r, maxSettingBodyBytes, &body); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(body.Value) == 0 {
@@ -62,4 +64,16 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func validSettingKey(w http.ResponseWriter, key string) bool {
+	if strings.TrimSpace(key) == "" {
+		http.Error(w, "missing key", http.StatusBadRequest)
+		return false
+	}
+	if len(key) > maxSettingKeyBytes {
+		http.Error(w, "key too long", http.StatusBadRequest)
+		return false
+	}
+	return true
 }

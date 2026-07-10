@@ -13,10 +13,14 @@ if (typeof window.ccHandoffPickup === "function") {
 // stays hidden — it degrades cleanly.
 const state = {
   token: localStorage.getItem("cc-handoff-token") || "",
+  authEpoch: 0,
   defaultRepo: localStorage.getItem("cc-handoff-default-repo") || "",
-  me: null, // { identity, is_admin, projects: [{id,name,role}] }
+  me: null, // { identity, is_admin, organizations: [{id,name,role}], projects: [{id,name,role}] }
+  organizations: [], // loaded in the Teams pane (GET /v1/orgs)
   projects: [], // loaded in the Projects pane (GET /v1/projects)
+  preferredProjectOrgID: "",
   projectID: "", // selected project for the scope=project handoff view
+  projectLabel: "",
   view: "recipient",
   items: [],
   selectedID: "",
@@ -25,6 +29,12 @@ const state = {
   comments: [],
   promptText: "",
   online: [],
+  adminUsers: [],
+  adminUserView: "active",
+  adminUserQuery: "",
+  adminUserStatus: "all",
+  creatingUser: false,
+  pendingUserActions: new Set(),
   workspaces: parseWorkspaces(localStorage.getItem("cc-handoff-workspaces")),
 };
 
@@ -48,13 +58,19 @@ const els = {
   tokenInput: document.querySelector("#token-input"),
   authMessage: document.querySelector("#auth-message"),
   sessionLabel: document.querySelector("#session-label"),
+  tabOrgs: document.querySelector("#tab-orgs"),
   tabProjects: document.querySelector("#tab-projects"),
   tabAccount: document.querySelector("#tab-account"),
   tabAdmin: document.querySelector("#tab-admin"),
+  orgsPane: document.querySelector("#orgs-pane"),
+  orgsList: document.querySelector("#orgs-list"),
+  newOrgForm: document.querySelector("#new-org-form"),
+  newOrgName: document.querySelector("#new-org-name"),
   projectsPane: document.querySelector("#projects-pane"),
   projectsList: document.querySelector("#projects-list"),
   newProjectForm: document.querySelector("#new-project-form"),
   newProjectName: document.querySelector("#new-project-name"),
+  newProjectOrg: document.querySelector("#new-project-org"),
   accountPane: document.querySelector("#account-pane"),
   passwordForm: document.querySelector("#password-form"),
   passwordOld: document.querySelector("#password-old"),
@@ -63,6 +79,14 @@ const els = {
   newTokenLabel: document.querySelector("#new-token-label"),
   tokensList: document.querySelector("#tokens-list"),
   adminPane: document.querySelector("#admin-pane"),
+  openCreateUser: document.querySelector("#open-create-user"),
+  createUserDialog: document.querySelector("#create-user-dialog"),
+  createUserCancel: document.querySelector("#create-user-cancel"),
+  createUserSubmit: document.querySelector("#create-user-submit"),
+  adminUserTabs: document.querySelector("#admin-user-tabs"),
+  adminUserSearch: document.querySelector("#admin-user-search"),
+  adminUserStatus: document.querySelector("#admin-user-status"),
+  adminUserStatusWrap: document.querySelector("#admin-user-status-wrap"),
   newUserForm: document.querySelector("#new-user-form"),
   newUserIdentity: document.querySelector("#new-user-identity"),
   newUserPassword: document.querySelector("#new-user-password"),
@@ -82,6 +106,7 @@ const els = {
   detailBadges: document.querySelector("#detail-badges"),
   detailTitle: document.querySelector("#detail-title"),
   detailSubtitle: document.querySelector("#detail-subtitle"),
+  deliveryTarget: document.querySelector("#delivery-target"),
   pickupButton: document.querySelector("#pickup-button"),
   ackButton: document.querySelector("#ack-button"),
   reassignButton: document.querySelector("#reassign-button"),
@@ -139,14 +164,49 @@ function wireEvents() {
   els.registerButton.addEventListener("click", onRegister);
   els.tokenConnect.addEventListener("click", onUseToken);
   els.signoutButton.addEventListener("click", onSignout);
+  els.newOrgForm.addEventListener("submit", onCreateOrganization);
   els.newProjectForm.addEventListener("submit", onCreateProject);
   els.passwordForm.addEventListener("submit", onChangePassword);
   els.newTokenForm.addEventListener("submit", onCreateToken);
   els.newUserForm.addEventListener("submit", onCreateUser);
+  els.openCreateUser.addEventListener("click", openCreateUserDialog);
+  els.createUserCancel.addEventListener("click", () => {
+    if (!state.creatingUser) els.createUserDialog.close();
+  });
+  els.createUserDialog.addEventListener("cancel", (event) => {
+    if (state.creatingUser) event.preventDefault();
+  });
   els.projectsList.addEventListener("click", onProjectsListClick);
   els.projectsList.addEventListener("submit", onProjectsListSubmit);
+  els.projectsList.addEventListener("change", onProjectsListChange);
+  els.orgsList.addEventListener("click", onOrganizationsListClick);
+  els.orgsList.addEventListener("submit", onOrganizationsListSubmit);
+  els.orgsList.addEventListener("change", onOrganizationsListChange);
   els.tokensList.addEventListener("click", onTokensListClick);
   els.usersList.addEventListener("click", onUsersListClick);
+  els.usersList.addEventListener("toggle", onAdminUserMenuToggle, true);
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest?.(".admin-user-menu")) closeAdminUserMenus();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAdminUserMenus();
+  });
+  els.adminUserTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-admin-user-view]");
+    if (!button) return;
+    state.adminUserView = button.dataset.adminUserView;
+    state.adminUserStatus = "all";
+    els.adminUserStatus.value = "all";
+    renderUsers(state.adminUsers);
+  });
+  els.adminUserSearch.addEventListener("input", () => {
+    state.adminUserQuery = els.adminUserSearch.value;
+    renderUsers(state.adminUsers);
+  });
+  els.adminUserStatus.addEventListener("change", () => {
+    state.adminUserStatus = els.adminUserStatus.value;
+    renderUsers(state.adminUsers);
+  });
 
   els.refreshButton.addEventListener("click", refreshAll);
   els.limitSelect.addEventListener("change", refreshAll);
@@ -160,7 +220,7 @@ function wireEvents() {
     const button = event.target.closest("[data-launch]");
     if (!button) return;
     const ws = state.workspaces[Number(button.dataset.launch)];
-    if (ws) copyToClipboard(ws.command, "工作区启动命令已复制，去终端粘贴执行");
+    if (ws) copyToClipboard(ws.command, "启动命令已复制，去终端粘贴执行");
   });
 
   els.handoffList.addEventListener("click", (event) => {
@@ -210,7 +270,7 @@ function wireEvents() {
 
   els.copyPickupCmdButton.addEventListener("click", () => {
     if (!state.selectedID) return;
-    copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "兼容 CLI 命令已复制，去终端粘贴执行");
+    copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "CLI 命令已复制，去终端粘贴执行");
   });
 
   els.reloadCommentsButton.addEventListener("click", loadComments);
@@ -235,7 +295,7 @@ async function onPickup() {
   // Desktop fork-exec via Lorca Bind; browser mode falls back to clipboard.
   if (typeof window.ccHandoffPickup === "function") {
     els.pickupButton.disabled = true;
-    toast("正在接收并启动 Agent…");
+    toast("正在 pickup…");
     try {
       const out = await window.ccHandoffPickup(state.selectedID, state.defaultRepo || "");
       toast(`接收完成\n${out.split("\n")[0]}`);
@@ -248,7 +308,7 @@ async function onPickup() {
     }
     return;
   }
-  copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "已复制兼容 CLI 命令到剪贴板，去终端粘贴执行");
+  copyToClipboard(`cc-handoff pickup ${state.selectedID}`, "已复制 CLI 命令到剪贴板，去终端粘贴执行");
 }
 
 async function openReassignDialog() {
@@ -256,7 +316,7 @@ async function openReassignDialog() {
   const pkg = state.selectedPackage;
   if (!pkg) return;
 
-  els.reassignContext.textContent = `当前协作任务：${pkg.id}　·　bug group：${pkg.bug_group_id || "-"}`;
+  els.reassignContext.textContent = `当前 handoff：${pkg.id}　·　bug group：${pkg.bug_group_id || "-"}`;
 
   let onlineUsers = state.online;
   if (!onlineUsers.length) {
@@ -326,21 +386,32 @@ async function refreshAll() {
     renderOnline([]);
     return;
   }
+  if (state.view === "organizations") {
+    await Promise.allSettled([loadOnline(), loadOrganizations()]);
+    return;
+  }
+  if (state.view === "projects") {
+    await Promise.allSettled([loadOnline(), loadProjects()]);
+    return;
+  }
+  if (state.view === "account") return loadAccount();
+  if (state.view === "admin") return loadAdmin();
+  if (state.view === "workspaces") return renderWorkspaces();
   await Promise.allSettled([loadOnline(), loadList()]);
 }
 
 async function loadList() {
   try {
-    const limit = encodeURIComponent(els.limitSelect.value);
-    let q;
+    const q = new URLSearchParams({ limit: els.limitSelect.value });
     if (state.view === "project" && state.projectID) {
-      q = `scope=project&project=${encodeURIComponent(state.projectID)}`;
+      q.set("scope", "project");
+      q.set("project", state.projectID);
     } else if (state.view === "all") {
-      q = "scope=all";
+      q.set("scope", "all");
     } else {
-      q = `as=${encodeURIComponent(state.view)}`;
+      q.set("as", state.view);
     }
-    const data = await api(`/v1/handoffs?${q}&limit=${limit}`);
+    const data = await api(`/v1/handoffs?${q.toString()}`);
     state.items = data.items || [];
     renderList();
   } catch (err) {
@@ -400,7 +471,7 @@ async function loadComments() {
 
 async function api(path, options = {}) {
   if (!state.token) {
-    throw new Error("Missing enterprise relay token.");
+    throw new Error("Missing relay token.");
   }
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${state.token}`);
@@ -427,23 +498,32 @@ async function copyToClipboard(text, message) {
   }
 }
 
+async function copyToClipboardForAuth(text, message, authEpoch) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (authRequestCurrent(authEpoch)) toast(message);
+  } catch (err) {
+    if (authRequestCurrent(authEpoch)) toast(`复制失败：${err.message || err}`);
+  }
+}
+
 function renderList() {
   const title = viewTitle(state.view);
   els.listTitle.textContent = title;
   const query = els.searchInput.value.trim().toLowerCase();
   const items = state.items.filter((item) => haystack(item).includes(query));
   els.listMeta.textContent = state.token
-    ? `${items.length} shown from ${state.items.length} loaded`
-    : "Connect to load agent work packages.";
+    ? listMetaLabel(items.length, state.items.length)
+    : "Connect to load handoffs.";
 
   if (!items.length) {
-    els.handoffList.innerHTML = `<div class="empty-list">${escapeHTML(state.token ? "No work packages match this view." : "No session token configured.")}</div>`;
+    els.handoffList.innerHTML = `<div class="empty-list">${escapeHTML(state.token ? "No handoffs match this view." : "No token configured.")}</div>`;
     return;
   }
 
   els.handoffList.innerHTML = items.map((item) => {
     const active = item.id === state.selectedID ? " active" : "";
-    const headline = item.headline || "(no delivery brief)";
+    const headline = item.headline || "(no summary headline)";
     const people = recipientsLabel(item) || item.sender || "";
     return `
       <button class="handoff-row${active}" type="button" data-id="${escapeAttr(item.id)}">
@@ -466,15 +546,15 @@ function renderList() {
 
 function renderOnline(users) {
   const online = users.filter((user) => user.online).length;
-  els.onlineCount.textContent = `${online} online`;
+  els.onlineCount.textContent = `${online} 在线`;
   if (!users.length) {
-    els.onlineList.innerHTML = `<p class="muted">No known team members.</p>`;
+    els.onlineList.innerHTML = `<p class="muted">暂无已知用户。</p>`;
     return;
   }
   els.onlineList.innerHTML = users.map((user) => `
     <div class="online-user">
       <span>${escapeHTML(user.identity)}</span>
-      <span class="presence ${user.online ? "online" : ""}" title="${user.online ? "Online" : "Offline"}"></span>
+      <span class="presence ${user.online ? "online" : ""}" title="${user.online ? "在线" : "离线"}"></span>
     </div>
   `).join("");
 }
@@ -494,7 +574,8 @@ function switchView(view) {
   els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
   applyMainView(view);
   if (view === "workspaces") return renderWorkspaces();
-  if (view === "projects") return loadProjects();
+  if (view === "organizations") return Promise.allSettled([loadOnline(), loadOrganizations()]);
+  if (view === "projects") return Promise.allSettled([loadOnline(), loadProjects()]);
   if (view === "account") return loadAccount();
   if (view === "admin") return loadAdmin();
   renderDetail();
@@ -506,6 +587,7 @@ function applyMainView(view) {
   els.listPane.classList.toggle("hidden", !handoff);
   els.detailPane.classList.toggle("hidden", !handoff);
   els.workspacesPane.classList.toggle("hidden", view !== "workspaces");
+  els.orgsPane.classList.toggle("hidden", view !== "organizations");
   els.projectsPane.classList.toggle("hidden", view !== "projects");
   els.accountPane.classList.toggle("hidden", view !== "account");
   els.adminPane.classList.toggle("hidden", view !== "admin");
@@ -515,9 +597,9 @@ function renderWorkspaces() {
   const items = state.workspaces;
   els.workspacesMeta.textContent = items.length
     ? `${items.length} 个项目 · 点击「复制启动命令」到终端粘贴执行。`
-    : "未配置 workspace。用兼容命令 `cc-handoff workspace add <name> <github-url|path>` 添加。";
+    : "未配置 workspace。用 `cc-handoff workspace add <name> <github-url|path>` 添加。";
   if (!items.length) {
-    els.workspaceList.innerHTML = `<div class="empty-list">${escapeHTML("No developer workspaces configured.")}</div>`;
+    els.workspaceList.innerHTML = `<div class="empty-list">${escapeHTML("还没有配置工作区。")}</div>`;
     return;
   }
   els.workspaceList.innerHTML = items.map((ws, i) => `
@@ -551,6 +633,7 @@ function renderDetail() {
   ].join("");
   els.detailTitle.textContent = headline;
   els.detailSubtitle.textContent = `${pkg.sender || "-"} -> ${recipientsFromPackage(pkg).join(", ") || pkg.recipient || "-"}`;
+  renderDeliveryTarget(pkg.delivery_target);
 
   els.statusState.textContent = status?.state || "-";
   els.statusCreated.textContent = formatDate(status?.created_at || pkg.created_at);
@@ -561,7 +644,7 @@ function renderDetail() {
   els.summaryContent.textContent = pkg.summary_md || "";
   renderMetadata(pkg);
   renderAPIDelta(pkg.api_delta);
-  els.promptContent.textContent = state.promptText || "(Agent prompt 加载中…)";
+  els.promptContent.textContent = state.promptText || "(prompt 加载中…)";
   renderComments();
 
   const pending = status?.state === "pending";
@@ -591,6 +674,7 @@ function renderMetadata(pkg) {
     ["Base SHA", pkg.repo?.base_sha],
     ["Sender", pkg.sender],
     ["Recipients", recipientsFromPackage(pkg).join(", ") || pkg.recipient],
+    ["Delivery Target", deliveryTargetLabel(pkg.delivery_target)],
     ["Created", formatDate(pkg.created_at)],
     ["Amends", pkg.amends_handoff],
     ["Responds To", pkg.responds_to],
@@ -607,6 +691,38 @@ function renderMetadata(pkg) {
       <dd>${escapeHTML(String(value))}</dd>
     </div>
   `).join("");
+}
+
+function renderDeliveryTarget(target) {
+  const parts = deliveryTargetParts(target);
+  els.deliveryTarget.classList.toggle("hidden", parts.length === 0);
+  if (!parts.length) {
+    els.deliveryTarget.innerHTML = "";
+    return;
+  }
+  els.deliveryTarget.innerHTML = `
+    <span class="delivery-target-title">团队定向</span>
+    <span class="delivery-target-items">
+      ${parts.map(([label, value]) => `<span title="${escapeAttr(label)} ${escapeAttr(value)}">${escapeHTML(label)} · ${escapeHTML(value)}</span>`).join("")}
+    </span>
+  `;
+}
+
+function deliveryTargetParts(target) {
+  if (!target) return [];
+  const parts = [];
+  const add = (label, value) => {
+    const clean = String(value || "").trim();
+    if (clean) parts.push([label, clean]);
+  };
+  add("项目", target.project_id);
+  add("团队", target.org_id);
+  add("指定成员", target.member);
+  return parts;
+}
+
+function deliveryTargetLabel(target) {
+  return deliveryTargetParts(target).map(([label, value]) => `${label} ${value}`).join(" · ");
 }
 
 function renderAPIDelta(delta) {
@@ -631,7 +747,7 @@ function renderAPIDelta(delta) {
 
 function renderComments() {
   if (!state.comments.length) {
-    els.commentsList.innerHTML = `<p class="muted">No comments yet.</p>`;
+    els.commentsList.innerHTML = `<p class="muted">还没有评论。</p>`;
     return;
   }
   els.commentsList.innerHTML = state.comments.map((comment) => `
@@ -647,14 +763,14 @@ function renderComments() {
 
 function setConnectedLabel() {
   const connected = Boolean(state.token);
-  els.sessionLabel.textContent = connected ? (state.me?.identity || "connected") : "Not connected";
+  els.sessionLabel.textContent = connected ? (state.me?.identity || "已连接") : "未连接";
   els.signoutButton.classList.toggle("hidden", !connected);
 }
 
 function authError(err) {
   const msg = err.message || String(err);
   if (msg.includes("401") || msg.includes("invalid token") || msg.includes("missing bearer")) {
-    els.authMessage.textContent = "Token rejected by enterprise relay.";
+    els.authMessage.textContent = "Relay 拒绝了这个 token。";
   }
   toast(msg);
 }
@@ -667,7 +783,28 @@ function toast(message) {
 }
 
 function viewTitle(view) {
-  return view === "sender" ? "Initiated" : view === "history" ? "Audit History" : "Coordination Queue";
+  if (view === "sender") return "已发送";
+  if (view === "history") return "历史";
+  if (view === "project") return state.projectID ? `项目 · ${currentProjectLabel()}` : "项目协作任务";
+  if (view === "all") return "全部协作任务";
+  return "任务队列";
+}
+
+function currentProjectLabel() {
+  const project = state.projects.find((p) => p.id === state.projectID)
+    || (state.me?.projects || []).find((p) => p.id === state.projectID);
+  return state.projectLabel || project?.name || state.projectID || "项目";
+}
+
+function listMetaLabel(shown, loaded) {
+  const base = `显示 ${shown} 条，共加载 ${loaded} 条`;
+  if (state.view === "project") {
+    return state.projectID ? `${base} · ${currentProjectLabel()}` : `${base} · 全部可见项目`;
+  }
+  if (state.view === "all") {
+    return `${base} · 管理员范围`;
+  }
+  return base;
 }
 
 function haystack(item) {
@@ -743,12 +880,29 @@ function escapeAttr(value) {
 // --- auth: login / token / signout ---
 
 function setToken(tok) {
-  state.token = tok || "";
+  const next = tok || "";
+  if (next !== state.token) invalidateAuthContext();
+  state.token = next;
   if (state.token) {
     localStorage.setItem("cc-handoff-token", state.token);
   } else {
     localStorage.removeItem("cc-handoff-token");
   }
+}
+
+function invalidateAuthContext() {
+  state.authEpoch += 1;
+  state.adminUsers = [];
+  state.pendingUserActions.clear();
+  state.creatingUser = false;
+  if (els.createUserDialog.open) els.createUserDialog.close();
+  setCreateUserPending(false);
+  closeAdminUserMenus();
+  els.usersList.innerHTML = "";
+}
+
+function authRequestCurrent(epoch) {
+  return epoch === state.authEpoch;
 }
 
 async function onLogin(event) {
@@ -807,7 +961,7 @@ async function onRegister(event) {
     const data = await resp.json();
     setToken(data.token);
     els.loginPassword.value = "";
-    await onConnected();
+    await onConnected({ view: "organizations" });
   } catch (err) {
     toast(`注册失败：${err.message || err}`);
   }
@@ -816,7 +970,7 @@ async function onRegister(event) {
 function onUseToken() {
   const tok = els.tokenInput.value.trim();
   if (!tok) {
-      toast("请粘贴机器 token");
+    toast("请粘贴机器 token");
     return;
   }
   setToken(tok);
@@ -825,6 +979,7 @@ function onUseToken() {
 }
 
 async function onSignout() {
+  invalidateAuthContext();
   try {
     if (state.token) await api("/v1/logout", { method: "POST" });
   } catch {
@@ -832,7 +987,11 @@ async function onSignout() {
   }
   setToken("");
   state.me = null;
+  state.organizations = [];
+  state.projects = [];
   state.items = [];
+  state.projectID = "";
+  state.projectLabel = "";
   setupRoleTabs();
   setConnectedLabel();
   switchView("recipient");
@@ -842,29 +1001,435 @@ async function onSignout() {
 
 // onConnected runs once a token is established (login or paste): learn who we
 // are, reveal role-appropriate tabs, then load the default view.
-async function onConnected() {
+async function onConnected(options = {}) {
+  const authEpoch = state.authEpoch;
   try {
-    state.me = await api("/v1/me");
+    const me = await api("/v1/me");
+    if (!authRequestCurrent(authEpoch)) return;
+    state.me = me;
   } catch (err) {
+    if (!authRequestCurrent(authEpoch)) return;
     state.me = null;
     setupRoleTabs();
     setConnectedLabel();
     authError(err);
     return;
   }
+  state.adminUserView = "active";
+  state.adminUserQuery = "";
+  state.adminUserStatus = "all";
+  els.adminUserSearch.value = "";
+  els.adminUserStatus.value = "all";
   els.authMessage.textContent = `已登录为 ${state.me.identity}`;
   setupRoleTabs();
   setConnectedLabel();
+  if (options.view) {
+    await switchView(options.view);
+    return;
+  }
   refreshAll();
 }
 
-// setupRoleTabs reveals Projects (members or admins), Admin (admins), and
-// Account (anyone signed in) based on /v1/me; hides them again when signed out.
+async function refreshMe() {
+  state.me = await api("/v1/me");
+  setupRoleTabs();
+  setConnectedLabel();
+}
+
+// setupRoleTabs reveals Teams/Projects/Account to every signed-in user so a
+// freshly registered account can bootstrap its first team and project.
 function setupRoleTabs() {
   const me = state.me;
-  els.tabProjects.classList.toggle("hidden", !(me && (me.is_admin || (me.projects && me.projects.length))));
+  els.tabOrgs.classList.toggle("hidden", !me);
+  els.tabProjects.classList.toggle("hidden", !me);
   els.tabAdmin.classList.toggle("hidden", !(me && me.is_admin));
   els.tabAccount.classList.toggle("hidden", !me);
+}
+
+// --- organizations / teams pane ---
+
+async function loadOrganizations() {
+  if (!state.token) return;
+  try {
+    const data = await api("/v1/orgs");
+    state.organizations = data.organizations || [];
+    renderOrganizations();
+    renderProjectOrgOptions();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function organizationRole(id) {
+  const fresh = (state.organizations || []).find((o) => o.id === id);
+  if (roleKey(fresh?.role)) return roleKey(fresh.role);
+  const org = (state.me?.organizations || []).find((o) => o.id === id);
+  if (org) return roleKey(org.role);
+  return state.me?.is_admin ? "admin" : "member";
+}
+
+function organizationName(id) {
+  const org = state.organizations.find((o) => o.id === id) || (state.me?.organizations || []).find((o) => o.id === id);
+  return org?.name || id || "默认团队";
+}
+
+function canManageOrganization(role) {
+  const value = roleKey(role);
+  return state.me?.is_admin || value === "owner" || value === "admin";
+}
+
+function identityKey(identity) {
+  return String(identity || "").trim();
+}
+
+function roleKey(role) {
+  return String(role || "").trim();
+}
+
+function isOnlineIdentity(identity) {
+  const id = identityKey(identity);
+  return Boolean(id && state.online.some((user) => identityKey(user.identity) === id && user.online));
+}
+
+function memberPresence(identity) {
+  const online = isOnlineIdentity(identity);
+  return `<span class="presence ${online ? "online" : ""}" title="${online ? "在线" : "离线"}"></span>`;
+}
+
+function roleTone(role) {
+  const value = roleKey(role);
+  return ["owner", "admin", "member", "viewer", "guest"].includes(value) ? `role-${value}` : "role-member";
+}
+
+function roleLabel(role, scope = "team") {
+  const value = roleKey(role);
+  if (scope === "project") {
+    if (value === "owner") return "负责人";
+    if (value === "admin") return "管理员";
+    if (value === "viewer") return "只读";
+    if (value === "member") return "成员";
+  }
+  if (value === "owner") return "负责人";
+  if (value === "admin") return "管理员";
+  if (value === "guest") return "访客";
+  if (value === "member") return "成员";
+  return value || "成员";
+}
+
+function roleSelectOptions(roles, currentRole) {
+  const current = roleKey(currentRole);
+  return roles.map((role) => `<option value="${escapeAttr(role)}" ${role === current ? "selected" : ""}>${escapeHTML(roleLabel(role, role === "viewer" ? "project" : "team"))}</option>`).join("");
+}
+
+function metricTile(label, value) {
+  return `<div class="team-metric"><span>${escapeHTML(label)}</span><strong>${escapeHTML(String(value))}</strong></div>`;
+}
+
+function identityLabel(member) {
+  const name = (member.display_name || "").trim();
+  return name ? `${member.identity} · ${name}` : member.identity;
+}
+
+function memberCandidateOptions(candidates) {
+  if (!candidates.length) {
+    return `<option value="">无可选成员</option>`;
+  }
+  return [
+    `<option value="">选择成员</option>`,
+    ...candidates.map((m) => `<option value="${escapeAttr(m.identity)}">${escapeHTML(identityLabel(m))}</option>`),
+  ].join("");
+}
+
+function reachableUserCandidates(existingMembers = []) {
+  const existing = new Set(existingMembers.map((m) => identityKey(m.identity)).filter(Boolean));
+  return state.online
+    .filter((user) => {
+      const identity = identityKey(user.identity);
+      return identity && !existing.has(identity);
+    })
+    .map((user) => ({ identity: identityKey(user.identity), display_name: user.online ? "在线" : "离线" }));
+}
+
+function memberCandidateForm(kind, candidates, roles) {
+  const scope = kind === "member" ? "project" : "team";
+  const roleOptions = roles.map((role) => `<option value="${escapeAttr(role)}">${escapeHTML(roleLabel(role, scope))}</option>`).join("");
+  const emptyHint = candidates.length ? "" : `<span class="member-picker-hint">没有候选时仍可手动输入 identity。</span>`;
+  return `
+    <form class="inline-form member-invite-form member-picker" data-form="${escapeAttr(kind)}">
+      <select name="candidate" aria-label="选择成员">
+        ${memberCandidateOptions(candidates)}
+      </select>
+      <input type="text" name="identity" aria-label="成员 identity" placeholder="或手动输入 identity">
+      <select name="role" aria-label="成员角色">${roleOptions}</select>
+      <button type="submit" class="secondary">加成员</button>
+      ${emptyHint}
+    </form>`;
+}
+
+function renderMemberTable(members, options = {}) {
+  if (!members.length) {
+    return `<div class="empty-inline">还没有成员。</div>`;
+  }
+  const removeAttr = options.removeAttr || "";
+  const canRemove = Boolean(options.canRemove && removeAttr);
+  const roleAttr = options.roleAttr || "";
+  const roleOptions = options.roles || [];
+  const canChangeRole = Boolean(options.canChangeRole && roleAttr && roleOptions.length);
+  const ownerCount = members.filter((m) => roleKey(m.role) === "owner").length;
+  const removeBlockReasons = options.removeBlockReasons || {};
+  const removeDisabledReason = options.removeDisabledReason || "";
+  return `
+    <div class="member-table ${canRemove ? "has-actions" : ""}" role="table" aria-label="${escapeAttr(options.label || "成员")}">
+      <div class="member-table-row member-table-head" role="row">
+        <span role="columnheader">成员</span>
+        <span role="columnheader">角色</span>
+        <span role="columnheader">状态</span>
+        ${canRemove ? `<span role="columnheader">操作</span>` : ""}
+      </div>
+      ${members.map((m) => {
+        const displayName = (m.display_name || "").trim();
+        const online = isOnlineIdentity(m.identity);
+        const isLastOwner = roleKey(m.role) === "owner" && ownerCount <= 1;
+        const removeBlockReason = isLastOwner ? "至少保留一个负责人" : removeDisabledReason || removeBlockReasons[identityKey(m.identity)] || "";
+        const roleControl = canChangeRole
+          ? `<select class="member-role-select" ${roleAttr}="${escapeAttr(m.identity)}" aria-label="更新成员 ${escapeAttr(m.identity)} 的角色" ${isLastOwner ? `disabled title="至少保留一个负责人"` : ""}>${roleSelectOptions(roleOptions, m.role)}</select>`
+          : `<span class="role-pill ${roleTone(m.role)}">${escapeHTML(roleLabel(m.role, roleOptions.includes("viewer") ? "project" : "team"))}</span>`;
+        const removeButton = removeBlockReason
+          ? `<button type="button" class="link-danger" disabled title="${escapeAttr(removeBlockReason)}" aria-label="不能移除成员 ${escapeAttr(m.identity)}">${escapeHTML(isLastOwner ? "保留" : "受保护")}</button>`
+          : `<button type="button" class="link-danger" ${removeAttr}="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button>`;
+        return `
+          <div class="member-table-row" role="row">
+            <span class="member-person" role="cell" data-label="成员">
+              <span class="member-identity">${escapeHTML(m.identity)}</span>
+              ${displayName ? `<small>${escapeHTML(displayName)}</small>` : ""}
+            </span>
+            <span class="member-role" role="cell" data-label="角色">${roleControl}</span>
+            <span class="member-state" role="cell" data-label="状态">${memberPresence(m.identity)}<span class="member-state-text">${online ? "在线" : "离线"}</span></span>
+            ${canRemove ? `<span class="member-actions" role="cell" data-label="操作">${removeButton}</span>` : ""}
+          </div>`;
+      }).join("")}
+    </div>`;
+}
+
+function projectOwnerGuardMessage(uncheckedProjectNames = []) {
+  const names = uncheckedProjectNames.map((name) => String(name || "").trim()).filter(Boolean);
+  return names.length ? `项目负责人状态未确认: ${names.join(", ")}` : "项目负责人状态未确认";
+}
+
+async function organizationMemberRemovalGuards(projects = []) {
+  const soleProjectOwnerNames = {};
+  const uncheckedProjectNames = [];
+  for (const project of projects) {
+    try {
+      const detail = await api(`/v1/projects/${encodeURIComponent(project.id)}`);
+      const members = detail.members || [];
+      const owners = members.filter((m) => roleKey(m.role) === "owner");
+      if (owners.length === 1) {
+        const identity = identityKey(owners[0].identity);
+        if (!soleProjectOwnerNames[identity]) soleProjectOwnerNames[identity] = [];
+        soleProjectOwnerNames[identity].push(project.name || project.id);
+      }
+    } catch {
+      uncheckedProjectNames.push(project.name || project.id);
+    }
+  }
+  const removeBlockReasons = {};
+  for (const [identity, names] of Object.entries(soleProjectOwnerNames)) {
+    removeBlockReasons[identity] = `先转移项目负责人: ${names.join(", ")}`;
+  }
+  return {
+    removeBlockReasons,
+    removeDisabledReason: uncheckedProjectNames.length ? projectOwnerGuardMessage(uncheckedProjectNames) : "",
+  };
+}
+
+function inlineWarning(message) {
+  if (!message) return "";
+  return `<div class="inline-warning" role="status">${escapeHTML(message)}</div>`;
+}
+
+function renderOrganizations() {
+  if (!state.organizations.length) {
+    els.orgsList.innerHTML = `<div class="empty-list">还没有团队。新建一个团队，然后在项目页创建项目。</div>`;
+    return;
+  }
+  els.orgsList.innerHTML = state.organizations.map((org) => {
+    const role = organizationRole(org.id);
+    const canManage = canManageOrganization(role);
+    return `
+      <div class="aux-card org-card" data-org="${escapeAttr(org.id)}">
+        <div class="aux-card-head">
+          <div class="org-title">
+            <strong>${escapeHTML(org.name)}</strong>
+            <span class="badge">${escapeHTML(roleLabel(role, "team"))}</span>
+          </div>
+          <div class="aux-card-actions">
+            ${canManage ? `<button class="secondary" type="button" data-action="manage-org">管理</button>` : ""}
+          </div>
+        </div>
+        <div class="muted org-meta">负责人 · ${escapeHTML(org.owner_identity || "-")} · ${escapeHTML(org.id)}</div>
+        <div class="aux-card-body hidden" data-body></div>
+      </div>`;
+  }).join("");
+}
+
+async function onOrganizationsListClick(event) {
+  const card = event.target.closest("[data-org]");
+  if (!card) return;
+  const id = card.dataset.org;
+  const body = card.querySelector("[data-body]");
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  try {
+    if (action === "manage-org") {
+      if (!body.classList.contains("hidden")) {
+        body.classList.add("hidden");
+        return;
+      }
+      await renderOrganizationManage(id, body);
+      body.classList.remove("hidden");
+      return;
+    }
+    const member = event.target.closest("[data-remove-org-member]")?.dataset.removeOrgMember;
+    if (member !== undefined) {
+      await api(`/v1/orgs/${encodeURIComponent(id)}/members/${encodeURIComponent(member)}`, { method: "DELETE" });
+      toast("已移除团队成员");
+      await refreshMe();
+      await loadOrganizations();
+      const next = organizationBody(id);
+      if (next) {
+        await renderOrganizationManage(id, next);
+        next.classList.remove("hidden");
+      }
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function onOrganizationsListSubmit(event) {
+  event.preventDefault();
+  const form = event.target;
+  const card = form.closest("[data-org]");
+  if (!card || form.dataset.form !== "org-member") return;
+  const id = card.dataset.org;
+  const candidate = form.querySelector("[name=candidate]")?.value.trim() || "";
+  const manual = form.querySelector("[name=identity]")?.value.trim() || "";
+  const identity = manual || candidate;
+  const role = form.querySelector("[name=role]").value;
+  if (!identity) return;
+  try {
+    await api(`/v1/orgs/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
+    toast("已添加团队成员");
+    form.reset();
+    await refreshMe();
+    await loadOrganizations();
+    const next = organizationBody(id);
+    if (next) {
+      await renderOrganizationManage(id, next);
+      next.classList.remove("hidden");
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function onOrganizationsListChange(event) {
+  const select = event.target.closest("[data-org-member-role]");
+  if (!select) return;
+  const card = select.closest("[data-org]");
+  if (!card) return;
+  const id = card.dataset.org;
+  const identity = select.dataset.orgMemberRole;
+  const role = select.value;
+  try {
+    await api(`/v1/orgs/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
+    toast("已更新团队成员角色");
+    await refreshMe();
+    await loadOrganizations();
+    const next = organizationBody(id);
+    if (next) {
+      await renderOrganizationManage(id, next);
+      next.classList.remove("hidden");
+    }
+  } catch (err) {
+    toast(err.message);
+    const next = organizationBody(id);
+    if (next) await renderOrganizationManage(id, next);
+  }
+}
+
+function organizationBody(id) {
+  const card = Array.from(els.orgsList.querySelectorAll("[data-org]")).find((el) => el.dataset.org === id);
+  return card?.querySelector("[data-body]") || null;
+}
+
+async function renderOrganizationManage(id, body) {
+  try {
+    const data = await api(`/v1/orgs/${encodeURIComponent(id)}`);
+    const members = data.members || [];
+    const projects = data.projects || [];
+    const role = organizationRole(id);
+    const canManage = canManageOrganization(role);
+    const onlineCount = members.filter((m) => isOnlineIdentity(m.identity)).length;
+    const removalGuards = canManage
+      ? await organizationMemberRemovalGuards(projects)
+      : { removeBlockReasons: {}, removeDisabledReason: "" };
+    body.innerHTML = `
+      <div class="team-summary-strip">
+        ${metricTile("项目", projects.length)}
+        ${metricTile("成员", members.length)}
+        ${metricTile("在线", onlineCount)}
+        ${metricTile("你的角色", roleLabel(role, "team"))}
+      </div>
+      <div class="manage-block">
+        <h4>项目</h4>
+        <div class="team-project-grid">
+          ${projects.length ? projects.map((p) => `
+            <button class="team-project-card" type="button" data-jump-project="${escapeAttr(p.id)}">
+              <span>${escapeHTML(p.name)}</span>
+              <small>${escapeHTML(p.owner_identity || "")}</small>
+            </button>`).join("") : `<span class="muted">这个团队下还没有项目。</span>`}
+        </div>
+      </div>
+      <div class="manage-block">
+        <h4>成员</h4>
+        ${inlineWarning(removalGuards.removeDisabledReason)}
+        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-org-member", canChangeRole: canManage, roleAttr: "data-org-member-role", roles: ["member", "admin", "guest", "owner"], label: "团队成员", removeBlockReasons: removalGuards.removeBlockReasons, removeDisabledReason: removalGuards.removeDisabledReason })}
+        ${canManage ? memberCandidateForm("org-member", reachableUserCandidates(members), ["member", "admin", "guest", "owner"]) : ""}
+      </div>`;
+    body.querySelectorAll("[data-jump-project]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.projectID = button.dataset.jumpProject;
+        state.projectLabel = button.querySelector("span")?.textContent || "";
+        switchView("project");
+      });
+    });
+  } catch (err) {
+    body.innerHTML = `<p class="muted">${escapeHTML(err.message)}</p>`;
+  }
+}
+
+async function onCreateOrganization(event) {
+  event.preventDefault();
+  const name = els.newOrgName.value.trim();
+  if (!name) return;
+  try {
+    const org = await api("/v1/orgs", { method: "POST", body: JSON.stringify({ name }) });
+    if (org?.id) state.preferredProjectOrgID = org.id;
+    els.newOrgName.value = "";
+    toast("团队已创建");
+    await refreshMe();
+    await loadOrganizations();
+    if (org?.id) {
+      const body = organizationBody(org.id);
+      if (body) {
+        await renderOrganizationManage(org.id, body);
+        body.classList.remove("hidden");
+      }
+    }
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 // --- projects pane ---
@@ -872,7 +1437,13 @@ function setupRoleTabs() {
 async function loadProjects() {
   if (!state.token) return;
   try {
-    const data = await api("/v1/projects");
+    const [projectsData, orgsData] = await Promise.all([
+      api("/v1/projects"),
+      api("/v1/orgs").catch(() => ({ organizations: state.organizations || [] })),
+    ]);
+    state.organizations = orgsData.organizations || [];
+    renderProjectOrgOptions();
+    const data = projectsData;
     state.projects = data.projects || [];
     renderProjects();
   } catch (err) {
@@ -880,29 +1451,52 @@ async function loadProjects() {
   }
 }
 
+function renderProjectOrgOptions() {
+  const orgs = (state.organizations || []).filter((org) => canManageOrganization(organizationRole(org.id)));
+  if (!els.newProjectOrg) return;
+  const selected = state.preferredProjectOrgID || els.newProjectOrg.value || "";
+  if (!orgs.length) {
+    els.newProjectOrg.innerHTML = `<option value="">我的默认团队</option>`;
+    return;
+  }
+  els.newProjectOrg.innerHTML = [
+    `<option value="">我的默认团队</option>`,
+    ...orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHTML(org.name)}</option>`),
+  ].join("");
+  els.newProjectOrg.value = Array.from(els.newProjectOrg.options).some((option) => option.value === selected) ? selected : "";
+}
+
 function projectRole(id) {
+  const project = (state.projects || []).find((pr) => pr.id === id);
+  if (roleKey(project?.role)) return roleKey(project.role);
   const p = (state.me?.projects || []).find((pr) => pr.id === id);
-  if (p) return p.role;
-  return state.me?.is_admin ? "admin" : "member";
+  if (p) return roleKey(p.role);
+  return state.me?.is_admin ? "admin" : "viewer";
 }
 
 function renderProjects() {
   if (!state.projects.length) {
-    els.projectsList.innerHTML = `<div class="empty-list">还没有企业项目。用上面的表单新建一个。</div>`;
+    els.projectsList.innerHTML = `<div class="empty-list">还没有项目。用上面的表单新建一个。</div>`;
     return;
   }
   els.projectsList.innerHTML = state.projects.map((p) => {
     const role = projectRole(p.id);
-    const canManage = role === "owner" || state.me?.is_admin;
+    const canManage = canManageOrganization(role);
+    const teamName = organizationName(p.org_id);
     return `
-      <div class="aux-card" data-project="${escapeAttr(p.id)}">
+      <div class="aux-card project-card" data-project="${escapeAttr(p.id)}">
         <div class="aux-card-head">
-          <div><strong>${escapeHTML(p.name)}</strong> <span class="badge">${escapeHTML(role)}</span></div>
+          <div class="project-title">
+            <strong>${escapeHTML(p.name)}</strong>
+            <span class="badge">${escapeHTML(roleLabel(role, "project"))}</span>
+            <span class="badge soft">${escapeHTML(teamName)}</span>
+          </div>
           <div class="aux-card-actions">
-            <button class="secondary" type="button" data-action="browse">查看协作任务</button>
+            <button class="secondary" type="button" data-action="browse">查看 handoff</button>
             ${canManage ? `<button class="secondary" type="button" data-action="manage">管理</button>` : ""}
           </div>
         </div>
+        <div class="muted project-meta">团队 · ${escapeHTML(teamName)} · 负责人 · ${escapeHTML(p.owner_identity || "-")} · ${escapeHTML(p.id)}</div>
         <div class="aux-card-body hidden" data-body></div>
       </div>`;
   }).join("");
@@ -917,6 +1511,8 @@ async function onProjectsListClick(event) {
   try {
     if (action === "browse") {
       state.projectID = id;
+      const project = state.projects.find((p) => p.id === id);
+      state.projectLabel = project?.name || "";
       switchView("project");
       return;
     }
@@ -947,6 +1543,11 @@ async function onProjectsListClick(event) {
   }
 }
 
+function projectBody(id) {
+  const card = Array.from(els.projectsList.querySelectorAll("[data-project]")).find((el) => el.dataset.project === id);
+  return card?.querySelector("[data-body]") || null;
+}
+
 async function onProjectsListSubmit(event) {
   event.preventDefault();
   const form = event.target;
@@ -955,12 +1556,14 @@ async function onProjectsListSubmit(event) {
   const id = card.dataset.project;
   try {
     if (form.dataset.form === "repo") {
-      const name = form.querySelector("input").value.trim();
-      if (!name) return;
-      await api(`/v1/projects/${encodeURIComponent(id)}/repos`, { method: "POST", body: JSON.stringify({ repo_name: name }) });
-      toast("已绑定 repo");
+      const cloneURL = form.querySelector("input").value.trim();
+      if (!cloneURL) return;
+      await api(`/v1/projects/${encodeURIComponent(id)}/repos`, { method: "POST", body: JSON.stringify({ clone_url: cloneURL }) });
+      toast("已绑定 GitHub 仓库");
     } else if (form.dataset.form === "member") {
-      const identity = form.querySelector("[name=identity]").value.trim();
+      const candidate = form.querySelector("[name=candidate]")?.value.trim() || "";
+      const manual = form.querySelector("[name=identity]")?.value.trim() || "";
+      const identity = manual || candidate;
       const role = form.querySelector("[name=role]").value;
       if (!identity) return;
       await api(`/v1/projects/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
@@ -972,32 +1575,80 @@ async function onProjectsListSubmit(event) {
   }
 }
 
+async function onProjectsListChange(event) {
+  const select = event.target.closest("[data-member-role]");
+  if (!select) return;
+  const card = select.closest("[data-project]");
+  if (!card) return;
+  const id = card.dataset.project;
+  const identity = select.dataset.memberRole;
+  const role = select.value;
+  try {
+    await api(`/v1/projects/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ identity, role }) });
+    toast("已更新成员角色");
+    await refreshMe();
+    await loadProjects();
+    const next = projectBody(id);
+    if (next) {
+      await renderProjectManage(id, next);
+      next.classList.remove("hidden");
+    }
+  } catch (err) {
+    toast(err.message);
+    const next = projectBody(id);
+    if (next) await renderProjectManage(id, next);
+  }
+}
+
 async function renderProjectManage(id, body) {
   try {
     const data = await api(`/v1/projects/${encodeURIComponent(id)}`);
     const repos = data.repos || [];
+    const repoBindings = data.repo_bindings || repos.map((repo_name) => ({ repo_name, clone_url: "" }));
     const members = data.members || [];
+    const project = data.project || {};
+    const role = projectRole(id);
+    const canManage = canManageOrganization(role);
+    let orgMembers = [];
+    if (project.org_id) {
+      try {
+        const orgData = await api(`/v1/orgs/${encodeURIComponent(project.org_id)}`);
+        orgMembers = orgData.members || [];
+      } catch {
+        orgMembers = [];
+      }
+    }
+    const projectMemberIDs = new Set(members.map((m) => identityKey(m.identity)).filter(Boolean));
+    const memberCandidates = orgMembers.filter((m) => {
+      const identity = identityKey(m.identity);
+      return identity && !projectMemberIDs.has(identity);
+    });
+    const onlineCount = members.filter((m) => isOnlineIdentity(m.identity)).length;
     body.innerHTML = `
+      <div class="team-summary-strip">
+        ${metricTile("成员", members.length)}
+        ${metricTile("在线", onlineCount)}
+        ${metricTile("Repos", repos.length)}
+        ${metricTile("团队", organizationName(project.org_id))}
+      </div>
+      <div class="manage-block project-context">
+        <span class="muted">团队</span>
+        <strong>${escapeHTML(organizationName(project.org_id))}</strong>
+      </div>
       <div class="manage-block">
-        <h4>Repos</h4>
+        <h4>GitHub 仓库</h4>
         <div class="chip-row">
-          ${repos.length ? repos.map((r) => `<span class="chip">${escapeHTML(r)}<button type="button" data-unmap="${escapeAttr(r)}" aria-label="移除 repo ${escapeAttr(r)}" title="移除">×</button></span>`).join("") : `<span class="muted">无</span>`}
+          ${repoBindings.length ? repoBindings.map((r) => `<span class="chip" title="${escapeAttr(r.clone_url || "历史绑定：尚无 clone URL")}">${escapeHTML(r.repo_name)}${r.clone_url ? ` · ${escapeHTML(r.clone_url)}` : " · 未配置 URL"}${canManage ? `<button type="button" data-unmap="${escapeAttr(r.repo_name)}" aria-label="移除 repo ${escapeAttr(r.repo_name)}" title="移除">×</button>` : ""}</span>`).join("") : `<span class="muted">无</span>`}
         </div>
-        <form class="inline-form" data-form="repo">
-          <input type="text" aria-label="要绑定的 repo 名" placeholder="repo 名（如 kunlun-backend）">
-          <button type="submit" class="secondary">绑定 repo</button>
-        </form>
+        ${canManage ? `<form class="inline-form" data-form="repo">
+          <input type="text" inputmode="url" aria-label="GitHub clone URL" placeholder="https://github.com/org/repo.git 或 git@github.com:org/repo.git">
+          <button type="submit" class="secondary">绑定仓库</button>
+        </form>` : ""}
       </div>
       <div class="manage-block">
         <h4>成员</h4>
-        <div class="member-rows">
-          ${members.map((m) => `<div class="member-row"><span>${escapeHTML(m.identity)}</span><span class="badge">${escapeHTML(m.role)}</span><button type="button" class="link-danger" data-remove-member="${escapeAttr(m.identity)}" aria-label="移除成员 ${escapeAttr(m.identity)}">移除</button></div>`).join("")}
-        </div>
-        <form class="inline-form" data-form="member">
-          <input type="text" name="identity" aria-label="成员 identity" placeholder="identity">
-          <select name="role" aria-label="成员角色"><option value="member">member</option><option value="viewer">viewer</option><option value="owner">owner</option></select>
-          <button type="submit" class="secondary">加成员</button>
-        </form>
+        ${renderMemberTable(members, { canRemove: canManage, removeAttr: "data-remove-member", canChangeRole: canManage, roleAttr: "data-member-role", roles: ["member", "viewer", "owner"], label: "项目成员" })}
+        ${canManage ? memberCandidateForm("member", memberCandidates, ["member", "viewer", "owner"]) : ""}
       </div>`;
   } catch (err) {
     body.innerHTML = `<p class="muted">${escapeHTML(err.message)}</p>`;
@@ -1007,14 +1658,22 @@ async function renderProjectManage(id, body) {
 async function onCreateProject(event) {
   event.preventDefault();
   const name = els.newProjectName.value.trim();
+  const orgID = els.newProjectOrg.value;
   if (!name) return;
   try {
-    await api("/v1/projects", { method: "POST", body: JSON.stringify({ name }) });
+    const project = await api("/v1/projects", { method: "POST", body: JSON.stringify({ name, org_id: orgID }) });
+    state.preferredProjectOrgID = orgID;
     els.newProjectName.value = "";
     toast("项目已创建");
-    state.me = await api("/v1/me");
-    setupRoleTabs();
+    await refreshMe();
     await loadProjects();
+    if (project?.id) {
+      const body = projectBody(project.id);
+      if (body) {
+        await renderProjectManage(project.id, body);
+        body.classList.remove("hidden");
+      }
+    }
   } catch (err) {
     toast(err.message);
   }
@@ -1064,7 +1723,7 @@ async function onCreateToken(event) {
   try {
     const data = await api("/v1/tokens", { method: "POST", body: JSON.stringify({ label: els.newTokenLabel.value.trim() }) });
     els.newTokenLabel.value = "";
-    await copyToClipboard(data.token, "token 已复制（只显示这一次！粘进兼容命令 cc-handoff init）");
+    await copyToClipboard(data.token, "token 已复制（只显示这一次！粘进 cc-handoff init）");
     await loadAccount();
   } catch (err) {
     toast(err.message);
@@ -1091,34 +1750,105 @@ async function onChangePassword(event) {
 
 async function loadAdmin() {
   if (!state.token) return;
+  const authEpoch = state.authEpoch;
   try {
     const data = await api("/v1/users");
+    if (!authRequestCurrent(authEpoch)) return;
     renderUsers(data.users || []);
   } catch (err) {
-    toast(err.message);
+    if (authRequestCurrent(authEpoch)) toast(err.message);
+  }
+}
+
+function closeAdminUserMenus(except = null) {
+  els.usersList.querySelectorAll("details.admin-user-menu[open]").forEach((menu) => {
+    if (menu !== except) menu.open = false;
+  });
+}
+
+function onAdminUserMenuToggle(event) {
+  const menu = event.target;
+  if (menu.matches?.("details.admin-user-menu") && menu.open) {
+    closeAdminUserMenus(menu);
   }
 }
 
 function renderUsers(users) {
-  if (!users.length) {
-    els.usersList.innerHTML = `<div class="empty-list">没有账号。</div>`;
+  state.adminUsers = users;
+  const showDeleted = state.adminUserView === "deleted";
+  const query = state.adminUserQuery.trim().toLowerCase();
+  const visibleUsers = users.filter((u) => {
+    if (Boolean(u.deleted) !== showDeleted) return false;
+    const identity = String(u.identity || "").toLowerCase();
+    const displayName = String(u.display_name || "").toLowerCase();
+    if (query && !identity.includes(query) && !displayName.includes(query)) return false;
+    if (showDeleted || state.adminUserStatus === "all") return true;
+    return state.adminUserStatus === "disabled" ? Boolean(u.disabled) : !u.disabled;
+  });
+  els.adminUserTabs.querySelectorAll("[data-admin-user-view]").forEach((button) => {
+    const active = button.dataset.adminUserView === state.adminUserView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  els.adminUserStatusWrap.classList.toggle("hidden", showDeleted);
+  if (!visibleUsers.length) {
+    const filtered = Boolean(query) || (!showDeleted && state.adminUserStatus !== "all");
+    const message = showDeleted
+      ? (filtered ? "没有匹配的已删除账号。" : "没有已删除账号。")
+      : (filtered ? "没有匹配的账号。" : "没有账号。");
+    els.usersList.innerHTML = `<div class="admin-user-empty">${message}</div>`;
     return;
   }
-  els.usersList.innerHTML = users.map((u) => `
-    <div class="aux-card" data-user="${escapeAttr(u.identity)}" data-admin="${u.is_admin ? "1" : "0"}" data-disabled="${u.disabled ? "1" : "0"}">
-      <div class="aux-card-head">
-        <div>
-          <strong>${escapeHTML(u.identity)}</strong>
-          ${u.is_admin ? `<span class="badge">admin</span>` : ""}
-          ${u.disabled ? `<span class="badge expired">disabled</span>` : ""}
-        </div>
-        <div class="aux-card-actions">
-          <button class="secondary" type="button" data-uaction="admin">${u.is_admin ? "取消 admin" : "设为 admin"}</button>
-          <button class="secondary" type="button" data-uaction="disable">${u.disabled ? "启用" : "停用"}</button>
-          <button class="secondary" type="button" data-uaction="reset">重置密码</button>
-        </div>
+  const rows = visibleUsers.map((u) => {
+    const pending = state.pendingUserActions.has(u.identity);
+    const self = u.identity === state.me?.identity;
+    const displayName = String(u.display_name || "").trim();
+    const title = displayName || u.identity;
+    const subtitle = displayName
+      ? `<span class="admin-user-identity">${escapeHTML(u.identity)}</span>`
+      : "";
+    const role = u.is_admin
+      ? `<span class="badge">系统管理员</span>`
+      : `<span class="admin-user-plain">普通成员</span>`;
+    const status = u.deleted
+      ? `<span class="badge expired">已删除</span>`
+      : (u.disabled
+        ? `<span class="badge warning">已停用</span>`
+        : `<span class="badge success">已启用</span>`);
+    const actions = u.deleted
+      ? ""
+      : (pending
+        ? `<span class="admin-user-pending" role="status">处理中…</span>`
+        : `<details class="admin-user-menu">
+            <summary aria-label="账号 ${escapeAttr(u.identity)} 的操作">•••</summary>
+            <div class="admin-user-menu-popover">
+              <button type="button" data-uaction="admin" ${self ? `disabled title="不能取消当前账号管理员"` : ""}>${self ? "不能取消当前账号管理员" : (u.is_admin ? "取消管理员" : "授予管理员")}</button>
+              <button type="button" data-uaction="disable" ${self ? `disabled title="不能停用当前账号"` : ""}>${self ? "不能停用当前账号" : (u.disabled ? "启用" : "停用")}</button>
+              <button type="button" data-uaction="reset">重置密码</button>
+              <button type="button" class="danger-text" data-uaction="delete" ${self ? `disabled title="不能删除当前登录账号"` : ""}>删除账号</button>
+            </div>
+          </details>`);
+    return `
+    <div class="admin-user-row" role="row" data-user="${escapeAttr(u.identity)}" data-admin="${u.is_admin ? "1" : "0"}" data-disabled="${u.disabled ? "1" : "0"}" data-deleted="${u.deleted ? "1" : "0"}">
+      <div class="admin-user-account" role="cell">
+        <div class="admin-user-title"><strong>${escapeHTML(title)}</strong>${self ? `<span class="badge current">当前</span>` : ""}</div>
+        ${subtitle}
       </div>
-    </div>`).join("");
+      <div class="admin-user-role" role="cell" data-label="角色">${role}</div>
+      <div class="admin-user-status" role="cell" data-label="状态">${status}</div>
+      <div class="admin-user-actions" role="cell">${actions}</div>
+    </div>`;
+  }).join("");
+  els.usersList.innerHTML = `
+    <div class="admin-user-table" role="table" aria-label="账号列表">
+      <div class="admin-user-row admin-user-header" role="row">
+        <div role="columnheader">账号</div>
+        <div role="columnheader">角色</div>
+        <div role="columnheader">状态</div>
+        <div role="columnheader">操作</div>
+      </div>
+      ${rows}
+    </div>`;
 }
 
 async function onUsersListClick(event) {
@@ -1126,45 +1856,100 @@ async function onUsersListClick(event) {
   const action = event.target.closest("[data-uaction]")?.dataset.uaction;
   if (!card || !action) return;
   const id = card.dataset.user;
+  if (state.pendingUserActions.has(id) || card.dataset.deleted === "1") return;
+  if (id === state.me?.identity && (action === "admin" || action === "disable" || action === "delete")) return;
+  const authEpoch = state.authEpoch;
+  if (action === "delete") {
+    const confirmed = window.confirm(`确定删除账号 ${id}？\n\n删除后无法恢复，该 identity 不能重新注册，所有登录和机器 token 会立即失效。`);
+    if (!confirmed) return;
+  }
+  state.pendingUserActions.add(id);
+  renderUsers(state.adminUsers);
   try {
     if (action === "admin") {
       await api(`/v1/users/${encodeURIComponent(id)}/admin`, { method: "POST", body: JSON.stringify({ is_admin: card.dataset.admin !== "1" }) });
+      if (!authRequestCurrent(authEpoch)) return;
       toast("已更新");
     } else if (action === "disable") {
       await api(`/v1/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: JSON.stringify({ disabled: card.dataset.disabled !== "1" }) });
+      if (!authRequestCurrent(authEpoch)) return;
       toast("已更新");
     } else if (action === "reset") {
       const data = await api(`/v1/users/${encodeURIComponent(id)}/reset-password`, { method: "POST" });
-      await copyToClipboard(data.password, `新密码已复制（只显示这一次）：${data.password}`);
+      if (!authRequestCurrent(authEpoch)) return;
+      await copyToClipboardForAuth(data.password, `新密码已复制（只显示这一次）：${data.password}`, authEpoch);
+    } else if (action === "delete") {
+      await api(`/v1/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!authRequestCurrent(authEpoch)) return;
+      state.adminUsers = state.adminUsers.map((u) => u.identity === id
+        ? { ...u, is_admin: false, disabled: true, deleted: true }
+        : u);
+      renderUsers(state.adminUsers);
+      toast("账号已删除");
     }
+    if (!authRequestCurrent(authEpoch)) return;
     await loadAdmin();
   } catch (err) {
-    toast(err.message);
+    if (authRequestCurrent(authEpoch)) toast(err.message);
+  } finally {
+    if (authRequestCurrent(authEpoch)) {
+      state.pendingUserActions.delete(id);
+      renderUsers(state.adminUsers);
+    }
   }
+}
+
+function openCreateUserDialog() {
+  if (state.creatingUser) return;
+  els.newUserIdentity.value = "";
+  els.newUserPassword.value = "";
+  els.newUserAdmin.checked = false;
+  els.createUserDialog.showModal();
+  els.newUserIdentity.focus();
+}
+
+function setCreateUserPending(pending) {
+  state.creatingUser = pending;
+  els.openCreateUser.disabled = pending;
+  els.createUserCancel.disabled = pending;
+  els.createUserSubmit.disabled = pending;
+  els.newUserIdentity.disabled = pending;
+  els.newUserPassword.disabled = pending;
+  els.newUserAdmin.disabled = pending;
+  els.createUserSubmit.textContent = pending ? "创建中…" : "创建账号";
 }
 
 async function onCreateUser(event) {
   event.preventDefault();
+  if (state.creatingUser) return;
   const identity = els.newUserIdentity.value.trim();
   if (!identity) {
     toast("请填 identity");
+    els.newUserIdentity.focus();
     return;
   }
+  const authEpoch = state.authEpoch;
+  setCreateUserPending(true);
   try {
     const body = { identity, is_admin: els.newUserAdmin.checked };
     const pw = els.newUserPassword.value.trim();
     if (pw) body.password = pw;
     const data = await api("/v1/users", { method: "POST", body: JSON.stringify(body) });
+    if (!authRequestCurrent(authEpoch)) return;
     els.newUserIdentity.value = "";
     els.newUserPassword.value = "";
     els.newUserAdmin.checked = false;
+    els.createUserDialog.close();
     if (data.password) {
-      await copyToClipboard(data.password, `账号已建，初始密码已复制（只显示这一次）：${data.password}`);
+      await copyToClipboardForAuth(data.password, `账号已建，初始密码已复制（只显示这一次）：${data.password}`, authEpoch);
     } else {
       toast("账号已创建");
     }
+    if (!authRequestCurrent(authEpoch)) return;
     await loadAdmin();
   } catch (err) {
-    toast(err.message);
+    if (authRequestCurrent(authEpoch)) toast(err.message);
+  } finally {
+    if (authRequestCurrent(authEpoch)) setCreateUserPending(false);
   }
 }

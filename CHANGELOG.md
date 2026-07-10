@@ -1,10 +1,16 @@
 # Changelog
 
-All notable changes to cc-handoff are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [SemVer](https://semver.org/).
+All notable changes to Infinite Agent Platform are documented here. The `cc-handoff` binary name remains the compatibility CLI. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [SemVer](https://semver.org/).
 
 The single source of truth for the version number is the `VERSION` file at the repo root. `make release-tag` refuses to tag unless `CHANGELOG.md` has a matching `## [X.Y.Z]` heading.
 
 ## [Unreleased]
+
+### Fixed
+
+- **Relay 发布包不再遗漏 Flutter Web 客户端** — GitHub Release 和一键部署会先构建并校验 `/app/` 的 `index.html` / `main.dart.js`，再编译内嵌资源的 relay；支持显式 `FLUTTER` 路径并探测常见 Homebrew 安装位置。
+- **当前管理员不能再自行降权或停用** — 后端在串行账号变更锁内拒绝当前账号的取消管理员/停用操作，并保护最后有效管理员；Flutter 与 Relay Web 同步禁用对应菜单项。
+- **会话标签批量关闭严格按可见顺序生效** — “关闭其他/左侧/右侧”使用菜单打开时真实显示的处分屏标签 ID 顺序，不再误隐藏被项目过滤的后台会话或按重排前顺序操作固定会话。
 
 ## [1.0.1] - 2026-07-08
 
@@ -24,6 +30,103 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 - **企业 relay 可关闭公开注册** — `cc-relay -disable-register` 或 `RELAY_DISABLE_REGISTER=1` 会让 `/v1/register` 返回 403；Web UI 对关闭注册给出明确管理员提示。
 - **停用账号立即让所有 bearer 来源失效** — 每次认证都会检查 DB 账号状态；被停用后，已有 UI session、DB machine token、legacy `tokens.json` file token 都会被拒绝。
+
+## [0.9.30] - 2026-07-10
+
+### Added
+
+- **管理员安全删除账号** — Relay、Web UI 与 Flutter App 支持全局管理员删除账号；删除采用不可恢复 tombstone，永久保留 identity 与 handoff/todo/评论历史归属，同时立即吊销 session、机器 token 和待处理邀请，并保护当前登录账号、最后可用管理员及团队/项目最后负责人。
+- **GitHub 团队项目绑定与拉取** — 团队项目可绑定经过规范化的 GitHub HTTPS/SSH clone URL；成员可从工作区一键拉取可访问项目，支持多仓库、部分成功反馈、既有 remote 校验和不覆盖安全导入。
+- **按工作区/项目分组的会话管理器** — 项目树、顶部会话条和全局管理器共用同一归属解析，支持搜索、状态筛选、固定、批量关闭、工作区专注模式与 worktree 归并到主项目。
+
+### Changed
+
+- **团队项目页改为紧凑主从工作台** — 桌面端使用团队侧栏 + 项目/成员/邀请详情，窄屏改为顶部团队选择；创建和管理操作收进 dialog/sheet，取消横向团队卡片和常驻输入框。
+- **胶囊广场改为响应式资料库** — 新增搜索、归属和来源筛选，桌面多列/窄屏单列紧凑卡片，展示完整摘要、作者、Agent、仓库、更新时间、会话/角色/技能包信息，并收口编辑删除权限。
+- **Admin 账号管理高密度化** — Flutter 和 Relay Web 同步采用创建 dialog、账号/已删除分段、搜索与启用状态筛选；桌面使用紧凑分栏行，窄屏自适应堆叠，并对账号切换中的异步响应做世代隔离。
+- **Relay 部署默认可被外部访问** — systemd/部署脚本的默认监听地址由 `127.0.0.1:8080` 改为 `0.0.0.0:8080`，同时保留参数覆盖。
+
+### Fixed
+
+- **Codex Stop hook 不再返回无效 JSON** — 同机会话消息投递对 Claude Code / Codex 都只返回标准顶层 `decision:block` + `reason`,不再给 Stop 混入不受支持的 `hookSpecificOutput.additionalContext`;marker 改为 JSON 成功写出后再清理,本地 stdout 失败时保留重试,并继续用 `stop_hook_active` 防止重复 continuation。
+- **删除个人团队后不再被邀请/重启复活** — 组织回填迁移只处理 `org_id` 为空的真正 legacy 项目，不再扫描全部用户和已归属项目；无团队账号保持无团队，接受项目邀请只加入目标团队/项目。
+- **LocalBus 会话遗留文件可控清理** — 真正关闭会话时清理对应 events/mapping/空 inbox，启动及每 6 小时只清理超过 7 天的孤儿缓存和旧 receipt；活跃/恢复会话、非空 inbox、pending request 及 Agent transcript 始终保护，并对多实例、dispose/restart、symlink 和锁 ABA 竞态 fail-closed。
+- **工作区右键菜单不再重叠** — 工作区空白区和工作区/项目/会话行的右键命中层分离，行菜单不会再同时触发外层菜单，会话分组操作可正常弹出。
+
+## [0.9.29] - 2026-07-10
+
+### Changed
+
+- **项目级身份降级为旧点对点兼容** — 团队/项目模式下不再引导用户配置 `.cc-handoff.toml` 的 `identity.me` / `partner` / `partners`;CLI init、App 项目配置页、示例配置、命令模板和文档都改为默认使用登录态 / machine token 身份与团队项目收件范围。
+- **团队邀请式 onboarding 收口** — 新注册账号不再自动创建个人团队;项目创建必须选择真实团队,用户通过团队/项目邀请加入协作范围。
+
+### Fixed
+
+- **团队/项目管理清理更完整** — App 支持删除团队,relay 删除团队时同步清理项目和邀请;项目邀请可直接邀请团队外账号,接受项目邀请时自动补团队成员关系。
+- **旧身份配置不再被 App 空值写回** — 项目配置保存时,空的 legacy identity 会被移除而不是保留旧 `[identity]` 段;README 与 MCP 报错也明确 `identity.partners` 只属于 legacy 角色别名。
+
+## [0.9.28] - 2026-07-10
+
+### Added
+
+- **团队邀请闭环** — 团队/项目详情页支持发起和取消待接受邀请,成员可在「项目」页顶部看到待处理团队/项目邀请并接受或拒绝;原生 macOS App 和手机端 App 共享同一套团队工作台入口。
+
+### Fixed
+
+- **邀请接受不再误改权限** — 接受项目邀请会自动补团队成员关系,接受后会清理邀请;历史残留邀请不会把已有更高团队/项目角色降级,也不会把项目负责人降成普通成员。
+- **邀请生命周期清理更完整** — 项目删除、团队空默认删除、手动加入成员、移除团队/项目成员、禁用账号都会同步清理相关 pending invitations,避免旧邀请继续显示或重新恢复访问。
+- **团队邀请 UI 窄屏稳定** — 待处理邀请面板改为受控高度和内部滚动,修复手机宽度下按钮/文本导致的布局溢出。
+
+## [0.9.27] - 2026-07-10
+
+### Added
+
+- **SaaS 团队化与成员协作收口** — App 侧补齐团队/项目/成员管理视图,支持注册后创建团队、拉成员、按团队项目共享待办与 handoff;团队待办、handoff、在线会话发送、远程指派和会话恢复都按 relay 项目/团队范围过滤,避免跨团队误投。
+- **团队级 handoff / 待办协作体验** — handoff 增加团队收件视图、项目共享空态说明、团队成员转交候选和 fanout/pickup 状态;待办支持团队成员指派、项目成员显示名、团队角色标签、移动端/桌面端一致的一键指派入口。
+
+### Changed
+
+- **App UI 系统性响应式加固** — 批量重构待办、handoff、项目/团队、账号、胶囊、远程工作区、Git/文件/搜索等弹窗和菜单,大量长 identity、项目名、repo 名、角色标签、路径和错误消息都改为单行省略、受控宽高或滚动布局;小屏/手机/窄窗口下不再轻易溢出。
+- **在线会话右键发送菜单更可扫** — 会话发送目标按同项目/其它会话/在线用户等范围分组,长列表收进二级菜单,并明确团队发送范围,降低误选目标的概率。
+
+### Fixed
+
+- **团队权限和目标范围更严格** — 修复/补强团队 owner / 项目 owner 保护、禁用用户过滤、项目成员移除/降级保护、handoff 接收动作可见性、todo 指派候选、远程 todo 指派、online send 项目范围等边界;只读成员隐藏写操作,团队管理员/负责人按有效角色获得对应能力。
+- **异步竞态和账号切换更稳** — 系统性保护登录、账号页、项目页、待办页、handoff 详情、胶囊广场、远程工作区、编辑器、Git/搜索/文件等异步回调,避免切账号/切项目/关闭弹窗后旧请求覆盖新状态或 setState 到已卸载组件。
+- **重复提交与失败恢复更稳** — 锁住评论、ack、转交、待办删除/评论/指派、项目/成员/账号操作、胶囊载入/编辑等重复点击路径;失败时保留输入或释放按钮,避免卡死、双发、误删。
+- **同步抛错兜底** — best-effort 团队上下文、待办成员加载、待办详情自动保存等路径现在同时兜住同步和异步失败,不会把 relay/client 的边缘异常炸到 UI。
+- **路径与传输安全加固** — handoff/todo/team URL 编码、远程收文件路径、handoff 附件下载路径、远程 worktree 删除目标、session 注入目标等都做了更严格校验和规范化,减少路径穿越和错误目标操作风险。
+
+## [0.9.26] - 2026-07-08
+
+### Fixed
+
+- **Codex 颜色主题查询回归保护** — 主终端的 `ccTerminal()` 继续默认回答 Codex 的 OSC 10/11 前景/背景色查询,并新增测试固定返回 app 主题色;会话总览快速回复预览使用的影子 terminal 则关闭协议查询回复,避免回放快照里的颜色查询时二次响应。顺带给预览自动滚到底部的 post-frame 回调加 `mounted` 保护,防止弹窗关闭后访问已释放的滚动控制器。
+
+## [0.9.25] - 2026-07-08
+
+### Fixed
+
+- **会话总览快速回复预览现在可调大小和字号** — 预览弹窗新增字体放大/缩小按钮,底部右侧新增拖拽手柄,可同时调整弹窗宽度和终端预览高度;这些设置会持久化,换会话/重启后沿用。预览渲染改为原生字号 + 源终端宽度 + 底部自动跟随,避免上一版整屏缩放在宽 TUI 下文字过小,也避免 resize 手柄遮挡「在工作区打开 / 打成胶囊」等底部操作。
+
+## [0.9.24] - 2026-07-08
+
+### Fixed
+
+- **会话总览快速回复预览不再排版错乱** — 预览原本把源会话在源宽度(常 80~120 列)抓取的彩色 ANSI 快照灌进一个更窄、会自动重排的一次性终端，导致 codex/claude 的分隔线、输入框、状态行等按源宽度绝对定位的 TUI 内容溢出折行、样式错乱。现在快照会一并携带源终端的 cols×rows，预览按源宽度渲染(不再 reflow)并用 FittedBox 整屏缩放进预览框：内容完整可见、绝不折行。桌面与手机/远程客户端共用同一渲染组件，远程协议同步下发终端几何(旧 host 缺省时回退默认几何、向后兼容)。
+
+## [0.9.23] - 2026-07-08
+
+### Fixed
+
+- **后台蒸馏不再无限转圈** — headless Claude/Codex 蒸馏现在每次 one-shot 都有硬超时,超时会终止子进程;persona / seed 改为串行生成,避免两个本地 CLI 进程同时抢状态。persona 未产出时会停止卡片 spinner 并提示失败,不再卡在「蒸馏中」或进入空角色复查。
+
+## [0.9.22] - 2026-07-07
+
+### Fixed
+
+- **新建会话的首条投递不再丢 / 双发** — 待办「新建会话」和胶囊「载入蒸馏角色」现在共用同一条 `spawn → dispatch → wakeAndDeliver` 队列路径。Claude / Codex 的 boot ready 优先等本次会话 fresh `SessionStart` hook,再短暂 settle 后 flush;旧 `tsN` 历史 hook 事件会按本次启动时间过滤,避免误判 ready。hook 缺失时才走较保守的 quiet fallback。
+- **Claude 原样恢复支持特殊字符工作目录** — Claude Code 的项目目录编码现在按真实 cwd 的「非字母数字全转 `-`」规则计算,修复路径包含空格、中文、`·` 等字符时胶囊原样 `--resume` 导入到错误目录的问题。
 
 ## [0.9.21] - 2026-07-07
 
@@ -649,7 +752,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.11...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.9.30...HEAD
+[0.9.30]: https://github.com/gmslll/cc-collaboration/compare/v0.9.29...v0.9.30
 [0.6.11]: https://github.com/gmslll/cc-collaboration/compare/v0.6.10...v0.6.11
 [0.6.10]: https://github.com/gmslll/cc-collaboration/compare/v0.6.9...v0.6.10
 [0.6.9]: https://github.com/gmslll/cc-collaboration/compare/v0.6.8...v0.6.9

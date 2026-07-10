@@ -9,7 +9,12 @@ class PickupResult {
   final String materializeDir;
   final String agentCmd;
   final bool acked;
-  PickupResult(this.worktreeDir, this.materializeDir, this.agentCmd, this.acked);
+  PickupResult(
+    this.worktreeDir,
+    this.materializeDir,
+    this.agentCmd,
+    this.acked,
+  );
 }
 
 class CliException implements Exception {
@@ -53,16 +58,20 @@ class Cli {
   // PATH) and can find git / claude / codex; on Windows the GUI already inherits
   // the full user environment, so the executable is run directly. workingDirectory
   // is forwarded to Process.run — needed for commands like `todo import-linear`
-  // that rely on config.Resolve(cwd) finding a specific repo's .cc-handoff.toml.
-  static Future<ProcessResult> _exec(List<String> args,
-      {String? workingDirectory}) {
+  // that use cwd to find optional repo/project context.
+  static Future<ProcessResult> _exec(
+    List<String> args, {
+    String? workingDirectory,
+  }) {
     final bin = _bin();
     if (Platform.isWindows) {
       return Process.run(bin, args, workingDirectory: workingDirectory);
     }
     final cmd = '${shQuote(bin)} ${args.map(shQuote).join(' ')}';
-    return Process.run(_shell(), ['-lc', cmd],
-        workingDirectory: workingDirectory);
+    return Process.run(_shell(), [
+      '-lc',
+      cmd,
+    ], workingDirectory: workingDirectory);
   }
 
   // installBusHooks wires the local-bus lifecycle hooks into the user's agent
@@ -127,11 +136,18 @@ class Cli {
   // worktree dir + the interactive agent command to run in the terminal.
   static Future<PickupResult> pickup(String id, String repoPath) async {
     final res = await _exec([
-      'pickup', id, '--repo', repoPath, '--worktree', '--json',
+      'pickup',
+      id,
+      '--repo',
+      repoPath,
+      '--worktree',
+      '--json',
     ]);
     if (res.exitCode != 0) {
       final err = (res.stderr as String).trim();
-      throw CliException(err.isNotEmpty ? err : 'pickup 失败 (exit ${res.exitCode})');
+      throw CliException(
+        err.isNotEmpty ? err : 'pickup 失败 (exit ${res.exitCode})',
+      );
     }
     final out = (res.stdout as String).trim();
     final Map<String, dynamic> j;
@@ -150,8 +166,10 @@ class Cli {
 
   // run executes `cc-handoff <args>` and returns trimmed stdout; throws
   // CliException(stderr) on non-zero exit.
-  static Future<String> run(List<String> args,
-      {String? workingDirectory}) async {
+  static Future<String> run(
+    List<String> args, {
+    String? workingDirectory,
+  }) async {
     final res = await _exec(args, workingDirectory: workingDirectory);
     if (res.exitCode != 0) {
       final err = (res.stderr as String).trim();
@@ -168,19 +186,17 @@ class Cli {
     String? linearProjectId,
     String? projectId,
     String? workingDirectory,
-  }) =>
-      run([
-        'todo', 'import-linear',
-        '--team', teamKey,
-        if (linearProjectId != null && linearProjectId.isNotEmpty) ...[
-          '--linear-project',
-          linearProjectId,
-        ],
-        if (projectId != null && projectId.isNotEmpty) ...[
-          '--project',
-          projectId,
-        ],
-      ], workingDirectory: workingDirectory);
+  }) => run([
+    'todo',
+    'import-linear',
+    '--team',
+    teamKey,
+    if (linearProjectId != null && linearProjectId.isNotEmpty) ...[
+      '--linear-project',
+      linearProjectId,
+    ],
+    if (projectId != null && projectId.isNotEmpty) ...['--project', projectId],
+  ], workingDirectory: workingDirectory);
 
   // --- workspace / project management (config.toml round-trips via SaveUser) ---
 
@@ -189,10 +205,11 @@ class Cli {
   // positional) — flags-first parses cleanly there; the fixed CLI (parseFlexible)
   // accepts either order.
   static Future<void> workspaceCreate(String name, {String? path}) => run([
-        'workspace', 'create',
-        if (path != null && path.trim().isNotEmpty) ...['--path', path.trim()],
-        name,
-      ]);
+    'workspace',
+    'create',
+    if (path != null && path.trim().isNotEmpty) ...['--path', path.trim()],
+    name,
+  ]);
 
   static Future<void> workspaceAdd(String name, String source) =>
       run(['workspace', 'add', name, source]);
@@ -204,6 +221,32 @@ class Cli {
   static Future<String> workspaceImport(String dir) =>
       run(['workspace', 'import', dir, '--json']);
 
+  static Future<Map<String, dynamic>> workspacePullTeamRepo({
+    required String workspaceName,
+    required String workspacePath,
+    required String repoName,
+    required String cloneUrl,
+    required String projectId,
+  }) async {
+    final out = await run([
+      'workspace',
+      'pull-team-repo',
+      workspaceName,
+      repoName,
+      cloneUrl,
+      '--path',
+      workspacePath,
+      '--project-id',
+      projectId,
+      '--json',
+    ]);
+    try {
+      return Map<String, dynamic>.from(jsonDecode(out) as Map);
+    } catch (_) {
+      throw CliException('无法解析拉取团队项目结果: $out');
+    }
+  }
+
   static Future<void> workspaceRemove(String name) =>
       run(['workspace', 'remove', name]);
 
@@ -212,21 +255,39 @@ class Cli {
 
   // --- worktree management (pure git; project resolved by name + workspace) ---
 
-  static Future<void> worktreeAdd(String project, String branch,
-          {String? workspace, String? start}) =>
-      run([
-        'worktree', 'add', project, branch,
-        if (workspace != null && workspace.isNotEmpty) ...['--workspace', workspace],
-        if (start != null && start.trim().isNotEmpty) ...['--start', start.trim()],
-      ]);
+  static Future<void> worktreeAdd(
+    String project,
+    String branch, {
+    String? workspace,
+    String? start,
+  }) => run([
+    'worktree',
+    'add',
+    project,
+    branch,
+    if (workspace != null && workspace.isNotEmpty) ...[
+      '--workspace',
+      workspace,
+    ],
+    if (start != null && start.trim().isNotEmpty) ...['--start', start.trim()],
+  ]);
 
-  static Future<void> worktreeRemove(String project, String branch,
-          {String? workspace, bool force = false}) =>
-      run([
-        'worktree', 'remove', project, branch,
-        if (workspace != null && workspace.isNotEmpty) ...['--workspace', workspace],
-        if (force) '--force',
-      ]);
+  static Future<void> worktreeRemove(
+    String project,
+    String branch, {
+    String? workspace,
+    bool force = false,
+  }) => run([
+    'worktree',
+    'remove',
+    project,
+    branch,
+    if (workspace != null && workspace.isNotEmpty) ...[
+      '--workspace',
+      workspace,
+    ],
+    if (force) '--force',
+  ]);
 
   // --- config editing (user-level + per-workspace; round-trips via SaveUser) ---
 
@@ -244,28 +305,36 @@ class Cli {
     String? linearToken,
     String? githubToken,
     String? terminalApp,
-  }) =>
-      run([
-        'config', 'set',
-        if (relayUrl != null) ...['--relay-url', relayUrl],
-        if (token != null) ...['--token', token],
-        if (identity != null) ...['--identity', identity],
-        if (agent != null) ...['--agent', agent],
-        if (claudeCommand != null) ...['--claude-command', claudeCommand],
-        if (codexCommand != null) ...['--codex-command', codexCommand],
-        if (workspaceRoot != null) ...['--workspace-root', workspaceRoot],
-        if (gradeCommand != null) ...['--grade-command', gradeCommand],
-        if (linearToken != null) ...['--linear-token', linearToken],
-        if (githubToken != null) ...['--github-token', githubToken],
-        if (terminalApp != null) ...['--terminal-app', terminalApp],
-      ]);
+    bool? publishSessions,
+  }) => run([
+    'config',
+    'set',
+    if (relayUrl != null) ...['--relay-url', relayUrl],
+    if (token != null) ...['--token', token],
+    if (identity != null) ...['--identity', identity],
+    if (agent != null) ...['--agent', agent],
+    if (claudeCommand != null) ...['--claude-command', claudeCommand],
+    if (codexCommand != null) ...['--codex-command', codexCommand],
+    if (workspaceRoot != null) ...['--workspace-root', workspaceRoot],
+    if (gradeCommand != null) ...['--grade-command', gradeCommand],
+    if (linearToken != null) ...['--linear-token', linearToken],
+    if (githubToken != null) ...['--github-token', githubToken],
+    if (terminalApp != null) ...['--terminal-app', terminalApp],
+    if (publishSessions != null)
+      '--publish-sessions=${publishSessions ? 'true' : 'false'}',
+  ]);
 
-  static Future<void> workspaceSet(String name,
-          {String? preLaunch, String? editor, String? agent}) =>
-      run([
-        'workspace', 'set', name,
-        if (preLaunch != null) ...['--pre-launch', preLaunch],
-        if (editor != null) ...['--editor', editor],
-        if (agent != null) ...['--agent', agent],
-      ]);
+  static Future<void> workspaceSet(
+    String name, {
+    String? preLaunch,
+    String? editor,
+    String? agent,
+  }) => run([
+    'workspace',
+    'set',
+    name,
+    if (preLaunch != null) ...['--pre-launch', preLaunch],
+    if (editor != null) ...['--editor', editor],
+    if (agent != null) ...['--agent', agent],
+  ]);
 }

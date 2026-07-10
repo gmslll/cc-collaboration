@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,49 +12,50 @@
       <div class="brand">
         <div>
           <h1>Infinite Agent Platform</h1>
-          <p id="session-label">Not connected</p>
+          <p id="session-label">未连接</p>
         </div>
-        <button id="refresh-button" class="icon-button" type="button" title="Refresh" aria-label="Refresh">
+        <button id="refresh-button" class="icon-button" type="button" title="刷新" aria-label="刷新">
           <span aria-hidden="true">&#8635;</span>
         </button>
       </div>
 
       <form id="login-form" class="auth-panel">
-        <label>Enterprise sign in</label>
-        <input id="login-identity" type="text" autocomplete="username" aria-label="Login identity" placeholder="identity (e.g. you@platform)">
-        <input id="login-password" type="password" autocomplete="current-password" aria-label="Password" placeholder="password">
-        <button type="submit">Sign in</button>
-        <button id="register-button" type="button" class="secondary">申请内部账号</button>
-        <p id="auth-message" class="muted" aria-live="polite">Session stored locally in this browser.</p>
+        <label>登录</label>
+        <input id="login-identity" type="text" autocomplete="username" aria-label="登录 identity" placeholder="identity（如 you@backend）">
+        <input id="login-password" type="password" autocomplete="current-password" aria-label="密码" placeholder="密码">
+        <button type="submit">登录</button>
+        <button id="register-button" type="button" class="secondary">没有账号?注册</button>
+        <p id="auth-message" class="muted" aria-live="polite">登录状态只保存在当前浏览器。</p>
         <details class="token-advanced">
-          <summary>Use a machine token instead</summary>
+          <summary>改用机器 token</summary>
           <div class="token-row">
-            <input id="token-input" type="password" autocomplete="off" aria-label="Machine token" placeholder="Bearer token">
-            <button id="token-connect" type="button" class="secondary">Use token</button>
+            <input id="token-input" type="password" autocomplete="off" aria-label="机器 token" placeholder="Bearer token">
+            <button id="token-connect" type="button" class="secondary">使用 token</button>
           </div>
         </details>
-        <button id="signout-button" type="button" class="secondary hidden">Sign out</button>
+        <button id="signout-button" type="button" class="secondary hidden">退出登录</button>
       </form>
 
-      <nav class="view-tabs" aria-label="Coordination views">
-        <button class="tab-button active" type="button" data-view="recipient">Queue</button>
-        <button class="tab-button" type="button" data-view="sender">Initiated</button>
-        <button class="tab-button" type="button" data-view="history">Audit</button>
-        <button id="tab-projects" class="tab-button hidden" type="button" data-view="projects">Projects</button>
-        <button id="tab-account" class="tab-button hidden" type="button" data-view="account">Account</button>
-        <button id="tab-admin" class="tab-button hidden" type="button" data-view="admin">Admin</button>
-        <button id="tab-workspaces" class="tab-button hidden" type="button" data-view="workspaces">Workspaces</button>
+      <nav class="view-tabs" aria-label="协作任务视图">
+        <button class="tab-button active" type="button" data-view="recipient">任务队列</button>
+        <button class="tab-button" type="button" data-view="sender">已发送</button>
+        <button class="tab-button" type="button" data-view="history">历史</button>
+        <button id="tab-orgs" class="tab-button hidden" type="button" data-view="organizations">团队</button>
+        <button id="tab-projects" class="tab-button hidden" type="button" data-view="projects">项目</button>
+        <button id="tab-account" class="tab-button hidden" type="button" data-view="account">账号</button>
+        <button id="tab-admin" class="tab-button hidden" type="button" data-view="admin">管理</button>
+        <button id="tab-workspaces" class="tab-button hidden" type="button" data-view="workspaces">工作区</button>
       </nav>
 
       <label class="search-box" for="search-input">
-        <span>Search</span>
-        <input id="search-input" type="search" placeholder="id, owner, repo, headline">
+        <span>搜索</span>
+        <input id="search-input" type="search" placeholder="id, sender, repo, headline">
       </label>
 
       <section class="online-panel" aria-labelledby="online-title">
         <div class="section-title">
-            <h2 id="online-title">Team Presence</h2>
-          <span id="online-count">0 online</span>
+          <h2 id="online-title">在线用户</h2>
+          <span id="online-count">0 在线</span>
         </div>
         <div id="online-list" class="online-list"></div>
       </section>
@@ -64,8 +65,8 @@
       <section class="list-pane" aria-labelledby="list-title">
         <div class="pane-header">
           <div>
-            <h2 id="list-title">Queue</h2>
-            <p id="list-meta">Connect to load agent work packages.</p>
+            <h2 id="list-title">任务队列</h2>
+            <p id="list-meta">连接后加载协作任务。</p>
           </div>
           <select id="limit-select" aria-label="Limit">
             <option value="25">25</option>
@@ -79,8 +80,8 @@
 
       <section class="detail-pane" aria-live="polite">
         <div id="empty-state" class="empty-state">
-          <h2>Select a work package</h2>
-          <p>Choose a row to inspect delivery context, status, comments, and available actions.</p>
+          <h2>选择一个协作任务</h2>
+          <p>选择一行查看交付内容、状态、评论和可用操作。</p>
         </div>
 
         <article id="detail-view" class="detail-view hidden">
@@ -89,6 +90,7 @@
               <div id="detail-badges" class="badge-row"></div>
               <h2 id="detail-title"></h2>
               <p id="detail-subtitle"></p>
+              <div id="delivery-target" class="delivery-target hidden"></div>
             </div>
             <div class="detail-actions">
               <button id="pickup-button" type="button">接收并启动 Agent</button>
@@ -100,19 +102,19 @@
 
           <div class="status-grid">
             <div>
-              <span>State</span>
+              <span>状态</span>
               <strong id="status-state">-</strong>
             </div>
             <div>
-              <span>Created</span>
+              <span>创建时间</span>
               <strong id="status-created">-</strong>
             </div>
             <div>
-              <span>Comments</span>
+              <span>评论</span>
               <strong id="status-comments">-</strong>
             </div>
             <div>
-              <span>Accepted</span>
+              <span>接收时间</span>
               <strong id="status-picked">-</strong>
             </div>
           </div>
@@ -122,7 +124,7 @@
           <div class="content-columns">
             <section class="summary-panel" aria-labelledby="summary-title">
               <div class="section-title">
-              <h3 id="summary-title">Delivery Brief</h3>
+                <h3 id="summary-title">Summary</h3>
                 <button id="copy-summary-button" class="secondary" type="button">Copy</button>
               </div>
               <pre id="summary-content"></pre>
@@ -152,13 +154,13 @@
 
           <section class="comments-panel" aria-labelledby="comments-title">
             <div class="section-title">
-              <h3 id="comments-title">Comments</h3>
-              <button id="reload-comments-button" class="secondary" type="button">Reload</button>
+              <h3 id="comments-title">评论</h3>
+              <button id="reload-comments-button" class="secondary" type="button">刷新</button>
             </div>
             <div id="comments-list" class="comments-list"></div>
             <form id="comment-form" class="comment-form">
-              <textarea id="comment-input" rows="3" placeholder="Add a comment"></textarea>
-              <button type="submit">Send</button>
+              <textarea id="comment-input" rows="3" placeholder="添加评论"></textarea>
+              <button type="submit">发送</button>
             </form>
           </section>
         </article>
@@ -167,7 +169,7 @@
       <section id="workspaces-pane" class="workspaces-pane hidden" aria-labelledby="workspaces-title">
         <div class="pane-header">
           <div>
-            <h2 id="workspaces-title">Developer Workspaces</h2>
+            <h2 id="workspaces-title">工作区</h2>
             <p id="workspaces-meta" class="muted">点击「复制启动命令」到终端粘贴执行。</p>
           </div>
         </div>
@@ -177,22 +179,37 @@
       <section id="projects-pane" class="aux-pane hidden" aria-labelledby="projects-title">
         <div class="pane-header">
           <div>
-            <h2 id="projects-title">Projects</h2>
+            <h2 id="projects-title">项目</h2>
             <p class="muted">创建并管理企业项目；选一个项目查看它的协作任务与交付历史。</p>
           </div>
         </div>
         <form id="new-project-form" class="inline-form">
           <input id="new-project-name" type="text" aria-label="新项目名称" placeholder="新项目名称">
+          <select id="new-project-org" aria-label="项目所属团队"></select>
           <button type="submit">新建项目</button>
         </form>
         <div id="projects-list" class="aux-list"></div>
       </section>
 
+      <section id="orgs-pane" class="aux-pane hidden" aria-labelledby="orgs-title">
+        <div class="pane-header">
+          <div>
+            <h2 id="orgs-title">团队</h2>
+            <p class="muted">管理团队成员和团队下的项目。负责人/管理员可邀请成员。</p>
+          </div>
+        </div>
+        <form id="new-org-form" class="inline-form">
+          <input id="new-org-name" type="text" aria-label="新团队名称" placeholder="新团队名称">
+          <button type="submit">新建团队</button>
+        </form>
+        <div id="orgs-list" class="aux-list"></div>
+      </section>
+
       <section id="account-pane" class="aux-pane hidden" aria-labelledby="account-title">
         <div class="pane-header">
           <div>
-            <h2 id="account-title">Account</h2>
-            <p class="muted">改密码、生成 / 吊销机器 token（给 CLI / watch / MCP 兼容客户端用）。</p>
+            <h2 id="account-title">账号</h2>
+            <p class="muted">改密码、生成 / 吊销机器 token（给 CLI / watch / MCP 用）。</p>
           </div>
         </div>
         <form id="password-form" class="inline-form">
@@ -200,7 +217,7 @@
           <input id="password-new" type="password" autocomplete="new-password" aria-label="新密码（至少 8 位）" placeholder="新密码（≥8 位）">
           <button type="submit">改密码</button>
         </form>
-        <div class="section-title"><h3>Machine Tokens</h3></div>
+        <div class="section-title"><h3>机器 token</h3></div>
         <form id="new-token-form" class="inline-form">
           <input id="new-token-label" type="text" aria-label="token 标签" placeholder="标签（如 laptop）">
           <button type="submit">生成 token</button>
@@ -210,21 +227,57 @@
 
       <section id="admin-pane" class="aux-pane hidden" aria-labelledby="admin-title">
         <div class="pane-header">
-          <div>
-            <h2 id="admin-title">Admin · Identity & Access</h2>
-            <p class="muted">创建内部账号、设置管理员、停用成员、重置密码。</p>
-          </div>
+          <h2 id="admin-title">管理 · 账号</h2>
+          <button id="open-create-user" type="button" class="admin-create-button">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M8 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm-6 7c.4-3.2 2.5-5 6-5 1.2 0 2.3.2 3.1.6M15.5 9v7m-3.5-3.5h7" />
+            </svg>
+            创建账号
+          </button>
         </div>
-        <form id="new-user-form" class="inline-form">
-          <input id="new-user-identity" type="text" aria-label="新账号 identity" placeholder="identity（如 alex@frontend）">
-          <input id="new-user-password" type="text" aria-label="初始密码（留空自动生成）" placeholder="初始密码（留空自动生成）">
-          <label class="check"><input id="new-user-admin" type="checkbox"> admin</label>
-          <button type="submit">创建账号</button>
-        </form>
-        <div id="users-list" class="aux-list"></div>
+        <div class="admin-user-toolbar">
+          <label class="admin-user-search">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
+            <input id="admin-user-search" type="search" placeholder="搜索账号或名称" aria-label="搜索账号或名称">
+          </label>
+          <div id="admin-user-tabs" class="admin-user-tabs" role="tablist" aria-label="账号状态">
+            <button type="button" class="admin-user-tab active" data-admin-user-view="active" role="tab" aria-selected="true">现有账号</button>
+            <button type="button" class="admin-user-tab" data-admin-user-view="deleted" role="tab" aria-selected="false">已删除</button>
+          </div>
+          <label id="admin-user-status-wrap" class="admin-user-status-wrap">
+            <span>状态</span>
+            <select id="admin-user-status" aria-label="筛选账号状态">
+              <option value="all">全部</option>
+              <option value="enabled">启用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+        </div>
+        <div id="users-list" class="admin-user-list"></div>
       </section>
     </main>
   </div>
+
+  <dialog id="create-user-dialog" class="reassign-dialog admin-create-dialog">
+    <form id="new-user-form">
+      <h3>创建账号</h3>
+      <div class="admin-create-fields">
+        <label>
+          identity
+          <input id="new-user-identity" type="text" aria-label="新账号 identity" placeholder="identity（如 alex@frontend）">
+        </label>
+        <label>
+          初始密码
+          <input id="new-user-password" type="text" aria-label="初始密码（留空自动生成）" placeholder="初始密码（留空自动生成）">
+        </label>
+        <label class="check admin-create-admin"><input id="new-user-admin" type="checkbox"> 创建为系统管理员</label>
+      </div>
+      <div class="dialog-actions">
+        <button id="create-user-cancel" type="button" class="secondary">取消</button>
+        <button id="create-user-submit" type="submit">创建账号</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="reassign-dialog" class="reassign-dialog">
     <form id="reassign-form" method="dialog">

@@ -15,9 +15,11 @@ import '../local/agent_transcript.dart';
 import '../local/agent_usage.dart';
 import '../local/cli.dart';
 import '../local/crash_log.dart';
+import '../local/hook_activity.dart';
 import '../local/local_bus.dart';
 import '../local/path_utils.dart';
 import '../local/platform.dart';
+import '../local/session_overview.dart';
 import '../local/shell.dart';
 import '../ghostty_shadow.dart';
 import '../terminal_snapshot_formatter.dart';
@@ -249,14 +251,14 @@ class TerminalSession {
   // decoupled from the UI, no manual Enter. The hazard is the target's PTY:
   // pasteText writes into _pty, which is (a) null before start() — a dormant /
   // deferred / never-mounted tab, so the message silently vanishes — and (b) not
-  // yet accepting input for ~1s while the agent boots, so a paste+Enter races the
-  // launch and is lost or mangled. So "started" is NOT "ready": readiness is
-  // _started AND _bootSettled, where _bootSettled flips true once the launch output
-  // goes quiet (agent sitting at its prompt). deliverLocalMessage routes any
-  // NOT-ready target through wakeAndDeliver, which ensures it's started and queues
-  // the message; the boot-ready watch (armed in start() for EVERY session) flushes
-  // the queue with paste+submit the instant the agent settles. A ready target
-  // pastes+submits immediately, exactly as the active tab always did.
+  // yet accepting input while the agent boots, so a paste+Enter races the launch
+  // and is lost or mangled. So "started" is NOT "ready": readiness is _started
+  // AND _bootSettled. For agent sessions, _bootSettled prefers the agent's own
+  // SessionStart hook; terminal-output quiet is only a fallback for missing hooks.
+  // deliverLocalMessage routes any NOT-ready target through wakeAndDeliver, which
+  // ensures it's started and queues the message; the boot-ready watch (armed in
+  // start() for EVERY session) flushes the queue with paste+submit once ready. A
+  // ready target pastes+submits immediately, exactly as the active tab always did.
   final List<({String text, bool submit})> _pendingWake = [];
   // _bootSettled: the PTY's launch/redraw output has gone quiet at least once → the
   // agent is up and accepting input. Set once by _markBootSettled (settle timer or
@@ -269,12 +271,22 @@ class TerminalSession {
   // — for tests to assert a delivery in the boot window is queued (not dropped,
   // not doubled, not pasted into a not-ready PTY).
   int get pendingWakeCount => _pendingWake.length;
+  DateTime? _bootStartedAt;
+  bool _bootHookSeen = false;
   Timer? _bootSettleTimer;
   Timer? _bootCapTimer;
-  // Quiet-after-launch gap that reads as "agent ready for input", and a hard cap
-  // so a pathologically chatty startup still marks ready instead of hanging.
-  static const Duration _bootSettle = Duration(milliseconds: 1500);
+  Timer? _bootHookPollTimer;
+  // Quiet-after-launch fallback. Hooks are the primary ready signal for
+  // Claude/Codex; this long fallback keeps sessions usable when hooks are absent
+  // or broken, without treating a brief silent startup stall as ready.
+  Duration get _bootSettle =>
+      isAgent ? _agentBootQuietFallback : _shellBootQuietFallback;
+  static const Duration _agentBootQuietFallback = Duration(seconds: 8);
+  static const Duration _shellBootQuietFallback = Duration(milliseconds: 1500);
+  @visibleForTesting
+  Duration get debugBootSettle => _bootSettle;
   static const Duration _bootCap = Duration(seconds: 30);
+  static const Duration _bootHookSettle = Duration(milliseconds: 300);
 
   // wakeAndDeliver queues [text] for a NOT-ready target and ensures it's started.
   // It never pastes directly — the boot-ready watch armed in start() drains
@@ -287,17 +299,52 @@ class TerminalSession {
     start(); // idempotent; arms the boot-ready watch if it wasn't already running
   }
 
-  // _armBootReady starts the readiness watch: the cap is an unconditional backstop
-  // armed at launch; the settle timer is armed per PTY chunk (see _noteBootOutput)
-  // so ready lands ~_bootSettle after the launch output goes quiet, not mid-boot.
+  // _armBootReady starts the readiness watch: agent sessions poll for the
+  // SessionStart hook (primary), terminal quiet is a fallback, and the cap is the
+  // final backstop for a pathologically stuck startup.
   void _armBootReady() {
     if (_bootSettled) return;
+    _bootStartedAt = DateTime.now();
+    _bootHookSeen = false;
     _bootCapTimer?.cancel();
     _bootCapTimer = Timer(_bootCap, _markBootSettled);
+    if (isAgent) {
+      _bootHookPollTimer?.cancel();
+      _bootHookPollTimer = Timer.periodic(
+        const Duration(milliseconds: 100),
+        (_) => _checkBootHookReady(),
+      );
+      _checkBootHookReady();
+    }
+  }
+
+  void _checkBootHookReady() {
+    if (_bootSettled || _disposed || !isAgent || _bootHookSeen) return;
+    final seenStart = _hasFreshSessionStart(
+      localBusHookActivities(id, limit: 8),
+    );
+    if (!seenStart) return;
+    _bootHookSeen = true;
+    _bootSettleTimer?.cancel();
+    _bootSettleTimer = Timer(_bootHookSettle, _markBootSettled);
+  }
+
+  bool _hasFreshSessionStart(List<HookActivity> activities) {
+    final startedAt = _bootStartedAt;
+    if (startedAt == null) return false;
+    // Hook files are keyed by stable tsN and survive restarts/resumes. Ignore
+    // stale SessionStart events from an earlier PTY using the same bus id, with a
+    // small skew allowance for filesystem timestamp / wall-clock ordering.
+    final floor = startedAt.subtract(const Duration(seconds: 1));
+    return activities.any(
+      (a) => a.event == 'SessionStart' && !a.at.isBefore(floor),
+    );
   }
 
   // _noteBootOutput pushes the settle timer on each PTY chunk until the launch
-  // output goes quiet. No-op once ready — a cheap guard on the output hot path.
+  // output goes quiet. For agent sessions this is only the missing-hook fallback;
+  // the normal path is SessionStart above. No-op once ready — a cheap guard on
+  // the output hot path.
   void _noteBootOutput() {
     if (_bootSettled) return;
     _bootSettleTimer?.cancel();
@@ -314,6 +361,8 @@ class TerminalSession {
     _bootSettleTimer = null;
     _bootCapTimer?.cancel();
     _bootCapTimer = null;
+    _bootHookPollTimer?.cancel();
+    _bootHookPollTimer = null;
     if (_disposed) return;
     _flushPending();
   }
@@ -322,8 +371,10 @@ class TerminalSession {
     if (_pendingWake.isEmpty) return;
     final pending = List.of(_pendingWake);
     _pendingWake.clear();
-    // pasteText's delayed-Enter + _ensureSubmitted backstop drive the submit — the
-    // same path the active tab uses — so a held message auto-runs on flush.
+    // A queued boot delivery flushes right as the startup screen has gone quiet.
+    // Use the same submit verifier as direct paste: some fresh TUIs swallow the
+    // first delayed Enter, and without the verifier the prompt sits in the input
+    // row instead of running (seen on 待办→新建会话).
     for (final d in pending) {
       pasteText(d.text, submit: d.submit);
     }
@@ -333,6 +384,13 @@ class TerminalSession {
   // so tests can exercise ready-target routing / queue-flush without a live agent
   // boot. Test-only; never called in production.
   void debugMarkBootSettled() => _markBootSettled();
+
+  @visibleForTesting
+  void debugSetBootStartedAt(DateTime t) => _bootStartedAt = t;
+
+  @visibleForTesting
+  bool debugHasFreshSessionStart(List<HookActivity> activities) =>
+      _hasFreshSessionStart(activities);
 
   static final RegExp _terminalProtocolReply = RegExp(
     r'^(?:(?:'
@@ -582,6 +640,21 @@ class TerminalSession {
     return XtermSnapshotFormatter(terminal).ansiTail(rows);
   }
 
+  // snapshotSized is snapshotAnsi PLUS the source terminal's geometry, so the
+  // quick-reply preview can render at THIS width (no reflow of TUI chrome). The
+  // tail is exactly viewHeight rows (the current screen) so the snapshot's
+  // logical-line count equals the source rows == the rows the preview sizes to,
+  // keeping the bottom prompt from being clipped.
+  ScreenSnapshot snapshotSized() {
+    final cols = terminal.viewWidth;
+    final rows = terminal.viewHeight;
+    return (
+      ansi: XtermSnapshotFormatter(terminal).ansiTail(rows),
+      cols: cols,
+      rows: rows,
+    );
+  }
+
   // _resolvedCommand is the shell command actually run for this session. For a
   // plain shell / arbitrary command it's [command] unchanged. For an agent it's
   // rebuilt from agent + preLaunch + session binding so a reopened tab resumes
@@ -649,6 +722,13 @@ class TerminalSession {
     // bare name) BEFORE spawning, so a claude/codex that isn't on the GUI's PATH
     // still starts. Cheap and cached after the first session (see AgentResolver).
     if (agent == 'claude' || agent == 'codex') {
+      // App startup installs hooks fire-and-forget; a user can still spawn an
+      // agent before that write lands. Do one targeted, idempotent install right
+      // before launching so this session can produce the SessionStart event that
+      // the boot-ready gate uses. Failure is non-fatal: the quiet/cap fallbacks
+      // below still keep the session usable.
+      await Cli.installBusHooks(agents: [agent]);
+      if (_disposed) return; // closed while installing hooks
       _invocation = await AgentResolver.resolve(agent);
     }
     if (_disposed) return; // closed during the async resolve
@@ -1108,6 +1188,7 @@ class TerminalSession {
     _usageTicker?.cancel();
     _bootSettleTimer?.cancel();
     _bootCapTimer?.cancel();
+    _bootHookPollTimer?.cancel();
     activityRev.dispose();
     usage.dispose();
     controller.dispose();
@@ -1207,6 +1288,7 @@ class _TerminalPaneState extends State<TerminalPane> {
   // text-only, so the image goes through `pasteboard`.
   Future<void> _paste() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
     final text = data?.text;
     if (text != null && text.isNotEmpty) {
       _terminal.paste(text);
@@ -1223,6 +1305,7 @@ class _TerminalPaneState extends State<TerminalPane> {
     try {
       bytes = await Pasteboard.image;
     } catch (_) {}
+    if (!mounted) return;
     if (bytes == null || bytes.isEmpty) return;
     try {
       final dir = Directory('${(await getTemporaryDirectory()).path}/cc-paste');
@@ -1230,6 +1313,7 @@ class _TerminalPaneState extends State<TerminalPane> {
       final path =
           '${dir.path}/img-${DateTime.now().millisecondsSinceEpoch}.png';
       await File(path).writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
       _terminal.paste(path);
       if (mounted) snack(context, '已粘贴图片路径(回车让 agent 读取)');
     } catch (_) {
@@ -1346,11 +1430,12 @@ class _TerminalPaneState extends State<TerminalPane> {
       case 'interject':
         // Flutter showMenu has no submenu: reopen a target picker, then route
         // the selection submit:true so a busy peer receives it via its Stop hook.
-        final pick = await showPeerPicker(
+        final pick = await showGroupedPeerMenu(
           context,
           globalPos,
-          [...widget.same, ...widget.others],
-          'interject',
+          same: widget.same,
+          others: widget.others,
+          prefix: 'interject',
           icon: Icons.bolt_rounded,
           label: (t) => '插话到「${t.label}」',
         );
@@ -1538,7 +1623,8 @@ class _WindowsImeInputLayerState extends State<_WindowsImeInputLayer> {
     super.didUpdateWidget(old);
     if (old.active == widget.active) return;
     logBreadcrumb(
-        'ime.${widget.active ? 'activate' : 'deactivate'} ${widget.session.id}');
+      'ime.${widget.active ? 'activate' : 'deactivate'} ${widget.session.id}',
+    );
     if (widget.active) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && widget.active) _focus.requestFocus();

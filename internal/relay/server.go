@@ -15,10 +15,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cc-collaboration/internal/handoff"
@@ -65,9 +65,12 @@ type Server struct {
 	// operator can never be locked out. Effective admin = SeedAdmins ∪
 	// users.is_admin.
 	SeedAdmins []string
+	// accountMu serializes account-state mutations whose safety checks depend
+	// on the current effective-admin set (notably deleting the last admin).
+	accountMu sync.Mutex
 	// DisableRegistration closes the public /v1/register route for enterprise
-	// deployments that provision users through admins or the relay useradd
-	// bootstrap command. Default false preserves existing self-service installs.
+	// deployments that provision users through an administrator. Default false
+	// preserves self-service registration for existing installations.
 	DisableRegistration bool
 }
 
@@ -130,6 +133,17 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/users/{id}/admin", s.setUserAdmin)
 	api.HandleFunc("POST /v1/users/{id}/disable", s.setUserDisabled)
 	api.HandleFunc("POST /v1/users/{id}/reset-password", s.resetUserPassword)
+	api.HandleFunc("DELETE /v1/users/{id}", s.deleteUser)
+	// Organizations: SaaS teams/workspaces. Any authenticated user can create
+	// one; owners/admins manage membership.
+	api.HandleFunc("GET /v1/orgs", s.listOrganizations)
+	api.HandleFunc("POST /v1/orgs", s.createOrganization)
+	api.HandleFunc("GET /v1/orgs/{id}", s.getOrganization)
+	api.HandleFunc("DELETE /v1/orgs/{id}", s.deleteOrganization)
+	api.HandleFunc("POST /v1/orgs/{id}/members", s.addOrganizationMember)
+	api.HandleFunc("DELETE /v1/orgs/{id}/members/{identity}", s.removeOrganizationMember)
+	api.HandleFunc("POST /v1/orgs/{id}/invitations", s.createOrganizationInvitation)
+	api.HandleFunc("DELETE /v1/orgs/{id}/invitations/{invitation_id}", s.cancelOrganizationInvitation)
 	// Projects: self-service create + owner/admin management.
 	api.HandleFunc("GET /v1/projects", s.listProjects)
 	api.HandleFunc("POST /v1/projects", s.createProject)
@@ -140,6 +154,11 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /v1/projects/{id}/repos", s.unmapRepo)
 	api.HandleFunc("POST /v1/projects/{id}/members", s.addMember)
 	api.HandleFunc("DELETE /v1/projects/{id}/members/{identity}", s.removeMember)
+	api.HandleFunc("POST /v1/projects/{id}/invitations", s.createProjectInvitation)
+	api.HandleFunc("DELETE /v1/projects/{id}/invitations/{invitation_id}", s.cancelProjectInvitation)
+	api.HandleFunc("GET /v1/invitations", s.listMyInvitations)
+	api.HandleFunc("POST /v1/invitations/{id}/accept", s.acceptInvitation)
+	api.HandleFunc("POST /v1/invitations/{id}/decline", s.declineInvitation)
 	// Self-service machine tokens (any authenticated user, own tokens only).
 	api.HandleFunc("GET /v1/tokens", s.listTokens)
 	api.HandleFunc("POST /v1/tokens", s.createToken)
@@ -194,7 +213,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 // broadcastPresence is wired as Hub.OnPresenceChange. Fans a user.online /
-// user.offline event out to every OTHER subscribed identity.
+// user.offline event out to every reachable subscribed identity.
 func (s *Server) broadcastPresence(identity string, online bool) {
 	// A user that just went fully offline has no live sessions to target.
 	if !online && s.Sessions != nil {
@@ -208,7 +227,28 @@ func (s *Server) broadcastPresence(identity string, online bool) {
 	if err != nil {
 		return
 	}
-	s.Hub.PublishExcept(identity, sse.Event{Type: eventType, Data: data})
+	for _, recipient := range s.Hub.OnlineRecipients() {
+		if recipient == identity {
+			continue
+		}
+		ok, err := s.canReachIdentity(context.Background(), recipient, identity)
+		if err != nil || !ok {
+			continue
+		}
+		s.publishToActive(context.Background(), sse.Event{Type: eventType, Recipient: recipient, Data: data})
+	}
+}
+
+func (s *Server) publishToActive(ctx context.Context, ev sse.Event) bool {
+	if s.Hub == nil || ev.Recipient == "" {
+		return false
+	}
+	active, err := s.Store.UserActive(ctx, ev.Recipient)
+	if err != nil || !active {
+		return false
+	}
+	s.Hub.Publish(ev)
+	return true
 }
 
 // postAlert receives a server-side log alert and fans it out to the target
@@ -219,7 +259,7 @@ func (s *Server) broadcastPresence(identity string, online bool) {
 func (s *Server) postAlert(w http.ResponseWriter, r *http.Request) {
 	sender := auth.Identity(r.Context())
 	var alert handoffschema.LogAlert
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&alert); err != nil {
+	if err := decodeJSONBody(w, r, 1<<20, &alert); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -231,10 +271,13 @@ func (s *Server) postAlert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "message required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireReachableIdentity(w, r, alert.Recipient) {
+		return
+	}
 	alert.Sender = sender
 	if s.Hub != nil {
 		if data, err := json.Marshal(alert); err == nil {
-			s.Hub.Publish(sse.Event{Type: sse.EventTypeLogAlert, Recipient: alert.Recipient, Data: data})
+			s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeLogAlert, Recipient: alert.Recipient, Data: data})
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
@@ -269,7 +312,7 @@ func (s *Server) screenShareIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	var p handoffschema.Package
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&p); err != nil {
+	if err := decodeJSONBody(w, r, 32<<20, &p); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -278,6 +321,22 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if len(p.EffectiveRecipients()) == 0 && p.RequiresRecipient() {
 		http.Error(w, "recipient required", http.StatusBadRequest)
 		return
+	}
+	for _, recipient := range p.EffectiveRecipients() {
+		recipient = strings.TrimSpace(recipient)
+		if recipient == "" {
+			http.Error(w, "recipient required", http.StatusBadRequest)
+			return
+		}
+		ok, err := s.canReachIdentity(r.Context(), identity, recipient)
+		if err != nil {
+			http.Error(w, "check recipient reachability: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 	// Server overrides sender + id + created_at + schema_version to prevent spoofing.
 	p.Sender = identity
@@ -295,7 +354,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "insert: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.publishHandoffCreated(&p, p.EffectiveRecipients())
+	s.publishHandoffCreated(r.Context(), &p, p.EffectiveRecipients())
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         p.ID,
 		"created_at": p.CreatedAt,
@@ -341,7 +400,7 @@ func (s *Server) patchCapsule(w http.ResponseWriter, r *http.Request) {
 		Visibility *string `json:"visibility,omitempty"`
 		Summary    *string `json:"summary,omitempty"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &body); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -356,7 +415,7 @@ func (s *Server) patchCapsule(w http.ResponseWriter, r *http.Request) {
 // targeted recipients. No-op when the Hub isn't configured (e.g. in tests
 // that don't wire one). Marshalling failure is silent — events are
 // best-effort; reconnect-with-Last-Event-Id is the recovery path.
-func (s *Server) publishHandoffCreated(p *handoffschema.Package, targets []string) {
+func (s *Server) publishHandoffCreated(ctx context.Context, p *handoffschema.Package, targets []string) {
 	if s.Hub == nil || len(targets) == 0 {
 		return
 	}
@@ -366,7 +425,7 @@ func (s *Server) publishHandoffCreated(p *handoffschema.Package, targets []strin
 		return
 	}
 	for _, rec := range targets {
-		s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffCreated, Recipient: rec, Data: data})
+		s.publishToActive(ctx, sse.Event{Type: sse.EventTypeHandoffCreated, Recipient: rec, Data: data})
 	}
 }
 
@@ -403,7 +462,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		)
 		if pid := r.URL.Query().Get("project"); pid != "" {
 			if !s.isAdmin(r.Context(), identity) {
-				if _, ok, _ := s.Store.MemberRole(r.Context(), pid, identity); !ok {
+				if _, ok, _ := s.Store.EffectiveProjectRole(r.Context(), pid, identity); !ok {
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
@@ -536,6 +595,30 @@ func (s *Server) packageParticipants(ctx context.Context, pkg *handoffschema.Pac
 	return out
 }
 
+func (s *Server) commentTargets(ctx context.Context, pkg *handoffschema.Package) []string {
+	seen := map[string]struct{}{}
+	add := func(id string) {
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+	}
+	for _, id := range s.packageParticipants(ctx, pkg) {
+		add(id)
+	}
+	if repo := pkg.Repo.Name; repo != "" {
+		if targets, err := s.Store.ListRepoHandoffEventTargets(ctx, repo); err == nil {
+			for _, id := range targets {
+				add(id)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out
+}
+
 func (s *Server) callerCanView(ctx context.Context, pkg *handoffschema.Package, identity string) bool {
 	for _, p := range s.packageParticipants(ctx, pkg) {
 		if p == identity {
@@ -558,7 +641,8 @@ func (s *Server) canViewPackage(ctx context.Context, pkg *handoffschema.Package,
 	}
 	// Capsules follow the plaza's visibility rule, not the recipient one.
 	if pkg.EffectiveKind() == handoffschema.KindCapsule {
-		return pkg.CapsuleVisibleTo(identity)
+		ok, err := s.Store.CapsuleVisibleTo(ctx, pkg, identity)
+		return err == nil && ok
 	}
 	if s.callerCanView(ctx, pkg, identity) {
 		return true
@@ -637,7 +721,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 // listOnlineUsers exposes the relay roster so a caller can answer "is my
 // partner currently watching?" before sending an urgent handoff or comment.
-func (s *Server) listOnlineUsers(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) listOnlineUsers(w http.ResponseWriter, r *http.Request) {
 	if s.Hub == nil {
 		http.Error(w, "events not enabled", http.StatusNotImplemented)
 		return
@@ -647,6 +731,36 @@ func (s *Server) listOnlineUsers(w http.ResponseWriter, _ *http.Request) {
 		online[id] = true
 	}
 	known := s.Tokens.Identities()
+	if ids, err := s.Store.KnownIdentities(context.Background()); err == nil {
+		known = append(known, ids...)
+	}
+	for id := range online {
+		known = append(known, id)
+	}
+	slices.Sort(known)
+	known = slices.Compact(known)
+	activeKnown := known[:0]
+	for _, id := range known {
+		if active, err := s.Store.UserActive(r.Context(), id); err == nil && active {
+			activeKnown = append(activeKnown, id)
+		}
+	}
+	known = activeKnown
+	caller := auth.Identity(r.Context())
+	if !s.isAdmin(r.Context(), caller) {
+		visible := known[:0]
+		for _, id := range known {
+			ok, err := s.canReachIdentity(r.Context(), caller, id)
+			if err != nil {
+				http.Error(w, "filter online users: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if ok {
+				visible = append(visible, id)
+			}
+		}
+		known = visible
+	}
 	users := make([]handoffschema.OnlineUser, 0, len(known))
 	for _, id := range known {
 		users = append(users, handoffschema.OnlineUser{Identity: id, Online: online[id]})
@@ -700,7 +814,7 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body string `json:"body"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -717,11 +831,11 @@ func (s *Server) postComment(w http.ResponseWriter, r *http.Request) {
 
 	if s.Hub != nil {
 		if data, err := json.Marshal(c); err == nil {
-			for _, t := range participants {
+			for _, t := range s.commentTargets(r.Context(), pkg) {
 				if t == identity {
 					continue
 				}
-				s.Hub.Publish(sse.Event{Type: sse.EventTypeCommentCreated, Recipient: t, Data: data})
+				s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeCommentCreated, Recipient: t, Data: data})
 			}
 		}
 	}
@@ -767,7 +881,7 @@ func (s *Server) listInboxComments(w http.ResponseWriter, r *http.Request) {
 
 	comments, maxID, err := s.Store.ListCommentsSince(r.Context(), identity, since, limit)
 	if err != nil {
-		http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -902,7 +1016,7 @@ func (s *Server) retract(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason,omitempty"`
 	}
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		if err := decodeJSONBody(w, r, 4<<10, &body); err != nil && !errors.Is(err, io.EOF) {
 			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -928,7 +1042,7 @@ func (s *Server) retract(w http.ResponseWriter, r *http.Request) {
 		ev := handoffschema.RetractEvent{ID: id, Sender: identity, Reason: body.Reason}
 		if data, err := json.Marshal(ev); err == nil {
 			for _, rec := range recipients {
-				s.Hub.Publish(sse.Event{Type: sse.EventTypeHandoffRetracted, Recipient: rec, Data: data})
+				s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeHandoffRetracted, Recipient: rec, Data: data})
 			}
 		}
 	}
@@ -947,16 +1061,20 @@ func (s *Server) reassign(w http.ResponseWriter, r *http.Request) {
 		To     string `json:"to"`
 		Reason string `json:"reason"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	req.To = strings.TrimSpace(req.To)
 	if req.To == "" {
 		http.Error(w, "to required", http.StatusBadRequest)
 		return
 	}
 	if req.To == identity {
 		http.Error(w, "cannot reassign to yourself", http.StatusBadRequest)
+		return
+	}
+	if !s.requireReachableIdentity(w, r, req.To) {
 		return
 	}
 
@@ -986,7 +1104,7 @@ func (s *Server) reassign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.publishHandoffCreated(newPkg, []string{req.To})
+	s.publishHandoffCreated(r.Context(), newPkg, []string{req.To})
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":              newPkg.ID,
@@ -1045,8 +1163,6 @@ func auditLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }
 
-var handoffIDInPath = regexp.MustCompile(`^/v1/handoffs/([^/]+)`)
-
 func logging(next http.Handler) http.Handler {
 	logger := auditLogger()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1054,7 +1170,8 @@ func logging(next http.Handler) http.Handler {
 		var identity string
 		ctx := auth.WithIdentityHolder(r.Context(), &identity)
 		rec := &statusRecorder{ResponseWriter: w, code: 200}
-		next.ServeHTTP(rec, r.WithContext(ctx))
+		req := r.WithContext(ctx)
+		next.ServeHTTP(rec, req)
 
 		attrs := []slog.Attr{
 			slog.String("method", r.Method),
@@ -1065,9 +1182,16 @@ func logging(next http.Handler) http.Handler {
 		if identity != "" {
 			attrs = append(attrs, slog.String("identity", identity))
 		}
-		if m := handoffIDInPath.FindStringSubmatch(r.URL.Path); len(m) == 2 {
-			attrs = append(attrs, slog.String("handoff_id", m[1]))
+		if id := handoffIDForLog(req); id != "" {
+			attrs = append(attrs, slog.String("handoff_id", id))
 		}
 		logger.LogAttrs(r.Context(), slog.LevelInfo, "relay.request", attrs...)
 	})
+}
+
+func handoffIDForLog(r *http.Request) string {
+	if !strings.HasPrefix(r.URL.Path, "/v1/handoffs/") {
+		return ""
+	}
+	return r.PathValue("id")
 }

@@ -1,15 +1,7 @@
 # Repo-level config — copy to <repo-root>/.cc-handoff.toml
-# Example below maps test-backend → test-frontend; adjust the regex/templates for your pair.
-
-[identity]
-# me      = "you@backend"    # optional; overrides user-level identity for this repo
-partner = "alex@frontend"    # default recipient for /handoff and /request (single-target flows)
-
-# partners = ["backend", "frontend"]
-# Multi-recipient default for /submit-bug (tester / QA repos). When set,
-# `submit_bug` fans the bug out to every identity here unless the caller
-# passes an explicit `to=[...]`. For a normal 2-party repo leave this
-# unset — it'll fall back to [partner] automatically.
+# Team/project routing is the default. The sender identity comes from the
+# logged-in user or machine token; recipients come from the bound team project
+# or from explicit --project/--org/--member flags.
 
 [paths]
 swagger = "docs/swagger.yaml"   # optional; if set, swagger delta is included in the package
@@ -69,3 +61,11 @@ wake_on_comment    = false       # Claude only: if true, partner replies pull th
 mute_user_presence = false       # default false: pop a notification when other identities come
                                  # online / go offline (relay broadcasts presence on watch
                                  # connect/disconnect). Set true to silence them.
+
+# Legacy point-to-point compatibility only. New team/project setups do not need
+# this section.
+#
+# [identity]
+# me = "you@backend"             # optional old per-repo override
+# partner = "alex@frontend"      # explicit old point-to-point target
+# partners = ["backend", "frontend"] # old submit_bug role aliases

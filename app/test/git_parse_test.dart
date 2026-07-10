@@ -36,7 +36,11 @@ void main() {
     expect(commits[1].hash, b);
     expect(commits[2].hash, c);
     for (final commit in commits) {
-      expect(commit.hash.trim(), commit.hash, reason: 'hash has stray whitespace');
+      expect(
+        commit.hash.trim(),
+        commit.hash,
+        reason: 'hash has stray whitespace',
+      );
       expect(commit.hash.startsWith('\n'), isFalse);
     }
 
@@ -55,5 +59,46 @@ void main() {
     expect(kinds.contains(EdgeKind.fromDot), isTrue);
     expect(kinds.contains(EdgeKind.toDot), isTrue);
     expect(layout.laneCount, 1); // all on one lane
+  });
+
+  test('GitStatusSummary exposes precise bulk action availability', () {
+    const clean = GitStatusSummary(
+      branch: 'main',
+      staged: 0,
+      modified: 0,
+      untracked: 0,
+      conflicted: 0,
+      ahead: 0,
+      behind: 0,
+    );
+    expect(clean.hasStageableChanges, isFalse);
+    expect(clean.hasStagedChanges, isFalse);
+    expect(clean.hasAnyChanges, isFalse);
+
+    const unstaged = GitStatusSummary(
+      branch: 'main',
+      staged: 0,
+      modified: 1,
+      untracked: 1,
+      conflicted: 0,
+      ahead: 0,
+      behind: 0,
+    );
+    expect(unstaged.hasStageableChanges, isTrue);
+    expect(unstaged.hasStagedChanges, isFalse);
+    expect(unstaged.hasAnyChanges, isTrue);
+
+    const staged = GitStatusSummary(
+      branch: 'main',
+      staged: 2,
+      modified: 0,
+      untracked: 0,
+      conflicted: 0,
+      ahead: 0,
+      behind: 0,
+    );
+    expect(staged.hasStageableChanges, isFalse);
+    expect(staged.hasStagedChanges, isTrue);
+    expect(staged.hasAnyChanges, isTrue);
   });
 }

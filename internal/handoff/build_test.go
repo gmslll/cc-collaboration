@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
@@ -110,6 +111,74 @@ func TestBuild_Bug_NoGitRepo(t *testing.T) {
 	}
 	if pkg.Repo.Branch != "" || pkg.Repo.HeadSHA != "" {
 		t.Fatalf("expected empty repo meta without git, got branch=%q head=%q", pkg.Repo.Branch, pkg.Repo.HeadSHA)
+	}
+}
+
+func TestBuild_PreservesDeliveryTarget(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+
+	inboxDir := filepath.Join(dir, ".cc-handoff", "inbox")
+	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(SummaryDraftPath(inboxDir), []byte("team scoped handoff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	target := &handoffschema.DeliveryTarget{
+		ProjectID: "project-1",
+		Member:    "dev@team",
+	}
+	pkg, _, err := Build(context.Background(), BuildOptions{
+		RepoRoot:       dir,
+		RepoName:       "demo",
+		Sender:         "owner@team",
+		Recipient:      "dev@team",
+		Kind:           handoffschema.KindRequest,
+		InboxDir:       inboxDir,
+		DeliveryTarget: target,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if pkg.DeliveryTarget == nil {
+		t.Fatal("delivery target was not preserved")
+	}
+	if pkg.DeliveryTarget.ProjectID != "project-1" ||
+		pkg.DeliveryTarget.OrgID != "" ||
+		pkg.DeliveryTarget.Member != "dev@team" {
+		t.Fatalf("delivery target = %+v", pkg.DeliveryTarget)
+	}
+}
+
+func TestBuildReassignment_RetargetsDeliveryTargetMember(t *testing.T) {
+	orig := &handoffschema.Package{
+		ID:        "bug-original",
+		Kind:      handoffschema.KindBug,
+		Sender:    "tester@team",
+		Recipient: "backend@team",
+		Urgency:   handoffschema.UrgencyUrgent,
+		Repo:      handoffschema.Repo{Name: "demo"},
+		SummaryMD: "team scoped bug",
+		DeliveryTarget: &handoffschema.DeliveryTarget{
+			ProjectID: "project-1",
+			OrgID:     "org-1",
+			Member:    "backend@team",
+		},
+	}
+
+	got := BuildReassignment(orig, "frontend@team", "root cause is frontend", "backend@team", time.Date(2026, 7, 9, 8, 0, 0, 0, time.UTC))
+	if got.DeliveryTarget == nil {
+		t.Fatal("delivery target was not preserved")
+	}
+	if got.DeliveryTarget == orig.DeliveryTarget {
+		t.Fatal("delivery target should be copied, not aliased")
+	}
+	if got.DeliveryTarget.ProjectID != "project-1" ||
+		got.DeliveryTarget.OrgID != "org-1" ||
+		got.DeliveryTarget.Member != "frontend@team" {
+		t.Fatalf("delivery target = %+v", got.DeliveryTarget)
 	}
 }
 

@@ -13,6 +13,14 @@ import 'local_bus.dart';
 // Kept in lib/local so it carries no screens/ import; both ends + the remote
 // layer share the same type.
 
+// ScreenSnapshot is one coloured live-screen snapshot for the quick-reply popup:
+// the ANSI tail PLUS the source terminal's own geometry (cols×rows). The preview
+// renders it at THAT native width instead of reflowing to the popup's narrow
+// width, so absolute-positioned TUI chrome (box art, separators, the agent's
+// input prompt) stays aligned instead of shattering. cols/rows travel with the
+// ansi through both the local previewHandler and the remote `screen` frame.
+typedef ScreenSnapshot = ({String ansi, int cols, int rows});
+
 // SessionStatus is the at-a-glance state shown on each card. `shell` = a plain
 // (non-agent) terminal. Agent states combine the coarse terminal busy flag with
 // recent hook events so the overview can say what the agent is actually doing.
@@ -77,6 +85,7 @@ class SessionCard {
   final bool isAgent;
   final String workspace; // workspace name ('' if unmapped/orphan)
   final String project; // project name ('' if unmapped/orphan)
+  final String projectId; // relay project id ('' if unmapped/legacy)
   final String? worktree; // worktree name (null at project root)
   final SessionStatus status;
   final String
@@ -111,6 +120,7 @@ class SessionCard {
     required this.isAgent,
     required this.workspace,
     required this.project,
+    this.projectId = '',
     required this.worktree,
     required this.status,
     this.statusDetail = '',
@@ -129,6 +139,7 @@ class SessionCard {
     'isAgent': isAgent,
     'ws': workspace,
     'proj': project,
+    'projectId': projectId,
     'wt': worktree,
     'status': status.name,
     'statusDetail': statusDetail,
@@ -150,6 +161,7 @@ class SessionCard {
       isAgent: m['isAgent'] == true,
       workspace: (m['ws'] ?? '').toString(),
       project: (m['proj'] ?? '').toString(),
+      projectId: (m['projectId'] ?? '').toString().trim(),
       worktree: m['wt']?.toString(),
       status: sessionStatusFromName(m['status'] as String?),
       statusDetail: (m['statusDetail'] ?? '').toString(),
@@ -183,7 +195,7 @@ class SessionOverviewStore extends ChangeNotifier {
   // deeper live-screen snapshot. Both registered by WorkspacePage so the quick-
   // reply popup can preview + reply without switching to the workspace.
   void Function(String sid, String text, {bool submit})? inputHandler;
-  Future<String?> Function(String sid)? previewHandler;
+  Future<ScreenSnapshot?> Function(String sid)? previewHandler;
   // reviewedHandler marks a session as "已查看" — the overview page can't reach
   // `terms`, so opening the quick-reply preview routes through here to let
   // WorkspacePage clear that session's 待 review flag (the same "the user is
@@ -215,6 +227,7 @@ class SessionOverviewStore extends ChangeNotifier {
     required String workspace,
     required String project,
     required String kind,
+    String? projectId,
     String? newWorktreeBranch,
     String? worktreeStart,
     String? resumeAgentSessionId,
@@ -270,7 +283,7 @@ class SessionOverviewStore extends ChangeNotifier {
   void sendInput(String sid, String text, {bool submit = false}) =>
       inputHandler?.call(sid, text, submit: submit);
 
-  Future<String?> loadPreview(String sid) async =>
+  Future<ScreenSnapshot?> loadPreview(String sid) async =>
       previewHandler == null ? null : await previewHandler!(sid);
 
   // markReviewed reports that the user is now looking at [sid] (opened its
@@ -293,6 +306,7 @@ class SessionOverviewStore extends ChangeNotifier {
     required String workspace,
     required String project,
     required String kind,
+    String? projectId,
     String? newWorktreeBranch,
     String? worktreeStart,
     String? resumeAgentSessionId,
@@ -303,6 +317,7 @@ class SessionOverviewStore extends ChangeNotifier {
       workspace: workspace,
       project: project,
       kind: kind,
+      projectId: projectId,
       newWorktreeBranch: newWorktreeBranch,
       worktreeStart: worktreeStart,
       resumeAgentSessionId: resumeAgentSessionId,
@@ -331,8 +346,12 @@ class SessionOverviewStore extends ChangeNotifier {
     List<String> skillZips = const [],
   }) async {
     if (submitCapsuleHandler == null) return (false, '会话总览未就绪');
-    return submitCapsuleHandler!(draft,
-        visibility: visibility, summary: summary, skillZips: skillZips);
+    return submitCapsuleHandler!(
+      draft,
+      visibility: visibility,
+      summary: summary,
+      skillZips: skillZips,
+    );
   }
 }
 

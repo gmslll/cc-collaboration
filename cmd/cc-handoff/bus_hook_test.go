@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,48 +15,13 @@ import (
 	"github.com/cc-collaboration/internal/setup"
 )
 
-func TestBusHookResponse_PostToolUse_NonBlockingFallback(t *testing.T) {
-	out := busHookResponse(busHookEvent{HookEventName: "PostToolUse"}, "msg", 1)
-	if out == nil {
-		t.Fatal("expected a response for PostToolUse")
+func TestWriteStopHookDecision_ExactSharedSchema(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeStopHookDecision(&out, "msg"); err != nil {
+		t.Fatal(err)
 	}
-	if _, blocked := out["decision"]; blocked {
-		t.Error("PostToolUse fallback must not use decision:block because Codex replaces the original tool result")
-	}
-	hso, _ := out["hookSpecificOutput"].(map[string]any)
-	if hso == nil || hso["additionalContext"] != "msg" {
-		t.Errorf("missing additionalContext: %+v", out)
-	}
-	if hso["hookEventName"] != "PostToolUse" {
-		t.Errorf("hookEventName=%v, want PostToolUse", hso["hookEventName"])
-	}
-}
-
-func TestBusHookResponse_EmptyEventDefaultsToPostToolUse(t *testing.T) {
-	out := busHookResponse(busHookEvent{}, "msg", 1)
-	if _, blocked := out["decision"]; blocked {
-		t.Error("empty event fallback must not use decision:block")
-	}
-	hso, _ := out["hookSpecificOutput"].(map[string]any)
-	if hso == nil || hso["hookEventName"] != "PostToolUse" {
-		t.Errorf("empty event should default hookEventName to PostToolUse: %+v", out)
-	}
-}
-
-func TestBusHookResponse_StopBlocks(t *testing.T) {
-	out := busHookResponse(busHookEvent{HookEventName: "Stop"}, "msg", 2)
-	if out == nil {
-		t.Fatal("expected a response for Stop")
-	}
-	if out["decision"] != "block" {
-		t.Errorf("Stop should block to pull a new turn, got decision=%v", out["decision"])
-	}
-	if out["reason"] != "msg" {
-		t.Errorf("Stop reason must carry the message body for Codex continuation, got %v", out["reason"])
-	}
-	hso, _ := out["hookSpecificOutput"].(map[string]any)
-	if hso == nil || hso["additionalContext"] != "msg" {
-		t.Errorf("missing additionalContext: %+v", out)
+	if got, want := out.String(), "{\"decision\":\"block\",\"reason\":\"msg\"}\n"; got != want {
+		t.Fatalf("Stop JSON=%q, want exact Claude/Codex schema %q", got, want)
 	}
 }
 
@@ -87,7 +55,7 @@ func TestBusHookDrain_MalformedPayloadStaysSilent(t *testing.T) {
 	}
 }
 
-func TestBusHookDrain_StopWithMessagesKeepsDeliveryJSON(t *testing.T) {
+func TestBusHookDrain_FirstStopUsesExactSchemaAndDrainsAfterWrite(t *testing.T) {
 	bus := t.TempDir()
 	const sid = "ts-parent"
 	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi"}); err != nil {
@@ -97,12 +65,26 @@ func TestBusHookDrain_StopWithMessagesKeepsDeliveryJSON(t *testing.T) {
 	t.Setenv("CC_SESSION_ID", sid)
 
 	out := runDrainCapture(t, `{"hook_event_name":"Stop"}`)
-	var m map[string]any
-	if err := json.Unmarshal([]byte(out), &m); err != nil {
-		t.Fatalf("parse stdout %q: %v", out, err)
+	m := parseStopDecision(t, out)
+	if len(m) != 2 || m["decision"] != "block" {
+		t.Fatalf("Stop response must contain only decision/reason, got %+v", m)
 	}
-	if m["decision"] != "block" {
-		t.Fatalf("Stop with messages must keep delivery response, got %+v", m)
+	reason, _ := m["reason"].(string)
+	if !strings.Contains(reason, "[来自 ts-peer · ts-peer] hi") {
+		t.Fatalf("Stop reason does not carry the peer message: %q", reason)
+	}
+	if _, exists := m["hookSpecificOutput"]; exists {
+		t.Fatalf("Stop must not return hookSpecificOutput: %+v", m)
+	}
+
+	// A successfully written, locally schema-valid response clears the marker so
+	// the app's 3s timeout cannot paste a duplicate.
+	inbox, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox) != 0 {
+		t.Fatalf("live inbox still has %d message(s), want drained", len(inbox))
 	}
 }
 
@@ -118,8 +100,8 @@ func TestBusHookDrain_StopFailureNoMessagesOutputsEmptyJSON(t *testing.T) {
 
 // The hook is installed on many lifecycle events for activity tracking, but bus
 // delivery must only drain on Stop. Events such as PermissionRequest do not
-// support the additionalContext shape this delivery path needs; clearing markers
-// there would lose the peer message.
+// support this continuation decision; clearing markers there would lose the
+// peer message.
 func TestBusHookDrain_UnsupportedEventLeavesInboxParked(t *testing.T) {
 	bus := t.TempDir()
 	const sid = "ts-parent"
@@ -177,10 +159,8 @@ func TestBusHookDrain_PostToolUseLeavesInboxParked(t *testing.T) {
 	}
 }
 
-// Note: the wake-loop guard (don't re-block when stop_hook_active) lives in
-// runBusHookDrain, which bails before draining so parked messages survive — see
-// the end-to-end check rather than here, since busHookResponse is only reached
-// once a response is actually wanted.
+// The acceptance/recovery tests below exercise the real temporary inbox rather
+// than only testing response construction.
 
 // runDrainWith invokes runBusHookDrain with payload on stdin and a throwaway
 // stdout, restoring both after. The drain reads CC_BUS_DIR/CC_SESSION_ID from
@@ -225,6 +205,15 @@ func runDrainCapture(t *testing.T, payload string) string {
 	return string(out)
 }
 
+func parseStopDecision(t *testing.T, out string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("parse Stop stdout %q: %v", out, err)
+	}
+	return m
+}
+
 // A Task subagent inherits the parent's CC_SESSION_ID, so its tool-call
 // PostToolUse hook would (before the agent_id gate) drain and DELETE the
 // parent's parked peer messages into the subagent's context — the parent and
@@ -250,6 +239,28 @@ func TestBusHookDrain_SubagentDoesNotStealParentInbox(t *testing.T) {
 	}
 }
 
+func TestBusHookDrain_SubagentStopReturnsEmptyJSONAndLeavesParentInbox(t *testing.T) {
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "hi parent"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	out := runDrainCapture(t, `{"hook_event_name":"SubagentStop","agent_id":"sub-123","stop_hook_active":false}`)
+	if out != "{}\n" {
+		t.Fatalf("SubagentStop stdout=%q, want empty JSON", out)
+	}
+	left, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 {
+		t.Fatalf("SubagentStop stole parent inbox: got %d message(s)", len(left))
+	}
+}
+
 // A top-level Stop (no agent_id) must drain normally, or messages would stay
 // parked forever once the target agent reaches the end of its turn.
 func TestBusHookDrain_TopLevelStopDrainsInbox(t *testing.T) {
@@ -270,6 +281,71 @@ func TestBusHookDrain_TopLevelStopDrainsInbox(t *testing.T) {
 	}
 	if len(left) != 0 {
 		t.Fatalf("top-level hook must drain the inbox, %d message(s) left", len(left))
+	}
+}
+
+func TestBusHookDrain_StdoutFailureLeavesInboxForRetry(t *testing.T) {
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "retry me"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	oldWriter := busHookWriteStopDecision
+	busHookWriteStopDecision = func(io.Writer, string) error { return errors.New("broken stdout") }
+	defer func() { busHookWriteStopDecision = oldWriter }()
+
+	out := runDrainCapture(t, `{"hook_event_name":"Stop","stop_hook_active":false}`)
+	if out != "" {
+		t.Fatalf("failed stdout write produced %q", out)
+	}
+	left, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || left[0].Msg.Body != "retry me" {
+		t.Fatalf("stdout failure lost the marker: %+v", left)
+	}
+}
+
+func TestBusHookDrain_StopHookActiveDoesNotRepeatOrDrainNewMessage(t *testing.T) {
+	bus := t.TempDir()
+	const sid = "ts-parent"
+	if err := localbus.WriteMsg(bus, sid, "001", localbus.Msg{From: "ts-peer", Body: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_BUS_DIR", bus)
+	t.Setenv("CC_SESSION_ID", sid)
+
+	first := parseStopDecision(t, runDrainCapture(t, `{"hook_event_name":"Stop","stop_hook_active":false}`))
+	if !strings.Contains(first["reason"].(string), "first") {
+		t.Fatalf("first response lost message: %+v", first)
+	}
+	// The first marker was cleared after the exact response was written. This
+	// second message arrives while the hook-driven continuation is running and
+	// must stay parked when stop_hook_active prevents a wake-loop.
+	if err := localbus.WriteMsg(bus, sid, "002", localbus.Msg{From: "ts-new", Body: "second"}); err != nil {
+		t.Fatal(err)
+	}
+
+	activeOut := runDrainCapture(t, `{"hook_event_name":"Stop","stop_hook_active":true}`)
+	if activeOut != "{}\n" {
+		t.Fatalf("stop_hook_active stdout=%q, want empty JSON to avoid a continuation loop", activeOut)
+	}
+	live, err := localbus.ListMsgs(bus, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].Msg.Body != "second" {
+		t.Fatalf("stop_hook_active drained a new message without delivery: %+v", live)
+	}
+
+	next := parseStopDecision(t, runDrainCapture(t, `{"hook_event_name":"Stop","stop_hook_active":false}`))
+	nextReason := next["reason"].(string)
+	if !strings.Contains(nextReason, "second") || strings.Contains(nextReason, "first") {
+		t.Fatalf("next top-level Stop reason=%q, want only the new message", nextReason)
 	}
 }
 

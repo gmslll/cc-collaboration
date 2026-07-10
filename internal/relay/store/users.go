@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,8 @@ type User struct {
 	DisplayName  string    `json:"display_name,omitempty"`
 	IsAdmin      bool      `json:"is_admin"`
 	Disabled     bool      `json:"disabled"`
+	Deleted      bool      `json:"deleted"`
+	DeletedAt    time.Time `json:"deleted_at,omitzero"`
 	CreatedAt    time.Time `json:"created_at"`
 	PasswordHash string    `json:"-"`
 }
@@ -28,24 +31,34 @@ func boolToInt(b bool) int {
 // CreateUser inserts a new account. Returns an error (UNIQUE violation) when the
 // identity already exists.
 func (s *Store) CreateUser(ctx context.Context, u User, now time.Time) error {
+	u.Identity = strings.TrimSpace(u.Identity)
+	u.DisplayName = strings.TrimSpace(u.DisplayName)
+	if u.Identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users(identity, password_hash, display_name, is_admin, disabled, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO users(identity, password_hash, display_name, is_admin, disabled, deleted_at, created_at)
+		 VALUES(?, ?, ?, ?, ?, 0, ?)`,
 		u.Identity, u.PasswordHash, u.DisplayName, boolToInt(u.IsAdmin), boolToInt(u.Disabled), now.UnixMilli())
 	return err
 }
 
 // GetUser returns the account for identity, or ErrNotFound.
 func (s *Store) GetUser(ctx context.Context, identity string) (User, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return User{}, ErrNotFound
+	}
 	var (
 		u                 User
 		isAdmin, disabled int
+		deletedMS         int64
 		createdMS         int64
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT identity, password_hash, display_name, is_admin, disabled, created_at
+		`SELECT identity, password_hash, display_name, is_admin, disabled, deleted_at, created_at
 		   FROM users WHERE identity = ?`, identity).
-		Scan(&u.Identity, &u.PasswordHash, &u.DisplayName, &isAdmin, &disabled, &createdMS)
+		Scan(&u.Identity, &u.PasswordHash, &u.DisplayName, &isAdmin, &disabled, &deletedMS, &createdMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -54,6 +67,10 @@ func (s *Store) GetUser(ctx context.Context, identity string) (User, error) {
 	}
 	u.IsAdmin = isAdmin != 0
 	u.Disabled = disabled != 0
+	u.Deleted = deletedMS != 0
+	if u.Deleted {
+		u.DeletedAt = time.UnixMilli(deletedMS).UTC()
+	}
 	u.CreatedAt = time.UnixMilli(createdMS).UTC()
 	return u, nil
 }
@@ -61,7 +78,7 @@ func (s *Store) GetUser(ctx context.Context, identity string) (User, error) {
 // ListUsers returns all accounts, sorted by identity. PasswordHash is cleared.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT identity, display_name, is_admin, disabled, created_at FROM users ORDER BY identity`)
+		`SELECT identity, display_name, is_admin, disabled, deleted_at, created_at FROM users ORDER BY identity`)
 	if err != nil {
 		return nil, err
 	}
@@ -69,13 +86,18 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		var (
 			u                 User
 			isAdmin, disabled int
+			deletedMS         int64
 			createdMS         int64
 		)
-		if err := r.Scan(&u.Identity, &u.DisplayName, &isAdmin, &disabled, &createdMS); err != nil {
+		if err := r.Scan(&u.Identity, &u.DisplayName, &isAdmin, &disabled, &deletedMS, &createdMS); err != nil {
 			return User{}, err
 		}
 		u.IsAdmin = isAdmin != 0
 		u.Disabled = disabled != 0
+		u.Deleted = deletedMS != 0
+		if u.Deleted {
+			u.DeletedAt = time.UnixMilli(deletedMS).UTC()
+		}
 		u.CreatedAt = time.UnixMilli(createdMS).UTC()
 		return u, nil
 	})
@@ -84,15 +106,49 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 // UserIsAdmin reports whether identity is a DB-flagged admin. A missing account
 // is not an admin (false, nil) — seed admins are layered on at the server level.
 func (s *Store) UserIsAdmin(ctx context.Context, identity string) (bool, error) {
-	var isAdmin int
-	err := s.db.QueryRowContext(ctx, `SELECT is_admin FROM users WHERE identity = ?`, identity).Scan(&isAdmin)
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false, nil
+	}
+	var isAdmin, disabled, deleted int
+	err := s.db.QueryRowContext(ctx, `SELECT is_admin, disabled, deleted_at != 0 FROM users WHERE identity = ?`, identity).Scan(&isAdmin, &disabled, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return isAdmin != 0, nil
+	return isAdmin != 0 && disabled == 0 && deleted == 0, nil
+}
+
+// UserActive reports whether an identity is allowed to authenticate. Missing
+// DB users are allowed so legacy file-token identities keep working. Deleted
+// users deliberately keep a tombstone row, which prevents that compatibility
+// rule from accidentally reviving their legacy credentials.
+func (s *Store) UserActive(ctx context.Context, identity string) (bool, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false, nil
+	}
+	var disabled, deleted int
+	err := s.db.QueryRowContext(ctx, `SELECT disabled, deleted_at != 0 FROM users WHERE identity = ?`, identity).Scan(&disabled, &deleted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return disabled == 0 && deleted == 0, nil
+}
+
+func (s *Store) KnownIdentities(ctx context.Context) ([]string, error) {
+	return s.queryStrings(ctx, `
+SELECT identity FROM users WHERE disabled = 0 AND deleted_at = 0
+UNION
+SELECT mt.identity FROM machine_tokens mt
+  LEFT JOIN users u ON u.identity = mt.identity
+ WHERE u.identity IS NULL OR (u.disabled = 0 AND u.deleted_at = 0)
+ORDER BY identity`)
 }
 
 // UserIsDisabled reports whether identity has a DB account that is disabled.
@@ -125,21 +181,257 @@ func (s *Store) execAffecting(ctx context.Context, query string, args ...any) er
 }
 
 func (s *Store) SetPasswordHash(ctx context.Context, identity, hash string) error {
-	return s.execAffecting(ctx, `UPDATE users SET password_hash = ? WHERE identity = ?`, hash, identity)
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
+	return s.execAffecting(ctx, `UPDATE users SET password_hash = ? WHERE identity = ? AND deleted_at = 0`, hash, identity)
 }
 
 func (s *Store) SetAdmin(ctx context.Context, identity string, isAdmin bool) error {
-	return s.execAffecting(ctx, `UPDATE users SET is_admin = ? WHERE identity = ?`, boolToInt(isAdmin), identity)
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
+	return s.execAffecting(ctx, `UPDATE users SET is_admin = ? WHERE identity = ? AND deleted_at = 0`, boolToInt(isAdmin), identity)
 }
 
 func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool) error {
-	return s.execAffecting(ctx, `UPDATE users SET disabled = ? WHERE identity = ?`, boolToInt(disabled), identity)
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE users SET disabled = ? WHERE identity = ? AND deleted_at = 0`, boolToInt(disabled), identity)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	if disabled {
+		if err := prepareDisableOwnerIdentity(ctx, tx, identity); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE identity = ?`, identity); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM machine_tokens WHERE identity = ?`, identity); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE identity = ?`, identity); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteUser irreversibly tombstones an account while preserving its identity
+// and historical attribution. Identity remains unique forever: recreating or
+// self-registering the same identity continues to conflict with the users row.
+//
+// Operational credentials and pending account-owned state are removed in the
+// same transaction. Team/project membership rows remain as an audit trail, but
+// are hidden from active-member lists and cannot grant access to an inactive
+// account. Owner denormalizations are transferred with the same safety checks
+// used by SetDisabled.
+func (s *Store) DeleteUser(ctx context.Context, identity string, now time.Time) error {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users
+		    SET password_hash = '', is_admin = 0, disabled = 1, deleted_at = ?
+		  WHERE identity = ? AND deleted_at = 0`,
+		now.UnixMilli(), identity)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	if err := prepareDisableOwnerIdentity(ctx, tx, identity); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM sessions WHERE identity = ?`,
+		`DELETE FROM machine_tokens WHERE identity = ?`,
+		`DELETE FROM user_settings WHERE identity = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, identity); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM invitations WHERE identity = ? OR inviter_identity = ?`, identity, identity); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func prepareDisableOwnerIdentity(ctx context.Context, tx *sql.Tx, identity string) error {
+	identity = strings.TrimSpace(identity)
+	orgRows, err := tx.QueryContext(ctx,
+		`SELECT org_id FROM organization_members WHERE identity = ? AND role = ?`,
+		identity, OrgRoleOwner)
+	if err != nil {
+		return err
+	}
+	var orgIDs []string
+	for orgRows.Next() {
+		var id string
+		if err := orgRows.Scan(&id); err != nil {
+			orgRows.Close()
+			return err
+		}
+		orgIDs = append(orgIDs, id)
+	}
+	if err := orgRows.Close(); err != nil {
+		return err
+	}
+	if err := orgRows.Err(); err != nil {
+		return err
+	}
+	for _, orgID := range orgIDs {
+		if orgID == defaultOrganizationID(identity) {
+			deleted, err := deleteEmptyDefaultOrganization(ctx, tx, orgID, identity)
+			if err != nil {
+				return err
+			}
+			if deleted {
+				continue
+			}
+		}
+		if err := requireOtherActiveOrgOwner(ctx, tx, orgID, identity); err != nil {
+			return err
+		}
+		if err := replaceOrganizationOwnerIdentity(ctx, tx, orgID, identity); err != nil {
+			return err
+		}
+	}
+
+	projectRows, err := tx.QueryContext(ctx,
+		`SELECT project_id FROM project_members WHERE identity = ? AND role = ?`,
+		identity, RoleOwner)
+	if err != nil {
+		return err
+	}
+	var projectIDs []string
+	for projectRows.Next() {
+		var id string
+		if err := projectRows.Scan(&id); err != nil {
+			projectRows.Close()
+			return err
+		}
+		projectIDs = append(projectIDs, id)
+	}
+	if err := projectRows.Close(); err != nil {
+		return err
+	}
+	if err := projectRows.Err(); err != nil {
+		return err
+	}
+	for _, projectID := range projectIDs {
+		if err := requireOtherActiveProjectOwner(ctx, tx, projectID, identity); err != nil {
+			return err
+		}
+		if err := replaceProjectOwnerIdentity(ctx, tx, projectID, identity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteEmptyDefaultOrganization(ctx context.Context, tx *sql.Tx, orgID, owner string) (bool, error) {
+	var currentOwner string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT owner_identity FROM organizations WHERE id = ?`, orgID).Scan(&currentOwner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	if currentOwner != owner {
+		return false, nil
+	}
+	var members int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM organization_members WHERE org_id = ?`, orgID).Scan(&members); err != nil {
+		return false, err
+	}
+	var projects int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE org_id = ?`, orgID).Scan(&projects); err != nil {
+		return false, err
+	}
+	if members != 1 || projects != 0 {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE org_id = ?`, orgID); err != nil {
+		return false, err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM organizations WHERE id = ?`, orgID)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func requireOtherActiveOrgOwner(ctx context.Context, tx *sql.Tx, orgID, disabledOwner string) error {
+	var owners int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		   FROM organization_members om
+		   LEFT JOIN users u ON u.identity = om.identity
+		  WHERE om.org_id = ? AND om.role = ? AND om.identity != ?
+		    AND (u.identity IS NULL OR (u.disabled = 0 AND u.deleted_at = 0))`,
+		orgID, OrgRoleOwner, disabledOwner).Scan(&owners); err != nil {
+		return err
+	}
+	if owners == 0 {
+		return ErrLastOwner
+	}
+	return nil
+}
+
+func requireOtherActiveProjectOwner(ctx context.Context, tx *sql.Tx, projectID, disabledOwner string) error {
+	var owners int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		   FROM project_members pm
+		   LEFT JOIN users u ON u.identity = pm.identity
+		  WHERE pm.project_id = ? AND pm.role = ? AND pm.identity != ?
+		    AND (u.identity IS NULL OR (u.disabled = 0 AND u.deleted_at = 0))`,
+		projectID, RoleOwner, disabledOwner).Scan(&owners); err != nil {
+		return err
+	}
+	if owners == 0 {
+		return ErrLastOwner
+	}
+	return nil
 }
 
 // --- sessions (UI login) ---
 
 // CreateSession records a login session keyed by the token hash, expiring at expires.
 func (s *Store) CreateSession(ctx context.Context, tokenHash, identity string, now, expires time.Time) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	identity = strings.TrimSpace(identity)
+	if tokenHash == "" || identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions(token_hash, identity, created_at, expires_at) VALUES(?, ?, ?, ?)`,
 		tokenHash, identity, now.UnixMilli(), expires.UnixMilli())
@@ -148,6 +440,7 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash, identity string, n
 
 // SessionIdentity returns the identity for a non-expired session token hash.
 func (s *Store) SessionIdentity(ctx context.Context, tokenHash string, now time.Time) (string, bool, error) {
+	tokenHash = strings.TrimSpace(tokenHash)
 	var identity string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT identity FROM sessions WHERE token_hash = ? AND expires_at > ?`, tokenHash, now.UnixMilli()).
@@ -162,6 +455,7 @@ func (s *Store) SessionIdentity(ctx context.Context, tokenHash string, now time.
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
+	tokenHash = strings.TrimSpace(tokenHash)
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
 	return err
 }
@@ -184,6 +478,12 @@ type MachineToken struct {
 }
 
 func (s *Store) CreateMachineToken(ctx context.Context, tokenHash, identity, label string, now time.Time) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	identity = strings.TrimSpace(identity)
+	label = strings.TrimSpace(label)
+	if tokenHash == "" || identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO machine_tokens(token_hash, identity, label, created_at) VALUES(?, ?, ?, ?)`,
 		tokenHash, identity, label, now.UnixMilli())
@@ -193,6 +493,11 @@ func (s *Store) CreateMachineToken(ctx context.Context, tokenHash, identity, lab
 // SeedMachineToken inserts a token from the legacy tokens.json, ignoring it if
 // already present (idempotent across restarts).
 func (s *Store) SeedMachineToken(ctx context.Context, tokenHash, identity string, now time.Time) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	identity = strings.TrimSpace(identity)
+	if tokenHash == "" || identity == "" {
+		return ErrInvalid
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO machine_tokens(token_hash, identity, label, created_at) VALUES(?, ?, 'seed', ?)`,
 		tokenHash, identity, now.UnixMilli())
@@ -200,6 +505,7 @@ func (s *Store) SeedMachineToken(ctx context.Context, tokenHash, identity string
 }
 
 func (s *Store) MachineTokenIdentity(ctx context.Context, tokenHash string) (string, bool, error) {
+	tokenHash = strings.TrimSpace(tokenHash)
 	var identity string
 	err := s.db.QueryRowContext(ctx, `SELECT identity FROM machine_tokens WHERE token_hash = ?`, tokenHash).Scan(&identity)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -212,6 +518,7 @@ func (s *Store) MachineTokenIdentity(ctx context.Context, tokenHash string) (str
 }
 
 func (s *Store) ListMachineTokens(ctx context.Context, identity string) ([]MachineToken, error) {
+	identity = strings.TrimSpace(identity)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT token_hash, identity, label, created_at FROM machine_tokens WHERE identity = ? ORDER BY created_at DESC`, identity)
 	if err != nil {
@@ -233,6 +540,11 @@ func (s *Store) ListMachineTokens(ctx context.Context, identity string) ([]Machi
 // DeleteMachineToken revokes a token, scoped to its owner so a user can only
 // revoke their own.
 func (s *Store) DeleteMachineToken(ctx context.Context, identity, tokenHash string) error {
+	identity = strings.TrimSpace(identity)
+	tokenHash = strings.TrimSpace(tokenHash)
+	if identity == "" || tokenHash == "" {
+		return ErrInvalid
+	}
 	return s.execAffecting(ctx,
 		`DELETE FROM machine_tokens WHERE token_hash = ? AND identity = ?`, tokenHash, identity)
 }

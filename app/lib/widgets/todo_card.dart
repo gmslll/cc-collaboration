@@ -45,6 +45,7 @@ class TodoCard extends StatelessWidget {
               const Spacer(),
               _AssigneeAvatar(
                 identity: todo.assigneeIdentity,
+                displayName: todo.assigneeDisplayName,
                 sourceName: todo.sourceAssigneeName,
                 sourceAvatarUrl: todo.sourceAssigneeAvatarUrl,
               ),
@@ -66,27 +67,47 @@ class TodoCard extends StatelessWidget {
               (todo.repoName ?? '').isNotEmpty ||
               (todo.groupName ?? '').isNotEmpty) ...[
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: [
-                if (recurrenceLabel != null)
-                  _miniTag(
-                    Icons.repeat_rounded,
-                    recurrenceLabel,
-                    CcColors.accentBright,
-                  ),
-                if (projectName != null)
-                  _miniTag(Icons.folder_rounded, projectName!, CcColors.muted),
-                if ((todo.repoName ?? '').isNotEmpty)
-                  _miniTag(Icons.source_rounded, todo.repoName!, CcColors.muted),
-                if ((todo.groupName ?? '').isNotEmpty)
-                  _miniTag(
-                    Icons.folder_outlined,
-                    todo.groupName!,
-                    CcColors.subtle,
-                  ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final tagMaxWidth =
+                    constraints.maxWidth.isFinite && constraints.maxWidth > 0
+                    ? constraints.maxWidth
+                    : 180.0;
+                return Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    if (recurrenceLabel != null)
+                      _miniTag(
+                        Icons.repeat_rounded,
+                        recurrenceLabel,
+                        CcColors.accentBright,
+                        maxWidth: tagMaxWidth,
+                      ),
+                    if (projectName != null)
+                      _miniTag(
+                        Icons.folder_rounded,
+                        projectName!,
+                        CcColors.muted,
+                        maxWidth: tagMaxWidth,
+                      ),
+                    if ((todo.repoName ?? '').isNotEmpty)
+                      _miniTag(
+                        Icons.source_rounded,
+                        todo.repoName!,
+                        CcColors.muted,
+                        maxWidth: tagMaxWidth,
+                      ),
+                    if ((todo.groupName ?? '').isNotEmpty)
+                      _miniTag(
+                        Icons.folder_outlined,
+                        todo.groupName!,
+                        CcColors.subtle,
+                        maxWidth: tagMaxWidth,
+                      ),
+                  ],
+                );
+              },
             ),
           ],
           const SizedBox(height: 10),
@@ -104,29 +125,39 @@ class TodoCard extends StatelessWidget {
   }
 }
 
-Widget _miniTag(IconData icon, String label, Color color) => Container(
-  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
-  decoration: BoxDecoration(
-    color: color.withValues(alpha: 0.12),
-    border: Border.all(color: color.withValues(alpha: 0.35)),
-    borderRadius: BorderRadius.circular(CcRadius.sm),
-  ),
-  child: Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 10.5, color: color),
-      const SizedBox(width: 4),
-      Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 10.5,
-          color: color,
-          fontWeight: FontWeight.w600,
+Widget _miniTag(
+  IconData icon,
+  String label,
+  Color color, {
+  required double maxWidth,
+}) => ConstrainedBox(
+  constraints: BoxConstraints(maxWidth: maxWidth),
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      border: Border.all(color: color.withValues(alpha: 0.35)),
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 10.5, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   ),
 );
 
@@ -139,10 +170,12 @@ Widget _miniTag(IconData icon, String label, Color color) => Container(
 // "assigned" affordance in this app (see StatusControl's inProgress dot).
 class _AssigneeAvatar extends StatelessWidget {
   final String? identity;
+  final String? displayName;
   final String? sourceName;
   final String? sourceAvatarUrl;
   const _AssigneeAvatar({
     required this.identity,
+    this.displayName,
     this.sourceName,
     this.sourceAvatarUrl,
   });
@@ -151,10 +184,11 @@ class _AssigneeAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     const size = 20.0;
     final id = (identity ?? '').trim();
+    final display = (displayName ?? '').trim();
     final name = (sourceName ?? '').trim();
     final avatarUrl = (sourceAvatarUrl ?? '').trim();
     // Unassigned in both the relay and the source → hollow ring.
-    if (id.isEmpty && name.isEmpty && avatarUrl.isEmpty) {
+    if (id.isEmpty && display.isEmpty && name.isEmpty && avatarUrl.isEmpty) {
       return Container(
         width: size,
         height: size,
@@ -164,7 +198,7 @@ class _AssigneeAvatar extends StatelessWidget {
         ),
       );
     }
-    final label = id.isNotEmpty ? id : name;
+    final label = display.isNotEmpty ? display : (id.isNotEmpty ? id : name);
     final initial = label.isEmpty ? '?' : label[0].toUpperCase();
     final glyph = Container(
       width: size,
@@ -199,6 +233,9 @@ class _AssigneeAvatar extends StatelessWidget {
                   progress == null ? child : glyph,
             ),
           );
-    return Tooltip(message: name.isNotEmpty ? name : id, child: avatar);
+    final tip = display.isNotEmpty
+        ? (id.isNotEmpty && id != display ? '$display · $id' : display)
+        : (name.isNotEmpty ? name : id);
+    return Tooltip(message: tip, child: avatar);
   }
 }

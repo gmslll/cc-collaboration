@@ -121,6 +121,7 @@ Structure (one `# 模块 API Brief: <name>` block per module — do not merge en
 调 `submit_handoff` MCP 工具:
 - `summary`: 第 4 步的完整 brief Markdown(已经把第 3 步自检的产物吸收进契约 / 集成提示;始终传 — 不依赖磁盘 draft)
 - `module_paths`: 用户给的模块路径数组,与磁盘上一致
+- 默认发给当前 workspace/repo 绑定的团队项目；如果用户明确要求「发给项目/团队/所有相关成员」，传 `project`（cc-handoff 项目 id）或 `org`（组织 id），不要再传 `to`；如果用户明确指定团队里的某个人，同时传 `member`（真实 identity）。只有用户明确要求旧点对点发送时才传 `to`
 - `prd`: 第 5 步的产品需求(用户回 `没有` / `n` 就不传)
 - `note`: 第 6 步的需求备注(用户回 `没有` / `n` 就不传)
 - `amends`: 第 7 步判断的上次 handoff id(只在确实是修正交付时传)

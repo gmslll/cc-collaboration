@@ -103,7 +103,7 @@ Setup:
   cc-handoff init     [--agent claude|codex|manual] [--with-mcp] [--with-commands] [--with-instructions]
 
 Sender flow:
-  cc-handoff submit       [--to ID] [--urgent] [--note TEXT] [--base REF] [--amends ID]
+  cc-handoff submit       [--to ID | --project ID | --org ID] [--member ID] [--urgent] [--note TEXT] [--base REF] [--amends ID]
   cc-handoff sent         [--limit N] [--json]          list my recent sent handoffs
   cc-handoff status       <id> [--json]                 show state / picked_at / comments
   cc-handoff retract      <id> [--reason TEXT]          cancel a still-pending handoff
@@ -112,7 +112,8 @@ Sender flow:
                                                         freeze a session context (① transcript / ② distilled role) to the plaza — 个人 (default) or --public (公开, team-visible)
 
 Receiver flow:
-  cc-handoff list     [--json]                          inbox: pending handoffs on relay
+  cc-handoff list     [--json] [--project ID | --all-projects] [--limit N]
+                                                        inbox: pending handoffs, or project-shared handoffs
   cc-handoff pickup   <id> [--no-ack] [--direct] [--repo PATH] [--worktree [--open [--window]]]
                                                         fetch + materialize + ack (--worktree integrates on an isolated branch worktree)
   cc-handoff inbox    [--json]                          local: already-materialized handoffs
@@ -124,7 +125,8 @@ Receiver flow:
 Both sides:
   cc-handoff comment      <id> <body...>                post a comment
   cc-handoff comment      --list <id>                   list comments on a handoff
-  cc-handoff online       [--json]                      show registered identities + who is currently watching
+  cc-handoff online       [--json] [--project ID | --org ID] [--member ID]
+                                                        show registered identities + who is currently watching
   cc-handoff msg          list | send <target> <text...> [--no-submit] | read <target> [--lines N] [--json] | whoami
                                                         local point-to-point messaging between sibling app sessions (no relay; run inside an app-spawned terminal)
                                                         read = pull a plain-text snapshot of another session's screen
@@ -142,8 +144,8 @@ Both sides:
   cc-handoff logs         <project> [--workspace NAME] [--grep RE] [--context N] [--no-grade] [--open [--window]]
                                                         pull the project's log source, extract + grade the latest error (deduped), optionally launch the agent to triage
   cc-handoff logs config  <project> [--workspace NAME]  interactively set up (or edit) the project's log source
-  cc-handoff alert        --to <identity> --project <name> [--message TEXT | --file PATH] [--level LVL] [--grade]
-                                                        forward a server log alert to a teammate's watch (server-side hook entry point)
+  cc-handoff alert        [--to ID | --team-project ID | --org ID] [--member ID] --project <name> [--message TEXT | --file PATH] [--level LVL] [--grade]
+                                                        forward a server log alert to project/team managers or teammates (server-side hook entry point)
   cc-handoff link-linear  --handoff <id> --issue <ENG-XXX> [--url URL]
                                                         record a Linear issue ↔ handoff binding locally
   cc-handoff linear-sync  [--no-notify] [--json]        pull new Linear @-mentions and fire desktop notifications

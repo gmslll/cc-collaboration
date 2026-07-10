@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:app/local/capsule_distill.dart';
@@ -7,7 +8,7 @@ void main() {
   // A fake headless runner: routes by a keyword in the prompt so the persona
   // and seed one-shots return distinct bodies. The prompt is fed on stdin.
   ProcRunner fakeRunner({int exit = 0, bool emptyPersona = false}) =>
-      (exe, args, {stdin}) async {
+      (exe, args, {stdin, timeout}) async {
         final prompt = stdin ?? args.join(' ');
         if (prompt.contains('专职角色')) {
           return ProcOutcome(exit, emptyPersona ? '' : 'PERSONA-BODY', '');
@@ -90,6 +91,45 @@ void main() {
     },
   );
 
+  test('runOfflineDistill bounds a hung persona one-shot', () async {
+    final dir = draft();
+    addTearDown(() => Directory(dir).deleteSync(recursive: true));
+    final never = Completer<ProcOutcome>();
+    final ok = await runOfflineDistill(
+      agentKind: 'codex',
+      headlessExe: 'codex',
+      draftDir: dir,
+      transcriptText: 't',
+      runProc: (_, _, {stdin, timeout}) => never.future,
+      oneShotTimeout: const Duration(milliseconds: 5),
+    );
+    expect(ok, isFalse);
+    expect(File('$dir/persona.md').existsSync(), isFalse);
+  });
+
+  test('runOfflineDistill runs persona then seed sequentially', () async {
+    final dir = draft();
+    addTearDown(() => Directory(dir).deleteSync(recursive: true));
+    final prompts = <String>[];
+    final ok = await runOfflineDistill(
+      agentKind: 'codex',
+      headlessExe: 'codex',
+      draftDir: dir,
+      transcriptText: 't',
+      runProc: (_, _, {stdin, timeout}) async {
+        prompts.add(stdin ?? '');
+        return ProcOutcome(0, 'OUT-${prompts.length}', '');
+      },
+      oneShotTimeout: const Duration(seconds: 1),
+    );
+    expect(ok, isTrue);
+    expect(prompts, hasLength(2));
+    expect(prompts[0], contains('专职角色'));
+    expect(prompts[1], contains('上下文摘要'));
+    expect(File('$dir/persona.md').readAsStringSync(), 'OUT-1');
+    expect(File('$dir/seed.md').readAsStringSync(), 'OUT-2');
+  });
+
   test(
     'distillCapsule offline path runs headless and reports offline',
     () async {
@@ -132,7 +172,7 @@ void main() {
           File('$dir/deps.txt').writeAsStringSync('');
           return true;
         },
-        runProc: (_, _, {stdin}) async =>
+        runProc: (_, _, {stdin, timeout}) async =>
             fail('self path must not go headless'),
         selfPoll: const Duration(milliseconds: 1),
         selfTimeout: const Duration(seconds: 2),

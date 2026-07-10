@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -17,6 +18,15 @@ import (
 // (app crashed / network gone) disappears within this window even if the
 // presence-offline hook misses the transition.
 const publishedSessionTTL = 90 * time.Second
+
+const (
+	maxPublishedSessions      = 64
+	maxSessionIDLen           = 96
+	maxSessionLabelLen        = 160
+	maxSessionProjectLen      = 160
+	maxSessionWorkdirLen      = 512
+	defaultSessionLabelPrefix = "Session "
+)
 
 // sessionRegistry holds each identity's currently-open terminal sessions so a
 // peer can target a specific remote session. In-memory + transient (like the
@@ -48,6 +58,10 @@ func (r *sessionRegistry) now() time.Time {
 func (r *sessionRegistry) set(identity string, sessions []handoffschema.SessionInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(sessions) == 0 {
+		delete(r.byID, identity)
+		return
+	}
 	r.byID[identity] = sessionEntry{sessions: sessions, expires: r.now().Add(publishedSessionTTL)}
 }
 
@@ -82,21 +96,73 @@ func (s *Server) postSessions(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Sessions []handoffschema.SessionInfo `json:"sessions"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+	if err := decodeJSONBody(w, r, 1<<20, &body); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.Sessions.set(identity, body.Sessions)
+	s.Sessions.set(identity, normalizePublishedSessions(body.Sessions))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// getUserSessions returns another user's currently-open sessions (empty if
-// offline / never published / expired). Any authenticated user may query — it's
-// presence-level info, like /v1/users/online.
+func normalizePublishedSessions(in []handoffschema.SessionInfo) []handoffschema.SessionInfo {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]handoffschema.SessionInfo, 0, min(len(in), maxPublishedSessions))
+	for _, s := range in {
+		if len(out) >= maxPublishedSessions {
+			break
+		}
+		id := truncateRunes(strings.TrimSpace(s.ID), maxSessionIDLen)
+		if id == "" {
+			continue
+		}
+		label := truncateRunes(strings.TrimSpace(s.Label), maxSessionLabelLen)
+		if label == "" {
+			label = defaultSessionLabelPrefix + id
+		}
+		out = append(out, handoffschema.SessionInfo{
+			ID:        id,
+			Label:     label,
+			Project:   truncateRunes(strings.TrimSpace(s.Project), maxSessionProjectLen),
+			ProjectID: truncateRunes(strings.TrimSpace(s.ProjectID), maxSessionProjectLen),
+			Workdir:   truncateRunes(strings.TrimSpace(s.Workdir), maxSessionWorkdirLen),
+		})
+	}
+	return out
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	for i := range s {
+		if max == 0 {
+			return s[:i]
+		}
+		max--
+	}
+	return s
+}
+
+// getUserSessions returns a reachable user's currently-open sessions (empty if
+// offline / never published / expired). Reachable means self, admin, or shared
+// organization/project membership.
 func (s *Server) getUserSessions(w http.ResponseWriter, r *http.Request) {
-	sessions := s.Sessions.get(r.PathValue("identity"))
+	caller := auth.Identity(r.Context())
+	target := r.PathValue("identity")
+	if !s.requireReachableIdentity(w, r, target) {
+		return
+	}
+	sessions := s.Sessions.get(target)
 	if sessions == nil {
 		sessions = []handoffschema.SessionInfo{}
+	}
+	var err error
+	sessions, err = s.sessionsVisibleTo(r.Context(), caller, target, sessions)
+	if err != nil {
+		http.Error(w, "filter sessions: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
@@ -108,23 +174,144 @@ func (s *Server) getUserSessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	sender := auth.Identity(r.Context())
 	var msg handoffschema.Message
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&msg); err != nil {
+	if err := decodeJSONBody(w, r, 1<<20, &msg); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(msg.Recipient) == "" {
+	msg.Recipient = strings.TrimSpace(msg.Recipient)
+	msg.SessionID = strings.TrimSpace(msg.SessionID)
+	msg.Project = strings.TrimSpace(msg.Project)
+	msg.ProjectID = strings.TrimSpace(msg.ProjectID)
+	if msg.Recipient == "" {
 		http.Error(w, "recipient required", http.StatusBadRequest)
+		return
+	}
+	if msg.SessionID == "" {
+		http.Error(w, "session_id required", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(msg.Body) == "" {
 		http.Error(w, "body required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireReachableIdentity(w, r, msg.Recipient) {
+		return
+	}
+	targetSession, ok := publishedSession(s.Sessions.get(msg.Recipient), msg.SessionID)
+	if !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	visible, err := s.sessionVisibleTo(r.Context(), sender, msg.Recipient, targetSession)
+	if err != nil {
+		http.Error(w, "check session scope: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !visible {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if s.Hub != nil {
-		out := handoffschema.Message{From: sender, SessionID: msg.SessionID, Body: msg.Body}
+		out := handoffschema.Message{
+			From:      sender,
+			SessionID: msg.SessionID,
+			Body:      msg.Body,
+			Project:   targetSession.Project,
+			ProjectID: targetSession.ProjectID,
+		}
 		if data, err := json.Marshal(out); err == nil {
-			s.Hub.Publish(sse.Event{Type: sse.EventTypeMessageDeliver, Recipient: msg.Recipient, Data: data})
+			s.publishToActive(r.Context(), sse.Event{Type: sse.EventTypeMessageDeliver, Recipient: msg.Recipient, Data: data})
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func publishedSession(sessions []handoffschema.SessionInfo, id string) (handoffschema.SessionInfo, bool) {
+	for _, s := range sessions {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return handoffschema.SessionInfo{}, false
+}
+
+func (s *Server) sessionsVisibleTo(ctx context.Context, caller, target string, sessions []handoffschema.SessionInfo) ([]handoffschema.SessionInfo, error) {
+	if len(sessions) == 0 {
+		return sessions, nil
+	}
+	out := make([]handoffschema.SessionInfo, 0, len(sessions))
+	for _, session := range sessions {
+		ok, err := s.sessionVisibleTo(ctx, caller, target, session)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, session)
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) sessionVisibleTo(ctx context.Context, caller, target string, session handoffschema.SessionInfo) (bool, error) {
+	projectID := strings.TrimSpace(session.ProjectID)
+	if projectID == "" {
+		return true, nil
+	}
+	targetCanAccess, err := s.identityCanAccessProject(ctx, target, projectID)
+	if err != nil {
+		return false, err
+	}
+	if !targetCanAccess {
+		return false, nil
+	}
+	if caller == target || s.isAdmin(ctx, caller) {
+		return true, nil
+	}
+	return s.identityCanAccessProject(ctx, caller, projectID)
+}
+
+func (s *Server) identityCanAccessProject(ctx context.Context, identity, projectID string) (bool, error) {
+	if identity == "" || projectID == "" {
+		return false, nil
+	}
+	if s.isAdmin(ctx, identity) {
+		return true, nil
+	}
+	_, ok, err := s.Store.EffectiveProjectRole(ctx, projectID, identity)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+func (s *Server) requireReachableIdentity(w http.ResponseWriter, r *http.Request, target string) bool {
+	caller := auth.Identity(r.Context())
+	ok, err := s.canReachIdentity(r.Context(), caller, target)
+	if err != nil {
+		http.Error(w, "check identity reachability: "+err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	if !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (s *Server) canReachIdentity(ctx context.Context, caller, target string) (bool, error) {
+	active, err := s.Store.UserActive(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	if !active {
+		return false, nil
+	}
+	if caller == target || s.isAdmin(ctx, caller) {
+		return true, nil
+	}
+	return s.identitiesShareTeam(ctx, caller, target)
+}
+
+func (s *Server) identitiesShareTeam(ctx context.Context, a, b string) (bool, error) {
+	return s.Store.IdentitiesShareTeam(ctx, a, b)
 }

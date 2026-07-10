@@ -7,6 +7,7 @@
 # Optional env:
 #   ARCH=amd64|arm64  override; default = autodetect via ssh
 #   SSH_OPTS="-i ~/.ssh/id_ed25519 -p 2222"
+#   FLUTTER=/path/to/flutter  override Flutter executable discovery
 #
 # Idempotent: first run installs, subsequent runs upgrade the binary +
 # restart. Tokens, DB, and operational scripts are only seeded if absent.
@@ -41,6 +42,19 @@ else
 fi
 echo "  → linux/$arch"
 
+say "build Flutter Web client for relay"
+flutter_bin=${FLUTTER:-$(command -v flutter 2>/dev/null || true)}
+if [[ -z "$flutter_bin" ]]; then
+  for candidate in /opt/homebrew/bin/flutter /usr/local/bin/flutter; do
+    if [[ -x "$candidate" ]]; then flutter_bin="$candidate"; break; fi
+  done
+fi
+[[ -x "$flutter_bin" ]] \
+  || { echo "flutter is required to embed the relay /app/ client (set FLUTTER=/path/to/flutter)" >&2; exit 1; }
+( cd "$ROOT" && make web FLUTTER="$flutter_bin" )
+test -s "$ROOT/internal/relay/app/index.html"
+test -s "$ROOT/internal/relay/app/main.dart.js"
+
 say "build cc-relay for linux/$arch"
 ( cd "$ROOT" && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 \
   go build -o "bin/cc-relay-linux-$arch" ./cmd/relay )
@@ -61,15 +75,14 @@ say "install + restart on $HOST"
 SSH "bash -se" <<'REMOTE'
 set -euo pipefail
 cd /tmp/cc-handoff-deploy
-chmod +x cc-relay install.sh uninstall.sh rotate-token.sh backup.sh
+chmod +x cc-relay install.sh uninstall.sh backup.sh
 
-# install.sh is idempotent: creates user/dirs/unit/sample tokens only when
-# missing; always copies the binary and enables the service.
+# install.sh is idempotent: creates user/dirs/unit; always copies the binary
+# and enables the service.
 sudo BIN_SRC=./cc-relay bash install.sh
 
 # Drop the operational scripts where they're easy to invoke later.
 sudo install -m 0755 uninstall.sh    /usr/local/sbin/cc-handoff-uninstall
-sudo install -m 0755 rotate-token.sh /usr/local/sbin/cc-handoff-rotate-token
 sudo install -m 0755 backup.sh       /usr/local/sbin/cc-handoff-backup
 
 sudo systemctl restart cc-handoff-relay
@@ -83,13 +96,12 @@ echo
 sudo systemctl status cc-handoff-relay --no-pager | head -5 || true
 echo
 echo "binary  : /usr/local/bin/cc-relay"
-echo "tokens  : /etc/cc-handoff/tokens.json   (edit then: systemctl restart cc-handoff-relay)"
 echo "data    : /var/lib/cc-handoff/relay.db"
 echo
 echo "ops:"
-echo "  sudo cc-handoff-rotate-token <identity>"
-echo "  sudo cc-handoff-backup"o
+echo "  sudo -u cc-handoff /usr/local/bin/cc-relay useradd -db /var/lib/cc-handoff/relay.db -identity <you@example.com> -admin"
+echo "  sudo cc-handoff-backup"
 echo "  sudo cc-handoff-uninstall [--purge]"
 REMOTE
 
-say "done — point your reverse proxy at 127.0.0.1:8080 if not already"
+say "done — relay listens on 0.0.0.0:8080; restrict port 8080 with firewall/security-group rules"

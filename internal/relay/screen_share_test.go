@@ -25,3 +25,15 @@ func TestScreenShareBrokerRoutesOnlyWithinIdentityAndRoom(t *testing.T) {
 		t.Fatalf("direct peer for other identity delivered: %#v", got)
 	}
 }
+
+func TestScreenShareDeliverAfterRemoveDoesNotPanic(t *testing.T) {
+	b := newScreenShareBroker()
+	viewer := b.add("alice", "ROOM1", "viewer")
+
+	b.remove("alice", "ROOM1", viewer)
+	deliverScreenShare(viewer, []byte(`{"t":"offer"}`))
+
+	if _, ok := <-viewer.send; ok {
+		t.Fatal("removed screen-share connection send channel is still open")
+	}
+}

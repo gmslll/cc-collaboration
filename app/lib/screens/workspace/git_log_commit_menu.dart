@@ -28,7 +28,8 @@ mixin _GitLogCommitMenu on _GitMixin {
     // HEAD 判定(门控 Undo Commit)。用内存里当前分支的 tip(short hash)前缀比对,
     // 避免每次右键都起一个 login-shell 跑 rev-parse 阻塞菜单弹出。
     final current = _gitBranches.where((b) => b.current).firstOrNull;
-    final isHead = current != null &&
+    final isHead =
+        current != null &&
         current.lastHash.isNotEmpty &&
         c.hash.startsWith(current.lastHash);
     final hasParent = c.parents.isNotEmpty;
@@ -217,8 +218,11 @@ mixin _GitLogCommitMenu on _GitMixin {
         _snack('没有可导出的内容');
         return;
       }
-      final saved = await writePatchToPickedFile(patch, '${c.shortHash}.patch');
-      if (saved != null && mounted) _snack('已保存 patch: $saved');
+      final out = await pickPatchFilePath('${c.shortHash}.patch');
+      if (out == null) return;
+      if (!mounted) return;
+      final saved = await writePatchFile(out, patch);
+      if (mounted) _snack('已保存 patch: $saved');
     } catch (e) {
       if (mounted) _snack(errorText(e));
     }
@@ -232,6 +236,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitCheckout(p.path, c.hash);
@@ -249,6 +254,7 @@ mixin _GitLogCommitMenu on _GitMixin {
   Future<void> _resetToCommit(ProjectCfg p, GitCommit c) async {
     final mode = await _pickResetMode(c);
     if (mode == null) return;
+    if (!mounted) return;
     if (mode == 'hard' &&
         !await _confirm(
           'Hard reset?',
@@ -256,6 +262,7 @@ mixin _GitLogCommitMenu on _GitMixin {
         )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitReset(p.path, c.hash, mode: mode);
@@ -277,6 +284,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitReset(p.path, '${c.hash}^', mode: 'soft');
@@ -299,6 +307,7 @@ mixin _GitLogCommitMenu on _GitMixin {
       initial: c.subject,
     );
     if (msg == null || msg.isEmpty) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       // 走脚本化 rebase 的 reword(--autostash 保留暂存/工作区改动),只改信息;
@@ -328,6 +337,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitFixupIntoParent(p.path, c.hash, keepMessage: keepMessage);
@@ -350,6 +360,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitDropCommit(p.path, c.hash);
@@ -371,6 +382,7 @@ mixin _GitLogCommitMenu on _GitMixin {
     )) {
       return;
     }
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitPushUpTo(p.path, c.hash);
@@ -393,6 +405,7 @@ mixin _GitLogCommitMenu on _GitMixin {
       okLabel: 'Create Tag',
     );
     if (name == null) return;
+    if (!mounted) return;
     setState(() => _gitLoading = true);
     try {
       await gitTag(p.path, name, ref: c.hash);
@@ -464,7 +477,9 @@ mixin _GitLogCommitMenu on _GitMixin {
                             ? Icons.radio_button_checked_rounded
                             : Icons.radio_button_unchecked_rounded,
                         size: 18,
-                        color: mode == value ? CcColors.accent : CcColors.subtle,
+                        color: mode == value
+                            ? CcColors.accent
+                            : CcColors.subtle,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -521,36 +536,53 @@ mixin _GitLogCommitMenu on _GitMixin {
     final ctl = TextEditingController(text: initial ?? '');
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (hint != null) ...[
-              Text(hint, style: CcType.code(size: 12, color: CcColors.muted)),
-              const SizedBox(height: 8),
-            ],
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              minLines: 2,
-              maxLines: 6,
-              decoration: const InputDecoration(labelText: 'Commit message'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (hint != null) ...[
+                    SelectableText(
+                      hint,
+                      style: CcType.code(size: 12, color: CcColors.muted),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  TextField(
+                    controller: ctl,
+                    autofocus: true,
+                    minLines: 2,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'Commit message',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('OK'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+        );
+      },
     );
     final text = ctl.text.trim();
     ctl.dispose();

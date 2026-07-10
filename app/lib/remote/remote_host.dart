@@ -20,7 +20,128 @@ class RemoteRoot {
   final String name;
   final String path;
   final String workspace;
-  const RemoteRoot(this.name, this.path, this.workspace);
+  final String projectId;
+  const RemoteRoot(this.name, this.path, this.workspace, [this.projectId = '']);
+}
+
+bool remoteGitFilePathAllowed(String? file) {
+  final raw = (file ?? '').trim();
+  if (raw.isEmpty) return false;
+  final path = normalizePathSeparators(raw);
+  if (path.startsWith('/') || path.startsWith('//')) return false;
+  if (RegExp(r'^[A-Za-z]:/').hasMatch(path)) return false;
+  if (path.startsWith(':(')) return false; // git pathspec magic
+  for (final part in path.split('/')) {
+    if (part.isEmpty || part == '.' || part == '..') return false;
+  }
+  return true;
+}
+
+bool remoteGitRefNameAllowed(String? value) {
+  final ref = (value ?? '').trim();
+  if (ref.isEmpty || ref.length > 200) return false;
+  if (ref == '@' ||
+      ref == 'HEAD' ||
+      ref.startsWith('-') ||
+      ref.startsWith('/') ||
+      ref.endsWith('/') ||
+      ref.startsWith('refs/')) {
+    return false;
+  }
+  if (ref.contains(r'\') ||
+      ref.contains('..') ||
+      ref.contains('@{') ||
+      ref.contains('//')) {
+    return false;
+  }
+  if (ref.endsWith('.') || ref.endsWith('.lock')) return false;
+  for (final part in ref.split('/')) {
+    if (part.startsWith('.') || part.endsWith('.lock')) return false;
+  }
+  return !RegExp(r'[\x00-\x20\x7f~^:?*\[]').hasMatch(ref);
+}
+
+bool remoteGitStartRefAllowed(String? value) {
+  final ref = (value ?? '').trim();
+  if (ref.isEmpty) return true;
+  return remoteGitRefNameAllowed(ref) ||
+      RegExp(r'^[0-9a-fA-F]{4,40}$').hasMatch(ref);
+}
+
+bool remoteGitStashRefAllowed(String? value) =>
+    RegExp(r'^stash@\{[0-9]+\}$').hasMatch((value ?? '').trim());
+
+bool remoteConfigMutationAllowed(String? action, Map<String, dynamic> frame) {
+  switch (action) {
+    case 'wt.add':
+      return _remoteConfigTextAllowed(frame['project'], maxLength: 256) &&
+          _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+          ) &&
+          _remoteConfigGitRefAllowed(frame['branch']) &&
+          _remoteConfigGitStartAllowed(frame['start']);
+    case 'wt.remove':
+      return _remoteConfigTextAllowed(frame['project'], maxLength: 256) &&
+          _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+          ) &&
+          _remoteConfigGitRefAllowed(frame['branch']);
+    case 'ws.new':
+      return _remoteConfigTextAllowed(frame['name'], maxLength: 256) &&
+          _remoteConfigTextAllowed(
+            frame['path'],
+            optional: true,
+            maxLength: 4096,
+          );
+    case 'ws.remove':
+      return _remoteConfigTextAllowed(frame['name'], maxLength: 256);
+    case 'proj.add':
+      return _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+            maxLength: 256,
+          ) &&
+          _remoteConfigTextAllowed(frame['source'], maxLength: 4096);
+    case 'proj.remove':
+      return _remoteConfigTextAllowed(
+            frame['workspace'],
+            optional: true,
+            allowBlank: true,
+            maxLength: 256,
+          ) &&
+          _remoteConfigTextAllowed(frame['project'], maxLength: 256);
+    default:
+      return false;
+  }
+}
+
+bool _remoteConfigTextAllowed(
+  Object? value, {
+  bool optional = false,
+  bool allowBlank = false,
+  int maxLength = 512,
+}) {
+  if (value == null) return optional;
+  if (value is! String) return false;
+  final text = value.trim();
+  if (text.isEmpty) return optional && allowBlank && value.isEmpty;
+  if (text.length > maxLength) return false;
+  return !RegExp(r'[\x00-\x1f\x7f]').hasMatch(text);
+}
+
+bool _remoteConfigGitRefAllowed(Object? value) =>
+    value is String && remoteGitRefNameAllowed(value);
+
+bool _remoteConfigGitStartAllowed(Object? value) {
+  if (value == null) return true;
+  return value is String &&
+      value.trim().isNotEmpty &&
+      remoteGitStartRefAllowed(value);
 }
 
 // _isHighSurrogate reports whether [u] is the leading half of a UTF-16 surrogate
@@ -389,11 +510,16 @@ class RemoteHost extends RemoteChannel {
         final from = (f['from'] as num?)?.toInt();
         final s = _sessionById(f['sid'] as String?);
         if (from != null) {
+          final snap = s?.snapshotSized();
           send({
             't': 'screen',
             'to': from,
             'sid': f['sid'],
-            'text': s?.snapshotAnsi(60) ?? '', // coloured tail (ANSI)
+            'text': snap?.ansi ?? '', // coloured tail (ANSI)
+            // source geometry so the phone renders at the computer's width
+            // (full-screen TUIs format to width) instead of reflowing.
+            'cols': snap?.cols ?? 0,
+            'rows': snap?.rows ?? 0,
           });
         }
       case 'term.resize':
@@ -419,15 +545,14 @@ class RemoteHost extends RemoteChannel {
         // onAssignTodo and reply ok/err directed back to the requesting client.
         final from = (f['from'] as num?)?.toInt();
         if (from != null) {
-          final todoId = (f['todoId'] as String?) ?? '';
-          (onAssignTodo?.call(f) ??
-                  Future.value('桌面版不支持远程指派,请升级桌面 App'))
-              .then((err) => send({
-                    't': err == null ? 'todo.assign.ok' : 'todo.assign.err',
-                    'to': from,
-                    'todoId': todoId,
-                    'msg': ?err,
-                  }));
+          final todoId = ((f['todoId'] as String?) ?? '').trim();
+          unawaited(
+            _replyTodoAssign(
+              {...f, 'todoId': todoId},
+              from: from,
+              todoId: todoId,
+            ),
+          );
         }
       case 'session.close':
         final sid = f['sid'] as String?;
@@ -475,6 +600,26 @@ class RemoteHost extends RemoteChannel {
       case 'wt.list':
         _wtList(f);
     }
+  }
+
+  Future<void> _replyTodoAssign(
+    Map<String, dynamic> frame, {
+    required int from,
+    required String todoId,
+  }) async {
+    String? err;
+    try {
+      final handler = onAssignTodo;
+      err = handler == null ? '桌面版不支持远程指派,请升级桌面 App' : await handler(frame);
+    } catch (e) {
+      err = '远程指派失败: $e';
+    }
+    send({
+      't': err == null ? 'todo.assign.ok' : 'todo.assign.err',
+      'to': from,
+      'todoId': todoId,
+      'msg': ?err,
+    });
   }
 
   Future<void> _dispatchShare(String t, Map<String, dynamic> f) async {
@@ -528,19 +673,39 @@ class RemoteHost extends RemoteChannel {
     return msg;
   }
 
-  List<Map<String, dynamic>> _sessionItems() => sessions()
-      .map(
-        (s) => {
-          'sid': s.id,
-          'title': s.label,
-          'workdir': s.workdir,
-          'agent': s.agentKind,
-        },
-      )
-      .toList();
+  RemoteRoot? _rootForWorkdir(String workdir) {
+    RemoteRoot? best;
+    for (final root in roots()) {
+      if (!pathWithin(workdir, root.path)) continue;
+      if (best == null || root.path.length > best.path.length) best = root;
+    }
+    return best;
+  }
+
+  List<Map<String, dynamic>> _sessionItems() => sessions().map((s) {
+    final root = _rootForWorkdir(s.workdir);
+    return {
+      'sid': s.id,
+      'title': s.label,
+      'workdir': s.workdir,
+      'agent': s.agentKind,
+      if (root != null) ...{
+        'project': root.name,
+        'workspace': root.workspace,
+        'project_id': root.projectId,
+      },
+    };
+  }).toList();
 
   List<Map<String, dynamic>> _rootItems() => roots()
-      .map((r) => {'name': r.name, 'path': r.path, 'workspace': r.workspace})
+      .map(
+        (r) => {
+          'name': r.name,
+          'path': r.path,
+          'workspace': r.workspace,
+          'project_id': r.projectId,
+        },
+      )
       .toList();
 
   // _rootsPayload is the `roots` frame body: the project list plus ALL workspace
@@ -726,17 +891,56 @@ class RemoteHost extends RemoteChannel {
     _watchers.clear();
   }
 
-  String? _safePath(String? path) {
-    if (path == null || path.isEmpty) return null;
+  RemoteRoot? _rootForPath(String path) {
+    RemoteRoot? best;
+    var bestLen = -1;
     for (final r in roots()) {
-      if (pathWithin(path, r.path)) return path;
+      if (pathWithin(path, r.path) && r.path.length > bestLen) {
+        best = r;
+        bestLen = r.path.length;
+      }
     }
-    return null;
+    return best;
+  }
+
+  Future<String?> _safePath(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    final root = _rootForPath(path);
+    if (root == null) return null;
+    if (!await _resolvedPathStaysInRoot(path, root.path)) return null;
+    return path;
+  }
+
+  Future<bool> _resolvedPathStaysInRoot(String path, String rootPath) async {
+    try {
+      final rootReal = Directory(rootPath).resolveSymbolicLinksSync();
+      final rel = pathRelativeTo(rootPath, path);
+      if (rel.isEmpty) return true;
+      var current = rootPath;
+      for (final part in rel.split('/')) {
+        if (part.isEmpty) continue;
+        current = pathJoin(current, part);
+        final type = FileSystemEntity.typeSync(current, followLinks: false);
+        if (type == FileSystemEntityType.notFound) return true;
+        final real = switch (type) {
+          FileSystemEntityType.directory => Directory(
+            current,
+          ).resolveSymbolicLinksSync(),
+          FileSystemEntityType.file => File(current).resolveSymbolicLinksSync(),
+          FileSystemEntityType.link => Link(current).resolveSymbolicLinksSync(),
+          _ => current,
+        };
+        if (!pathWithin(real, rootReal)) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _fsList(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
@@ -772,7 +976,7 @@ class RemoteHost extends RemoteChannel {
 
   Future<void> _fsRead(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'fs.err', 'to': to, 'path': f['path'], 'msg': 'forbidden'});
@@ -801,7 +1005,7 @@ class RemoteHost extends RemoteChannel {
   // preserving the file's existing line ending like the desktop editor does.
   Future<void> _fsWrite(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     final content = f['content'] as String?;
     if (to == null) return;
     if (path == null || content == null) {
@@ -832,7 +1036,7 @@ class RemoteHost extends RemoteChannel {
   // git.status: working-tree changes + recent commits for a (root) repo.
   Future<void> _gitStatus(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
@@ -876,10 +1080,10 @@ class RemoteHost extends RemoteChannel {
   // git.diff: unified diff of a file's working-tree changes.
   Future<void> _gitDiff(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     final file = f['file'] as String?;
     if (to == null) return;
-    if (path == null || file == null || file.contains('..')) {
+    if (path == null || !remoteGitFilePathAllowed(file)) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
       return;
     }
@@ -888,7 +1092,7 @@ class RemoteHost extends RemoteChannel {
       final full = f['full'] == true;
       final diff = await gitDiffFileWorking(
         path,
-        file,
+        file!,
         context: full ? 999999 : 3,
       );
       send({'t': 'git.diff.ok', 'to': to, 'file': file, 'diff': diff});
@@ -900,7 +1104,7 @@ class RemoteHost extends RemoteChannel {
   // git.show: full diff of a commit (hash validated to avoid arg injection).
   Future<void> _gitShow(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     final hash = f['hash'] as String?;
     if (to == null) return;
     if (path == null ||
@@ -923,7 +1127,7 @@ class RemoteHost extends RemoteChannel {
   Future<void> _gitOp(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
     final op = f['t'] as String?;
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
@@ -931,18 +1135,40 @@ class RemoteHost extends RemoteChannel {
     }
     final file = f['file'] as String?;
     final branch = f['branch'] as String?;
+    final start = f['start'] as String?;
+    final stashRef = f['ref'] as String?;
+    final isFileOp =
+        op == 'git.stage' || op == 'git.unstage' || op == 'git.discard';
+    if (isFileOp && !remoteGitFilePathAllowed(file)) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    if (op == 'git.checkout' && !remoteGitRefNameAllowed(branch)) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    if (op == 'git.createBranch' &&
+        (!remoteGitRefNameAllowed(branch) ||
+            !remoteGitStartRefAllowed(start))) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
+    if (op == 'git.stashPop' && !remoteGitStashRefAllowed(stashRef)) {
+      send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
     try {
       switch (op) {
         case 'git.stage':
-          if (file != null) await gitStageFiles(path, [file]);
+          await gitStageFiles(path, [file!]);
         case 'git.unstage':
-          if (file != null) await gitUnstageFiles(path, [file]);
+          await gitUnstageFiles(path, [file!]);
         case 'git.stageAll':
           await gitStageAll(path);
         case 'git.unstageAll':
           await gitUnstageAll(path);
         case 'git.discard':
-          if (file != null) await gitRestore(path, file);
+          await gitRestore(path, file!);
         case 'git.discardAll':
           await gitRestoreChanges(path, await gitChanges(path));
         case 'git.commit':
@@ -970,13 +1196,12 @@ class RemoteHost extends RemoteChannel {
           if (branch != null) await gitCheckout(path, branch);
         case 'git.createBranch':
           if (branch != null) {
-            await gitCreateBranch(path, branch, start: f['start'] as String?);
+            await gitCreateBranch(path, branch, start: start);
           }
         case 'git.stash':
           await gitStashPush(path, (f['message'] as String?) ?? '');
         case 'git.stashPop':
-          final ref = f['ref'] as String?;
-          if (ref != null) await gitStashPop(path, ref);
+          if (stashRef != null) await gitStashPop(path, stashRef);
       }
       send({'t': 'git.op.ok', 'to': to, 'op': op});
     } catch (e) {
@@ -986,7 +1211,7 @@ class RemoteHost extends RemoteChannel {
 
   Future<void> _gitBranches(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'git.err', 'to': to, 'msg': 'forbidden'});
@@ -1023,6 +1248,10 @@ class RemoteHost extends RemoteChannel {
       send({'t': 'cfg.err', 'to': to, 'msg': '不支持'});
       return;
     }
+    if (!remoteConfigMutationAllowed(action, f)) {
+      send({'t': 'cfg.err', 'to': to, 'msg': 'forbidden'});
+      return;
+    }
     try {
       await onConfigAction!(action, f);
       send({'t': 'cfg.ok', 'to': to, 'op': action});
@@ -1034,7 +1263,7 @@ class RemoteHost extends RemoteChannel {
   // wt.list: enumerate a project's worktrees (read-only; reuses listWorktrees).
   Future<void> _wtList(Map<String, dynamic> f) async {
     final to = (f['from'] as num?)?.toInt();
-    final path = _safePath(f['path'] as String?);
+    final path = await _safePath(f['path'] as String?);
     if (to == null) return;
     if (path == null) {
       send({'t': 'cfg.err', 'to': to, 'msg': 'forbidden'});

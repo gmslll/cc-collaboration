@@ -7,6 +7,7 @@
 VERSION     := $(shell cat VERSION)
 LDFLAGS     := -X 'github.com/cc-collaboration/internal/version.Version=$(VERSION)'
 INSTALL_DIR ?= /usr/local/bin
+FLUTTER     ?= flutter
 
 .PHONY: all build cli relay mcp web relay-linux relay-linux-arm64 cli-windows-amd64 cli-windows-arm64 mcp-windows-amd64 mcp-windows-arm64 windows app-run app-macos app-ios app-ios-run app-apk package package-macos package-android install test e2e deploy clean version release-tag
 
@@ -24,7 +25,7 @@ cli:
 # targets depend on it so the embedded client is always current — for a fast
 # Go-only relay build that skips this, run `go build ./cmd/relay` directly.
 web:
-	cd app && flutter build web -t lib/main_web.dart --base-href /app/ --dart-define=APP_VERSION=$(VERSION)
+	cd app && "$(FLUTTER)" build web -t lib/main_web.dart --base-href /app/
 	rm -rf internal/relay/app
 	mkdir -p internal/relay/app
 	cp -R app/build/web/. internal/relay/app/

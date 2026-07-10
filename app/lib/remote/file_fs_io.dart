@@ -83,9 +83,11 @@ class _IoChunkSink implements FileChunkSink {
 Future<FileChunkSink> openReceiveSink(
   IncomingFile info, {
   required bool host,
+  Directory? landingDirOverride,
 }) async {
-  final dir = await _landingDir(host: host);
-  final finalPath = _dedupePath(dir, info.name);
+  final dir = landingDirOverride ?? await _landingDir(host: host);
+  await dir.create(recursive: true);
+  final finalPath = _dedupePath(dir, sanitizeFileName(info.name));
   final tmp = File('$finalPath.part');
   final raf = await tmp.open(mode: FileMode.write);
   return _IoChunkSink(tmp, raf, finalPath);

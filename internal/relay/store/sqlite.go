@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +56,8 @@ CREATE TABLE IF NOT EXISTS handoffs (
 );
 CREATE INDEX IF NOT EXISTS idx_handoffs_recipient_state_created
   ON handoffs(recipient, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_handoffs_kind_created
+  ON handoffs(kind, created_at);
 
 CREATE TABLE IF NOT EXISTS comments (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +94,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name  TEXT NOT NULL DEFAULT '',
   is_admin      INTEGER NOT NULL DEFAULT 0,
   disabled      INTEGER NOT NULL DEFAULT 0,
+  deleted_at    INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL
 );
 
@@ -109,8 +114,24 @@ CREATE TABLE IF NOT EXISTS machine_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_machine_tokens_identity ON machine_tokens(identity);
 
+CREATE TABLE IF NOT EXISTS organizations (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  owner_identity TEXT NOT NULL,
+  created_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS organization_members (
+  org_id    TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  identity  TEXT NOT NULL,
+  role      TEXT NOT NULL,
+  PRIMARY KEY (org_id, identity)
+);
+CREATE INDEX IF NOT EXISTS idx_organization_members_identity ON organization_members(identity);
+
 CREATE TABLE IF NOT EXISTS projects (
   id             TEXT PRIMARY KEY,
+  org_id         TEXT NOT NULL DEFAULT '',
   name           TEXT NOT NULL,
   owner_identity TEXT NOT NULL,
   created_at     INTEGER NOT NULL
@@ -118,7 +139,8 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS project_repos (
   repo_name   TEXT PRIMARY KEY,
-  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  clone_url   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_project_repos_project ON project_repos(project_id);
 
@@ -129,6 +151,23 @@ CREATE TABLE IF NOT EXISTS project_members (
   PRIMARY KEY (project_id, identity)
 );
 CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(identity);
+
+CREATE TABLE IF NOT EXISTS invitations (
+  id               TEXT PRIMARY KEY,
+  scope            TEXT NOT NULL,
+  org_id           TEXT NOT NULL DEFAULT '',
+  project_id       TEXT NOT NULL DEFAULT '',
+  identity         TEXT NOT NULL,
+  role             TEXT NOT NULL,
+  inviter_identity TEXT NOT NULL,
+  created_at       INTEGER NOT NULL,
+  CHECK(scope IN ('org', 'project')),
+  CHECK((scope = 'org' AND org_id != '' AND project_id = '') OR (scope = 'project' AND org_id != '' AND project_id != '')),
+  UNIQUE(scope, org_id, project_id, identity)
+);
+CREATE INDEX IF NOT EXISTS idx_invitations_identity ON invitations(identity);
+CREATE INDEX IF NOT EXISTS idx_invitations_org ON invitations(org_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_project ON invitations(project_id);
 `); err != nil {
 		return err
 	}
@@ -139,6 +178,12 @@ CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(ident
 		{"kind", `ALTER TABLE handoffs ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
 		{"recipients", `ALTER TABLE handoffs ADD COLUMN recipients TEXT NOT NULL DEFAULT ''`},
 		{"bug_group_id", `ALTER TABLE handoffs ADD COLUMN bug_group_id TEXT NOT NULL DEFAULT ''`},
+		{"project_org_id", `ALTER TABLE projects ADD COLUMN org_id TEXT NOT NULL DEFAULT ''`},
+		{"user_deleted_at", `ALTER TABLE users ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0`},
+		// Legacy project_repos rows intentionally keep an empty clone_url. They
+		// remain readable/mappable, but only bindings with a validated URL are
+		// offered by clients as cloneable team projects.
+		{"project_repo_clone_url", `ALTER TABLE project_repos ADD COLUMN clone_url TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := s.db.Exec(ddl.sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {
@@ -148,6 +193,12 @@ CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(ident
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_bug_group ON handoffs(bug_group_id)`); err != nil {
 		return fmt.Errorf("create bug_group index: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_kind_created ON handoffs(kind, created_at)`); err != nil {
+		return fmt.Errorf("create handoff kind index: %w", err)
+	}
+	if err := s.backfillOrganizations(); err != nil {
+		return err
 	}
 	// One-time backfill: for every legacy handoff with no handoff_recipients
 	// row, insert one mirroring its scalar (recipient, state, picked_at) so
@@ -311,7 +362,115 @@ CREATE TABLE IF NOT EXISTS user_settings (
 	return nil
 }
 
+func defaultOrganizationID(identity string) string {
+	sum := sha256.Sum256([]byte(identity))
+	return "org_" + hex.EncodeToString(sum[:])[:12]
+}
+
+// backfillOrganizations assigns only projects created before organizations
+// existed. A non-empty projects.org_id marks a current or already-migrated
+// project, so reopening the store must not recreate deleted teams or replay
+// memberships for it. The transaction makes each legacy project migration
+// atomic; after commit its org_id is non-empty and later opens are no-ops.
+func (s *Store) backfillOrganizations() error {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().UnixMilli()
+	rows, err := tx.QueryContext(ctx, `
+SELECT id, owner_identity
+  FROM projects
+ WHERE org_id = '' AND owner_identity != ''
+ ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("scan legacy projects: %w", err)
+	}
+	type legacyProject struct {
+		id, owner string
+	}
+	var projects []legacyProject
+	for rows.Next() {
+		var project legacyProject
+		if err := rows.Scan(&project.id, &project.owner); err != nil {
+			rows.Close()
+			return err
+		}
+		projects = append(projects, project)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, project := range projects {
+		orgID := defaultOrganizationID(project.owner)
+		name := project.owner + "'s team"
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO organizations(id, name, owner_identity, created_at) VALUES(?, ?, ?, ?)`,
+			orgID, name, project.owner, now); err != nil {
+			return fmt.Errorf("backfill organization for legacy project %s: %w", project.id, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
+			 ON CONFLICT(org_id, identity) DO UPDATE SET role = excluded.role`,
+			orgID, project.owner, OrgRoleOwner); err != nil {
+			return fmt.Errorf("backfill organization owner for legacy project %s: %w", project.id, err)
+		}
+
+		memberRows, err := tx.QueryContext(ctx,
+			`SELECT identity, role FROM project_members WHERE project_id = ? AND identity != '' ORDER BY identity`,
+			project.id)
+		if err != nil {
+			return fmt.Errorf("scan members for legacy project %s: %w", project.id, err)
+		}
+		type projectMember struct {
+			identity, role string
+		}
+		var members []projectMember
+		for memberRows.Next() {
+			var member projectMember
+			if err := memberRows.Scan(&member.identity, &member.role); err != nil {
+				memberRows.Close()
+				return err
+			}
+			members = append(members, member)
+		}
+		if err := memberRows.Err(); err != nil {
+			memberRows.Close()
+			return err
+		}
+		memberRows.Close()
+		for _, member := range members {
+			role := OrgRoleMember
+			if member.role == RoleOwner {
+				role = OrgRoleOwner
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
+				 ON CONFLICT(org_id, identity) DO UPDATE SET role =
+				   CASE
+				     WHEN organization_members.role = ? OR excluded.role != ? THEN organization_members.role
+				     ELSE excluded.role
+				   END`,
+				orgID, member.identity, role, OrgRoleOwner, OrgRoleOwner); err != nil {
+				return fmt.Errorf("backfill member for legacy project %s: %w", project.id, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE projects SET org_id = ? WHERE id = ? AND org_id = ''`,
+			orgID, project.id); err != nil {
+			return fmt.Errorf("assign organization to legacy project %s: %w", project.id, err)
+		}
+	}
+	return tx.Commit()
+}
+
 var ErrNotFound = errors.New("handoff not found")
+var ErrLastOwner = errors.New("last owner cannot be removed")
+var ErrInvalid = errors.New("invalid input")
 
 func (s *Store) Insert(ctx context.Context, p *handoffschema.Package) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -333,6 +492,17 @@ func (s *Store) Insert(ctx context.Context, p *handoffschema.Package) error {
 // Shared between Insert (own tx) and Reassign (which already owns a tx that
 // also flips the previous recipient's slot atomically with the new handoff).
 func insertHandoffInTx(ctx context.Context, tx *sql.Tx, p *handoffschema.Package) error {
+	p.Sender = strings.TrimSpace(p.Sender)
+	p.Recipient = strings.TrimSpace(p.Recipient)
+	p.Recipients = handoffschema.DedupeIdentities(p.Recipients)
+	if p.DeliveryTarget != nil {
+		p.DeliveryTarget.ProjectID = strings.TrimSpace(p.DeliveryTarget.ProjectID)
+		p.DeliveryTarget.OrgID = strings.TrimSpace(p.DeliveryTarget.OrgID)
+		p.DeliveryTarget.Member = strings.TrimSpace(p.DeliveryTarget.Member)
+		if p.DeliveryTarget.ProjectID == "" && p.DeliveryTarget.OrgID == "" && p.DeliveryTarget.Member == "" {
+			p.DeliveryTarget = nil
+		}
+	}
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -376,6 +546,7 @@ func insertHandoffInTx(ctx context.Context, tx *sql.Tx, p *handoffschema.Package
 }
 
 func (s *Store) Get(ctx context.Context, id string) (*handoffschema.Package, handoffschema.State, error) {
+	id = strings.TrimSpace(id)
 	var payload string
 	var state string
 	err := s.db.QueryRowContext(ctx,
@@ -399,6 +570,7 @@ func (s *Store) Get(ctx context.Context, id string) (*handoffschema.Package, han
 // handoff_recipients so multi-recipient bug handoffs show up for every
 // recipient until each individual slot is acked or reassigned.
 func (s *Store) ListPending(ctx context.Context, recipient string, limit int) ([]handoffschema.ListItem, error) {
+	recipient = strings.TrimSpace(recipient)
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -431,6 +603,7 @@ func (s *Store) ListPending(ctx context.Context, recipient string, limit int) ([
 // "Picked" surfaces normal closure; "reassigned" surfaces bugs the caller
 // kicked over to the other side (still useful to look back at).
 func (s *Store) ListHistory(ctx context.Context, recipient string, limit int) ([]handoffschema.ListItem, error) {
+	recipient = strings.TrimSpace(recipient)
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -458,17 +631,18 @@ func (s *Store) ListHistory(ctx context.Context, recipient string, limit int) ([
 	return out, rows.Err()
 }
 
-// ListCapsules returns the plaza rows visible to [identity]: every public
-// capsule plus the caller's own (any visibility), newest first. Visibility
-// lives in the JSON payload, so this loads capsule rows and filters in Go —
-// fine for the plaza's modest scale; [limit] bounds the scan.
+// ListCapsules returns the plaza rows visible to [identity]: the caller's own
+// capsules plus public capsules from identities they can reach via shared
+// org/project membership. Visibility lives in the JSON payload, so this loads
+// capsule rows and filters in Go — fine for the plaza's modest scale; [limit]
+// bounds the returned visible rows.
 func (s *Store) ListCapsules(ctx context.Context, identity string, limit int) ([]handoffschema.CapsuleListItem, error) {
 	if limit <= 0 {
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT payload FROM handoffs WHERE kind = ? ORDER BY created_at DESC LIMIT ?`,
-		string(handoffschema.KindCapsule), limit,
+		`SELECT payload FROM handoffs WHERE kind = ? ORDER BY created_at DESC`,
+		string(handoffschema.KindCapsule),
 	)
 	if err != nil {
 		return nil, err
@@ -484,13 +658,29 @@ func (s *Store) ListCapsules(ctx context.Context, identity string, limit int) ([
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
 			continue // skip a corrupt row rather than fail the whole plaza
 		}
-		// Public capsules to anyone, private ones only to their owner.
-		if !p.CapsuleVisibleTo(identity) {
+		visible, err := s.CapsuleVisibleTo(ctx, &p, identity)
+		if err != nil {
+			return nil, err
+		}
+		if !visible {
 			continue
 		}
 		out = append(out, handoffschema.NewCapsuleListItem(&p))
+		if len(out) >= limit {
+			break
+		}
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) CapsuleVisibleTo(ctx context.Context, p *handoffschema.Package, viewer string) (bool, error) {
+	if p.Sender == viewer {
+		return true, nil
+	}
+	if p.CapsuleOrEmpty().EffectiveVisibility() != handoffschema.CapsulePublic {
+		return false, nil
+	}
+	return s.IdentitiesShareTeam(ctx, p.Sender, viewer)
 }
 
 // capsuleOwnerRow fetches (sender, kind) for id, enforcing "exists + is a
@@ -546,6 +736,7 @@ func (s *Store) UpdateCapsuleMeta(ctx context.Context, id, owner string, visibil
 		return fmt.Errorf("decode capsule payload: %w", err)
 	}
 	p.ApplyCapsuleEdit(visibility, summary)
+	p.Capsule.UpdatedAt = time.Now().UTC()
 	updated, err := json.Marshal(&p)
 	if err != nil {
 		return err
@@ -596,6 +787,8 @@ func scanListItem(rows *sql.Rows) (handoffschema.ListItem, error) {
 }
 
 func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body string) (handoffschema.Comment, error) {
+	handoffID = strings.TrimSpace(handoffID)
+	sender = strings.TrimSpace(sender)
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO comments(handoff_id, sender, body, created_at) VALUES(?, ?, ?, ?)`,
@@ -615,10 +808,11 @@ func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body strin
 }
 
 // ListCommentsSince returns comments visible to identity (caller is sender,
-// per-recipient slot owner, or any participant in the same bug_group_id) with
-// id > since, excluding comments the caller posted themselves. Also returns
-// the global max comment id for cursor bootstrap. limit <= 0 means "max_id
-// only, no rows"; limit is capped at 500.
+// per-recipient slot owner, any participant in the same bug_group_id, or a
+// member/manager of the project owning the handoff's repo) with id > since,
+// excluding comments the caller posted themselves. Also returns the global max
+// comment id for cursor bootstrap. limit <= 0 means "max_id only, no rows";
+// limit is capped at 500.
 //
 // Bug-group broadcast: the CTE `my_groups` collects every bug_group_id the
 // caller participates in (as sender or current/historical recipient). For
@@ -626,6 +820,14 @@ func (s *Store) InsertComment(ctx context.Context, handoffID, sender, body strin
 // no rows and the extra clause is a no-op — semantics match the legacy
 // (h.sender = ? OR h.recipient = ?) query.
 func (s *Store) ListCommentsSince(ctx context.Context, identity string, since int64, limit int) ([]handoffschema.Comment, int64, error) {
+	identity = strings.TrimSpace(identity)
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !active {
+		return nil, 0, ErrForbidden
+	}
 	var maxID int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM comments`).Scan(&maxID); err != nil {
 		return nil, 0, err
@@ -649,10 +851,19 @@ func (s *Store) ListCommentsSince(ctx context.Context, identity string, since in
 		  WHERE c.id > ?2 AND c.sender != ?1
 		    AND (h.sender = ?1
 		         OR r.recipient = ?1
-		         OR (h.bug_group_id != '' AND h.bug_group_id IN (SELECT bug_group_id FROM my_groups)))
+		         OR (h.bug_group_id != '' AND h.bug_group_id IN (SELECT bug_group_id FROM my_groups))
+		         OR EXISTS (
+		            SELECT 1
+		              FROM project_repos pr
+		              JOIN projects p ON p.id = pr.project_id
+		              LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?1
+		              LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?1
+		             WHERE pr.repo_name = h.repo_name
+		               AND (pm.identity IS NOT NULL OR om.role IN (?4, ?5))
+		         ))
 		  GROUP BY c.id
 		  ORDER BY c.id ASC LIMIT ?3`,
-		identity, since, limit,
+		identity, since, limit, OrgRoleOwner, OrgRoleAdmin,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -679,6 +890,7 @@ func (s *Store) ListCommentsSince(ctx context.Context, identity string, since in
 // out comment SSE events to everyone who has ever touched the bug chain, so
 // tester + original-side + reassigned-side all stay in sync.
 func (s *Store) BugGroupParticipants(ctx context.Context, bugGroupID string) ([]string, error) {
+	bugGroupID = strings.TrimSpace(bugGroupID)
 	if bugGroupID == "" {
 		return nil, nil
 	}
@@ -709,6 +921,7 @@ func (s *Store) BugGroupParticipants(ctx context.Context, bugGroupID string) ([]
 }
 
 func (s *Store) ListComments(ctx context.Context, handoffID string) ([]handoffschema.Comment, error) {
+	handoffID = strings.TrimSpace(handoffID)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, sender, body, created_at FROM comments
 		 WHERE handoff_id = ? ORDER BY created_at ASC`,
@@ -733,6 +946,7 @@ func (s *Store) ListComments(ctx context.Context, handoffID string) ([]handoffsc
 }
 
 func (s *Store) PutAttachment(ctx context.Context, handoffID, name, sha256Hex string, content []byte) error {
+	handoffID = strings.TrimSpace(handoffID)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO attachments(handoff_id, name, sha256, size, content)
 		 VALUES(?, ?, ?, ?, ?)
@@ -747,6 +961,7 @@ func (s *Store) PutAttachment(ctx context.Context, handoffID, name, sha256Hex st
 
 // GetAttachment returns the raw bytes plus sha256/size, or ErrNotFound.
 func (s *Store) GetAttachment(ctx context.Context, handoffID, name string) ([]byte, string, int, error) {
+	handoffID = strings.TrimSpace(handoffID)
 	var content []byte
 	var sum string
 	var size int
@@ -768,6 +983,8 @@ func (s *Store) GetAttachment(ctx context.Context, handoffID, name string) ([]by
 // rolls forward to "picked". For legacy single-recipient handoffs this matches
 // the original semantics exactly (one slot ⇒ slot-close == parent-close).
 func (s *Store) Ack(ctx context.Context, id, byIdentity string) error {
+	id = strings.TrimSpace(id)
+	byIdentity = strings.TrimSpace(byIdentity)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -840,6 +1057,14 @@ func (s *Store) Ack(ctx context.Context, id, byIdentity string) error {
 // pending/picked recipient of `id`, ErrConflict if `to` is already busy in
 // the same bug group, ErrNotFound if the handoff doesn't exist.
 func (s *Store) Reassign(ctx context.Context, id, from string, newPkg *handoffschema.Package, reason string) error {
+	id = strings.TrimSpace(id)
+	from = strings.TrimSpace(from)
+	reason = strings.TrimSpace(reason)
+	if newPkg == nil {
+		return ErrInvalid
+	}
+	newPkg.Recipient = strings.TrimSpace(newPkg.Recipient)
+	newPkg.Recipients = handoffschema.DedupeIdentities(newPkg.Recipients)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -953,6 +1178,8 @@ var ErrForbidden = errors.New("forbidden")
 // id doesn't exist, ErrForbidden if caller isn't the sender, ErrConflict if
 // the handoff was already picked or retracted.
 func (s *Store) Retract(ctx context.Context, id, byIdentity string) ([]string, error) {
+	id = strings.TrimSpace(id)
+	byIdentity = strings.TrimSpace(byIdentity)
 	var sender, recipient, recipientsJSON, state string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT sender, recipient, recipients, state FROM handoffs WHERE id = ?`, id,
@@ -1013,20 +1240,22 @@ func (s *Store) Retract(ctx context.Context, id, byIdentity string) ([]string, e
 	return targets, nil
 }
 
-// ListSent returns the caller's most recent sent handoffs (any state),
-// newest-first. Mirrors ListPending for the sender side; senders can use this
-// to see "did the recipient pick it up yet?" without polling status one-by-one.
-// For multi-recipient bug handoffs Recipients is populated; Recipient remains
-// the first recipient for back-compat with old clients reading the scalar.
+// ListSent returns the caller's most recent sent non-capsule handoffs (any
+// state), newest-first. Mirrors ListPending for the sender side; senders can
+// use this to see "did the recipient pick it up yet?" without polling status
+// one-by-one. Capsules live behind the plaza listing instead. For
+// multi-recipient bug handoffs Recipients is populated; Recipient remains the
+// first recipient for back-compat with old clients reading the scalar.
 func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]handoffschema.ListItem, error) {
+	sender = strings.TrimSpace(sender)
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, sender, recipient, recipients, urgency, state, created_at, repo_name, branch, headline, kind, bug_group_id FROM handoffs
-		 WHERE sender = ?
+		 WHERE sender = ? AND kind != ?
 		 ORDER BY created_at DESC LIMIT ?`,
-		sender, limit,
+		sender, string(handoffschema.KindCapsule), limit,
 	)
 	if err != nil {
 		return nil, err
@@ -1073,6 +1302,7 @@ func (s *Store) ListSent(ctx context.Context, sender string, limit int) ([]hando
 // bug handoffs PickupBy carries per-recipient slot state so testers can see
 // "backend picked it up but frontend hasn't even read it" at a glance.
 func (s *Store) Status(ctx context.Context, id string) (handoffschema.Status, error) {
+	id = strings.TrimSpace(id)
 	var (
 		sender, recipient, recipientsJSON, state, bugGroupID string
 		createdMS                                            int64

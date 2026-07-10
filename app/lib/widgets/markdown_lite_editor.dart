@@ -64,37 +64,57 @@ List<InlineSpan> inlineMarkdownSpans(
   final spans = <InlineSpan>[];
   var last = 0;
   for (final m in _inlineRe.allMatches(s)) {
-    if (m.start > last) spans.add(TextSpan(text: s.substring(last, m.start), style: base));
+    if (m.start > last) {
+      spans.add(TextSpan(text: s.substring(last, m.start), style: base));
+    }
     final token = m.group(0)!;
     if (m.group(1) != null) {
       // **bold**
       if (!hideMarkers) spans.add(TextSpan(text: '**', style: dim));
-      spans.add(TextSpan(
+      spans.add(
+        TextSpan(
           text: token.substring(2, token.length - 2),
-          style: base.copyWith(fontWeight: FontWeight.w700, color: CcColors.text)));
+          style: base.copyWith(
+            fontWeight: FontWeight.w700,
+            color: CcColors.text,
+          ),
+        ),
+      );
       if (!hideMarkers) spans.add(TextSpan(text: '**', style: dim));
     } else if (m.group(2) != null) {
       // `code`
       if (!hideMarkers) spans.add(TextSpan(text: '`', style: dim));
-      spans.add(TextSpan(
+      spans.add(
+        TextSpan(
           text: token.substring(1, token.length - 1),
           style: base.copyWith(
-              fontFamily: CcType.mono,
-              fontSize: (base.fontSize ?? 14.5) * 0.92,
-              color: CcColors.accentBright)));
+            fontFamily: CcType.mono,
+            fontSize: (base.fontSize ?? 14.5) * 0.92,
+            color: CcColors.accentBright,
+          ),
+        ),
+      );
       if (!hideMarkers) spans.add(TextSpan(text: '`', style: dim));
     } else {
       // *italic*
       final marker = token[0];
       if (!hideMarkers) spans.add(TextSpan(text: marker, style: dim));
-      spans.add(TextSpan(
+      spans.add(
+        TextSpan(
           text: token.substring(1, token.length - 1),
-          style: base.copyWith(fontStyle: FontStyle.italic, color: CcColors.text)));
+          style: base.copyWith(
+            fontStyle: FontStyle.italic,
+            color: CcColors.text,
+          ),
+        ),
+      );
       if (!hideMarkers) spans.add(TextSpan(text: marker, style: dim));
     }
     last = m.end;
   }
-  if (last < s.length) spans.add(TextSpan(text: s.substring(last), style: base));
+  if (last < s.length) {
+    spans.add(TextSpan(text: s.substring(last), style: base));
+  }
   return spans;
 }
 
@@ -106,12 +126,22 @@ List<InlineSpan> decorateMarkdownLine(
   final dim = base.copyWith(color: CcColors.subtle);
   final heading = _headingRe.firstMatch(line);
   if (heading != null) {
-    final hashes = heading.group(1)!, space = heading.group(2)!, rest = heading.group(3)!;
+    final hashes = heading.group(1)!,
+        space = heading.group(2)!,
+        rest = heading.group(3)!;
     final level = hashes.length;
-    final size = (base.fontSize ?? 14.5) *
-        (level == 1 ? 1.55 : level == 2 ? 1.32 : 1.16);
-    final headStyle =
-        base.copyWith(fontSize: size, fontWeight: FontWeight.w700, color: CcColors.text);
+    final size =
+        (base.fontSize ?? 14.5) *
+        (level == 1
+            ? 1.55
+            : level == 2
+            ? 1.32
+            : 1.16);
+    final headStyle = base.copyWith(
+      fontSize: size,
+      fontWeight: FontWeight.w700,
+      color: CcColors.text,
+    );
     return [
       if (!hideMarkers) TextSpan(text: hashes + space, style: dim),
       ...inlineMarkdownSpans(rest, headStyle, hideMarkers: hideMarkers),
@@ -120,7 +150,10 @@ List<InlineSpan> decorateMarkdownLine(
   final quote = _quoteRe.firstMatch(line);
   if (quote != null) {
     final marker = quote.group(1)!, rest = quote.group(2)!;
-    final quoteStyle = base.copyWith(color: CcColors.muted, fontStyle: FontStyle.italic);
+    final quoteStyle = base.copyWith(
+      color: CcColors.muted,
+      fontStyle: FontStyle.italic,
+    );
     return [
       if (!hideMarkers) TextSpan(text: marker, style: dim),
       ...inlineMarkdownSpans(rest, quoteStyle, hideMarkers: hideMarkers),
@@ -129,7 +162,10 @@ List<InlineSpan> decorateMarkdownLine(
   final item = _listItemRe.firstMatch(line);
   if (item != null) {
     final marker = item.group(1)!, rest = item.group(2)!;
-    final markerStyle = base.copyWith(color: CcColors.accentBright, fontWeight: FontWeight.w700);
+    final markerStyle = base.copyWith(
+      color: CcColors.accentBright,
+      fontWeight: FontWeight.w700,
+    );
     // List markers stay visible even with hideMarkers: true — see doc above.
     return [
       TextSpan(text: marker, style: markerStyle),
@@ -172,13 +208,17 @@ class MarkdownLiteController extends TextEditingController {
     // edge case, far better than the whole document flattening on every
     // keystroke.
     if (withComposing && value.composing.isValid) {
-      return TextSpan(style: base, children: [
-        ..._decorate(value.composing.textBefore(value.text), base),
-        TextSpan(
+      return TextSpan(
+        style: base,
+        children: [
+          ..._decorate(value.composing.textBefore(value.text), base),
+          TextSpan(
             text: value.composing.textInside(value.text),
-            style: const TextStyle(decoration: TextDecoration.underline)),
-        ..._decorate(value.composing.textAfter(value.text), base),
-      ]);
+            style: const TextStyle(decoration: TextDecoration.underline),
+          ),
+          ..._decorate(value.composing.textAfter(value.text), base),
+        ],
+      );
     }
     return TextSpan(style: base, children: _decorate(text, base));
   }
@@ -192,7 +232,10 @@ class MarkdownLiteController extends TextEditingController {
 // inserted '\n') so paste of multi-line text is left untouched.
 class _ListContinuationFormatter extends TextInputFormatter {
   @override
-  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
     final sel = newValue.selection;
     if (!sel.isValid || !sel.isCollapsed) return newValue;
     final pos = sel.baseOffset;
@@ -211,16 +254,23 @@ class _ListContinuationFormatter extends TextInputFormatter {
     final content = (bullet ?? numbered)!.group(4)!;
     if (content.trim().isEmpty) {
       // Empty list line + Enter: drop the marker, don't continue the list.
-      final newText = newValue.text.substring(0, lineStart) + newValue.text.substring(pos);
-      return TextEditingValue(text: newText, selection: TextSelection.collapsed(offset: lineStart));
+      final newText =
+          newValue.text.substring(0, lineStart) + newValue.text.substring(pos);
+      return TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: lineStart),
+      );
     }
     final indent = (bullet ?? numbered)!.group(1)!;
     final prefix = bullet != null
         ? '$indent${bullet.group(2)} '
         : '$indent${int.parse(numbered!.group(2)!) + 1}. ';
-    final newText = newValue.text.substring(0, pos) + prefix + newValue.text.substring(pos);
+    final newText =
+        newValue.text.substring(0, pos) + prefix + newValue.text.substring(pos);
     return TextEditingValue(
-        text: newText, selection: TextSelection.collapsed(offset: pos + prefix.length));
+      text: newText,
+      selection: TextSelection.collapsed(offset: pos + prefix.length),
+    );
   }
 }
 
@@ -269,6 +319,16 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
 
   bool get _canUploadMedia => widget.client != null && widget.todoId != null;
 
+  @override
+  void didUpdateWidget(MarkdownLiteEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.client, widget.client) ||
+        oldWidget.todoId != widget.todoId) {
+      _mediaBusy = false;
+      _dropHover = false;
+    }
+  }
+
   void _wrapSelection(String marker) {
     final sel = widget.controller.selection;
     if (!sel.isValid) return;
@@ -276,16 +336,24 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
     if (sel.isCollapsed) {
       final newText = text.replaceRange(sel.start, sel.start, '$marker$marker');
       widget.controller.value = TextEditingValue(
-          text: newText, selection: TextSelection.collapsed(offset: sel.start + marker.length));
+        text: newText,
+        selection: TextSelection.collapsed(offset: sel.start + marker.length),
+      );
       widget.onChanged?.call(newText);
       return;
     }
     final selected = text.substring(sel.start, sel.end);
-    final newText = text.replaceRange(sel.start, sel.end, '$marker$selected$marker');
+    final newText = text.replaceRange(
+      sel.start,
+      sel.end,
+      '$marker$selected$marker',
+    );
     widget.controller.value = TextEditingValue(
       text: newText,
       selection: TextSelection(
-          baseOffset: sel.start + marker.length, extentOffset: sel.end + marker.length),
+        baseOffset: sel.start + marker.length,
+        extentOffset: sel.end + marker.length,
+      ),
     );
     widget.onChanged?.call(newText);
   }
@@ -311,24 +379,38 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
     return 'pasted-$ts-${_pasteSeq++}.png';
   }
 
+  bool _isCurrentUploadTarget(RelayClient client, String todoId) =>
+      mounted && identical(client, widget.client) && todoId == widget.todoId;
+
   Future<void> _uploadAndInsertImage(Uint8List bytes, String name) async {
     final client = widget.client;
     final todoId = widget.todoId;
     if (client == null || todoId == null) return;
     if (_mediaBusy) {
-      if (mounted) snack(context, '已有图片正在上传，请稍候');
+      if (mounted) {
+        snack(context, '已有图片正在上传，请稍候');
+      }
       return;
     }
     setState(() => _mediaBusy = true);
-    if (mounted) snack(context, '正在上传图片…', duration: const Duration(seconds: 2));
+    if (mounted) {
+      snack(context, '正在上传图片…', duration: const Duration(seconds: 2));
+    }
     try {
       await client.uploadTodoAttachment(todoId, name, bytes);
-      if (!mounted) return;
+      if (!_isCurrentUploadTarget(client, todoId)) return;
       _insertAtCursor('![]($name)');
     } catch (e) {
-      if (mounted) snack(context, '图片上传失败: ${errorText(e)}');
+      if (!mounted ||
+          !identical(client, widget.client) ||
+          todoId != widget.todoId) {
+        return;
+      }
+      snack(context, '图片上传失败: ${errorText(e)}');
     } finally {
-      if (mounted) setState(() => _mediaBusy = false);
+      if (_isCurrentUploadTarget(client, todoId)) {
+        setState(() => _mediaBusy = false);
+      }
     }
   }
 
@@ -386,7 +468,10 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
     }
     if (result.isEmpty) return false;
 
-    final text = _stripImagePlaceholders(result.markdown, result.imageSrcs.length);
+    final text = _stripImagePlaceholders(
+      result.markdown,
+      result.imageSrcs.length,
+    );
     var handled = text.isNotEmpty;
     if (text.isNotEmpty) _insertAtCursor(text);
 
@@ -410,8 +495,10 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
 
   Future<Uint8List?> _downloadRemoteImage(String url) async {
     try {
-      final response = await Dio()
-          .get<List<int>>(url, options: Options(responseType: ResponseType.bytes));
+      final response = await Dio().get<List<int>>(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
       final data = response.data;
       if (data == null || data.isEmpty) return null;
       return data is Uint8List ? data : Uint8List.fromList(data);
@@ -435,7 +522,9 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
   }
 
   Future<void> _handleDrop(DropDoneDetails detail) async {
-    final images = detail.files.where((f) => isImageAttachmentName(f.name)).toList();
+    final images = detail.files
+        .where((f) => isImageAttachmentName(f.name))
+        .toList();
     final skipped = detail.files.length - images.length;
     for (final f in images) {
       try {
@@ -453,15 +542,22 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
   @override
   Widget build(BuildContext context) {
     final bindings = <ShortcutActivator, VoidCallback>{
-      LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyB): () => _wrapSelection('**'),
+      LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyB): () =>
+          _wrapSelection('**'),
       LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyB): () =>
           _wrapSelection('**'),
-      LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyI): () => _wrapSelection('*'),
+      LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyI): () =>
+          _wrapSelection('*'),
       LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyI): () =>
           _wrapSelection('*'),
       if (_canUploadMedia) ...{
-        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyV): () => _handlePaste(),
-        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyV): () => _handlePaste(),
+        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyV): () =>
+            _handlePaste(),
+        LogicalKeySet(
+          LogicalKeyboardKey.control,
+          LogicalKeyboardKey.keyV,
+        ): () =>
+            _handlePaste(),
       },
     };
 
@@ -474,7 +570,8 @@ class _MarkdownLiteEditorState extends State<MarkdownLiteEditor> {
         minLines: widget.minLines,
         maxLines: widget.maxLines,
         onChanged: widget.onChanged,
-        style: widget.style ??
+        style:
+            widget.style ??
             const TextStyle(fontSize: 14.5, height: 1.55, color: CcColors.text),
         cursorColor: CcColors.accentBright,
         decoration: InputDecoration(

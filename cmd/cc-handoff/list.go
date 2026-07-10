@@ -12,11 +12,15 @@ import (
 
 	"github.com/cc-collaboration/internal/config"
 	"github.com/cc-collaboration/internal/transport"
+	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
 func runList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON instead of a table")
+	projectID := fs.String("project", "", "show project-shared handoffs for this project id")
+	allProjects := fs.Bool("all-projects", false, "show project-shared handoffs across all projects I belong to")
+	limit := fs.Int("limit", 100, "max items for project-shared listing")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -25,24 +29,33 @@ func runList(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return err
 	}
 	client := transport.New(res.RelayURL, res.Token)
-	items, err := client.List(ctx, res.Me)
+	var listItems []handoffschema.ListItem
+	project, projectMode, err := listProjectTarget(*projectID, *allProjects)
+	if err != nil {
+		return err
+	}
+	if projectMode {
+		listItems, err = client.ListProjectHandoffs(ctx, project, *limit)
+	} else {
+		listItems, err = client.List(ctx, res.Me)
+	}
 	if err != nil {
 		return err
 	}
 	if *asJSON {
-		return json.NewEncoder(os.Stdout).Encode(items)
+		return json.NewEncoder(os.Stdout).Encode(listItems)
 	}
-	if len(items) == 0 {
+	if len(listItems) == 0 {
 		fmt.Println("inbox is empty.")
 		return nil
 	}
 	fmt.Printf("%-32s  %-22s  %-7s  %-19s  %s\n", "ID", "FROM", "URG", "WHEN", "HEADLINE")
-	for _, it := range items {
+	for _, it := range listItems {
 		fmt.Printf("%-32s  %-22s  %-7s  %-19s  %s\n",
 			it.ID,
 			truncRight(it.Sender, 22),
@@ -52,6 +65,20 @@ func runList(ctx context.Context, args []string) error {
 		)
 	}
 	return nil
+}
+
+func listProjectTarget(projectID string, allProjects bool) (string, bool, error) {
+	projectID = cleanTargetArg(projectID)
+	if projectID != "" && allProjects {
+		return "", false, fmt.Errorf("--project and --all-projects are mutually exclusive")
+	}
+	if allProjects {
+		return "", true, nil
+	}
+	if projectID != "" {
+		return projectID, true, nil
+	}
+	return "", false, nil
 }
 
 // truncRight returns s capped at n runes, appending an ellipsis if truncated.

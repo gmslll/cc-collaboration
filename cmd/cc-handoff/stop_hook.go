@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +14,7 @@ import (
 // runStopHook is invoked by Claude Code's Stop hook. It scans the receiver's
 // inbox for unread partner comments dropped by `cc-handoff watch`, drains
 // them, and emits a Stop-hook JSON response that pulls Claude back into
-// another turn with the comment bodies as additional context.
+// another turn with the comment bodies in the standard decision reason.
 //
 // Exit-code policy: always 0. A non-zero exit triggers Claude Code's blocking
 // error path (stderr → user) which would surprise the user every time they're
@@ -33,7 +32,7 @@ func runStopHook(ctx context.Context, args []string) error {
 	if err != nil {
 		return nil
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return nil
 	}
@@ -62,21 +61,14 @@ func runStopHook(ctx context.Context, args []string) error {
 			e.HandoffID, e.Comment.ID, e.Comment.Sender, e.Comment.Body)
 	}
 
-	// Clear before printing so a stdout failure can't strand markers and
-	// cause a wake-loop on the next Stop fire.
-	inbox.ClearUnread(entries)
-
-	out := map[string]any{
-		"decision": "block",
-		"reason":   fmt.Sprintf("cc-handoff: partner 回复了 %d 条 comment,见 hookSpecificOutput.additionalContext。", len(entries)),
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     "Stop",
-			"additionalContext": ctxText.String(),
-		},
-	}
-	enc := json.NewEncoder(os.Stdout)
-	if err := enc.Encode(out); err != nil {
+	// Claude Code Stop accepts only the standard top-level decision/reason
+	// continuation shape. Put the full instruction in reason; Stop does not
+	// support hookSpecificOutput.additionalContext. Preserve unread markers if
+	// stdout itself fails so a later Stop can retry them.
+	if err := writeStopHookDecision(os.Stdout, ctxText.String()); err != nil {
 		fmt.Fprintf(os.Stderr, "stop-hook: encode JSON: %v\n", err)
+		return nil
 	}
+	inbox.ClearUnread(entries)
 	return nil
 }

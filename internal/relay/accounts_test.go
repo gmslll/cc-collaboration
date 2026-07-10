@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,12 +71,19 @@ func TestLoginFlow(t *testing.T) {
 		t.Fatalf("me status=%d", code)
 	}
 	var me struct {
-		Identity string `json:"identity"`
-		IsAdmin  bool   `json:"is_admin"`
+		Identity      string `json:"identity"`
+		IsAdmin       bool   `json:"is_admin"`
+		Organizations []struct {
+			Name string `json:"name"`
+			Role string `json:"role"`
+		} `json:"organizations"`
 	}
 	_ = json.Unmarshal(body, &me)
 	if me.Identity != "alice@backend" || !me.IsAdmin {
 		t.Fatalf("me=%+v", me)
+	}
+	if len(me.Organizations) != 0 {
+		t.Fatalf("login should not create default organization: %+v", me.Organizations)
 	}
 
 	// No token → 401.
@@ -114,14 +123,19 @@ func TestRegisterFlow(t *testing.T) {
 		t.Fatalf("register status=%d body=%s", code, body)
 	}
 	var rr struct {
-		Token   string `json:"token"`
-		IsAdmin bool   `json:"is_admin"`
+		Token          string `json:"token"`
+		MachineToken   string `json:"machine_token"`
+		MachineTokenID string `json:"machine_token_id"`
+		IsAdmin        bool   `json:"is_admin"`
 	}
 	if err := json.Unmarshal(body, &rr); err != nil {
 		t.Fatal(err)
 	}
 	if rr.Token == "" {
 		t.Fatal("no session token returned")
+	}
+	if rr.MachineToken == "" || rr.MachineTokenID == "" {
+		t.Fatalf("no default machine token returned: %+v", rr)
 	}
 	if rr.IsAdmin {
 		t.Error("self-registered account must not be admin")
@@ -133,12 +147,21 @@ func TestRegisterFlow(t *testing.T) {
 		t.Fatalf("me status=%d", code)
 	}
 	var me struct {
-		Identity string `json:"identity"`
-		IsAdmin  bool   `json:"is_admin"`
+		Identity      string `json:"identity"`
+		IsAdmin       bool   `json:"is_admin"`
+		Organizations []struct {
+			Role string `json:"role"`
+		} `json:"organizations"`
 	}
 	_ = json.Unmarshal(body, &me)
 	if me.Identity != "carol@demo" || me.IsAdmin {
 		t.Fatalf("me=%+v", me)
+	}
+	if len(me.Organizations) != 0 {
+		t.Fatalf("registered account should start without organizations: %+v", me.Organizations)
+	}
+	if code, body = getAuthed(t, srv.URL+"/v1/me", rr.MachineToken); code != http.StatusOK {
+		t.Fatalf("default machine token should authenticate: status=%d body=%s", code, body)
 	}
 
 	// Duplicate identity → 409.
@@ -180,69 +203,73 @@ func TestRegisterCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestDisabledUserInvalidatesAllBearerSources(t *testing.T) {
+func TestRegisterRejectsReservedTokenIdentities(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-
-	hash, _ := auth.HashPassword("pw-12345678")
-	if err := st.CreateUser(context.Background(),
-		store.User{Identity: "alice@backend", PasswordHash: hash}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.CreateMachineToken(context.Background(),
-		auth.HashToken("machine-alice"), "alice@backend", "laptop", time.Now()); err != nil {
+	if err := st.SeedMachineToken(context.Background(), "hash-cli", "cli@demo", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
 	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
-	if err := os.WriteFile(tokensPath, []byte(`[{"token":"file-alice","identity":"alice@backend"}]`), 0o600); err != nil {
+	if err := os.WriteFile(tokensPath, []byte(`[{"token":"tok-legacy","identity":"legacy@demo"}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	tokens := auth.NewTokens()
 	if err := tokens.LoadFile(tokensPath); err != nil {
 		t.Fatal(err)
 	}
-
 	srv := httptest.NewServer((&relay.Server{
 		Store: st, Tokens: tokens, Hub: sse.NewHub(),
 	}).Handler())
 	t.Cleanup(srv.Close)
 
-	code, body := postJSON(t, srv.URL+"/v1/login", "",
-		map[string]string{"identity": "alice@backend", "password": "pw-12345678"})
-	if code != http.StatusOK {
-		t.Fatalf("login status=%d body=%s", code, body)
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "legacy@demo", "password": "secret pass"}); code != http.StatusConflict {
+		t.Fatalf("register legacy token identity: status=%d, want 409", code)
 	}
-	var lr struct {
-		Token string `json:"token"`
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "cli@demo", "password": "secret pass"}); code != http.StatusConflict {
+		t.Fatalf("register machine token identity: status=%d, want 409", code)
 	}
-	if err := json.Unmarshal(body, &lr); err != nil {
-		t.Fatal(err)
+	if code, body := getAuthed(t, srv.URL+"/v1/me", "tok-legacy"); code != http.StatusOK {
+		t.Fatalf("legacy token should still authenticate: status=%d body=%s", code, body)
 	}
-	for name, token := range map[string]string{
-		"session": lr.Token,
-		"machine": "machine-alice",
-		"file":    "file-alice",
-	} {
-		if code, _ := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusOK {
-			t.Fatalf("%s token before disable: status=%d", name, code)
-		}
+	if code, _ := postJSON(t, srv.URL+"/v1/orgs", "tok-legacy",
+		map[string]string{"name": "Legacy Team"}); code != http.StatusUnauthorized {
+		t.Fatalf("legacy token create org: status=%d, want 401", code)
 	}
+	if code, _ := getAuthed(t, srv.URL+"/v1/projects", "tok-legacy"); code != http.StatusUnauthorized {
+		t.Fatalf("legacy token list projects: status=%d, want 401", code)
+	}
+	if code, _ := getAuthed(t, srv.URL+"/v1/tokens", "tok-legacy"); code != http.StatusUnauthorized {
+		t.Fatalf("legacy token list machine tokens: status=%d, want 401", code)
+	}
+}
 
-	if err := st.SetDisabled(context.Background(), "alice@backend", true); err != nil {
+func TestRegisterRejectsTrailingJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	for name, token := range map[string]string{
-		"session": lr.Token,
-		"machine": "machine-alice",
-		"file":    "file-alice",
-	} {
-		if code, _ := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusUnauthorized {
-			t.Fatalf("%s token after disable: status=%d", name, code)
-		}
+	t.Cleanup(func() { _ = st.Close() })
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/register", "",
+		`{"identity":"tail@demo","password":"secret pass"} {"identity":"tail2@demo","password":"secret pass"}`); code != http.StatusBadRequest {
+		t.Fatalf("register trailing json = %d %s", code, body)
+	}
+	if _, err := st.GetUser(context.Background(), "tail@demo"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("trailing register created first account: err=%v", err)
+	}
+	if _, err := st.GetUser(context.Background(), "tail2@demo"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("trailing register created second account: err=%v", err)
 	}
 }
 
@@ -279,6 +306,293 @@ func TestBackCompatFileToken(t *testing.T) {
 	}
 }
 
+func TestDisabledUserRevokesExistingAuth(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "user@demo", "userpass1")
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	userTok := loginToken(t, srv.URL, "user@demo", "userpass1")
+	if code, _ := getAuthed(t, srv.URL+"/v1/me", userTok); code != http.StatusOK {
+		t.Fatalf("me before disable = %d", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/users/user@demo/disable", adminTok,
+		map[string]bool{"disabled": true}); code != http.StatusOK {
+		t.Fatalf("disable user = %d", code)
+	}
+	if code, _ := getAuthed(t, srv.URL+"/v1/me", userTok); code != http.StatusUnauthorized {
+		t.Fatalf("me after disable = %d", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/login", "",
+		map[string]string{"identity": "user@demo", "password": "userpass1"}); code != http.StatusUnauthorized {
+		t.Fatalf("login disabled user = %d", code)
+	}
+}
+
+func TestUserBooleanMutationsRejectInvalidJSON(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "admin-target@demo", "targetpass1")
+	mkUser(t, st, "disabled-target@demo", "targetpass2")
+	if err := st.SetAdmin(context.Background(), "admin-target@demo", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDisabled(context.Background(), "disabled-target@demo", true); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	if code, body := postRawJSON(t, srv.URL+"/v1/users/admin-target@demo/admin", adminTok, "{"); code != http.StatusBadRequest {
+		t.Fatalf("invalid admin json = %d %s", code, body)
+	}
+	if ok, err := st.UserIsAdmin(context.Background(), "admin-target@demo"); err != nil || !ok {
+		t.Fatalf("invalid admin json changed admin state: ok=%v err=%v", ok, err)
+	}
+
+	if code, body := postRawJSON(t, srv.URL+"/v1/users/disabled-target@demo/disable", adminTok, "{"); code != http.StatusBadRequest {
+		t.Fatalf("invalid disable json = %d %s", code, body)
+	}
+	u, err := st.GetUser(context.Background(), "disabled-target@demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.Disabled {
+		t.Fatal("invalid disable json changed disabled state")
+	}
+}
+
+func TestAdminCreateUserTrimsIdentity(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	mkUser(t, st, "admin@demo", "adminpass1")
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	code, body := postJSON(t, srv.URL+"/v1/users", adminTok,
+		map[string]any{"identity": "  member@demo  ", "password": "memberpass1"})
+	if code != http.StatusCreated {
+		t.Fatalf("create trimmed user = %d %s", code, body)
+	}
+	var created struct {
+		Identity string `json:"identity"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Identity != "member@demo" {
+		t.Fatalf("created identity = %q, want trimmed", created.Identity)
+	}
+	users, err := st.ListUsers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range users {
+		if user.Identity == "  member@demo  " {
+			t.Fatalf("untrimmed account should not exist in stored users: %+v", users)
+		}
+	}
+
+	memberTok := loginToken(t, srv.URL, "  member@demo  ", "memberpass1")
+	code, body = getAuthed(t, srv.URL+"/v1/me", memberTok)
+	if code != http.StatusOK {
+		t.Fatalf("me for trimmed user = %d %s", code, body)
+	}
+	var me struct {
+		Identity      string `json:"identity"`
+		Organizations []struct {
+			Name string `json:"name"`
+		} `json:"organizations"`
+	}
+	if err := json.Unmarshal(body, &me); err != nil {
+		t.Fatal(err)
+	}
+	if me.Identity != "member@demo" {
+		t.Fatalf("me identity = %q, want trimmed", me.Identity)
+	}
+	if len(me.Organizations) != 0 {
+		t.Fatalf("admin-created account should start without organizations: %+v", me.Organizations)
+	}
+}
+
+func TestDeleteUserRequiresAdminAndRejectsSelf(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "member@demo", "memberpass1")
+	mkUser(t, st, "target@demo", "targetpass1")
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	memberTok := loginToken(t, srv.URL, "member@demo", "memberpass1")
+	if code, _ := deleteAuthed(t, srv.URL+"/v1/users/target@demo", memberTok); code != http.StatusForbidden {
+		t.Fatalf("non-admin delete = %d, want 403", code)
+	}
+	if code, body := deleteAuthed(t, srv.URL+"/v1/users/admin@demo", adminTok); code != http.StatusConflict {
+		t.Fatalf("self delete = %d %s, want 409", code, body)
+	}
+	if u, err := st.GetUser(context.Background(), "target@demo"); err != nil || u.Deleted {
+		t.Fatalf("rejected deletes changed target: user=%+v err=%v", u, err)
+	}
+}
+
+func TestAdminCannotDemoteOrDisableCurrentAccount(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "admin@demo", "adminpass1")
+	if err := st.SetAdmin(context.Background(), "admin@demo", true); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	if code, body := postJSON(t, srv.URL+"/v1/users/admin@demo/admin", adminTok,
+		map[string]bool{"is_admin": false}); code != http.StatusConflict {
+		t.Fatalf("self demote = %d %s, want 409", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/users/admin@demo/disable", adminTok,
+		map[string]bool{"disabled": true}); code != http.StatusConflict {
+		t.Fatalf("self disable = %d %s, want 409", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/users/%20admin@demo%20/disable", adminTok,
+		map[string]bool{"disabled": true}); code != http.StatusConflict {
+		t.Fatalf("space-padded self disable = %d %s, want 409", code, body)
+	}
+	u, err := st.GetUser(context.Background(), "admin@demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.IsAdmin || u.Disabled {
+		t.Fatalf("rejected self mutation changed account: %+v", u)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/me", adminTok); code != http.StatusOK {
+		t.Fatalf("admin token after rejected mutations = %d %s", code, body)
+	}
+}
+
+func TestDeleteUserRevokesCredentialsAndReservesIdentity(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "target@demo", "targetpass1")
+	if err := st.CreateMachineToken(context.Background(), auth.HashToken("machine-target"), "target@demo", "laptop", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[{"token":"legacy-target","identity":"target@demo"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: tokens, Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	targetSession := loginToken(t, srv.URL, "target@demo", "targetpass1")
+	for label, token := range map[string]string{
+		"session": targetSession,
+		"machine": "machine-target",
+		"legacy":  "legacy-target",
+	} {
+		if code, body := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusOK {
+			t.Fatalf("%s credential before delete = %d %s", label, code, body)
+		}
+	}
+	if code, body := deleteAuthed(t, srv.URL+"/v1/users/target@demo", adminTok); code != http.StatusOK {
+		t.Fatalf("admin delete = %d %s", code, body)
+	}
+	for label, token := range map[string]string{
+		"session": targetSession,
+		"machine": "machine-target",
+		"legacy":  "legacy-target",
+	} {
+		if code, _ := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusUnauthorized {
+			t.Fatalf("%s credential after delete = %d, want 401", label, code)
+		}
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/login", "",
+		map[string]string{"identity": "target@demo", "password": "targetpass1"}); code != http.StatusUnauthorized {
+		t.Fatalf("deleted account login = %d, want 401", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "target@demo", "password": "new password"}); code != http.StatusConflict {
+		t.Fatalf("deleted identity registration = %d, want 409", code)
+	}
+
+	code, body := getAuthed(t, srv.URL+"/v1/users", adminTok)
+	if code != http.StatusOK {
+		t.Fatalf("list users after delete = %d %s", code, body)
+	}
+	var listed struct {
+		Users []store.User `json:"users"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	var tombstone *store.User
+	for i := range listed.Users {
+		if listed.Users[i].Identity == "target@demo" {
+			tombstone = &listed.Users[i]
+		}
+	}
+	if tombstone == nil || !tombstone.Deleted || !tombstone.Disabled || tombstone.IsAdmin || tombstone.DeletedAt.IsZero() {
+		t.Fatalf("deleted account missing tombstone response: %+v", tombstone)
+	}
+	if code, _ := deleteAuthed(t, srv.URL+"/v1/users/target@demo", adminTok); code != http.StatusNotFound {
+		t.Fatalf("repeat delete = %d, want 404", code)
+	}
+}
+
 func postJSON(t *testing.T, url, bearer string, payload any) (int, []byte) {
 	t.Helper()
 	var body io.Reader
@@ -287,6 +601,16 @@ func postJSON(t *testing.T, url, bearer string, payload any) (int, []byte) {
 		body = bytes.NewReader(b)
 	}
 	req, _ := http.NewRequest(http.MethodPost, url, body)
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	return do(t, req)
+}
+
+func postRawJSON(t *testing.T, url, bearer, payload string) (int, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)

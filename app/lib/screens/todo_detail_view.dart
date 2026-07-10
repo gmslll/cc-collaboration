@@ -13,12 +13,30 @@ import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
+import '../local/todo_permissions.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_lite_editor.dart';
 import '../widgets/todo_attachment_thumb.dart';
 import '../widgets/todo_body_view.dart';
 import '../widgets/todo_property_controls.dart';
+
+double todoDetailDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+double todoDetailReadOnlyPillMaxWidth(
+  BoxConstraints constraints, {
+  double preferred = 220,
+  double minWidth = 96,
+}) {
+  final available = constraints.maxWidth;
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minWidth) return available;
+  return available < preferred ? available : preferred;
+}
 
 // TodoDetailView is the reusable 待办详情/编辑面板. Linear-flavored editing
 // model: title/body autosave on blur (+ a debounce while typing the body)
@@ -51,6 +69,7 @@ class TodoDetailView extends StatefulWidget {
   // _groups field doc). Typing a name not in this list still works; it's
   // created on first use like everywhere else GroupControl appears.
   final List<String> groups;
+  final TodoAccess access;
   // onOpenSession additionally switches the host's own top-level nav to the
   // 工作区 tab before focusing the session (mirrors main.dart's
   // _openSessionInWorkspace, used by SessionOverviewPage) — pass this when
@@ -69,6 +88,7 @@ class TodoDetailView extends StatefulWidget {
     this.overviewStore,
     this.config,
     this.groups = const [],
+    this.access = TodoAccess.full,
     this.onOpenSession,
   });
 
@@ -78,12 +98,16 @@ class TodoDetailView extends StatefulWidget {
 
 class TodoDetailViewState extends State<TodoDetailView> {
   late Todo _current = widget.todo;
-  late final TextEditingController _titleCtl =
-      TextEditingController(text: widget.todo.title);
-  late final MarkdownLiteController _bodyCtl =
-      MarkdownLiteController(text: widget.todo.bodyMd);
-  late final FocusNode _titleFocus = FocusNode()..addListener(_onTitleFocusChange);
-  late final FocusNode _bodyFocus = FocusNode()..addListener(_onBodyFocusChange);
+  late final TextEditingController _titleCtl = TextEditingController(
+    text: widget.todo.title,
+  );
+  late final MarkdownLiteController _bodyCtl = MarkdownLiteController(
+    text: widget.todo.bodyMd,
+  );
+  late final FocusNode _titleFocus = FocusNode()
+    ..addListener(_onTitleFocusChange);
+  late final FocusNode _bodyFocus = FocusNode()
+    ..addListener(_onBodyFocusChange);
   final _commentCtl = TextEditingController();
   Timer? _bodyDebounce;
   List<TodoComment> _comments = const [];
@@ -91,12 +115,18 @@ class TodoDetailViewState extends State<TodoDetailView> {
   bool _textDirty = false;
   bool _saving = false;
   bool _uploading = false;
+  bool _commenting = false;
+  bool _deleting = false;
+  bool _propertyMutating = false;
   // Body starts in read-only display mode (TodoBodyView, images inlined);
   // clicking it swaps to the live MarkdownLiteEditor for editing, and losing
   // focus swaps back — same split as the plan's "编辑态/展示态" design so
   // body_md itself never has to represent "is this being edited" state.
   bool _bodyEditing = false;
   bool _resumingSession = false;
+  int _textSaveGeneration = 0;
+  int _loadGeneration = 0;
+  int _commentLoadGeneration = 0;
   // Height (px) of the top pane (title/properties/body, scrollable) above the
   // 评论/附件 TabBarView — user-draggable via the vertical DragHandle in
   // build(), persisted so it survives switching between todos. Was a fixed
@@ -106,6 +136,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
 
   RelayClient get _client => widget.client;
   String get _id => widget.todo.id;
+  TodoAccess get _access => widget.access;
 
   @override
   void initState() {
@@ -117,20 +148,27 @@ class TodoDetailViewState extends State<TodoDetailView> {
   @override
   void didUpdateWidget(TodoDetailView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.todo.id != widget.todo.id) {
-      if (_textDirty) {
+    final todoChanged = oldWidget.todo.id != widget.todo.id;
+    final clientChanged = !identical(oldWidget.client, widget.client);
+    if (todoChanged || clientChanged) {
+      if (_textDirty && oldWidget.access.canEdit) {
         // Flush the OLD todo's edits before switching away — best-effort,
         // decoupled from this widget's _saving/_textDirty (which now track
         // the newly-selected todo).
         final oldId = oldWidget.todo.id;
         final oldTitle = _titleCtl.text.trim();
         final oldBody = _bodyCtl.text;
-        _client
-            .updateTodo(oldId, title: oldTitle, bodyMd: oldBody)
-            .catchError((_) => oldWidget.todo);
+        Future.sync(
+          () => oldWidget.client.updateTodo(
+            oldId,
+            title: oldTitle,
+            bodyMd: oldBody,
+          ),
+        ).catchError((_) => oldWidget.todo);
       }
       _bodyDebounce?.cancel();
       setState(() {
+        _textSaveGeneration++;
         _current = widget.todo;
         _titleCtl.text = widget.todo.title;
         _bodyCtl.text = widget.todo.bodyMd;
@@ -138,10 +176,24 @@ class TodoDetailViewState extends State<TodoDetailView> {
         _bodyEditing = false;
         _comments = const [];
         _loadingAttachments = true;
+        _saving = false;
+        _uploading = false;
+        _commenting = false;
+        _deleting = false;
+        _propertyMutating = false;
+        _resumingSession = false;
       });
       _loadFull();
       reloadComments();
-    } else if (!_textDirty && oldWidget.todo.updatedAt != widget.todo.updatedAt) {
+    } else if (!_access.canEdit &&
+        (oldWidget.access.canEdit || _textDirty || _bodyEditing)) {
+      _bodyDebounce?.cancel();
+      setState(() {
+        _textDirty = false;
+        _bodyEditing = false;
+      });
+    } else if (!_textDirty &&
+        oldWidget.todo.updatedAt != widget.todo.updatedAt) {
       // An external update (SSE-driven store upsert) landed while this todo is
       // open — re-fetch rather than hand-merge fields, since GET-by-id is the
       // only source of truth for `attachments`.
@@ -156,10 +208,14 @@ class TodoDetailViewState extends State<TodoDetailView> {
     // mid-edit. Best-effort like the didUpdateWidget switch-away flush: the
     // widget is gone by the time this could fail, so there's nowhere left to
     // surface an error.
-    if (_textDirty) {
-      _client
-          .updateTodo(_id, title: _titleCtl.text.trim(), bodyMd: _bodyCtl.text)
-          .catchError((_) => _current);
+    if (_textDirty && _access.canEdit) {
+      Future.sync(
+        () => _client.updateTodo(
+          _id,
+          title: _titleCtl.text.trim(),
+          bodyMd: _bodyCtl.text,
+        ),
+      ).catchError((_) => _current);
     }
     _bodyDebounce?.cancel();
     _titleCtl.dispose();
@@ -171,9 +227,12 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _loadFull() async {
+    final generation = ++_loadGeneration;
+    final client = _client;
+    final id = _id;
     try {
-      final t = await _client.todo(_id);
-      if (!mounted) return;
+      final t = await client.todo(id);
+      if (!_isCurrentLoad(generation, client, id)) return;
       setState(() {
         _current = t;
         _loadingAttachments = false;
@@ -183,22 +242,37 @@ class TodoDetailViewState extends State<TodoDetailView> {
         }
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation, client, id)) return;
       setState(() => _loadingAttachments = false);
+      if (!mounted) return;
       snack(context, '加载待办详情失败: ${errorText(e)}');
     }
   }
+
+  bool _isCurrentTodoClient(RelayClient client, String id) =>
+      mounted && identical(client, widget.client) && id == _id;
+
+  bool _isCurrentLoad(int generation, RelayClient client, String id) =>
+      _isCurrentTodoClient(client, id) && generation == _loadGeneration;
 
   // reloadComments is public so the host can force a refresh when
   // TodoStore.onComment fires for this todo's id (a todo.comment_created SSE
   // event) — the store itself doesn't model comments, it just tells the host
   // which todo needs its comment list reloaded.
   Future<void> reloadComments() async {
+    final generation = ++_commentLoadGeneration;
+    final client = _client;
+    final id = _id;
     try {
-      final cs = await _client.todoComments(_id);
-      if (mounted) setState(() => _comments = cs);
+      final cs = await client.todoComments(id);
+      if (_isCurrentCommentLoad(generation, client, id)) {
+        setState(() => _comments = cs);
+      }
     } catch (_) {}
   }
+
+  bool _isCurrentCommentLoad(int generation, RelayClient client, String id) =>
+      _isCurrentTodoClient(client, id) && generation == _commentLoadGeneration;
 
   void _markTextDirty() {
     if (_textDirty) return;
@@ -228,12 +302,14 @@ class TodoDetailViewState extends State<TodoDetailView> {
 
   void _applyUpdated(Todo t) {
     if (!mounted) return;
+    if (t.id != _id) return;
     // PATCH/status-update responses always carry an empty `attachments`
     // (relay skips that join outside GET-by-id) — if nothing attachment-wise
     // actually changed server-side (count is unchanged), keep the
     // already-loaded list instead of blanking out inline images that
     // TodoBodyView needs sha256 metadata for.
-    final merged = t.attachments.isEmpty && t.attachmentCount == _current.attachmentCount
+    final merged =
+        t.attachments.isEmpty && t.attachmentCount == _current.attachmentCount
         ? t.copyWith(attachments: _current.attachments)
         : t;
     setState(() => _current = merged);
@@ -241,18 +317,31 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _saveTextEdits() async {
+    if (!_access.canEdit) {
+      setState(() => _textDirty = false);
+      return;
+    }
     _bodyDebounce?.cancel();
+    final saveGeneration = ++_textSaveGeneration;
     setState(() => _saving = true);
+    final client = _client;
+    final id = _id;
     final sentTitle = _titleCtl.text.trim();
     final sentBody = _bodyCtl.text;
     try {
-      final updated = await _client.updateTodo(_id, title: sentTitle, bodyMd: sentBody);
-      if (!mounted) return;
+      final updated = await client.updateTodo(
+        id,
+        title: sentTitle,
+        bodyMd: sentBody,
+      );
+      if (!_isCurrentTodoClient(client, id)) return;
+      if (saveGeneration != _textSaveGeneration) return;
       // If the field(s) changed again while this request was in flight, the
       // just-saved snapshot is already stale — keep _textDirty set (and
       // re-arm the debounce) instead of clearing it, so those newer
       // keystrokes aren't silently dropped.
-      final stale = _titleCtl.text.trim() != sentTitle || _bodyCtl.text != sentBody;
+      final stale =
+          _titleCtl.text.trim() != sentTitle || _bodyCtl.text != sentBody;
       setState(() {
         _saving = false;
         _textDirty = stale;
@@ -264,18 +353,36 @@ class TodoDetailViewState extends State<TodoDetailView> {
       }
       _applyUpdated(updated);
     } catch (e) {
-      if (!mounted) return;
+      if (!_isCurrentTodoClient(client, id)) return;
+      if (saveGeneration != _textSaveGeneration) return;
       setState(() => _saving = false);
+      if (!mounted) return;
       snack(context, '保存失败: ${errorText(e)}');
     }
   }
 
   Future<void> _setStatus(TodoStatus s) async {
+    if (!_access.canEdit) {
+      snack(context, '你对这条待办只有只读权限');
+      return;
+    }
+    if (_propertyMutating) return;
+    final client = _client;
+    final id = _id;
+    setState(() => _propertyMutating = true);
     try {
-      final updated = await _client.setTodoStatus(_id, s);
+      final updated = await client.setTodoStatus(id, s);
+      if (!_isCurrentTodoClient(client, id)) return;
       _applyUpdated(updated);
     } catch (e) {
-      if (mounted) snack(context, '更新状态失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '更新状态失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _propertyMutating = false);
+      }
     }
   }
 
@@ -288,9 +395,17 @@ class TodoDetailViewState extends State<TodoDetailView> {
     String? repoName,
     String? groupName,
   }) async {
+    if (!_access.canEdit) {
+      snack(context, '你对这条待办只有只读权限');
+      return;
+    }
+    if (_propertyMutating) return;
+    final client = _client;
+    final id = _id;
+    setState(() => _propertyMutating = true);
     try {
-      final updated = await _client.updateTodo(
-        _id,
+      final updated = await client.updateTodo(
+        id,
         priority: priority,
         recurrence: recurrence,
         dueAt: dueAt,
@@ -299,9 +414,17 @@ class TodoDetailViewState extends State<TodoDetailView> {
         repoName: repoName,
         groupName: groupName,
       );
+      if (!_isCurrentTodoClient(client, id)) return;
       _applyUpdated(updated);
     } catch (e) {
-      if (mounted) snack(context, '更新失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '更新失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _propertyMutating = false);
+      }
     }
   }
 
@@ -322,6 +445,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   Future<void> _clearGroup() => _patch(groupName: '');
 
   Future<void> _pickDueDate() async {
+    if (_propertyMutating) return;
     final now = DateTime.now();
     final current = _current.dueAt ?? now;
     final date = await showDatePicker(
@@ -346,8 +470,7 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // something a person recognizes, not a raw identity string.
   String? get _assigneeLabel {
     final t = _current;
-    if ((t.assigneeSessionLabel ?? '').isNotEmpty) return t.assigneeSessionLabel;
-    return t.assigneeIdentity;
+    return t.assigneeLabel;
   }
 
   bool get _hasSessionBinding =>
@@ -395,43 +518,62 @@ class TodoDetailViewState extends State<TodoDetailView> {
       return;
     }
 
+    final client = _client;
+    final id = t.id;
     setState(() => _resumingSession = true);
-    final (sid, err) = await overview.spawn(
-      workspace: wsName,
-      project: projName,
-      kind: (t.assigneeAgentKind ?? '').isNotEmpty ? t.assigneeAgentKind! : 'claude',
-      resumeAgentSessionId: resumeId,
-      // Pass the exact saved dir through (not just the project it resolved
-      // to) so a session that ran inside a worktree respawns there instead
-      // of silently falling back to the project root — see
-      // _spawnForDispatch/_spawnManagedSession in workspace_page.dart.
-      workdir: workdir,
-    );
-    if (!mounted) return;
-    setState(() => _resumingSession = false);
-    if (sid == null) {
-      snack(context, '恢复会话失败: ${err ?? "未知错误"}');
-      return;
+    try {
+      final (sid, err) = await overview.spawn(
+        workspace: wsName,
+        project: projName,
+        kind: (t.assigneeAgentKind ?? '').isNotEmpty
+            ? t.assigneeAgentKind!
+            : 'claude',
+        resumeAgentSessionId: resumeId,
+        // Pass the exact saved dir through (not just the project it resolved
+        // to) so a session that ran inside a worktree respawns there instead
+        // of silently falling back to the project root — see
+        // _spawnForDispatch/_spawnManagedSession in workspace_page.dart.
+        workdir: workdir,
+      );
+      if (!_isCurrentTodoClient(client, id)) return;
+      if (sid == null) {
+        snack(context, '恢复会话失败: ${err ?? "未知错误"}');
+        return;
+      }
+      // A respawned --resume session is brand-new terminal state: even if the CLI
+      // restored the conversation history, Flutter has no signal telling "history
+      // came back" from "silently got a blank session" apart (overview.spawn only
+      // returns (sid, error)). So always re-deliver the task pointer — the
+      // materialized file is overwrite-based (reflects latest state) and the
+      // message is short, so a redundant reminder when history did restore is far
+      // cheaper than leaving the user staring at a blank session with no context.
+      final prep = await prepareTodoAssignmentText(
+        client: client,
+        todoId: id,
+        fallbackTodo: t,
+        workdir: workdir,
+      );
+      if (!_isCurrentTodoClient(client, id)) return;
+      String? dispatchErr;
+      try {
+        dispatchErr = overview.dispatch(LocalMsg('', sid, prep.taskText, true));
+      } catch (e) {
+        dispatchErr = errorText(e);
+      }
+      if (dispatchErr != null) {
+        if (!mounted) return;
+        snack(context, '会话已恢复，但投递任务说明失败: $dispatchErr');
+      }
+      _openSession(sid);
+    } catch (e) {
+      if (!_isCurrentTodoClient(client, id)) return;
+      if (!mounted) return;
+      snack(context, '恢复会话失败: ${errorText(e)}');
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _resumingSession = false);
+      }
     }
-    // A respawned --resume session is brand-new terminal state: even if the CLI
-    // restored the conversation history, Flutter has no signal telling "history
-    // came back" from "silently got a blank session" apart (overview.spawn only
-    // returns (sid, error)). So always re-deliver the task pointer — the
-    // materialized file is overwrite-based (reflects latest state) and the
-    // message is short, so a redundant reminder when history did restore is far
-    // cheaper than leaving the user staring at a blank session with no context.
-    final prep = await prepareTodoAssignmentText(
-      client: _client,
-      todoId: t.id,
-      fallbackTodo: t,
-      workdir: workdir,
-    );
-    if (!mounted) return;
-    final dispatchErr = overview.dispatch(LocalMsg('', sid, prep.taskText, true));
-    if (dispatchErr != null) {
-      snack(context, '会话已恢复，但投递任务说明失败: $dispatchErr');
-    }
-    _openSession(sid);
   }
 
   void _openSession(String sid) {
@@ -443,56 +585,130 @@ class TodoDetailViewState extends State<TodoDetailView> {
   }
 
   Future<void> _delete() async {
+    if (!_access.canDelete) {
+      snack(context, '你对这条待办没有删除权限');
+      return;
+    }
+    if (_deleting) return;
+    final client = _client;
+    final id = _id;
+    final title = _current.title.trim();
+    final detail = title.isEmpty
+        ? '确定删除这条待办吗？此操作不可撤销。'
+        : '将删除待办 "$title"。此操作不可撤销。';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除待办'),
-        content: const Text('确定删除这条待办吗？此操作不可撤销。'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('删除')),
-        ],
-      ),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: const Text(
+            '删除待办',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          content: SizedBox(
+            width: todoDetailDialogWidth(size),
+            child: SingleChildScrollView(child: Text(detail)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true) return;
+    if (!_isCurrentTodoClient(client, id)) return;
+    if (!mounted) return;
+    setState(() => _deleting = true);
     try {
-      await _client.deleteTodo(_id);
+      await client.deleteTodo(id);
+      if (!_isCurrentTodoClient(client, id)) return;
       widget.onDeleted?.call();
     } catch (e) {
-      if (mounted) snack(context, '删除失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '删除失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _deleting = false);
+      }
     }
   }
 
   Future<void> _postComment() async {
+    if (!_access.canComment) {
+      snack(context, '你对这条待办没有评论权限');
+      return;
+    }
+    if (_commenting) return;
     final body = _commentCtl.text.trim();
     if (body.isEmpty) return;
+    final client = _client;
+    final id = _id;
+    setState(() => _commenting = true);
     try {
-      await _client.postTodoComment(_id, body);
+      await client.postTodoComment(id, body);
+      if (!_isCurrentTodoClient(client, id)) return;
+      if (!mounted) return;
       _commentCtl.clear();
       await reloadComments();
     } catch (e) {
-      if (mounted) snack(context, '评论失败: ${errorText(e)}');
+      if (_isCurrentTodoClient(client, id)) {
+        if (!mounted) return;
+        snack(context, '评论失败: ${errorText(e)}');
+      }
+    } finally {
+      if (_isCurrentTodoClient(client, id) && mounted) {
+        setState(() => _commenting = false);
+      }
     }
   }
 
   Future<void> _pickAndUploadAttachments() async {
-    final res =
-        await FilePicker.platform.pickFiles(allowMultiple: true, withData: true);
+    if (!_access.canUploadAttachment) {
+      snack(context, '你对这条待办没有上传附件权限');
+      return;
+    }
+    final res = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true,
+    );
     if (res == null || res.files.isEmpty || !mounted) return;
+    final client = _client;
+    final id = _id;
     setState(() => _uploading = true);
     for (final f in res.files) {
+      if (!mounted) return;
+      if (!_isCurrentTodoClient(client, id)) return;
       try {
         Uint8List? bytes = f.bytes;
         bytes ??= f.path != null ? await File(f.path!).readAsBytes() : null;
+        if (!_isCurrentTodoClient(client, id)) return;
+        if (!mounted) return;
         if (bytes == null) continue;
-        await _client.uploadTodoAttachment(_id, f.name, bytes);
+        await client.uploadTodoAttachment(id, f.name, bytes);
+        if (!_isCurrentTodoClient(client, id)) return;
       } catch (e) {
-        if (mounted) snack(context, '上传 ${f.name} 失败: ${errorText(e)}');
+        if (_isCurrentTodoClient(client, id)) {
+          if (!mounted) return;
+          snack(context, '上传 ${f.name} 失败: ${errorText(e)}');
+        }
       }
     }
-    if (!mounted) return;
+    if (!_isCurrentTodoClient(client, id)) return;
     setState(() => _uploading = false);
     await _loadFull();
   }
@@ -512,49 +728,68 @@ class TodoDetailViewState extends State<TodoDetailView> {
           const minTop = 120.0;
           const minBottom = 120.0;
           const handle = 8.0;
-          final maxTop = (constraints.maxHeight - handle - minBottom)
-              .clamp(minTop, double.infinity);
+          final maxTop = (constraints.maxHeight - handle - minBottom).clamp(
+            minTop,
+            double.infinity,
+          );
           final topHeight = _topPaneHeight.clamp(minTop, maxTop);
-          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            SizedBox(
-              height: topHeight,
-              child: SingleChildScrollView(child: _header()),
-            ),
-            resizeHandle(
-              prefKey: 'todo.topPaneHeightPx',
-              get: () => _topPaneHeight,
-              set: (v) => setState(() => _topPaneHeight = v),
-              min: minTop,
-              max: maxTop,
-              vertical: true,
-            ),
-            TabBar(tabs: [
-              Tab(text: '评论 (${_comments.length})'),
-              Tab(text: '附件 (${_current.attachmentCount})'),
-            ]),
-            Expanded(
-              child: TabBarView(children: [
-                _commentsTab(),
-                SingleChildScrollView(
-                    padding: const EdgeInsets.all(16), child: _attachmentsTab()),
-              ]),
-            ),
-          ]);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                height: topHeight,
+                child: SingleChildScrollView(child: _header()),
+              ),
+              resizeHandle(
+                prefKey: 'todo.topPaneHeightPx',
+                get: () => _topPaneHeight,
+                set: (v) => setState(() => _topPaneHeight = v),
+                min: minTop,
+                max: maxTop,
+                vertical: true,
+              ),
+              TabBar(
+                tabs: [
+                  Tab(text: '评论 (${_comments.length})'),
+                  Tab(text: '附件 (${_current.attachmentCount})'),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _commentsTab(),
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: _attachmentsTab(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
         },
       ),
     );
   }
 
   Widget _header() => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Expanded(
               child: TextField(
                 controller: _titleCtl,
                 focusNode: _titleFocus,
+                readOnly: !_access.canEdit,
                 style: const TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.w700, color: CcColors.text),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: CcColors.text,
+                ),
                 decoration: const InputDecoration(
                   isDense: true,
                   filled: false,
@@ -562,119 +797,205 @@ class TodoDetailViewState extends State<TodoDetailView> {
                   contentPadding: EdgeInsets.zero,
                   hintText: '标题',
                 ),
-                onChanged: (_) => _markTextDirty(),
-                onSubmitted: (_) => _saveTextEdits(),
+                onChanged: _access.canEdit ? (_) => _markTextDirty() : null,
+                onSubmitted: _access.canEdit ? (_) => _saveTextEdits() : null,
               ),
             ),
             if (_saving)
               const Padding(
                 padding: EdgeInsets.only(left: 8, top: 4),
                 child: SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2)),
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline_rounded, size: 19),
-              tooltip: '删除待办',
-              visualDensity: VisualDensity.compact,
-              onPressed: _delete,
-            ),
-          ]),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              StatusControl(
-                status: _current.status,
-                colorOf: _statusColor,
-                onChanged: _setStatus,
+            if (_access.canDelete)
+              IconButton(
+                icon: _deleting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.delete_outline_rounded, size: 19),
+                tooltip: '删除待办',
+                visualDensity: VisualDensity.compact,
+                onPressed: _deleting ? null : _delete,
               ),
-              _dot(),
-              PriorityControl(
-                priority: priorityLabels.containsKey(_current.priority)
-                    ? _current.priority
-                    : 'normal',
-                onChanged: (v) => _patch(priority: v),
-              ),
-              _dot(),
-              RecurrenceControl(
-                recurrence: recurrenceLabels.containsKey(_current.recurrence)
-                    ? _current.recurrence
-                    : '',
-                onChanged: (v) => _patch(recurrence: v),
-              ),
-              _dot(),
-              DueDatePill(
-                dueAt: _current.dueAt,
-                onTap: _pickDueDate,
-                onClear: () => _patch(clearDueAt: true),
-              ),
-              _dot(),
-              WorkspaceRepoControl(
-                workspaceName: _current.workspaceName,
-                repoName: _current.repoName,
-                workspaces: widget.config?.workspaces ?? const [],
-                onBind: _bindRepo,
-                onClear: _clearRepo,
-              ),
-              _dot(),
-              GroupControl(
-                groupName: _current.groupName,
-                existingGroups: widget.groups,
-                onSelect: _setGroup,
-                onClear: _clearGroup,
-              ),
-            ],
-          ),
-          if ((_current.assigneeIdentity ?? '').isNotEmpty ||
-              _hasSessionBinding) ...[
-            const SizedBox(height: 8),
-            _assigneeRow(),
           ],
-          const SizedBox(height: 4),
-          const Divider(height: 20),
-          _body(),
-        ]),
-      );
+        ),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final readOnlyPillMaxWidth = todoDetailReadOnlyPillMaxWidth(
+              constraints,
+            );
+            return Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (_access.canEdit)
+                  StatusControl(
+                    status: _current.status,
+                    colorOf: _statusColor,
+                    onChanged: _setStatus,
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.adjust_rounded,
+                    label: todoStatusLabel(_current.status),
+                    color: _statusColor(_current.status),
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  PriorityControl(
+                    priority: priorityLabels.containsKey(_current.priority)
+                        ? _current.priority
+                        : 'normal',
+                    onChanged: (v) => _patch(priority: v),
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.signal_cellular_alt_rounded,
+                    label: priorityLabels[_current.priority] ?? '普通',
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  RecurrenceControl(
+                    recurrence:
+                        recurrenceLabels.containsKey(_current.recurrence)
+                        ? _current.recurrence
+                        : '',
+                    onChanged: (v) => _patch(recurrence: v),
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.repeat_rounded,
+                    label: recurrenceLabels[_current.recurrence] ?? '不重复',
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  DueDatePill(
+                    dueAt: _current.dueAt,
+                    onTap: _pickDueDate,
+                    onClear: () => _patch(clearDueAt: true),
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.calendar_today_rounded,
+                    label: _current.dueAt == null
+                        ? '截止日期'
+                        : commitDate(_current.dueAt!),
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  WorkspaceRepoControl(
+                    workspaceName: _current.workspaceName,
+                    repoName: _current.repoName,
+                    workspaces: widget.config?.workspaces ?? const [],
+                    onBind: _bindRepo,
+                    onClear: _clearRepo,
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.dns_rounded,
+                    label:
+                        (_current.workspaceName ?? '').isNotEmpty &&
+                            (_current.repoName ?? '').isNotEmpty
+                        ? '${_current.workspaceName} / ${_current.repoName}'
+                        : '未绑定库',
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  GroupControl(
+                    groupName: _current.groupName,
+                    existingGroups: widget.groups,
+                    onSelect: _setGroup,
+                    onClear: _clearGroup,
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.folder_outlined,
+                    label: (_current.groupName ?? '').isEmpty
+                        ? '未分组'
+                        : _current.groupName!,
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                if (_propertyMutating) ...[
+                  _dot(),
+                  const SizedBox(
+                    width: 13,
+                    height: 13,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+        if ((_current.assigneeIdentity ?? '').isNotEmpty ||
+            _hasSessionBinding) ...[
+          const SizedBox(height: 8),
+          _assigneeRow(),
+        ],
+        const SizedBox(height: 4),
+        const Divider(height: 20),
+        _body(),
+      ],
+    ),
+  );
 
   // _assigneeRow shows who a todo is assigned to plus, when there's a
   // session binding to try, the "打开/恢复会话" button — jumps to the live
   // bus session if it's still around, else respawns from the permanent
   // resume trio (see _openOrResumeSession).
   Widget _assigneeRow() => Row(
-        children: [
-          const Icon(Icons.person_outline_rounded, size: 14, color: CcColors.muted),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '指派给 ${_assigneeLabel ?? "未知"}',
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, color: CcColors.muted),
-            ),
+    children: [
+      const Icon(Icons.person_outline_rounded, size: 14, color: CcColors.muted),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Tooltip(
+          message: _current.assigneeTooltip ?? _assigneeLabel ?? '未知',
+          child: Text(
+            '指派给 ${_assigneeLabel ?? "未知"}',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, color: CcColors.muted),
           ),
-          if (_hasSessionBinding &&
-              widget.overviewStore != null &&
-              widget.config != null)
-            TextButton.icon(
-              onPressed: _resumingSession ? null : _openOrResumeSession,
-              icon: _resumingSession
-                  ? const SizedBox(
-                      width: 13,
-                      height: 13,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.play_circle_outline_rounded, size: 15),
-              label: const Text('打开/恢复会话', style: TextStyle(fontSize: 12)),
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-              ),
-            ),
-        ],
-      );
+        ),
+      ),
+      if (_hasSessionBinding &&
+          widget.overviewStore != null &&
+          widget.config != null)
+        TextButton.icon(
+          onPressed: _resumingSession ? null : _openOrResumeSession,
+          icon: _resumingSession
+              ? const SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.play_circle_outline_rounded, size: 15),
+          label: const Text('打开/恢复会话', style: TextStyle(fontSize: 12)),
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+          ),
+        ),
+    ],
+  );
 
   // AnimatedSize softens the height jump between the two states — inherent
   // whenever the body has an inline image, since the editor collapses it
@@ -683,153 +1004,228 @@ class TodoDetailViewState extends State<TodoDetailView> {
   // string means there's no shared layout between "image" and "image
   // reference text" to animate between, only the container size).
   Widget _body() => AnimatedSize(
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOut,
-        alignment: Alignment.topLeft,
-        child: _bodyEditing
-            ? MarkdownLiteEditor(
-                controller: _bodyCtl,
-                focusNode: _bodyFocus,
-                client: _client,
-                todoId: _id,
-                hintText: '添加描述…支持 # 标题 / - 列表 / **加粗**',
-                onChanged: _onBodyChanged,
-                autofocus: true,
-                minLines: 4,
-                maxLines: 14,
-              )
-            : GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => setState(() => _bodyEditing = true),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 88),
-                  child: Align(
-                    alignment: Alignment.topLeft,
-                    child: TodoBodyView(
-                      client: _client,
-                      todoId: _id,
-                      bodyMd: _bodyCtl.text,
-                      attachments: _current.attachments,
-                    ),
-                  ),
+    duration: const Duration(milliseconds: 150),
+    curve: Curves.easeOut,
+    alignment: Alignment.topLeft,
+    child: _bodyEditing && _access.canEdit
+        ? MarkdownLiteEditor(
+            controller: _bodyCtl,
+            focusNode: _bodyFocus,
+            client: _client,
+            todoId: _id,
+            hintText: '添加描述…支持 # 标题 / - 列表 / **加粗**',
+            onChanged: _onBodyChanged,
+            autofocus: true,
+            minLines: 4,
+            maxLines: 14,
+          )
+        : GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _access.canEdit
+                ? () => setState(() => _bodyEditing = true)
+                : null,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 88),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: TodoBodyView(
+                  client: _client,
+                  todoId: _id,
+                  bodyMd: _bodyCtl.text,
+                  attachments: _current.attachments,
                 ),
-              ),
-      );
-
-  Widget _dot() => Container(
-        width: 3,
-        height: 3,
-        margin: const EdgeInsets.symmetric(horizontal: 2),
-        decoration:
-            const BoxDecoration(color: CcColors.border, shape: BoxShape.circle),
-      );
-
-  Widget _commentsTab() => Column(children: [
-        Expanded(
-          child: _comments.isEmpty
-              ? centerMsg('暂无评论')
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-                  itemCount: _comments.length,
-                  itemBuilder: (_, i) {
-                    final c = _comments[i];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Text(c.authorIdentity,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600, fontSize: 12.5)),
-                            const SizedBox(width: 8),
-                            Text(relativeTime(c.createdAt),
-                                style: const TextStyle(
-                                    color: CcColors.subtle, fontSize: 11)),
-                          ]),
-                          const SizedBox(height: 3),
-                          SelectableText(c.body,
-                              style: const TextStyle(fontSize: 13.5, height: 1.45)),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-        ),
-        const Divider(height: 1),
-        Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _commentCtl,
-                minLines: 1,
-                maxLines: 4,
-                decoration:
-                    const InputDecoration(hintText: '写评论…', isDense: true),
-                onSubmitted: (_) => _postComment(),
               ),
             ),
-            IconButton(
-                onPressed: _postComment,
-                icon: const Icon(Icons.send_rounded, size: 20)),
-          ]),
-        ),
-      ]);
+          ),
+  );
 
-  Widget _attachmentsTab() {
-    final atts = _current.attachments;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Text('附件',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-        const Spacer(),
-        OutlinedButton.icon(
-          onPressed: _uploading ? null : _pickAndUploadAttachments,
-          icon: _uploading
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2))
-              : const Icon(Icons.add_rounded, size: 16),
-          label: Text(_uploading ? '上传中…' : '添加附件'),
-        ),
-      ]),
-      const SizedBox(height: 12),
-      if (atts.isEmpty && _loadingAttachments && _current.attachmentCount > 0)
-        const Center(
-            child: Padding(
-                padding: EdgeInsets.all(16),
-                child: CircularProgressIndicator(strokeWidth: 2)))
-      else if (atts.isEmpty)
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
-          child: Text('暂无附件', style: TextStyle(color: CcColors.muted)),
-        )
-      else
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: atts.map((a) => _attachmentTile(a)).toList(),
-        ),
-    ]);
-  }
+  Widget _dot() => Container(
+    width: 3,
+    height: 3,
+    margin: const EdgeInsets.symmetric(horizontal: 2),
+    decoration: const BoxDecoration(
+      color: CcColors.border,
+      shape: BoxShape.circle,
+    ),
+  );
 
-  Widget _attachmentTile(TodoAttachment a) => Column(
+  Widget _readOnlyPill({
+    required IconData icon,
+    required String label,
+    Color color = CcColors.muted,
+    required double maxWidth,
+  }) => ConstrainedBox(
+    constraints: BoxConstraints(maxWidth: maxWidth),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          TodoAttachmentThumb(client: _client, todoId: _id, attachment: a, size: 72),
-          const SizedBox(height: 4),
-          SizedBox(
-            width: 80,
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Flexible(
             child: Text(
-              a.name,
+              label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11),
+              style: TextStyle(fontSize: 12.5, color: color),
             ),
           ),
         ],
-      );
+      ),
+    ),
+  );
+
+  Widget _commentsTab() => Column(
+    children: [
+      Expanded(
+        child: _comments.isEmpty
+            ? centerMsg('暂无评论')
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+                itemCount: _comments.length,
+                itemBuilder: (_, i) {
+                  final c = _comments[i];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              c.authorIdentity,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              relativeTime(c.createdAt),
+                              style: const TextStyle(
+                                color: CcColors.subtle,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        SelectableText(
+                          c.body,
+                          style: const TextStyle(fontSize: 13.5, height: 1.45),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+      ),
+      if (_access.canComment) ...[
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _commentCtl,
+                  minLines: 1,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    hintText: '写评论…',
+                    isDense: true,
+                  ),
+                  enabled: !_commenting,
+                  onSubmitted: (_) => _postComment(),
+                ),
+              ),
+              IconButton(
+                onPressed: _commenting ? null : _postComment,
+                icon: _commenting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send_rounded, size: 20),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ],
+  );
+
+  Widget _attachmentsTab() {
+    final atts = _current.attachments;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              '附件',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            const Spacer(),
+            if (_access.canUploadAttachment)
+              OutlinedButton.icon(
+                onPressed: _uploading ? null : _pickAndUploadAttachments,
+                icon: _uploading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_rounded, size: 16),
+                label: Text(_uploading ? '上传中…' : '添加附件'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (atts.isEmpty && _loadingAttachments && _current.attachmentCount > 0)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else if (atts.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('暂无附件', style: TextStyle(color: CcColors.muted)),
+          )
+        else
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: atts.map((a) => _attachmentTile(a)).toList(),
+          ),
+      ],
+    );
+  }
+
+  Widget _attachmentTile(TodoAttachment a) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      TodoAttachmentThumb(
+        client: _client,
+        todoId: _id,
+        attachment: a,
+        size: 72,
+      ),
+      const SizedBox(height: 4),
+      SizedBox(
+        width: 80,
+        child: Text(
+          a.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 11),
+        ),
+      ),
+    ],
+  );
 }

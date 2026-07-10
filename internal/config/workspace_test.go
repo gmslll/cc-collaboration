@@ -88,6 +88,32 @@ func TestListProjects(t *testing.T) {
 	}
 }
 
+func TestWorkspaceProjectIDForPath(t *testing.T) {
+	root := t.TempDir()
+	api := filepath.Join(root, "api")
+	web := filepath.Join(root, "web")
+	mkRepo(t, api)
+	mkRepo(t, web)
+	u := &User{Workspaces: []Workspace{{
+		Name: "demo",
+		Path: root,
+		Projects: []Project{
+			{Name: "api", Path: api, ProjectID: "relay-api"},
+			{Name: "web", Path: web},
+		},
+	}}}
+
+	if got := WorkspaceProjectIDForPath(u, filepath.Join(api, "internal", "server.go")); got != "relay-api" {
+		t.Fatalf("api project id = %q, want relay-api", got)
+	}
+	if got := WorkspaceProjectIDForPath(u, filepath.Join(web, "src")); got != "" {
+		t.Fatalf("web project id = %q, want empty", got)
+	}
+	if got := WorkspaceProjectIDForPath(u, filepath.Join(root, "outside")); got != "" {
+		t.Fatalf("outside project id = %q, want empty", got)
+	}
+}
+
 func TestBuildLaunchCommand(t *testing.T) {
 	root := "/ws"
 	tests := []struct {

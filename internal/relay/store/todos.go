@@ -16,7 +16,9 @@ import (
 // contract calls for (avoids an N+1 join from list views). Every query
 // using it must alias the todos table "t".
 const todoColumns = `t.id, t.project_id, t.owner_identity, t.title, t.body_md, t.status, t.priority,
-       t.assignee_identity, t.assignee_session_id, t.assignee_session_label,
+       t.assignee_identity,
+       COALESCE((SELECT u.display_name FROM users u WHERE u.identity = t.assignee_identity AND u.disabled = 0), '') AS assignee_display_name,
+       t.assignee_session_id, t.assignee_session_label,
        t.assignee_agent_session_id, t.assignee_workdir, t.assignee_agent_kind,
        t.workspace_name, t.repo_name, t.recurrence, t.group_name,
        t.due_at, t.next_occurrence_at, t.created_at, t.updated_at, t.completed_at,
@@ -34,7 +36,7 @@ func scanTodoRow(row scanner) (todoschema.Todo, error) {
 	)
 	if err := row.Scan(
 		&t.ID, &projectID, &t.OwnerIdentity, &t.Title, &t.BodyMD, &t.Status, &t.Priority,
-		&t.AssigneeIdentity, &t.AssigneeSessionID, &t.AssigneeSessionLabel,
+		&t.AssigneeIdentity, &t.AssigneeDisplayName, &t.AssigneeSessionID, &t.AssigneeSessionLabel,
 		&t.AssigneeAgentSessionID, &t.AssigneeWorkdir, &t.AssigneeAgentKind,
 		&t.WorkspaceName, &t.RepoName, &t.Recurrence, &t.GroupName,
 		&dueMS, &nextMS, &createdMS, &updatedMS, &completedMS,
@@ -78,10 +80,65 @@ func timeToNullMS(t *time.Time) sql.NullInt64 {
 	return sql.NullInt64{Int64: t.UnixMilli(), Valid: true}
 }
 
+func normalizeTodoForWrite(t *todoschema.Todo) {
+	t.ID = strings.TrimSpace(t.ID)
+	t.ProjectID = strings.TrimSpace(t.ProjectID)
+	t.OwnerIdentity = strings.TrimSpace(t.OwnerIdentity)
+	t.Title = strings.TrimSpace(t.Title)
+	t.Status = todoschema.Status(strings.TrimSpace(string(t.Status)))
+	t.Priority = todoschema.Priority(strings.TrimSpace(string(t.Priority)))
+	t.Recurrence = todoschema.Recurrence(strings.TrimSpace(string(t.Recurrence)))
+	t.AssigneeIdentity = strings.TrimSpace(t.AssigneeIdentity)
+	t.AssigneeSessionID = strings.TrimSpace(t.AssigneeSessionID)
+	t.AssigneeSessionLabel = strings.TrimSpace(t.AssigneeSessionLabel)
+	t.AssigneeAgentSessionID = strings.TrimSpace(t.AssigneeAgentSessionID)
+	t.AssigneeWorkdir = strings.TrimSpace(t.AssigneeWorkdir)
+	t.AssigneeAgentKind = strings.TrimSpace(t.AssigneeAgentKind)
+	t.WorkspaceName = strings.TrimSpace(t.WorkspaceName)
+	t.RepoName = strings.TrimSpace(t.RepoName)
+	t.GroupName = strings.TrimSpace(t.GroupName)
+	t.SourceRef = strings.TrimSpace(t.SourceRef)
+	t.SourceURL = strings.TrimSpace(t.SourceURL)
+	t.SourceProvider = strings.TrimSpace(t.SourceProvider)
+	t.SourceTeamKey = strings.TrimSpace(t.SourceTeamKey)
+	t.SourceProjectID = strings.TrimSpace(t.SourceProjectID)
+	t.SourceUpdatedAt = strings.TrimSpace(t.SourceUpdatedAt)
+	t.SourceAssigneeName = strings.TrimSpace(t.SourceAssigneeName)
+	t.SourceAssigneeAvatarURL = strings.TrimSpace(t.SourceAssigneeAvatarURL)
+}
+
+func trimStringPtr(p *string) {
+	if p != nil {
+		*p = strings.TrimSpace(*p)
+	}
+}
+
+func normalizeTodoPatchForWrite(p *TodoPatch) {
+	trimStringPtr(p.Title)
+	trimStringPtr(p.WorkspaceName)
+	trimStringPtr(p.RepoName)
+	trimStringPtr(p.GroupName)
+	trimStringPtr(p.SourceProvider)
+	trimStringPtr(p.SourceTeamKey)
+	trimStringPtr(p.SourceProjectID)
+	trimStringPtr(p.SourceUpdatedAt)
+	trimStringPtr(p.SourceAssigneeName)
+	trimStringPtr(p.SourceAssigneeAvatarURL)
+	if p.Priority != nil {
+		v := todoschema.Priority(strings.TrimSpace(string(*p.Priority)))
+		p.Priority = &v
+	}
+	if p.Recurrence != nil {
+		v := todoschema.Recurrence(strings.TrimSpace(string(*p.Recurrence)))
+		p.Recurrence = &v
+	}
+}
+
 // getTodoRow reads a todo by id with no authorization check — internal
 // helper for the exported methods below, each of which does its own
 // permission check via todoPermission before or after calling this.
 func (s *Store) getTodoRow(ctx context.Context, id string) (todoschema.Todo, error) {
+	id = strings.TrimSpace(id)
 	t, err := scanTodoRow(s.db.QueryRowContext(ctx, `SELECT `+todoColumns+` FROM todos t WHERE t.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return todoschema.Todo{}, ErrNotFound
@@ -105,20 +162,30 @@ type todoPerm struct {
 func fullTodoPerm() todoPerm { return todoPerm{view: true, comment: true, edit: true, del: true} }
 
 // todoPermission derives callerIdentity's access to t. Mirrors the project
-// role semantics already documented on RoleOwner/RoleMember/RoleViewer in
-// projects.go ("member can view + comment; viewer is read-only"), extended
-// with two decisions specific to todos (see pkg/todoschema/todo.go and the
+// effective project role semantics already documented on RoleOwner/RoleMember/
+// RoleViewer/RoleAdmin in projects.go ("member can view + comment; viewer is
+// read-only"), extended with two decisions specific to todos (see
+// pkg/todoschema/todo.go and the
 // Phase 0 handoff note for the full rationale):
 //   - "viewer is read-only" is taken literally: a viewer can list/view a
 //     team todo but cannot comment or edit it, let alone delete it.
-//   - delete is stricter than edit: only the project's owner role (or a
-//     personal todo's own owner_identity) may delete; member can edit but
+//   - delete is stricter than edit: only the project's owner/admin role (or
+//     a personal todo's own owner_identity) may delete; member can edit but
 //     not delete, so team members can't casually wipe each other's todos.
 //
-// A global admin (users.is_admin) always gets full access, matching the
-// existing "Global admin supersedes all of these" note on project roles.
+// A global admin (users.is_admin) always gets full access.
 func (s *Store) todoPermission(ctx context.Context, t todoschema.Todo, identity string) (todoPerm, error) {
+	identity = strings.TrimSpace(identity)
+	t.ProjectID = strings.TrimSpace(t.ProjectID)
+	t.OwnerIdentity = strings.TrimSpace(t.OwnerIdentity)
 	if identity == "" {
+		return todoPerm{}, nil
+	}
+	active, err := s.UserActive(ctx, identity)
+	if err != nil {
+		return todoPerm{}, err
+	}
+	if !active {
 		return todoPerm{}, nil
 	}
 	isAdmin, err := s.UserIsAdmin(ctx, identity)
@@ -134,7 +201,7 @@ func (s *Store) todoPermission(ctx context.Context, t todoschema.Todo, identity 
 		}
 		return todoPerm{}, nil
 	}
-	role, ok, err := s.MemberRole(ctx, t.ProjectID, identity)
+	role, ok, err := s.EffectiveProjectRole(ctx, t.ProjectID, identity)
 	if err != nil {
 		return todoPerm{}, err
 	}
@@ -142,6 +209,8 @@ func (s *Store) todoPermission(ctx context.Context, t todoschema.Todo, identity 
 		return todoPerm{}, nil
 	}
 	switch role {
+	case RoleAdmin:
+		return fullTodoPerm(), nil
 	case RoleOwner:
 		return fullTodoPerm(), nil
 	case RoleMember:
@@ -161,11 +230,15 @@ func forbidTodo(action, identity, id string) error {
 // caller left them zero-valued (all three Phase 1+ entry points — HTTP
 // handler, MCP tool, CLI — build a Todo by hand, so defaulting here avoids
 // triplicating that logic). t.OwnerIdentity is treated as the creator: for
-// a team todo (ProjectID set) they must already be an owner/member of that
-// project (not viewer, matching todoPermission's edit tier); personal
-// todos (ProjectID empty) have no such check since owner_identity IS the
-// access boundary.
+// a team todo (ProjectID set) they must already be able to edit that project
+// (project owner/member or team owner/admin; not viewer, matching
+// todoPermission's edit tier). Disabled owners cannot create either personal
+// or team todos; missing DB users remain allowed for legacy tokens.json users.
 func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
+	if t == nil {
+		return ErrInvalid
+	}
+	normalizeTodoForWrite(t)
 	if t.ID == "" {
 		return fmt.Errorf("create todo: id required")
 	}
@@ -174,6 +247,13 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 	}
 	if t.Title == "" {
 		return fmt.Errorf("create todo: title required")
+	}
+	active, err := s.UserActive(ctx, t.OwnerIdentity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return forbidTodo("create todos for disabled identity", t.OwnerIdentity, t.ID)
 	}
 	if t.Status == "" {
 		t.Status = todoschema.StatusTodo
@@ -201,7 +281,7 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 			return err
 		}
 		if !isAdmin {
-			role, ok, err := s.MemberRole(ctx, t.ProjectID, t.OwnerIdentity)
+			role, ok, err := s.EffectiveProjectRole(ctx, t.ProjectID, t.OwnerIdentity)
 			if err != nil {
 				return err
 			}
@@ -210,15 +290,29 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 			}
 		}
 	}
-	_, err := s.db.ExecContext(ctx,
+	if t.AssigneeIdentity == "" {
+		t.AssigneeSessionID = ""
+		t.AssigneeSessionLabel = ""
+		t.AssigneeAgentSessionID = ""
+		t.AssigneeWorkdir = ""
+		t.AssigneeAgentKind = ""
+	}
+	if err := s.requireTodoAssignableTo(ctx, *t, t.AssigneeIdentity); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO todos(id, project_id, owner_identity, title, body_md, status, priority,
-			assignee_identity, assignee_session_id, assignee_session_label, workspace_name, repo_name, recurrence, group_name,
+			assignee_identity, assignee_session_id, assignee_session_label,
+			assignee_agent_session_id, assignee_workdir, assignee_agent_kind,
+			workspace_name, repo_name, recurrence, group_name,
 			due_at, next_occurrence_at, created_at, updated_at, completed_at,
 			source_ref, source_url, source_provider, source_team_key, source_project_id,
 			source_updated_at, source_assignee_name, source_assignee_avatar_url)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, nullableString(t.ProjectID), t.OwnerIdentity, t.Title, t.BodyMD, string(t.Status), string(t.Priority),
-		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel, t.WorkspaceName, t.RepoName, string(t.Recurrence), t.GroupName,
+		t.AssigneeIdentity, t.AssigneeSessionID, t.AssigneeSessionLabel,
+		t.AssigneeAgentSessionID, t.AssigneeWorkdir, t.AssigneeAgentKind,
+		t.WorkspaceName, t.RepoName, string(t.Recurrence), t.GroupName,
 		timeToNullMS(t.DueAt), timeToNullMS(t.NextOccurrenceAt), t.CreatedAt.UnixMilli(), t.UpdatedAt.UnixMilli(), timeToNullMS(t.CompletedAt),
 		t.SourceRef, t.SourceURL, t.SourceProvider, t.SourceTeamKey, t.SourceProjectID,
 		t.SourceUpdatedAt, t.SourceAssigneeName, t.SourceAssigneeAvatarURL,
@@ -231,6 +325,8 @@ func (s *Store) CreateTodo(ctx context.Context, t *todoschema.Todo) error {
 // field comment in pkg/todoschema/todo.go). ErrNotFound if the row doesn't
 // exist; ErrForbidden if it exists but callerIdentity can't view it.
 func (s *Store) GetTodo(ctx context.Context, id, callerIdentity string) (todoschema.Todo, error) {
+	id = strings.TrimSpace(id)
+	callerIdentity = strings.TrimSpace(callerIdentity)
 	t, err := s.getTodoRow(ctx, id)
 	if err != nil {
 		return todoschema.Todo{}, err
@@ -251,6 +347,9 @@ func (s *Store) GetTodo(ctx context.Context, id, callerIdentity string) (todosch
 // keeps source_ref idempotency scoped to where the import writes; source_ref
 // is an external identifier, not a globally-owned unique key.
 func (s *Store) FindTodoBySourceRef(ctx context.Context, callerIdentity, sourceRef, projectID string) (todoschema.Todo, bool, error) {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	sourceRef = strings.TrimSpace(sourceRef)
+	projectID = strings.TrimSpace(projectID)
 	if sourceRef == "" {
 		return todoschema.Todo{}, false, nil
 	}
@@ -319,6 +418,18 @@ type TodoListFilter struct {
 // (each branch only ever selects rows callerIdentity is entitled to), not
 // by a per-row permission check, so it stays a single query.
 func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoListFilter) ([]todoschema.Todo, error) {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	f.Scope = strings.TrimSpace(f.Scope)
+	f.ProjectID = strings.TrimSpace(f.ProjectID)
+	f.Status = strings.TrimSpace(f.Status)
+	f.GroupName = strings.TrimSpace(f.GroupName)
+	active, err := s.UserActive(ctx, callerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, forbidTodo("list", callerIdentity, "disabled identity")
+	}
 	limit := f.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 200
@@ -336,7 +447,7 @@ func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoList
 				return nil, err
 			}
 			if !isAdmin {
-				_, ok, err := s.MemberRole(ctx, f.ProjectID, callerIdentity)
+				_, ok, err := s.EffectiveProjectRole(ctx, f.ProjectID, callerIdentity)
 				if err != nil {
 					return nil, err
 				}
@@ -348,13 +459,22 @@ func (s *Store) ListTodos(ctx context.Context, callerIdentity string, f TodoList
 			args = append(args, f.ProjectID)
 		} else {
 			query = `SELECT ` + todoColumns + ` FROM todos t
-			           JOIN project_members pm ON pm.project_id = t.project_id
-			          WHERE pm.identity = ?`
-			args = append(args, callerIdentity)
+			           JOIN projects p ON p.id = t.project_id
+			           LEFT JOIN project_members pm ON pm.project_id = t.project_id AND pm.identity = ?
+			           LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+			          WHERE pm.identity IS NOT NULL OR om.role IN (?, ?)`
+			args = append(args, callerIdentity, callerIdentity, OrgRoleOwner, OrgRoleAdmin)
 		}
 	case "assigned":
-		query = `SELECT ` + todoColumns + ` FROM todos t WHERE t.assignee_identity = ?`
-		args = append(args, callerIdentity)
+		query = `SELECT ` + todoColumns + ` FROM todos t
+		           LEFT JOIN projects p ON p.id = t.project_id
+		           LEFT JOIN project_members pm ON pm.project_id = t.project_id AND pm.identity = ?
+		           LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+		          WHERE t.assignee_identity = ?
+		            AND ((t.project_id IS NULL AND t.owner_identity = ?)
+		              OR pm.identity IS NOT NULL
+		              OR om.role IN (?, ?))`
+		args = append(args, callerIdentity, callerIdentity, callerIdentity, callerIdentity, OrgRoleOwner, OrgRoleAdmin)
 	case "all":
 		isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
 		if err != nil {
@@ -421,6 +541,9 @@ type OptionalTime struct {
 
 // UpdateTodoFields applies patch to todo id, requiring edit access.
 func (s *Store) UpdateTodoFields(ctx context.Context, id, callerIdentity string, patch TodoPatch) (todoschema.Todo, error) {
+	id = strings.TrimSpace(id)
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	normalizeTodoPatchForWrite(&patch)
 	t, err := s.getTodoRow(ctx, id)
 	if err != nil {
 		return todoschema.Todo{}, err
@@ -518,6 +641,9 @@ func (s *Store) UpdateTodoFields(ctx context.Context, id, callerIdentity string,
 // internal/relay/todo_recurrence.go in Phase 1, is what actually acts on
 // next_occurrence_at while the todo stays done).
 func (s *Store) SetTodoStatus(ctx context.Context, id, callerIdentity string, status todoschema.Status) (todoschema.Todo, error) {
+	id = strings.TrimSpace(id)
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	status = todoschema.Status(strings.TrimSpace(string(status)))
 	if !todoschema.ValidStatus(status) {
 		return todoschema.Todo{}, fmt.Errorf("set todo status: invalid status %q", status)
 	}
@@ -566,6 +692,21 @@ func (s *Store) SetTodoStatus(ctx context.Context, id, callerIdentity string, st
 // own to nudge toward — matching Linear's own model, where assignee and
 // state are unrelated fields.
 func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIdentity, assigneeSessionID, assigneeSessionLabel, assigneeAgentSessionID, assigneeWorkdir, assigneeAgentKind string) (todoschema.Todo, error) {
+	id = strings.TrimSpace(id)
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	assigneeIdentity = strings.TrimSpace(assigneeIdentity)
+	assigneeSessionID = strings.TrimSpace(assigneeSessionID)
+	assigneeSessionLabel = strings.TrimSpace(assigneeSessionLabel)
+	assigneeAgentSessionID = strings.TrimSpace(assigneeAgentSessionID)
+	assigneeWorkdir = strings.TrimSpace(assigneeWorkdir)
+	assigneeAgentKind = strings.TrimSpace(assigneeAgentKind)
+	if assigneeIdentity == "" {
+		assigneeSessionID = ""
+		assigneeSessionLabel = ""
+		assigneeAgentSessionID = ""
+		assigneeWorkdir = ""
+		assigneeAgentKind = ""
+	}
 	t, err := s.getTodoRow(ctx, id)
 	if err != nil {
 		return todoschema.Todo{}, err
@@ -576,6 +717,9 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 	}
 	if !perm.edit {
 		return todoschema.Todo{}, forbidTodo("assign", callerIdentity, id)
+	}
+	if err := s.requireTodoAssignableTo(ctx, t, assigneeIdentity); err != nil {
+		return todoschema.Todo{}, err
 	}
 	now := time.Now().UTC()
 	if _, err := s.db.ExecContext(ctx,
@@ -595,9 +739,39 @@ func (s *Store) AssignTodo(ctx context.Context, id, callerIdentity, assigneeIden
 	return s.withAttachments(ctx, updated)
 }
 
+func (s *Store) requireTodoAssignableTo(ctx context.Context, t todoschema.Todo, assigneeIdentity string) error {
+	assigneeIdentity = strings.TrimSpace(assigneeIdentity)
+	t.ProjectID = strings.TrimSpace(t.ProjectID)
+	t.OwnerIdentity = strings.TrimSpace(t.OwnerIdentity)
+	if assigneeIdentity == "" {
+		return nil
+	}
+	active, err := s.UserActive(ctx, assigneeIdentity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return forbidTodo("assign todo to disabled identity", assigneeIdentity, t.ID)
+	}
+	if t.ProjectID == "" {
+		if assigneeIdentity == t.OwnerIdentity {
+			return nil
+		}
+		return forbidTodo("assign personal todo to", assigneeIdentity, t.ID)
+	}
+	if _, ok, err := s.EffectiveProjectRole(ctx, t.ProjectID, assigneeIdentity); err != nil {
+		return err
+	} else if ok {
+		return nil
+	}
+	return forbidTodo("assign project todo to", assigneeIdentity, t.ProjectID)
+}
+
 // DeleteTodo removes todo id, requiring delete access (stricter than edit
 // — see todoPermission).
 func (s *Store) DeleteTodo(ctx context.Context, id, callerIdentity string) error {
+	id = strings.TrimSpace(id)
+	callerIdentity = strings.TrimSpace(callerIdentity)
 	t, err := s.getTodoRow(ctx, id)
 	if err != nil {
 		return err
@@ -633,6 +807,7 @@ func (s *Store) DueRecurringTodos(ctx context.Context, now time.Time) ([]todosch
 // DueRecurringTodos and this call) is a harmless no-op rather than
 // clobbering their change; system-level like DueRecurringTodos.
 func (s *Store) ResetRecurringTodo(ctx context.Context, id string, now time.Time) (todoschema.Todo, error) {
+	id = strings.TrimSpace(id)
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE todos SET status = ?, completed_at = NULL, next_occurrence_at = NULL, updated_at = ?
 		  WHERE id = ? AND status = ?`,
@@ -644,9 +819,11 @@ func (s *Store) ResetRecurringTodo(ctx context.Context, id string, now time.Time
 }
 
 // requireTodoProjectMember checks that callerIdentity has at least view
-// access to project's todos (any member role including viewer, or global
-// admin) — the same tier ListTodos' scope="project" branch already uses.
+// access to project's todos (any direct project member, team owner/admin, or
+// global admin) — the same tier ListTodos' scope="project" branch already uses.
 func (s *Store) requireTodoProjectMember(ctx context.Context, callerIdentity, projectID string) error {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	projectID = strings.TrimSpace(projectID)
 	isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
 	if err != nil {
 		return err
@@ -654,7 +831,7 @@ func (s *Store) requireTodoProjectMember(ctx context.Context, callerIdentity, pr
 	if isAdmin {
 		return nil
 	}
-	_, ok, err := s.MemberRole(ctx, projectID, callerIdentity)
+	_, ok, err := s.EffectiveProjectRole(ctx, projectID, callerIdentity)
 	if err != nil {
 		return err
 	}
@@ -665,9 +842,11 @@ func (s *Store) requireTodoProjectMember(ctx context.Context, callerIdentity, pr
 }
 
 // requireTodoProjectEditor checks that callerIdentity can edit todos in
-// project (owner/member, not viewer, or global admin) — the same tier
-// CreateTodo requires for creating a team todo.
+// project (project owner/member, team owner/admin, not viewer, or global
+// admin) — the same tier CreateTodo requires for creating a team todo.
 func (s *Store) requireTodoProjectEditor(ctx context.Context, callerIdentity, projectID string) error {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	projectID = strings.TrimSpace(projectID)
 	isAdmin, err := s.UserIsAdmin(ctx, callerIdentity)
 	if err != nil {
 		return err
@@ -675,12 +854,24 @@ func (s *Store) requireTodoProjectEditor(ctx context.Context, callerIdentity, pr
 	if isAdmin {
 		return nil
 	}
-	role, ok, err := s.MemberRole(ctx, projectID, callerIdentity)
+	role, ok, err := s.EffectiveProjectRole(ctx, projectID, callerIdentity)
 	if err != nil {
 		return err
 	}
 	if !ok || role == RoleViewer {
 		return forbidTodo("edit todo groups in", callerIdentity, projectID)
+	}
+	return nil
+}
+
+func (s *Store) requireTodoPersonalOwnerActive(ctx context.Context, callerIdentity string) error {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	active, err := s.UserActive(ctx, callerIdentity)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return forbidTodo("use personal todo groups as", callerIdentity, "disabled identity")
 	}
 	return nil
 }
@@ -692,9 +883,14 @@ func (s *Store) requireTodoProjectEditor(ctx context.Context, callerIdentity, pr
 // branch). Unlike ListTodos there's no "union of every project" mode: a
 // group name is only meaningful within the one scope it was set in.
 func (s *Store) ListTodoGroups(ctx context.Context, callerIdentity, projectID string) ([]string, error) {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	projectID = strings.TrimSpace(projectID)
 	var rows *sql.Rows
 	var err error
 	if projectID == "" {
+		if err := s.requireTodoPersonalOwnerActive(ctx, callerIdentity); err != nil {
+			return nil, err
+		}
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT DISTINCT group_name FROM todos WHERE project_id IS NULL AND owner_identity = ? AND group_name != '' ORDER BY group_name`,
 			callerIdentity)
@@ -724,7 +920,14 @@ func (s *Store) ListTodoGroups(ctx context.Context, callerIdentity, projectID st
 // pkg/todoschema.Todo.GroupName); this is only for relabeling one that
 // already has todos in it.
 func (s *Store) RenameTodoGroup(ctx context.Context, callerIdentity, projectID, oldName, newName string) error {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	projectID = strings.TrimSpace(projectID)
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
 	if projectID == "" {
+		if err := s.requireTodoPersonalOwnerActive(ctx, callerIdentity); err != nil {
+			return err
+		}
 		_, err := s.db.ExecContext(ctx,
 			`UPDATE todos SET group_name = ? WHERE project_id IS NULL AND owner_identity = ? AND group_name = ?`,
 			newName, callerIdentity, oldName)
@@ -743,7 +946,13 @@ func (s *Store) RenameTodoGroup(ctx context.Context, callerIdentity, projectID, 
 // currently in name, without deleting the todos themselves. Same
 // scoping/permission tier as RenameTodoGroup.
 func (s *Store) ClearTodoGroup(ctx context.Context, callerIdentity, projectID, name string) error {
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	projectID = strings.TrimSpace(projectID)
+	name = strings.TrimSpace(name)
 	if projectID == "" {
+		if err := s.requireTodoPersonalOwnerActive(ctx, callerIdentity); err != nil {
+			return err
+		}
 		_, err := s.db.ExecContext(ctx,
 			`UPDATE todos SET group_name = '' WHERE project_id IS NULL AND owner_identity = ? AND group_name = ?`,
 			callerIdentity, name)
@@ -762,6 +971,8 @@ func (s *Store) ClearTodoGroup(ctx context.Context, callerIdentity, projectID, n
 // (view+comment tier — team viewers are excluded, matching "viewer is
 // read-only").
 func (s *Store) InsertTodoComment(ctx context.Context, todoID, author, body string) (todoschema.Comment, error) {
+	todoID = strings.TrimSpace(todoID)
+	author = strings.TrimSpace(author)
 	t, err := s.getTodoRow(ctx, todoID)
 	if err != nil {
 		return todoschema.Comment{}, err
@@ -788,6 +999,8 @@ func (s *Store) InsertTodoComment(ctx context.Context, todoID, author, body stri
 // ListTodoComments returns every comment on todo id, oldest-first,
 // requiring view access.
 func (s *Store) ListTodoComments(ctx context.Context, todoID, callerIdentity string) ([]todoschema.Comment, error) {
+	todoID = strings.TrimSpace(todoID)
+	callerIdentity = strings.TrimSpace(callerIdentity)
 	t, err := s.getTodoRow(ctx, todoID)
 	if err != nil {
 		return nil, err
@@ -822,6 +1035,9 @@ func (s *Store) ListTodoComments(ctx context.Context, todoID, callerIdentity str
 // requiring edit access. Mirrors Store.PutAttachment's upsert-by-name
 // semantics exactly.
 func (s *Store) PutTodoAttachment(ctx context.Context, todoID, callerIdentity, name, sha256Hex string, content []byte) error {
+	todoID = strings.TrimSpace(todoID)
+	callerIdentity = strings.TrimSpace(callerIdentity)
+	sha256Hex = strings.TrimSpace(sha256Hex)
 	t, err := s.getTodoRow(ctx, todoID)
 	if err != nil {
 		return err
@@ -849,6 +1065,8 @@ func (s *Store) PutTodoAttachment(ctx context.Context, todoID, callerIdentity, n
 // GetTodoAttachment returns the raw bytes plus sha256/size for a todo
 // attachment, requiring view access. ErrNotFound if no such attachment.
 func (s *Store) GetTodoAttachment(ctx context.Context, todoID, callerIdentity, name string) ([]byte, string, int, error) {
+	todoID = strings.TrimSpace(todoID)
+	callerIdentity = strings.TrimSpace(callerIdentity)
 	t, err := s.getTodoRow(ctx, todoID)
 	if err != nil {
 		return nil, "", 0, err
@@ -879,6 +1097,8 @@ func (s *Store) GetTodoAttachment(ctx context.Context, todoID, callerIdentity, n
 // ListTodoAttachments returns attachment metadata (no content bytes) for
 // todo id, requiring view access.
 func (s *Store) ListTodoAttachments(ctx context.Context, todoID, callerIdentity string) ([]todoschema.Attachment, error) {
+	todoID = strings.TrimSpace(todoID)
+	callerIdentity = strings.TrimSpace(callerIdentity)
 	t, err := s.getTodoRow(ctx, todoID)
 	if err != nil {
 		return nil, err
@@ -897,6 +1117,7 @@ func (s *Store) ListTodoAttachments(ctx context.Context, todoID, callerIdentity 
 // reused by GetTodo (which has already checked view access on the parent
 // todo by the time it needs the attachment list).
 func (s *Store) listTodoAttachmentsRaw(ctx context.Context, todoID string) ([]todoschema.Attachment, error) {
+	todoID = strings.TrimSpace(todoID)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT name, sha256, size, created_at FROM todo_attachments WHERE todo_id = ? ORDER BY created_at ASC`,
 		todoID,

@@ -20,10 +20,10 @@ const recurrenceLabels = {
 };
 
 Color priorityColor(String p) => switch (p) {
-      'high' => CcColors.danger,
-      'low' => CcColors.subtle,
-      _ => CcColors.muted,
-    };
+  'high' => CcColors.danger,
+  'low' => CcColors.subtle,
+  _ => CcColors.muted,
+};
 
 // todoStatusColor is the single source of truth for status dot/pill colors —
 // shared by the board (todos_page.dart), the detail view's StatusControl
@@ -35,20 +35,28 @@ Color priorityColor(String p) => switch (p) {
 // duplicate gets a distinct violet since it isn't really a pipeline stage at
 // all, just a terminal "merged into another issue" marker.
 Color todoStatusColor(TodoStatus s) => switch (s) {
-      TodoStatus.triage => CcColors.warning,
-      TodoStatus.backlog => CcColors.borderSoft,
-      TodoStatus.todo => CcColors.muted,
-      TodoStatus.inProgress => CcColors.accent,
-      TodoStatus.inReview => CcColors.info,
-      TodoStatus.done => CcColors.ok,
-      TodoStatus.canceled => CcColors.subtle,
-      TodoStatus.duplicate => CcColors.violet,
-    };
+  TodoStatus.triage => CcColors.warning,
+  TodoStatus.backlog => CcColors.borderSoft,
+  TodoStatus.todo => CcColors.muted,
+  TodoStatus.inProgress => CcColors.accent,
+  TodoStatus.inReview => CcColors.info,
+  TodoStatus.done => CcColors.ok,
+  TodoStatus.canceled => CcColors.subtle,
+  TodoStatus.duplicate => CcColors.violet,
+};
 
 // priorityBars is Linear's priority glyph: 3 bars of increasing height,
 // filled up to the level (low=1, normal=2, high=3) in the level's color.
-Widget priorityBars(String priority, {double maxHeight = 11, double barWidth = 3}) {
-  final filled = switch (priority) { 'low' => 1, 'high' => 3, _ => 2 };
+Widget priorityBars(
+  String priority, {
+  double maxHeight = 11,
+  double barWidth = 3,
+}) {
+  final filled = switch (priority) {
+    'low' => 1,
+    'high' => 3,
+    _ => 2,
+  };
   final color = priorityColor(priority);
   final heights = [maxHeight * 0.42, maxHeight * 0.7, maxHeight];
   return Row(
@@ -76,24 +84,35 @@ Widget _pillTap({
   required GlobalKey key,
   required VoidCallback onTap,
   required Widget child,
-}) =>
-    Material(
-      key: key,
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(CcRadius.sm),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: child,
-        ),
+  bool enabled = true,
+}) => Opacity(
+  opacity: enabled ? 1 : 0.55,
+  child: Material(
+    key: key,
+    color: Colors.transparent,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+      onTap: enabled ? onTap : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: child,
       ),
-    );
+    ),
+  ),
+);
 
-Future<T?> _openBelow<T>(BuildContext context, GlobalKey key, List<PopupMenuEntry<T>> items) {
+Future<T?> _openBelow<T>(
+  BuildContext context,
+  GlobalKey key,
+  List<PopupMenuEntry<T>> items,
+) {
   final box = key.currentContext!.findRenderObject() as RenderBox;
   final pos = box.localToGlobal(Offset(0, box.size.height + 4));
-  return showMenu<T>(context: context, position: menuPosAt(context, pos), items: items);
+  return showMenu<T>(
+    context: context,
+    position: menuPosAt(context, pos),
+    items: items,
+  );
 }
 
 PopupMenuItem<T> _checkableRow<T>({
@@ -101,27 +120,36 @@ PopupMenuItem<T> _checkableRow<T>({
   required bool selected,
   required Widget leading,
   required String label,
-}) =>
-    PopupMenuItem<T>(
-      value: value,
-      height: 32,
-      child: Row(children: [
-        leading,
+}) => PopupMenuItem<T>(
+  value: value,
+  height: 32,
+  child: Row(
+    children: [
+      leading,
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+      if (selected) ...[
         const SizedBox(width: 8),
-        Text(label),
-        if (selected) ...[
-          const Spacer(),
-          const Icon(Icons.check_rounded, size: 14, color: CcColors.accentBright),
-        ],
-      ]),
-    );
+        const Icon(Icons.check_rounded, size: 14, color: CcColors.accentBright),
+      ],
+    ],
+  ),
+);
 
 class PriorityControl extends StatefulWidget {
   final String priority;
   final ValueChanged<String> onChanged;
   final bool showLabel;
-  const PriorityControl(
-      {super.key, required this.priority, required this.onChanged, this.showLabel = true});
+  final bool enabled;
+  const PriorityControl({
+    super.key,
+    required this.priority,
+    required this.onChanged,
+    this.showLabel = true,
+    this.enabled = true,
+  });
 
   @override
   State<PriorityControl> createState() => _PriorityControlState();
@@ -140,30 +168,43 @@ class _PriorityControlState extends State<PriorityControl> {
           label: priorityLabels[p]!,
         ),
     ]);
+    if (!mounted) return;
     if (v != null) widget.onChanged(v);
   }
 
   @override
   Widget build(BuildContext context) => _pillTap(
-        key: _key,
-        onTap: _open,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          priorityBars(widget.priority),
-          if (widget.showLabel) ...[
-            const SizedBox(width: 6),
-            Text(priorityLabels[widget.priority] ?? '普通',
-                style: const TextStyle(fontSize: 12.5, color: CcColors.muted)),
-          ],
-        ]),
-      );
+    key: _key,
+    onTap: _open,
+    enabled: widget.enabled,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        priorityBars(widget.priority),
+        if (widget.showLabel) ...[
+          const SizedBox(width: 6),
+          Text(
+            priorityLabels[widget.priority] ?? '普通',
+            style: const TextStyle(fontSize: 12.5, color: CcColors.muted),
+          ),
+        ],
+      ],
+    ),
+  );
 }
 
 class StatusControl extends StatefulWidget {
   final TodoStatus status;
   final Color Function(TodoStatus) colorOf;
   final ValueChanged<TodoStatus> onChanged;
-  const StatusControl(
-      {super.key, required this.status, required this.colorOf, required this.onChanged});
+  final bool enabled;
+  const StatusControl({
+    super.key,
+    required this.status,
+    required this.colorOf,
+    required this.onChanged,
+    this.enabled = true,
+  });
 
   @override
   State<StatusControl> createState() => _StatusControlState();
@@ -182,6 +223,7 @@ class _StatusControlState extends State<StatusControl> {
           label: todoStatusLabel(s),
         ),
     ]);
+    if (!mounted) return;
     if (v != null) widget.onChanged(v);
   }
 
@@ -191,12 +233,26 @@ class _StatusControlState extends State<StatusControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        statusDot(color, size: 8, glow: widget.status == TodoStatus.inProgress),
-        const SizedBox(width: 6),
-        Text(todoStatusLabel(widget.status),
-            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: color)),
-      ]),
+      enabled: widget.enabled,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          statusDot(
+            color,
+            size: 8,
+            glow: widget.status == TodoStatus.inProgress,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            todoStatusLabel(widget.status),
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -204,7 +260,13 @@ class _StatusControlState extends State<StatusControl> {
 class RecurrenceControl extends StatefulWidget {
   final String recurrence;
   final ValueChanged<String> onChanged;
-  const RecurrenceControl({super.key, required this.recurrence, required this.onChanged});
+  final bool enabled;
+  const RecurrenceControl({
+    super.key,
+    required this.recurrence,
+    required this.onChanged,
+    this.enabled = true,
+  });
 
   @override
   State<RecurrenceControl> createState() => _RecurrenceControlState();
@@ -219,10 +281,15 @@ class _RecurrenceControlState extends State<RecurrenceControl> {
         _checkableRow<String>(
           value: e.key,
           selected: e.key == widget.recurrence,
-          leading: const Icon(Icons.repeat_rounded, size: 14, color: CcColors.muted),
+          leading: const Icon(
+            Icons.repeat_rounded,
+            size: 14,
+            color: CcColors.muted,
+          ),
           label: e.value,
         ),
     ]);
+    if (!mounted) return;
     if (v != null) widget.onChanged(v);
   }
 
@@ -232,13 +299,25 @@ class _RecurrenceControlState extends State<RecurrenceControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.repeat_rounded, size: 14, color: active ? CcColors.accentBright : CcColors.subtle),
-        const SizedBox(width: 6),
-        Text(recurrenceLabels[widget.recurrence] ?? '不重复',
+      enabled: widget.enabled,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.repeat_rounded,
+            size: 14,
+            color: active ? CcColors.accentBright : CcColors.subtle,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            recurrenceLabels[widget.recurrence] ?? '不重复',
             style: TextStyle(
-                fontSize: 12.5, color: active ? CcColors.text : CcColors.subtle)),
-      ]),
+              fontSize: 12.5,
+              color: active ? CcColors.text : CcColors.subtle,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -247,41 +326,60 @@ class DueDatePill extends StatelessWidget {
   final DateTime? dueAt;
   final VoidCallback onTap;
   final VoidCallback? onClear;
-  const DueDatePill({super.key, required this.dueAt, required this.onTap, this.onClear});
+  final bool enabled;
+  const DueDatePill({
+    super.key,
+    required this.dueAt,
+    required this.onTap,
+    this.onClear,
+    this.enabled = true,
+  });
 
   @override
   Widget build(BuildContext context) {
     final due = dueAt;
     final has = due != null;
     final overdue = has && due.isBefore(DateTime.now());
-    final color = !has ? CcColors.subtle : (overdue ? CcColors.danger : CcColors.muted);
+    final color = !has
+        ? CcColors.subtle
+        : (overdue ? CcColors.danger : CcColors.muted);
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(CcRadius.sm),
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.calendar_today_rounded, size: 13, color: color),
-            const SizedBox(width: 6),
-            Text(has ? commitDate(due) : '截止日期',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.calendar_today_rounded, size: 13, color: color),
+              const SizedBox(width: 6),
+              Text(
+                has ? commitDate(due) : '截止日期',
                 style: TextStyle(
-                    fontSize: 12.5,
-                    color: color,
-                    fontWeight: has ? FontWeight.w600 : FontWeight.w400)),
-            if (has && onClear != null) ...[
-              const SizedBox(width: 2),
-              InkWell(
-                onTap: onClear,
-                borderRadius: BorderRadius.circular(10),
-                child: const Padding(
-                  padding: EdgeInsets.all(2),
-                  child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+                  fontSize: 12.5,
+                  color: color,
+                  fontWeight: has ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
+              if (has && onClear != null) ...[
+                const SizedBox(width: 2),
+                InkWell(
+                  onTap: enabled ? onClear : null,
+                  borderRadius: BorderRadius.circular(10),
+                  child: const Padding(
+                    padding: EdgeInsets.all(2),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 12,
+                      color: CcColors.subtle,
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ]),
+          ),
         ),
       ),
     );
@@ -299,6 +397,7 @@ class WorkspaceRepoControl extends StatefulWidget {
   final List<WorkspaceCfg> workspaces;
   final void Function(String workspaceName, String repoName) onBind;
   final VoidCallback onClear;
+  final bool enabled;
   const WorkspaceRepoControl({
     super.key,
     required this.workspaceName,
@@ -306,6 +405,7 @@ class WorkspaceRepoControl extends StatefulWidget {
     required this.workspaces,
     required this.onBind,
     required this.onClear,
+    this.enabled = true,
   });
 
   @override
@@ -322,7 +422,11 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
         _checkableRow<WorkspaceCfg>(
           value: w,
           selected: w.name == widget.workspaceName,
-          leading: const Icon(Icons.dns_rounded, size: 14, color: CcColors.muted),
+          leading: const Icon(
+            Icons.dns_rounded,
+            size: 14,
+            color: CcColors.muted,
+          ),
           label: w.name,
         ),
     ]);
@@ -335,41 +439,63 @@ class _WorkspaceRepoControlState extends State<WorkspaceRepoControl> {
       for (final p in ws.projects)
         _checkableRow<ProjectCfg>(
           value: p,
-          selected: ws.name == widget.workspaceName && p.name == widget.repoName,
-          leading: const Icon(Icons.source_rounded, size: 14, color: CcColors.muted),
+          selected:
+              ws.name == widget.workspaceName && p.name == widget.repoName,
+          leading: const Icon(
+            Icons.source_rounded,
+            size: 14,
+            color: CcColors.muted,
+          ),
           label: p.name,
         ),
     ]);
     if (repo == null) return;
+    if (!mounted) return;
     widget.onBind(ws.name, repo.name);
   }
 
   @override
   Widget build(BuildContext context) {
     final bound =
-        (widget.workspaceName ?? '').isNotEmpty && (widget.repoName ?? '').isNotEmpty;
+        (widget.workspaceName ?? '').isNotEmpty &&
+        (widget.repoName ?? '').isNotEmpty;
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.dns_rounded, size: 14, color: bound ? CcColors.accentBright : CcColors.subtle),
-        const SizedBox(width: 6),
-        Text(
-          bound ? '${widget.workspaceName} / ${widget.repoName}' : '未绑定库',
-          style: TextStyle(fontSize: 12.5, color: bound ? CcColors.text : CcColors.subtle),
-        ),
-        if (bound) ...[
-          const SizedBox(width: 2),
-          InkWell(
-            onTap: widget.onClear,
-            borderRadius: BorderRadius.circular(10),
-            child: const Padding(
-              padding: EdgeInsets.all(2),
-              child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+      enabled: widget.enabled,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.dns_rounded,
+            size: 14,
+            color: bound ? CcColors.accentBright : CcColors.subtle,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            bound ? '${widget.workspaceName} / ${widget.repoName}' : '未绑定库',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: bound ? CcColors.text : CcColors.subtle,
             ),
           ),
+          if (bound) ...[
+            const SizedBox(width: 2),
+            InkWell(
+              onTap: widget.enabled ? widget.onClear : null,
+              borderRadius: BorderRadius.circular(10),
+              child: const Padding(
+                padding: EdgeInsets.all(2),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 12,
+                  color: CcColors.subtle,
+                ),
+              ),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 }
@@ -386,16 +512,37 @@ class GroupControl extends StatefulWidget {
   final List<String> existingGroups;
   final ValueChanged<String> onSelect;
   final VoidCallback? onClear;
+  final bool enabled;
   const GroupControl({
     super.key,
     required this.groupName,
     required this.existingGroups,
     required this.onSelect,
     this.onClear,
+    this.enabled = true,
   });
 
   @override
   State<GroupControl> createState() => _GroupControlState();
+}
+
+double groupPickerListMaxHeight(
+  Size screenSize, {
+  double preferred = 180,
+  double minHeight = 96,
+  double maxFraction = 0.34,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
+double groupPickerDialogWidth(Size size, {double preferred = 360}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
 }
 
 class _GroupControlState extends State<GroupControl> {
@@ -409,6 +556,7 @@ class _GroupControlState extends State<GroupControl> {
         existing: widget.existingGroups,
       ),
     );
+    if (!mounted) return;
     if (result != null && result.isNotEmpty) widget.onSelect(result);
   }
 
@@ -419,26 +567,45 @@ class _GroupControlState extends State<GroupControl> {
     return _pillTap(
       key: _key,
       onTap: _open,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.folder_outlined,
-            size: 14, color: has ? CcColors.accentBright : CcColors.subtle),
-        const SizedBox(width: 6),
-        Text(
-          has ? name : '未分组',
-          style: TextStyle(fontSize: 12.5, color: has ? CcColors.text : CcColors.subtle),
-        ),
-        if (has && widget.onClear != null) ...[
-          const SizedBox(width: 2),
-          InkWell(
-            onTap: widget.onClear,
-            borderRadius: BorderRadius.circular(10),
-            child: const Padding(
-              padding: EdgeInsets.all(2),
-              child: Icon(Icons.close_rounded, size: 12, color: CcColors.subtle),
+      enabled: widget.enabled,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.folder_outlined,
+            size: 14,
+            color: has ? CcColors.accentBright : CcColors.subtle,
+          ),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(
+              has ? name : '未分组',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: has ? CcColors.text : CcColors.subtle,
+              ),
             ),
           ),
+          if (has && widget.onClear != null) ...[
+            const SizedBox(width: 2),
+            InkWell(
+              onTap: widget.enabled ? widget.onClear : null,
+              borderRadius: BorderRadius.circular(10),
+              child: const Padding(
+                padding: EdgeInsets.all(2),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 12,
+                  color: CcColors.subtle,
+                ),
+              ),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 }
@@ -476,60 +643,77 @@ class _GroupPickerDialogState extends State<_GroupPickerDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
     final q = _ctl.text.trim();
     final matches = _filtered;
-    final isNewName = q.isNotEmpty && !matches.any((g) => g.toLowerCase() == q.toLowerCase());
+    final isNewName =
+        q.isNotEmpty && !matches.any((g) => g.toLowerCase() == q.toLowerCase());
     return AlertDialog(
-      title: const Text('分组'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('分组', maxLines: 1, overflow: TextOverflow.ellipsis),
       content: SizedBox(
-        width: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _ctl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: '输入分组名，回车创建/选择',
-                isDense: true,
+        width: groupPickerDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: _ctl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: '输入分组名，回车创建/选择',
+                  isDense: true,
+                ),
+                onChanged: (_) => setState(() {}),
+                onSubmitted: _submit,
               ),
-              onChanged: (_) => setState(() {}),
-              onSubmitted: _submit,
-            ),
-            if (matches.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 180),
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (final g in matches)
-                        ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.folder_outlined, size: 16),
-                          title: Text(g),
-                          onTap: () => Navigator.pop(context, g),
-                        ),
-                    ],
+              if (matches.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: groupPickerListMaxHeight(size),
+                    ),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final g in matches)
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(
+                              Icons.folder_outlined,
+                              size: 16,
+                            ),
+                            title: Text(
+                              g,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => Navigator.pop(context, g),
+                          ),
+                      ],
+                    ),
+                  ),
+                )
+              else if (isNewName)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '将创建新分组 "$q"',
+                    style: const TextStyle(color: CcColors.muted, fontSize: 12),
                   ),
                 ),
-              )
-            else if (isNewName)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  '将创建新分组 "$q"',
-                  style: const TextStyle(color: CcColors.muted, fontSize: 12),
-                ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
         FilledButton(
           onPressed: q.isEmpty ? null : () => _submit(q),
           child: const Text('确定'),

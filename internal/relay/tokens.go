@@ -1,7 +1,7 @@
 package relay
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
 	"time"
 
@@ -16,6 +16,9 @@ import (
 
 // listTokens lists the caller's machine tokens (id = hash, never the raw value).
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAccount(w, r); !ok {
+		return
+	}
 	identity := auth.Identity(r.Context())
 	toks, err := s.Store.ListMachineTokens(r.Context(), identity)
 	if err != nil {
@@ -31,27 +34,44 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 // createToken mints a machine token for the caller and returns the raw value
 // once. Only its hash is stored.
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAccount(w, r); !ok {
+		return
+	}
 	identity := auth.Identity(r.Context())
 	var req struct {
 		Label string `json:"label"`
 	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req)
-
-	raw, err := auth.NewToken()
-	if err != nil {
-		http.Error(w, "mint token: "+err.Error(), http.StatusInternalServerError)
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.CreateMachineToken(r.Context(), auth.HashToken(raw), identity, req.Label, time.Now()); err != nil {
+
+	raw, id, err := s.createMachineToken(r.Context(), identity, req.Label, time.Now())
+	if err != nil {
 		http.Error(w, "create token: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"token": raw, "label": req.Label, "id": auth.HashToken(raw)})
+	writeJSON(w, http.StatusCreated, map[string]any{"token": raw, "label": req.Label, "id": id})
+}
+
+func (s *Server) createMachineToken(ctx context.Context, identity, label string, now time.Time) (string, string, error) {
+	raw, err := auth.NewToken()
+	if err != nil {
+		return "", "", err
+	}
+	id := auth.HashToken(raw)
+	if err := s.Store.CreateMachineToken(ctx, id, identity, label, now); err != nil {
+		return "", "", err
+	}
+	return raw, id, nil
 }
 
 // deleteToken revokes one of the caller's tokens by id (its hash). Scoped to the
 // owner, so revoking a token you don't own is a 404.
 func (s *Server) deleteToken(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAccount(w, r); !ok {
+		return
+	}
 	identity := auth.Identity(r.Context())
 	if err := s.Store.DeleteMachineToken(r.Context(), identity, r.PathValue("id")); err != nil {
 		s.writeStoreErr(w, err)

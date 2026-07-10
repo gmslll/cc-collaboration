@@ -2,7 +2,7 @@ package relay
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,30 +27,61 @@ type bearerResolver struct {
 func (b *bearerResolver) Resolve(ctx context.Context, raw string) (string, bool) {
 	h := auth.HashToken(raw)
 	if id, ok, err := b.store.SessionIdentity(ctx, h, time.Now()); err == nil && ok {
-		return b.resolveActive(ctx, id)
+		return b.active(ctx, id)
 	}
 	if id, ok, err := b.store.MachineTokenIdentity(ctx, h); err == nil && ok {
-		return b.resolveActive(ctx, id)
+		return b.active(ctx, id)
 	}
 	if b.seed != nil {
 		if id, ok := b.seed.Resolve(ctx, raw); ok {
-			return b.resolveActive(ctx, id)
+			return b.active(ctx, id)
 		}
 	}
 	return "", false
 }
 
-func (b *bearerResolver) resolveActive(ctx context.Context, identity string) (string, bool) {
-	disabled, err := b.store.UserIsDisabled(ctx, identity)
-	if err != nil || disabled {
-		return "", false
+func (b *bearerResolver) active(ctx context.Context, identity string) (string, bool) {
+	if ok, err := b.store.UserActive(ctx, identity); err == nil && ok {
+		return identity, true
 	}
-	return identity, true
+	return "", false
+}
+
+// requireAccount gates SaaS/team-account features to real DB accounts.
+// Legacy tokens.json identities can still authenticate for backwards-compatible
+// automation, but they must register/login before owning teams or minting
+// account-scoped machine tokens.
+func (s *Server) requireAccount(w http.ResponseWriter, r *http.Request) (store.User, bool) {
+	identity := auth.Identity(r.Context())
+	u, err := s.Store.GetUser(r.Context(), identity)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "请先注册或登录账号", http.StatusUnauthorized)
+		return store.User{}, false
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return store.User{}, false
+	}
+	if u.Deleted {
+		http.Error(w, "账号已删除", http.StatusForbidden)
+		return store.User{}, false
+	}
+	if u.Disabled {
+		http.Error(w, "账号已停用", http.StatusForbidden)
+		return store.User{}, false
+	}
+	return u, true
 }
 
 // isAdmin reports whether identity is an effective admin: an operator-seeded
-// admin (SeedAdmins) or a DB-flagged one (users.is_admin).
+// admin (SeedAdmins) or a DB-flagged one (users.is_admin). A disabled DB user
+// is never effective, even if it also appears in SeedAdmins; missing DB users
+// remain allowed so operator seed admins cannot be locked out accidentally.
 func (s *Server) isAdmin(ctx context.Context, identity string) bool {
+	active, err := s.Store.UserActive(ctx, identity)
+	if err != nil || !active {
+		return false
+	}
 	if slices.Contains(s.SeedAdmins, identity) {
 		return true
 	}
@@ -66,14 +97,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		Identity string `json:"identity"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	u, err := s.Store.GetUser(r.Context(), req.Identity)
+	identity := strings.TrimSpace(req.Identity)
+	u, err := s.Store.GetUser(r.Context(), identity)
 	// Uniform failure — don't leak which of {no account, wrong password,
 	// disabled} occurred.
-	if err != nil || u.Disabled || u.PasswordHash == "" || !auth.CheckPassword(u.PasswordHash, req.Password) {
+	if err != nil || u.Disabled || u.Deleted || u.PasswordHash == "" || !auth.CheckPassword(u.PasswordHash, req.Password) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -82,9 +114,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 // register provisions a normal (non-admin, enabled) account from {identity,
 // password} and immediately issues a session, so the new user is signed in
-// without a separate login. It can be disabled for enterprise deployments via
-// Server.DisableRegistration. Like login, it's registered on the outer mux
-// (bypasses the auth middleware) since the caller has no token yet.
+// without a separate login. It can be disabled for enterprise deployments.
+// Like login, it is registered on the outer mux because the caller has no
+// bearer token yet.
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if s.DisableRegistration {
 		http.Error(w, "self-registration disabled", http.StatusForbidden)
@@ -94,7 +126,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		Identity string `json:"identity"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -105,6 +137,15 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Password == "" {
 		http.Error(w, "password required", http.StatusBadRequest)
+		return
+	}
+	reserved, err := s.identityReserved(r.Context(), identity)
+	if err != nil {
+		http.Error(w, "check identity: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if reserved {
+		http.Error(w, "该账号已注册", http.StatusConflict)
 		return
 	}
 	hash, err := auth.HashPassword(req.Password)
@@ -122,28 +163,63 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.issueSession(w, r, identity, http.StatusCreated)
+	machineToken, machineTokenID, err := s.createMachineToken(r.Context(), identity, "default", time.Now())
+	if err != nil {
+		http.Error(w, "create machine token: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp, err := s.newSessionResponse(r, identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp["machine_token"] = machineToken
+	resp["machine_token_id"] = machineTokenID
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) identityReserved(ctx context.Context, identity string) (bool, error) {
+	if _, err := s.Store.GetUser(ctx, identity); err == nil {
+		return true, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	tokens, err := s.Store.ListMachineTokens(ctx, identity)
+	if err != nil {
+		return false, err
+	}
+	if len(tokens) > 0 {
+		return true, nil
+	}
+	return s.Tokens != nil && slices.Contains(s.Tokens.Identities(), identity), nil
 }
 
 // issueSession mints a session token for identity, persists it, and writes the
 // standard auth body ({token, identity, is_admin}) with status. Shared by login
 // and register so both hand back an immediately-usable session.
 func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, identity string, status int) {
+	resp, err := s.newSessionResponse(r, identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, status, resp)
+}
+
+func (s *Server) newSessionResponse(r *http.Request, identity string) (map[string]any, error) {
 	raw, err := auth.NewToken()
 	if err != nil {
-		http.Error(w, "mint session: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, errors.New("mint session: " + err.Error())
 	}
 	now := time.Now()
 	if err := s.Store.CreateSession(r.Context(), auth.HashToken(raw), identity, now, now.Add(sessionTTL)); err != nil {
-		http.Error(w, "create session: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, errors.New("create session: " + err.Error())
 	}
-	writeJSON(w, status, map[string]any{
+	return map[string]any{
 		"token":    raw,
 		"identity": identity,
 		"is_admin": s.isAdmin(r.Context(), identity),
-	})
+	}, nil
 }
 
 // logout revokes the caller's current session (if the presented bearer is one).
@@ -164,13 +240,31 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	organizations, err := s.Store.MemberOrganizations(r.Context(), identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if projects == nil {
 		projects = []store.ProjectRole{}
 	}
+	if organizations == nil {
+		organizations = []store.OrganizationRole{}
+	}
+	invitations, err := s.Store.ListInvitationsForIdentity(r.Context(), identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if invitations == nil {
+		invitations = []store.Invitation{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"identity": identity,
-		"is_admin": s.isAdmin(r.Context(), identity),
-		"projects": projects,
+		"identity":      identity,
+		"is_admin":      s.isAdmin(r.Context(), identity),
+		"organizations": organizations,
+		"projects":      projects,
+		"invitations":   invitations,
 	})
 }
 
@@ -200,11 +294,12 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName string `json:"display_name"`
 		IsAdmin     bool   `json:"is_admin"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Identity) == "" {
+	identity := strings.TrimSpace(req.Identity)
+	if identity == "" {
 		http.Error(w, "identity required", http.StatusBadRequest)
 		return
 	}
@@ -223,7 +318,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.CreateUser(r.Context(), store.User{
-		Identity: req.Identity, PasswordHash: hash, DisplayName: req.DisplayName, IsAdmin: req.IsAdmin,
+		Identity: identity, PasswordHash: hash, DisplayName: req.DisplayName, IsAdmin: req.IsAdmin,
 	}, time.Now()); err != nil {
 		code := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -232,7 +327,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create user: "+err.Error(), code)
 		return
 	}
-	resp := map[string]any{"identity": req.Identity, "is_admin": req.IsAdmin}
+	resp := map[string]any{"identity": identity, "is_admin": req.IsAdmin}
 	if generated {
 		resp["password"] = pw
 	}
@@ -246,8 +341,34 @@ func (s *Server) setUserAdmin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IsAdmin bool `json:"is_admin"`
 	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req)
-	if err := s.Store.SetAdmin(r.Context(), r.PathValue("id"), req.IsAdmin); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	identity := strings.TrimSpace(r.PathValue("id"))
+	if !req.IsAdmin {
+		if identity == auth.Identity(r.Context()) {
+			http.Error(w, "cannot demote current account", http.StatusConflict)
+			return
+		}
+		if s.isAdmin(r.Context(), identity) {
+			hasOther, err := s.hasOtherAvailableAdmin(r.Context(), identity)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !hasOther {
+				http.Error(w, "last available admin cannot be demoted", http.StatusConflict)
+				return
+			}
+		}
+	}
+	if err := s.Store.SetAdmin(r.Context(), identity, req.IsAdmin); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
@@ -258,15 +379,120 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
+	identity := strings.TrimSpace(r.PathValue("id"))
 	var req struct {
 		Disabled bool `json:"disabled"`
 	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req)
-	if err := s.Store.SetDisabled(r.Context(), r.PathValue("id"), req.Disabled); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	if req.Disabled {
+		if identity == auth.Identity(r.Context()) {
+			http.Error(w, "cannot disable current account", http.StatusConflict)
+			return
+		}
+		if s.isAdmin(r.Context(), identity) {
+			hasOther, err := s.hasOtherAvailableAdmin(r.Context(), identity)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !hasOther {
+				http.Error(w, "last available admin cannot be disabled", http.StatusConflict)
+				return
+			}
+		}
+	}
+	if err := s.Store.SetDisabled(r.Context(), identity, req.Disabled); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
+	if req.Disabled && s.Sessions != nil {
+		s.Sessions.clear(identity)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// deleteUser irreversibly tombstones an account. Only a global admin may call
+// it; the current account and the final effective admin are protected here,
+// while the store owns the atomic credential/relationship transition.
+func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	identity := strings.TrimSpace(r.PathValue("id"))
+	if identity == "" {
+		http.Error(w, "identity required", http.StatusBadRequest)
+		return
+	}
+	if identity == auth.Identity(r.Context()) {
+		http.Error(w, "cannot delete current account", http.StatusConflict)
+		return
+	}
+
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	u, err := s.Store.GetUser(r.Context(), identity)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if u.Deleted {
+		http.Error(w, "account already deleted", http.StatusNotFound)
+		return
+	}
+	if s.isAdmin(r.Context(), identity) {
+		hasOther, err := s.hasOtherAvailableAdmin(r.Context(), identity)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !hasOther {
+			http.Error(w, "last available admin cannot be deleted", http.StatusConflict)
+			return
+		}
+	}
+	if err := s.Store.DeleteUser(r.Context(), identity, time.Now().UTC()); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if s.Sessions != nil {
+		s.Sessions.clear(identity)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) hasOtherAvailableAdmin(ctx context.Context, excluded string) (bool, error) {
+	users, err := s.Store.ListUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	candidates := make(map[string]struct{}, len(users)+len(s.SeedAdmins))
+	for _, identity := range s.SeedAdmins {
+		if identity = strings.TrimSpace(identity); identity != "" {
+			candidates[identity] = struct{}{}
+		}
+	}
+	for _, u := range users {
+		if u.IsAdmin {
+			candidates[u.Identity] = struct{}{}
+		}
+	}
+	for identity := range candidates {
+		if identity != excluded && s.isAdmin(ctx, identity) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // resetUserPassword generates a new password for an account and returns it once.
@@ -298,7 +524,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		Old string `json:"old"`
 		New string `json:"new"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

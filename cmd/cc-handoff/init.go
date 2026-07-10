@@ -47,7 +47,7 @@ func runInit(ctx context.Context, args []string) error {
 	relay := fs.String("relay", "", "relay URL, e.g. https://your-vps.example.com")
 	token := fs.String("token", "", "bearer token issued by the relay admin")
 	me := fs.String("me", "", "your identity, e.g. you@backend")
-	partner := fs.String("partner", "", "partner identity, e.g. alex@frontend")
+	partner := fs.String("partner", "", "legacy point-to-point partner identity; team project routing does not need this")
 	repoName := fs.String("repo", "", "repo name (default: basename of repo root)")
 	base := fs.String("base", "origin/main", "git base ref for diff/log")
 	swagger := fs.String("swagger", "", "path to OpenAPI/Swagger file relative to repo root (optional)")
@@ -166,9 +166,8 @@ func runInit(ctx context.Context, args []string) error {
 	if *partner != "" {
 		repoCfg.Identity.Partner = *partner
 	}
-	repoCfg.Identity.Partner = prompt("Partner identity (e.g. alex@frontend)", repoCfg.Identity.Partner)
-	if repoCfg.Identity.Partner == "" {
-		return fmt.Errorf("partner identity required")
+	if repoCfg.Identity.Partner != "" {
+		repoCfg.Identity.Partner = prompt("Legacy partner identity (optional, e.g. alex@frontend)", repoCfg.Identity.Partner)
 	}
 
 	if *repoName == "" {
@@ -206,9 +205,10 @@ func runInit(ctx context.Context, args []string) error {
 	fmt.Println()
 	fmt.Println("Done. Next steps:")
 	fmt.Println()
-	fmt.Println("  As sender (recipient is `" + repoCfg.Identity.Partner + "`):")
+	fmt.Println("  As sender:")
 	fmt.Println("    1. Write a Markdown summary to " + filepath.Join(inboxDir, ".draft-summary.md"))
 	fmt.Println("    2. cc-handoff submit  [--urgent --note \"...\"]")
+	fmt.Println("       (defaults to the current team project; use --to only for explicit point-to-point delivery)")
 	fmt.Println("    3. cc-handoff status <id>     # check whether the recipient has picked it up")
 	fmt.Println("    4. cc-handoff retract <id>    # if you sent the wrong thing")
 	fmt.Println()

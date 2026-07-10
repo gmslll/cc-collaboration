@@ -10,7 +10,13 @@ class ProjectCfg {
   final String name;
   final String path; // absolute
   final String github;
-  const ProjectCfg(this.name, this.path, [this.github = '']);
+  final String projectId; // relay project id; optional for team-scoped actions
+  const ProjectCfg(
+    this.name,
+    this.path, [
+    this.github = '',
+    this.projectId = '',
+  ]);
 }
 
 // A workspace from config.toml [[workspace]]: its projects + the resolved agent
@@ -24,8 +30,14 @@ class WorkspaceCfg {
   final String editor;
   final String preLaunch;
   final List<ProjectCfg> projects;
-  const WorkspaceCfg(this.name, this.path, this.agent, this.editor,
-      this.preLaunch, this.projects);
+  const WorkspaceCfg(
+    this.name,
+    this.path,
+    this.agent,
+    this.editor,
+    this.preLaunch,
+    this.projects,
+  );
 }
 
 // projectsOf returns [workspace]'s projects (empty when the workspace is null /
@@ -35,9 +47,9 @@ List<ProjectCfg> projectsOf(AppConfig cfg, String? workspace) {
   return m.isEmpty ? const [] : m.first.projects;
 }
 
-// AppConfig reads the same ~/.config/cc-handoff/config.toml the CLI uses, so the
-// desktop app is auto-authenticated and can resolve a handoff's repo name to a
-// local clone for pickup, and render the Workspace→Project tree.
+// AppConfig reads the same ~/.config/cc-handoff/config.toml the CLI uses. Auth
+// keys may be empty in local-only mode; workspace/project config still loads so
+// the desktop cockpit can start without a relay login.
 class AppConfig {
   final String relayUrl;
   final String token;
@@ -60,22 +72,34 @@ class AppConfig {
   /// used when a repo's .cc-handoff.toml doesn't set its own terminal_app.
   final String terminalApp;
 
+  /// Whether this desktop publishes its local session list to online users.
+  /// Default false: presence remains visible, session targets stay private.
+  final bool publishSessions;
+
   /// per-agent launch overrides (absolute path or full command/script); empty =
   /// auto-resolve. Read by AgentResolver so the PTY launcher works without a
   /// PATH-resolvable `claude`/`codex`.
   final String claudeCommand;
   final String codexCommand;
 
-  AppConfig(this.relayUrl, this.token, this.identity, this.repos,
-      [this.workspaces = const [],
-      this.agent = '',
-      this.workspaceRoot = '',
-      this.gradeCommand = '',
-      this.linearToken = '',
-      this.githubToken = '',
-      this.terminalApp = '',
-      this.claudeCommand = '',
-      this.codexCommand = '']);
+  AppConfig(
+    String relayUrl,
+    String token,
+    String identity,
+    this.repos, [
+    this.workspaces = const [],
+    this.agent = '',
+    this.workspaceRoot = '',
+    this.gradeCommand = '',
+    this.linearToken = '',
+    this.githubToken = '',
+    this.terminalApp = '',
+    this.claudeCommand = '',
+    this.codexCommand = '',
+    this.publishSessions = false,
+  ]) : relayUrl = relayUrl.trim(),
+       token = token.trim(),
+       identity = identity.trim();
 
   String? repoPath(String name) => repos[name];
 
@@ -89,13 +113,17 @@ class AppConfig {
   // are preserved; only the three auth keys are (re)written (also refreshes an
   // expired token on re-login). Mirrors the Go side's config.SaveUser.
   static Future<void> saveAuth(
-      String relayUrl, String token, String identity) async {
+    String relayUrl,
+    String token,
+    String identity,
+  ) async {
     final f = File(configPath());
     Map<String, dynamic> map = {};
     if (await f.exists()) {
       try {
         map = Map<String, dynamic>.from(
-            TomlDocument.parse(await f.readAsString()).toMap());
+          TomlDocument.parse(await f.readAsString()).toMap(),
+        );
       } catch (_) {
         map = {}; // unparseable — rebuild rather than block login
       }
@@ -121,7 +149,6 @@ class AppConfig {
     final relay = (map['relay_url'] ?? '').toString();
     final token = (map['token'] ?? '').toString();
     final identity = (map['identity'] ?? '').toString();
-    if (relay.isEmpty || token.isEmpty) return null;
 
     final userAgent = (map['agent'] ?? '').toString();
     final wsRoot = (map['workspace_root'] ?? '').toString();
@@ -129,6 +156,7 @@ class AppConfig {
     final linear = (map['linear_personal_token'] ?? '').toString();
     final githubToken = (map['github_token'] ?? '').toString();
     final terminalApp = (map['terminal_app'] ?? '').toString();
+    final publishSessions = parsePublishSessionsFlag(map);
     final claudeCommand = (map['claude_command'] ?? '').toString();
     final codexCommand = (map['codex_command'] ?? '').toString();
     final repos = <String, String>{};
@@ -162,16 +190,35 @@ class AppConfig {
         // entries so a doubled config row doesn't show the project twice.
         if (!seenProjects.add(name)) continue;
         final github = (p['github'] ?? '').toString();
+        final projectId = (p['project_id'] ?? '').toString().trim();
         repos.putIfAbsent(name, () => path);
-        projCfgs.add(ProjectCfg(name, path, github));
+        projCfgs.add(ProjectCfg(name, path, github, projectId));
       }
       wsList.add(
-          WorkspaceCfg(wsName, wsPath, agent, editor, preLaunch, projCfgs));
+        WorkspaceCfg(wsName, wsPath, agent, editor, preLaunch, projCfgs),
+      );
     }
 
-    return AppConfig(relay, token, identity, repos, wsList, userAgent, wsRoot,
-        grade, linear, githubToken, terminalApp, claudeCommand, codexCommand);
+    return AppConfig(
+      relay,
+      token,
+      identity,
+      repos,
+      wsList,
+      userAgent,
+      wsRoot,
+      grade,
+      linear,
+      githubToken,
+      terminalApp,
+      claudeCommand,
+      codexCommand,
+      publishSessions,
+    );
   }
+
+  static bool parsePublishSessionsFlag(Map<String, dynamic> map) =>
+      map['publish_sessions'] == true;
 }
 
 String _home() => homeDir();

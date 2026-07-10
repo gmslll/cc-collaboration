@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// TestResolveRelay_NoPartnerNeeded pins the capsule/plaza fix: ResolveRelay
-// succeeds with only a user-level relay connection, even when the repo config
-// has no partner — while strict Resolve still rejects that.
-func TestResolveRelay_NoPartnerNeeded(t *testing.T) {
+// TestResolve_NoPartnerNeeded pins team-project routing: repo config can omit
+// the legacy point-to-point partner.
+func TestResolve_NoPartnerNeeded(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if _, err := SaveUser(&User{RelayURL: "http://relay", Token: "tok", Identity: "me@x", Agent: "claude"}); err != nil {
 		t.Fatal(err)
@@ -20,8 +19,12 @@ func TestResolveRelay_NoPartnerNeeded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Resolve(repo); err == nil || !strings.Contains(err.Error(), "identity.partner") {
-		t.Errorf("strict Resolve should reject the missing partner, got %v", err)
+	full, err := Resolve(repo)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if full.Partner != "" || len(full.Partners) != 0 {
+		t.Fatalf("legacy partner fields = %q/%v, want empty", full.Partner, full.Partners)
 	}
 	res, err := ResolveRelay(repo)
 	if err != nil {

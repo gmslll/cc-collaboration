@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  FLUTTER_VERSION: '3.44.1' # keep in sync with package-apps.yml
+  FLUTTER_VERSION: '3.44.1'
 
 jobs:
   build:
@@ -52,11 +52,18 @@ jobs:
           cache: true
 
       - uses: subosito/flutter-action@v2
-        if: matrix.include_relay == true
+        if: matrix.include_relay
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: build relay web client
+        if: matrix.include_relay
+        run: |
+          make web
+          test -s internal/relay/app/index.html
+          test -s internal/relay/app/main.dart.js
 
       - name: read VERSION + verify tag
         id: ver
@@ -73,9 +80,6 @@ jobs:
         run: |
           mkdir -p dist
           ldflags="-X 'github.com/cc-collaboration/internal/version.Version=${{ steps.ver.outputs.version }}'"
-          if [ "${{ matrix.include_relay }}" = "true" ]; then
-            make web
-          fi
           go build -ldflags "$ldflags" -o "dist/cc-handoff${{ matrix.ext }}" ./cmd/cc-handoff
           go build -ldflags "$ldflags" -o "dist/cc-handoff-mcp${{ matrix.ext }}" ./cmd/cc-handoff-mcp
           if [ "${{ matrix.include_relay }}" = "true" ]; then

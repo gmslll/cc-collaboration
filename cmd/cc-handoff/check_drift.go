@@ -15,7 +15,7 @@ import (
 
 func runCheckDrift(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("check-drift", flag.ContinueOnError)
-	to := fs.String("to", "", "limit baseline search to handoffs sent to this recipient (default: identity.partner from .cc-handoff.toml)")
+	to := fs.String("to", "", "limit baseline search to handoffs sent to this recipient (default: any recipient)")
 	limit := fs.Int("limit", 20, "how many sent items to scan looking for a baseline")
 	asJSON := fs.Bool("json", false, "emit JSON (full APIDelta) instead of a human summary")
 	if err := fs.Parse(args); err != nil {
@@ -26,15 +26,12 @@ func runCheckDrift(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return err
 	}
 
-	recipient := res.Partner
-	if *to != "" {
-		recipient = *to
-	}
+	recipient := cleanTargetArg(*to)
 
 	client := transport.New(res.RelayURL, res.Token)
 	result, err := drift.Detect(ctx, client, recipient, config.ResolveSwaggerPath(config.RepoRoot(cwd), res.Swagger), *limit)

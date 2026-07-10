@@ -5,7 +5,10 @@
 // roles (see internal/relay/store/projects.go RoleOwner/RoleMember/RoleViewer).
 package todoschema
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const SchemaVersion = 1
 
@@ -105,16 +108,20 @@ func (r Recurrence) AddInterval(t time.Time) time.Time {
 // client) build against — see the "统一 API 契约" section of the feature
 // plan; do not rename.
 type Todo struct {
-	ID                   string   `json:"id"`
-	ProjectID            string   `json:"project_id,omitempty"` // empty = personal todo
-	OwnerIdentity        string   `json:"owner_identity"`
-	Title                string   `json:"title"`
-	BodyMD               string   `json:"body_md,omitempty"`
-	Status               Status   `json:"status"`
-	Priority             Priority `json:"priority"`
-	AssigneeIdentity     string   `json:"assignee_identity,omitempty"`
-	AssigneeSessionID    string   `json:"assignee_session_id,omitempty"`
-	AssigneeSessionLabel string   `json:"assignee_session_label,omitempty"`
+	ID               string   `json:"id"`
+	ProjectID        string   `json:"project_id,omitempty"` // empty = personal todo
+	OwnerIdentity    string   `json:"owner_identity"`
+	Title            string   `json:"title"`
+	BodyMD           string   `json:"body_md,omitempty"`
+	Status           Status   `json:"status"`
+	Priority         Priority `json:"priority"`
+	AssigneeIdentity string   `json:"assignee_identity,omitempty"`
+	// AssigneeDisplayName is a read-only relay-user display overlay for
+	// AssigneeIdentity. It is derived from users.display_name and not persisted
+	// on the todo row, so older relays/unknown users naturally omit it.
+	AssigneeDisplayName  string `json:"assignee_display_name,omitempty"`
+	AssigneeSessionID    string `json:"assignee_session_id,omitempty"`
+	AssigneeSessionLabel string `json:"assignee_session_label,omitempty"`
 	// AssigneeAgentSessionID/AssigneeWorkdir/AssigneeAgentKind are the
 	// permanent-resume counterpart to AssigneeSessionID: the latter is a bus
 	// session id that goes stale the moment a tab closes, while these three
@@ -187,6 +194,21 @@ type Todo struct {
 
 // IsPersonal reports whether t is a personal (not project-scoped) todo.
 func (t Todo) IsPersonal() bool { return t.ProjectID == "" }
+
+// AssigneeLabel returns the human-facing assignee label for text UIs. Keep the
+// identity visible when a display name exists so terminal/MCP output remains
+// copy-pasteable for follow-up commands.
+func (t Todo) AssigneeLabel() string {
+	id := strings.TrimSpace(t.AssigneeIdentity)
+	name := strings.TrimSpace(t.AssigneeDisplayName)
+	if name == "" || name == id {
+		return id
+	}
+	if id == "" {
+		return name
+	}
+	return name + " <" + id + ">"
+}
 
 // Attachment is metadata for a binary blob stored alongside a todo. The
 // bytes are uploaded/fetched via

@@ -6,32 +6,6 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'ws_connect.dart';
 
-@visibleForTesting
-Uri remoteWsUri(String relayUrl, String role) {
-  var raw = relayUrl.trim();
-  if (!raw.contains('://')) {
-    raw = 'ws://$raw';
-  }
-
-  final parsed = Uri.parse(raw);
-  final scheme = switch (parsed.scheme.toLowerCase()) {
-    'https' => 'wss',
-    'http' => 'ws',
-    'wss' || 'ws' => parsed.scheme.toLowerCase(),
-    final other => other,
-  };
-  final basePath = parsed.path.replaceAll(RegExp(r'/+$'), '');
-  final port = parsed.hasPort && parsed.port != 0 ? parsed.port : null;
-
-  return Uri(
-    scheme: scheme,
-    host: parsed.host,
-    port: port,
-    path: basePath.isEmpty ? '/v1/ws' : '$basePath/v1/ws',
-    queryParameters: {'role': role},
-  );
-}
-
 // RemoteChannel is the shared transport for both ends of the remote workspace:
 // it owns the relay WebSocket (connect, auth, auto-reconnect), the /v1/ws URL
 // normalization, the `_hello`/`_peer` control frames, and frame send/dispatch.
@@ -108,11 +82,37 @@ abstract class RemoteChannel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  static Uri _uri(String relayUrl, String role) {
+    var raw = relayUrl.trim();
+    if (!raw.contains('://')) raw = 'ws://$raw';
+
+    final parsed = Uri.parse(raw);
+    final scheme = switch (parsed.scheme.toLowerCase()) {
+      'https' => 'wss',
+      'http' => 'ws',
+      'wss' || 'ws' => parsed.scheme.toLowerCase(),
+      final other => other,
+    };
+    final basePath = parsed.path.replaceAll(RegExp(r'/+$'), '');
+    final port = parsed.hasPort && parsed.port != 0 ? parsed.port : null;
+    return Uri(
+      scheme: scheme,
+      host: parsed.host,
+      port: port,
+      path: basePath.isEmpty ? '/v1/ws' : '$basePath/v1/ws',
+      queryParameters: {'role': role},
+    );
+  }
+
+  @visibleForTesting
+  static Uri uriForTesting(String relayUrl, String role) =>
+      _uri(relayUrl, role);
+
   Future<void> _loop() async {
     while (_running) {
       lastError = null;
       try {
-        final ch = connectWs(remoteWsUri(relayUrl, role), token);
+        final ch = connectWs(_uri(relayUrl, role), token);
         // ready completes on a successful handshake (or throws → reconnect). On
         // native the channel also pings every 20s so a dead peer is detected
         // (the stream ends, the loop reconnects) — mobile NAT/proxies silently

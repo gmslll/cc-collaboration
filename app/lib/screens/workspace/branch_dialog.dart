@@ -9,6 +9,208 @@ class _BranchNode {
   GitBranch? branch;
 }
 
+class WorkspaceBranchCreateDraft {
+  final String branch;
+  final String startRef;
+
+  const WorkspaceBranchCreateDraft({
+    required this.branch,
+    required this.startRef,
+  });
+}
+
+double workspaceBranchDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+Size workspaceBranchFullDialogSize(
+  Size viewport, {
+  double preferredWidth = 760,
+  double preferredHeight = 660,
+}) => Size(
+  workspaceNavigationDialogDimension(viewport.width - 32, preferredWidth),
+  workspaceNavigationDialogDimension(
+    viewport.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
+class WorkspaceBranchCreateDialog extends StatefulWidget {
+  final String initialBranch;
+  final String initialStartRef;
+
+  const WorkspaceBranchCreateDialog({
+    super.key,
+    this.initialBranch = '',
+    this.initialStartRef = '',
+  });
+
+  @override
+  State<WorkspaceBranchCreateDialog> createState() =>
+      _WorkspaceBranchCreateDialogState();
+}
+
+class _WorkspaceBranchCreateDialogState
+    extends State<WorkspaceBranchCreateDialog> {
+  late final TextEditingController _branchCtl = TextEditingController(
+    text: widget.initialBranch,
+  );
+  late final TextEditingController _startCtl = TextEditingController(
+    text: widget.initialStartRef,
+  );
+
+  @override
+  void dispose() {
+    _branchCtl.dispose();
+    _startCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(
+    context,
+    WorkspaceBranchCreateDraft(
+      branch: _branchCtl.text,
+      startRef: _startCtl.text,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('新建分支', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: workspaceBranchDialogWidth(size),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _branchCtl,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: '分支名'),
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _startCtl,
+                decoration: const InputDecoration(labelText: '起点 ref(可选)'),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建并切换')),
+      ],
+    );
+  }
+}
+
+class WorkspaceBranchRenameDialog extends StatefulWidget {
+  final String initialName;
+
+  const WorkspaceBranchRenameDialog({super.key, required this.initialName});
+
+  @override
+  State<WorkspaceBranchRenameDialog> createState() =>
+      _WorkspaceBranchRenameDialogState();
+}
+
+class _WorkspaceBranchRenameDialogState
+    extends State<WorkspaceBranchRenameDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text('重命名分支', maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: workspaceBranchDialogWidth(size),
+        child: SingleChildScrollView(
+          child: TextField(
+            controller: _ctl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '新分支名'),
+            onSubmitted: (_) => _submit(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('重命名')),
+      ],
+    );
+  }
+}
+
+class WorkspaceBranchConfirmDialog extends StatelessWidget {
+  final String title;
+  final String message;
+  final String confirmLabel;
+  final bool destructive;
+
+  const WorkspaceBranchConfirmDialog({
+    super.key,
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+    this.destructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: workspaceBranchDialogWidth(size),
+        child: SingleChildScrollView(
+          child: SelectableText(message, style: CcType.code(size: 12)),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          style: destructive
+              ? FilledButton.styleFrom(backgroundColor: CcColors.danger)
+              : null,
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(confirmLabel),
+        ),
+      ],
+    );
+  }
+}
+
 class _BranchDialog extends StatefulWidget {
   final ProjectCfg project;
   final Future<void> Function(GitBranch branch) onCheckout;
@@ -77,10 +279,14 @@ class _BranchDialogState extends State<_BranchDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final dialogSize = workspaceBranchFullDialogSize(
+      MediaQuery.sizeOf(context),
+    );
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: SizedBox(
-        width: 760,
-        height: 660,
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Column(
           children: [
             _DialogHeader(
@@ -222,6 +428,7 @@ class _BranchListPaneState extends State<_BranchListPane> {
   }
 
   Future<void> _run(Future<void> Function() action) async {
+    if (!mounted) return;
     try {
       await action();
       if (mounted) await widget.onRefresh();
@@ -236,45 +443,20 @@ class _BranchListPaneState extends State<_BranchListPane> {
   }
 
   Future<void> _createBranch() async {
-    final ctl = TextEditingController(text: _query.trim());
     final current = widget.branches
         .where((b) => b.current)
         .map((b) => b.name)
         .firstOrNull;
-    final startCtl = TextEditingController(text: current ?? '');
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<WorkspaceBranchCreateDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建分支'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '分支名'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: startCtl,
-              decoration: const InputDecoration(labelText: '起点 ref(可选)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建并切换'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchCreateDialog(
+        initialBranch: _query.trim(),
+        initialStartRef: current ?? '',
       ),
     );
-    if (ok != true) return;
-    final branch = ctl.text.trim();
+    if (draft == null) return;
+    if (!mounted) return;
+    final branch = draft.branch.trim();
     if (branch.isEmpty) {
       if (mounted) snack(context, '分支名不能为空');
       return;
@@ -282,37 +464,20 @@ class _BranchListPaneState extends State<_BranchListPane> {
     await _run(
       () => widget.onCreate(
         branch,
-        startCtl.text.trim().isEmpty ? null : startCtl.text.trim(),
+        draft.startRef.trim().isEmpty ? null : draft.startRef.trim(),
       ),
     );
   }
 
   Future<void> _renameBranch(GitBranch b) async {
     if (b.remote) return;
-    final ctl = TextEditingController(text: b.name);
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重命名分支'),
-        content: TextField(
-          controller: ctl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: '新分支名'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('重命名'),
-          ),
-        ],
-      ),
+      builder: (_) => WorkspaceBranchRenameDialog(initialName: b.name),
     );
-    if (ok != true) return;
-    final next = ctl.text.trim();
+    if (raw == null) return;
+    if (!mounted) return;
+    final next = raw.trim();
     if (next.isEmpty || next == b.name) return;
     await _run(() => widget.onRename(b.name, next));
   }
@@ -321,25 +486,15 @@ class _BranchListPaneState extends State<_BranchListPane> {
     if (b.remote || b.current) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(force ? '强制删除分支?' : '删除分支?'),
-        content: Text(
-          '${b.name}\n\n${force ? 'git branch -D' : 'git branch -d'}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchConfirmDialog(
+        title: force ? '强制删除分支?' : '删除分支?',
+        message: '${b.name}\n\n${force ? 'git branch -D' : 'git branch -d'}',
+        confirmLabel: '删除',
+        destructive: true,
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     await _run(() => widget.onDelete(b.name, force));
   }
 
@@ -349,25 +504,15 @@ class _BranchListPaneState extends State<_BranchListPane> {
     final local = b.localName ?? b.name;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除远端分支?'),
-        content: Text(
-          '$remote/$local\n\n会执行 `git push $remote --delete $local`。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete Remote'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchConfirmDialog(
+        title: '删除远端分支?',
+        message: '$remote/$local\n\n会执行 `git push $remote --delete $local`。',
+        confirmLabel: 'Delete Remote',
+        destructive: true,
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     await _run(() => widget.onDeleteRemote(b));
   }
 
@@ -375,26 +520,16 @@ class _BranchListPaneState extends State<_BranchListPane> {
     if (b.remote) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(publish ? 'Publish branch?' : 'Push branch?'),
-        content: Text(
-          publish
-              ? '${b.name}\n\n会执行 `git push -u origin ${b.name}`。'
-              : '${b.name}\n\n会执行 `git push origin ${b.name}`。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(publish ? 'Publish' : 'Push'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchConfirmDialog(
+        title: publish ? 'Publish branch?' : 'Push branch?',
+        message: publish
+            ? '${b.name}\n\n会执行 `git push -u origin ${b.name}`。'
+            : '${b.name}\n\n会执行 `git push origin ${b.name}`。',
+        confirmLabel: publish ? 'Publish' : 'Push',
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     await _run(() => widget.onPushBranch(b, publish: publish));
   }
 
@@ -745,9 +880,11 @@ class _BranchListPaneState extends State<_BranchListPane> {
     final meta = [
       if (b.upstream.isNotEmpty) 'tracks ${b.upstream}',
       if (b.lastHash.isNotEmpty)
-        [b.lastHash, if (age.isNotEmpty) age, b.lastSubject]
-            .where((s) => s.isNotEmpty)
-            .join(' · '),
+        [
+          b.lastHash,
+          if (age.isNotEmpty) age,
+          b.lastSubject,
+        ].where((s) => s.isNotEmpty).join(' · '),
     ].join(' · ');
     return GestureDetector(
       behavior: HitTestBehavior.translucent,

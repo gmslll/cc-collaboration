@@ -42,7 +42,18 @@ class RemoteSession {
   final String title;
   final String workdir;
   final String agent;
-  RemoteSession(this.sid, this.title, this.workdir, this.agent);
+  final String workspace;
+  final String project;
+  final String projectId;
+  RemoteSession(
+    this.sid,
+    this.title,
+    this.workdir,
+    this.agent, {
+    this.workspace = '',
+    this.project = '',
+    this.projectId = '',
+  });
 }
 
 // phoneRemoteClient is the phone's single live RemoteClient (its WS connection to
@@ -57,7 +68,8 @@ class RemoteRootInfo {
   final String name;
   final String path;
   final String workspace;
-  RemoteRootInfo(this.name, this.path, this.workspace);
+  final String projectId;
+  RemoteRootInfo(this.name, this.path, this.workspace, [this.projectId = '']);
 }
 
 class RemoteWorktree {
@@ -183,8 +195,10 @@ class RemoteClient extends RemoteChannel {
   Map<String, SessionCard> overview = {};
   // screens holds the latest one-shot terminal snapshot per session id, fetched
   // by the quick-reply popup via requestScreen (distinct from the full mirror's
-  // streamed output). Updated on each `screen` reply.
-  Map<String, String> screens = {};
+  // streamed output). Updated on each `screen` reply. The record carries the
+  // host terminal's geometry so the popup renders at the computer's width
+  // instead of reflowing TUI chrome to the phone's narrow width.
+  Map<String, ScreenSnapshot> screens = {};
   Map<String, List<HookActivity>> activities = {};
 
   List<ShareSource> shareSources = [];
@@ -522,6 +536,7 @@ class RemoteClient extends RemoteChannel {
       shareLoading = false;
       shareError = '连接已断开';
     }
+    _completeAllAssigns('连接已断开');
     unawaited(_shareViewer?.stop(closeRenderer: false));
   }
 
@@ -585,6 +600,9 @@ class RemoteClient extends RemoteChannel {
               (s['title'] as String?) ?? '',
               (s['workdir'] as String?) ?? '',
               (s['agent'] as String?) ?? 'claude',
+              workspace: (s['workspace'] as String?) ?? '',
+              project: (s['project'] as String?) ?? '',
+              projectId: (s['project_id'] as String?)?.trim() ?? '',
             ),
         ];
         for (final entry in _terminals.entries) {
@@ -593,11 +611,12 @@ class RemoteClient extends RemoteChannel {
         _setHostOnline(true);
         notifyListeners();
       case 'todo.assign.ok':
-        _assignWaiters.remove(f['todoId'] as String?)?.complete(null);
+        _completeAssign(f['todoId'] as String?, null);
       case 'todo.assign.err':
-        _assignWaiters
-            .remove(f['todoId'] as String?)
-            ?.complete((f['msg'] as String?) ?? '远程指派失败');
+        _completeAssign(
+          f['todoId'] as String?,
+          (f['msg'] as String?) ?? '远程指派失败',
+        );
       case 'overview':
         final ov = <String, SessionCard>{};
         for (final m in (f['items'] as List? ?? [])) {
@@ -611,7 +630,13 @@ class RemoteClient extends RemoteChannel {
       case 'screen':
         final sid = f['sid'] as String?;
         if (sid != null) {
-          screens[sid] = (f['text'] as String?) ?? '';
+          // cols/rows absent from an older host → 0; the popup then falls back
+          // to a default geometry (roughly the pre-fix reflow behaviour).
+          screens[sid] = (
+            ansi: (f['text'] as String?) ?? '',
+            cols: (f['cols'] as num?)?.toInt() ?? 0,
+            rows: (f['rows'] as num?)?.toInt() ?? 0,
+          );
           notifyListeners();
         }
       case 'roots':
@@ -621,6 +646,7 @@ class RemoteClient extends RemoteChannel {
               r['name'] as String,
               r['path'] as String,
               (r['workspace'] as String?) ?? '',
+              (r['project_id'] as String?)?.trim() ?? '',
             ),
         ];
         workspaceNames = [
@@ -1070,6 +1096,7 @@ class RemoteClient extends RemoteChannel {
     _shareSourcesTimer?.cancel();
     _shareViewer?.removeListener(_onShareViewerChanged);
     unawaited(_shareViewer?.stop());
+    _completeAllAssigns('连接已关闭');
     super.dispose();
   }
 
@@ -1094,6 +1121,26 @@ class RemoteClient extends RemoteChannel {
   // returned future: null on success, an error string otherwise. Times out if
   // the host never answers (old desktop version / dropped link).
   final Map<String, Completer<String?>> _assignWaiters = {};
+  final Map<String, Timer> _assignTimeouts = {};
+
+  void _completeAssign(String? todoId, String? result) {
+    if (todoId == null) return;
+    _assignTimeouts.remove(todoId)?.cancel();
+    final waiter = _assignWaiters.remove(todoId);
+    if (waiter != null && !waiter.isCompleted) waiter.complete(result);
+  }
+
+  void _completeAllAssigns(String result) {
+    for (final timer in _assignTimeouts.values) {
+      timer.cancel();
+    }
+    _assignTimeouts.clear();
+    final waiters = _assignWaiters.values.toList();
+    _assignWaiters.clear();
+    for (final waiter in waiters) {
+      if (!waiter.isCompleted) waiter.complete(result);
+    }
+  }
 
   Future<String?> requestAssign({
     required String todoId,
@@ -1101,25 +1148,39 @@ class RemoteClient extends RemoteChannel {
     String? sid,
     String? workspace,
     String? project,
+    String? projectId,
     String? kind,
     String? branch,
   }) {
+    final cleanTodoId = todoId.trim();
+    final cleanMode = mode.trim();
+    final cleanSid = _trimOrNull(sid);
+    final cleanWorkspace = _trimOrNull(workspace);
+    final cleanProject = _trimOrNull(project);
+    final cleanProjectId = _trimOrNull(projectId);
+    final cleanKind = _trimOrNull(kind);
+    final cleanBranch = _trimOrNull(branch);
+    if (!_hostOnline) {
+      return Future.value('电脑端未在线，请先在电脑端开启「共享工作区」');
+    }
     // Supersede any in-flight request for the same todo.
-    _assignWaiters.remove(todoId)?.complete('已被新的指派请求取代');
+    _assignTimeouts.remove(cleanTodoId)?.cancel();
+    _assignWaiters.remove(cleanTodoId)?.complete('已被新的指派请求取代');
     final c = Completer<String?>();
-    _assignWaiters[todoId] = c;
+    _assignWaiters[cleanTodoId] = c;
     send({
       't': 'todo.assign',
-      'todoId': todoId,
-      'mode': mode,
-      'sid': ?sid,
-      'workspace': ?workspace,
-      'project': ?project,
-      'kind': ?kind,
-      if (branch != null && branch.isNotEmpty) 'branch': branch,
+      'todoId': cleanTodoId,
+      'mode': cleanMode,
+      'sid': ?cleanSid,
+      'workspace': ?cleanWorkspace,
+      'project': ?cleanProject,
+      'projectId': ?cleanProjectId,
+      'kind': ?cleanKind,
+      'branch': ?cleanBranch,
     });
-    Timer(const Duration(seconds: 30), () {
-      _assignWaiters.remove(todoId)?.complete('桌面无响应(请确认桌面 App 在线)');
+    _assignTimeouts[cleanTodoId] = Timer(const Duration(seconds: 30), () {
+      _completeAssign(cleanTodoId, '桌面无响应(请确认桌面 App 在线)');
     });
     return c.future;
   }
@@ -1225,8 +1286,12 @@ class RemoteClient extends RemoteChannel {
   void loadBranches(String repo) => send({'t': 'git.branches', 'path': repo});
   void gitCheckout(String repo, String branch) =>
       send({'t': 'git.checkout', 'path': repo, 'branch': branch});
-  void gitCreateBranch(String repo, String branch) =>
-      send({'t': 'git.createBranch', 'path': repo, 'branch': branch});
+  void gitCreateBranch(String repo, String branch, {String? start}) => send({
+    't': 'git.createBranch',
+    'path': repo,
+    'branch': branch,
+    if (_trimOrNull(start) != null) 'start': _trimOrNull(start),
+  });
   void gitStash(String repo, String message) =>
       send({'t': 'git.stash', 'path': repo, 'message': message});
   void gitStashPop(String repo, String ref) =>
@@ -1235,13 +1300,24 @@ class RemoteClient extends RemoteChannel {
   // Project management — host replies cfg.ok (→ rebroadcast roots) or cfg.err.
   void loadWorktrees(String projectPath) =>
       send({'t': 'wt.list', 'path': projectPath});
-  void newWorkspace(String name, String path) =>
-      send({'t': 'ws.new', 'name': name, if (path.isNotEmpty) 'path': path});
-  void removeWorkspace(String name) => send({'t': 'ws.remove', 'name': name});
-  void addProject(String workspace, String source) =>
-      send({'t': 'proj.add', 'workspace': workspace, 'source': source});
-  void removeProject(String workspace, String project) =>
-      send({'t': 'proj.remove', 'workspace': workspace, 'project': project});
+  void newWorkspace(String name, String path) {
+    final trimmedPath = _trimOrNull(path);
+    send({'t': 'ws.new', 'name': name.trim(), 'path': ?trimmedPath});
+  }
+
+  void removeWorkspace(String name) =>
+      send({'t': 'ws.remove', 'name': name.trim()});
+  void addProject(String workspace, String source) => send({
+    't': 'proj.add',
+    'workspace': workspace.trim(),
+    'source': source.trim(),
+  });
+  void removeProject(String workspace, String project) => send({
+    't': 'proj.remove',
+    'workspace': workspace.trim(),
+    'project': project.trim(),
+  });
+
   void addWorktree(
     String workspace,
     String project,
@@ -1249,16 +1325,22 @@ class RemoteClient extends RemoteChannel {
     String start,
   ) => send({
     't': 'wt.add',
-    'workspace': workspace,
-    'project': project,
-    'branch': branch,
-    if (start.isNotEmpty) 'start': start,
+    'workspace': workspace.trim(),
+    'project': project.trim(),
+    'branch': branch.trim(),
+    if (_trimOrNull(start) != null) 'start': _trimOrNull(start),
   });
   void removeWorktree(String workspace, String project, String branch) => send({
     't': 'wt.remove',
-    'workspace': workspace,
-    'project': project,
-    'branch': branch,
+    'workspace': workspace.trim(),
+    'project': project.trim(),
+    'branch': branch.trim(),
     'force': true,
   });
+}
+
+String? _trimOrNull(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return trimmed;
 }

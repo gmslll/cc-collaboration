@@ -4,9 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'brand.dart';
 import 'api/models.dart';
 import 'api/relay_client.dart';
+import 'brand.dart';
 import 'local/config.dart';
 import 'local/crash_log.dart';
 import 'local/prefs.dart';
@@ -186,7 +186,7 @@ class _HomeShellState extends State<HomeShell> {
   bool _meDegraded = false;
   String? _relayHint;
   int _index = 0;
-  // Top-level nav rail (工作区/任务队列/项目/账号) starts hidden for more canvas
+  // Top-level nav rail (工作区/收件箱/项目/账号) starts hidden for more canvas
   // width; toggled from the AppBar, remembered across launches.
   bool _navRailHidden = Prefs.getBool('nav.railHidden', def: true);
   // Shared 会话总览 projection: WorkspacePage produces into it, SessionOverviewPage
@@ -197,9 +197,51 @@ class _HomeShellState extends State<HomeShell> {
   // doc comment in local/todo_store.dart.
   final TodoStore _todoStore = TodoStore();
   bool _checkedUpdate = false; // one-shot on-launch update check guard
+  int _bootstrapGeneration = 0;
 
   bool get _isDesktop =>
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+  bool get _loggedIn =>
+      _client != null &&
+      (_cfg?.relayUrl ?? '').isNotEmpty &&
+      (_cfg?.token ?? '').isNotEmpty;
+  String? get _initialRelayUrl {
+    final relay = _cfg?.relayUrl ?? '';
+    return relay.isNotEmpty ? relay : _relayHint;
+  }
+
+  AppConfig _configWithSession(AppConfig? cfg, Session session) => AppConfig(
+    session.relayUrl,
+    session.token,
+    session.identity,
+    cfg?.repos ?? const {},
+    cfg?.workspaces ?? const [],
+    cfg?.agent ?? '',
+    cfg?.workspaceRoot ?? '',
+    cfg?.gradeCommand ?? '',
+    cfg?.linearToken ?? '',
+    cfg?.githubToken ?? '',
+    cfg?.terminalApp ?? '',
+    cfg?.claudeCommand ?? '',
+    cfg?.codexCommand ?? '',
+    cfg?.publishSessions ?? false,
+  );
+
+  Future<void> _reloadLocalConfig() async {
+    final cfg = await AppConfig.load();
+    if (!mounted || cfg == null) return;
+    final current = _cfg;
+    if (current == null || !_loggedIn) {
+      setState(() => _cfg = cfg);
+      return;
+    }
+    final session = Session(
+      relayUrl: current.relayUrl,
+      token: current.token,
+      identity: current.identity,
+    );
+    setState(() => _cfg = _configWithSession(cfg, session));
+  }
 
   @override
   void initState() {
@@ -208,6 +250,8 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _bootstrap() async {
+    if (!mounted) return;
+    final generation = ++_bootstrapGeneration;
     setState(() {
       _loading = true;
       _needLogin = false;
@@ -222,7 +266,10 @@ class _HomeShellState extends State<HomeShell> {
 
     final session =
         stored ??
-        (cfg != null && !loggedOut
+        (cfg != null &&
+                !loggedOut &&
+                cfg.relayUrl.isNotEmpty &&
+                cfg.token.isNotEmpty
             ? Session(
                 relayUrl: cfg.relayUrl,
                 token: cfg.token,
@@ -231,10 +278,17 @@ class _HomeShellState extends State<HomeShell> {
             : null);
 
     if (session == null) {
-      if (!mounted) return;
+      if (!_isCurrentBootstrap(generation)) return;
+      await _todoStore.stop();
+      if (!_isCurrentBootstrap(generation)) return;
+      final localCfg = cfg ?? AppConfig('', '', '', const {});
       setState(() {
+        _cfg = localCfg;
+        _client = null;
+        _me = null;
+        _meDegraded = false;
         _loading = false;
-        _needLogin = true;
+        _needLogin = !_isDesktop;
         _relayHint = cfg?.relayUrl;
       });
       return;
@@ -247,15 +301,10 @@ class _HomeShellState extends State<HomeShell> {
     } catch (_) {
       // older relay / transient — treat as non-admin member
     }
-    if (!mounted) return;
+    if (!_isCurrentBootstrap(generation)) return;
+    final activeCfg = _configWithSession(cfg, session);
     setState(() {
-      _cfg = AppConfig(
-        session.relayUrl,
-        session.token,
-        session.identity,
-        cfg?.repos ?? const {},
-        cfg?.workspaces ?? const [],
-      );
+      _cfg = activeCfg;
       _client = client;
       // /v1/me can fail transiently (relay 502 / timeout / offline). Fall back
       // to a non-admin member identity so the local workspace still renders —
@@ -271,9 +320,13 @@ class _HomeShellState extends State<HomeShell> {
     // Skipped when `me` came back null (older relay / transient /me failure
     // above) since TodoStore.start requires a non-null Me.
     if (me != null) {
-      await _todoStore.start(client: client, me: me, config: _cfg!);
+      if (!_isCurrentBootstrap(generation)) return;
+      await _todoStore.start(client: client, me: me, config: activeCfg);
     }
   }
+
+  bool _isCurrentBootstrap(int generation) =>
+      mounted && generation == _bootstrapGeneration;
 
   Future<void> _onLoggedIn(Session s) async {
     await SessionStore.save(s);
@@ -288,7 +341,7 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _switchAccount() async {
-    final currentRelay = _cfg?.relayUrl ?? _relayHint;
+    final currentRelay = _initialRelayUrl;
     final currentIdentity = _cfg?.identity;
     final accounts = await SessionStore.accounts();
     if (!mounted) return;
@@ -303,13 +356,20 @@ class _HomeShellState extends State<HomeShell> {
               child: Row(
                 children: [
                   Icon(
-                    a.identity == currentIdentity && a.relayUrl == currentRelay
+                    savedAccountMatchesSession(
+                          a,
+                          relayUrl: currentRelay,
+                          identity: currentIdentity,
+                        )
                         ? Icons.check_circle_rounded
                         : Icons.account_circle_rounded,
                     size: 20,
                     color:
-                        a.identity == currentIdentity &&
-                            a.relayUrl == currentRelay
+                        savedAccountMatchesSession(
+                          a,
+                          relayUrl: currentRelay,
+                          identity: currentIdentity,
+                        )
                         ? CcColors.accent
                         : CcColors.muted,
                   ),
@@ -318,9 +378,15 @@ class _HomeShellState extends State<HomeShell> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(a.identity),
+                        Text(
+                          a.identity,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         Text(
                           hostOf(a.relayUrl),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: CcColors.subtle,
                             fontSize: 12,
@@ -365,16 +431,36 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _logout() async {
+    _bootstrapGeneration++;
     // Switch to the login screen immediately so the button always responds,
     // even if the secure-store writes below are slow or throw.
     if (mounted) {
+      unawaited(_todoStore.stop());
+      final localCfg = _cfg == null
+          ? AppConfig('', '', '', const {})
+          : AppConfig(
+              '',
+              '',
+              '',
+              _cfg!.repos,
+              _cfg!.workspaces,
+              _cfg!.agent,
+              _cfg!.workspaceRoot,
+              _cfg!.gradeCommand,
+              _cfg!.linearToken,
+              _cfg!.githubToken,
+              _cfg!.terminalApp,
+              _cfg!.claudeCommand,
+              _cfg!.codexCommand,
+              _cfg!.publishSessions,
+            );
       setState(() {
         _client = null;
-        _cfg = null;
+        _cfg = localCfg;
         _me = null;
         _meDegraded = false;
         _index = 0;
-        _needLogin = true;
+        _needLogin = !_isDesktop;
       });
     }
     // Best-effort: drop the stored session and record the explicit logout so
@@ -383,6 +469,21 @@ class _HomeShellState extends State<HomeShell> {
       await SessionStore.clear();
       await SessionStore.markLoggedOut();
     } catch (_) {}
+  }
+
+  Future<void> _showLogin() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => LoginScreen(
+          initialRelayUrl: _initialRelayUrl,
+          showCancel: true,
+          onLoggedIn: (s) async {
+            await _onLoggedIn(s);
+            if (mounted) Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
   }
 
   // _openSessionInWorkspace is invoked from the 会话总览 cards: switch to the
@@ -401,7 +502,7 @@ class _HomeShellState extends State<HomeShell> {
     if (_needLogin) {
       return LoginScreen(initialRelayUrl: _relayHint, onLoggedIn: _onLoggedIn);
     }
-    if (_client == null) {
+    if (_cfg == null) {
       return const Scaffold(body: Center(child: Text('初始化失败')));
     }
 
@@ -442,10 +543,10 @@ class _HomeShellState extends State<HomeShell> {
     final pages = <Widget>[
       if (_isDesktop)
         WorkspacePage(
-          client: _client!,
+          client: _client,
           config: _cfg!,
           overviewStore: _overviewStore,
-          me: _me!,
+          me: _me,
           store: _todoStore,
         ),
       // 会话总览 sits right after 工作区 on desktop (index 1) — keep in sync with
@@ -458,29 +559,44 @@ class _HomeShellState extends State<HomeShell> {
         ),
       if (!_isDesktop)
         RemoteWorkspacePage(relayUrl: _cfg!.relayUrl, token: _cfg!.token),
-      HandoffsPage(client: _client!, config: _cfg!, showTerminal: _isDesktop),
-      CapsulePlazaPage(
-        client: _client!,
-        identity: _cfg!.identity,
-        overviewStore: _overviewStore,
-        config: _cfg!,
-        isDesktop: _isDesktop,
-      ),
-      TodosPage(
-        client: _client!,
-        config: _cfg!,
-        me: _me!,
-        store: _todoStore,
-        overviewStore: _overviewStore,
-        onOpenSession: _isDesktop ? _openSessionInWorkspace : null,
-      ),
-      ProjectsPage(client: _client!),
-      AccountPage(
-        client: _client!,
-        identity: _cfg!.identity,
-        onSwitchAccount: _switchAccount,
-      ),
-      if (isAdmin) AdminPage(client: _client!),
+      _loggedIn
+          ? HandoffsPage(
+              client: _client!,
+              config: _cfg!,
+              me: _me,
+              showTerminal: _isDesktop,
+            )
+          : _loginRequiredPage('任务队列'),
+      _loggedIn
+          ? CapsulePlazaPage(
+              client: _client!,
+              identity: _cfg!.identity,
+              overviewStore: _overviewStore,
+              config: _cfg!,
+              isDesktop: _isDesktop,
+            )
+          : _loginRequiredPage('Agent 库'),
+      _loggedIn
+          ? TodosPage(
+              client: _client!,
+              config: _cfg!,
+              me: _me!,
+              store: _todoStore,
+              overviewStore: _overviewStore,
+              onOpenSession: _isDesktop ? _openSessionInWorkspace : null,
+            )
+          : _loginRequiredPage('待办'),
+      _loggedIn ? ProjectsPage(client: _client!) : _loginRequiredPage('项目'),
+      _loggedIn
+          ? AccountPage(
+              client: _client!,
+              identity: _cfg!.identity,
+              onSwitchAccount: _switchAccount,
+              onConfigSaved: () =>
+                  unawaited(_reloadLocalConfig().catchError((_) {})),
+            )
+          : _loginRequiredPage('账号'),
+      if (isAdmin) AdminPage(client: _client!, currentIdentity: _cfg!.identity),
     ];
     // dests and pages are built with matching `if (_isDesktop)` / `if (isAdmin)`
     // guards; keep them index-aligned for IndexedStack + the nav rail.
@@ -492,6 +608,13 @@ class _HomeShellState extends State<HomeShell> {
       body = Column(
         children: [
           _degradedBar(),
+          Expanded(child: body),
+        ],
+      );
+    } else if (!_loggedIn && _isDesktop) {
+      body = Column(
+        children: [
+          _localOnlyBar(),
           Expanded(child: body),
         ],
       );
@@ -597,6 +720,67 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  Widget _localOnlyBar() => Material(
+    color: CcColors.panel,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.lock_open_rounded, size: 15, color: CcColors.muted),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              '本地模式: 工作区和会话总览可用,收件箱/广场/待办等 relay 功能需要登录',
+              style: TextStyle(color: CcColors.muted, fontSize: 12),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: _showLogin,
+            icon: const Icon(Icons.login_rounded, size: 15),
+            label: const Text('登录'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _loginRequiredPage(String feature) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 360),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.cloud_sync_rounded, size: 36, color: CcColors.muted),
+          const SizedBox(height: 12),
+          Text(
+            '$feature 需要登录 relay',
+            style: const TextStyle(
+              color: CcColors.text,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '本地工作区可以继续使用。登录后会自动启用同步、团队和广场功能。',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: CcColors.muted, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _showLogin,
+            icon: const Icon(Icons.login_rounded, size: 18),
+            label: const Text('登录账号'),
+          ),
+        ],
+      ),
+    ),
+  );
+
   // _statusBar is a tmux/vim-style footer (desktop): host · identity on the
   // left, the active view as a "mode" on the right. Mono, terminal feel.
   Widget _statusBar(List<_Dest> dests) {
@@ -613,16 +797,20 @@ class _HomeShellState extends State<HomeShell> {
           Text('❯', style: CcType.code(size: 12, color: CcColors.ok)),
           const SizedBox(width: 6),
           Text(
-            hostOf(_cfg!.relayUrl),
+            _loggedIn ? hostOf(_cfg!.relayUrl) : 'local',
             style: CcType.code(size: 11.5, color: CcColors.muted),
           ),
           Text('  ·  ', style: CcType.code(size: 11.5, color: CcColors.subtle)),
           Text(
-            _cfg!.identity,
+            _loggedIn ? _cfg!.identity : '未登录',
             style: CcType.code(size: 11.5, color: CcColors.muted),
           ),
           const Spacer(),
-          statusDot(CcColors.ok, size: 6, glow: true),
+          statusDot(
+            _loggedIn ? CcColors.ok : CcColors.muted,
+            size: 6,
+            glow: _loggedIn,
+          ),
           const SizedBox(width: 6),
           Text(
             page,
@@ -684,7 +872,9 @@ class _HomeShellState extends State<HomeShell> {
         const SizedBox(width: 12),
         Flexible(
           child: Text(
-            '${hostOf(_cfg!.relayUrl)} · ${_cfg!.identity}',
+            _loggedIn
+                ? '${hostOf(_cfg!.relayUrl)} · ${_cfg!.identity}'
+                : '本地模式 · 未登录',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -701,17 +891,30 @@ class _HomeShellState extends State<HomeShell> {
         tooltip: '账号',
         icon: const Icon(Icons.account_circle_rounded),
         onSelected: (v) {
+          if (v == 'login') _showLogin();
           if (v == 'switch') _switchAccount();
           if (v == 'logout') _logout();
         },
-        itemBuilder: (_) => [
-          ccMenuItem(
-            value: 'switch',
-            icon: Icons.switch_account_rounded,
-            label: '切换账号',
-          ),
-          ccMenuItem(value: 'logout', icon: Icons.logout_rounded, label: '登出'),
-        ],
+        itemBuilder: (_) => _loggedIn
+            ? [
+                ccMenuItem(
+                  value: 'switch',
+                  icon: Icons.switch_account_rounded,
+                  label: '切换账号',
+                ),
+                ccMenuItem(
+                  value: 'logout',
+                  icon: Icons.logout_rounded,
+                  label: '登出',
+                ),
+              ]
+            : [
+                ccMenuItem(
+                  value: 'login',
+                  icon: Icons.login_rounded,
+                  label: '登录账号',
+                ),
+              ],
       ),
       const SizedBox(width: 4),
     ],

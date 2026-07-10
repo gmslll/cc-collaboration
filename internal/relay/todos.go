@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -70,7 +71,7 @@ func (s *Server) createTodo(w http.ResponseWriter, r *http.Request) {
 		// pkg/todoschema.Todo.GroupName) — empty means ungrouped.
 		GroupName string `json:"group_name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -203,7 +204,7 @@ func (s *Server) renameTodoGroup(w http.ResponseWriter, r *http.Request) {
 		OldName   string `json:"old_name"`
 		NewName   string `json:"new_name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -227,7 +228,7 @@ func (s *Server) clearTodoGroup(w http.ResponseWriter, r *http.Request) {
 		ProjectID string `json:"project_id"`
 		Name      string `json:"name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -251,7 +252,7 @@ func (s *Server) patchTodo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	raw := map[string]json.RawMessage{}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&raw); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &raw); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -399,7 +400,7 @@ func (s *Server) setTodoStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Status string `json:"status"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 4<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -431,8 +432,20 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 		AssigneeAgentKind      string `json:"assignee_agent_kind"`
 	}
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		if err := decodeJSONBody(w, r, 4<<10, &req); err != nil && !errors.Is(err, io.EOF) {
 			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	if strings.TrimSpace(req.AssigneeIdentity) != "" && strings.TrimSpace(req.AssigneeSessionID) != "" {
+		td, err := s.Store.GetTodo(r.Context(), id, identity)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if err := s.validateTodoAssignSession(r.Context(), identity, td, req.AssigneeIdentity, req.AssigneeSessionID); err != nil {
+			writeStoreError(w, err)
 			return
 		}
 	}
@@ -445,6 +458,33 @@ func (s *Server) assignTodo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishTodoEvent(r.Context(), sse.EventTypeTodoAssigned, updated)
 	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) validateTodoAssignSession(ctx context.Context, caller string, todo todoschema.Todo, assigneeIdentity, assigneeSessionID string) error {
+	assigneeIdentity = strings.TrimSpace(assigneeIdentity)
+	assigneeSessionID = strings.TrimSpace(assigneeSessionID)
+	if s.Sessions == nil || assigneeIdentity == "" || assigneeSessionID == "" {
+		return nil
+	}
+	session, ok := publishedSession(s.Sessions.get(assigneeIdentity), assigneeSessionID)
+	if !ok {
+		// Keep legacy/manual CLI assignment working: the durable resume trio can
+		// outlive the transient relay session registry.
+		return nil
+	}
+	visible, err := s.sessionVisibleTo(ctx, caller, assigneeIdentity, session)
+	if err != nil {
+		return err
+	}
+	if !visible {
+		return fmt.Errorf("%w: %s cannot assign todo %s to session %s", store.ErrForbidden, caller, todo.ID, assigneeSessionID)
+	}
+	todoProjectID := strings.TrimSpace(todo.ProjectID)
+	sessionProjectID := strings.TrimSpace(session.ProjectID)
+	if todoProjectID != "" && sessionProjectID != "" && todoProjectID != sessionProjectID {
+		return fmt.Errorf("%w: session %s belongs to project %s, not todo project %s", store.ErrForbidden, assigneeSessionID, sessionProjectID, todoProjectID)
+	}
+	return nil
 }
 
 // recurAdvanceTodo manually forces a due, recurring, done todo back to
@@ -506,7 +546,7 @@ func (s *Server) postTodoComment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body string `json:"body"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, 64<<10, &req); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -595,10 +635,10 @@ func (s *Server) getTodoAttachment(w http.ResponseWriter, r *http.Request) {
 }
 
 // todoTargets returns who a Todo event should fan out to: just the owner for
-// a personal todo, or every member of its project for a team todo (sourced
-// live from Store.ListMembers, since project membership can change
-// independently of any one todo — unlike handoff fan-out, which targets a
-// fixed recipient list captured at send time).
+// a personal todo, or every effective realtime target for a team todo (direct
+// project members plus team owners/admins). Targets are sourced live because
+// membership can change independently of any one todo — unlike handoff fan-out,
+// which targets a fixed recipient list captured at send time.
 func (s *Server) todoTargets(ctx context.Context, t todoschema.Todo) []string {
 	if t.IsPersonal() {
 		if t.OwnerIdentity == "" {
@@ -606,13 +646,9 @@ func (s *Server) todoTargets(ctx context.Context, t todoschema.Todo) []string {
 		}
 		return []string{t.OwnerIdentity}
 	}
-	members, err := s.Store.ListMembers(ctx, t.ProjectID)
+	targets, err := s.Store.ListProjectTodoTargets(ctx, t.ProjectID)
 	if err != nil {
 		return nil
-	}
-	targets := make([]string, 0, len(members))
-	for _, m := range members {
-		targets = append(targets, m.Identity)
 	}
 	return targets
 }
@@ -634,6 +670,6 @@ func (s *Server) publishTodoEvent(ctx context.Context, eventType string, t todos
 		return
 	}
 	for _, rec := range targets {
-		s.Hub.Publish(sse.Event{Type: eventType, Recipient: rec, Data: data})
+		s.publishToActive(ctx, sse.Event{Type: eventType, Recipient: rec, Data: data})
 	}
 }

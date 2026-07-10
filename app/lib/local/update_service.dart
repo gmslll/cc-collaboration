@@ -210,7 +210,11 @@ Future<void> checkForUpdatesUi(
   final go = await showDialog<bool>(
     context: context,
     builder: (_) => AlertDialog(
-      title: Text('发现新版本 ${info.version}'),
+      title: Text(
+        '发现新版本 ${info.version}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       content: Text('当前 $kAppVersion → ${info.version}'),
       actions: [
         TextButton(
