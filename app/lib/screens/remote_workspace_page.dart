@@ -362,24 +362,41 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: CcColors.panel,
-        title: const Text('收到文件', style: TextStyle(color: CcColors.text)),
-        content: Text(
-          '${o.peerName ?? '电脑'} 想发送\n${o.name}（${_fmtBytes(o.size)}）',
-          style: const TextStyle(color: CcColors.muted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('拒绝', style: TextStyle(color: CcColors.danger)),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          backgroundColor: CcColors.panel,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('接受'),
+          title: const Text(
+            '收到文件',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: CcColors.text),
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: remoteWorkspaceDialogWidth(size),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                '${o.peerName ?? '电脑'} 想发送\n${o.name}（${_fmtBytes(o.size)}）',
+                style: const TextStyle(color: CcColors.muted),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('拒绝', style: TextStyle(color: CcColors.danger)),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('接受'),
+            ),
+          ],
+        );
+      },
     ).then((accepted) {
       _offerDialogOpen = false;
       if (!mounted) return;

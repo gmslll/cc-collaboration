@@ -90,6 +90,25 @@ void main() {
     expect(dialog, contains('onSubmitted: (_) => _submit()'));
   });
 
+  test('remote incoming file offer dialog uses scroll-safe content', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('  void _pumpOffers()'),
+      source.indexOf('  // _sendFileToMac picks'),
+    );
+
+    expect(dialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('maxLines: 1'));
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(dialog, contains('remoteWorkspaceDialogWidth(size)'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('SelectableText'));
+    expect(dialog, isNot(contains('content: Text(')));
+  });
+
   test('remote terminal screen rebinds client lifecycle on widget update', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',
