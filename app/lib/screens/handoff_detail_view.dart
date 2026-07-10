@@ -485,10 +485,9 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
       );
       return;
     }
-    // pickup requires a per-repo .cc-handoff.toml directly in the repo dir (the
-    // CLI refuses to walk up to a sibling's config). If it's missing, offer to
-    // initialize it in place — partner defaults to the handoff sender — so the
-    // button doesn't dead-end on an un-init'd repo.
+    // If the repo has no .cc-handoff.toml, offer to initialize the minimal
+    // per-repo context needed for pickup/worktrees. Team routing no longer
+    // needs a legacy partner field.
     if (!File(RepoConfig.pathFor(path)).existsSync()) {
       if (!await _confirmInit(p, path)) return;
     }
@@ -516,8 +515,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
   }
 
   // _confirmInit prompts to initialize an un-init'd repo, then writes a minimal
-  // .cc-handoff.toml (partner = sender, base = origin/main) — the only per-repo
-  // fields pickup/config.Resolve require. Returns true when the repo is ready to
+  // .cc-handoff.toml (repo + base only). Returns true when the repo is ready to
   // pick up (config written), false when the user cancels or the write fails.
   Future<bool> _confirmInit(Package p, String path) async {
     final generation = _loadGeneration;
@@ -527,7 +525,6 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final identity = _cfg.identity;
     final id = p.id;
     final repoName = p.repo.name.trim();
-    final sender = p.sender.trim();
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -564,7 +561,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'partner = ${sender.isEmpty ? p.sender : sender}',
+                    'repo = ${repoName.isEmpty ? p.repo.name : repoName}',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: CcType.code(size: 12),
@@ -601,7 +598,7 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     try {
       await RepoConfig(
         raw: {},
-        partner: p.sender,
+        repo: repoName.isEmpty ? p.repo.name : repoName,
         base: 'origin/main',
       ).save(path);
       if (!_isCurrentLoad(generation, client, id, relayUrl, token, identity)) {

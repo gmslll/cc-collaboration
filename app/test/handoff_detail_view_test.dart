@@ -85,7 +85,8 @@ void main() {
     expect(dialog, contains('SingleChildScrollView'));
     expect(dialog, contains('maxLines: 2'));
     expect(dialog, contains('overflow: TextOverflow.ellipsis'));
-    expect(dialog, contains('partner ='));
+    expect(dialog, contains('repo ='));
+    expect(dialog, isNot(contains('partner =')));
     expect(dialog, contains('path,'));
     expect(dialog, isNot(contains('content: Text(')));
   });

@@ -126,9 +126,13 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                   const SizedBox(height: 12),
                   _card('身份', [
                     _text('me(覆盖用户 identity,可空)', c.me, (v) => c.me = v),
-                    _text('partner(主接收人)', c.partner, (v) => c.partner = v),
                     _text(
-                      'partners(多接收人,逗号分隔)',
+                      'partner(旧点对点,可空)',
+                      c.partner,
+                      (v) => c.partner = v,
+                    ),
+                    _text(
+                      'partners(旧 bug 别名,逗号分隔)',
                       c.partners,
                       (v) => c.partners = v,
                     ),
