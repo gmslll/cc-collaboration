@@ -245,16 +245,21 @@ void main() {
       source.indexOf('Future<void> _linearConfigDialog()'),
     );
 
+    expect(dialog, contains('todoDialogWidth(size)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('maxLines: 1'));
     expect(dialog, contains('menuMaxHeight: todoMenuMaxHeight'));
+    expect(dialog, isNot(contains('width: 400')));
     expect(dialog, isNot(contains('child: Text(w.name),')));
     expect(dialog, isNot(contains('child: Text(p.name),')));
     expect(
       dialog,
-      contains('w.name,\n                            maxLines: 1'),
+      contains('w.name,\n                                maxLines: 1'),
     );
     expect(
       dialog,
-      contains('p.name,\n                            maxLines: 1'),
+      contains('p.name,\n                                maxLines: 1'),
     );
     expect(dialog, contains('overflow: TextOverflow.ellipsis'));
   });

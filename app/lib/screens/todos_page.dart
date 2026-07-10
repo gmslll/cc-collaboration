@@ -522,90 +522,104 @@ class _TodosPageState extends State<TodosPage> {
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('召唤待办助手'),
-          content: SizedBox(
-            width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  '起一个专门帮你生成/管理待办的会话,已注入待办助手人格,可直接用 '
-                  'cc-handoff todo 在同一 relay 上增删改;改动会同步回看板和手机。',
-                  style: TextStyle(
-                    color: CcColors.muted,
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButton<String>(
-                  isExpanded: true,
-                  menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(ctx)),
-                  value: ws,
-                  items: workspaces
-                      .map(
-                        (w) => DropdownMenuItem(
-                          value: w.name,
-                          child: Text(
-                            w.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) => setLocal(() {
-                    ws = v ?? ws;
-                    final ps = projsFor(ws);
-                    proj = ps.isNotEmpty ? ps.first.name : null;
-                  }),
-                ),
-                const SizedBox(height: 8),
-                DropdownButton<String>(
-                  isExpanded: true,
-                  menuMaxHeight: todoMenuMaxHeight(MediaQuery.sizeOf(ctx)),
-                  hint: const Text('project'),
-                  value: proj,
-                  items: projsFor(ws)
-                      .map(
-                        (p) => DropdownMenuItem(
-                          value: p.name,
-                          child: Text(
-                            p.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) => setLocal(() => proj = v),
-                ),
-                const SizedBox(height: 12),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'claude', label: Text('Claude')),
-                    ButtonSegment(value: 'codex', label: Text('Codex')),
+        builder: (ctx, setLocal) {
+          final size = MediaQuery.sizeOf(ctx);
+          return AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
+            ),
+            title: const Text(
+              '召唤待办助手',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            content: SizedBox(
+              width: todoDialogWidth(size),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '起一个专门帮你生成/管理待办的会话,已注入待办助手人格,可直接用 '
+                      'cc-handoff todo 在同一 relay 上增删改;改动会同步回看板和手机。',
+                      style: TextStyle(
+                        color: CcColors.muted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButton<String>(
+                      isExpanded: true,
+                      menuMaxHeight: todoMenuMaxHeight(size),
+                      value: ws,
+                      items: workspaces
+                          .map(
+                            (w) => DropdownMenuItem(
+                              value: w.name,
+                              child: Text(
+                                w.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setLocal(() {
+                        ws = v ?? ws;
+                        final ps = projsFor(ws);
+                        proj = ps.isNotEmpty ? ps.first.name : null;
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButton<String>(
+                      isExpanded: true,
+                      menuMaxHeight: todoMenuMaxHeight(size),
+                      hint: const Text('project'),
+                      value: proj,
+                      items: projsFor(ws)
+                          .map(
+                            (p) => DropdownMenuItem(
+                              value: p.name,
+                              child: Text(
+                                p.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setLocal(() => proj = v),
+                    ),
+                    const SizedBox(height: 12),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'claude', label: Text('Claude')),
+                        ButtonSegment(value: 'codex', label: Text('Codex')),
+                      ],
+                      selected: {agent},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (s) =>
+                          setLocal(() => agent = s.first),
+                    ),
                   ],
-                  selected: {agent},
-                  showSelectedIcon: false,
-                  onSelectionChanged: (s) => setLocal(() => agent = s.first),
                 ),
-              ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: proj == null ? null : () => Navigator.pop(ctx, true),
-              child: const Text('召唤'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: proj == null ? null : () => Navigator.pop(ctx, true),
+                child: const Text('召唤'),
+              ),
+            ],
+          );
+        },
       ),
     );
     if (go != true || proj == null) return;
