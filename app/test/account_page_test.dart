@@ -64,6 +64,9 @@ void main() {
     );
 
     expect(dialog, contains('accountDialogWidth'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('maxLines: 1'));
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
     expect(dialog, contains('scrollDirection: Axis.horizontal'));
     expect(dialog, contains('SelectableText'));
   });

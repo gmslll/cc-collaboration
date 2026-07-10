@@ -498,7 +498,12 @@ class _AccountPageState extends State<AccountPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('机器 token(只显示一次)'),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        title: const Text(
+          '机器 token(只显示一次)',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         content: SizedBox(
           width: accountDialogWidth(MediaQuery.sizeOf(ctx)),
           child: SingleChildScrollView(
