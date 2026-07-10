@@ -11,6 +11,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('todo detail dialogs are capped for compact screens', () {
+    expect(todoDetailDialogWidth(const Size(1024, 800)), 420);
+    expect(todoDetailDialogWidth(const Size(360, 760)), 328);
+    expect(todoDetailDialogWidth(const Size(24, 760)), 420);
+  });
+
   testWidgets('stale todo detail load cannot overwrite a newer todo', (
     tester,
   ) async {
@@ -211,6 +217,7 @@ void main() {
 
     await tester.tap(deleteButton());
     await tester.pumpAndSettle();
+    expect(find.text('将删除待办 "delete title"。此操作不可撤销。'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
     await tester.pump();
 

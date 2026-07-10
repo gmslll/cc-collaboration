@@ -21,6 +21,12 @@ import '../widgets/todo_attachment_thumb.dart';
 import '../widgets/todo_body_view.dart';
 import '../widgets/todo_property_controls.dart';
 
+double todoDetailDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 // TodoDetailView is the reusable 待办详情/编辑面板. Linear-flavored editing
 // model: title/body autosave on blur (+ a debounce while typing the body)
 // instead of a standalone Save button, and status/priority/recurrence/due-
@@ -567,22 +573,41 @@ class TodoDetailViewState extends State<TodoDetailView> {
     if (_deleting) return;
     final client = _client;
     final id = _id;
+    final title = _current.title.trim();
+    final detail = title.isEmpty
+        ? '确定删除这条待办吗？此操作不可撤销。'
+        : '将删除待办 "$title"。此操作不可撤销。';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除待办'),
-        content: const Text('确定删除这条待办吗？此操作不可撤销。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
+          title: const Text(
+            '删除待办',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: todoDetailDialogWidth(size),
+            child: SingleChildScrollView(child: Text(detail)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true) return;
     if (!_isCurrentTodoClient(client, id)) return;
