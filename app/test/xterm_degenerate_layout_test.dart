@@ -83,6 +83,123 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'line picture cache follows equal-revision rows through buffer moves',
+    (tester) async {
+      final cases = <String, void Function(Terminal)>{
+        'row reorder': (term) {
+          term.buffer.lines.replaceWith(
+            term.buffer.lines.toList().reversed.toList(),
+          );
+        },
+        'scroll up': (term) => term.buffer.scrollUp(1),
+        'insert line': (term) {
+          term.buffer
+            ..setCursor(0, 1)
+            ..insertLines(1);
+        },
+        'delete line': (term) {
+          term.buffer
+            ..setCursor(0, 1)
+            ..deleteLines(1);
+        },
+        'resize reflow': (term) => term.resize(4, 4),
+        // Moving a coloured row into the last viewport slot catches the phone
+        // symptom where stale backgrounds survive next to the bottom composer.
+        'scroll down into bottom row': (term) => term.buffer.scrollDown(1),
+      };
+
+      BufferLine colouredLine(int codePoint, int red, int green, int blue) {
+        final style = CursorStyle()..setBackgroundColorRgb(red, green, blue);
+        final source = BufferLine(8);
+        for (var i = 0; i < source.length; i++) {
+          source.setCell(i, codePoint, 1, style);
+        }
+        // Build every line with the same low revision. A resize reflow copies a
+        // half-line once and marks it wrapped once, producing revision 2 too.
+        final line = BufferLine(8, isWrapped: true)
+          ..copyFrom(source, 0, 0, source.length)
+          ..isWrapped = false;
+        return line;
+      }
+
+      RenderTerminal.debugProfilePaint = true;
+      try {
+        for (final entry in cases.entries) {
+          final term = Terminal(maxLines: 100)..resize(8, 4);
+          final initial = <BufferLine>[
+            colouredLine('A'.codeUnitAt(0), 120, 20, 20),
+            colouredLine('B'.codeUnitAt(0), 20, 120, 20),
+            colouredLine('C'.codeUnitAt(0), 20, 20, 120),
+            colouredLine('D'.codeUnitAt(0), 120, 100, 20),
+          ];
+          for (var i = 0; i < initial.length; i++) {
+            term.buffer.lines[i] = initial[i];
+          }
+
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: SizedBox(
+                  width: 160,
+                  height: 100,
+                  child: TerminalView(term, autoResize: false),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+          final renderTerminal = tester.renderObject<RenderTerminal>(
+            find.byWidgetPredicate(
+              (widget) => widget.runtimeType.toString() == '_TerminalView',
+            ),
+          );
+          final before = term.buffer.lines.toList();
+
+          entry.value(term);
+          final after = term.buffer.lines.toList();
+          final compared = before.length < after.length
+              ? before.length
+              : after.length;
+          var movedRows = 0;
+          var equalRevisionContentMoves = 0;
+          for (var i = 0; i < compared; i++) {
+            if (identical(before[i], after[i])) continue;
+            movedRows++;
+            if (before[i].revision == after[i].revision &&
+                (before[i].getContent(0) != after[i].getContent(0) ||
+                    before[i].getBackground(0) != after[i].getBackground(0))) {
+              equalRevisionContentMoves++;
+            }
+          }
+          expect(movedRows, isPositive, reason: entry.key);
+          expect(
+            equalRevisionContentMoves,
+            isPositive,
+            reason: '${entry.key} must exercise the equal-revision collision',
+          );
+
+          RenderTerminal.lastPaintProfile = null;
+          renderTerminal.markNeedsPaint();
+          await tester.pump();
+          final profile = RenderTerminal.lastPaintProfile!;
+          expect(
+            profile.lineCacheMisses,
+            greaterThanOrEqualTo(movedRows),
+            reason:
+                '${entry.key}: every different BufferLine at a cached row must repaint',
+          );
+
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+      } finally {
+        RenderTerminal.debugProfilePaint = false;
+        RenderTerminal.lastPaintProfile = null;
+      }
+    },
+  );
+
   test('buffer line revision tracks paint-affecting mutations', () {
     final line = BufferLine(8);
     final style = CursorStyle();

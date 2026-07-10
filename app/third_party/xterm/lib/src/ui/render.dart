@@ -917,6 +917,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       signature = Object.hash(
         signature,
         i,
+        identityHashCode(line),
         line.length,
         line.isWrapped,
         line.revision,
@@ -1123,7 +1124,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }) {
     var entry = _linePictureCache[lineIndex];
     var recordedLineCommands = false;
-    if (entry != null && !validateSignature && !line.hasDirtyRange) {
+    if (entry != null &&
+        identical(entry.line, line) &&
+        !validateSignature &&
+        !line.hasDirtyRange) {
       profile?.lineSignatureSkips++;
       profile?.lineCacheHits++;
       if (entry.commandCache == null) {
@@ -1134,7 +1138,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     } else {
       final signature = _linePaintSignature(line);
       profile?.lineSignatureChecks++;
-      if (entry?.signature != signature) {
+      if (!identical(entry?.line, line) || entry?.signature != signature) {
         profile?.lineCacheMisses++;
         profile?.lineCommandCacheMisses++;
         entry?.dispose();
@@ -1147,6 +1151,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
             height: _backgroundBandHeight(lineIndex),
           );
           entry = _LinePictureCache(
+            line,
             signature,
             commandCache: _LineCommandCache.empty,
           );
@@ -1203,6 +1208,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         lineCommands.clear();
         if (textRunsCoverForeground || geometryRunsCoverForeground) {
           entry = _LinePictureCache(
+            line,
             signature,
             commandCache: commandCache,
             needsGeometryCommands: needsGeometryCommands,
@@ -1234,6 +1240,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
             }
           }
           entry = _LinePictureCache(
+            line,
             signature,
             picture: recorder.endRecording(),
             commandCache: commandCache,
@@ -1288,6 +1295,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   bool _canPartiallyRepaintLine(_LinePictureCache entry, BufferLine line) {
+    if (!identical(entry.line, line)) return false;
     if (!line.hasDirtyRange) return false;
     if (entry.picture != null || entry.needsGeometryCommands) return false;
     if (entry.commandCache == null) return false;
@@ -2294,12 +2302,14 @@ class _RowDirtyTracker {
 
 class _LinePictureCache {
   _LinePictureCache(
+    this.line,
     this.signature, {
     this.picture,
     this.commandCache = _LineCommandCache.empty,
     this.needsGeometryCommands = false,
   });
 
+  final BufferLine line;
   final int signature;
   final Picture? picture;
   final _LineCommandCache? commandCache;
