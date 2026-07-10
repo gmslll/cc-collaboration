@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/screens/workspace_page.dart';
 import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +13,91 @@ void main() {
       workspaceBranchDialogWidth(const Size(360, 760), preferred: 460),
       328,
     );
+  });
+
+  testWidgets('WorkspaceBranchConfirmDialog fits compact screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 320);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    bool? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                result = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => const WorkspaceBranchConfirmDialog(
+                    title: '删除分支?',
+                    message:
+                        'feature/very/long/branch/name/that/keeps/going\n\n'
+                        'git branch -d feature/very/long/branch/name/that/keeps/going',
+                    confirmLabel: '删除',
+                    destructive: true,
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final title = tester.widget<Text>(find.text('删除分支?'));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+    expect(contentScroll.scrollDirection, Axis.vertical);
+
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+    expect(result, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('workspace branch action confirms are responsive', () {
+    final source = File(
+      'lib/screens/workspace/branch_dialog.dart',
+    ).readAsStringSync();
+    final deleteLocal = source.substring(
+      source.indexOf('Future<void> _deleteBranch('),
+      source.indexOf('Future<void> _deleteRemoteBranch('),
+    );
+    final deleteRemote = source.substring(
+      source.indexOf('Future<void> _deleteRemoteBranch('),
+      source.indexOf('Future<void> _pushBranch('),
+    );
+    final pushBranch = source.substring(
+      source.indexOf('Future<void> _pushBranch('),
+      source.indexOf('Future<void> _mergeBranch('),
+    );
+
+    for (final dialog in [deleteLocal, deleteRemote, pushBranch]) {
+      expect(dialog, contains('WorkspaceBranchConfirmDialog('));
+      expect(dialog, isNot(contains('AlertDialog(')));
+      expect(dialog, isNot(contains('content: Text(')));
+    }
   });
 
   testWidgets('WorkspaceBranchCreateDialog cancel closes cleanly', (

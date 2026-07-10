@@ -155,6 +155,49 @@ class _WorkspaceBranchRenameDialogState
   }
 }
 
+class WorkspaceBranchConfirmDialog extends StatelessWidget {
+  final String title;
+  final String message;
+  final String confirmLabel;
+  final bool destructive;
+
+  const WorkspaceBranchConfirmDialog({
+    super.key,
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+    this.destructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      content: SizedBox(
+        width: workspaceBranchDialogWidth(size),
+        child: SingleChildScrollView(
+          child: SelectableText(message, style: CcType.code(size: 12)),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          style: destructive
+              ? FilledButton.styleFrom(backgroundColor: CcColors.danger)
+              : null,
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(confirmLabel),
+        ),
+      ],
+    );
+  }
+}
+
 class _BranchDialog extends StatefulWidget {
   final ProjectCfg project;
   final Future<void> Function(GitBranch branch) onCheckout;
@@ -426,22 +469,11 @@ class _BranchListPaneState extends State<_BranchListPane> {
     if (b.remote || b.current) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(force ? '强制删除分支?' : '删除分支?'),
-        content: Text(
-          '${b.name}\n\n${force ? 'git branch -D' : 'git branch -d'}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchConfirmDialog(
+        title: force ? '强制删除分支?' : '删除分支?',
+        message: '${b.name}\n\n${force ? 'git branch -D' : 'git branch -d'}',
+        confirmLabel: '删除',
+        destructive: true,
       ),
     );
     if (ok != true) return;
@@ -455,22 +487,11 @@ class _BranchListPaneState extends State<_BranchListPane> {
     final local = b.localName ?? b.name;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除远端分支?'),
-        content: Text(
-          '$remote/$local\n\n会执行 `git push $remote --delete $local`。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete Remote'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchConfirmDialog(
+        title: '删除远端分支?',
+        message: '$remote/$local\n\n会执行 `git push $remote --delete $local`。',
+        confirmLabel: 'Delete Remote',
+        destructive: true,
       ),
     );
     if (ok != true) return;
@@ -482,23 +503,12 @@ class _BranchListPaneState extends State<_BranchListPane> {
     if (b.remote) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(publish ? 'Publish branch?' : 'Push branch?'),
-        content: Text(
-          publish
-              ? '${b.name}\n\n会执行 `git push -u origin ${b.name}`。'
-              : '${b.name}\n\n会执行 `git push origin ${b.name}`。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(publish ? 'Publish' : 'Push'),
-          ),
-        ],
+      builder: (_) => WorkspaceBranchConfirmDialog(
+        title: publish ? 'Publish branch?' : 'Push branch?',
+        message: publish
+            ? '${b.name}\n\n会执行 `git push -u origin ${b.name}`。'
+            : '${b.name}\n\n会执行 `git push origin ${b.name}`。',
+        confirmLabel: publish ? 'Publish' : 'Push',
       ),
     );
     if (ok != true) return;
