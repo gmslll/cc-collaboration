@@ -895,6 +895,8 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
           children: [
             Text(
               p.routeLabel(fallbackRecipient: _cfg.identity),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),

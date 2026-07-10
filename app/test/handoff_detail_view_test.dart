@@ -115,6 +115,34 @@ void main() {
     expect(fileRow, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  testWidgets('handoff header clamps long route identities', (tester) async {
+    const sender =
+        'very-long-sender-identity-for-team-handoff-routing@example.com';
+    final package = _package('long-route', sender, 'route handoff');
+    final client = _ActionDetailClient(package);
+
+    await tester.binding.setSurfaceSize(const Size(260, 520));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('long-route', sender, 'route handoff'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final route = tester.widget<Text>(find.text('$sender → me@x'));
+
+    expect(tester.takeException(), isNull);
+    expect(route.maxLines, 1);
+    expect(route.overflow, TextOverflow.ellipsis);
+  });
+
   test('handoff attachment download path flattens nested unsafe names', () {
     expect(
       handoffAttachmentTempPath('/tmp/cc', 'logs/a #1.txt'),
