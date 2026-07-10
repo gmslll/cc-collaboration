@@ -89,6 +89,49 @@ func ListProjects(u *User, ws Workspace) []Project {
 	return out
 }
 
+// WorkspaceProjectIDForPath returns the relay project id configured for the
+// workspace project that contains path. Empty means either no workspace project
+// matched or the matched project has no project_id binding.
+func WorkspaceProjectIDForPath(u *User, path string) string {
+	p, ok := WorkspaceProjectForPath(u, path)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(p.ProjectID)
+}
+
+// WorkspaceProjectForPath finds the most specific workspace project containing
+// path. Explicit project entries can carry metadata such as project_id; scanned
+// repos still participate but usually have no project_id.
+func WorkspaceProjectForPath(u *User, path string) (Project, bool) {
+	if u == nil || strings.TrimSpace(path) == "" {
+		return Project{}, false
+	}
+	cleanPath, err := filepath.Abs(expandPath(path))
+	if err != nil {
+		cleanPath = filepath.Clean(expandPath(path))
+	}
+	var (
+		best    Project
+		bestLen int
+		found   bool
+	)
+	for _, ws := range u.Workspaces {
+		for _, p := range ListProjects(u, ws) {
+			projectRoot := filepath.Clean(p.Path)
+			if !pathWithin(cleanPath, projectRoot) {
+				continue
+			}
+			if n := len(projectRoot); !found || n > bestLen {
+				best = p
+				bestLen = n
+				found = true
+			}
+		}
+	}
+	return best, found
+}
+
 // BuildLaunchCommand renders the copyable one-line shell command that opens a
 // project: cd into it, run the optional pre-launch snippet, optionally open the
 // editor, then start the agent. This is the single source of truth for the
@@ -170,6 +213,16 @@ func projectPath(root, p string) string {
 		p = filepath.Join(root, p)
 	}
 	return filepath.Clean(p)
+}
+
+func pathWithin(path, root string) bool {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if path == root {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && rel != "" && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }
 
 func userAgent(u *User) string {

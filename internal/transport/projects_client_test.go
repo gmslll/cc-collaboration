@@ -58,6 +58,35 @@ func TestResolveTeamRecipientsFiltersReadOnlyRoles(t *testing.T) {
 	}
 }
 
+func TestProjectIDForRepoFindsMappedProject(t *testing.T) {
+	var requested []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/projects":
+			w.Write([]byte(`{"projects":[{"id":"p1","name":"API"},{"id":"p2","name":"Web"}]}`))
+		case "/v1/projects/p1":
+			w.Write([]byte(`{"project":{"id":"p1","org_id":"o1"},"repos":["other-repo"]}`))
+		case "/v1/projects/p2":
+			w.Write([]byte(`{"project":{"id":"p2","org_id":"o1"},"repos":[" cc-collaboration ","frontend"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	got, ok, err := New(srv.URL, "tok").ProjectIDForRepo(context.Background(), "cc-collaboration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got != "p2" {
+		t.Fatalf("project id = %q ok=%v, want p2 true", got, ok)
+	}
+	if !slices.Equal(requested, []string{"/v1/projects", "/v1/projects/p1", "/v1/projects/p2"}) {
+		t.Fatalf("requests = %v", requested)
+	}
+}
+
 func TestResolveTeamRecipientsTrimsTeamTargetArgs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

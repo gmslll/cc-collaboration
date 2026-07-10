@@ -422,6 +422,7 @@ type Resolved struct {
 	InboxOverride       string
 	Linear              LinearIntegration
 	LinearPersonalToken string
+	WorkspaceProjectID  string
 }
 
 type resolveOpts struct {
@@ -501,6 +502,7 @@ func resolveWith(cwd string, opts resolveOpts) (*Resolved, error) {
 		InboxOverride:       r.Inbox.Dir,
 		Linear:              r.Integrations.Linear,
 		LinearPersonalToken: u.LinearPersonalToken,
+		WorkspaceProjectID:  WorkspaceProjectIDForPath(u, cwd),
 	}
 	// A repo's terminal_app wins; otherwise fall back to the user-level default
 	// (the platform default is applied later by the launcher when both are "").

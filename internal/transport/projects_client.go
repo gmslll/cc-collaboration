@@ -23,7 +23,20 @@ type ProjectMember struct {
 
 type projectBrief struct {
 	ID    string `json:"id"`
+	Name  string `json:"name"`
 	OrgID string `json:"org_id"`
+}
+
+type ProjectSummary struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+type ProjectDetail struct {
+	Project projectBrief    `json:"project"`
+	Repos   []string        `json:"repos"`
+	Members []ProjectMember `json:"members"`
 }
 
 type OrganizationMember struct {
@@ -69,14 +82,56 @@ func (c *Client) ListProjectAssigneeIdentities(ctx context.Context, projectID st
 }
 
 func (c *Client) projectTeam(ctx context.Context, projectID string) (projectBrief, []ProjectMember, error) {
-	var out struct {
-		Project projectBrief    `json:"project"`
-		Members []ProjectMember `json:"members"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(projectID), nil, &out); err != nil {
+	out, err := c.Project(ctx, projectID)
+	if err != nil {
 		return projectBrief{}, nil, err
 	}
 	return out.Project, out.Members, nil
+}
+
+func (c *Client) Projects(ctx context.Context) ([]ProjectSummary, error) {
+	var out struct {
+		Projects []ProjectSummary `json:"projects"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/projects", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Projects, nil
+}
+
+func (c *Client) Project(ctx context.Context, projectID string) (*ProjectDetail, error) {
+	var out ProjectDetail
+	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(projectID), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ProjectIDForRepo(ctx context.Context, repoName string) (string, bool, error) {
+	repoName = strings.TrimSpace(repoName)
+	if repoName == "" {
+		return "", false, nil
+	}
+	projects, err := c.Projects(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	for _, p := range projects {
+		id := strings.TrimSpace(p.ID)
+		if id == "" {
+			continue
+		}
+		detail, err := c.Project(ctx, id)
+		if err != nil {
+			return "", false, err
+		}
+		for _, repo := range detail.Repos {
+			if strings.TrimSpace(repo) == repoName {
+				return id, true, nil
+			}
+		}
+	}
+	return "", false, nil
 }
 
 func (c *Client) ListOrganizationMembers(ctx context.Context, orgID string) ([]OrganizationMember, error) {

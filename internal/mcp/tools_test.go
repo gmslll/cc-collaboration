@@ -213,6 +213,37 @@ func TestResolveToolRecipientsMemberRequiresTrimmedTeamTarget(t *testing.T) {
 	}
 }
 
+func TestInferredToolProjectPrefersWorkspaceBinding(t *testing.T) {
+	got, err := inferredToolProject(
+		context.Background(),
+		nil,
+		&config.Resolved{WorkspaceProjectID: " relay-project ", RepoName: "repo"},
+		"",
+		"",
+		"",
+		" member@x ",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "relay-project" {
+		t.Fatalf("project = %q, want relay-project", got)
+	}
+}
+
+func TestShouldInferToolProjectKeepsExplicitTargets(t *testing.T) {
+	if shouldInferToolProject("receiver@x", "", "", "", "") {
+		t.Fatal("direct receiver should not infer project")
+	}
+	if shouldInferToolProject("", "", "org1", "member@x", "") {
+		t.Fatal("explicit org should not infer project")
+	}
+	if !shouldInferToolProject("", "", "", "member@x", "partner@x") {
+		t.Fatal("member without team target should infer current project")
+	}
+}
+
 func TestResolveBugRecipients_RoleAliasesUseConfiguredIdentities(t *testing.T) {
 	res := &config.Resolved{
 		Me:       "qa@tester",

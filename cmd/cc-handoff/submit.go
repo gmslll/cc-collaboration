@@ -44,12 +44,20 @@ func runSubmit(ctx context.Context, args []string) error {
 	if *to != "" {
 		recipient = *to
 	}
+	client := transport.New(res.RelayURL, res.Token)
+	resolvedProjectID := cleanTargetArg(*projectID)
+	if shouldInferProjectTarget(*to, resolvedProjectID, *orgID, *member, recipient) {
+		if inferred, ok, err := inferDefaultProjectID(ctx, client, res); err != nil {
+			return err
+		} else if ok {
+			resolvedProjectID = inferred
+		}
+	}
 	resolvedRecipient := recipient
-	if *to == "" && (*projectID != "" || *orgID != "") {
+	if *to == "" && (resolvedProjectID != "" || *orgID != "") {
 		resolvedRecipient = ""
 	}
-	client := transport.New(res.RelayURL, res.Token)
-	recipients, err := resolveSubmitRecipients(ctx, client, res.Me, resolvedRecipient, *projectID, *orgID, *member)
+	recipients, err := resolveSubmitRecipients(ctx, client, res.Me, resolvedRecipient, resolvedProjectID, *orgID, *member)
 	if err != nil {
 		return err
 	}
@@ -78,7 +86,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		fanout = recipients
 	}
 	repoRoot := config.RepoRoot(cwd)
-	deliveryTarget := submitDeliveryTarget(*projectID, *orgID, *member)
+	deliveryTarget := submitDeliveryTarget(resolvedProjectID, *orgID, *member)
 	pkg, attachments, err := handoff.Build(ctx, handoff.BuildOptions{
 		RepoRoot:       repoRoot,
 		RepoName:       res.RepoName,
@@ -123,6 +131,20 @@ func runSubmit(ctx context.Context, args []string) error {
 		fmt.Printf("  amends=%s\n", pkg.AmendsHandoff)
 	}
 	return nil
+}
+
+func shouldInferProjectTarget(to, projectID, orgID, member, recipient string) bool {
+	if cleanTargetArg(to) != "" || cleanTargetArg(projectID) != "" || cleanTargetArg(orgID) != "" {
+		return false
+	}
+	return cleanTargetArg(member) != "" || cleanTargetArg(recipient) == ""
+}
+
+func inferDefaultProjectID(ctx context.Context, client *transport.Client, res *config.Resolved) (string, bool, error) {
+	if id := cleanTargetArg(res.WorkspaceProjectID); id != "" {
+		return id, true, nil
+	}
+	return client.ProjectIDForRepo(ctx, res.RepoName)
 }
 
 func submitDeliveryTarget(projectID, orgID, member string) *handoffschema.DeliveryTarget {

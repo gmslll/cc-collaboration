@@ -155,7 +155,11 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	}
 
 	client := transport.New(res.RelayURL, res.Token)
-	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, a.Project, a.Org, a.Member)
+	project, err := inferredToolProject(ctx, client, res, a.To, a.Project, a.Org, a.Member, res.Partner)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, project, a.Org, a.Member)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -197,7 +201,7 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Amends:           a.Amends,
 		InboxDir:         inboxDir,
 		ExtraAttachments: extras,
-		DeliveryTarget:   deliveryTarget(a.Project, a.Org, a.Member),
+		DeliveryTarget:   deliveryTarget(project, a.Org, a.Member),
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -351,7 +355,11 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	}
 
 	client := transport.New(res.RelayURL, res.Token)
-	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, a.Project, a.Org, a.Member)
+	project, err := inferredToolProject(ctx, client, res, a.To, a.Project, a.Org, a.Member, res.Partner)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, project, a.Org, a.Member)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -382,7 +390,7 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 		Kind:             handoffschema.KindRequest,
 		InboxDir:         inboxDir,
 		ExtraAttachments: extras,
-		DeliveryTarget:   deliveryTarget(a.Project, a.Org, a.Member),
+		DeliveryTarget:   deliveryTarget(project, a.Org, a.Member),
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -468,11 +476,18 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 
 	client := transport.New(res.RelayURL, res.Token)
 	var recipients []string
-	if a.Project != "" || a.Org != "" || a.Member != "" {
+	project := a.Project
+	if len(a.To) == 0 {
+		project, err = inferredToolProject(ctx, client, res, "", a.Project, a.Org, a.Member, "")
+		if err != nil {
+			return ToolResult{}, err
+		}
+	}
+	if project != "" || a.Org != "" || a.Member != "" {
 		if len(a.To) > 0 {
 			return ToolResult{}, fmt.Errorf("to cannot be combined with project/org/member")
 		}
-		recipients, _, err = resolveToolRecipients(ctx, client, res.Me, "", "", a.Project, a.Org, a.Member)
+		recipients, _, err = resolveToolRecipients(ctx, client, res.Me, "", "", project, a.Org, a.Member)
 		if err != nil {
 			return ToolResult{}, err
 		}
@@ -515,7 +530,7 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 		Kind:             handoffschema.KindBug,
 		InboxDir:         inboxDir,
 		ExtraAttachments: extras,
-		DeliveryTarget:   deliveryTarget(a.Project, a.Org, a.Member),
+		DeliveryTarget:   deliveryTarget(project, a.Org, a.Member),
 	})
 	if err != nil {
 		return ToolResult{}, err
@@ -651,7 +666,7 @@ func reassignBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, e
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -685,6 +700,31 @@ func formatRecipientList(rs []string) string {
 		quoted = append(quoted, "`"+r+"`")
 	}
 	return strings.Join(quoted, ", ")
+}
+
+func inferredToolProject(ctx context.Context, client *transport.Client, res *config.Resolved, to, projectID, orgID, member, defaultRecipient string) (string, error) {
+	projectID = strings.TrimSpace(projectID)
+	if !shouldInferToolProject(to, projectID, orgID, member, defaultRecipient) {
+		return projectID, nil
+	}
+	if id := strings.TrimSpace(res.WorkspaceProjectID); id != "" {
+		return id, nil
+	}
+	id, ok, err := client.ProjectIDForRepo(ctx, res.RepoName)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return id, nil
+	}
+	return "", nil
+}
+
+func shouldInferToolProject(to, projectID, orgID, member, defaultRecipient string) bool {
+	if strings.TrimSpace(to) != "" || strings.TrimSpace(projectID) != "" || strings.TrimSpace(orgID) != "" {
+		return false
+	}
+	return strings.TrimSpace(member) != "" || strings.TrimSpace(defaultRecipient) == ""
 }
 
 func resolveToolRecipients(ctx context.Context, client *transport.Client, sender, defaultRecipient, to, projectID, orgID, member string) ([]string, string, error) {
@@ -865,7 +905,7 @@ func pickupHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -962,7 +1002,7 @@ func commentHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -1199,7 +1239,7 @@ func statusHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -1246,7 +1286,7 @@ func listSentHandler(ctx context.Context, raw json.RawMessage) (ToolResult, erro
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -1303,7 +1343,7 @@ func listHistoryHandler(ctx context.Context, raw json.RawMessage) (ToolResult, e
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
