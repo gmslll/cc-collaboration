@@ -1000,7 +1000,7 @@ void main() {
   test('workspace session rename uses owned controller widget', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final helper = source.substring(
-      source.indexOf('Future<void> _renameSession('),
+      source.indexOf('Future<String?> _renameSession('),
       source.indexOf('List<Widget> _worktreeNodes'),
     );
 
@@ -1565,7 +1565,10 @@ void main() {
       'setState(() => _gitLoading = true)',
     );
     expectGuardBefore(
-      between('Future<void> _renameSession(', 'List<Widget> _worktreeNodes('),
+      between(
+        'Future<String?> _renameSession(',
+        'List<Widget> _worktreeNodes(',
+      ),
       'final v = raw.trim();',
       'setState(() => s.name',
     );
