@@ -595,6 +595,12 @@ void main() {
     );
   });
 
+  test('workspace go to line dialog width fits compact screens', () {
+    expect(workspaceGoToLineDialogWidth(const Size(1024, 800)), 420);
+    expect(workspaceGoToLineDialogWidth(const Size(360, 420)), 328);
+    expect(workspaceGoToLineDialogWidth(const Size(220, 220)), 188);
+  });
+
   test('workspace quick open dialog uses viewport based bounds', () {
     final source = File(
       'lib/screens/workspace/navigation_dialogs.dart',
@@ -609,6 +615,13 @@ void main() {
     expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
     expect(dialog, isNot(contains('width: 680')));
     expect(dialog, isNot(contains('height: 620')));
+
+    final lineDialog = source.substring(
+      source.indexOf('class _GoToLineDialogState'),
+    );
+    expect(lineDialog, contains('workspaceGoToLineDialogWidth'));
+    expect(lineDialog, contains('MediaQuery.sizeOf(context)'));
+    expect(lineDialog, isNot(contains('width: 420')));
   });
 
   test('workspace search dialog size fits compact screens', () {

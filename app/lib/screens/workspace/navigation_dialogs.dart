@@ -23,6 +23,9 @@ Size workspaceQuickOpenDialogSize(
   ),
 );
 
+double workspaceGoToLineDialogWidth(Size viewport, {double preferred = 420}) =>
+    workspaceNavigationDialogDimension(viewport.width - 32, preferred);
+
 class _QuickOpenDialog extends StatefulWidget {
   final List<WorkspaceCfg> workspaces;
   const _QuickOpenDialog({required this.workspaces});
@@ -247,7 +250,7 @@ class _GoToLineDialogState extends State<_GoToLineDialog> {
   @override
   Widget build(BuildContext context) => Dialog(
     child: SizedBox(
-      width: 420,
+      width: workspaceGoToLineDialogWidth(MediaQuery.sizeOf(context)),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
