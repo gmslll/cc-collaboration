@@ -818,48 +818,14 @@ mixin _GitMixin on State<WorkspacePage> {
 
   Future<void> _showCreateBranchQuick(ProjectCfg p) async {
     final current = _gitStatus?.branch ?? '';
-    final ctl = TextEditingController();
-    final startCtl = TextEditingController(text: current);
-    final ok = await showDialog<bool>(
+    final draft = await showDialog<WorkspaceBranchCreateDraft>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New Branch'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Branch name'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: startCtl,
-              decoration: const InputDecoration(labelText: 'Start point'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Create and Checkout'),
-          ),
-        ],
-      ),
+      builder: (_) => WorkspaceBranchCreateDialog(initialStartRef: current),
     );
-    if (ok != true) {
-      ctl.dispose();
-      startCtl.dispose();
-      return;
-    }
-    final branch = ctl.text.trim();
-    final start = startCtl.text.trim();
-    ctl.dispose();
-    startCtl.dispose();
+    if (draft == null) return;
+    if (!mounted) return;
+    final branch = draft.branch.trim();
+    final start = draft.startRef.trim();
     if (branch.isEmpty) {
       _snack('分支名不能为空');
       return;

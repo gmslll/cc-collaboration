@@ -701,6 +701,9 @@ void main() {
     final source = File(
       'lib/screens/workspace/branch_dialog.dart',
     ).readAsStringSync();
+    final gitMixin = File(
+      'lib/screens/workspace/git_mixin.dart',
+    ).readAsStringSync();
     final createHelper = source.substring(
       source.indexOf('Future<void> _createBranch('),
       source.indexOf('Future<void> _renameBranch('),
@@ -708,6 +711,10 @@ void main() {
     final renameHelper = source.substring(
       source.indexOf('Future<void> _renameBranch('),
       source.indexOf('Future<void> _deleteBranch('),
+    );
+    final quickCreateHelper = gitMixin.substring(
+      gitMixin.indexOf('Future<void> _showCreateBranchQuick('),
+      gitMixin.indexOf('Future<bool> _gitPushWithUpstreamFallback('),
     );
 
     expect(createHelper, contains('showDialog<WorkspaceBranchCreateDraft>'));
@@ -719,6 +726,14 @@ void main() {
     expect(renameHelper, contains('WorkspaceBranchRenameDialog('));
     expect(renameHelper, isNot(contains('TextEditingController')));
     expect(renameHelper, isNot(contains('showDialog<bool>')));
+
+    expect(
+      quickCreateHelper,
+      contains('showDialog<WorkspaceBranchCreateDraft>'),
+    );
+    expect(quickCreateHelper, contains('WorkspaceBranchCreateDialog('));
+    expect(quickCreateHelper, isNot(contains('TextEditingController')));
+    expect(quickCreateHelper, isNot(contains('showDialog<bool>')));
   });
 
   test('remote workspace branch creation supports an explicit start ref', () {
