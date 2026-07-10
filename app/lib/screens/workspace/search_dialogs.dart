@@ -1,5 +1,18 @@
 part of '../workspace_page.dart';
 
+Size workspaceSearchDialogSize(
+  Size viewport, {
+  required double preferredWidth,
+  required double preferredHeight,
+}) => Size(
+  workspaceNavigationDialogDimension(viewport.width - 32, preferredWidth),
+  workspaceNavigationDialogDimension(
+    viewport.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
 class _SearchHit {
   final String project;
   final String path;
@@ -135,6 +148,11 @@ class _GoToSymbolDialogState extends State<_GoToSymbolDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final dialogSize = workspaceSearchDialogSize(
+      MediaQuery.sizeOf(context),
+      preferredWidth: 760,
+      preferredHeight: 660,
+    );
     final q = _query.trim().toLowerCase();
     final filtered = q.isEmpty
         ? _symbols.take(100).toList()
@@ -149,9 +167,10 @@ class _GoToSymbolDialogState extends State<_GoToSymbolDialog> {
               .take(140)
               .toList();
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: SizedBox(
-        width: 760,
-        height: 660,
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Column(
           children: [
             Container(
@@ -307,9 +326,7 @@ List<_CodeSymbol> _extractCodeSymbols(String path, String text) {
 // 符号解析正则:提为模块级 final,编译一次(原先在逐行循环里每行重建)。
 // Matches both top-level funcs (`func Name(`) and methods with a receiver
 // (`func (r *T) Name(`) — the optional group is the receiver, not a second func.
-final _reGoFunc = RegExp(
-  r'^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(',
-);
+final _reGoFunc = RegExp(r'^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(');
 final _reGoType = RegExp(r'^type\s+([A-Za-z_][\w]*)\s+(struct|interface)\b');
 final _reDartType = RegExp(
   r'^(?:abstract\s+|base\s+|final\s+|sealed\s+|mixin\s+)*'
@@ -621,81 +638,92 @@ class _FindInFilesDialogState extends State<_FindInFilesDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
-    child: SizedBox(
-      width: 860,
-      height: 680,
-      child: Column(
-        children: [
-          _DialogHeader(
-            icon: Icons.search_rounded,
-            title: 'Find in Files',
-            trailing: [
-              if (_hits.isNotEmpty)
-                Text(
-                  '${_hits.length} results',
-                  style: CcType.code(size: 11.5, color: CcColors.subtle),
-                ),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-            child: TextField(
-              controller: _ctl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: 'Search text in project files',
-                isDense: true,
-                prefixIcon: Icon(Icons.search_rounded, size: 18),
-              ),
-              onChanged: _search,
-              onSubmitted: (_) {
-                if (_hits.isNotEmpty) Navigator.pop(context, _hits.first);
-              },
-            ),
-          ),
-          if (_loading) const LinearProgressIndicator(minHeight: 2),
-          Expanded(
-            child: _error != null
-                ? centerMsg(_error!, onRetry: () => _search(_query))
-                : _query.length < 2
-                ? centerMsg('输入至少 2 个字符开始搜索')
-                : !_loading && _hits.isEmpty
-                ? centerMsg('没有匹配结果')
-                : ListView.separated(
-                    itemCount: _hits.length,
-                    separatorBuilder: (_, _) =>
-                        const Divider(height: 1, color: CcColors.border),
-                    itemBuilder: (_, i) {
-                      final h = _hits[i];
-                      return ListTile(
-                        dense: true,
-                        leading: const Icon(
-                          Icons.manage_search_rounded,
-                          size: 18,
-                          color: CcColors.muted,
-                        ),
-                        title: Text(
-                          h.text.isEmpty ? ' ' : h.text,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CcType.code(size: 12.5),
-                        ),
-                        subtitle: Text(
-                          '${h.project}/${h.rel}:${h.line}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CcType.code(size: 11, color: CcColors.subtle),
-                        ),
-                        onTap: () => Navigator.pop(context, h),
-                      );
-                    },
+  Widget build(BuildContext context) {
+    final dialogSize = workspaceSearchDialogSize(
+      MediaQuery.sizeOf(context),
+      preferredWidth: 860,
+      preferredHeight: 680,
+    );
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: SizedBox(
+        width: dialogSize.width,
+        height: dialogSize.height,
+        child: Column(
+          children: [
+            _DialogHeader(
+              icon: Icons.search_rounded,
+              title: 'Find in Files',
+              trailing: [
+                if (_hits.isNotEmpty)
+                  Text(
+                    '${_hits.length} results',
+                    style: CcType.code(size: 11.5, color: CcColors.subtle),
                   ),
-          ),
-        ],
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: TextField(
+                controller: _ctl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Search text in project files',
+                  isDense: true,
+                  prefixIcon: Icon(Icons.search_rounded, size: 18),
+                ),
+                onChanged: _search,
+                onSubmitted: (_) {
+                  if (_hits.isNotEmpty) Navigator.pop(context, _hits.first);
+                },
+              ),
+            ),
+            if (_loading) const LinearProgressIndicator(minHeight: 2),
+            Expanded(
+              child: _error != null
+                  ? centerMsg(_error!, onRetry: () => _search(_query))
+                  : _query.length < 2
+                  ? centerMsg('输入至少 2 个字符开始搜索')
+                  : !_loading && _hits.isEmpty
+                  ? centerMsg('没有匹配结果')
+                  : ListView.separated(
+                      itemCount: _hits.length,
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 1, color: CcColors.border),
+                      itemBuilder: (_, i) {
+                        final h = _hits[i];
+                        return ListTile(
+                          dense: true,
+                          leading: const Icon(
+                            Icons.manage_search_rounded,
+                            size: 18,
+                            color: CcColors.muted,
+                          ),
+                          title: Text(
+                            h.text.isEmpty ? ' ' : h.text,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: CcType.code(size: 12.5),
+                          ),
+                          subtitle: Text(
+                            '${h.project}/${h.rel}:${h.line}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: CcType.code(
+                              size: 11,
+                              color: CcColors.subtle,
+                            ),
+                          ),
+                          onTap: () => Navigator.pop(context, h),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _FindUsagesDialog extends StatefulWidget {
@@ -878,10 +906,16 @@ class _FindUsagesDialogState extends State<_FindUsagesDialog> {
   @override
   Widget build(BuildContext context) {
     final symbol = _symbol;
+    final dialogSize = workspaceSearchDialogSize(
+      MediaQuery.sizeOf(context),
+      preferredWidth: 940,
+      preferredHeight: 680,
+    );
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: SizedBox(
-        width: 940,
-        height: 680,
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Column(
           children: [
             _DialogHeader(
@@ -1096,10 +1130,16 @@ class _FileStructureDialogState extends State<_FileStructureDialog> {
   Widget build(BuildContext context) {
     final name = pathBaseName(widget.path);
     final symbols = _filtered;
+    final dialogSize = workspaceSearchDialogSize(
+      MediaQuery.sizeOf(context),
+      preferredWidth: 680,
+      preferredHeight: 620,
+    );
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: SizedBox(
-        width: 680,
-        height: 620,
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Column(
           children: [
             _DialogHeader(
@@ -1230,10 +1270,16 @@ class _FindInCurrentFileDialogState extends State<_FindInCurrentFileDialog> {
   @override
   Widget build(BuildContext context) {
     final name = pathBaseName(widget.path);
+    final dialogSize = workspaceSearchDialogSize(
+      MediaQuery.sizeOf(context),
+      preferredWidth: 760,
+      preferredHeight: 560,
+    );
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: SizedBox(
-        width: 760,
-        height: 560,
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Column(
           children: [
             _DialogHeader(

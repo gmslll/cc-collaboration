@@ -585,6 +585,55 @@ void main() {
     expect(dialog, isNot(contains('height: 620')));
   });
 
+  test('workspace search dialog size fits compact screens', () {
+    expect(
+      workspaceSearchDialogSize(
+        const Size(1200, 900),
+        preferredWidth: 860,
+        preferredHeight: 680,
+      ),
+      const Size(860, 680),
+    );
+    expect(
+      workspaceSearchDialogSize(
+        const Size(360, 420),
+        preferredWidth: 940,
+        preferredHeight: 680,
+      ),
+      const Size(328, 372),
+    );
+    expect(
+      workspaceSearchDialogSize(
+        const Size(220, 220),
+        preferredWidth: 760,
+        preferredHeight: 660,
+      ),
+      const Size(188, 172),
+    );
+  });
+
+  test('workspace search dialogs use viewport based bounds', () {
+    final source = File(
+      'lib/screens/workspace/search_dialogs.dart',
+    ).readAsStringSync();
+
+    expect(
+      'workspaceSearchDialogSize'.allMatches(source).length,
+      greaterThanOrEqualTo(6),
+    );
+    expect(
+      'insetPadding: const EdgeInsets.symmetric'.allMatches(source).length,
+      greaterThanOrEqualTo(5),
+    );
+    expect(source, isNot(contains('width: 760')));
+    expect(source, isNot(contains('width: 860')));
+    expect(source, isNot(contains('width: 940')));
+    expect(source, isNot(contains('height: 660')));
+    expect(source, isNot(contains('height: 680')));
+    expect(source, isNot(contains('height: 620')));
+    expect(source, isNot(contains('height: 560')));
+  });
+
   test('workspace confirm dialog uses responsive long-message content', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final confirmDialog = source.substring(
