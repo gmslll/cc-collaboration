@@ -114,6 +114,19 @@ bool workspaceCommitActionEnabled({
   required bool loading,
 }) => !loading && hasCommitTarget && message.trim().isNotEmpty;
 
+double workspaceLogFilterMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.46,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 List<OnlineUser> onlineSendSelectableUsers(
   Iterable<OnlineUser> users,
   String selfIdentity, {
@@ -8723,7 +8736,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         isExpanded: true,
         value: value,
         iconSize: 16,
-        menuMaxHeight: 320,
+        menuMaxHeight: workspaceLogFilterMenuMaxHeight(
+          MediaQuery.sizeOf(context),
+        ),
         style: CcType.code(size: 11.5, color: CcColors.text),
         items: items,
         onChanged: onChanged,

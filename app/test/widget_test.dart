@@ -420,14 +420,16 @@ void main() {
     );
   });
 
-  test('workspace git log filter menus are width constrained', () {
+  test('workspace git log filter menus are viewport constrained', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final filters = source.substring(
       source.indexOf('Widget _logFilterDropdown({'),
       source.indexOf('// _logPathFilterChip'),
     );
 
-    expect(filters, contains('menuMaxHeight: 320'));
+    expect(filters, contains('workspaceLogFilterMenuMaxHeight'));
+    expect(filters, contains('MediaQuery.sizeOf(context)'));
+    expect(filters, isNot(contains('menuMaxHeight: 320')));
     expect(
       filters,
       isNot(contains('DropdownMenuItem(value: r, child: Text(r))')),
@@ -552,6 +554,15 @@ void main() {
     expect(workspaceConfirmDialogWidth(const Size(320, 760)), 288);
     expect(workspaceConfirmDialogWidth(const Size(1024, 760)), 420);
     expect(workspaceConfirmDialogWidth(const Size(20, 760)), 420);
+  });
+
+  test('workspace log filter menus fit compact screens', () {
+    expect(workspaceLogFilterMenuMaxHeight(const Size(1024, 900)), 320);
+    expect(
+      workspaceLogFilterMenuMaxHeight(const Size(320, 420)),
+      closeTo(193.2, 0.001),
+    );
+    expect(workspaceLogFilterMenuMaxHeight(const Size(320, 220)), 160);
   });
 
   test('workspace compare with HEAD dialog size fits compact screens', () {
