@@ -41,6 +41,19 @@ void main() {
     expect(keyBar, contains('overflow: TextOverflow.ellipsis'));
   });
 
+  test('remote workspace exposes persistent PTY transport modes', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+
+    expect(source, contains("value: 'transport:auto'"));
+    expect(source, contains("value: 'transport:p2p'"));
+    expect(source, contains("value: 'transport:relay'"));
+    expect(source, contains('saveRemotePtyTransportMode(mode)'));
+    expect(source, contains('P2P 直连失败'));
+    expect(source, contains("tooltip: '改用 Relay'"));
+  });
+
   test('remote workspace dropdown menu height is capped', () {
     expect(remoteWorkspaceMenuMaxHeight(const Size(1024, 900)), 320);
     expect(

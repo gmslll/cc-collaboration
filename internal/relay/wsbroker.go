@@ -15,9 +15,10 @@ import (
 
 // The ws broker pipes opaque frames between a single user's own devices so a
 // phone "client" can drive a desktop "host" workspace (terminal streams + file
-// requests). It is deliberately dumb: it never interprets payloads, only routes
-// by the authenticated identity + connection role, so the relay stays a thin
-// transport and another user can never reach your host (different identity).
+// requests). It only interprets the top-level routing envelope: `to` selects an
+// opposite-role peer and `from` is overwritten with the authenticated connId.
+// Application payloads remain opaque, and another identity can never reach your
+// host.
 //
 // A frame from a client is delivered to that identity's host(s); a frame from a
 // host to the identity's client(s). A frame may target one peer via its
@@ -71,19 +72,21 @@ func (b *wsBroker) remove(identity string, c *wsConn) {
 
 // peers returns where a frame from `from` should go: the single connection with
 // id==to if to>0, else every opposite-role connection of the same identity.
+// Directed frames remain role-isolated: guessing a connId must not let one
+// client address another client (or one host address another host).
 func (b *wsBroker) peers(identity string, from *wsConn, to uint64) []*wsConn {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var out []*wsConn
 	for _, c := range b.conns[identity] {
-		if c == from {
+		if c == from || c.role == from.role {
 			continue
 		}
 		if to != 0 {
 			if c.id == to {
 				out = append(out, c)
 			}
-		} else if c.role != from.role {
+		} else {
 			out = append(out, c)
 		}
 	}
@@ -182,12 +185,29 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if typ != websocket.MessageText {
 			continue
 		}
-		var env struct {
-			To uint64 `json:"to"`
+		var env map[string]json.RawMessage
+		if err := json.Unmarshal(data, &env); err != nil || env == nil {
+			continue
 		}
-		_ = json.Unmarshal(data, &env)
-		for _, p := range s.WsBroker.peers(identity, c, env.To) {
-			deliver(p, data)
+		var to uint64
+		if raw := env["to"]; raw != nil {
+			if err := json.Unmarshal(raw, &to); err != nil {
+				continue
+			}
+		}
+		// The connection id is authenticated transport metadata. Never trust a
+		// caller-provided `from`, because PTY routes use it as a peer identity.
+		from, err := json.Marshal(c.id)
+		if err != nil {
+			continue
+		}
+		env["from"] = from
+		stamped, err := json.Marshal(env)
+		if err != nil {
+			continue
+		}
+		for _, p := range s.WsBroker.peers(identity, c, to) {
+			deliver(p, stamped)
 		}
 	}
 }

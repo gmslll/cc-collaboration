@@ -19,6 +19,7 @@ import '../local/remote_prefs.dart';
 import '../local/session_overview.dart';
 import '../remote/file_fs.dart';
 import '../remote/file_transfer.dart';
+import '../remote/pty_transport.dart';
 import '../remote/remote_client.dart';
 import '../screen_share/models.dart';
 import '../syntax.dart';
@@ -284,8 +285,17 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
     if (mounted) setState(() {});
   }
 
-  RemoteClient _newRemoteClient() =>
-      RemoteClient(relayUrl: widget.relayUrl, token: widget.token);
+  RemoteClient _newRemoteClient() => RemoteClient(
+    relayUrl: widget.relayUrl,
+    token: widget.token,
+    ptyTransportMode: loadRemotePtyTransportMode(),
+  );
+
+  Future<void> _setPtyTransportMode(PtyTransportMode mode) async {
+    saveRemotePtyTransportMode(mode);
+    await _c.setPtyTransportMode(mode);
+    if (mounted) setState(() {});
+  }
 
   void _attachRemoteClient(RemoteClient client) {
     client.addListener(_onClientChange);
@@ -799,11 +809,18 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                 onPressed: _c.connected ? _c.refresh : null,
               ),
               PopupMenuButton<String>(
-                tooltip: '显示设置',
+                tooltip: '远程设置',
                 icon: const Icon(Icons.tune_rounded),
                 onSelected: (v) {
                   if (v == 'content') {
                     _setShowSessionContent(!showSessionContent);
+                    return;
+                  }
+                  if (v.startsWith('transport:')) {
+                    final mode = PtyTransportMode.fromWire(
+                      v.substring('transport:'.length),
+                    );
+                    if (mode != null) unawaited(_setPtyTransportMode(mode));
                   }
                 },
                 itemBuilder: (_) => [
@@ -811,6 +828,22 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
                     value: 'content',
                     checked: showSessionContent,
                     child: const Text('显示会话内容'),
+                  ),
+                  const PopupMenuDivider(),
+                  CheckedPopupMenuItem<String>(
+                    value: 'transport:auto',
+                    checked: _c.ptyTransportMode == PtyTransportMode.auto,
+                    child: const Text('传输：自动（推荐）'),
+                  ),
+                  CheckedPopupMenuItem<String>(
+                    value: 'transport:p2p',
+                    checked: _c.ptyTransportMode == PtyTransportMode.p2p,
+                    child: const Text('传输：仅 P2P'),
+                  ),
+                  CheckedPopupMenuItem<String>(
+                    value: 'transport:relay',
+                    checked: _c.ptyTransportMode == PtyTransportMode.relay,
+                    child: const Text('传输：仅 Relay'),
                   ),
                 ],
               ),
@@ -880,11 +913,21 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   }
 
   Widget _statusBanner() {
+    final strictP2PUnavailable =
+        _c.ptyTransportMode == PtyTransportMode.p2p &&
+        _c.ptyPeerState != PtyPeerState.p2p;
     final (color, text) = !_c.connected
         ? (CcColors.danger, _c.error == null ? '连接中…' : '未连接（${_c.error}）')
         : !_c.hostOnline && _c.sessions.isEmpty
         ? (CcColors.warning, '已连 relay · 等待电脑端开启「共享工作区」')
-        : (CcColors.ok, '已连接电脑工作区');
+        : strictP2PUnavailable
+        ? (
+            _c.ptyError == null ? CcColors.warning : CcColors.danger,
+            _c.ptyError == null
+                ? '已连接电脑 · ${_c.ptyTransportStatusLabel}'
+                : 'P2P 直连失败 · ${_c.ptyError} · 未使用 Relay 转发终端',
+          )
+        : (CcColors.ok, '已连接电脑工作区 · ${_c.ptyTransportStatusLabel}');
     return Container(
       width: double.infinity,
       color: color.withValues(alpha: 0.14),
@@ -2747,6 +2790,43 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
     _updateDefaultViewport(context);
   }
 
+  Widget _ptyBlockedBanner() => Container(
+    width: double.infinity,
+    color: CcColors.danger.withValues(alpha: 0.14),
+    padding: const EdgeInsets.fromLTRB(10, 5, 4, 5),
+    child: Row(
+      children: [
+        const Icon(Icons.link_off_rounded, size: 16, color: CcColors.danger),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            widget.client.ptyError ?? '正在建立 P2P 直连，终端输入暂不可用',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: CcColors.danger, fontSize: 11.5),
+          ),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: '重试 P2P',
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          onPressed: () => unawaited(widget.client.retryP2P()),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: '改用 Relay',
+          icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+          onPressed: () {
+            saveRemotePtyTransportMode(PtyTransportMode.relay);
+            unawaited(
+              widget.client.setPtyTransportMode(PtyTransportMode.relay),
+            );
+          },
+        ),
+      ],
+    ),
+  );
+
   @override
   void initState() {
     super.initState();
@@ -3388,6 +3468,8 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       ),
       body: Column(
         children: [
+          if (widget.client.ptyInputBlocked(widget.session.sid))
+            _ptyBlockedBanner(),
           Expanded(
             child: Stack(
               children: [

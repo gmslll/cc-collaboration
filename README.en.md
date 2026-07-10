@@ -24,7 +24,7 @@ Infinite Agent Platform provides that operating layer:
 - **Coordination queue**: package cross-role delivery as structured work packages with briefs, prompts, API deltas, attachments, comments, status, and audit history.
 - **Enterprise relay**: self-hosted HTTP/SSE relay with accounts, machine tokens, project membership, presence, tasks, agent capsules, and a web admin UI.
 - **Local session bus**: sibling agent sessions on one machine can message each other, read visible screens, and be coordinated by a supervisor.
-- **Web and mobile entry points**: web for relay administration and queue inspection; mobile for remote workspace viewing, lightweight assignment, and status follow-up.
+- **Web and mobile entry points**: web for relay administration and queue inspection; mobile for remote workspace viewing, lightweight assignment, and status follow-up. Remote terminal PTY traffic can use automatic selection, direct P2P, or Relay forwarding, while authentication, signaling, files, Git, and other control traffic stay on Relay.
 
 ## Common Workflows
 

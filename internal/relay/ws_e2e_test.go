@@ -2,6 +2,8 @@ package relay_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,13 +64,60 @@ func TestWSUpgradeAndBroker(t *testing.T) {
 		t.Fatalf("client ws upgrade failed: %v", err)
 	}
 	defer client.CloseNow()
+	_, hello, err := client.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clientHello struct {
+		ConnID uint64 `json:"connId"`
+	}
+	if err := json.Unmarshal(hello, &clientHello); err != nil || clientHello.ConnID == 0 {
+		t.Fatalf("invalid client hello %q: %v", hello, err)
+	}
 
-	if err := client.Write(ctx, websocket.MessageText, []byte(`{"t":"hi","from":0}`)); err != nil {
+	if err := client.Write(ctx, websocket.MessageText, []byte(`{"t":"hi","from":999999}`)); err != nil {
 		t.Fatal(err)
 	}
 	// The host receives relay control frames (_hello/_peer) first, then the frame.
-	if !waitForText(ctx, host, `"t":"hi"`) {
+	hi, ok := readTextContaining(ctx, host, `"t":"hi"`)
+	if !ok {
 		t.Fatal("host never received the client's brokered frame")
+	}
+	var stamped struct {
+		From uint64 `json:"from"`
+	}
+	if err := json.Unmarshal(hi, &stamped); err != nil || stamped.From != clientHello.ConnID {
+		t.Fatalf("brokered from = %d, want authenticated connId %d (frame %q, err %v)", stamped.From, clientHello.ConnID, hi, err)
+	}
+	if err := client.Write(ctx, websocket.MessageText, []byte(`{"t":"pty.signal","kind":"mode","mode":"p2p"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !waitForText(ctx, host, `"t":"pty.signal"`) {
+		t.Fatal("host never received the PTY WebRTC signaling frame")
+	}
+
+	otherClient, _, err := websocket.Dial(ctx, wsURL+"/v1/ws?role=client", opts)
+	if err != nil {
+		t.Fatalf("second client ws upgrade failed: %v", err)
+	}
+	defer otherClient.CloseNow()
+	_, otherHello, err := otherClient.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var other struct {
+		ConnID uint64 `json:"connId"`
+	}
+	if err := json.Unmarshal(otherHello, &other); err != nil || other.ConnID == 0 {
+		t.Fatalf("invalid second client hello %q: %v", otherHello, err)
+	}
+	if err := client.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"t":"same-role","to":%d}`, other.ConnID))); err != nil {
+		t.Fatal(err)
+	}
+	shortCtx, cancelShort := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancelShort()
+	if waitForText(shortCtx, otherClient, `"t":"same-role"`) {
+		t.Fatal("directed client frame reached another client")
 	}
 }
 
@@ -128,14 +177,19 @@ func TestWSStopsForwardingAfterUserDisabled(t *testing.T) {
 }
 
 func waitForText(ctx context.Context, c *websocket.Conn, want string) bool {
+	_, ok := readTextContaining(ctx, c, want)
+	return ok
+}
+
+func readTextContaining(ctx context.Context, c *websocket.Conn, want string) ([]byte, bool) {
 	for i := 0; i < 10; i++ {
 		_, data, err := c.Read(ctx)
 		if err != nil {
-			return false
+			return nil, false
 		}
 		if strings.Contains(string(data), want) {
-			return true
+			return data, true
 		}
 	}
-	return false
+	return nil, false
 }

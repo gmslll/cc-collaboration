@@ -14,6 +14,7 @@ func TestWsBrokerRoutesByIdentityAndRole(t *testing.T) {
 	b := newWsBroker()
 	host := b.add("alice", "host")
 	client := b.add("alice", "client")
+	otherClient := b.add("alice", "client")
 	bobHost := b.add("bob", "host")
 
 	// A client frame (to=0) goes to its own identity's host, nothing else.
@@ -21,7 +22,7 @@ func TestWsBrokerRoutesByIdentityAndRole(t *testing.T) {
 		t.Fatalf("client→host routing wrong: %v", connIDs(got))
 	}
 	// A host frame (to=0) goes to its own identity's client.
-	if got := b.peers("alice", host, 0); len(got) != 1 || got[0] != client {
+	if got := b.peers("alice", host, 0); len(got) != 2 || got[0] != client || got[1] != otherClient {
 		t.Fatalf("host→client routing wrong: %v", connIDs(got))
 	}
 	// Cross-identity isolation: bob's host must never receive alice's frames.
@@ -38,12 +39,16 @@ func TestWsBrokerRoutesByIdentityAndRole(t *testing.T) {
 	if got := b.peers("alice", host, client.id); len(got) != 1 || got[0] != client {
 		t.Fatalf("directed host→client wrong: %v", connIDs(got))
 	}
+	if got := b.peers("alice", client, otherClient.id); len(got) != 0 {
+		t.Fatalf("directed same-role frame was not isolated: %v", connIDs(got))
+	}
 	// rolePeers selects by role for presence notifications.
-	if got := b.rolePeers("alice", "client"); len(got) != 1 || got[0] != client {
+	if got := b.rolePeers("alice", "client"); len(got) != 2 || got[0] != client || got[1] != otherClient {
 		t.Fatalf("rolePeers(client) wrong: %v", connIDs(got))
 	}
 	// After removal the host has no client peer and alice is cleaned up if empty.
 	b.remove("alice", client)
+	b.remove("alice", otherClient)
 	if got := b.peers("alice", host, 0); len(got) != 0 {
 		t.Fatalf("after remove, host should have no peers: %v", connIDs(got))
 	}

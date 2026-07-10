@@ -14,6 +14,8 @@ import '../terminal_mouse.dart';
 import '../terminal_theme.dart';
 import 'file_fs.dart';
 import 'file_transfer.dart';
+import 'pty_transport.dart';
+import 'pty_transport_webrtc.dart';
 import 'remote_channel.dart';
 
 // deviceDisplayName resolves a human-friendly name for this phone (shown in the
@@ -151,17 +153,54 @@ class SentFile {
   SentFile(this.name, this.path) : at = DateTime.now();
 }
 
+enum _ClientPtyRouteState { opening, ready, failed }
+
+class _ClientPtyRoute {
+  _ClientPtyRoute({required this.id, required this.p2p});
+
+  final String id;
+  final bool p2p;
+  _ClientPtyRouteState state = _ClientPtyRouteState.opening;
+  int nextSendSequence = 1;
+  int nextReceiveSequence = 1;
+  ({int rows, int cols})? pendingResize;
+}
+
 // RemoteClient is the phone side of the remote workspace: over the relay (see
 // RemoteChannel for transport) it discovers the desktop host's terminal sessions
 // and project roots, drives terminals (xterm fed by network bytes, keystrokes
 // sent back), and browses/reads files. Read-only files for now (editing later).
 class RemoteClient extends RemoteChannel {
-  RemoteClient({required super.relayUrl, required super.token})
-    : super(role: 'client') {
+  RemoteClient({
+    required super.relayUrl,
+    required super.token,
+    super.socketConnector,
+    PtyTransportMode ptyTransportMode = PtyTransportMode.auto,
+    PtyPeerFactory? ptyPeerFactory,
+  }) : _ptyMode = ptyTransportMode,
+       super(role: 'client') {
+    _ptyTransport = PtyClientTransportController(
+      mode: ptyTransportMode,
+      peerFactory: ptyPeerFactory ?? WebRtcPtyPeerFactory(),
+      sendSignal: send,
+      onFrame: _onPtyFrame,
+      onStatus: _onPtyStatus,
+    );
     _loadDeviceName();
   }
 
   bool _hostOnline = false;
+  late final PtyClientTransportController _ptyTransport;
+  PtyTransportMode _ptyMode;
+  PtyPeerStatus? _ptyStatus;
+  String? _ptyLocalError;
+  int? _hostPeerId;
+  int _routeCounter = 0;
+  Timer? _p2pConnectTimer;
+  bool _ptyDisposed = false;
+  bool _ptyRecovering = false;
+  int _ptyOperationEpoch = 0;
+  final Map<String, _ClientPtyRoute> _ptyRoutes = {};
 
   // This phone's display name, sent to the host on connect (hello) so the
   // desktop's send list / progress rows can show "Gabriel 的 iPhone" instead of
@@ -518,6 +557,107 @@ class RemoteClient extends RemoteChannel {
 
   bool get hostOnline => _hostOnline;
   String? get error => lastError;
+  PtyTransportMode get ptyTransportMode => _ptyMode;
+  PtyPeerState get ptyPeerState => _ptyMode == PtyTransportMode.relay
+      ? PtyPeerState.relay
+      : (_ptyStatus?.state ?? PtyPeerState.closed);
+  String? get ptyError => _ptyLocalError ?? _ptyStatus?.error;
+
+  String get ptyTransportStatusLabel {
+    if (_ptyMode == PtyTransportMode.relay) return 'Relay';
+    if (ptyPeerState == PtyPeerState.p2p) return 'P2P';
+    if (_ptyMode == PtyTransportMode.p2p) {
+      if (ptyError != null || ptyPeerState == PtyPeerState.failed) {
+        return 'P2P 失败';
+      }
+      return 'P2P 连接中';
+    }
+    if (ptyPeerState == PtyPeerState.connecting) return 'Relay · P2P 连接中';
+    if (ptyPeerState == PtyPeerState.failed) return 'Relay · P2P 不可用';
+    return 'Relay';
+  }
+
+  bool ptyInputBlocked(String sid) {
+    if (_ptyMode != PtyTransportMode.p2p) return false;
+    final route = _ptyRoutes[sid];
+    return route == null ||
+        !route.p2p ||
+        route.state != _ClientPtyRouteState.ready;
+  }
+
+  Future<void> setPtyTransportMode(PtyTransportMode mode) async {
+    if (mode == _ptyMode) {
+      if (mode == PtyTransportMode.p2p) await retryP2P();
+      return;
+    }
+    final previousMode = _ptyMode;
+    final operation = ++_ptyOperationEpoch;
+    _p2pConnectTimer?.cancel();
+    _ptyLocalError = null;
+    final hadRelayRoute = _ptyRoutes.values.any((route) => !route.p2p);
+    // Route teardown is a Relay control message and is sent before changing
+    // transport state. In particular, entering strict P2P must stop the host's
+    // existing Relay watcher instead of merely discarding its output locally.
+    _closeAllTerminalRoutes();
+    final reconnectForStrictPrivacy =
+        mode == PtyTransportMode.p2p &&
+        previousMode != PtyTransportMode.p2p &&
+        (previousMode == PtyTransportMode.relay || hadRelayRoute) &&
+        connected;
+    // A pre-P2P host may ignore term.close, and a saturated broker may drop it.
+    // Reconnecting forces every host version to drop the old connId watcher.
+    if (reconnectForStrictPrivacy) kick();
+    _ptyMode = mode;
+    await _ptyTransport.setMode(mode);
+    if (_ptyDisposed || operation != _ptyOperationEpoch || _ptyMode != mode) {
+      return;
+    }
+    if (reconnectForStrictPrivacy) {
+      notifyListeners();
+      return;
+    }
+    final host = _hostPeerId;
+    if (host != null && mode != PtyTransportMode.relay) {
+      _ptyTransport.hostConnected(host);
+      if (mode == PtyTransportMode.p2p) _armP2PConnectTimeout(host);
+    }
+    _reopenTerminalRoutes();
+    notifyListeners();
+  }
+
+  Future<void> retryP2P() async {
+    if (_ptyMode == PtyTransportMode.relay) return;
+    final host = _hostPeerId;
+    if (host == null) {
+      _ptyLocalError = '等待电脑端在线';
+      notifyListeners();
+      return;
+    }
+    _p2pConnectTimer?.cancel();
+    _ptyLocalError = null;
+    final operation = ++_ptyOperationEpoch;
+    final mode = _ptyMode;
+    final epoch = _ptyStatus?.epoch ?? 0;
+    if (epoch > 0) {
+      send({
+        't': ptySignalFrameType,
+        'to': host,
+        'kind': 'close',
+        'epoch': epoch,
+        'reason': 'client retry',
+      });
+    }
+    await _ptyTransport.restartPeer(host);
+    if (_ptyDisposed ||
+        operation != _ptyOperationEpoch ||
+        _ptyMode != mode ||
+        _hostPeerId != host) {
+      return;
+    }
+    _ptyTransport.hostConnected(host);
+    if (_ptyMode == PtyTransportMode.p2p) _armP2PConnectTimeout(host);
+    notifyListeners();
+  }
 
   void connect() => start();
 
@@ -529,6 +669,17 @@ class RemoteClient extends RemoteChannel {
 
   @override
   void onDisconnected() {
+    _ptyOperationEpoch++;
+    _p2pConnectTimer?.cancel();
+    final host = _hostPeerId;
+    _hostPeerId = null;
+    if (host != null) unawaited(_ptyTransport.peerDisconnected(host));
+    for (final route in _ptyRoutes.values) {
+      if (route.p2p) route.state = _ClientPtyRouteState.failed;
+    }
+    if (_ptyMode == PtyTransportMode.p2p) {
+      _ptyLocalError ??= '电脑连接已断开';
+    }
     _hostOnline = false;
     _shareSourcesTimer?.cancel();
     _shareSourcesTimer = null;
@@ -543,9 +694,236 @@ class RemoteClient extends RemoteChannel {
   @override
   void onPeer(int connId, String role, bool connected) {
     if (role != 'host') return;
-    if (connected) send({'t': 'list'});
+    if (connected) {
+      _rememberHost(connId);
+      send({'t': 'list', 'to': connId});
+    } else if (_hostPeerId == connId) {
+      _ptyOperationEpoch++;
+      _p2pConnectTimer?.cancel();
+      _hostPeerId = null;
+      for (final route in _ptyRoutes.values) {
+        if (route.p2p) route.state = _ClientPtyRouteState.failed;
+      }
+      if (_ptyMode == PtyTransportMode.p2p) {
+        _ptyLocalError ??= '电脑连接已断开';
+      }
+      unawaited(_ptyTransport.peerDisconnected(connId));
+    }
     _setHostOnline(connected);
     notifyListeners();
+  }
+
+  void _rememberHost(int peerId) {
+    if (peerId <= 0 || _hostPeerId == peerId) return;
+    _ptyOperationEpoch++;
+    final previous = _hostPeerId;
+    _hostPeerId = peerId;
+    if (previous != null) unawaited(_ptyTransport.peerDisconnected(previous));
+    if (_ptyMode != PtyTransportMode.relay) {
+      _ptyTransport.hostConnected(peerId);
+      if (_ptyMode == PtyTransportMode.p2p) _armP2PConnectTimeout(peerId);
+    }
+  }
+
+  void _armP2PConnectTimeout(int peerId) {
+    _p2pConnectTimer?.cancel();
+    _p2pConnectTimer = Timer(const Duration(seconds: 3), () {
+      if (_hostPeerId != peerId ||
+          _ptyMode != PtyTransportMode.p2p ||
+          ptyPeerState == PtyPeerState.p2p) {
+        return;
+      }
+      _ptyLocalError = 'P2P 直连超时';
+      for (final route in _ptyRoutes.values) {
+        if (route.p2p) route.state = _ClientPtyRouteState.failed;
+      }
+      notifyListeners();
+    });
+  }
+
+  void _onPtyStatus(PtyPeerStatus status) {
+    if (_ptyDisposed) return;
+    if (status.peerId != _hostPeerId) return;
+    final previous = _ptyStatus?.state;
+    _ptyStatus = status;
+    if (status.state == PtyPeerState.p2p) {
+      _p2pConnectTimer?.cancel();
+      _ptyLocalError = null;
+      if (previous != PtyPeerState.p2p && _ptyMode != PtyTransportMode.relay) {
+        scheduleMicrotask(_reopenTerminalRoutes);
+      }
+    } else if ((status.state == PtyPeerState.failed ||
+            status.state == PtyPeerState.closed) &&
+        previous == PtyPeerState.p2p) {
+      if (_ptyMode == PtyTransportMode.auto) {
+        final host = _hostPeerId;
+        if (host != null) unawaited(_recoverAutomaticPty(host));
+      } else if (_ptyMode == PtyTransportMode.p2p) {
+        _ptyLocalError = status.error ?? _ptyLocalError ?? 'P2P 连接已断开';
+        for (final route in _ptyRoutes.values) {
+          if (route.p2p) route.state = _ClientPtyRouteState.failed;
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  void _onPtyFrame(int peerId, Map<String, dynamic> frame) {
+    if (_ptyDisposed) return;
+    if (peerId != _hostPeerId) return;
+    _handlePtyDataFrame(frame, viaP2P: true);
+  }
+
+  void _handlePtyDataFrame(Map<String, dynamic> frame, {required bool viaP2P}) {
+    final type = frame['t'];
+    final sidValue = frame['sid'];
+    if (sidValue is! String || sidValue.isEmpty) return;
+    final sid = sidValue;
+    final route = _ptyRoutes[sid];
+
+    // An older host does not echo routeId/seq. Keep upgraded clients compatible
+    // on Relay, but never admit an unbound frame from a DataChannel.
+    if (route == null) {
+      final data = frame['d'];
+      if (!viaP2P && type == 'term.output' && data is String) {
+        _applyTerminalOutput(sid, data);
+      }
+      return;
+    }
+    final routeIdValue = frame['routeId'];
+    if (routeIdValue != null && routeIdValue is! String) {
+      _failPtyRoute(sid, 'PTY routeId 类型无效');
+      return;
+    }
+    final routeId = routeIdValue is String ? routeIdValue : null;
+    final legacyRelay = !viaP2P && !route.p2p && routeId == null;
+    if (!legacyRelay && routeId != route.id) return;
+    if (route.p2p != viaP2P && !legacyRelay && type != 'term.routeFailed') {
+      return;
+    }
+
+    if (type == 'term.routeFailed') {
+      final reason = frame['reason'];
+      _failPtyRoute(sid, reason is String ? reason : 'PTY 路由失败');
+      return;
+    }
+    if (type == 'term.ready') {
+      route.state = _ClientPtyRouteState.ready;
+      final pending = route.pendingResize;
+      route.pendingResize = null;
+      if (pending != null) {
+        _sendTermFrame(sid, {
+          't': 'term.resize',
+          'sid': sid,
+          'rows': pending.rows,
+          'cols': pending.cols,
+        });
+      }
+      notifyListeners();
+      return;
+    }
+    if (type != 'term.output') return;
+
+    final data = frame['d'];
+    if (data is! String) {
+      if (!legacyRelay) _failPtyRoute(sid, 'PTY 输出内容类型无效');
+      return;
+    }
+    final seqValue = frame['seq'];
+    final seq = seqValue is int ? seqValue : null;
+    if (seq == null) {
+      if (!legacyRelay) {
+        _failPtyRoute(sid, 'PTY 输出缺少序号');
+        return;
+      }
+    } else if (seq < route.nextReceiveSequence) {
+      return;
+    } else if (seq > route.nextReceiveSequence) {
+      _failPtyRoute(sid, 'PTY 输出序号不连续');
+      return;
+    } else {
+      route.nextReceiveSequence++;
+    }
+    _applyTerminalOutput(sid, data);
+  }
+
+  void _applyTerminalOutput(String sid, String data) {
+    _resizeRefreshTimers.remove(sid)?.cancel();
+    final replayUntil = _resizeRefreshReplayUntil[sid];
+    if (replayUntil == null || DateTime.now().isAfter(replayUntil)) {
+      _resizeRefreshReplayUntil.remove(sid);
+      _resizeRefreshAttempted.remove(sid);
+    }
+    _terminals[sid]?.write(data);
+  }
+
+  void _failPtyRoute(String sid, String reason) {
+    final route = _ptyRoutes[sid];
+    if (route == null || route.state == _ClientPtyRouteState.failed) return;
+    route.state = _ClientPtyRouteState.failed;
+    _ptyLocalError = reason;
+    final host = _hostPeerId;
+    final epoch = _ptyStatus?.epoch ?? 0;
+    if (host != null && epoch > 0) {
+      send({
+        't': ptySignalFrameType,
+        'to': host,
+        'kind': 'close',
+        'epoch': epoch,
+        'reason': reason,
+      });
+    }
+    if (_ptyMode == PtyTransportMode.auto && host != null) {
+      unawaited(_recoverAutomaticPty(host));
+    } else if (host != null) {
+      unawaited(_ptyTransport.restartPeer(host));
+    }
+    notifyListeners();
+  }
+
+  Future<void> _recoverAutomaticPty(int host) async {
+    if (_ptyRecovering ||
+        _ptyDisposed ||
+        _ptyMode != PtyTransportMode.auto ||
+        _hostPeerId != host) {
+      return;
+    }
+    final operation = _ptyOperationEpoch;
+    _ptyRecovering = true;
+    try {
+      await _ptyTransport.restartPeer(host);
+      if (_ptyDisposed ||
+          _ptyMode != PtyTransportMode.auto ||
+          _hostPeerId != host ||
+          operation != _ptyOperationEpoch) {
+        return;
+      }
+      _reopenTerminalRoutes();
+      _ptyTransport.hostConnected(host);
+    } finally {
+      _ptyRecovering = false;
+    }
+  }
+
+  void _reopenTerminalRoutes() {
+    if (_ptyDisposed || _terminals.isEmpty) return;
+    for (final sid in _terminals.keys.toList()) {
+      reloadTerminal(sid);
+    }
+    onTerminalReset?.call();
+  }
+
+  void _closeTerminalRoute(String sid, {int? peerId}) {
+    final route = _ptyRoutes.remove(sid);
+    final host = peerId ?? _hostPeerId;
+    if (route == null || host == null) return;
+    send({'t': 'term.close', 'to': host, 'sid': sid, 'routeId': route.id});
+  }
+
+  void _closeAllTerminalRoutes({int? peerId}) {
+    for (final sid in _ptyRoutes.keys.toList()) {
+      _closeTerminalRoute(sid, peerId: peerId);
+    }
   }
 
   // _setHostOnline centralizes the host-online flag so a false→true transition
@@ -580,6 +958,17 @@ class RemoteClient extends RemoteChannel {
   @override
   void onFrame(Map<String, dynamic> f) {
     final t = f['t'];
+    if (t == ptySignalFrameType) {
+      final from = f['from'];
+      if (from is int && from == _hostPeerId) {
+        unawaited(_ptyTransport.handleSignal(f));
+      }
+      return;
+    }
+    if (t == 'term.ready' || t == 'term.routeFailed') {
+      _handlePtyDataFrame(f, viaP2P: false);
+      return;
+    }
     // File transfer frames split by role: accept/reject/ack/cancel for a file we
     // are SENDING route to its handle; offer/chunk/end (and cancels of an inbound
     // file) go to the receiver.
@@ -593,6 +982,8 @@ class RemoteClient extends RemoteChannel {
     }
     switch (t) {
       case 'sessions':
+        final from = (f['from'] as num?)?.toInt();
+        if (from != null && from > 0) _rememberHost(from);
         sessions = [
           for (final s in (f['items'] as List? ?? []))
             RemoteSession(
@@ -662,17 +1053,7 @@ class RemoteClient extends RemoteChannel {
         Notifications.show(title, body); // OS banner (works in background too)
         notifyListeners();
       case 'term.output':
-        final sid = f['sid'] as String?;
-        final d = f['d'] as String?;
-        if (sid != null && d != null) {
-          _resizeRefreshTimers.remove(sid)?.cancel();
-          final replayUntil = _resizeRefreshReplayUntil[sid];
-          if (replayUntil == null || DateTime.now().isAfter(replayUntil)) {
-            _resizeRefreshReplayUntil.remove(sid);
-            _resizeRefreshAttempted.remove(sid);
-          }
-          _terminals[sid]?.write(d);
-        }
+        _handlePtyDataFrame(f, viaP2P: false);
       case 'reply':
         // The desktop pushed an agent's clean reply text for a watched session;
         // the terminal screen reads it aloud if its TTS toggle is on.
@@ -897,7 +1278,7 @@ class RemoteClient extends RemoteChannel {
   // soft keyboards lack Esc / Ctrl / arrows that agent TUIs need).
   void sendKeys(String sid, String data) {
     touchSession(sid); // input is an operation → keep this session's cache warm
-    send({'t': 'term.input', 'sid': sid, 'd': data});
+    _sendTermFrame(sid, {'t': 'term.input', 'sid': sid, 'd': data});
   }
 
   // requestScreen asks the host for a one-shot snapshot of [sid]'s current
@@ -916,7 +1297,8 @@ class RemoteClient extends RemoteChannel {
     // Same wheel fix as the desktop so touch-scroll reaches full-screen TUIs;
     // without it xterm's default handler drops the wheel while the app tracks.
     term.mouseHandler = const WheelMouseHandler();
-    term.onOutput = (d) => send({'t': 'term.input', 'sid': sid, 'd': d});
+    term.onOutput = (d) =>
+        _sendTermFrame(sid, {'t': 'term.input', 'sid': sid, 'd': d});
     term.onResize = (w, h, pw, ph) {
       _lastViewport[sid] = (
         cols: w,
@@ -945,14 +1327,74 @@ class RemoteClient extends RemoteChannel {
     // last-known screen size for a first-ever open of this sid, so we send the
     // real width instead of nothing (which leaves the PTY at the other device's).
     final vp = _lastViewport[sid] ?? _lastKnownViewport ?? defaultViewport;
+    _openTerminalRoute(sid, vp);
+    return term;
+  }
+
+  void _openTerminalRoute(String sid, ({int cols, int rows})? viewport) {
+    final host = _hostPeerId;
+    final p2pReady = host != null && ptyPeerState == PtyPeerState.p2p;
+    final useP2P = _ptyMode != PtyTransportMode.relay && p2pReady;
+    final route = _ClientPtyRoute(
+      id: '${DateTime.now().microsecondsSinceEpoch}-${++_routeCounter}',
+      p2p: useP2P || _ptyMode == PtyTransportMode.p2p,
+    );
+    _ptyRoutes[sid] = route;
+
+    // Strict P2P never leaks PTY bytes through Relay. Keep the local mirror
+    // empty until negotiation succeeds; status UI offers retry / Relay mode.
+    if (_ptyMode == PtyTransportMode.p2p && !p2pReady) {
+      if (host != null) _armP2PConnectTimeout(host);
+      return;
+    }
+    if (!route.p2p) {
+      // Relay is already ordered with term.open. Mark ready immediately for
+      // backward compatibility with hosts predating term.ready.
+      route.state = _ClientPtyRouteState.ready;
+    }
     send({
       't': 'term.open',
+      'to': ?host,
       'sid': sid,
+      'routeId': route.id,
+      'transport': route.p2p ? 'p2p' : 'relay',
       'historyMode': historyMode,
-      if (vp != null) 'cols': vp.cols,
-      if (vp != null) 'rows': vp.rows,
+      if (viewport != null) 'cols': viewport.cols,
+      if (viewport != null) 'rows': viewport.rows,
     });
-    return term;
+  }
+
+  bool _sendTermFrame(String sid, Map<String, dynamic> frame) {
+    final route = _ptyRoutes[sid];
+    if (route == null || route.state != _ClientPtyRouteState.ready) {
+      if (frame['t'] == 'term.resize') {
+        route?.pendingResize = (
+          rows: (frame['rows'] as num?)?.toInt() ?? 0,
+          cols: (frame['cols'] as num?)?.toInt() ?? 0,
+        );
+      }
+      return false;
+    }
+    final host = _hostPeerId;
+    if (host == null) return false;
+    final outbound = <String, dynamic>{
+      ...frame,
+      'routeId': route.id,
+      'seq': route.nextSendSequence++,
+    };
+    if (!route.p2p) {
+      send({...outbound, 'to': host});
+      return true;
+    }
+    unawaited(
+      _ptyTransport.sendPtyFrame(host, outbound).then((result) {
+        if (result != PtySendResult.sentP2p &&
+            identical(_ptyRoutes[sid], route)) {
+          _failPtyRoute(sid, 'P2P 数据通道不可用');
+        }
+      }),
+    );
+    return true;
   }
 
   void _configureTerminalForSession(String sid, Terminal term) {
@@ -973,6 +1415,7 @@ class RemoteClient extends RemoteChannel {
   void reloadTerminal(String sid) {
     _resizeRefreshTimers.remove(sid)?.cancel();
     _terminals.remove(sid);
+    _closeTerminalRoute(sid);
     _resizeTimers.remove(sid)?.cancel();
     terminalFor(sid); // recreate + send term.open now → host replays backlog
   }
@@ -1030,6 +1473,7 @@ class RemoteClient extends RemoteChannel {
 
   void _evictTerminal(String sid) {
     _terminals.remove(sid);
+    _closeTerminalRoute(sid);
     _resizeTimers.remove(sid)?.cancel();
     _resizeRefreshTimers.remove(sid)?.cancel();
     _resizeRefreshAttempted.remove(sid);
@@ -1038,8 +1482,14 @@ class RemoteClient extends RemoteChannel {
     _lastActive.remove(sid);
   }
 
-  void _sendResize(String sid, {required int rows, required int cols}) {
-    send({'t': 'term.resize', 'sid': sid, 'rows': rows, 'cols': cols});
+  bool _sendResize(String sid, {required int rows, required int cols}) {
+    final sent = _sendTermFrame(sid, {
+      't': 'term.resize',
+      'sid': sid,
+      'rows': rows,
+      'cols': cols,
+    });
+    if (!sent) return false;
     // Some TUIs accept SIGWINCH but don't repaint until their next real output.
     // If the host sends output after the resize, term.output cancels this. If it
     // stays quiet, re-open the watched terminal so the host replays the current
@@ -1047,7 +1497,7 @@ class RemoteClient extends RemoteChannel {
     // visible until the agent's next answer.
     _resizeRefreshTimers.remove(sid)?.cancel();
     final attempted = _resizeRefreshAttempted[sid];
-    if (attempted?.rows == rows && attempted?.cols == cols) return;
+    if (attempted?.rows == rows && attempted?.cols == cols) return true;
     _resizeRefreshTimers[sid] = Timer(const Duration(milliseconds: 1200), () {
       _resizeRefreshTimers.remove(sid);
       if (_viewedSid != sid || !_terminals.containsKey(sid)) return;
@@ -1058,6 +1508,7 @@ class RemoteClient extends RemoteChannel {
       reloadTerminal(sid);
       onTerminalReset?.call();
     });
+    return true;
   }
 
   // adoptSize makes the device that's currently viewing [sid] re-assert its own
@@ -1079,14 +1530,20 @@ class RemoteClient extends RemoteChannel {
     if (vp == null) return 'no-viewport-yet';
     final w = vp.cols, h = vp.rows;
     if (w >= 2 && h >= 2) {
-      _sendResize(sid, rows: h, cols: w);
-      return '${w}x$h';
+      return _sendResize(sid, rows: h, cols: w)
+          ? '${w}x$h'
+          : 'transport-blocked';
     }
     return 'skip ${w}x$h';
   }
 
   @override
   void dispose() {
+    _closeAllTerminalRoutes();
+    _ptyDisposed = true;
+    _ptyOperationEpoch++;
+    _p2pConnectTimer?.cancel();
+    unawaited(_ptyTransport.dispose());
     _evictTimer?.cancel();
     for (final t in _resizeRefreshTimers.values) {
       t.cancel();

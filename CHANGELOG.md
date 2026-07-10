@@ -6,6 +6,10 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Added
+
+- **远程终端可选择自动、P2P 或 Relay 传输** — 手机端可持久化选择终端 PTY 数据路径；自动模式优先直连并安全回退，严格 P2P 不会把已分配的输入/输出帧重发到 Relay。认证、WebRTC 信令、文件、Git 和其它控制消息仍经 Relay，并补齐连接世代、服务端 peer 身份、背压和重组内存保护。
+
 ### Fixed
 
 - **Relay 发布包不再遗漏 Flutter Web 客户端** — GitHub Release 和一键部署会先构建并校验 `/app/` 的 `index.html` / `main.dart.js`，再编译内嵌资源的 relay；支持显式 `FLUTTER` 路径并探测常见 Homebrew 安装位置。

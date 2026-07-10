@@ -68,7 +68,7 @@ cc-handoff 现在是两大块:
 - **内置代码编辑器(re_editor)** —— 语法高亮 + **跳转到定义**:全语言先用正则符号索引兜底,装了语言服务器的语言再走精确 LSP。触发:Cmd/Ctrl+点击、F12、Cmd/Ctrl+B。语言服务器**在「编辑器插件」面板里配置**(gopls / dart / jdtls / pyright / typescript-language-server / rust-analyzer / clangd —— 自动探测,找不到可手填路径),另有格式化插件(gofmt / prettier / clang-format / …)。
 - **本地会话总线** —— 同一台机器上多个 agent 会话点对点发消息、读对方屏幕(命令行入口 `cc-handoff msg`,见「命令行速查」)。这也是本仓库多 agent 协作开发依赖的机制。
 - **supervisor(总管)** —— 从总线生成并托管 agent 会话,项目 / 会话 / worktree 右键有「起总管」入口。
-- **投屏到手机** —— 把桌面 workspace 通过 relay 投到手机端;手机可查看 / 操作终端、双向文件传输,iOS 端用**灵动岛 / Live Activity** 显示会话状态。
+- **投屏到手机** —— 把桌面 workspace 投到手机端;终端 PTY 数据可选自动、P2P 直连或 Relay 转发，认证 / 信令 / 文件 / Git 控制面继续走 Relay。手机可查看 / 操作终端、双向文件传输，iOS 端用**灵动岛 / Live Activity** 显示会话状态。
 - 其它:文件树文件级复制 / 剪切 / 粘贴 + 与访达剪贴板互通、会话总览、token 用量、hook 活动、语音输入等。
 
 **平台**:桌面(macOS / Windows)为主,移动端(iOS / Android)侧重投屏 / 查看。终端、git、格式化、LSP 等本地能力**仅桌面端生效**。

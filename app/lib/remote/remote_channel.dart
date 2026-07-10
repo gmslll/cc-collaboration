@@ -6,6 +6,36 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'ws_connect.dart';
 
+abstract interface class RemoteSocket {
+  Future<void> get ready;
+  Stream<dynamic> get stream;
+  void add(dynamic data);
+  Future<void> close();
+}
+
+typedef RemoteSocketConnector = RemoteSocket Function(Uri uri, String token);
+
+class _WebSocketRemoteSocket implements RemoteSocket {
+  _WebSocketRemoteSocket(this.channel);
+
+  final WebSocketChannel channel;
+
+  @override
+  Future<void> get ready => channel.ready;
+
+  @override
+  Stream<dynamic> get stream => channel.stream;
+
+  @override
+  void add(dynamic data) => channel.sink.add(data);
+
+  @override
+  Future<void> close() => channel.sink.close();
+}
+
+RemoteSocket _connectRemoteSocket(Uri uri, String token) =>
+    _WebSocketRemoteSocket(connectWs(uri, token));
+
 // RemoteChannel is the shared transport for both ends of the remote workspace:
 // it owns the relay WebSocket (connect, auth, auto-reconnect), the /v1/ws URL
 // normalization, the `_hello`/`_peer` control frames, and frame send/dispatch.
@@ -18,10 +48,15 @@ abstract class RemoteChannel extends ChangeNotifier {
     required this.relayUrl,
     required this.token,
     required this.role,
-  });
+    RemoteSocketConnector? socketConnector,
+  }) : _socketConnector = socketConnector ?? _connectRemoteSocket;
 
-  WebSocketChannel? _ch;
+  final RemoteSocketConnector _socketConnector;
+  RemoteSocket? _ch;
+  RemoteSocket? _pendingSocket;
+  Timer? _authHeartbeat;
   int? _connId; // this connection's id (from the relay's _hello)
+  int _generation = 0;
   bool _running = false;
   bool _disposed = false;
   String? lastError;
@@ -32,14 +67,22 @@ abstract class RemoteChannel extends ChangeNotifier {
   void start() {
     if (_running || _disposed) return;
     _running = true;
+    final generation = ++_generation;
     _notify();
-    unawaited(_loop());
+    unawaited(_loop(generation));
   }
 
   void stop() {
     _running = false;
-    _ch?.sink.close();
+    _generation++;
+    _authHeartbeat?.cancel();
+    _authHeartbeat = null;
+    final ch = _ch;
+    final pending = _pendingSocket;
     _ch = null;
+    _pendingSocket = null;
+    unawaited(_closeQuietly(ch));
+    if (!identical(pending, ch)) unawaited(_closeQuietly(pending));
     _connId = null;
     _notify();
   }
@@ -48,7 +91,15 @@ abstract class RemoteChannel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _running = false;
-    _ch?.sink.close();
+    _generation++;
+    _authHeartbeat?.cancel();
+    _authHeartbeat = null;
+    final ch = _ch;
+    final pending = _pendingSocket;
+    _ch = null;
+    _pendingSocket = null;
+    unawaited(_closeQuietly(ch));
+    if (!identical(pending, ch)) unawaited(_closeQuietly(pending));
     super.dispose();
   }
 
@@ -58,7 +109,7 @@ abstract class RemoteChannel extends ChangeNotifier {
   // a full ping interval to notice. No-op when not running / not connected.
   void kick() {
     if (!_running) return;
-    _ch?.sink.close();
+    unawaited(_closeQuietly(_ch));
   }
 
   // --- subclass hooks ---
@@ -74,7 +125,7 @@ abstract class RemoteChannel extends ChangeNotifier {
     if (ch == null) return;
     frame['from'] = _connId ?? 0;
     try {
-      ch.sink.add(jsonEncode(frame));
+      ch.add(jsonEncode(frame));
     } catch (_) {}
   }
 
@@ -108,29 +159,69 @@ abstract class RemoteChannel extends ChangeNotifier {
   static Uri uriForTesting(String relayUrl, String role) =>
       _uri(relayUrl, role);
 
-  Future<void> _loop() async {
-    while (_running) {
+  bool _isCurrent(int generation, RemoteSocket ch) =>
+      !_disposed && _running && generation == _generation && identical(_ch, ch);
+
+  static Future<void> _closeQuietly(RemoteSocket? ch) async {
+    try {
+      await ch?.close();
+    } catch (_) {}
+  }
+
+  Future<void> _loop(int generation) async {
+    while (_running && !_disposed && generation == _generation) {
       lastError = null;
+      RemoteSocket? ch;
+      var installed = false;
       try {
-        final ch = connectWs(_uri(relayUrl, role), token);
+        ch = _socketConnector(_uri(relayUrl, role), token);
+        _pendingSocket = ch;
         // ready completes on a successful handshake (or throws → reconnect). On
         // native the channel also pings every 20s so a dead peer is detected
         // (the stream ends, the loop reconnects) — mobile NAT/proxies silently
         // drop idle TCP; on web the browser owns keepalive. See ws_connect.dart.
         await ch.ready;
+        if (_disposed || !_running || generation != _generation) {
+          await _closeQuietly(ch);
+          return;
+        }
+        if (identical(_pendingSocket, ch)) _pendingSocket = null;
         _ch = ch;
+        installed = true;
+        // PTY bytes may travel entirely over a WebRTC DataChannel. Keep a small
+        // authenticated Relay text frame flowing so the server re-checks a
+        // disabled/deleted account and closes the control socket; both peers
+        // then tear down P2P in onDisconnected instead of retaining access.
+        _authHeartbeat?.cancel();
+        _authHeartbeat = Timer.periodic(const Duration(seconds: 15), (_) {
+          if (_isCurrent(generation, ch!)) send({'t': '_ping'});
+        });
         _notify();
         await for (final msg in ch.stream) {
+          if (!_isCurrent(generation, ch)) break;
           if (msg is String) _dispatch(msg);
         }
       } catch (e) {
-        lastError = '$e';
+        if (!_disposed && _running && generation == _generation) {
+          lastError = '$e';
+        }
       }
-      _ch = null;
-      _connId = null;
-      onDisconnected();
-      _notify();
-      if (!_running) break;
+      if (ch != null && _isCurrent(generation, ch)) {
+        _authHeartbeat?.cancel();
+        _authHeartbeat = null;
+        _ch = null;
+        _connId = null;
+        onDisconnected();
+        _notify();
+      } else if (!installed &&
+          !_disposed &&
+          _running &&
+          generation == _generation) {
+        _notify();
+      }
+      if (identical(_pendingSocket, ch)) _pendingSocket = null;
+      await _closeQuietly(ch);
+      if (!_running || _disposed || generation != _generation) break;
       await Future<void>.delayed(const Duration(seconds: 3));
     }
   }
