@@ -28,6 +28,8 @@ const state = {
   comments: [],
   promptText: "",
   online: [],
+  adminUsers: [],
+  pendingUserActions: new Set(),
   workspaces: parseWorkspaces(localStorage.getItem("cc-handoff-workspaces")),
 };
 
@@ -1675,25 +1677,33 @@ async function loadAdmin() {
 }
 
 function renderUsers(users) {
+  state.adminUsers = users;
   if (!users.length) {
     els.usersList.innerHTML = `<div class="empty-list">没有账号。</div>`;
     return;
   }
-  els.usersList.innerHTML = users.map((u) => `
-    <div class="aux-card" data-user="${escapeAttr(u.identity)}" data-admin="${u.is_admin ? "1" : "0"}" data-disabled="${u.disabled ? "1" : "0"}">
+  els.usersList.innerHTML = users.map((u) => {
+    const pending = state.pendingUserActions.has(u.identity);
+    const self = u.identity === state.me?.identity;
+    return `
+    <div class="aux-card" data-user="${escapeAttr(u.identity)}" data-admin="${u.is_admin ? "1" : "0"}" data-disabled="${u.disabled ? "1" : "0"}" data-deleted="${u.deleted ? "1" : "0"}">
       <div class="aux-card-head">
         <div>
           <strong>${escapeHTML(u.identity)}</strong>
           ${u.is_admin ? `<span class="badge">系统管理员</span>` : ""}
-          ${u.disabled ? `<span class="badge expired">已停用</span>` : ""}
+          ${u.deleted ? `<span class="badge expired">已删除</span>` : (u.disabled ? `<span class="badge expired">已停用</span>` : "")}
         </div>
         <div class="aux-card-actions">
-          <button class="secondary" type="button" data-uaction="admin">${u.is_admin ? "取消管理员" : "授予管理员"}</button>
-          <button class="secondary" type="button" data-uaction="disable">${u.disabled ? "启用" : "停用"}</button>
-          <button class="secondary" type="button" data-uaction="reset">重置密码</button>
+          ${u.deleted ? "" : `
+            <button class="secondary" type="button" data-uaction="admin" ${pending ? "disabled" : ""}>${u.is_admin ? "取消管理员" : "授予管理员"}</button>
+            <button class="secondary" type="button" data-uaction="disable" ${pending ? "disabled" : ""}>${u.disabled ? "启用" : "停用"}</button>
+            <button class="secondary" type="button" data-uaction="reset" ${pending ? "disabled" : ""}>重置密码</button>
+            <button class="danger" type="button" data-uaction="delete" ${pending || self ? "disabled" : ""} ${self ? `title="不能删除当前登录账号"` : ""}>${pending ? "处理中…" : "删除账号"}</button>
+          `}
         </div>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 
 async function onUsersListClick(event) {
@@ -1701,6 +1711,13 @@ async function onUsersListClick(event) {
   const action = event.target.closest("[data-uaction]")?.dataset.uaction;
   if (!card || !action) return;
   const id = card.dataset.user;
+  if (state.pendingUserActions.has(id) || card.dataset.deleted === "1") return;
+  if (action === "delete") {
+    const confirmed = window.confirm(`确定删除账号 ${id}？\n\n删除后无法恢复，该 identity 不能重新注册，所有登录和机器 token 会立即失效。`);
+    if (!confirmed) return;
+  }
+  state.pendingUserActions.add(id);
+  renderUsers(state.adminUsers);
   try {
     if (action === "admin") {
       await api(`/v1/users/${encodeURIComponent(id)}/admin`, { method: "POST", body: JSON.stringify({ is_admin: card.dataset.admin !== "1" }) });
@@ -1711,10 +1728,19 @@ async function onUsersListClick(event) {
     } else if (action === "reset") {
       const data = await api(`/v1/users/${encodeURIComponent(id)}/reset-password`, { method: "POST" });
       await copyToClipboard(data.password, `新密码已复制（只显示这一次）：${data.password}`);
+    } else if (action === "delete") {
+      await api(`/v1/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+      state.adminUsers = state.adminUsers.map((u) => u.identity === id
+        ? { ...u, is_admin: false, disabled: true, deleted: true }
+        : u);
+      toast("账号已删除");
     }
     await loadAdmin();
   } catch (err) {
     toast(err.message);
+  } finally {
+    state.pendingUserActions.delete(id);
+    renderUsers(state.adminUsers);
   }
 }
 

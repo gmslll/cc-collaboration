@@ -337,7 +337,7 @@ func TestAdminAccountsUIUsesLocalizedStatusCopy(t *testing.T) {
 	js := string(src)
 	required := []string{
 		`${u.is_admin ? ` + "`<span class=\"badge\">系统管理员</span>`" + ` : ""}`,
-		`${u.disabled ? ` + "`<span class=\"badge expired\">已停用</span>`" + ` : ""}`,
+		`u.disabled ? ` + "`<span class=\"badge expired\">已停用</span>`",
 		`${u.is_admin ? "取消管理员" : "授予管理员"}`,
 	}
 	for _, want := range required {
@@ -350,6 +350,29 @@ func TestAdminAccountsUIUsesLocalizedStatusCopy(t *testing.T) {
 	}
 	if strings.Contains(js, `<span class="badge expired">disabled</span>`) {
 		t.Fatal("admin account UI still renders raw disabled badge text")
+	}
+}
+
+func TestAdminAccountsUIProvidesGuardedDelete(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	required := []string{
+		`u.deleted ? ` + "`<span class=\"badge expired\">已删除</span>`",
+		`data-uaction="delete"`,
+		`title="不能删除当前登录账号"`,
+		`window.confirm(` + "`确定删除账号 ${id}？",
+		`该 identity 不能重新注册，所有登录和机器 token 会立即失效。`,
+		`state.pendingUserActions.add(id);`,
+		"await api(`/v1/users/${encodeURIComponent(id)}`, { method: \"DELETE\" });",
+		`state.pendingUserActions.delete(id);`,
+	}
+	for _, want := range required {
+		if !strings.Contains(js, want) {
+			t.Fatalf("admin account UI is missing delete-state fragment %q", want)
+		}
 	}
 }
 

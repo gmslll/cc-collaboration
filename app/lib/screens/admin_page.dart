@@ -8,6 +8,7 @@ import '../widgets.dart';
 
 String adminFlagLabel(bool isAdmin) => isAdmin ? '系统管理员' : '普通成员';
 String disabledFlagLabel(bool disabled) => disabled ? '已停用' : '已启用';
+String deletedFlagLabel(bool deleted) => deleted ? '已删除' : '未删除';
 String adminToggleLabel(bool isAdmin) => isAdmin ? '取消管理员' : '设为管理员';
 String adminUserTitle(User user) =>
     user.displayName.isEmpty ? user.identity : user.displayName;
@@ -27,7 +28,8 @@ double adminSecretDialogWidth(Size size, {double preferred = 420}) {
 
 class AdminPage extends StatefulWidget {
   final RelayClient client;
-  const AdminPage({super.key, required this.client});
+  final String currentIdentity;
+  const AdminPage({super.key, required this.client, this.currentIdentity = ''});
 
   @override
   State<AdminPage> createState() => _AdminPageState();
@@ -191,6 +193,30 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
+  Future<bool> _confirmDelete(User user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除账号？'),
+        content: Text(
+          '确定删除 ${user.identity}？删除后无法恢复，该 identity 不能重新注册，所有登录和机器 token 会立即失效。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+            child: const Text('删除账号'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -291,7 +317,7 @@ class _AdminPageState extends State<AdminPage> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                    if (u.isAdmin || u.disabled) ...[
+                    if (u.isAdmin || u.disabled || u.deleted) ...[
                       const SizedBox(height: 5),
                       Wrap(
                         spacing: 6,
@@ -299,7 +325,9 @@ class _AdminPageState extends State<AdminPage> {
                         children: [
                           if (u.isAdmin)
                             tag(adminFlagLabel(true), CcColors.accent),
-                          if (u.disabled)
+                          if (u.deleted)
+                            tag(deletedFlagLabel(true), CcColors.danger)
+                          else if (u.disabled)
                             tag(disabledFlagLabel(true), CcColors.danger),
                         ],
                       ),
@@ -314,7 +342,9 @@ class _AdminPageState extends State<AdminPage> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                trailing: _pendingUserActions.contains(u.identity)
+                trailing: u.deleted
+                    ? null
+                    : _pendingUserActions.contains(u.identity)
                     ? const SizedBox(
                         width: 28,
                         height: 28,
@@ -327,18 +357,19 @@ class _AdminPageState extends State<AdminPage> {
                         ),
                       )
                     : PopupMenuButton<String>(
-                        onSelected: (v) {
+                        onSelected: (v) async {
+                          final client = widget.client;
                           switch (v) {
                             case 'admin':
                               _act(
-                                widget.client,
+                                client,
                                 u.identity,
                                 (client) =>
                                     client.setUserAdmin(u.identity, !u.isAdmin),
                               );
                             case 'disable':
                               _act(
-                                widget.client,
+                                client,
                                 u.identity,
                                 (client) => client.setUserDisabled(
                                   u.identity,
@@ -346,7 +377,7 @@ class _AdminPageState extends State<AdminPage> {
                                 ),
                               );
                             case 'reset':
-                              _act(widget.client, u.identity, (client) async {
+                              _act(client, u.identity, (client) async {
                                 final pw = await client.resetPassword(
                                   u.identity,
                                 );
@@ -354,6 +385,15 @@ class _AdminPageState extends State<AdminPage> {
                                   _showSecret('${u.identity} 的新密码', pw);
                                 }
                               });
+                            case 'delete':
+                              if (await _confirmDelete(u) &&
+                                  _isCurrentClient(client)) {
+                                await _act(
+                                  client,
+                                  u.identity,
+                                  (client) => client.deleteUser(u.identity),
+                                );
+                              }
                           }
                         },
                         itemBuilder: (_) => [
@@ -373,6 +413,16 @@ class _AdminPageState extends State<AdminPage> {
                             value: 'reset',
                             icon: Icons.password_rounded,
                             label: '重置密码',
+                          ),
+                          ccMenuItem(
+                            value: u.identity == widget.currentIdentity
+                                ? null
+                                : 'delete',
+                            icon: Icons.delete_forever_rounded,
+                            label: u.identity == widget.currentIdentity
+                                ? '不能删除当前账号'
+                                : '删除账号',
+                            danger: true,
                           ),
                         ],
                       ),

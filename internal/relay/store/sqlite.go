@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name  TEXT NOT NULL DEFAULT '',
   is_admin      INTEGER NOT NULL DEFAULT 0,
   disabled      INTEGER NOT NULL DEFAULT 0,
+  deleted_at    INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL
 );
 
@@ -177,6 +178,7 @@ CREATE INDEX IF NOT EXISTS idx_invitations_project ON invitations(project_id);
 		{"recipients", `ALTER TABLE handoffs ADD COLUMN recipients TEXT NOT NULL DEFAULT ''`},
 		{"bug_group_id", `ALTER TABLE handoffs ADD COLUMN bug_group_id TEXT NOT NULL DEFAULT ''`},
 		{"project_org_id", `ALTER TABLE projects ADD COLUMN org_id TEXT NOT NULL DEFAULT ''`},
+		{"user_deleted_at", `ALTER TABLE users ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0`},
 	} {
 		if _, err := s.db.Exec(ddl.sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {

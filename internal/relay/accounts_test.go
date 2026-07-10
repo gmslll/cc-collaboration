@@ -424,6 +424,115 @@ func TestAdminCreateUserTrimsIdentity(t *testing.T) {
 	}
 }
 
+func TestDeleteUserRequiresAdminAndRejectsSelf(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "member@demo", "memberpass1")
+	mkUser(t, st, "target@demo", "targetpass1")
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	memberTok := loginToken(t, srv.URL, "member@demo", "memberpass1")
+	if code, _ := deleteAuthed(t, srv.URL+"/v1/users/target@demo", memberTok); code != http.StatusForbidden {
+		t.Fatalf("non-admin delete = %d, want 403", code)
+	}
+	if code, body := deleteAuthed(t, srv.URL+"/v1/users/admin@demo", adminTok); code != http.StatusConflict {
+		t.Fatalf("self delete = %d %s, want 409", code, body)
+	}
+	if u, err := st.GetUser(context.Background(), "target@demo"); err != nil || u.Deleted {
+		t.Fatalf("rejected deletes changed target: user=%+v err=%v", u, err)
+	}
+}
+
+func TestDeleteUserRevokesCredentialsAndReservesIdentity(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "admin@demo", "adminpass1")
+	mkUser(t, st, "target@demo", "targetpass1")
+	if err := st.CreateMachineToken(context.Background(), auth.HashToken("machine-target"), "target@demo", "laptop", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	tokensPath := filepath.Join(t.TempDir(), "tokens.json")
+	if err := os.WriteFile(tokensPath, []byte(`[{"token":"legacy-target","identity":"target@demo"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokens()
+	if err := tokens.LoadFile(tokensPath); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: tokens, Hub: sse.NewHub(),
+		SeedAdmins: []string{"admin@demo"},
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	targetSession := loginToken(t, srv.URL, "target@demo", "targetpass1")
+	for label, token := range map[string]string{
+		"session": targetSession,
+		"machine": "machine-target",
+		"legacy":  "legacy-target",
+	} {
+		if code, body := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusOK {
+			t.Fatalf("%s credential before delete = %d %s", label, code, body)
+		}
+	}
+	if code, body := deleteAuthed(t, srv.URL+"/v1/users/target@demo", adminTok); code != http.StatusOK {
+		t.Fatalf("admin delete = %d %s", code, body)
+	}
+	for label, token := range map[string]string{
+		"session": targetSession,
+		"machine": "machine-target",
+		"legacy":  "legacy-target",
+	} {
+		if code, _ := getAuthed(t, srv.URL+"/v1/me", token); code != http.StatusUnauthorized {
+			t.Fatalf("%s credential after delete = %d, want 401", label, code)
+		}
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/login", "",
+		map[string]string{"identity": "target@demo", "password": "targetpass1"}); code != http.StatusUnauthorized {
+		t.Fatalf("deleted account login = %d, want 401", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/register", "",
+		map[string]string{"identity": "target@demo", "password": "new password"}); code != http.StatusConflict {
+		t.Fatalf("deleted identity registration = %d, want 409", code)
+	}
+
+	code, body := getAuthed(t, srv.URL+"/v1/users", adminTok)
+	if code != http.StatusOK {
+		t.Fatalf("list users after delete = %d %s", code, body)
+	}
+	var listed struct {
+		Users []store.User `json:"users"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	var tombstone *store.User
+	for i := range listed.Users {
+		if listed.Users[i].Identity == "target@demo" {
+			tombstone = &listed.Users[i]
+		}
+	}
+	if tombstone == nil || !tombstone.Deleted || !tombstone.Disabled || tombstone.IsAdmin || tombstone.DeletedAt.IsZero() {
+		t.Fatalf("deleted account missing tombstone response: %+v", tombstone)
+	}
+	if code, _ := deleteAuthed(t, srv.URL+"/v1/users/target@demo", adminTok); code != http.StatusNotFound {
+		t.Fatalf("repeat delete = %d, want 404", code)
+	}
+}
+
 func postJSON(t *testing.T, url, bearer string, payload any) (int, []byte) {
 	t.Helper()
 	var body io.Reader

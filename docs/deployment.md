@@ -255,7 +255,7 @@ sudo -u cc-handoff /usr/local/bin/cc-relay useradd \
 **之后全在 Web UI 里**(`https://handoff.your-domain.com/ui/`):
 
 - 用账密登录(`you@backend` + 上面的密码);
-- **Admin** 标签:建其他账号(初始密码生成后回显一次)、设/取消 admin、停用、重置密码;
+- **Admin** 标签:建其他账号(初始密码生成后回显一次)、设/取消 admin、停用、重置密码或删除账号;删除采用 tombstone，identity 不可重新注册且历史署名保留;
 - **Projects** 标签:任何人可自助建项目(自己成 owner)、绑定 repo、加成员并配角色(`owner`/`member`/`viewer`);成员能看到所属项目的**所有** handoff,admin 看全部,viewer 只读不可评论;
 - **Account** 标签:改密码、**自助生成 DB machine token**(只回显一次)粘进客户端的 `cc-handoff init`、随时吊销。
 

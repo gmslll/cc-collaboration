@@ -15,6 +15,8 @@ type User struct {
 	DisplayName  string    `json:"display_name,omitempty"`
 	IsAdmin      bool      `json:"is_admin"`
 	Disabled     bool      `json:"disabled"`
+	Deleted      bool      `json:"deleted"`
+	DeletedAt    time.Time `json:"deleted_at,omitzero"`
 	CreatedAt    time.Time `json:"created_at"`
 	PasswordHash string    `json:"-"`
 }
@@ -35,8 +37,8 @@ func (s *Store) CreateUser(ctx context.Context, u User, now time.Time) error {
 		return ErrInvalid
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users(identity, password_hash, display_name, is_admin, disabled, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO users(identity, password_hash, display_name, is_admin, disabled, deleted_at, created_at)
+		 VALUES(?, ?, ?, ?, ?, 0, ?)`,
 		u.Identity, u.PasswordHash, u.DisplayName, boolToInt(u.IsAdmin), boolToInt(u.Disabled), now.UnixMilli())
 	return err
 }
@@ -50,12 +52,13 @@ func (s *Store) GetUser(ctx context.Context, identity string) (User, error) {
 	var (
 		u                 User
 		isAdmin, disabled int
+		deletedMS         int64
 		createdMS         int64
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT identity, password_hash, display_name, is_admin, disabled, created_at
+		`SELECT identity, password_hash, display_name, is_admin, disabled, deleted_at, created_at
 		   FROM users WHERE identity = ?`, identity).
-		Scan(&u.Identity, &u.PasswordHash, &u.DisplayName, &isAdmin, &disabled, &createdMS)
+		Scan(&u.Identity, &u.PasswordHash, &u.DisplayName, &isAdmin, &disabled, &deletedMS, &createdMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -64,6 +67,10 @@ func (s *Store) GetUser(ctx context.Context, identity string) (User, error) {
 	}
 	u.IsAdmin = isAdmin != 0
 	u.Disabled = disabled != 0
+	u.Deleted = deletedMS != 0
+	if u.Deleted {
+		u.DeletedAt = time.UnixMilli(deletedMS).UTC()
+	}
 	u.CreatedAt = time.UnixMilli(createdMS).UTC()
 	return u, nil
 }
@@ -71,7 +78,7 @@ func (s *Store) GetUser(ctx context.Context, identity string) (User, error) {
 // ListUsers returns all accounts, sorted by identity. PasswordHash is cleared.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT identity, display_name, is_admin, disabled, created_at FROM users ORDER BY identity`)
+		`SELECT identity, display_name, is_admin, disabled, deleted_at, created_at FROM users ORDER BY identity`)
 	if err != nil {
 		return nil, err
 	}
@@ -79,13 +86,18 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		var (
 			u                 User
 			isAdmin, disabled int
+			deletedMS         int64
 			createdMS         int64
 		)
-		if err := r.Scan(&u.Identity, &u.DisplayName, &isAdmin, &disabled, &createdMS); err != nil {
+		if err := r.Scan(&u.Identity, &u.DisplayName, &isAdmin, &disabled, &deletedMS, &createdMS); err != nil {
 			return User{}, err
 		}
 		u.IsAdmin = isAdmin != 0
 		u.Disabled = disabled != 0
+		u.Deleted = deletedMS != 0
+		if u.Deleted {
+			u.DeletedAt = time.UnixMilli(deletedMS).UTC()
+		}
 		u.CreatedAt = time.UnixMilli(createdMS).UTC()
 		return u, nil
 	})
@@ -98,42 +110,44 @@ func (s *Store) UserIsAdmin(ctx context.Context, identity string) (bool, error) 
 	if identity == "" {
 		return false, nil
 	}
-	var isAdmin, disabled int
-	err := s.db.QueryRowContext(ctx, `SELECT is_admin, disabled FROM users WHERE identity = ?`, identity).Scan(&isAdmin, &disabled)
+	var isAdmin, disabled, deleted int
+	err := s.db.QueryRowContext(ctx, `SELECT is_admin, disabled, deleted_at != 0 FROM users WHERE identity = ?`, identity).Scan(&isAdmin, &disabled, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return isAdmin != 0 && disabled == 0, nil
+	return isAdmin != 0 && disabled == 0 && deleted == 0, nil
 }
 
 // UserActive reports whether an identity is allowed to authenticate. Missing
-// DB users are allowed so legacy file-token identities keep working.
+// DB users are allowed so legacy file-token identities keep working. Deleted
+// users deliberately keep a tombstone row, which prevents that compatibility
+// rule from accidentally reviving their legacy credentials.
 func (s *Store) UserActive(ctx context.Context, identity string) (bool, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		return false, nil
 	}
-	var disabled int
-	err := s.db.QueryRowContext(ctx, `SELECT disabled FROM users WHERE identity = ?`, identity).Scan(&disabled)
+	var disabled, deleted int
+	err := s.db.QueryRowContext(ctx, `SELECT disabled, deleted_at != 0 FROM users WHERE identity = ?`, identity).Scan(&disabled, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return disabled == 0, nil
+	return disabled == 0 && deleted == 0, nil
 }
 
 func (s *Store) KnownIdentities(ctx context.Context) ([]string, error) {
 	return s.queryStrings(ctx, `
-SELECT identity FROM users WHERE disabled = 0
+SELECT identity FROM users WHERE disabled = 0 AND deleted_at = 0
 UNION
 SELECT mt.identity FROM machine_tokens mt
   LEFT JOIN users u ON u.identity = mt.identity
- WHERE u.identity IS NULL OR u.disabled = 0
+ WHERE u.identity IS NULL OR (u.disabled = 0 AND u.deleted_at = 0)
 ORDER BY identity`)
 }
 
@@ -156,7 +170,7 @@ func (s *Store) SetPasswordHash(ctx context.Context, identity, hash string) erro
 	if identity == "" {
 		return ErrInvalid
 	}
-	return s.execAffecting(ctx, `UPDATE users SET password_hash = ? WHERE identity = ?`, hash, identity)
+	return s.execAffecting(ctx, `UPDATE users SET password_hash = ? WHERE identity = ? AND deleted_at = 0`, hash, identity)
 }
 
 func (s *Store) SetAdmin(ctx context.Context, identity string, isAdmin bool) error {
@@ -164,7 +178,7 @@ func (s *Store) SetAdmin(ctx context.Context, identity string, isAdmin bool) err
 	if identity == "" {
 		return ErrInvalid
 	}
-	return s.execAffecting(ctx, `UPDATE users SET is_admin = ? WHERE identity = ?`, boolToInt(isAdmin), identity)
+	return s.execAffecting(ctx, `UPDATE users SET is_admin = ? WHERE identity = ? AND deleted_at = 0`, boolToInt(isAdmin), identity)
 }
 
 func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool) error {
@@ -177,7 +191,7 @@ func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool)
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE users SET disabled = ? WHERE identity = ?`, boolToInt(disabled), identity)
+	res, err := tx.ExecContext(ctx, `UPDATE users SET disabled = ? WHERE identity = ? AND deleted_at = 0`, boolToInt(disabled), identity)
 	if err != nil {
 		return err
 	}
@@ -198,6 +212,56 @@ func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool)
 		if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE identity = ?`, identity); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+// DeleteUser irreversibly tombstones an account while preserving its identity
+// and historical attribution. Identity remains unique forever: recreating or
+// self-registering the same identity continues to conflict with the users row.
+//
+// Operational credentials and pending account-owned state are removed in the
+// same transaction. Team/project membership rows remain as an audit trail, but
+// are hidden from active-member lists and cannot grant access to an inactive
+// account. Owner denormalizations are transferred with the same safety checks
+// used by SetDisabled.
+func (s *Store) DeleteUser(ctx context.Context, identity string, now time.Time) error {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users
+		    SET password_hash = '', is_admin = 0, disabled = 1, deleted_at = ?
+		  WHERE identity = ? AND deleted_at = 0`,
+		now.UnixMilli(), identity)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	if err := prepareDisableOwnerIdentity(ctx, tx, identity); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM sessions WHERE identity = ?`,
+		`DELETE FROM machine_tokens WHERE identity = ?`,
+		`DELETE FROM user_settings WHERE identity = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, identity); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM invitations WHERE identity = ? OR inviter_identity = ?`, identity, identity); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -317,7 +381,7 @@ func requireOtherActiveOrgOwner(ctx context.Context, tx *sql.Tx, orgID, disabled
 		   FROM organization_members om
 		   LEFT JOIN users u ON u.identity = om.identity
 		  WHERE om.org_id = ? AND om.role = ? AND om.identity != ?
-		    AND (u.identity IS NULL OR u.disabled = 0)`,
+		    AND (u.identity IS NULL OR (u.disabled = 0 AND u.deleted_at = 0))`,
 		orgID, OrgRoleOwner, disabledOwner).Scan(&owners); err != nil {
 		return err
 	}
@@ -334,7 +398,7 @@ func requireOtherActiveProjectOwner(ctx context.Context, tx *sql.Tx, projectID, 
 		   FROM project_members pm
 		   LEFT JOIN users u ON u.identity = pm.identity
 		  WHERE pm.project_id = ? AND pm.role = ? AND pm.identity != ?
-		    AND (u.identity IS NULL OR u.disabled = 0)`,
+		    AND (u.identity IS NULL OR (u.disabled = 0 AND u.deleted_at = 0))`,
 		projectID, RoleOwner, disabledOwner).Scan(&owners); err != nil {
 		return err
 	}

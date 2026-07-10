@@ -18,6 +18,8 @@ void main() {
     expect(adminFlagLabel(false), '普通成员');
     expect(disabledFlagLabel(true), '已停用');
     expect(disabledFlagLabel(false), '已启用');
+    expect(deletedFlagLabel(true), '已删除');
+    expect(deletedFlagLabel(false), '未删除');
   });
 
   test('admin toggle label describes the next action', () {
@@ -404,6 +406,126 @@ void main() {
     expect(find.byType(PopupMenuButton<String>), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('admin account delete requires confirmation and shows loading', (
+    tester,
+  ) async {
+    final client = _DelayedDeleteAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AdminPage(client: client, currentIdentity: 'current@x'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除账号'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除账号？'), findsOneWidget);
+    expect(client.deleteCount, 0);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(client.deleteCount, 0);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除账号'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(FilledButton, '删除账号'),
+      ),
+    );
+    await tester.pump();
+
+    expect(client.deleteCount, 1);
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    client.completeDelete();
+    await tester.pumpAndSettle();
+    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('admin account delete disables current account action', (
+    tester,
+  ) async {
+    final client = _DelayedDeleteAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AdminPage(client: client, currentIdentity: _longAdminIdentity),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    final item = tester.widget<PopupMenuItem<String>>(
+      find.ancestor(
+        of: find.text('不能删除当前账号'),
+        matching: find.byType(PopupMenuItem<String>),
+      ),
+    );
+    expect(item.enabled, isFalse);
+    expect(client.deleteCount, 0);
+  });
+
+  testWidgets('deleted admin account renders tombstone without actions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: _DeletedAdminPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('已删除'), findsOneWidget);
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('admin account delete surfaces request errors', (tester) async {
+    final client = _FailDeleteAdminPageFakeClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AdminPage(client: client, currentIdentity: 'current@x'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除账号'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(FilledButton, '删除账号'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(client.deleteCount, 1);
+    expect(find.textContaining('delete failed'), findsOneWidget);
+    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
 
 class _AdminPageFakeClient extends RelayClient {
@@ -509,6 +631,45 @@ class _DelayedAdminToggleAdminPageFakeClient extends _AdminPageFakeClient {
     if (!_setAdminCompleter.isCompleted) {
       _setAdminCompleter.complete();
     }
+  }
+}
+
+class _DelayedDeleteAdminPageFakeClient extends _AdminPageFakeClient {
+  final _deleteCompleter = Completer<void>();
+  int deleteCount = 0;
+
+  @override
+  Future<void> deleteUser(String identity) {
+    deleteCount++;
+    return _deleteCompleter.future;
+  }
+
+  void completeDelete() {
+    if (!_deleteCompleter.isCompleted) {
+      _deleteCompleter.complete();
+    }
+  }
+}
+
+class _DeletedAdminPageFakeClient extends _AdminPageFakeClient {
+  @override
+  Future<List<User>> users() async => [
+    User.fromJson({
+      'identity': 'deleted@x',
+      'display_name': 'Deleted User',
+      'disabled': true,
+      'deleted': true,
+    }),
+  ];
+}
+
+class _FailDeleteAdminPageFakeClient extends _AdminPageFakeClient {
+  int deleteCount = 0;
+
+  @override
+  Future<void> deleteUser(String identity) {
+    deleteCount++;
+    return Future<void>.error(Exception('delete failed'));
   }
 }
 

@@ -591,7 +591,7 @@ class _HomeShellState extends State<HomeShell> {
                   unawaited(_reloadLocalConfig().catchError((_) {})),
             )
           : _loginRequiredPage('账号'),
-      if (isAdmin) AdminPage(client: _client!),
+      if (isAdmin) AdminPage(client: _client!, currentIdentity: _cfg!.identity),
     ];
     // dests and pages are built with matching `if (_isDesktop)` / `if (isAdmin)`
     // guards; keep them index-aligned for IndexedStack + the nav rail.

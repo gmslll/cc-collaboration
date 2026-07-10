@@ -62,6 +62,10 @@ func (s *Server) requireAccount(w http.ResponseWriter, r *http.Request) (store.U
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return store.User{}, false
 	}
+	if u.Deleted {
+		http.Error(w, "账号已删除", http.StatusForbidden)
+		return store.User{}, false
+	}
 	if u.Disabled {
 		http.Error(w, "账号已停用", http.StatusForbidden)
 		return store.User{}, false
@@ -101,7 +105,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	u, err := s.Store.GetUser(r.Context(), identity)
 	// Uniform failure — don't leak which of {no account, wrong password,
 	// disabled} occurred.
-	if err != nil || u.Disabled || u.PasswordHash == "" || !auth.CheckPassword(u.PasswordHash, req.Password) {
+	if err != nil || u.Disabled || u.Deleted || u.PasswordHash == "" || !auth.CheckPassword(u.PasswordHash, req.Password) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -337,6 +341,11 @@ func (s *Server) setUserAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if err := s.Store.SetAdmin(r.Context(), r.PathValue("id"), req.IsAdmin); err != nil {
 		s.writeStoreErr(w, err)
 		return
@@ -356,6 +365,11 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if err := s.Store.SetDisabled(r.Context(), identity, req.Disabled); err != nil {
 		s.writeStoreErr(w, err)
 		return
@@ -364,6 +378,82 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 		s.Sessions.clear(identity)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// deleteUser irreversibly tombstones an account. Only a global admin may call
+// it; the current account and the final effective admin are protected here,
+// while the store owns the atomic credential/relationship transition.
+func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	identity := strings.TrimSpace(r.PathValue("id"))
+	if identity == "" {
+		http.Error(w, "identity required", http.StatusBadRequest)
+		return
+	}
+	if identity == auth.Identity(r.Context()) {
+		http.Error(w, "cannot delete current account", http.StatusConflict)
+		return
+	}
+
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	u, err := s.Store.GetUser(r.Context(), identity)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if u.Deleted {
+		http.Error(w, "account already deleted", http.StatusNotFound)
+		return
+	}
+	if s.isAdmin(r.Context(), identity) {
+		hasOther, err := s.hasOtherAvailableAdmin(r.Context(), identity)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !hasOther {
+			http.Error(w, "last available admin cannot be deleted", http.StatusConflict)
+			return
+		}
+	}
+	if err := s.Store.DeleteUser(r.Context(), identity, time.Now().UTC()); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if s.Sessions != nil {
+		s.Sessions.clear(identity)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) hasOtherAvailableAdmin(ctx context.Context, excluded string) (bool, error) {
+	users, err := s.Store.ListUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	candidates := make(map[string]struct{}, len(users)+len(s.SeedAdmins))
+	for _, identity := range s.SeedAdmins {
+		if identity = strings.TrimSpace(identity); identity != "" {
+			candidates[identity] = struct{}{}
+		}
+	}
+	for _, u := range users {
+		if u.IsAdmin {
+			candidates[u.Identity] = struct{}{}
+		}
+	}
+	for identity := range candidates {
+		if identity != excluded && s.isAdmin(ctx, identity) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // resetUserPassword generates a new password for an account and returns it once.

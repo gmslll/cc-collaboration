@@ -598,6 +598,9 @@ class RelayClient {
     data: {'disabled': disabled},
   );
 
+  Future<void> deleteUser(String identity) =>
+      _dio.delete('/v1/users/${_idSegment(identity)}');
+
   Future<String> resetPassword(String identity) async {
     final r = await _dio.post(
       '/v1/users/${_idSegment(identity)}/reset-password',

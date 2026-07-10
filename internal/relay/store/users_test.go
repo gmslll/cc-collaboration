@@ -2,9 +2,13 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/cc-collaboration/pkg/todoschema"
 )
 
 func TestUsersCRUD(t *testing.T) {
@@ -254,6 +258,242 @@ func TestSetDisabledDeletesEmptyDefaultOrganization(t *testing.T) {
 	}
 	if active, err := st.UserActive(ctx, "owner@x"); err != nil || active {
 		t.Fatalf("disabled owner should be inactive: active=%v err=%v", active, err)
+	}
+}
+
+func TestDeleteUserWithoutTeamCreatesNoOrganization(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.CreateUser(ctx, User{Identity: "solo@x", PasswordHash: "secret", IsAdmin: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSession(ctx, "session-solo", "solo@x", now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateMachineToken(ctx, "machine-solo", "solo@x", "laptop", now); err != nil {
+		t.Fatal(err)
+	}
+
+	orgs, err := st.ListOrganizations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orgs) != 0 {
+		t.Fatalf("new account unexpectedly has organizations before delete: %+v", orgs)
+	}
+	deletedAt := now.Add(time.Minute)
+	if err := st.DeleteUser(ctx, " solo@x ", deletedAt); err != nil {
+		t.Fatal(err)
+	}
+	orgs, err = st.ListOrganizations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orgs) != 0 {
+		t.Fatalf("account delete created an organization: %+v", orgs)
+	}
+
+	u, err := st.GetUser(ctx, "solo@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.Deleted || !u.Disabled || u.IsAdmin || u.PasswordHash != "" || u.DeletedAt.UnixMilli() != deletedAt.UnixMilli() {
+		t.Fatalf("unexpected tombstone: %+v", u)
+	}
+	if active, err := st.UserActive(ctx, "solo@x"); err != nil || active {
+		t.Fatalf("deleted user active=%v err=%v", active, err)
+	}
+	if _, ok, err := st.SessionIdentity(ctx, "session-solo", deletedAt); err != nil || ok {
+		t.Fatalf("deleted user's session survived: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := st.MachineTokenIdentity(ctx, "machine-solo"); err != nil || ok {
+		t.Fatalf("deleted user's machine token survived: ok=%v err=%v", ok, err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "solo@x"}, deletedAt); err == nil {
+		t.Fatal("deleted identity was reusable")
+	}
+	if err := st.SetDisabled(ctx, "solo@x", false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted user could be re-enabled: %v", err)
+	}
+	if err := st.SetPasswordHash(ctx, "solo@x", "new"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted user password could be reset: %v", err)
+	}
+}
+
+func TestDeleteUserPreservesMembershipAndHistoricalAttribution(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for _, identity := range []string{"owner@x", "survivor@x", "recipient@x"} {
+		if err := st.CreateUser(ctx, User{Identity: identity}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "survivor@x", OrgRoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "App", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "survivor@x", RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`INSERT INTO invitations(id, scope, org_id, project_id, identity, role, inviter_identity, created_at)
+		 VALUES('inv1', 'org', 'org1', '', 'owner@x', 'member', 'survivor@x', ?)`, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`INSERT INTO invitations(id, scope, org_id, project_id, identity, role, inviter_identity, created_at)
+		 VALUES('inv2', 'org', 'org1', '', 'recipient@x', 'member', 'owner@x', ?)`, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, "owner@x", "board", `{}`); err != nil {
+		t.Fatal(err)
+	}
+	mustInsertHandoff(t, st, "h-delete-history", "owner@x", "recipient@x")
+	mustInsertComment(t, st, "h-delete-history", "owner@x", "still attributed")
+	todo := &todoschema.Todo{
+		ID:               "todo-delete-history",
+		OwnerIdentity:    "owner@x",
+		AssigneeIdentity: "owner@x",
+		Title:            "Keep me",
+	}
+	if err := st.CreateTodo(ctx, todo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertTodoComment(ctx, todo.ID, "owner@x", "still attributed"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.DeleteUser(ctx, "owner@x", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	org, err := st.GetOrganization(ctx, "org1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.OwnerIdentity != "survivor@x" {
+		t.Fatalf("organization owner = %q, want survivor@x", org.OwnerIdentity)
+	}
+	project, err := st.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.OwnerIdentity != "survivor@x" {
+		t.Fatalf("project owner = %q, want survivor@x", project.OwnerIdentity)
+	}
+	if role, ok, err := st.OrganizationMemberRole(ctx, "org1", "owner@x"); err != nil || !ok || role != OrgRoleOwner {
+		t.Fatalf("organization membership history role=%q ok=%v err=%v", role, ok, err)
+	}
+	if role, ok, err := st.MemberRole(ctx, "p1", "owner@x"); err != nil || !ok || role != RoleOwner {
+		t.Fatalf("project membership history role=%q ok=%v err=%v", role, ok, err)
+	}
+	members, err := st.ListOrganizationMembers(ctx, "org1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range members {
+		if member.Identity == "owner@x" {
+			t.Fatalf("deleted membership leaked into active member list: %+v", members)
+		}
+	}
+
+	assertCount := func(label, query string, want int) {
+		t.Helper()
+		var got int
+		if err := st.db.QueryRowContext(ctx, query).Scan(&got); err != nil {
+			t.Fatalf("%s count: %v", label, err)
+		}
+		if got != want {
+			t.Fatalf("%s count=%d, want %d", label, got, want)
+		}
+	}
+	assertCount("pending invitations", `SELECT COUNT(*) FROM invitations WHERE identity = 'owner@x' OR inviter_identity = 'owner@x'`, 0)
+	assertCount("settings", `SELECT COUNT(*) FROM user_settings WHERE identity = 'owner@x'`, 0)
+	assertCount("handoffs", `SELECT COUNT(*) FROM handoffs WHERE id = 'h-delete-history' AND sender = 'owner@x'`, 1)
+	assertCount("handoff comments", `SELECT COUNT(*) FROM comments WHERE handoff_id = 'h-delete-history' AND sender = 'owner@x'`, 1)
+	assertCount("todos", `SELECT COUNT(*) FROM todos WHERE id = 'todo-delete-history' AND owner_identity = 'owner@x' AND assignee_identity = 'owner@x'`, 1)
+	assertCount("todo comments", `SELECT COUNT(*) FROM todo_comments WHERE todo_id = 'todo-delete-history' AND author_identity = 'owner@x'`, 1)
+}
+
+func TestDeleteUserProtectsLastOwnerAtomically(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.CreateUser(ctx, User{Identity: "owner@x", PasswordHash: "hash"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "App", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSession(ctx, "session-owner-delete", "owner@x", now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateMachineToken(ctx, "machine-owner-delete", "owner@x", "laptop", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.DeleteUser(ctx, "owner@x", now.Add(time.Minute)); !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("delete sole owner: want ErrLastOwner, got %v", err)
+	}
+	u, err := st.GetUser(ctx, "owner@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Deleted || u.Disabled || u.PasswordHash != "hash" {
+		t.Fatalf("failed delete partially changed account: %+v", u)
+	}
+	if _, ok, err := st.SessionIdentity(ctx, "session-owner-delete", now); err != nil || !ok {
+		t.Fatalf("failed delete removed session: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := st.MachineTokenIdentity(ctx, "machine-owner-delete"); err != nil || !ok {
+		t.Fatalf("failed delete removed machine token: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestDeleteUserMigrationKeepsExistingAccountsActive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE users (
+		identity TEXT PRIMARY KEY,
+		password_hash TEXT NOT NULL DEFAULT '',
+		display_name TEXT NOT NULL DEFAULT '',
+		is_admin INTEGER NOT NULL DEFAULT 0,
+		disabled INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(identity, password_hash, is_admin, disabled, created_at)
+		VALUES('legacy@x', 'hash', 1, 0, 1234)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	u, err := st.GetUser(context.Background(), "legacy@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Deleted || u.Disabled || !u.IsAdmin || u.PasswordHash != "hash" {
+		t.Fatalf("migration changed existing user: %+v", u)
 	}
 }
 

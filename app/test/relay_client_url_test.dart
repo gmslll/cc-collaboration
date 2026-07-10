@@ -76,6 +76,7 @@ void main() {
     await client.deleteToken('tok/team#1');
     await client.setUserAdmin('dev/team#1', true);
     await client.setUserDisabled('dev/team#1', true);
+    await client.deleteUser('dev/team#1');
     await client.resetPassword('dev/team#1');
 
     expect(seen, [
@@ -105,6 +106,7 @@ void main() {
       'DELETE /v1/tokens/tok%2Fteam%231',
       'POST /v1/users/dev%2Fteam%231/admin',
       'POST /v1/users/dev%2Fteam%231/disable',
+      'DELETE /v1/users/dev%2Fteam%231',
       'POST /v1/users/dev%2Fteam%231/reset-password',
     ]);
   });

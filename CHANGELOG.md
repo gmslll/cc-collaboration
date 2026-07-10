@@ -6,6 +6,10 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Added
+
+- **管理员安全删除账号** — Relay、Web UI 与 Flutter App 支持全局管理员删除账号；删除采用不可恢复 tombstone，永久保留 identity 与 handoff/todo/评论历史归属，同时立即吊销 session、机器 token 和待处理邀请，并保护当前登录账号、最后可用管理员及团队/项目最后负责人。
+
 ## [0.9.29] - 2026-07-10
 
 ### Changed

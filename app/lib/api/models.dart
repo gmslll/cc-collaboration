@@ -494,10 +494,11 @@ class MachineToken {
 
 class User {
   final String identity, displayName;
-  final bool isAdmin, disabled;
+  final bool isAdmin, disabled, deleted;
   User.fromJson(Map<String, dynamic> j)
     : identity = _trimmed(j['identity']),
       displayName = _trimmed(j['display_name']),
       isAdmin = j['is_admin'] == true,
-      disabled = j['disabled'] == true;
+      disabled = j['disabled'] == true,
+      deleted = j['deleted'] == true;
 }

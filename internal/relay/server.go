@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cc-collaboration/internal/handoff"
@@ -64,6 +65,9 @@ type Server struct {
 	// operator can never be locked out. Effective admin = SeedAdmins ∪
 	// users.is_admin.
 	SeedAdmins []string
+	// accountMu serializes account-state mutations whose safety checks depend
+	// on the current effective-admin set (notably deleting the last admin).
+	accountMu sync.Mutex
 }
 
 func (s *Server) Handler() http.Handler {
@@ -125,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/users/{id}/admin", s.setUserAdmin)
 	api.HandleFunc("POST /v1/users/{id}/disable", s.setUserDisabled)
 	api.HandleFunc("POST /v1/users/{id}/reset-password", s.resetUserPassword)
+	api.HandleFunc("DELETE /v1/users/{id}", s.deleteUser)
 	// Organizations: SaaS teams/workspaces. Any authenticated user can create
 	// one; owners/admins manage membership.
 	api.HandleFunc("GET /v1/orgs", s.listOrganizations)
