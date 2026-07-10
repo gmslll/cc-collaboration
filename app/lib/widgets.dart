@@ -58,18 +58,18 @@ String errorText(Object e) {
             cleanMsg != 'not found';
         switch (code) {
           case 401:
-            if (hasUsefulMsg) return cleanMsg!;
+            if (hasUsefulMsg) return cleanMsg;
             return '未授权(登录可能失效)';
           case 403:
-            if (hasUsefulMsg) return cleanMsg!;
+            if (hasUsefulMsg) return cleanMsg;
             return '没有权限';
           case 404:
-            if (hasUsefulMsg) return cleanMsg!;
+            if (hasUsefulMsg) return cleanMsg;
             return '不存在';
           case 409:
-            return hasUsefulMsg ? cleanMsg! : '冲突(可能已被处理)';
+            return hasUsefulMsg ? cleanMsg : '冲突(可能已被处理)';
         }
-        return hasUsefulMsg ? cleanMsg! : '请求失败($code)';
+        return hasUsefulMsg ? cleanMsg : '请求失败($code)';
       default:
         return e.message ?? '网络错误';
     }
