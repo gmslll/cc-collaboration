@@ -12,6 +12,31 @@ void main() {
     expect(fileNameDialogWidth(const Size(360, 760), preferred: 460), 328);
   });
 
+  test('file confirm dialog width fits compact screens', () {
+    expect(fileConfirmDialogWidth(const Size(320, 760)), 288);
+    expect(fileConfirmDialogWidth(const Size(1024, 760)), 420);
+    expect(fileConfirmDialogWidth(const Size(20, 760)), 420);
+  });
+
+  test('file delete confirmation uses responsive long-message content', () {
+    final source = File(
+      'lib/screens/file_browser_page.dart',
+    ).readAsStringSync();
+    final confirm = source.substring(
+      source.indexOf('Future<bool> _confirm('),
+      source.indexOf('Future<void> _newFile('),
+    );
+
+    expect(confirm, contains('MediaQuery.sizeOf(ctx)'));
+    expect(confirm, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(confirm, contains('maxLines: 1'));
+    expect(confirm, contains('overflow: TextOverflow.ellipsis'));
+    expect(confirm, contains('fileConfirmDialogWidth(size)'));
+    expect(confirm, contains('SingleChildScrollView'));
+    expect(confirm, contains('SelectableText'));
+    expect(confirm, isNot(contains('content: Text(')));
+  });
+
   test('file browser dynamic titles are width constrained', () {
     final source = File(
       'lib/screens/file_browser_page.dart',
