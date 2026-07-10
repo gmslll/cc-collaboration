@@ -2125,14 +2125,14 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
-            child: Row(
-              children: [
+            child: scrollableBar(
+              alignScrollEnd: true,
+              scrolling: [
                 TextButton.icon(
                   onPressed: () => _addProjectDialog(entry.key),
                   icon: const Icon(Icons.add, size: 15),
                   label: const Text('添加项目'),
                 ),
-                const Spacer(),
                 if (entry.key.isNotEmpty)
                   TextButton.icon(
                     onPressed: () => _confirmThen(

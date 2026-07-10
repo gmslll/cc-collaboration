@@ -139,6 +139,22 @@ void main() {
     expect(dialog, contains('onSubmitted: (_) => _submit()'));
   });
 
+  test('remote workspace management actions use scroll-safe layout', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final manage = source.substring(
+      source.indexOf('  Widget _manageTab()'),
+      source.indexOf('  Future<void> _newWorkspaceDialog()'),
+    );
+
+    expect(manage, contains('scrollableBar('));
+    expect(manage, contains('alignScrollEnd: true'));
+    expect(manage, contains("label: const Text('添加项目')"));
+    expect(manage, contains("label: const Text('删除工作区')"));
+    expect(manage, isNot(contains('const Spacer()')));
+  });
+
   test('remote supervisor knowledge dialog uses viewport based bounds', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',
