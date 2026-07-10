@@ -207,6 +207,7 @@ func TestUpdateCapsuleMeta_OwnerEdits(t *testing.T) {
 
 	priv := string(handoffschema.CapsulePrivate)
 	sum := "改过的说明"
+	beforeEdit := time.Now().UTC()
 	if err := st.UpdateCapsuleMeta(context.Background(), "c1", "alice", &priv, &sum); err != nil {
 		t.Fatalf("owner edit: %v", err)
 	}
@@ -215,7 +216,10 @@ func TestUpdateCapsuleMeta_OwnerEdits(t *testing.T) {
 		t.Errorf("private capsule leaked to teammate: %+v", items)
 	}
 	own, _ := st.ListCapsules(context.Background(), "alice", 0)
-	if len(own) != 1 || own[0].Visibility != handoffschema.CapsulePrivate || own[0].Headline != "改过的说明" {
+	if len(own) != 1 || own[0].Visibility != handoffschema.CapsulePrivate || own[0].Headline != "改过的说明" || own[0].Summary != sum {
 		t.Errorf("owner view after edit wrong: %+v", own)
+	}
+	if own[0].UpdatedAt.Before(beforeEdit) {
+		t.Errorf("owner view did not receive metadata update time: %+v", own[0])
 	}
 }

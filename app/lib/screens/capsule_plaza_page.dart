@@ -102,11 +102,45 @@ Size capsuleEditDialogSize(
   capsuleDialogDimension(viewport.height - 48, preferredHeight, min: 260),
 );
 
+enum CapsulePlazaScope { all, mine, team }
+
+int capsuleGridColumnCount(double availableWidth) {
+  if (!availableWidth.isFinite || availableWidth < 660) return 1;
+  if (availableWidth < 1020) return 2;
+  return 3;
+}
+
+String capsuleSummaryPreview(CapsuleListItem capsule) {
+  final summary = capsule.summary.trim();
+  final headline = capsule.headline.trim();
+  if (summary.isEmpty || summary == headline) return '暂无补充摘要';
+  final lines = summary.split('\n').map((line) => line.trim()).toList();
+  if (lines.isNotEmpty && lines.first == headline) lines.removeAt(0);
+  final preview = lines.where((line) => line.isNotEmpty).join(' ');
+  return preview.isEmpty ? '暂无补充摘要' : preview;
+}
+
+enum _PlazaFilterKind { agent, repo, clear }
+
+class _PlazaFilterChoice {
+  final _PlazaFilterKind kind;
+  final String value;
+
+  const _PlazaFilterChoice(this.kind, [this.value = '']);
+}
+
+enum _CapsuleOwnerAction { edit, delete }
+
 class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   List<CapsuleListItem>? _items;
   String? _error;
   bool _loading = false;
   int _loadGeneration = 0;
+  final _searchController = TextEditingController();
+  CapsulePlazaScope _scope = CapsulePlazaScope.all;
+  String? _agentFilter;
+  String? _repoFilter;
+  final Set<String> _deletingIds = {};
 
   @override
   void initState() {
@@ -115,14 +149,25 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   }
 
   @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(covariant CapsulePlazaPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_plazaContextChanged(oldWidget)) {
       _loadGeneration++;
+      _searchController.clear();
       setState(() {
         _items = null;
         _error = null;
         _loading = true;
+        _scope = CapsulePlazaScope.all;
+        _agentFilter = null;
+        _repoFilter = null;
+        _deletingIds.clear();
       });
       _load();
     }
@@ -193,42 +238,313 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
 
   @override
   Widget build(BuildContext context) {
+    final visibleCount = _items == null ? null : _filteredItems().length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 16, 12),
+        Container(
+          padding: const EdgeInsets.fromLTRB(18, 11, 12, 10),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: CcColors.border)),
+          ),
           child: Row(
             children: [
               const Icon(
-                Icons.storefront_rounded,
-                size: 20,
+                Icons.inventory_2_outlined,
+                size: 19,
                 color: CcColors.accent,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 9),
               const Text(
                 '胶囊广场',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700),
               ),
-              const SizedBox(width: 10),
-              if (_items != null)
-                Text(
-                  '${_items!.length} 个',
-                  style: CcType.code(size: 12.5, color: CcColors.muted),
+              const SizedBox(width: 9),
+              if (visibleCount != null)
+                Tooltip(
+                  message: '当前筛选结果',
+                  child: Container(
+                    key: const ValueKey('capsule-result-count'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: CcColors.panelHigh,
+                      borderRadius: BorderRadius.circular(CcRadius.sm),
+                    ),
+                    child: Text(
+                      '$visibleCount 个',
+                      style: CcType.code(size: 11.5, color: CcColors.muted),
+                    ),
+                  ),
                 ),
+              if (_loading && _items != null) ...[
+                const SizedBox(width: 9),
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 1.5),
+                ),
+              ],
               const Spacer(),
               IconButton(
-                tooltip: '刷新',
+                tooltip: '刷新胶囊',
+                visualDensity: VisualDensity.compact,
                 icon: const Icon(Icons.refresh_rounded, size: 18),
                 onPressed: _loading ? null : _load,
               ),
             ],
           ),
         ),
+        _toolbar(),
         Expanded(child: _body()),
       ],
     );
   }
+
+  List<CapsuleListItem> _filteredItems() {
+    final query = _searchController.text.trim().toLowerCase();
+    return (_items ?? const <CapsuleListItem>[]).where((capsule) {
+      final mine = capsuleOwnedBy(capsule, widget.identity);
+      if (_scope == CapsulePlazaScope.mine && !mine) return false;
+      if (_scope == CapsulePlazaScope.team && capsule.visibility != 'public') {
+        return false;
+      }
+      if (_agentFilter != null && capsule.sourceAgent != _agentFilter) {
+        return false;
+      }
+      if (_repoFilter != null && capsule.repoName != _repoFilter) return false;
+      if (query.isEmpty) return true;
+      final searchable = <String>[
+        capsule.headline,
+        capsule.summary,
+        capsule.owner,
+        capsule.sourceAgent,
+        capsule.repoName,
+        capsule.visibility == 'public' ? '团队共享' : '个人',
+        if (capsule.hasTranscript) '会话记录',
+        if (capsule.hasPersona) '角色说明',
+        if (capsule.skillPackCount > 0) '技能包',
+      ].join(' ').toLowerCase();
+      return searchable.contains(query);
+    }).toList();
+  }
+
+  Widget _toolbar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      color: CcColors.toolbar.withValues(alpha: 0.45),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final search = Row(
+            children: [
+              Expanded(child: _searchField()),
+              const SizedBox(width: 8),
+              _filterMenu(),
+            ],
+          );
+          final scopes = _scopeSegments();
+          if (constraints.maxWidth < 700) {
+            return Column(
+              children: [search, const SizedBox(height: 8), scopes],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: search),
+              const SizedBox(width: 12),
+              SizedBox(width: 310, child: scopes),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _searchField() => SizedBox(
+    height: 36,
+    child: TextField(
+      key: const ValueKey('capsule-search'),
+      controller: _searchController,
+      onChanged: (_) => setState(() {}),
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: '搜索标题、作者或项目',
+        isDense: true,
+        prefixIcon: const Icon(Icons.search_rounded, size: 17),
+        prefixIconConstraints: const BoxConstraints.tightFor(
+          width: 36,
+          height: 36,
+        ),
+        suffixIcon: _searchController.text.isEmpty
+            ? null
+            : IconButton(
+                tooltip: '清空搜索',
+                visualDensity: VisualDensity.compact,
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() {});
+                },
+                icon: const Icon(Icons.close_rounded, size: 16),
+              ),
+        suffixIconConstraints: const BoxConstraints.tightFor(
+          width: 36,
+          height: 36,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+      ),
+    ),
+  );
+
+  Widget _scopeSegments() => SizedBox(
+    height: 36,
+    child: SegmentedButton<CapsulePlazaScope>(
+      key: const ValueKey('capsule-visibility-filter'),
+      expandedInsets: EdgeInsets.zero,
+      showSelectedIcon: false,
+      style: const ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        textStyle: WidgetStatePropertyAll(TextStyle(fontSize: 12.5)),
+      ),
+      segments: const [
+        ButtonSegment(value: CapsulePlazaScope.all, label: Text('全部')),
+        ButtonSegment(value: CapsulePlazaScope.mine, label: Text('我的')),
+        ButtonSegment(value: CapsulePlazaScope.team, label: Text('团队共享')),
+      ],
+      selected: {_scope},
+      onSelectionChanged: (selection) =>
+          setState(() => _scope = selection.first),
+    ),
+  );
+
+  Widget _filterMenu() {
+    final agents =
+        (_items ?? const <CapsuleListItem>[])
+            .map((capsule) => capsule.sourceAgent)
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    final repos =
+        (_items ?? const <CapsuleListItem>[])
+            .map((capsule) => capsule.repoName)
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    final activeCount =
+        (_agentFilter == null ? 0 : 1) + (_repoFilter == null ? 0 : 1);
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: PopupMenuButton<_PlazaFilterChoice>(
+        key: const ValueKey('capsule-source-repo-filter'),
+        tooltip: '筛选来源和项目',
+        padding: EdgeInsets.zero,
+        onSelected: (choice) {
+          setState(() {
+            switch (choice.kind) {
+              case _PlazaFilterKind.agent:
+                _agentFilter = choice.value.isEmpty ? null : choice.value;
+              case _PlazaFilterKind.repo:
+                _repoFilter = choice.value.isEmpty ? null : choice.value;
+              case _PlazaFilterKind.clear:
+                _agentFilter = null;
+                _repoFilter = null;
+            }
+          });
+        },
+        itemBuilder: (_) => [
+          const PopupMenuItem(
+            enabled: false,
+            height: 28,
+            child: Text('来源工具', style: TextStyle(fontSize: 11)),
+          ),
+          CheckedPopupMenuItem(
+            key: const ValueKey('capsule-agent-all'),
+            value: const _PlazaFilterChoice(_PlazaFilterKind.agent),
+            checked: _agentFilter == null,
+            child: const Text('全部来源'),
+          ),
+          for (final agent in agents)
+            CheckedPopupMenuItem(
+              key: ValueKey('capsule-agent-$agent'),
+              value: _PlazaFilterChoice(_PlazaFilterKind.agent, agent),
+              checked: _agentFilter == agent,
+              child: Text(_agentName(agent)),
+            ),
+          const PopupMenuDivider(),
+          const PopupMenuItem(
+            enabled: false,
+            height: 28,
+            child: Text('项目 / Repo', style: TextStyle(fontSize: 11)),
+          ),
+          CheckedPopupMenuItem(
+            key: const ValueKey('capsule-repo-all'),
+            value: const _PlazaFilterChoice(_PlazaFilterKind.repo),
+            checked: _repoFilter == null,
+            child: const Text('全部项目'),
+          ),
+          for (final repo in repos)
+            CheckedPopupMenuItem(
+              key: ValueKey('capsule-repo-$repo'),
+              value: _PlazaFilterChoice(_PlazaFilterKind.repo, repo),
+              checked: _repoFilter == repo,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 260),
+                child: Text(repo, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+          if (activeCount > 0) ...[
+            const PopupMenuDivider(),
+            const PopupMenuItem(
+              value: _PlazaFilterChoice(_PlazaFilterKind.clear),
+              child: Text('清除来源与项目筛选'),
+            ),
+          ],
+        ],
+        icon: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Icon(
+              Icons.tune_rounded,
+              size: 18,
+              color: activeCount == 0 ? CcColors.muted : CcColors.accentBright,
+            ),
+            if (activeCount > 0)
+              Positioned(
+                right: -7,
+                top: -7,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: CcColors.accent,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$activeCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _agentName(String agent) => switch (agent.toLowerCase()) {
+    'codex' => 'Codex',
+    'claude' => 'Claude',
+    _ => agent,
+  };
 
   Widget _body() => asyncBody(
     loading: _loading && _items == null,
@@ -237,127 +553,329 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     child: () {
       final items = _items ?? const <CapsuleListItem>[];
       if (items.isEmpty) {
-        return centerMsg('广场还没有胶囊。\n在「会话总览」把一个会话「打成胶囊」并设为团队共享,就会出现在这里。');
+        return _emptyState(
+          icon: Icons.inventory_2_outlined,
+          title: '还没有胶囊',
+          detail: '在会话总览中创建胶囊后，它会出现在这里。',
+        );
+      }
+      final filtered = _filteredItems();
+      if (filtered.isEmpty) {
+        return _emptyState(
+          icon: Icons.search_off_rounded,
+          title: '没有匹配的胶囊',
+          detail: '换一个关键词或调整筛选条件。',
+          onClear: _clearFilters,
+        );
       }
       return RefreshIndicator(
         onRefresh: _load,
-        child: ListView.separated(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          itemCount: items.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 8),
-          itemBuilder: (_, i) => _capsuleCard(items[i]),
+        child: LayoutBuilder(
+          builder: (context, constraints) => GridView.builder(
+            key: const ValueKey('capsule-grid'),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+            physics: const AlwaysScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: capsuleGridColumnCount(constraints.maxWidth - 28),
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              mainAxisExtent: 280,
+            ),
+            itemCount: filtered.length,
+            itemBuilder: (_, i) => _capsuleCard(filtered[i]),
+          ),
         ),
       );
     },
   );
 
+  void _clearFilters() {
+    _searchController.clear();
+    setState(() {
+      _scope = CapsulePlazaScope.all;
+      _agentFilter = null;
+      _repoFilter = null;
+    });
+  }
+
+  Widget _emptyState({
+    required IconData icon,
+    required String title,
+    required String detail,
+    VoidCallback? onClear,
+  }) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 28, color: CcColors.subtle),
+          const SizedBox(height: 10),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text(
+            detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: CcColors.subtle, fontSize: 12.5),
+          ),
+          if (onClear != null) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: onClear,
+              icon: const Icon(Icons.filter_alt_off_rounded, size: 15),
+              label: const Text('清除筛选'),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+
   Widget _capsuleCard(CapsuleListItem c) {
     final mine = capsuleOwnedBy(c, widget.identity);
     final isPublic = c.visibility == 'public';
-    Text meta(String s) =>
-        Text(s, style: CcType.code(size: 11.5, color: CcColors.subtle));
+    final title = c.headline.trim().isNotEmpty
+        ? c.headline.trim()
+        : c.repoName.isNotEmpty
+        ? '${c.repoName} 会话胶囊'
+        : '未命名胶囊';
     return Container(
-      padding: const EdgeInsets.all(12),
+      key: ValueKey('capsule-card-${c.id}'),
+      padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
         color: CcColors.panel,
         borderRadius: BorderRadius.circular(CcRadius.md),
-        border: Border.all(color: CcColors.border),
+        border: Border.all(color: CcColors.borderSoft),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                c.sourceAgent == 'codex'
-                    ? Icons.terminal_rounded
-                    : Icons.smart_toy_rounded,
-                size: 16,
-                color: CcColors.subtle,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  c.headline.isEmpty ? '(无说明)' : c.headline,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              const SizedBox(width: 8),
               tag(
                 isPublic ? '团队共享' : '个人',
                 isPublic ? CcColors.accent : CcColors.muted,
               ),
+              const Spacer(),
+              if (mine)
+                PopupMenuButton<_CapsuleOwnerAction>(
+                  key: ValueKey('capsule-actions-${c.id}'),
+                  tooltip: '更多操作',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 132),
+                  onSelected: (action) {
+                    switch (action) {
+                      case _CapsuleOwnerAction.edit:
+                        _editCapsule(c);
+                      case _CapsuleOwnerAction.delete:
+                        _deleteCapsule(c);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      key: ValueKey('capsule-action-edit-${c.id}'),
+                      value: _CapsuleOwnerAction.edit,
+                      child: const ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.edit_outlined, size: 17),
+                        title: Text('编辑'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      key: ValueKey('capsule-action-delete-${c.id}'),
+                      value: _CapsuleOwnerAction.delete,
+                      enabled: !_deletingIds.contains(c.id),
+                      child: const ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.delete_outline_rounded,
+                          size: 17,
+                          color: CcColors.danger,
+                        ),
+                        title: Text(
+                          '删除',
+                          style: TextStyle(color: CcColors.danger),
+                        ),
+                      ),
+                    ),
+                  ],
+                  icon: const Icon(Icons.more_horiz_rounded, size: 19),
+                )
+              else
+                const SizedBox(height: 32),
             ],
+          ),
+          const SizedBox(height: 7),
+          Text(
+            title,
+            key: ValueKey('capsule-title-${c.id}'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 15,
+              height: 1.3,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 6),
-          Wrap(
-            spacing: 12,
-            runSpacing: 4,
+          Text(
+            capsuleSummaryPreview(c),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: CcColors.muted,
+              fontSize: 12.5,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
             children: [
-              meta(mine ? '我的' : c.owner),
-              meta('源 ${c.sourceAgent}'),
-              meta(
-                '①${c.hasTranscript ? "有" : "无"}  ②${c.hasPersona ? "有" : "无"}',
+              Expanded(
+                child: _metaItem(
+                  Icons.person_outline_rounded,
+                  '作者 ${c.owner.isEmpty ? "未知" : c.owner}',
+                ),
               ),
-              if (c.repoName.isNotEmpty) meta(c.repoName),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _metaItem(
+                  c.sourceAgent == 'codex'
+                      ? Icons.terminal_rounded
+                      : Icons.smart_toy_outlined,
+                  '来源 ${_agentName(c.sourceAgent)}',
+                ),
+              ),
             ],
           ),
-          if (mine ||
-              (widget.isDesktop && (c.hasTranscript || c.hasPersona))) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                // Owner-only edit/delete.
-                if (mine) ...[
-                  _cardAction(Icons.edit_rounded, '编辑', () => _editCapsule(c)),
-                  const SizedBox(width: 2),
-                  _cardAction(
-                    Icons.delete_outline_rounded,
-                    '删除',
-                    () => _deleteCapsule(c),
-                    color: CcColors.danger,
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Expanded(
+                child: _metaItem(
+                  Icons.folder_outlined,
+                  '项目 ${c.repoName.isEmpty ? "未关联" : c.repoName}',
+                ),
+              ),
+              const SizedBox(width: 10),
+              _metaItem(
+                Icons.schedule_rounded,
+                '更新 ${relativeTime(c.updatedAt)}',
+                tooltip: '更新于 ${commitDate(c.updatedAt.toLocal())}',
+              ),
+            ],
+          ),
+          const Spacer(),
+          Row(
+            children: [
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (_, constraints) =>
+                      _payloadBadges(c, compact: constraints.maxWidth < 170),
+                ),
+              ),
+              if (widget.isDesktop && (c.hasTranscript || c.hasPersona)) ...[
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  key: ValueKey('capsule-load-${c.id}'),
+                  onPressed: () => _loadCapsule(c),
+                  icon: const Icon(Icons.input_rounded, size: 15),
+                  label: const Text('载入'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 11),
+                    minimumSize: const Size(0, 32),
                   ),
-                ],
-                const Spacer(),
-                if (widget.isDesktop && (c.hasTranscript || c.hasPersona))
-                  OutlinedButton.icon(
-                    onPressed: () => _loadCapsule(c),
-                    icon: const Icon(Icons.download_rounded, size: 15),
-                    label: const Text('载入'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      minimumSize: const Size(0, 30),
-                    ),
-                  ),
+                ),
               ],
-            ),
-          ],
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _cardAction(
-    IconData icon,
-    String label,
-    VoidCallback onPressed, {
-    Color? color,
-  }) => TextButton.icon(
-    onPressed: onPressed,
-    icon: Icon(icon, size: 15, color: color),
-    label: Text(label, style: color == null ? null : TextStyle(color: color)),
-    style: TextButton.styleFrom(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      minimumSize: const Size(0, 30),
+  Widget _metaItem(IconData icon, String label, {String? tooltip}) => Tooltip(
+    message: tooltip ?? label,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: CcColors.subtle),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CcType.code(size: 10.5, color: CcColors.subtle),
+          ),
+        ),
+      ],
     ),
   );
 
+  Widget _payloadBadges(CapsuleListItem c, {required bool compact}) {
+    final badges = <Widget>[
+      if (c.hasTranscript)
+        _payloadBadge(
+          Icons.forum_outlined,
+          compact ? null : '会话记录',
+          '包含可续接的会话记录',
+        ),
+      if (c.hasPersona)
+        _payloadBadge(
+          Icons.badge_outlined,
+          compact ? null : '角色说明',
+          '包含蒸馏后的角色说明',
+        ),
+      if (c.skillPackCount > 0)
+        _payloadBadge(
+          Icons.extension_outlined,
+          compact ? null : '技能包 ${c.skillPackCount}',
+          '包含 ${c.skillPackCount} 个技能包',
+        ),
+    ];
+    if (badges.isEmpty) {
+      return Text(
+        '仅元数据',
+        style: CcType.code(size: 10.5, color: CcColors.subtle),
+      );
+    }
+    return Wrap(spacing: 5, runSpacing: 4, children: badges);
+  }
+
+  Widget _payloadBadge(IconData icon, String? label, String tooltip) => Tooltip(
+    message: tooltip,
+    child: Container(
+      height: 24,
+      padding: EdgeInsets.symmetric(horizontal: label == null ? 5 : 7),
+      decoration: BoxDecoration(
+        color: CcColors.bg.withValues(alpha: 0.32),
+        border: Border.all(color: CcColors.border),
+        borderRadius: BorderRadius.circular(CcRadius.sm),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: CcColors.muted),
+          if (label != null) ...[
+            const SizedBox(width: 4),
+            Text(label, style: CcType.code(size: 9.5, color: CcColors.muted)),
+          ],
+        ],
+      ),
+    ),
+  );
+
+  bool _containsCurrentCapsule(CapsuleListItem capsule) =>
+      _items?.any((item) => item.id == capsule.id) ?? false;
+
   Future<void> _deleteCapsule(CapsuleListItem c) async {
+    if (!capsuleOwnedBy(c, widget.identity) || !_containsCurrentCapsule(c)) {
+      return;
+    }
+    if (_deletingIds.contains(c.id)) return;
     final client = widget.client;
     final identity = widget.identity;
     final relayUrl = widget.config.relayUrl;
@@ -401,6 +919,9 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     if (ok != true) return;
     if (!mounted) return;
     if (!_isCurrentPlazaContext(client, identity, relayUrl, token)) return;
+    if (!capsuleOwnedBy(c, identity) || !_containsCurrentCapsule(c)) return;
+    if (_deletingIds.contains(c.id)) return;
+    setState(() => _deletingIds.add(c.id));
     try {
       await client.deleteCapsule(c.id);
       if (!mounted) return;
@@ -411,10 +932,17 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
       if (!mounted) return;
       if (!_isCurrentPlazaContext(client, identity, relayUrl, token)) return;
       snack(context, '删除失败: ${errorText(e)}');
+    } finally {
+      if (mounted && _deletingIds.contains(c.id)) {
+        setState(() => _deletingIds.remove(c.id));
+      }
     }
   }
 
   Future<void> _editCapsule(CapsuleListItem c) async {
+    if (!capsuleOwnedBy(c, widget.identity) || !_containsCurrentCapsule(c)) {
+      return;
+    }
     final client = widget.client;
     final identity = widget.identity;
     final relayUrl = widget.config.relayUrl;
@@ -434,6 +962,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   }
 
   Future<void> _loadCapsule(CapsuleListItem c) {
+    if (!_containsCurrentCapsule(c)) return Future.value();
     final client = widget.client;
     final identity = widget.identity;
     final relayUrl = widget.config.relayUrl;
@@ -1099,6 +1628,7 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
                 ),
                 const SizedBox(height: 12),
                 TextField(
+                  key: const ValueKey('capsule-edit-summary'),
                   controller: _summary,
                   decoration: const InputDecoration(
                     labelText: '说明',

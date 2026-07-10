@@ -251,6 +251,10 @@ type Capsule struct {
 	// HasPersona is true when a distilled persona payload is present, so the
 	// pickup UI can offer the "② distilled role" form.
 	HasPersona bool `json:"has_persona,omitempty"`
+	// UpdatedAt tracks the last metadata edit (summary / visibility). Capsules
+	// created before this field was added fall back to Package.CreatedAt in the
+	// plaza projection.
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
 // EffectiveVisibility returns the capsule's visibility, defaulting empty to
@@ -274,14 +278,27 @@ type CapsuleListItem struct {
 	OriginSessionID string    `json:"origin_session_id,omitempty"`
 	HasTranscript   bool      `json:"has_transcript"`
 	HasPersona      bool      `json:"has_persona"`
+	SkillPackCount  int       `json:"skill_pack_count"`
 	Headline        string    `json:"headline,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
 	RepoName        string    `json:"repo_name,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // NewCapsuleListItem projects a stored capsule Package into its plaza row.
 func NewCapsuleListItem(p *Package) CapsuleListItem {
 	c := p.CapsuleOrEmpty()
+	updatedAt := c.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = p.CreatedAt
+	}
+	skillPackCount := 0
+	for _, attachment := range p.Attachments {
+		if IsCapsuleSkillPack(attachment.Name) {
+			skillPackCount++
+		}
+	}
 	return CapsuleListItem{
 		ID:              p.ID,
 		Owner:           p.Sender,
@@ -290,9 +307,12 @@ func NewCapsuleListItem(p *Package) CapsuleListItem {
 		OriginSessionID: c.OriginSessionID,
 		HasTranscript:   c.HasTranscript,
 		HasPersona:      c.HasPersona,
+		SkillPackCount:  skillPackCount,
 		Headline:        p.Headline(),
+		Summary:         p.SummaryMD,
 		RepoName:        p.Repo.Name,
 		CreatedAt:       p.CreatedAt,
+		UpdatedAt:       updatedAt,
 	}
 }
 

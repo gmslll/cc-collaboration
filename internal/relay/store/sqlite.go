@@ -731,6 +731,7 @@ func (s *Store) UpdateCapsuleMeta(ctx context.Context, id, owner string, visibil
 		return fmt.Errorf("decode capsule payload: %w", err)
 	}
 	p.ApplyCapsuleEdit(visibility, summary)
+	p.Capsule.UpdatedAt = time.Now().UTC()
 	updated, err := json.Marshal(&p)
 	if err != nil {
 		return err

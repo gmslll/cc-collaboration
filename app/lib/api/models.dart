@@ -61,9 +61,11 @@ class CapsuleListItem {
       sourceAgent,
       originSessionId,
       headline,
+      summary,
       repoName;
   final bool hasTranscript, hasPersona;
-  final DateTime createdAt;
+  final int skillPackCount;
+  final DateTime createdAt, updatedAt;
 
   CapsuleListItem.fromJson(Map<String, dynamic> j)
     : id = _s(j['id']),
@@ -75,7 +77,12 @@ class CapsuleListItem {
       repoName = _s(j['repo_name']),
       hasTranscript = j['has_transcript'] == true,
       hasPersona = j['has_persona'] == true,
-      createdAt = _t(j['created_at']);
+      skillPackCount = (j['skill_pack_count'] as num?)?.toInt() ?? 0,
+      summary = _s(j['summary']).isEmpty ? _s(j['headline']) : _s(j['summary']),
+      createdAt = _t(j['created_at']),
+      updatedAt = _s(j['updated_at']).isEmpty
+          ? _t(j['created_at'])
+          : _t(j['updated_at']);
 }
 
 class Repo {
