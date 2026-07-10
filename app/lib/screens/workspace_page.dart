@@ -373,6 +373,99 @@ class _WorkspaceSessionRenameDialogState
   }
 }
 
+class WorkspacePathFilterDialog extends StatefulWidget {
+  final String initial;
+  final String? activeRel;
+
+  const WorkspacePathFilterDialog({
+    super.key,
+    this.initial = '',
+    this.activeRel,
+  });
+
+  @override
+  State<WorkspacePathFilterDialog> createState() =>
+      _WorkspacePathFilterDialogState();
+}
+
+class _WorkspacePathFilterDialogState extends State<WorkspacePathFilterDialog> {
+  late final TextEditingController _ctl = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctl.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final width = workspaceConfirmDialogWidth(size);
+    final activeRel = widget.activeRel;
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: const Text(
+        'Filter Log by Path',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: width,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _ctl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'File or directory path',
+                  hintText: 'app/lib/screens/workspace_page.dart',
+                ),
+                onSubmitted: (_) => _submit(),
+              ),
+              if (activeRel != null && activeRel.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Tooltip(
+                    message: activeRel,
+                    child: TextButton.icon(
+                      onPressed: () => _ctl.text = activeRel,
+                      icon: const Icon(Icons.my_location_rounded, size: 14),
+                      label: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: width > 72 ? width - 72 : width,
+                        ),
+                        child: Text(
+                          'Use active file: $activeRel',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Apply')),
+      ],
+    );
+  }
+}
+
 class WorkspaceCommitBranchDialog extends StatefulWidget {
   final String initialBranch;
   final String shortHash;
@@ -3946,59 +4039,20 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack('没有可过滤的项目');
       return;
     }
-    final ctl = TextEditingController(text: _logPathFilter);
     final active = _activeFile >= 0 && _activeFile < _codeFiles.length
         ? _projectForFile(_codeFiles[_activeFile].path)
         : null;
     final activeRel = active?.project.path == p.path ? active?.rel : null;
-    final ok = await showDialog<bool>(
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Filter Log by Path'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'File or directory path',
-                hintText: 'app/lib/screens/workspace_page.dart',
-              ),
-              onSubmitted: (_) => Navigator.pop(ctx, true),
-            ),
-            if (activeRel != null && activeRel.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => ctl.text = activeRel,
-                  icon: const Icon(Icons.my_location_rounded, size: 14),
-                  label: Text('Use active file: $activeRel'),
-                ),
-              ),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Apply'),
-          ),
-        ],
+      builder: (_) => WorkspacePathFilterDialog(
+        initial: _logPathFilter,
+        activeRel: activeRel,
       ),
     );
-    if (ok != true) {
-      ctl.dispose();
-      return;
-    }
-    final next = ctl.text.trim();
-    ctl.dispose();
+    if (raw == null) return;
     if (!mounted) return;
+    final next = raw.trim();
     setState(() => _logPathFilter = next);
     await _refreshGit();
   }

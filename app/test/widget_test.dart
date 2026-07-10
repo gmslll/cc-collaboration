@@ -446,6 +446,71 @@ void main() {
     );
   });
 
+  testWidgets('WorkspacePathFilterDialog fits compact screens', (tester) async {
+    tester.view.physicalSize = const Size(320, 320);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    String? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                result = await showDialog<String>(
+                  context: context,
+                  builder: (_) => const WorkspacePathFilterDialog(
+                    initial: 'app/lib/screens/workspace_page.dart',
+                    activeRel:
+                        'app/lib/screens/a/very/deep/team/shared/path/workspace_page.dart',
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    final contentScroll = tester.widget<SingleChildScrollView>(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+
+    expect(
+      dialog.insetPadding,
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+    );
+    expect(contentScroll.scrollDirection, Axis.vertical);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Apply'));
+    await tester.pumpAndSettle();
+    expect(result, 'app/lib/screens/workspace_page.dart');
+    expect(tester.takeException(), isNull);
+  });
+
+  test('workspace log path filter dialog owns controller', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final helper = source.substring(
+      source.indexOf('Future<void> _setGitLogPathFilter()'),
+      source.indexOf('Future<void> _showShortcuts()'),
+    );
+
+    expect(helper, contains('showDialog<String>'));
+    expect(helper, contains('WorkspacePathFilterDialog('));
+    expect(helper, isNot(contains('TextEditingController')));
+    expect(helper, isNot(contains('showDialog<bool>')));
+  });
+
   test('workspace change filter menu labels are width constrained', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final menu = source.substring(
@@ -1195,7 +1260,7 @@ void main() {
         'Future<void> _setGitLogPathFilter()',
         'Future<void> _showShortcuts()',
       ),
-      'ctl.dispose();',
+      'if (raw == null) return;',
       'setState(() => _logPathFilter = next)',
     );
     expectGuardBefore(
