@@ -733,6 +733,44 @@ void main() {
     expect(find.widgetWithText(TextField, '写评论…'), findsOneWidget);
   });
 
+  testWidgets('handoff comments clamp long team member identities', (
+    tester,
+  ) async {
+    final client = _ActionDetailClient(
+      _package('long-commenter', 'qa@x', 'team handoff'),
+      comments: [
+        _comment(
+          'very-long-team-member-identity-that-would-overflow@example.com',
+          'comment body',
+        ),
+      ],
+    );
+
+    await tester.binding.setSurfaceSize(const Size(220, 520));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: HandoffDetailView(
+          client: client,
+          config: AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {}),
+          item: _item('long-commenter', 'qa@x', 'team handoff'),
+          onOpenTerminal: (_, _) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 4; i++) {
+      await tester.drag(find.byType(TabBarView), const Offset(-220, 0));
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.text('comment body'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('handoff comment submit ignores duplicate taps while posting', (
     tester,
   ) async {
@@ -933,6 +971,7 @@ class _ActionDetailClient extends RelayClient {
   final bool delayPostComment;
   final bool delayAck;
   final bool delayProject;
+  final List<Comment> commentItems;
   int ackCalls = 0;
   int projectCalls = 0;
   int retractCalls = 0;
@@ -949,13 +988,15 @@ class _ActionDetailClient extends RelayClient {
     this.delayPostComment = false,
     this.delayAck = false,
     this.delayProject = false,
-  }) : super('http://127.0.0.1', 'tok');
+    List<Comment> comments = const [],
+  }) : commentItems = comments,
+       super('http://127.0.0.1', 'tok');
 
   @override
   Future<Package> get(String id) async => package;
 
   @override
-  Future<List<Comment>> comments(String id) async => const [];
+  Future<List<Comment>> comments(String id) async => commentItems;
 
   @override
   Future<String> prompt(String id) async => 'prompt for $id';

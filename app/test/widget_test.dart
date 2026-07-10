@@ -33,6 +33,31 @@ index 0000000..3333333
 ''';
 
 void main() {
+  testWidgets('center message scrolls instead of overflowing tiny panes', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(180, 120));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox.expand(
+            child: centerMsg(
+              '这是一段很长的空状态提示，用来模拟窄屏和低高度面板里的占位文案。',
+              onRetry: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('空状态提示'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, '重试'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('account page does not expose internal build markers', () {
     final source = File('lib/screens/account_page.dart').readAsStringSync();
 

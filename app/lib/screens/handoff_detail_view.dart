@@ -1404,11 +1404,15 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
                     children: [
                       Row(
                         children: [
-                          Text(
-                            c.sender,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
+                          Expanded(
+                            child: Text(
+                              c.sender,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 8),
