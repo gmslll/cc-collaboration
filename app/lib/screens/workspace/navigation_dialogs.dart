@@ -1,5 +1,28 @@
 part of '../workspace_page.dart';
 
+double workspaceNavigationDialogDimension(
+  double available,
+  double preferred, {
+  double min = 280,
+}) {
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < min) return available;
+  return available < preferred ? available : preferred;
+}
+
+Size workspaceQuickOpenDialogSize(
+  Size viewport, {
+  double preferredWidth = 680,
+  double preferredHeight = 620,
+}) => Size(
+  workspaceNavigationDialogDimension(viewport.width - 32, preferredWidth),
+  workspaceNavigationDialogDimension(
+    viewport.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
 class _QuickOpenDialog extends StatefulWidget {
   final List<WorkspaceCfg> workspaces;
   const _QuickOpenDialog({required this.workspaces});
@@ -84,6 +107,7 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final dialogSize = workspaceQuickOpenDialogSize(MediaQuery.sizeOf(context));
     final parsed = _parseQuery(_query);
     final q = parsed.query.toLowerCase();
     final filtered = q.isEmpty
@@ -93,9 +117,10 @@ class _QuickOpenDialogState extends State<_QuickOpenDialog> {
               .take(120)
               .toList();
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: SizedBox(
-        width: 680,
-        height: 620,
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Column(
           children: [
             Container(

@@ -554,6 +554,37 @@ void main() {
     expect(workspaceConfirmDialogWidth(const Size(20, 760)), 420);
   });
 
+  test('workspace quick open dialog size fits compact screens', () {
+    expect(
+      workspaceQuickOpenDialogSize(const Size(1024, 800)),
+      const Size(680, 620),
+    );
+    expect(
+      workspaceQuickOpenDialogSize(const Size(360, 420)),
+      const Size(328, 372),
+    );
+    expect(
+      workspaceQuickOpenDialogSize(const Size(220, 220)),
+      const Size(188, 172),
+    );
+  });
+
+  test('workspace quick open dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/workspace/navigation_dialogs.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _QuickOpenDialogState'),
+      source.indexOf('class _GoToLineDialog'),
+    );
+
+    expect(dialog, contains('workspaceQuickOpenDialogSize'));
+    expect(dialog, contains('MediaQuery.sizeOf(context)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, isNot(contains('width: 680')));
+    expect(dialog, isNot(contains('height: 620')));
+  });
+
   test('workspace confirm dialog uses responsive long-message content', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final confirmDialog = source.substring(
