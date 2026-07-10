@@ -226,6 +226,12 @@ void main() {
     expect(onlineSendIdentitySelected('dev@x', 'ops@x'), isFalse);
   });
 
+  test('online send dialog title reflects team project scope', () {
+    expect(onlineSendDialogTitle(null), '发送到在线用户');
+    expect(onlineSendDialogTitle('   '), '发送到在线用户');
+    expect(onlineSendDialogTitle(' backend '), '发送到团队用户 · backend');
+  });
+
   test('incoming peer message target check uses the live session list', () {
     final open = TerminalSession('/repo', 'codex', agent: 'codex');
     final closed = TerminalSession('/repo', 'claude', agent: 'claude');
@@ -307,6 +313,7 @@ void main() {
 
   test('online send dialog constrains long users and session labels', () {
     expect(source, contains('onlineSendDialogWidth'));
+    expect(source, contains('onlineSendDialogTitle(scope.projectName)'));
     expect(source, contains('onlineSendUserChipWidth'));
     expect(source, contains('onlineSendUserListMaxHeight'));
     expect(source, contains('SingleChildScrollView'));

@@ -163,6 +163,11 @@ List<OnlineUser> onlineSendSelectableUsers(
 bool onlineSendIdentitySelected(String? selected, String identity) =>
     selected != null && sameIdentity(selected, identity);
 
+String onlineSendDialogTitle(String? projectName) {
+  final name = (projectName ?? '').trim();
+  return name.isEmpty ? '发送到在线用户' : '发送到团队用户 · $name';
+}
+
 List<RemoteSession> onlineSendSessionsForProject(
   Iterable<RemoteSession> sessions, {
   String? projectId,
@@ -2224,7 +2229,11 @@ class _WorkspacePageState extends State<WorkspacePage>
                 horizontal: 16,
                 vertical: 24,
               ),
-              title: const Text('发送到在线用户'),
+              title: Text(
+                onlineSendDialogTitle(scope.projectName),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               content: SizedBox(
                 width: dialogWidth,
                 child: Column(
