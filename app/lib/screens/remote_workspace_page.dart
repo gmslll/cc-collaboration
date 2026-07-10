@@ -54,6 +54,29 @@ double remoteWorkspaceDialogWidth(
   return available < preferred ? available : preferred;
 }
 
+double remoteWorkspaceDialogDimension(
+  double available,
+  double preferred, {
+  double min = 160,
+}) {
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < min) return available;
+  return available < preferred ? available : preferred;
+}
+
+Size remoteSupervisorKnowledgeDialogSize(
+  Size screenSize, {
+  double preferredWidth = 520,
+  double preferredHeight = 600,
+}) => Size(
+  remoteWorkspaceDialogDimension(screenSize.width - 32, preferredWidth),
+  remoteWorkspaceDialogDimension(
+    screenSize.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
 String remoteWorktreeRemoveTarget(RemoteWorktree worktree) {
   final branch = worktree.branch.trim();
   return branch.isEmpty ? worktree.name : branch;
@@ -4144,10 +4167,17 @@ class _SupervisorKnowledgeDialogState
 
   @override
   Widget build(BuildContext context) {
+    final dialogSize = remoteSupervisorKnowledgeDialogSize(
+      MediaQuery.sizeOf(context),
+    );
     return Dialog(
       backgroundColor: CcColors.panel,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 600),
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
         child: ListenableBuilder(
           listenable: widget.client,
           builder: (BuildContext context, Widget? _) {

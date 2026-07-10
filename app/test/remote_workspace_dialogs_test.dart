@@ -59,6 +59,21 @@ void main() {
     );
   });
 
+  test('remote supervisor knowledge dialog size fits compact screens', () {
+    expect(
+      remoteSupervisorKnowledgeDialogSize(const Size(1024, 800)),
+      const Size(520, 600),
+    );
+    expect(
+      remoteSupervisorKnowledgeDialogSize(const Size(360, 420)),
+      const Size(328, 372),
+    );
+    expect(
+      remoteSupervisorKnowledgeDialogSize(const Size(220, 220)),
+      const Size(188, 172),
+    );
+  });
+
   test('remote new session dialog uses scroll-safe controls', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',
@@ -88,6 +103,22 @@ void main() {
     expect(dialog, contains('SingleChildScrollView'));
     expect(dialog, contains('textInputAction: TextInputAction.next'));
     expect(dialog, contains('onSubmitted: (_) => _submit()'));
+  });
+
+  test('remote supervisor knowledge dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _SupervisorKnowledgeDialogState'),
+      source.indexOf('// _RemoteDiffViewer shows'),
+    );
+
+    expect(dialog, contains('remoteSupervisorKnowledgeDialogSize'));
+    expect(dialog, contains('MediaQuery.sizeOf(context)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, isNot(contains('maxWidth: 520')));
+    expect(dialog, isNot(contains('maxHeight: 600')));
   });
 
   test('remote incoming file offer dialog uses scroll-safe content', () {
