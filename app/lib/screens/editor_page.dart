@@ -11,6 +11,12 @@ import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/markdown_view.dart';
 
+double editorDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class CodeEditorPane extends StatefulWidget {
   final String path;
   final int? initialLine;
@@ -310,21 +316,35 @@ class _EditorPageState extends State<EditorPage> {
   Future<bool> _confirmDiscard() async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('未保存的修改'),
-        content: const Text('放弃修改并离开?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('放弃'),
+          title: const Text(
+            '未保存的修改',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: editorDialogWidth(size),
+            child: const SingleChildScrollView(child: Text('放弃修改并离开?')),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('放弃'),
+            ),
+          ],
+        );
+      },
     );
     return ok ?? false;
   }
