@@ -569,6 +569,53 @@ void main() {
     expect(confirmDialog, isNot(contains('content: Text(')));
   });
 
+  test('workspace shortcuts dialog uses responsive scrollable content', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final shortcutsDialog = source.substring(
+      source.indexOf('Future<void> _showShortcuts()'),
+      source.indexOf('void _expandWithSessions()'),
+    );
+
+    expect(shortcutsDialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(
+      shortcutsDialog,
+      contains('insetPadding: const EdgeInsets.symmetric'),
+    );
+    expect(shortcutsDialog, contains('workspaceConfirmDialogWidth(size)'));
+    expect(shortcutsDialog, contains('SingleChildScrollView'));
+    expect(shortcutsDialog, contains('maxLines: 2'));
+    expect(shortcutsDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(shortcutsDialog, isNot(contains('width: 420')));
+  });
+
+  test('workspace supervisor dialog uses responsive scrollable content', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final supervisorDialog = source.substring(
+      source.indexOf('Future<void> _supervisorFlow('),
+      source.indexOf('Widget _toolButton({'),
+    );
+
+    expect(supervisorDialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(
+      supervisorDialog,
+      contains('insetPadding: const EdgeInsets.symmetric'),
+    );
+    expect(supervisorDialog, contains('workspaceConfirmDialogWidth(size)'));
+    expect(supervisorDialog, contains('SingleChildScrollView'));
+    expect(supervisorDialog, contains('overflow: TextOverflow.ellipsis'));
+  });
+
+  test('phone file received snackbar constrains long filenames', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final handler = source.substring(
+      source.indexOf('_remoteHost.onFileReceived = (name, path)'),
+      source.indexOf('_remoteHost.onSessionFile = (sid, name, path)'),
+    );
+
+    expect(handler, contains('maxLines: 2'));
+    expect(handler, contains('overflow: TextOverflow.ellipsis'));
+  });
+
   test('workspace git dialog titles are width constrained', () {
     final gitMixin = File(
       'lib/screens/workspace/git_mixin.dart',

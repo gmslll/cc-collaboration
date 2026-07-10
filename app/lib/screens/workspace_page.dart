@@ -1427,7 +1427,11 @@ class _WorkspacePageState extends State<WorkspacePage>
       m.showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('收到手机文件：$name'),
+          content: Text(
+            '收到手机文件：$name',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
           action: SnackBarAction(
             label: '在 Finder 中显示',
             onPressed: () => Process.run('open', ['-R', path]),
@@ -4089,34 +4093,53 @@ class _WorkspacePageState extends State<WorkspacePage>
     ];
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('快捷键'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final r in rows)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Row(
-                    children: [
-                      SizedBox(width: 112, child: chip(r.$1)),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(r.$2)),
-                    ],
-                  ),
-                ),
-            ],
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('关闭'),
+          title: const Text(
+            '快捷键',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final r in rows)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          SizedBox(width: 112, child: chip(r.$1)),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              r.$2,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -5300,37 +5323,53 @@ class _WorkspacePageState extends State<WorkspacePage>
   ) async {
     final choice = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('总管'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.play_arrow_rounded),
-              title: const Text('Claude 总管'),
-              onTap: () => Navigator.of(ctx).pop('claude'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: const Text('总管', maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.play_arrow_rounded),
+                    title: const Text('Claude 总管'),
+                    onTap: () => Navigator.of(ctx).pop('claude'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.smart_toy_outlined),
+                    title: const Text('Codex 总管'),
+                    onTap: () => Navigator.of(ctx).pop('codex'),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.menu_book_outlined),
+                    title: const Text('编辑知识库'),
+                    subtitle: const Text(
+                      '.cc-handoff/supervisor',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => Navigator.of(ctx).pop('edit'),
+                  ),
+                ],
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.smart_toy_outlined),
-              title: const Text('Codex 总管'),
-              onTap: () => Navigator.of(ctx).pop('codex'),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.menu_book_outlined),
-              title: const Text('编辑知识库'),
-              subtitle: const Text('.cc-handoff/supervisor'),
-              onTap: () => Navigator.of(ctx).pop('edit'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-        ],
-      ),
+        );
+      },
     );
     if (choice == null || !mounted) return;
     if (choice == 'edit') {

@@ -11,6 +11,12 @@ import '../theme.dart';
 import '../widgets.dart';
 import '../widgets/session_snapshot_view.dart';
 
+double capsuleChoiceDialogWidth(Size size, {double preferred = 440}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 // SessionOverviewPage is the desktop top-level "会话总览": every open session
 // laid out flat, grouped by 工作区 → 项目 → worktree, each as a card showing the
 // agent's latest reply preview + status + token usage — so the user can glance
@@ -591,20 +597,36 @@ Future<void> startCapsuleFlow(
   if (!sessionStatusIsActive(card.status)) {
     final choice = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('怎么蒸馏这个会话?'),
-        content: const Text('「让它自己蒸馏」更懂上下文,但会占用该会话一会儿;「后台蒸馏」不打扰它,读转录来做。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('后台蒸馏'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('让它自己蒸馏'),
+          title: const Text(
+            '怎么蒸馏这个会话?',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: capsuleChoiceDialogWidth(size),
+            child: const SingleChildScrollView(
+              child: Text('「让它自己蒸馏」更懂上下文,但会占用该会话一会儿;「后台蒸馏」不打扰它,读转录来做。'),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('后台蒸馏'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('让它自己蒸馏'),
+            ),
+          ],
+        );
+      },
     );
     if (choice == null) return; // cancelled
     preferSelf = choice;

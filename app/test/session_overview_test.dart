@@ -2,11 +2,37 @@ import 'dart:io';
 
 import 'package:app/local/local_bus.dart';
 import 'package:app/local/session_overview.dart';
+import 'package:app/screens/session_overview_page.dart';
 import 'package:app/screens/terminal_pane.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('capsule choice dialog width fits compact screens', () {
+    expect(capsuleChoiceDialogWidth(const Size(320, 760)), 288);
+    expect(capsuleChoiceDialogWidth(const Size(1024, 760)), 440);
+    expect(capsuleChoiceDialogWidth(const Size(20, 760)), 440);
+  });
+
+  test('capsule choice dialog uses responsive content', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<void> startCapsuleFlow('),
+      source.indexOf('if (!context.mounted) return;'),
+    );
+
+    expect(dialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('maxLines: 1'));
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(dialog, contains('capsuleChoiceDialogWidth(size)'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, isNot(contains('content: const Text(')));
+  });
 
   test('SessionStatus parses hook-derived overview states', () {
     expect(sessionStatusFromName('runningTool'), SessionStatus.runningTool);
