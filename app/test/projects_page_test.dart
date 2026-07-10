@@ -1945,6 +1945,25 @@ void main() {
     expect(find.text('待处理邀请'), findsNothing);
   });
 
+  testWidgets('pending invitations fit on compact screens', (tester) async {
+    tester.view.physicalSize = const Size(320, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _InvitationPanelProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('待处理邀请'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'organization sheet mutation after account switch closes stale sheet',
     (tester) async {

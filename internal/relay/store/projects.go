@@ -259,7 +259,23 @@ func (s *Store) RenameProject(ctx context.Context, id, name string) error {
 
 func (s *Store) DeleteProject(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
-	return s.execAffecting(ctx, `DELETE FROM projects WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE project_id = ?`, id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
 }
 
 // MapRepo binds a repo to a project; a repo belongs to exactly one project, so a

@@ -167,10 +167,19 @@ func (s *Store) AcceptInvitation(ctx context.Context, id, identity string) error
 		if !ValidOrgRole(inv.Role) {
 			return ErrInvalid
 		}
+		if exists, err := organizationExists(ctx, tx, inv.OrgID); err != nil {
+			return err
+		} else if !exists {
+			if err := deleteMissingInvitation(ctx, tx, id); err != nil {
+				return err
+			}
+			return ErrNotFound
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
-			 ON CONFLICT(org_id, identity) DO NOTHING`,
-			inv.OrgID, identity, inv.Role); err != nil {
+			 ON CONFLICT(org_id, identity) DO UPDATE SET role =
+			   CASE WHEN organization_members.role = ? THEN organization_members.role ELSE excluded.role END`,
+			inv.OrgID, identity, inv.Role, OrgRoleOwner); err != nil {
 			return err
 		}
 	case InvitationScopeProject:
@@ -180,25 +189,48 @@ func (s *Store) AcceptInvitation(ctx context.Context, id, identity string) error
 		var orgID string
 		if err := tx.QueryRowContext(ctx, `SELECT org_id FROM projects WHERE id = ?`, inv.ProjectID).Scan(&orgID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
+				if err := deleteMissingInvitation(ctx, tx, id); err != nil {
+					return err
+				}
 				return ErrNotFound
 			}
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
-			 ON CONFLICT(org_id, identity) DO NOTHING`,
-			orgID, identity, OrgRoleMember); err != nil {
+			 ON CONFLICT(org_id, identity) DO UPDATE SET role =
+			   CASE WHEN organization_members.role = ? THEN organization_members.role ELSE excluded.role END`,
+			orgID, identity, OrgRoleMember, OrgRoleOwner); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO project_members(project_id, identity, role) VALUES(?, ?, ?)
-			 ON CONFLICT(project_id, identity) DO NOTHING`,
-			inv.ProjectID, identity, inv.Role); err != nil {
+			 ON CONFLICT(project_id, identity) DO UPDATE SET role =
+			   CASE WHEN project_members.role = ? THEN project_members.role ELSE excluded.role END`,
+			inv.ProjectID, identity, inv.Role, RoleOwner); err != nil {
 			return err
 		}
 	default:
 		return ErrInvalid
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func organizationExists(ctx context.Context, tx *sql.Tx, orgID string) (bool, error) {
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM organizations WHERE id = ?`, orgID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func deleteMissingInvitation(ctx context.Context, tx *sql.Tx, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE id = ?`, id); err != nil {
 		return err
 	}

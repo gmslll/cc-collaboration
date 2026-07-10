@@ -1296,12 +1296,22 @@ class _InvitationPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            ...invitations.map(
-              (invitation) => _IncomingInvitationTile(
-                invitation: invitation,
-                busy: busy,
-                onAccept: () => onAccept(invitation),
-                onDecline: () => onDecline(invitation),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemCount: invitations.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final invitation = invitations[index];
+                  return _IncomingInvitationTile(
+                    invitation: invitation,
+                    busy: busy,
+                    onAccept: () => onAccept(invitation),
+                    onDecline: () => onDecline(invitation),
+                  );
+                },
               ),
             ),
           ],
@@ -1326,29 +1336,40 @@ class _IncomingInvitationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        invitation.scope == 'project'
-            ? Icons.folder_shared_rounded
-            : Icons.groups_rounded,
-        size: 18,
-        color: CcColors.muted,
-      ),
-      title: Text(
-        invitationTargetLabel(invitation),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        '${invitationScopeLabel(invitation)} · ${invitationRoleLabel(invitation)} · ${invitation.inviterIdentity}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Wrap(
-        spacing: 4,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          Icon(
+            invitation.scope == 'project'
+                ? Icons.folder_shared_rounded
+                : Icons.groups_rounded,
+            size: 18,
+            color: CcColors.muted,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  invitationTargetLabel(invitation),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${invitationScopeLabel(invitation)} · ${invitationRoleLabel(invitation)} · ${invitation.inviterIdentity}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 11, color: CcColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
           IconButton(
             tooltip: '拒绝',
             onPressed: busy ? null : onDecline,

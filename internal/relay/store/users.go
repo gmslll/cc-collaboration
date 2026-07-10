@@ -297,6 +297,9 @@ func deleteEmptyDefaultOrganization(ctx context.Context, tx *sql.Tx, orgID, owne
 	if members != 1 || projects != 0 {
 		return false, nil
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE org_id = ?`, orgID); err != nil {
+		return false, err
+	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM organizations WHERE id = ?`, orgID)
 	if err != nil {
 		return false, err
