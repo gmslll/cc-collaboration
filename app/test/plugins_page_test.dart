@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/local/lsp/lsp_plugin.dart';
 import 'package:app/screens/plugins_page.dart';
 import 'package:app/theme.dart';
@@ -5,6 +7,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('plugins dialog size fits compact screens', () {
+    expect(pluginsDialogSize(const Size(1024, 800)), const Size(580, 620));
+    expect(pluginsDialogSize(const Size(360, 420)), const Size(328, 372));
+    expect(pluginsDialogSize(const Size(220, 220)), const Size(188, 172));
+  });
+
+  test('plugins dialog uses viewport based bounds', () {
+    final source = File('lib/screens/plugins_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<void> showPluginsDialog('),
+      source.indexOf('class _PluginsPane'),
+    );
+
+    expect(dialog, contains('pluginsDialogSize'));
+    expect(dialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, isNot(contains('maxWidth: 580')));
+    expect(dialog, isNot(contains('maxHeight: 620')));
+  });
+
   test('LSP command dialog width fits compact screens', () {
     expect(lspCommandDialogWidth(const Size(320, 760)), 288);
     expect(lspCommandDialogWidth(const Size(1024, 760)), 440);

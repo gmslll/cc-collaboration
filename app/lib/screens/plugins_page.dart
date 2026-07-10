@@ -8,18 +8,42 @@ import '../plugins/plugin_manager.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
+double pluginsDialogDimension(
+  double available,
+  double preferred, {
+  double min = 160,
+}) {
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < min) return available;
+  return available < preferred ? available : preferred;
+}
+
+Size pluginsDialogSize(
+  Size viewport, {
+  double preferredWidth = 580,
+  double preferredHeight = 620,
+}) => Size(
+  pluginsDialogDimension(viewport.width - 32, preferredWidth),
+  pluginsDialogDimension(viewport.height - 48, preferredHeight, min: 260),
+);
+
 // Plugins management dialog: list the format plugins, show whether each tool is
 // installed on the host, let the user enable/disable them, and surface the
 // install command for missing tools.
 Future<void> showPluginsDialog(BuildContext context) => showDialog<void>(
   context: context,
-  builder: (_) => Dialog(
-    backgroundColor: CcColors.panel,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 580, maxHeight: 620),
-      child: const _PluginsPane(),
-    ),
-  ),
+  builder: (ctx) {
+    final dialogSize = pluginsDialogSize(MediaQuery.sizeOf(ctx));
+    return Dialog(
+      backgroundColor: CcColors.panel,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: SizedBox(
+        width: dialogSize.width,
+        height: dialogSize.height,
+        child: const _PluginsPane(),
+      ),
+    );
+  },
 );
 
 class _PluginsPane extends StatefulWidget {
