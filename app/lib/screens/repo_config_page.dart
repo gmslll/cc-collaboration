@@ -124,19 +124,6 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _card('身份', [
-                    _text('me(覆盖用户 identity,可空)', c.me, (v) => c.me = v),
-                    _text(
-                      'partner(旧点对点,可空)',
-                      c.partner,
-                      (v) => c.partner = v,
-                    ),
-                    _text(
-                      'partners(旧 bug 别名,逗号分隔)',
-                      c.partners,
-                      (v) => c.partners = v,
-                    ),
-                  ]),
                   _card('路径', [
                     _text(
                       'base(git base ref)',
@@ -154,6 +141,7 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
                   ]),
                   _rulesCard(c),
                   _triggersCard(c),
+                  _legacyIdentityCard(c),
                   _card('收件箱', [
                     _text(
                       'inbox dir(物化输出目录,可空)',
@@ -189,6 +177,30 @@ class _RepoConfigPageState extends State<RepoConfigPage> {
             ...children,
           ],
         ),
+      ),
+    ),
+  );
+
+  Widget _legacyIdentityCard(RepoConfig c) => Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Card(
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        title: const Text(
+          '旧点对点兼容',
+          style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700),
+        ),
+        subtitle: const Text(
+          '团队项目通信不需要项目级身份',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        children: [
+          _text('me(旧覆盖用户 identity,可空)', c.me, (v) => c.me = v),
+          _text('partner(旧点对点,可空)', c.partner, (v) => c.partner = v),
+          _text('partners(旧 bug 别名,逗号分隔)', c.partners, (v) => c.partners = v),
+        ],
       ),
     ),
   );

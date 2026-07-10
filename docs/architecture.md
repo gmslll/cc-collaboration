@@ -398,12 +398,12 @@ MVP 安全姿态有意保守。明确防的 / 不防的:
 
 ## 10. Identity & repo resolution
 
-`me` / `partner` / `repo_name` 在多个来源之间合并,优先级从高到低:
+团队/项目模式下,发送者身份由登录态或 machine token 决定,relay 会覆盖客户端包里的 `sender`。项目配置里的 `[identity]` 只作为旧点对点兼容入口保留。
 
 | 字段 | 1. CLI flag | 2. repo `.cc-handoff.toml` | 3. user `~/.config/cc-handoff/config.toml` | 4. 默认 |
 |---|---|---|---|---|
-| `Me` | (无 flag) | `[identity].me` | `identity` | — (必须有) |
-| `Partner` | `--to ID` (submit) | `[identity].partner` | — | — (必须有) |
+| `Me` | (无 flag) | `[identity].me` (legacy override) | `identity` | — (必须有) |
+| `Recipient` | `--to ID` (legacy) / `--project` / `--org` / `--member` | `[identity].partner` (legacy only) | — | bound team project |
 | `RelayURL` / `Token` | — | — | `relay_url` / `token` | — (必须有) |
 | `RepoName` | `--repo NAME` (init) | `[paths].repo` | — | `basename(repoRoot)` |
 | `Base` | `--base REF` | `[paths].base` | — | `origin/main` |

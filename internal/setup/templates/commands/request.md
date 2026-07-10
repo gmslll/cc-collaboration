@@ -1,5 +1,5 @@
 ---
-description: Send a feature/field/endpoint request from this side to the configured partner via cc-handoff.
+description: Send a feature/field/endpoint request from this side to the current team project via cc-handoff.
 ---
 
 You found something the partner needs to add or change — a missing field, a missing endpoint, a broken response shape, an ability that's not exposed. Compose the request and send it.
@@ -44,7 +44,7 @@ This command is the **reverse** of `/handoff`. There's no diff to ship; the summ
 
 6. 调 `submit_request` MCP 工具：
    - `summary`: 第 2 步的 Markdown 总结
-   - 默认发给配置里的 partner；如果用户明确要求「发给项目/团队/所有相关成员」，传 `project`（cc-handoff 项目 id）或 `org`（组织 id），不要再传 `to`；如果用户明确指定团队里的某个人，同时传 `member`（真实 identity）
+   - 默认发给当前 workspace/repo 绑定的团队项目；如果用户明确要求「发给项目/团队/所有相关成员」，传 `project`（cc-handoff 项目 id）或 `org`（组织 id），不要再传 `to`；如果用户明确指定团队里的某个人，同时传 `member`（真实 identity）。只有用户明确要求旧点对点发送时才传 `to`
    - `prd`: 第 3 步的产品需求（没有就不传）
    - `note`: 第 4 步的备注（没有就不传）
    - `attachment_paths`: 第 5 步的路径数组(没有就不传)

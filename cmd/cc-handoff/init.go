@@ -47,7 +47,7 @@ func runInit(ctx context.Context, args []string) error {
 	relay := fs.String("relay", "", "relay URL, e.g. https://your-vps.example.com")
 	token := fs.String("token", "", "bearer token issued by the relay admin")
 	me := fs.String("me", "", "your identity, e.g. you@backend")
-	partner := fs.String("partner", "", "optional legacy point-to-point partner identity, e.g. alex@frontend")
+	partner := fs.String("partner", "", "legacy point-to-point partner identity; team project routing does not need this")
 	repoName := fs.String("repo", "", "repo name (default: basename of repo root)")
 	base := fs.String("base", "origin/main", "git base ref for diff/log")
 	swagger := fs.String("swagger", "", "path to OpenAPI/Swagger file relative to repo root (optional)")
@@ -166,7 +166,9 @@ func runInit(ctx context.Context, args []string) error {
 	if *partner != "" {
 		repoCfg.Identity.Partner = *partner
 	}
-	repoCfg.Identity.Partner = prompt("Legacy partner identity (optional, e.g. alex@frontend)", repoCfg.Identity.Partner)
+	if repoCfg.Identity.Partner != "" {
+		repoCfg.Identity.Partner = prompt("Legacy partner identity (optional, e.g. alex@frontend)", repoCfg.Identity.Partner)
+	}
 
 	if *repoName == "" {
 		repoCfg.Paths.Repo = prompt("Repo name", cmp.Or(repoCfg.Paths.Repo, filepath.Base(config.RepoRoot(cwd))))

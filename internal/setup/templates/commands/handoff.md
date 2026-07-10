@@ -1,5 +1,5 @@
 ---
-description: Package the current branch's work and send it to the configured partner via cc-handoff.
+description: Package the current branch's work and send it to the current team project via cc-handoff.
 ---
 
 You just finished writing or modifying an API. Hand it off to the frontend partner.
@@ -59,7 +59,7 @@ You just finished writing or modifying an API. Hand it off to the frontend partn
 
 8. 调 `submit_handoff` MCP 工具：
    - `summary`: 第 3 步的 Markdown 总结（已经把第 2 步自检的产物吸收进 Contract / Notes 段）
-   - 默认发给配置里的 partner；如果用户明确要求「发给项目/团队/所有相关成员」，传 `project`（cc-handoff 项目 id）或 `org`（组织 id），不要再传 `to`；如果用户明确指定团队里的某个人，同时传 `member`（真实 identity）
+   - 默认发给当前 workspace/repo 绑定的团队项目；如果用户明确要求「发给项目/团队/所有相关成员」，传 `project`（cc-handoff 项目 id）或 `org`（组织 id），不要再传 `to`；如果用户明确指定团队里的某个人，同时传 `member`（真实 identity）。只有用户明确要求旧点对点发送时才传 `to`
    - `prd`: 第 4 步的产品需求（没有就不传）
    - `note`: 第 5 步的需求备注（没有就不传）
    - `amends`: 第 6 步判断的上次 handoff id(只在确实是修正交付时传)

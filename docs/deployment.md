@@ -736,7 +736,7 @@ rm -rf ~/.config/cc-handoff
 | 现象 | 检查 |
 |---|---|
 | `cc-handoff submit` 返回 401 | 客户端 token 不对 / 账号已停用 / `~/.config/cc-handoff/config.toml` 里的 identity 与 DB machine token 所属账号不一致 |
-| `cc-handoff submit` 报 `no recipient` | `.cc-handoff.toml` 漏了 `[identity] partner = ...` |
+| `cc-handoff submit` 报 `no recipient` | 当前 workspace/repo 没绑定团队项目,也没有传 `--project` / `--org` / `--to`;优先在 App 里把项目绑定到团队 Project |
 | `cc-handoff submit` 报 `swagger delta: parse...` | swagger 文件解析失败，把出错文件片段贴出来 |
 | `cc-handoff submit` 报 `base ref ... unreachable` | 默认 base 是 `origin/main`，本地没 fetch / 仓库用的 master/develop。改 `.cc-handoff.toml` 的 `[paths] base = "..."` |
 | 前端 watch 没收到通知 | (1) `journalctl -u cc-handoff-relay` 看 submit 的请求是不是 201；(2) `/tmp/cc-handoff.watch.err.log` 看 SSE 连接状态；(3) 反向代理 SSE 缓冲是不是关了（章节 1.2） |

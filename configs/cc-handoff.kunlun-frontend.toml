@@ -3,6 +3,7 @@
 # adopt this file for prod, otherwise `dogfood.sh cleanup` will remove it.
 
 [identity]
+# Legacy point-to-point dogfood target. Team/project routing does not need this.
 partner = "user@backend"
 
 [paths]
