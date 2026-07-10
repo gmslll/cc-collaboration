@@ -2121,23 +2121,41 @@ class _ProjectSheetState extends State<_ProjectSheet> {
   }
 
   Future<void> _delete() async {
+    final projectName = _d?.project.name.trim() ?? '';
+    final detail = projectName.isEmpty
+        ? '删除后不可恢复(repo / 成员映射一并删除)。'
+        : '将删除项目 "$projectName"。删除后不可恢复(repo / 成员映射一并删除)。';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除项目?'),
-        content: const Text('删除后不可恢复(repo / 成员映射一并删除)。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
+          title: const Text(
+            '删除项目?',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: projectDialogWidth(size),
+            child: SingleChildScrollView(child: Text(detail)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true) return;
     if (!mounted) return;

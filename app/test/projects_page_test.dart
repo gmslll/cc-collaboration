@@ -760,6 +760,22 @@ void main() {
     expect(renameDialog, isNot(contains('content: TextField(')));
   });
 
+  test('project delete dialog uses responsive controls', () {
+    final start = source.indexOf('Future<void> _delete() async');
+    final deleteDialog = source.substring(
+      start,
+      source.indexOf('bool _isOnline(String identity)', start),
+    );
+
+    expect(deleteDialog, contains('projectDialogWidth(size)'));
+    expect(deleteDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(deleteDialog, contains('maxLines: 1'));
+    expect(deleteDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(deleteDialog, contains('SingleChildScrollView'));
+    expect(deleteDialog, contains('projectName'));
+    expect(deleteDialog, isNot(contains('content: const Text(')));
+  });
+
   test('sole project owner map only includes projects with one owner', () {
     ProjectDetail detail({
       required String name,
