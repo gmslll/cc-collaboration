@@ -526,25 +526,72 @@ class HandoffDetailViewState extends State<HandoffDetailView> {
     final token = _cfg.token;
     final identity = _cfg.identity;
     final id = p.id;
+    final repoName = p.repo.name.trim();
+    final sender = p.sender.trim();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('初始化仓库'),
-        content: Text(
-          '仓库 "${p.repo.name}" 还没初始化 cc-handoff（缺少 .cc-handoff.toml）。'
-          '要现在初始化并接收吗？\n\npartner = ${p.sender}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('初始化并接收'),
+          title: const Text(
+            '初始化仓库',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: handoffActionDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('这个仓库还没初始化 cc-handoff。'),
+                  const SizedBox(height: 8),
+                  Text(
+                    repoName.isEmpty ? p.repo.name : repoName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 12),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    '缺少 .cc-handoff.toml。要现在初始化并接收吗？',
+                    style: TextStyle(color: CcColors.muted),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'partner = ${sender.isEmpty ? p.sender : sender}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    path,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: CcType.code(size: 11, color: CcColors.muted),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('初始化并接收'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true) return false;
     if (!mounted) return false;

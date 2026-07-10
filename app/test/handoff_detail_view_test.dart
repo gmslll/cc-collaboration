@@ -71,6 +71,25 @@ void main() {
     expect(dialog, isNot(contains('BoxConstraints(maxHeight: 112)')));
   });
 
+  test('handoff init dialog uses responsive content', () {
+    final source = File(
+      'lib/screens/handoff_detail_view.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<bool> _confirmInit('),
+      source.indexOf('Future<void> _retract('),
+    );
+
+    expect(dialog, contains('handoffActionDialogWidth(size)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('maxLines: 2'));
+    expect(dialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(dialog, contains('partner ='));
+    expect(dialog, contains('path,'));
+    expect(dialog, isNot(contains('content: Text(')));
+  });
+
   test('handoff file tab dynamic labels are width constrained', () {
     final source = File(
       'lib/screens/handoff_detail_view.dart',
