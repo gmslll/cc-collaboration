@@ -67,31 +67,47 @@ class TodoCard extends StatelessWidget {
               (todo.repoName ?? '').isNotEmpty ||
               (todo.groupName ?? '').isNotEmpty) ...[
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: [
-                if (recurrenceLabel != null)
-                  _miniTag(
-                    Icons.repeat_rounded,
-                    recurrenceLabel,
-                    CcColors.accentBright,
-                  ),
-                if (projectName != null)
-                  _miniTag(Icons.folder_rounded, projectName!, CcColors.muted),
-                if ((todo.repoName ?? '').isNotEmpty)
-                  _miniTag(
-                    Icons.source_rounded,
-                    todo.repoName!,
-                    CcColors.muted,
-                  ),
-                if ((todo.groupName ?? '').isNotEmpty)
-                  _miniTag(
-                    Icons.folder_outlined,
-                    todo.groupName!,
-                    CcColors.subtle,
-                  ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final tagMaxWidth =
+                    constraints.maxWidth.isFinite && constraints.maxWidth > 0
+                    ? constraints.maxWidth
+                    : 180.0;
+                return Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    if (recurrenceLabel != null)
+                      _miniTag(
+                        Icons.repeat_rounded,
+                        recurrenceLabel,
+                        CcColors.accentBright,
+                        maxWidth: tagMaxWidth,
+                      ),
+                    if (projectName != null)
+                      _miniTag(
+                        Icons.folder_rounded,
+                        projectName!,
+                        CcColors.muted,
+                        maxWidth: tagMaxWidth,
+                      ),
+                    if ((todo.repoName ?? '').isNotEmpty)
+                      _miniTag(
+                        Icons.source_rounded,
+                        todo.repoName!,
+                        CcColors.muted,
+                        maxWidth: tagMaxWidth,
+                      ),
+                    if ((todo.groupName ?? '').isNotEmpty)
+                      _miniTag(
+                        Icons.folder_outlined,
+                        todo.groupName!,
+                        CcColors.subtle,
+                        maxWidth: tagMaxWidth,
+                      ),
+                  ],
+                );
+              },
             ),
           ],
           const SizedBox(height: 10),
@@ -109,29 +125,39 @@ class TodoCard extends StatelessWidget {
   }
 }
 
-Widget _miniTag(IconData icon, String label, Color color) => Container(
-  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
-  decoration: BoxDecoration(
-    color: color.withValues(alpha: 0.12),
-    border: Border.all(color: color.withValues(alpha: 0.35)),
-    borderRadius: BorderRadius.circular(CcRadius.sm),
-  ),
-  child: Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 10.5, color: color),
-      const SizedBox(width: 4),
-      Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 10.5,
-          color: color,
-          fontWeight: FontWeight.w600,
+Widget _miniTag(
+  IconData icon,
+  String label,
+  Color color, {
+  required double maxWidth,
+}) => ConstrainedBox(
+  constraints: BoxConstraints(maxWidth: maxWidth),
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      border: Border.all(color: color.withValues(alpha: 0.35)),
+      borderRadius: BorderRadius.circular(CcRadius.sm),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 10.5, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   ),
 );
 
