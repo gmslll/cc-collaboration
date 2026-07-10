@@ -33,3 +33,7 @@ relay.db-shm
 # compilable on a fresh clone before the bundle is built.
 /internal/relay/app/*
 !/internal/relay/app/.gitkeep
+/scripts/fb-checker-extension/
+/scripts/fb-checker.py
+/scripts/fb-login-cookies.py
+/app/dist/
