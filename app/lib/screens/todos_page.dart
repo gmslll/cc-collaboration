@@ -694,41 +694,57 @@ class _TodosPageState extends State<TodosPage> {
   Future<void> _linearHelpDialog() {
     return showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Linear 导入配置'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_canUseLocalCli)
-                const _HelpText('1. 在用户配置里设置 linear_personal_token。')
-              else
-                const _HelpText('1. 手机/Web 端只切换查看来源；导入需在桌面端执行。'),
-              const _HelpText('2. 在待办页的 Linear 配置里填 team_key 和 project_id。'),
-              const _HelpText('3. team_key 填 issue 编号前缀，例如 INF-502 填 INF。'),
-              const _HelpText(
-                '4. project_id 是 Linear Project UUID；不填会看整个 team。',
-              ),
-              const _HelpText(
-                '5. Web 版 Linear 里打开项目，按 Cmd/Ctrl+K，搜索 Copy model UUID。',
-              ),
-              const _HelpText('6. 团队视图可在 Relay 项目和 Linear 项目之间切换；两者互斥。'),
-              const SizedBox(height: 10),
-              Text(
-                '导入时会按 source_ref(linear:<编号>) 幂等更新；Linear project 只作为远程来源筛选，不会覆盖每条 todo 的本地 workspace/repo 绑定。',
-                style: TextStyle(color: CcColors.muted, height: 1.35),
-              ),
-            ],
+      builder: (ctx) {
+        final dialogWidth = todoDialogWidth(MediaQuery.sizeOf(ctx));
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('知道了'),
+          title: const Text(
+            'Linear 导入配置',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: dialogWidth,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_canUseLocalCli)
+                    const _HelpText('1. 在用户配置里设置 linear_personal_token。')
+                  else
+                    const _HelpText('1. 手机/Web 端只切换查看来源；导入需在桌面端执行。'),
+                  const _HelpText(
+                    '2. 在待办页的 Linear 配置里填 team_key 和 project_id。',
+                  ),
+                  const _HelpText('3. team_key 填 issue 编号前缀，例如 INF-502 填 INF。'),
+                  const _HelpText(
+                    '4. project_id 是 Linear Project UUID；不填会看整个 team。',
+                  ),
+                  const _HelpText(
+                    '5. Web 版 Linear 里打开项目，按 Cmd/Ctrl+K，搜索 Copy model UUID。',
+                  ),
+                  const _HelpText('6. 团队视图可在 Relay 项目和 Linear 项目之间切换；两者互斥。'),
+                  const SizedBox(height: 10),
+                  Text(
+                    '导入时会按 source_ref(linear:<编号>) 幂等更新；Linear project 只作为远程来源筛选，不会覆盖每条 todo 的本地 workspace/repo 绑定。',
+                    style: TextStyle(color: CcColors.muted, height: 1.35),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
     );
   }
 

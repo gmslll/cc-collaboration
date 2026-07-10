@@ -261,11 +261,20 @@ void main() {
 
   test('todo Linear config dialog uses scroll-safe controls', () {
     final source = File('lib/screens/todos_page.dart').readAsStringSync();
+    final helpDialog = source.substring(
+      source.indexOf('Future<void> _linearHelpDialog()'),
+      source.indexOf('Future<void> _linearConfigDialog()'),
+    );
     final dialog = source.substring(
       source.indexOf('Future<void> _linearConfigDialog()'),
       source.indexOf('  @override\n  void didUpdateWidget'),
     );
 
+    expect(helpDialog, contains('todoDialogWidth'));
+    expect(helpDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(helpDialog, contains('maxLines: 1'));
+    expect(helpDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(helpDialog, contains('SingleChildScrollView'));
     expect(dialog, contains('todoDialogWidth'));
     expect(dialog, contains('SingleChildScrollView'));
     expect(dialog, contains('menuMaxHeight: todoMenuMaxHeight'));
