@@ -27,6 +27,52 @@ void main() {
     expect(dialog, isNot(contains('maxHeight: 620')));
   });
 
+  test('plugins list title rows keep extension chips bounded', () {
+    final source = File('lib/screens/plugins_page.dart').readAsStringSync();
+    final formatRow = source.substring(
+      source.indexOf('  Widget _row(FormatPlugin p)'),
+      source.indexOf('  Widget _extChips'),
+    );
+    final lspRow = source.substring(
+      source.indexOf('  Widget _lspRow(LspServerPlugin p)'),
+      source.indexOf('  // _notDetectedRow:'),
+    );
+
+    expect(formatRow, contains('Expanded('));
+    expect(formatRow, contains('Flexible(child: _extChips(p.exts))'));
+    expect(lspRow, contains('Expanded('));
+    expect(lspRow, contains('Flexible(child: _extChips(p.exts))'));
+    expect(source, contains('Widget _extChip(String text)'));
+    expect(source, contains('constraints: const BoxConstraints(maxWidth: 72)'));
+    expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
+
+  testWidgets('plugins dialog fits narrow screens with long chip rows', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(220, 360));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: pluginsDialogSize(const Size(220, 360)).width,
+              height: pluginsDialogSize(const Size(220, 360)).height,
+              child: pluginsPaneForTest(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('编辑器插件'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('LSP command dialog width fits compact screens', () {
     expect(lspCommandDialogWidth(const Size(320, 760)), 288);
     expect(lspCommandDialogWidth(const Size(1024, 760)), 440);

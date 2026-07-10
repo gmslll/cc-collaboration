@@ -46,8 +46,11 @@ Future<void> showPluginsDialog(BuildContext context) => showDialog<void>(
   },
 );
 
+Widget pluginsPaneForTest() => const _PluginsPane(detectOnOpen: false);
+
 class _PluginsPane extends StatefulWidget {
-  const _PluginsPane();
+  final bool detectOnOpen;
+  const _PluginsPane({this.detectOnOpen = true});
 
   @override
   State<_PluginsPane> createState() => _PluginsPaneState();
@@ -60,6 +63,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
   @override
   void initState() {
     super.initState();
+    if (!widget.detectOnOpen) return;
     _mgr.detectAll(); // refresh availability when the page opens
     _lsp.detectAll();
   }
@@ -173,7 +177,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
               children: [
                 Row(
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
                         p.name,
                         style: const TextStyle(
@@ -185,7 +189,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _extChips(p.exts),
+                    Flexible(child: _extChips(p.exts)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -206,11 +210,33 @@ class _PluginsPaneState extends State<_PluginsPane> {
     return Wrap(
       spacing: 4,
       children: [
-        for (final e in shown) chip(e),
-        if (extra > 0) chip('+$extra'),
+        for (final e in shown) _extChip(e),
+        if (extra > 0) _extChip('+$extra'),
       ],
     );
   }
+
+  Widget _extChip(String text) => ConstrainedBox(
+    constraints: const BoxConstraints(maxWidth: 72),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: CcColors.panelHigh,
+        border: Border.all(color: CcColors.border),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontFamily: CcType.mono,
+          fontSize: 12,
+          color: CcColors.text,
+        ),
+      ),
+    ),
+  );
 
   Widget _status(FormatPlugin p, bool avail) {
     if (p.builtIn) {
@@ -218,9 +244,13 @@ class _PluginsPaneState extends State<_PluginsPane> {
         children: [
           statusDot(CcColors.ok, size: 7),
           const SizedBox(width: 6),
-          const Text(
-            '内置 · 渲染预览',
-            style: TextStyle(color: CcColors.muted, fontSize: 12),
+          const Flexible(
+            child: Text(
+              '内置 · 渲染预览',
+              style: TextStyle(color: CcColors.muted, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       );
@@ -230,9 +260,13 @@ class _PluginsPaneState extends State<_PluginsPane> {
         children: [
           statusDot(CcColors.ok, size: 7),
           const SizedBox(width: 6),
-          Text(
-            '已检测到 ${p.tool}',
-            style: const TextStyle(color: CcColors.muted, fontSize: 12),
+          Flexible(
+            child: Text(
+              '已检测到 ${p.tool}',
+              style: const TextStyle(color: CcColors.muted, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       );
@@ -266,7 +300,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
               children: [
                 Row(
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
                         p.name,
                         style: const TextStyle(
@@ -278,7 +312,7 @@ class _PluginsPaneState extends State<_PluginsPane> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _extChips(p.exts),
+                    Flexible(child: _extChips(p.exts)),
                   ],
                 ),
                 const SizedBox(height: 4),
