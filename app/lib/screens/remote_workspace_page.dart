@@ -2800,7 +2800,9 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            widget.client.ptyError ?? '正在建立 P2P 直连，终端输入暂不可用',
+            widget.client.ptyRouteStatusText(widget.session.sid) ??
+                widget.client.ptyError ??
+                '正在建立终端路由，输入会暂存并在连接后发送',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: CcColors.danger, fontSize: 11.5),
@@ -4784,14 +4786,20 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   // mirrors the desktop popup's snap-equality guard.
   ScreenSnapshot? _lastScreen;
   SessionCard? _lastOverview;
+  String? _lastRouteStatus;
+  String? _sendError;
 
   String get _sid => widget.session.sid;
 
   @override
   void initState() {
     super.initState();
-    widget.client.addListener(_onChange);
+    widget.client.beginQuickReply(_sid);
     widget.client.requestScreen(_sid);
+    _lastScreen = widget.client.screens[_sid];
+    _lastOverview = widget.client.overview[_sid];
+    _lastRouteStatus = widget.client.ptyRouteStatusText(_sid);
+    widget.client.addListener(_onChange);
     _timer = Timer.periodic(
       const Duration(milliseconds: 1500),
       (_) => widget.client.requestScreen(_sid),
@@ -4801,6 +4809,7 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   @override
   void dispose() {
     widget.client.removeListener(_onChange);
+    widget.client.endQuickReply(_sid);
     _timer?.cancel();
     _ctl.dispose();
     super.dispose();
@@ -4814,21 +4823,30 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     if (!mounted) return;
     final screen = widget.client.screens[_sid];
     final overview = widget.client.overview[_sid];
-    if (screen == _lastScreen && identical(overview, _lastOverview)) return;
+    final routeStatus = widget.client.ptyRouteStatusText(_sid);
+    if (screen == _lastScreen &&
+        identical(overview, _lastOverview) &&
+        routeStatus == _lastRouteStatus) {
+      return;
+    }
     _lastScreen = screen;
     _lastOverview = overview;
+    _lastRouteStatus = routeStatus;
     setState(() {});
   }
 
   // _bump re-reads the screen shortly after a send so the reaction shows without
   // waiting for the next timer tick.
-  void _bump() => Future.delayed(
-    const Duration(milliseconds: 350),
-    () => widget.client.requestScreen(_sid),
-  );
+  void _bump() => Future.delayed(const Duration(milliseconds: 350), () {
+    if (mounted) widget.client.requestScreen(_sid);
+  });
 
   void _keys(String keys) {
-    widget.client.sendKeys(_sid, keys);
+    final accepted = widget.client.sendKeys(_sid, keys);
+    setState(() {
+      _sendError = accepted ? null : widget.client.ptyRouteStatusText(_sid);
+    });
+    if (!accepted) return;
     _bump();
   }
 
@@ -4837,8 +4855,13 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   void _sendText() {
     final t = _ctl.text;
     if (t.trim().isEmpty) return;
-    widget.client.sendKeys(_sid, t);
-    widget.client.sendKeys(_sid, '\r');
+    final enterAccepted = widget.client.sendKeys(_sid, '$t\r');
+    setState(() {
+      _sendError = enterAccepted
+          ? null
+          : widget.client.ptyRouteStatusText(_sid);
+    });
+    if (!enterAccepted) return;
     _ctl.clear();
     _bump();
   }
@@ -4920,6 +4943,19 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                   ),
                 ),
                 const SizedBox(height: 10),
+                if ((_sendError ?? widget.client.ptyRouteStatusText(_sid)) !=
+                    null) ...[
+                  Text(
+                    _sendError ?? widget.client.ptyRouteStatusText(_sid)!,
+                    style: TextStyle(
+                      color: _sendError == null
+                          ? CcColors.warning
+                          : CcColors.danger,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,

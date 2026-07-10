@@ -211,6 +211,10 @@ void main() {
     expect(dialog, contains('remoteQuickReplySnapshotHeight'));
     expect(dialog, contains('MediaQuery.sizeOf(context)'));
     expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('beginQuickReply(_sid)'));
+    expect(dialog, contains('endQuickReply(_sid)'));
+    expect(dialog, contains('ptyRouteStatusText(_sid)'));
+    expect(dialog, contains('if (!accepted) return'));
     expect(dialog, isNot(contains('height: 220')));
   });
 

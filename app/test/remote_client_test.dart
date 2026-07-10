@@ -123,6 +123,18 @@ class _FakePtyPeer implements PtyPeer {
   }
 }
 
+Map<String, dynamic> _sessionsFrame(
+  int from, [
+  List<String> sids = const <String>[],
+]) => {
+  't': 'sessions',
+  'from': from,
+  'items': [
+    for (final sid in sids)
+      {'sid': sid, 'title': sid, 'workdir': '/tmp/$sid', 'agent': 'codex'},
+  ],
+};
+
 void main() {
   test('remote git create branch includes optional start ref', () {
     final client = _TestRemoteClient();
@@ -315,7 +327,7 @@ void main() {
       peerFactory: factory,
     );
     addTearDown(client.dispose);
-    client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
 
     client.terminalFor('sid-1');
     client.sendKeys('sid-1', 'x');
@@ -329,12 +341,34 @@ void main() {
     expect(input['to'], 7);
   });
 
+  test('quick reply opens an input route on first use and after close', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+
+    expect(client.beginQuickReply('sid-1'), isTrue);
+    expect(client.sendKeys('sid-1', 'y'), isTrue);
+    client.endQuickReply('sid-1');
+    expect(client.beginQuickReply('sid-1'), isTrue);
+
+    final opens = client.sent
+        .where((frame) => frame['t'] == 'term.open')
+        .toList();
+    expect(opens, hasLength(2));
+    expect(opens.every((frame) => frame['historyMode'] == 'none'), isTrue);
+    final input = client.sent.singleWhere(
+      (frame) => frame['t'] == 'term.input',
+    );
+    expect(input['to'], 7);
+    expect(input['routeId'], opens.first['routeId']);
+  });
+
   test(
     'strict P2P does not leak terminal input through Relay before ready',
     () {
       final client = _TestRemoteClient(mode: PtyTransportMode.p2p);
       addTearDown(client.dispose);
-      client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+      client.onFrame(_sessionsFrame(7, ['sid-1']));
 
       client.terminalFor('sid-1');
       client.sendKeys('sid-1', 'dangerous-enter\r');
@@ -342,8 +376,62 @@ void main() {
       expect(client.sent.where((frame) => frame['t'] == 'term.open'), isEmpty);
       expect(client.sent.where((frame) => frame['t'] == 'term.input'), isEmpty);
       expect(client.ptyInputBlocked('sid-1'), isTrue);
+      expect(client.ptyRouteStatusText('sid-1'), contains('暂存 1 条'));
     },
   );
+
+  testWidgets('opening strict P2P route flushes queued input in order', (
+    tester,
+  ) async {
+    final factory = _FakePtyPeerFactory();
+    final client = _TestRemoteClient(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+    );
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+
+    expect(client.sendKeys('sid-1', 'first'), isTrue);
+    expect(client.sendKeys('sid-1', 'second'), isTrue);
+    client.onFrame({
+      't': ptySignalFrameType,
+      'from': 7,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+    });
+    await tester.pump();
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    factory.peer.emit({
+      't': 'term.ready',
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+    });
+    await tester.pump();
+
+    expect(
+      factory.peer
+          .sentFrames()
+          .where((frame) => frame['t'] == 'term.input')
+          .map((frame) => frame['d']),
+      ['first', 'second'],
+    );
+    expect(client.ptyRouteStatusText('sid-1'), isNull);
+  });
+
+  test('opening route input queue is bounded and reports overflow', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.p2p);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+
+    for (var i = 0; i < 64; i++) {
+      expect(client.sendKeys('sid-1', 'x'), isTrue);
+    }
+    expect(client.sendKeys('sid-1', 'overflow'), isFalse);
+    expect(client.ptyRouteStatusText('sid-1'), contains('待发送输入过多'));
+  });
 
   testWidgets('strict P2P locks ready output and input to one route', (
     tester,
@@ -354,7 +442,7 @@ void main() {
       peerFactory: factory,
     );
     addTearDown(client.dispose);
-    client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
     client.onFrame({
       't': ptySignalFrameType,
       'from': 7,
@@ -412,6 +500,17 @@ void main() {
     expect(term.buffer.getText(), isNot(contains('duplicate')));
   });
 
+  test('strict screen request never falls back to Relay', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.p2p);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.beginQuickReply('sid-1');
+
+    expect(client.requestScreen('sid-1'), isFalse);
+    expect(client.sent.where((frame) => frame['t'] == 'screen'), isEmpty);
+    expect(client.ptyRouteStatusText('sid-1'), contains('P2P'));
+  });
+
   testWidgets('malformed P2P terminal output fails closed without throwing', (
     tester,
   ) async {
@@ -421,7 +520,7 @@ void main() {
       peerFactory: factory,
     );
     addTearDown(client.dispose);
-    client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
     client.onFrame({
       't': ptySignalFrameType,
       'from': 7,
@@ -453,7 +552,7 @@ void main() {
     'switching from Relay to strict P2P closes the Relay route first',
     () async {
       final client = _TestRemoteClient(mode: PtyTransportMode.relay);
-      client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+      client.onFrame(_sessionsFrame(7, ['sid-1']));
       client.terminalFor('sid-1');
       final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
 
@@ -476,6 +575,62 @@ void main() {
     },
   );
 
+  test('strict P2P ignores late route-less Relay terminal content', () async {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    final terminal = client.terminalFor('sid-1');
+
+    await client.setPtyTransportMode(PtyTransportMode.p2p);
+    client.onFrame({
+      't': 'term.output',
+      'from': 7,
+      'sid': 'sid-1',
+      'd': 'relay-secret',
+    });
+    client.onFrame({
+      't': 'screen',
+      'from': 7,
+      'sid': 'sid-1',
+      'text': 'relay-screen-secret',
+    });
+
+    expect(terminal.buffer.getText(), isNot(contains('relay-secret')));
+    expect(client.screens['sid-1'], isNull);
+  });
+
+  test('strict P2P strips content from Relay overview', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.p2p);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onFrame({
+      't': 'overview',
+      'from': 7,
+      'items': [
+        {
+          'sid': 'sid-1',
+          'label': 'Secret',
+          'agent': 'codex',
+          'isAgent': true,
+          'ws': 'ws',
+          'proj': 'proj',
+          'status': 'working',
+          'statusDetail': 'private status',
+          'usage': '10%',
+          'preview': 'private output',
+          'recentActivity': [
+            {'kind': 'tool', 'text': 'private command'},
+          ],
+        },
+      ],
+    });
+
+    final card = client.overview['sid-1']!;
+    expect(card.preview, isEmpty);
+    expect(card.statusDetail, isEmpty);
+    expect(card.recentActivity, isEmpty);
+  });
+
   test(
     'strict P2P selection reconnects Relay to evict legacy host watchers',
     () async {
@@ -488,7 +643,7 @@ void main() {
       socket.readyCompleter.complete();
       await Future<void>.delayed(Duration.zero);
       expect(client.connected, isTrue);
-      client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+      client.onFrame(_sessionsFrame(7, ['sid-1']));
       client.terminalFor('sid-1');
 
       await client.setPtyTransportMode(PtyTransportMode.p2p);
@@ -506,7 +661,7 @@ void main() {
     final factory = _FakePtyPeerFactory();
     final client = _TestRemoteClient(peerFactory: factory);
     addTearDown(client.dispose);
-    client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
 
     client.onFrame({
       't': ptySignalFrameType,
@@ -529,7 +684,7 @@ void main() {
       peerFactory: factory,
     );
     addTearDown(client.dispose);
-    client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
     client.onFrame({
       't': ptySignalFrameType,
       'from': 7,
@@ -549,6 +704,7 @@ void main() {
 
     expect(client.ptyInputBlocked('sid-1'), isTrue);
     expect(client.ptyError, contains('断开'));
+    expect(client.ptyPeerState, PtyPeerState.closed);
   });
 
   testWidgets('retry completion cannot revive a disposed P2P client', (
@@ -589,7 +745,7 @@ void main() {
     addTearDown(client.dispose);
     var resets = 0;
     client.onTerminalReset = () => resets++;
-    client.onFrame({'t': 'sessions', 'from': 7, 'items': const []});
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
     client.terminalFor('sid-1');
     expect(
       client.sent.lastWhere((frame) => frame['t'] == 'term.open')['transport'],
@@ -609,6 +765,21 @@ void main() {
       'p2p',
     );
     expect(resets, 1);
+    expect(client.sendKeys('sid-1', 'queued-during-upgrade'), isTrue);
+    expect(factory.peer.sentFrames(), isEmpty);
+    final p2pOpen = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    factory.peer.emit({
+      't': 'term.ready',
+      'sid': 'sid-1',
+      'routeId': p2pOpen['routeId'],
+    });
+    await tester.pump();
+    expect(
+      factory.peer.sentFrames().singleWhere(
+        (frame) => frame['t'] == 'term.input',
+      )['d'],
+      'queued-during-upgrade',
+    );
 
     factory.peer.callbacks.onState(PtyPeerState.failed, 'network lost');
     await tester.pump();
@@ -618,6 +789,160 @@ void main() {
       'relay',
     );
     expect(resets, 2);
+  });
+
+  testWidgets('Relay output reorders briefly before rebuilding a gap', (
+    tester,
+  ) async {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    final terminal = client.terminalFor('sid-1');
+    var resets = 0;
+    client.onTerminalReset = () => resets++;
+    final firstOpen = client.sent.lastWhere(
+      (frame) => frame['t'] == 'term.open',
+    );
+
+    client.onFrame({
+      't': 'term.output',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': firstOpen['routeId'],
+      'seq': 2,
+      'd': 'second',
+    });
+    client.onFrame({
+      't': 'term.output',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': firstOpen['routeId'],
+      'seq': 1,
+      'd': 'first',
+    });
+    expect(terminal.buffer.getText(), contains('firstsecond'));
+
+    client.reloadTerminal('sid-1');
+    final gapOpen = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    client.onFrame({
+      't': 'term.output',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': gapOpen['routeId'],
+      'seq': 2,
+      'd': 'gap',
+    });
+    await tester.pump(const Duration(milliseconds: 181));
+    await tester.pump();
+
+    final recoveredOpen = client.sent.lastWhere(
+      (frame) => frame['t'] == 'term.open',
+    );
+    expect(recoveredOpen['routeId'], isNot(gapOpen['routeId']));
+    expect(recoveredOpen['to'], 7);
+    expect(resets, 1);
+  });
+
+  test('host selection is stable and terminal routes stay owner-bound', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onPeer(8, 'host', true);
+    client.terminalFor('sid-1');
+    final routeId = client.sent.lastWhere(
+      (frame) => frame['t'] == 'term.open',
+    )['routeId'];
+    client.onFrame(_sessionsFrame(8, ['other']));
+    expect(client.sessions.map((session) => session.sid), ['sid-1']);
+    client.onFrame({
+      't': 'term.output',
+      'from': 8,
+      'sid': 'sid-1',
+      'routeId': routeId,
+      'seq': 1,
+      'd': 'wrong-host-output',
+    });
+    expect(
+      client.terminalFor('sid-1').buffer.getText(),
+      isNot(contains('wrong-host-output')),
+    );
+
+    expect(client.sendKeys('sid-1', 'owner-only'), isTrue);
+    expect(
+      client.sent.lastWhere((frame) => frame['t'] == 'term.input')['to'],
+      7,
+    );
+    client.onPeer(8, 'host', false);
+    expect(client.hostOnline, isTrue);
+  });
+
+  test(
+    'current host failover waits for snapshot and preserves valid input',
+    () {
+      final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+      addTearDown(client.dispose);
+      client.onFrame(_sessionsFrame(7, ['sid-1']));
+      client.onPeer(8, 'host', true);
+      client.terminalFor('sid-1');
+
+      client.onPeer(7, 'host', false);
+      expect(client.sessions, isEmpty);
+      expect(client.sendKeys('sid-1', 'during-switch'), isTrue);
+      expect(
+        client.sent.where(
+          (frame) => frame['t'] == 'term.input' && frame['to'] == 8,
+        ),
+        isEmpty,
+      );
+      client.onFrame(_sessionsFrame(8, ['sid-1']));
+
+      expect(
+        client.sent.lastWhere((frame) => frame['t'] == 'term.open')['to'],
+        8,
+      );
+      final input = client.sent.lastWhere(
+        (frame) => frame['t'] == 'term.input',
+      );
+      expect(input['to'], 8);
+      expect(input['d'], 'during-switch');
+    },
+  );
+
+  test('current host failover drops input for a missing session', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onPeer(8, 'host', true);
+    client.terminalFor('sid-1');
+    client.onPeer(7, 'host', false);
+    expect(client.sendKeys('sid-1', 'must-not-cross-hosts'), isTrue);
+
+    client.onFrame(_sessionsFrame(8));
+
+    expect(
+      client.sent.where(
+        (frame) => frame['t'] == 'term.input' && frame['to'] == 8,
+      ),
+      isEmpty,
+    );
+    expect(client.ptyRouteStatusText('sid-1'), contains('没有此会话'));
+  });
+
+  test('session removal closes its owner route and rejects later input', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+
+    client.onFrame(_sessionsFrame(7));
+
+    final close = client.sent.lastWhere((frame) => frame['t'] == 'term.close');
+    expect(close['to'], 7);
+    expect(close['routeId'], open['routeId']);
+    expect(client.sendKeys('sid-1', 'late-input'), isFalse);
+    expect(client.ptyInputBlocked('sid-1'), isTrue);
+    expect(client.ptyRouteStatusText('sid-1'), contains('没有此会话'));
   });
 
   testWidgets('remote assign completes when the client is disposed', (
