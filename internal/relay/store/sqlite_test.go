@@ -22,6 +22,155 @@ func openTestStore(t *testing.T) *Store {
 	return st
 }
 
+func TestOpenKeepsTeamlessAccountTeamless(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	ctx := context.Background()
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "teamless@x"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	orgs, err := st.ListOrganizationsForIdentity(ctx, "teamless@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orgs) != 0 {
+		t.Fatalf("teamless account gained organizations after reopen: %+v", orgs)
+	}
+}
+
+func TestOpenDoesNotRecreateDeletedOrganization(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	ctx := context.Background()
+	now := time.Now()
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser(ctx, User{Identity: "owner@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	orgID := defaultOrganizationID("owner@x")
+	if err := st.CreateOrganization(ctx, orgID, "Deleted Personal Team", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteOrganization(ctx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, err := st.GetOrganization(ctx, orgID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted organization was recreated after reopen: %v", err)
+	}
+}
+
+func TestOpenMigratesOnlyUnassignedLegacyProjects(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	ctx := context.Background()
+	now := time.Now()
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range []string{"legacy-owner@x", "legacy-member@x", "teamless@x", "current-owner@x", "current-member@x"} {
+		if err := st.CreateUser(ctx, User{Identity: identity}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.CreateOrganization(ctx, "current-org", "Current Team", "current-owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "current-project", "current-org", "Current Project", "current-owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "current-project", "current-member@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`INSERT INTO projects(id, org_id, name, owner_identity, created_at) VALUES(?, '', ?, ?, ?);`,
+		"legacy-project", "Legacy Project", "legacy-owner@x", now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range []struct {
+		identity string
+		role     string
+	}{
+		{identity: "legacy-owner@x", role: RoleOwner},
+		{identity: "legacy-member@x", role: RoleMember},
+	} {
+		if _, err := st.db.ExecContext(ctx,
+			`INSERT INTO project_members(project_id, identity, role) VALUES(?, ?, ?)`,
+			"legacy-project", member.identity, member.role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyOrgID := defaultOrganizationID("legacy-owner@x")
+	legacyProject, err := st.GetProject(ctx, "legacy-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyProject.OrgID != legacyOrgID {
+		t.Fatalf("legacy project org_id = %q, want %q", legacyProject.OrgID, legacyOrgID)
+	}
+	if role, ok, err := st.OrganizationMemberRole(ctx, legacyOrgID, "legacy-owner@x"); err != nil || !ok || role != OrgRoleOwner {
+		t.Fatalf("legacy owner organization role = %q ok=%v err=%v", role, ok, err)
+	}
+	if role, ok, err := st.OrganizationMemberRole(ctx, legacyOrgID, "legacy-member@x"); err != nil || !ok || role != OrgRoleMember {
+		t.Fatalf("legacy member organization role = %q ok=%v err=%v", role, ok, err)
+	}
+	if orgs, err := st.ListOrganizationsForIdentity(ctx, "teamless@x"); err != nil || len(orgs) != 0 {
+		t.Fatalf("unrelated teamless account organizations = %+v err=%v", orgs, err)
+	}
+	if _, ok, err := st.OrganizationMemberRole(ctx, "current-org", "current-member@x"); err != nil || ok {
+		t.Fatalf("current project membership was replayed into organization: ok=%v err=%v", ok, err)
+	}
+
+	// Once the legacy project has an organization, subsequent opens must not
+	// replay its project membership into organization_members.
+	if _, err := st.db.ExecContext(ctx,
+		`DELETE FROM organization_members WHERE org_id = ? AND identity = ?`,
+		legacyOrgID, "legacy-member@x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, ok, err := st.OrganizationMemberRole(ctx, legacyOrgID, "legacy-member@x"); err != nil || ok {
+		t.Fatalf("second open replayed migrated membership: ok=%v err=%v", ok, err)
+	}
+}
+
 func mustInsertHandoff(t *testing.T, st *Store, id, sender, recipient string) {
 	t.Helper()
 	pkg := &handoffschema.Package{

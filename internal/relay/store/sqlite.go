@@ -360,6 +360,11 @@ func defaultOrganizationID(identity string) string {
 	return "org_" + hex.EncodeToString(sum[:])[:12]
 }
 
+// backfillOrganizations assigns only projects created before organizations
+// existed. A non-empty projects.org_id marks a current or already-migrated
+// project, so reopening the store must not recreate deleted teams or replay
+// memberships for it. The transaction makes each legacy project migration
+// atomic; after commit its org_id is non-empty and later opens are no-ops.
 func (s *Store) backfillOrganizations() error {
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -369,109 +374,88 @@ func (s *Store) backfillOrganizations() error {
 	defer tx.Rollback()
 	now := time.Now().UTC().UnixMilli()
 	rows, err := tx.QueryContext(ctx, `
-SELECT identity FROM users
-UNION
-SELECT owner_identity FROM projects WHERE owner_identity != ''
-UNION
-SELECT identity FROM project_members WHERE identity != ''`)
+SELECT id, owner_identity
+  FROM projects
+ WHERE org_id = '' AND owner_identity != ''
+ ORDER BY id`)
 	if err != nil {
-		return fmt.Errorf("scan organization owners: %w", err)
+		return fmt.Errorf("scan legacy projects: %w", err)
 	}
-	var identities []string
+	type legacyProject struct {
+		id, owner string
+	}
+	var projects []legacyProject
 	for rows.Next() {
-		var identity string
-		if err := rows.Scan(&identity); err != nil {
+		var project legacyProject
+		if err := rows.Scan(&project.id, &project.owner); err != nil {
 			rows.Close()
 			return err
 		}
-		if strings.TrimSpace(identity) != "" {
-			identities = append(identities, identity)
-		}
+		projects = append(projects, project)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
-	for _, identity := range identities {
-		orgID := defaultOrganizationID(identity)
-		name := identity + "'s team"
+	for _, project := range projects {
+		orgID := defaultOrganizationID(project.owner)
+		name := project.owner + "'s team"
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO organizations(id, name, owner_identity, created_at) VALUES(?, ?, ?, ?)`,
-			orgID, name, identity, now); err != nil {
-			return fmt.Errorf("backfill organization %s: %w", identity, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)`,
-			orgID, identity, OrgRoleOwner); err != nil {
-			return fmt.Errorf("backfill organization owner %s: %w", identity, err)
-		}
-	}
-	rows, err = tx.QueryContext(ctx, `SELECT id, owner_identity FROM projects WHERE owner_identity != ''`)
-	if err != nil {
-		return err
-	}
-	type projectOwner struct {
-		projectID string
-		owner     string
-	}
-	var projects []projectOwner
-	for rows.Next() {
-		var po projectOwner
-		if err := rows.Scan(&po.projectID, &po.owner); err != nil {
-			rows.Close()
-			return err
-		}
-		projects = append(projects, po)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, po := range projects {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE projects SET org_id = ? WHERE id = ? AND org_id = ''`,
-			defaultOrganizationID(po.owner), po.projectID); err != nil {
-			return err
-		}
-	}
-	rows, err = tx.QueryContext(ctx, `
-SELECT DISTINCT p.org_id, pm.identity, pm.role
-  FROM projects p
-  JOIN project_members pm ON pm.project_id = p.id
- WHERE p.org_id != '' AND pm.identity != ''`)
-	if err != nil {
-		return err
-	}
-	type member struct {
-		orgID, identity, role string
-	}
-	var members []member
-	for rows.Next() {
-		var m member
-		if err := rows.Scan(&m.orgID, &m.identity, &m.role); err != nil {
-			rows.Close()
-			return err
-		}
-		members = append(members, m)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, m := range members {
-		role := OrgRoleMember
-		if m.role == RoleOwner {
-			role = OrgRoleOwner
+			orgID, name, project.owner, now); err != nil {
+			return fmt.Errorf("backfill organization for legacy project %s: %w", project.id, err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
-			 ON CONFLICT(org_id, identity) DO UPDATE SET role =
-			   CASE WHEN organization_members.role = ? THEN organization_members.role ELSE excluded.role END`,
-			m.orgID, m.identity, role, OrgRoleOwner); err != nil {
+			 ON CONFLICT(org_id, identity) DO UPDATE SET role = excluded.role`,
+			orgID, project.owner, OrgRoleOwner); err != nil {
+			return fmt.Errorf("backfill organization owner for legacy project %s: %w", project.id, err)
+		}
+
+		memberRows, err := tx.QueryContext(ctx,
+			`SELECT identity, role FROM project_members WHERE project_id = ? AND identity != '' ORDER BY identity`,
+			project.id)
+		if err != nil {
+			return fmt.Errorf("scan members for legacy project %s: %w", project.id, err)
+		}
+		type projectMember struct {
+			identity, role string
+		}
+		var members []projectMember
+		for memberRows.Next() {
+			var member projectMember
+			if err := memberRows.Scan(&member.identity, &member.role); err != nil {
+				memberRows.Close()
+				return err
+			}
+			members = append(members, member)
+		}
+		if err := memberRows.Err(); err != nil {
+			memberRows.Close()
 			return err
+		}
+		memberRows.Close()
+		for _, member := range members {
+			role := OrgRoleMember
+			if member.role == RoleOwner {
+				role = OrgRoleOwner
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
+				 ON CONFLICT(org_id, identity) DO UPDATE SET role =
+				   CASE
+				     WHEN organization_members.role = ? OR excluded.role != ? THEN organization_members.role
+				     ELSE excluded.role
+				   END`,
+				orgID, member.identity, role, OrgRoleOwner, OrgRoleOwner); err != nil {
+				return fmt.Errorf("backfill member for legacy project %s: %w", project.id, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE projects SET org_id = ? WHERE id = ? AND org_id = ''`,
+			orgID, project.id); err != nil {
+			return fmt.Errorf("assign organization to legacy project %s: %w", project.id, err)
 		}
 	}
 	return tx.Commit()

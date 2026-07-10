@@ -168,6 +168,106 @@ func TestProjectInvitationAcceptsIntoProjectAndTeam(t *testing.T) {
 	}
 }
 
+func TestProjectInvitationDoesNotCreateUnrelatedOrganizations(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "owner@x", "ownerpass1")
+	mkUser(t, st, "invitee@x", "inviteepass1")
+
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
+	inviteeTok := loginToken(t, srv.URL, "invitee@x", "inviteepass1")
+	createOrg := func(name string) store.Organization {
+		t.Helper()
+		code, body := postJSON(t, srv.URL+"/v1/orgs", ownerTok, map[string]string{"name": name})
+		if code != http.StatusCreated {
+			t.Fatalf("create %s = %d %s", name, code, body)
+		}
+		var org store.Organization
+		if err := json.Unmarshal(body, &org); err != nil {
+			t.Fatal(err)
+		}
+		return org
+	}
+	deletedOrg := createOrg("Personal Team")
+	projectOrg := createOrg("Project Team")
+	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok,
+		map[string]string{"name": "Backend", "org_id": projectOrg.ID})
+	if code != http.StatusCreated {
+		t.Fatalf("create project = %d %s", code, body)
+	}
+	var project struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &project); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := deleteAuthed(t, srv.URL+"/v1/orgs/"+deletedOrg.ID, ownerTok); code != http.StatusOK {
+		t.Fatalf("delete personal organization = %d %s", code, body)
+	}
+
+	code, body = postJSON(t, srv.URL+"/v1/projects/"+project.ID+"/invitations", ownerTok,
+		map[string]string{"identity": "invitee@x", "role": "viewer"})
+	if code != http.StatusCreated {
+		t.Fatalf("create project invitation = %d %s", code, body)
+	}
+	ownerOrgs, err := st.ListOrganizationsForIdentity(context.Background(), "owner@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ownerOrgs) != 1 || ownerOrgs[0].ID != projectOrg.ID {
+		t.Fatalf("invitation recreated owner's deleted organization: %+v", ownerOrgs)
+	}
+	inviteeOrgs, err := st.ListOrganizationsForIdentity(context.Background(), "invitee@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inviteeOrgs) != 0 {
+		t.Fatalf("creating invitation provisioned invitee organization: %+v", inviteeOrgs)
+	}
+
+	var me struct {
+		Invitations []struct {
+			ID string `json:"id"`
+		} `json:"invitations"`
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/me", inviteeTok); code != http.StatusOK {
+		t.Fatalf("invitee me = %d %s", code, body)
+	} else if err := json.Unmarshal(body, &me); err != nil {
+		t.Fatal(err)
+	}
+	if len(me.Invitations) != 1 {
+		t.Fatalf("invitee invitations = %+v", me.Invitations)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/invitations/"+me.Invitations[0].ID+"/accept", inviteeTok, nil); code != http.StatusOK {
+		t.Fatalf("accept project invitation = %d %s", code, body)
+	}
+	inviteeOrgs, err = st.ListOrganizationsForIdentity(context.Background(), "invitee@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inviteeOrgs) != 1 || inviteeOrgs[0].ID != projectOrg.ID || inviteeOrgs[0].Role != store.OrgRoleMember {
+		t.Fatalf("accepted invitation organizations = %+v", inviteeOrgs)
+	}
+	if role, ok, err := st.MemberRole(context.Background(), project.ID, "invitee@x"); err != nil || !ok || role != store.RoleViewer {
+		t.Fatalf("accepted invitation project role = %q ok=%v err=%v", role, ok, err)
+	}
+	ownerOrgs, err = st.ListOrganizationsForIdentity(context.Background(), "owner@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ownerOrgs) != 1 || ownerOrgs[0].ID != projectOrg.ID {
+		t.Fatalf("accepting invitation recreated owner's deleted organization: %+v", ownerOrgs)
+	}
+}
+
 func registerToken(t *testing.T, base, identity, pw string) string {
 	t.Helper()
 	code, body := postJSON(t, base+"/v1/register", "", map[string]string{"identity": identity, "password": pw})
