@@ -538,6 +538,11 @@ void main() {
       rewordDialog,
       contains('title, maxLines: 1, overflow: TextOverflow.ellipsis'),
     );
+    expect(rewordDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(rewordDialog, contains('workspaceConfirmDialogWidth(size)'));
+    expect(rewordDialog, contains('SingleChildScrollView'));
+    expect(rewordDialog, contains('SelectableText'));
+    expect(rewordDialog, isNot(contains('content: Column(')));
     expect(commitFileDialog, contains('workspaceCommitFileDialogWidth'));
     expect(commitFileDialog, contains('SingleChildScrollView'));
     expect(

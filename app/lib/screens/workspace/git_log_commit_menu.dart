@@ -536,36 +536,53 @@ mixin _GitLogCommitMenu on _GitMixin {
     final ctl = TextEditingController(text: initial ?? '');
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (hint != null) ...[
-              Text(hint, style: CcType.code(size: 12, color: CcColors.muted)),
-              const SizedBox(height: 8),
-            ],
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              minLines: 2,
-              maxLines: 6,
-              decoration: const InputDecoration(labelText: 'Commit message'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (hint != null) ...[
+                    SelectableText(
+                      hint,
+                      style: CcType.code(size: 12, color: CcColors.muted),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  TextField(
+                    controller: ctl,
+                    autofocus: true,
+                    minLines: 2,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'Commit message',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('OK'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+        );
+      },
     );
     final text = ctl.text.trim();
     ctl.dispose();
