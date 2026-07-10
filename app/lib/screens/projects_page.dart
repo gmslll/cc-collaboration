@@ -352,6 +352,19 @@ double projectsMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double projectSheetLoadingHeight(
+  Size screenSize, {
+  double preferred = 180,
+  double minHeight = 96,
+  double maxFraction = 0.28,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   Iterable<ProjectDetail> details,
 ) {
@@ -1479,8 +1492,8 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
         bottom: MediaQuery.of(context).viewInsets.bottom + 16,
       ),
       child: d == null
-          ? const SizedBox(
-              height: 180,
+          ? SizedBox(
+              height: projectSheetLoadingHeight(MediaQuery.sizeOf(context)),
               child: Center(child: CircularProgressIndicator()),
             )
           : SingleChildScrollView(
@@ -2214,8 +2227,8 @@ class _ProjectSheetState extends State<_ProjectSheet> {
         bottom: MediaQuery.of(context).viewInsets.bottom + 16,
       ),
       child: d == null
-          ? const SizedBox(
-              height: 180,
+          ? SizedBox(
+              height: projectSheetLoadingHeight(MediaQuery.sizeOf(context)),
               child: Center(child: CircularProgressIndicator()),
             )
           : SingleChildScrollView(

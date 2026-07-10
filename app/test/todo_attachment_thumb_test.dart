@@ -19,12 +19,23 @@ void main() {
     expect(todoInlineImageMaxHeight(const Size(320, 300)), 160);
   });
 
+  test('inline todo image status height is responsive', () {
+    expect(todoInlineImageStatusHeight(const Size(1440, 900)), 100);
+    expect(
+      todoInlineImageStatusHeight(const Size(390, 500)),
+      closeTo(80, 0.001),
+    );
+    expect(todoInlineImageStatusHeight(const Size(320, 300)), 72);
+  });
+
   test('inline todo image avoids fixed height', () {
     final source = File('lib/widgets/todo_body_view.dart').readAsStringSync();
     final inlineImage = source.substring(source.indexOf('class _InlineImage'));
 
     expect(inlineImage, contains('todoInlineImageMaxHeight'));
+    expect(inlineImage, contains('todoInlineImageStatusHeight'));
     expect(inlineImage, isNot(contains('BoxConstraints(maxHeight: 360')));
+    expect(inlineImage, isNot(contains('height: 100')));
   });
 
   testWidgets(

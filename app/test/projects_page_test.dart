@@ -741,6 +741,15 @@ void main() {
     expect(projectsMenuMaxHeight(Size.zero), 320);
   });
 
+  test('project sheet loading height is responsive', () {
+    expect(projectSheetLoadingHeight(const Size(1024, 900)), 180);
+    expect(
+      projectSheetLoadingHeight(const Size(320, 500)),
+      closeTo(140, 0.001),
+    );
+    expect(projectSheetLoadingHeight(const Size(320, 300)), 96);
+  });
+
   test('project rename dialog uses responsive controls', () {
     final start = source.indexOf('Future<void> _rename(String current) async');
     final renameDialog = source.substring(
@@ -1246,6 +1255,8 @@ void main() {
       expect(sheet, contains('final generation = ++_loadGeneration;'));
       expect(sheet, contains('bool _isCurrentLoad(int generation)'));
       expect(sheet, contains('if (_isCurrentLoad(generation))'));
+      expect(sheet, contains('projectSheetLoadingHeight'));
+      expect(sheet, isNot(contains('height: 180')));
     }
   });
 

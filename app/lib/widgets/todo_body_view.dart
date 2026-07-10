@@ -32,6 +32,19 @@ double todoInlineImageMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double todoInlineImageStatusHeight(
+  Size screenSize, {
+  double preferred = 100,
+  double minHeight = 72,
+  double maxFraction = 0.16,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 // TodoBodyView is the read-only counterpart to MarkdownLiteEditor: same
 // body_md literal-markdown-string contract, same decorateMarkdownLine/
 // inlineMarkdownSpans styling for text lines, but a line that's exactly
@@ -269,7 +282,7 @@ class _InlineImageState extends State<_InlineImage> {
     onTap: broken ? _load : null,
     child: Container(
       width: 200,
-      height: 100,
+      height: todoInlineImageStatusHeight(MediaQuery.sizeOf(context)),
       decoration: BoxDecoration(
         color: CcColors.panelHigh,
         border: Border.all(color: CcColors.border),

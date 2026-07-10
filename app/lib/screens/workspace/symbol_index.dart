@@ -223,6 +223,30 @@ const _symbolIndexExts = {
 // _GoToDefinitionDialog is the disambiguation picker shown when an identifier
 // resolves to more than one definition site (regex over-match, overloads, or a
 // name reused across files). Tapping a row returns its _SymbolHit to navigate.
+double symbolDefinitionDialogWidth(Size screenSize, {double preferred = 720}) {
+  final available = screenSize.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
+double symbolDefinitionDialogHeight(
+  Size screenSize,
+  int hitCount, {
+  double minHeight = 220,
+  double preferredMax = 620,
+  double maxFraction = 0.82,
+}) {
+  final contentHeight = (hitCount * 56 + 120).clamp(
+    minHeight.toInt(),
+    preferredMax.toInt(),
+  );
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return contentHeight.toDouble();
+  final available = height * maxFraction.clamp(0, 1);
+  if (available >= contentHeight) return contentHeight.toDouble();
+  return available < minHeight ? minHeight : available;
+}
+
 class _GoToDefinitionDialog extends StatelessWidget {
   final String name;
   final List<_SymbolHit> hits;
@@ -230,10 +254,11 @@ class _GoToDefinitionDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenSize = MediaQuery.sizeOf(context);
     return Dialog(
       child: SizedBox(
-        width: 720,
-        height: (hits.length * 56 + 120).clamp(220, 620).toDouble(),
+        width: symbolDefinitionDialogWidth(screenSize),
+        height: symbolDefinitionDialogHeight(screenSize, hits.length),
         child: Column(
           children: [
             _DialogHeader(

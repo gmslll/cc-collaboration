@@ -16,6 +16,15 @@ void main() {
     expect(capsuleChoiceDialogWidth(const Size(20, 760)), 440);
   });
 
+  test('capsule review loading height fits compact screens', () {
+    expect(capsuleReviewLoadingHeight(const Size(1024, 900)), 120);
+    expect(
+      capsuleReviewLoadingHeight(const Size(320, 500)),
+      closeTo(90, 0.001),
+    );
+    expect(capsuleReviewLoadingHeight(const Size(320, 300)), 80);
+  });
+
   test('capsule choice dialog uses responsive content', () {
     final source = File(
       'lib/screens/session_overview_page.dart',
@@ -255,12 +264,17 @@ void main() {
       source.indexOf('class _CapsuleReviewDialogState'),
       source.indexOf('  // _labeledCodeField'),
     );
+    final fullReviewDialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+    );
 
     expect(reviewDialog, contains('if (_submitting) return;'));
     expect(reviewDialog, contains('try {'));
     expect(reviewDialog, contains('catch (e)'));
     expect(reviewDialog, contains("snack(context, '发送失败: \${errorText(e)}');"));
     expect(reviewDialog, contains('setState(() => _submitting = false);'));
+    expect(fullReviewDialog, contains('capsuleReviewLoadingHeight'));
+    expect(fullReviewDialog, isNot(contains('height: 120')));
   });
 
   test(

@@ -17,6 +17,19 @@ double capsuleChoiceDialogWidth(Size size, {double preferred = 440}) {
   return available < preferred ? available : preferred;
 }
 
+double capsuleReviewLoadingHeight(
+  Size screenSize, {
+  double preferred = 120,
+  double minHeight = 80,
+  double maxFraction = 0.18,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 // SessionOverviewPage is the desktop top-level "会话总览": every open session
 // laid out flat, grouped by 工作区 → 项目 → worktree, each as a card showing the
 // agent's latest reply preview + status + token usage — so the user can glance
@@ -818,8 +831,10 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: _loading
-              ? const SizedBox(
-                  height: 120,
+              ? SizedBox(
+                  height: capsuleReviewLoadingHeight(
+                    MediaQuery.sizeOf(context),
+                  ),
                   child: Center(child: CircularProgressIndicator()),
                 )
               : SingleChildScrollView(
