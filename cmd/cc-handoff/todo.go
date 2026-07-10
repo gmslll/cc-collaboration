@@ -95,15 +95,15 @@ func runTodo(ctx context.Context, args []string) error {
 	}
 }
 
-// todoClient resolves .cc-handoff.toml from the current directory and builds
-// a relay client from it — the same res.RelayURL/res.Token pair every other
-// handoff command (submit.go, list.go, status.go, ...) uses.
+// todoClient resolves the user relay account from the current directory and
+// builds a relay client. Todos are personal/project-scoped, so they do not
+// require a repo partner.
 func todoClient() (*transport.Client, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -111,10 +111,11 @@ func todoClient() (*transport.Client, error) {
 }
 
 // autoRepoNameFromCWD best-effort resolves the current directory's repo name
-// the same way config.Resolve does (.cc-handoff.toml [paths] repo, falling
-// back to the directory basename) — used to default --repo when the caller
-// passed --workspace but not --repo. Swallows errors: unlike todoClient()
-// (where an unresolvable config is fatal, since auth comes from it), a todo
+// the same way config.ResolveRelay does (.cc-handoff.toml [paths] repo,
+// falling back to the directory basename) — used to default --repo when the
+// caller passed --workspace but not --repo. Swallows errors: unlike
+// todoClient() (where an unresolvable config is fatal, since auth comes from
+// it), a todo
 // create call should still succeed with no repo name attached rather than
 // fail outright just because cwd isn't a configured repo.
 func autoRepoNameFromCWD() string {
@@ -122,7 +123,7 @@ func autoRepoNameFromCWD() string {
 	if err != nil {
 		return ""
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ""
 	}

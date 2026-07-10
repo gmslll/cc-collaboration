@@ -53,7 +53,7 @@ class Cli {
   // PATH) and can find git / claude / codex; on Windows the GUI already inherits
   // the full user environment, so the executable is run directly. workingDirectory
   // is forwarded to Process.run — needed for commands like `todo import-linear`
-  // that rely on config.Resolve(cwd) finding a specific repo's .cc-handoff.toml.
+  // that use cwd to find optional repo/project context.
   static Future<ProcessResult> _exec(List<String> args,
       {String? workingDirectory}) {
     final bin = _bin();

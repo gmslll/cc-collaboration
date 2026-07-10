@@ -190,14 +190,12 @@ type Inbox struct {
 
 type Identity struct {
 	Me string `toml:"me,omitempty"` // optional override of user-level identity
-	// Partner is the legacy single-recipient field used by
-	// submit_handoff/submit_request. Required for 2-party repos; tester
-	// repos that only ever fan out to multiple sides can leave it empty as
-	// long as Partners is set.
+	// Partner is the legacy single-recipient field. Team project routing is
+	// the default; this is only used for explicit role-alias compatibility and
+	// older point-to-point configs.
 	Partner string `toml:"partner,omitempty"`
-	// Partners is the multi-recipient list used by submit_bug as the default
-	// `to=[...]` value. Empty means "fall back to [Partner]". Set this for
-	// tester repos: partners = ["backend", "frontend"].
+	// Partners is the legacy multi-recipient list used for explicit submit_bug
+	// role aliases such as "backend", "frontend", and "both".
 	Partners []string `toml:"partners,omitempty"`
 }
 
@@ -397,15 +395,12 @@ type Resolved struct {
 	RelayURL string
 	Token    string
 	Me       string
-	// Partner is the default single recipient for /handoff and /request.
-	// Equals Partners[0] when only Partners was configured; equals the raw
-	// identity.partner otherwise. Empty only on tester repos that solely
-	// fan out — submit_handoff / submit_request will error in that case
-	// unless the caller passes an explicit `to=`.
+	// Partner is the legacy single recipient. It is not used as an implicit
+	// default target; team projects are inferred first, and point-to-point
+	// delivery must be explicit.
 	Partner string
-	// Partners is the default recipient list used by /submit-bug. Falls
-	// back to [Partner] when identity.partners isn't set, so existing
-	// 2-party repos transparently get a one-element list.
+	// Partners is the legacy explicit recipient list used for submit_bug role
+	// aliases. It falls back to [Partner] for older configs.
 	Partners []string
 	RepoName string
 	Base     string
@@ -426,14 +421,14 @@ type Resolved struct {
 }
 
 type resolveOpts struct {
-	requireRepo    bool
-	requirePartner bool
+	requireRepo bool
 }
 
-// Resolve loads the full user + repo config for the standard point-to-point
-// flows: a repo config (with a partner) is required.
+// Resolve loads the full user + repo config. A repo config is required, but a
+// legacy partner is optional because team projects are now the default routing
+// model.
 func Resolve(cwd string) (*Resolved, error) {
-	return resolveWith(cwd, resolveOpts{requireRepo: true, requirePartner: true})
+	return resolveWith(cwd, resolveOpts{requireRepo: true})
 }
 
 // ResolveRelay loads just enough to reach the relay: the user-level connection
@@ -442,7 +437,7 @@ func Resolve(cwd string) (*Resolved, error) {
 // recipient. A missing repo config degrades to best-effort context (RepoName
 // falls back to the directory name; rules/swagger/partner stay empty).
 func ResolveRelay(cwd string) (*Resolved, error) {
-	return resolveWith(cwd, resolveOpts{requireRepo: false, requirePartner: false})
+	return resolveWith(cwd, resolveOpts{requireRepo: false})
 }
 
 func resolveWith(cwd string, opts resolveOpts) (*Resolved, error) {
@@ -511,9 +506,6 @@ func resolveWith(cwd string, opts resolveOpts) (*Resolved, error) {
 	}
 	if out.RelayURL == "" || out.Token == "" || out.Me == "" {
 		return nil, fmt.Errorf("incomplete config: relay_url/token/identity must be set in user config")
-	}
-	if opts.requirePartner && len(out.Partners) == 0 {
-		return nil, fmt.Errorf("incomplete repo config: identity.partner or identity.partners must be set in %s", RepoConfigPath(cwd))
 	}
 	return out, nil
 }

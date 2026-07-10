@@ -94,7 +94,7 @@ func submitHandoffTool() Tool {
   "type": "object",
   "properties": {
     "summary":      {"type": "string", "description": "Markdown summary of the change. Written to <inbox-dir>/.draft-summary.md before the package is built (inbox-dir defaults to .cc-handoff/inbox, falls back to legacy .claude/handoff-inbox in older repos). If omitted, the existing draft (if any) is used."},
-    "to":           {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
+    "to":           {"type": "string", "description": "Recipient identity for an explicit point-to-point target. Omit to use the current team project."},
     "project":      {"type": "string", "description": "Project id to share this handoff with all actionable project recipients (direct owners/members plus team owners/admins). Mutually exclusive with to and org; excludes yourself and project viewers."},
     "org":          {"type": "string", "description": "Organization id to share this handoff with all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "member":       {"type": "string", "description": "With project/org, send only to this identity after validating they are an actionable member of that team."},
@@ -110,7 +110,7 @@ func submitHandoffTool() Tool {
 }`)
 	return Tool{
 		Name:        ToolSubmitHandoff,
-		Description: "Package the current branch's change set (git diff, swagger delta, summary, partner-mapping hints) and send it to a partner via the cc-handoff relay. Use this when you've finished implementing an API and want the receiving side to integrate.",
+		Description: "Package the current branch's change set (git diff, swagger delta, summary, partner-mapping hints) and send it to the current team project via the cc-handoff relay. Pass `to` only for explicit point-to-point delivery.",
 		InputSchema: schema,
 		Handler:     submitHandoffHandler,
 	}
@@ -155,11 +155,11 @@ func submitHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	}
 
 	client := transport.New(res.RelayURL, res.Token)
-	project, err := inferredToolProject(ctx, client, res, a.To, a.Project, a.Org, a.Member, res.Partner)
+	project, err := inferredToolProject(ctx, client, res, a.To, a.Project, a.Org)
 	if err != nil {
 		return ToolResult{}, err
 	}
-	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, project, a.Org, a.Member)
+	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, "", a.To, project, a.Org, a.Member)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -300,7 +300,7 @@ func submitRequestTool() Tool {
   "type": "object",
   "properties": {
     "summary": {"type": "string", "description": "Markdown 描述需求：缺什么字段 / 没暴露什么能力 / 返回结构哪里有问题，写到具体 endpoint + field。包含 Why（前端要拿它做什么）和 Acceptance（怎样算 OK）。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
-    "to":      {"type": "string", "description": "Recipient identity. Defaults to identity.partner from .cc-handoff.toml."},
+    "to":      {"type": "string", "description": "Recipient identity for an explicit point-to-point target. Omit to use the current team project."},
     "project": {"type": "string", "description": "Project id to share this request with all actionable project recipients (direct owners/members plus team owners/admins). Mutually exclusive with to and org; excludes yourself and project viewers."},
     "org":     {"type": "string", "description": "Organization id to share this request with all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "member":  {"type": "string", "description": "With project/org, send only to this identity after validating they are an actionable member of that team."},
@@ -313,7 +313,7 @@ func submitRequestTool() Tool {
 }`)
 	return Tool{
 		Name:        ToolSubmitRequest,
-		Description: "Send a feature/field/endpoint request from this side (typically frontend) to the partner (typically backend). Use this when the partner's API is incomplete — missing fields, missing endpoints, broken response shapes, etc. The summary IS the request body; no git diff or swagger delta is collected. Recipient picks it up via /pickup, designs/implements, then handoffs back with responds_to=<this id>.",
+		Description: "Send a feature/field/endpoint request from this side to the current team project. Use this when an API is incomplete — missing fields, missing endpoints, broken response shapes, etc. Pass `to` only for explicit point-to-point delivery.",
 		InputSchema: schema,
 		Handler:     submitRequestHandler,
 	}
@@ -355,11 +355,11 @@ func submitRequestHandler(ctx context.Context, raw json.RawMessage) (ToolResult,
 	}
 
 	client := transport.New(res.RelayURL, res.Token)
-	project, err := inferredToolProject(ctx, client, res, a.To, a.Project, a.Org, a.Member, res.Partner)
+	project, err := inferredToolProject(ctx, client, res, a.To, a.Project, a.Org)
 	if err != nil {
 		return ToolResult{}, err
 	}
-	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, res.Partner, a.To, project, a.Org, a.Member)
+	recipients, recipient, err := resolveToolRecipients(ctx, client, res.Me, "", a.To, project, a.Org, a.Member)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -420,7 +420,7 @@ func submitBugTool() Tool {
   "type": "object",
   "properties": {
     "summary": {"type": "string", "description": "Markdown 描述 bug：症状 / 复现步骤 / 期望 / 实际 / 怀疑归属(可选)。会写入 <inbox-dir>/.draft-summary.md；省略则用现有 draft（如有）。"},
-    "to":      {"type": "array", "items": {"type": "string"}, "description": "Recipient identities（一个或多个真实 identity,例如 [\"user@backend\", \"alex@frontend\"]）。Omit to use identity.partners from .cc-handoff.toml; falls back to [identity.partner] if partners 没配。Role aliases \"backend\" / \"frontend\" / \"both\" are accepted only as convenience and will be resolved against configured identities."},
+    "to":      {"type": "array", "items": {"type": "string"}, "description": "Recipient identities（一个或多个真实 identity,例如 [\"user@backend\", \"alex@frontend\"]）。省略则使用当前团队项目。Role aliases \"backend\" / \"frontend\" / \"both\" are accepted only when configured identities exist."},
     "project": {"type": "string", "description": "Project id to report this bug to all actionable project recipients (direct owners/members plus team owners/admins). Mutually exclusive with to and org; excludes yourself and viewers."},
     "org":     {"type": "string", "description": "Organization id to report this bug to all actionable organization members (owners/admins/members). Mutually exclusive with to and project; excludes yourself and guests."},
     "member":  {"type": "string", "description": "With project/org, report only to this identity after validating they are an actionable member of that team."},
@@ -433,7 +433,7 @@ func submitBugTool() Tool {
 }`)
 	return Tool{
 		Name:        ToolSubmitBug,
-		Description: "Report a bug from the test/QA side to one or more engineering identities at once. Prefer omitting `to` so configured identity.partners are used, or pass real identities such as [\"user@backend\", \"alex@frontend\"]. Role aliases \"backend\" / \"frontend\" / \"both\" are resolved against configured identities. The receivers' prompt walks them through a decision tree: judge if the bug is on their side → fix it / call reassign_bug to forward it / call comment_handoff to discuss cross-end. Comments on any handoff in the resulting bug group are auto-broadcast to every participant so the tester stays in the loop without manually relaying.",
+		Description: "Report a bug from the test/QA side to the current team project, or to explicit identities when `to` is provided. Role aliases \"backend\" / \"frontend\" / \"both\" are resolved only against configured identities. The receivers' prompt walks them through a decision tree: judge if the bug is on their side → fix it / call reassign_bug to forward it / call comment_handoff to discuss cross-end. Comments on any handoff in the resulting bug group are auto-broadcast to every participant so the tester stays in the loop without manually relaying.",
 		InputSchema: schema,
 		Handler:     submitBugHandler,
 	}
@@ -478,7 +478,7 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 	var recipients []string
 	project := a.Project
 	if len(a.To) == 0 {
-		project, err = inferredToolProject(ctx, client, res, "", a.Project, a.Org, a.Member, "")
+		project, err = inferredToolProject(ctx, client, res, "", a.Project, a.Org)
 		if err != nil {
 			return ToolResult{}, err
 		}
@@ -497,10 +497,7 @@ func submitBugHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 			return ToolResult{}, err
 		}
 		if len(recipients) == 0 {
-			recipients = append([]string(nil), res.Partners...)
-		}
-		if len(recipients) == 0 {
-			return ToolResult{}, fmt.Errorf("no recipients: pass `to=[\"backend\",\"frontend\",...]`, `project`, `org`, or set identity.partners in .cc-handoff.toml")
+			return ToolResult{}, fmt.Errorf("no recipients: pass `to=[...]`, `project`, `org`, or bind this workspace/repo to a team project")
 		}
 		for _, r := range recipients {
 			if r == res.Me {
@@ -702,9 +699,9 @@ func formatRecipientList(rs []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-func inferredToolProject(ctx context.Context, client *transport.Client, res *config.Resolved, to, projectID, orgID, member, defaultRecipient string) (string, error) {
+func inferredToolProject(ctx context.Context, client *transport.Client, res *config.Resolved, to, projectID, orgID string) (string, error) {
 	projectID = strings.TrimSpace(projectID)
-	if !shouldInferToolProject(to, projectID, orgID, member, defaultRecipient) {
+	if !shouldInferToolProject(to, projectID, orgID) {
 		return projectID, nil
 	}
 	if id := strings.TrimSpace(res.WorkspaceProjectID); id != "" {
@@ -720,11 +717,11 @@ func inferredToolProject(ctx context.Context, client *transport.Client, res *con
 	return "", nil
 }
 
-func shouldInferToolProject(to, projectID, orgID, member, defaultRecipient string) bool {
+func shouldInferToolProject(to, projectID, orgID string) bool {
 	if strings.TrimSpace(to) != "" || strings.TrimSpace(projectID) != "" || strings.TrimSpace(orgID) != "" {
 		return false
 	}
-	return strings.TrimSpace(member) != "" || strings.TrimSpace(defaultRecipient) == ""
+	return true
 }
 
 func resolveToolRecipients(ctx context.Context, client *transport.Client, sender, defaultRecipient, to, projectID, orgID, member string) ([]string, string, error) {
@@ -758,7 +755,7 @@ func resolveToolRecipients(ctx context.Context, client *transport.Client, sender
 		recipient = to
 	}
 	if recipient == "" {
-		return nil, "", fmt.Errorf("no recipient: pass `to`, `project`, `org`, or set identity.partner in .cc-handoff.toml")
+		return nil, "", fmt.Errorf("no recipient: pass `to`, `project`, `org`, or bind this workspace/repo to a team project")
 	}
 	if recipient == sender {
 		return nil, "", fmt.Errorf("cannot send to yourself (%s)", sender)
@@ -1404,7 +1401,7 @@ func retractHandoffHandler(ctx context.Context, raw json.RawMessage) (ToolResult
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -1531,7 +1528,7 @@ func listLocalInboxHandler(_ context.Context, raw json.RawMessage) (ToolResult, 
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -1568,7 +1565,7 @@ func checkDriftTool() Tool {
 	schema := json.RawMessage(`{
   "type": "object",
   "properties": {
-    "to":    {"type": "string", "description": "Limit baseline search to handoffs sent to this recipient. Defaults to identity.partner from .cc-handoff.toml."},
+    "to":    {"type": "string", "description": "Limit baseline search to handoffs sent to this recipient. Defaults to any recipient."},
     "limit": {"type": "integer", "description": "How many sent items to scan looking for a baseline handoff with a swagger snapshot. Defaults to 20."},
     "cwd":   {"type": "string", "description": "Repo working directory. Defaults to the MCP server's cwd."}
   }
@@ -1599,14 +1596,11 @@ func checkDriftHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
-	recipient := res.Partner
-	if a.To != "" {
-		recipient = a.To
-	}
+	recipient := strings.TrimSpace(a.To)
 	client := transport.New(res.RelayURL, res.Token)
 	result, err := drift.Detect(ctx, client, recipient, config.ResolveSwaggerPath(config.RepoRoot(cwd), res.Swagger), a.Limit)
 	if err != nil {
@@ -1660,7 +1654,7 @@ func linkLinearHandler(_ context.Context, raw json.RawMessage) (ToolResult, erro
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -1702,7 +1696,7 @@ func linearSyncHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}

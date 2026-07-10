@@ -15,7 +15,7 @@ import (
 
 // This file wires the Todo feature (see pkg/todoschema and
 // internal/transport/todo_client.go) up as MCP tools, following the same
-// config.Resolve(cwd) → transport.New(...) → client.<Method>(...) →
+// config.ResolveRelay(cwd) → transport.New(...) → client.<Method>(...) →
 // textResult(...) shape as the handoff tools earlier in this package.
 
 // --- create_todo -------------------------------------------------------
@@ -74,7 +74,7 @@ func createTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -231,7 +231,7 @@ func listTodosHandler(ctx context.Context, raw json.RawMessage) (ToolResult, err
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -307,7 +307,7 @@ func getTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, error
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -376,7 +376,7 @@ func updateTodoStatusHandler(ctx context.Context, raw json.RawMessage) (ToolResu
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -439,7 +439,7 @@ func assignTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, er
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -500,7 +500,7 @@ func commentTodoHandler(ctx context.Context, raw json.RawMessage) (ToolResult, e
 	if err != nil {
 		return ToolResult{}, err
 	}
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	if err != nil {
 		return ToolResult{}, err
 	}

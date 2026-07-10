@@ -17,7 +17,7 @@ import (
 
 func runSubmit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
-	to := fs.String("to", "", "recipient identity (default: partner from .cc-handoff.toml)")
+	to := fs.String("to", "", "recipient identity (explicit point-to-point target)")
 	projectID := fs.String("project", "", "send to all actionable project recipients (direct owners/members plus team owners/admins; excludes yourself and viewers)")
 	orgID := fs.String("org", "", "send to all actionable members of organization id (owners/admins/members; excludes yourself and guests)")
 	member := fs.String("member", "", "limit --project/--org delivery to this identity after validating team membership")
@@ -40,13 +40,10 @@ func runSubmit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	recipient := res.Partner
-	if *to != "" {
-		recipient = *to
-	}
+	recipient := cleanTargetArg(*to)
 	client := transport.New(res.RelayURL, res.Token)
 	resolvedProjectID := cleanTargetArg(*projectID)
-	if shouldInferProjectTarget(*to, resolvedProjectID, *orgID, *member, recipient) {
+	if shouldInferProjectTarget(*to, resolvedProjectID, *orgID) {
 		if inferred, ok, err := inferDefaultProjectID(ctx, client, res); err != nil {
 			return err
 		} else if ok {
@@ -62,7 +59,7 @@ func runSubmit(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(recipients) == 0 {
-		return fmt.Errorf("no recipient: pass --to, --project, --org, or set identity.partner in .cc-handoff.toml")
+		return fmt.Errorf("no recipient: pass --to/--project/--org, or bind this workspace/repo to a team project")
 	}
 	recipient = recipients[0]
 
@@ -133,11 +130,11 @@ func runSubmit(ctx context.Context, args []string) error {
 	return nil
 }
 
-func shouldInferProjectTarget(to, projectID, orgID, member, recipient string) bool {
+func shouldInferProjectTarget(to, projectID, orgID string) bool {
 	if cleanTargetArg(to) != "" || cleanTargetArg(projectID) != "" || cleanTargetArg(orgID) != "" {
 		return false
 	}
-	return cleanTargetArg(member) != "" || cleanTargetArg(recipient) == ""
+	return true
 }
 
 func inferDefaultProjectID(ctx context.Context, client *transport.Client, res *config.Resolved) (string, bool, error) {

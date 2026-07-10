@@ -59,6 +59,21 @@ func TestResolveSubmitRecipientsRejectsSelfAfterTrimming(t *testing.T) {
 	}
 }
 
+func TestShouldInferProjectTargetDefaultsToTeamProject(t *testing.T) {
+	if !shouldInferProjectTarget("", "", "") {
+		t.Fatal("missing explicit target should infer the current team project")
+	}
+	if shouldInferProjectTarget("receiver@x", "", "") {
+		t.Fatal("explicit --to should not infer a project")
+	}
+	if shouldInferProjectTarget("", "project-1", "") {
+		t.Fatal("explicit --project should not infer another project")
+	}
+	if shouldInferProjectTarget("", "", "org-1") {
+		t.Fatal("explicit --org should not infer a project")
+	}
+}
+
 func TestInferDefaultProjectIDPrefersWorkspaceBinding(t *testing.T) {
 	got, ok, err := inferDefaultProjectID(
 		context.Background(),

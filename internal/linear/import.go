@@ -44,7 +44,7 @@ type ImportResult struct {
 // projectID scopes created todos to a cc-handoff team project; empty means
 // personal todos owned by the caller's identity.
 func ImportTeamIssuesForRepo(ctx context.Context, cwd, teamKey, linearProjectID, projectID string) (ImportResult, error) {
-	res, err := config.Resolve(cwd)
+	res, err := config.ResolveRelay(cwd)
 	var (
 		relayURL            string
 		token               string

@@ -221,8 +221,6 @@ func TestInferredToolProjectPrefersWorkspaceBinding(t *testing.T) {
 		"",
 		"",
 		"",
-		" member@x ",
-		"",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -233,14 +231,14 @@ func TestInferredToolProjectPrefersWorkspaceBinding(t *testing.T) {
 }
 
 func TestShouldInferToolProjectKeepsExplicitTargets(t *testing.T) {
-	if shouldInferToolProject("receiver@x", "", "", "", "") {
+	if shouldInferToolProject("receiver@x", "", "") {
 		t.Fatal("direct receiver should not infer project")
 	}
-	if shouldInferToolProject("", "", "org1", "member@x", "") {
+	if shouldInferToolProject("", "", "org1") {
 		t.Fatal("explicit org should not infer project")
 	}
-	if !shouldInferToolProject("", "", "", "member@x", "partner@x") {
-		t.Fatal("member without team target should infer current project")
+	if !shouldInferToolProject("", "", "") {
+		t.Fatal("missing explicit target should infer current project")
 	}
 }
 
