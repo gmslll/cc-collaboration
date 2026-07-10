@@ -54,6 +54,30 @@ void main() {
     expect(capsuleReadonlyPreviewMaxHeight(const Size(320, 300)), 82);
   });
 
+  test('capsule delete dialog width fits compact screens', () {
+    expect(capsuleDeleteDialogWidth(const Size(1200, 900)), 420);
+    expect(capsuleDeleteDialogWidth(const Size(320, 700)), 288);
+    expect(capsuleDeleteDialogWidth(const Size(20, 700)), 420);
+  });
+
+  test('capsule delete confirmation uses responsive content', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final deleteDialog = source.substring(
+      source.indexOf('Future<void> _deleteCapsule('),
+      source.indexOf('Future<void> _editCapsule('),
+    );
+
+    expect(deleteDialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(deleteDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(deleteDialog, contains('maxLines: 1'));
+    expect(deleteDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(deleteDialog, contains('capsuleDeleteDialogWidth(size)'));
+    expect(deleteDialog, contains('SingleChildScrollView'));
+    expect(deleteDialog, isNot(contains('content: Text(')));
+  });
+
   test('capsule readonly previews avoid fixed height', () {
     final source = File(
       'lib/screens/capsule_plaza_page.dart',

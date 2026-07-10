@@ -55,6 +55,12 @@ double capsuleReadonlyPreviewMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double capsuleDeleteDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   List<CapsuleListItem>? _items;
   String? _error;
@@ -317,23 +323,39 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     final token = widget.config.token;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除胶囊?'),
-        content: Text(
-          '「${c.headline.isEmpty ? c.id : c.headline}」将从广场移除,不可恢复。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('删除'),
+          title: const Text(
+            '删除胶囊?',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: capsuleDeleteDialogWidth(size),
+            child: SingleChildScrollView(
+              child: Text(
+                '「${c.headline.isEmpty ? c.id : c.headline}」将从广场移除,不可恢复。',
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true) return;
     if (!mounted) return;
