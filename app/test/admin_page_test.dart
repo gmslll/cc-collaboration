@@ -12,6 +12,25 @@ const _longAdminIdentity =
 const _longAdminDisplayName =
     'Account Administrator With A Very Long Display Name For Team Management';
 
+Finder _userActions(String identity) =>
+    find.byKey(ValueKey('admin-user-actions-$identity'));
+
+Future<void> _openCreateDialog(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('admin-open-create')));
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
+Future<void> _submitCreate(WidgetTester tester, String identity) async {
+  await _openCreateDialog(tester);
+  await tester.enterText(
+    find.byKey(const ValueKey('admin-create-identity')),
+    identity,
+  );
+  await tester.pump();
+  await tester.tap(find.byKey(const ValueKey('admin-create-submit')));
+  await tester.pump();
+}
+
 void main() {
   test('admin account labels are localized', () {
     expect(adminFlagLabel(true), '系统管理员');
@@ -58,7 +77,7 @@ void main() {
   });
 
   testWidgets('admin user rows clamp long account labels', (tester) async {
-    tester.view.physicalSize = const Size(390, 760);
+    tester.view.physicalSize = const Size(320, 760);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -85,11 +104,16 @@ void main() {
     expect(subtitle.data, _longAdminIdentity);
     expect(subtitle.maxLines, 1);
     expect(subtitle.overflow, TextOverflow.ellipsis);
+    expect(
+      find.byKey(const ValueKey('admin-user-compact-list')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('admin-user-table-header')), findsNothing);
     expect(find.text('系统管理员'), findsOneWidget);
     expect(find.text('已停用'), findsOneWidget);
   });
 
-  testWidgets('admin create controls wrap and reflect input state', (
+  testWidgets('admin create dialog is compact and reflects input state', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(240, 760);
@@ -105,22 +129,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    FilledButton createButton() =>
-        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '创建账号'));
-
-    final adminOptionLabel = tester.widget<Text>(
-      find.byKey(const ValueKey('admin-create-admin-label')),
+    expect(find.byKey(const ValueKey('admin-create-identity')), findsNothing);
+    await _openCreateDialog(tester);
+    FilledButton createButton() => tester.widget<FilledButton>(
+      find.byKey(const ValueKey('admin-create-submit')),
     );
-
     expect(tester.takeException(), isNull);
-    expect(adminOptionLabel.maxLines, 1);
-    expect(adminOptionLabel.overflow, TextOverflow.ellipsis);
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('admin-create-admin-option')),
+      findsOneWidget,
+    );
     expect(createButton().onPressed, isNull);
 
-    await tester.enterText(find.byType(TextField).first, 'new@x');
+    await tester.enterText(
+      find.byKey(const ValueKey('admin-create-identity')),
+      'new@x',
+    );
     await tester.pump();
 
     expect(createButton().onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('admin create completion after unmount is ignored', (
@@ -135,10 +164,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'new@x');
-    await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
-    await tester.pump();
+    await _submitCreate(tester, 'new@x');
 
     await tester.pumpWidget(const SizedBox.shrink());
     client.completeCreate(null);
@@ -160,10 +186,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'old@x');
-    await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
-    await tester.pump();
+    await _submitCreate(tester, 'old@x');
 
     await tester.pumpWidget(
       MaterialApp(
@@ -171,15 +194,11 @@ void main() {
         home: Scaffold(body: AdminPage(client: newClient)),
       ),
     );
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, 'new-draft@x');
-    await tester.pump();
-
+    await tester.pump(const Duration(milliseconds: 300));
     oldClient.completeCreate('old-secret');
     await tester.pumpAndSettle();
 
     expect(oldClient.createCount, 1);
-    expect(find.text('new-draft@x'), findsOneWidget);
     expect(find.text('old-secret'), findsNothing);
     expect(find.text('账号 old@x 的初始密码'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -197,28 +216,28 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'new@x');
-    await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
-    await tester.pump();
+    await _submitCreate(tester, 'new@x');
 
     expect(client.createCount, 1);
-    expect(find.widgetWithText(FilledButton, '创建中...'), findsOneWidget);
+    expect(find.text('创建中...'), findsOneWidget);
     expect(
       tester
-          .widget<FilledButton>(find.widgetWithText(FilledButton, '创建中...'))
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('admin-create-submit')),
+          )
           .onPressed,
       isNull,
     );
 
-    await tester.tap(find.widgetWithText(FilledButton, '创建中...'));
+    await tester.tap(find.byKey(const ValueKey('admin-create-submit')));
     await tester.pump();
     expect(client.createCount, 1);
 
     client.completeCreate(null);
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(FilledButton, '创建账号'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byKey(const ValueKey('admin-open-create')), findsOneWidget);
     expect(client.createCount, 1);
     expect(tester.takeException(), isNull);
   });
@@ -240,10 +259,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, _longAdminIdentity);
-    await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
-    await tester.pump();
+    await _submitCreate(tester, _longAdminIdentity);
     client.completeCreate('secret-password');
     await tester.pumpAndSettle();
 
@@ -286,10 +302,7 @@ void main() {
     await tester.pump();
     expect(client.userRequestCount, 1);
 
-    await tester.enterText(find.byType(TextField).first, 'new@x');
-    await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
-    await tester.pump();
+    await _submitCreate(tester, 'new@x');
     client.completeCreate(null);
     await tester.pump();
     expect(client.userRequestCount, 2);
@@ -356,7 +369,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(_userActions(_longAdminIdentity));
     await tester.pumpAndSettle();
     await tester.tap(find.text('重置密码'));
     await tester.pump();
@@ -390,20 +403,20 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(_userActions(_longAdminIdentity));
     await tester.pumpAndSettle();
     await tester.tap(find.text('取消管理员'));
     await tester.pump();
 
     expect(client.setAdminCount, 1);
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(_userActions(_longAdminIdentity), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     client.completeSetAdmin();
     await tester.pumpAndSettle();
 
     expect(client.setAdminCount, 1);
-    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+    expect(_userActions(_longAdminIdentity), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -421,7 +434,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(_userActions(_longAdminIdentity));
     await tester.pumpAndSettle();
     await tester.tap(find.text('删除账号'));
     await tester.pumpAndSettle();
@@ -432,7 +445,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(client.deleteCount, 0);
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(_userActions(_longAdminIdentity));
     await tester.pumpAndSettle();
     await tester.tap(find.text('删除账号'));
     await tester.pumpAndSettle();
@@ -445,7 +458,7 @@ void main() {
     await tester.pump();
 
     expect(client.deleteCount, 1);
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(_userActions(_longAdminIdentity), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     client.completeDelete();
@@ -462,7 +475,7 @@ void main() {
       find.byKey(ValueKey('admin-user-title-$_longAdminIdentity')),
       findsOneWidget,
     );
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(_userActions(_longAdminIdentity), findsNothing);
 
     client.completeReload();
     await tester.pumpAndSettle();
@@ -470,7 +483,7 @@ void main() {
       find.byKey(ValueKey('admin-user-title-$_longAdminIdentity')),
       findsOneWidget,
     );
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(_userActions(_longAdminIdentity), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -488,7 +501,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    expect(find.text('当前'), findsOneWidget);
+    await tester.tap(_userActions(_longAdminIdentity));
     await tester.pumpAndSettle();
     final item = tester.widget<PopupMenuItem<String>>(
       find.ancestor(
@@ -519,7 +533,7 @@ void main() {
       find.byKey(const ValueKey('admin-user-title-deleted@x')),
       findsNothing,
     );
-    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+    expect(_userActions('active@x'), findsOneWidget);
 
     await tester.tap(find.text('已删除'));
     await tester.pumpAndSettle();
@@ -532,8 +546,60 @@ void main() {
       find.byKey(const ValueKey('admin-user-title-deleted@x')),
       findsOneWidget,
     );
-    expect(find.text('创建账号'), findsNothing);
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(_userActions('deleted@x'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('admin toolbar searches identity and filters active status', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: AdminPage(client: _FilterAdminPageFakeClient())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('admin-user-title-enabled@x')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-user-title-disabled@x')),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('admin-user-search')),
+      'paused person',
+    );
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('admin-user-title-enabled@x')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-user-title-disabled@x')),
+      findsOneWidget,
+    );
+
+    await tester.enterText(find.byKey(const ValueKey('admin-user-search')), '');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('admin-user-status-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, '启用'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('admin-user-title-enabled@x')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-user-title-disabled@x')),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -549,7 +615,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(_userActions(_longAdminIdentity));
     await tester.pumpAndSettle();
     await tester.tap(find.text('删除账号'));
     await tester.pumpAndSettle();
@@ -563,7 +629,7 @@ void main() {
 
     expect(client.deleteCount, 1);
     expect(find.textContaining('delete failed'), findsOneWidget);
-    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+    expect(_userActions(_longAdminIdentity), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 5));
   });
@@ -721,6 +787,24 @@ class _MixedAdminPageFakeClient extends _AdminPageFakeClient {
     User.fromJson({
       'identity': 'deleted@x',
       'display_name': 'Deleted User',
+      'disabled': true,
+      'deleted': true,
+    }),
+  ];
+}
+
+class _FilterAdminPageFakeClient extends _AdminPageFakeClient {
+  @override
+  Future<List<User>> users() async => [
+    User.fromJson({'identity': 'enabled@x', 'display_name': 'Active Person'}),
+    User.fromJson({
+      'identity': 'disabled@x',
+      'display_name': 'Paused Person',
+      'disabled': true,
+    }),
+    User.fromJson({
+      'identity': 'deleted@x',
+      'display_name': 'Deleted Person',
       'disabled': true,
       'deleted': true,
     }),

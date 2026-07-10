@@ -336,8 +336,9 @@ func TestAdminAccountsUIUsesLocalizedStatusCopy(t *testing.T) {
 	}
 	js := string(src)
 	required := []string{
-		`${u.is_admin ? ` + "`<span class=\"badge\">系统管理员</span>`" + ` : ""}`,
-		`u.disabled ? ` + "`<span class=\"badge expired\">已停用</span>`",
+		`<span class="badge">系统管理员</span>`,
+		`<span class="badge warning">已停用</span>`,
+		`<span class="badge success">已启用</span>`,
 		`${u.is_admin ? "取消管理员" : "授予管理员"}`,
 	}
 	for _, want := range required {
@@ -360,7 +361,7 @@ func TestAdminAccountsUIProvidesGuardedDelete(t *testing.T) {
 	}
 	js := string(src)
 	required := []string{
-		`u.deleted ? ` + "`<span class=\"badge expired\">已删除</span>`",
+		`<span class="badge expired">已删除</span>`,
 		`data-uaction="delete"`,
 		`title="不能删除当前登录账号"`,
 		`window.confirm(` + "`确定删除账号 ${id}？",
@@ -394,12 +395,18 @@ func TestAdminAccountsUIFiltersTombstoneArchive(t *testing.T) {
 	css := string(cssBytes)
 	for _, want := range []string{
 		`adminUserView: "active"`,
+		`adminUserQuery: ""`,
+		`adminUserStatus: "all"`,
 		`state.adminUserView = button.dataset.adminUserView;`,
+		`state.adminUserQuery = els.adminUserSearch.value;`,
+		`state.adminUserStatus = els.adminUserStatus.value;`,
 		`const showDeleted = state.adminUserView === "deleted";`,
-		`const visibleUsers = users.filter((u) => Boolean(u.deleted) === showDeleted);`,
-		`els.newUserForm.classList.toggle("hidden", showDeleted);`,
-		`els.usersList.innerHTML = visibleUsers.map((u) => {`,
-		"${u.deleted ? \"\" : `",
+		`if (Boolean(u.deleted) !== showDeleted) return false;`,
+		`if (query && !identity.includes(query) && !displayName.includes(query)) return false;`,
+		`return state.adminUserStatus === "disabled" ? Boolean(u.disabled) : !u.disabled;`,
+		`els.adminUserStatusWrap.classList.toggle("hidden", showDeleted);`,
+		`const actions = u.deleted`,
+		`? ""`,
 		`? { ...u, is_admin: false, disabled: true, deleted: true }`,
 		`renderUsers(state.adminUsers);`,
 	} {
@@ -408,24 +415,63 @@ func TestAdminAccountsUIFiltersTombstoneArchive(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		`id="open-create-user"`,
+		`id="admin-user-search"`,
 		`id="admin-user-tabs"`,
 		`data-admin-user-view="active"`,
 		`data-admin-user-view="deleted"`,
-		`role="tab" aria-selected="true">账号</button>`,
+		`role="tab" aria-selected="true">现有账号</button>`,
 		`role="tab" aria-selected="false">已删除</button>`,
+		`id="admin-user-status"`,
+		`<option value="enabled">启用</option>`,
+		`<option value="disabled">停用</option>`,
+		`<dialog id="create-user-dialog"`,
+		`<form id="new-user-form">`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Fatalf("relay admin archive UI is missing tab markup %q", want)
+			t.Fatalf("relay admin account UI is missing toolbar/dialog markup %q", want)
 		}
 	}
+	adminStart := strings.Index(html, `<section id="admin-pane"`)
+	if adminStart < 0 {
+		t.Fatal("relay admin account UI is missing admin pane")
+	}
+	adminEndOffset := strings.Index(html[adminStart:], `</section>`)
+	if adminEndOffset < 0 {
+		t.Fatal("relay admin account UI has an unterminated admin pane")
+	}
+	adminPane := html[adminStart : adminStart+adminEndOffset]
+	if strings.Contains(adminPane, `id="new-user-form"`) {
+		t.Fatal("relay admin account UI still renders the create form permanently in the admin pane")
+	}
 	for _, want := range []string{
+		`.admin-user-toolbar {`,
+		`.admin-user-search {`,
 		`.admin-user-tabs {`,
 		`display: inline-flex;`,
 		`.admin-user-tab.active {`,
 		`min-height: 28px;`,
+		`.admin-user-row {`,
+		`grid-template-columns: minmax(240px, 5fr) minmax(108px, 2fr) minmax(96px, 2fr) 38px;`,
+		`min-height: 58px;`,
+		`.admin-user-menu {`,
+		`.admin-create-dialog {`,
+		`@media (max-width: 700px) {`,
+		`grid-template-rows: auto auto;`,
+		`min-height: 72px;`,
 	} {
 		if !strings.Contains(css, want) {
-			t.Fatalf("relay admin archive UI is missing compact tab style %q", want)
+			t.Fatalf("relay admin account UI is missing dense responsive style %q", want)
+		}
+	}
+	for _, want := range []string{
+		`els.createUserDialog.showModal();`,
+		`setCreateUserPending(true);`,
+		`els.createUserDialog.close();`,
+		`setCreateUserPending(false);`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("relay admin account UI is missing create dialog behavior %q", want)
 		}
 	}
 }

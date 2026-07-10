@@ -227,25 +227,57 @@
 
       <section id="admin-pane" class="aux-pane hidden" aria-labelledby="admin-title">
         <div class="pane-header">
-          <div>
-            <h2 id="admin-title">管理 · 账号</h2>
-            <p class="muted">创建账号、设管理员 / 停用、重置密码或删除账号。</p>
+          <h2 id="admin-title">管理 · 账号</h2>
+          <button id="open-create-user" type="button" class="admin-create-button">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M8 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm-6 7c.4-3.2 2.5-5 6-5 1.2 0 2.3.2 3.1.6M15.5 9v7m-3.5-3.5h7" />
+            </svg>
+            创建账号
+          </button>
+        </div>
+        <div class="admin-user-toolbar">
+          <label class="admin-user-search">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
+            <input id="admin-user-search" type="search" placeholder="搜索账号或名称" aria-label="搜索账号或名称">
+          </label>
+          <div id="admin-user-tabs" class="admin-user-tabs" role="tablist" aria-label="账号状态">
+            <button type="button" class="admin-user-tab active" data-admin-user-view="active" role="tab" aria-selected="true">现有账号</button>
+            <button type="button" class="admin-user-tab" data-admin-user-view="deleted" role="tab" aria-selected="false">已删除</button>
           </div>
+          <label id="admin-user-status-wrap" class="admin-user-status-wrap">
+            <span>状态</span>
+            <select id="admin-user-status" aria-label="筛选账号状态">
+              <option value="all">全部</option>
+              <option value="enabled">启用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
         </div>
-        <div id="admin-user-tabs" class="admin-user-tabs" role="tablist" aria-label="账号状态">
-          <button type="button" class="admin-user-tab active" data-admin-user-view="active" role="tab" aria-selected="true">账号</button>
-          <button type="button" class="admin-user-tab" data-admin-user-view="deleted" role="tab" aria-selected="false">已删除</button>
-        </div>
-        <form id="new-user-form" class="inline-form">
-          <input id="new-user-identity" type="text" aria-label="新账号 identity" placeholder="identity（如 alex@frontend）">
-          <input id="new-user-password" type="text" aria-label="初始密码（留空自动生成）" placeholder="初始密码（留空自动生成）">
-          <label class="check"><input id="new-user-admin" type="checkbox"> 管理员</label>
-          <button type="submit">创建账号</button>
-        </form>
-        <div id="users-list" class="aux-list"></div>
+        <div id="users-list" class="admin-user-list"></div>
       </section>
     </main>
   </div>
+
+  <dialog id="create-user-dialog" class="reassign-dialog admin-create-dialog">
+    <form id="new-user-form">
+      <h3>创建账号</h3>
+      <div class="admin-create-fields">
+        <label>
+          identity
+          <input id="new-user-identity" type="text" aria-label="新账号 identity" placeholder="identity（如 alex@frontend）">
+        </label>
+        <label>
+          初始密码
+          <input id="new-user-password" type="text" aria-label="初始密码（留空自动生成）" placeholder="初始密码（留空自动生成）">
+        </label>
+        <label class="check admin-create-admin"><input id="new-user-admin" type="checkbox"> 创建为系统管理员</label>
+      </div>
+      <div class="dialog-actions">
+        <button id="create-user-cancel" type="button" class="secondary">取消</button>
+        <button id="create-user-submit" type="submit">创建账号</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="reassign-dialog" class="reassign-dialog">
     <form id="reassign-form" method="dialog">

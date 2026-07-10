@@ -30,6 +30,9 @@ const state = {
   online: [],
   adminUsers: [],
   adminUserView: "active",
+  adminUserQuery: "",
+  adminUserStatus: "all",
+  creatingUser: false,
   pendingUserActions: new Set(),
   workspaces: parseWorkspaces(localStorage.getItem("cc-handoff-workspaces")),
 };
@@ -75,7 +78,14 @@ const els = {
   newTokenLabel: document.querySelector("#new-token-label"),
   tokensList: document.querySelector("#tokens-list"),
   adminPane: document.querySelector("#admin-pane"),
+  openCreateUser: document.querySelector("#open-create-user"),
+  createUserDialog: document.querySelector("#create-user-dialog"),
+  createUserCancel: document.querySelector("#create-user-cancel"),
+  createUserSubmit: document.querySelector("#create-user-submit"),
   adminUserTabs: document.querySelector("#admin-user-tabs"),
+  adminUserSearch: document.querySelector("#admin-user-search"),
+  adminUserStatus: document.querySelector("#admin-user-status"),
+  adminUserStatusWrap: document.querySelector("#admin-user-status-wrap"),
   newUserForm: document.querySelector("#new-user-form"),
   newUserIdentity: document.querySelector("#new-user-identity"),
   newUserPassword: document.querySelector("#new-user-password"),
@@ -158,6 +168,13 @@ function wireEvents() {
   els.passwordForm.addEventListener("submit", onChangePassword);
   els.newTokenForm.addEventListener("submit", onCreateToken);
   els.newUserForm.addEventListener("submit", onCreateUser);
+  els.openCreateUser.addEventListener("click", openCreateUserDialog);
+  els.createUserCancel.addEventListener("click", () => {
+    if (!state.creatingUser) els.createUserDialog.close();
+  });
+  els.createUserDialog.addEventListener("cancel", (event) => {
+    if (state.creatingUser) event.preventDefault();
+  });
   els.projectsList.addEventListener("click", onProjectsListClick);
   els.projectsList.addEventListener("submit", onProjectsListSubmit);
   els.projectsList.addEventListener("change", onProjectsListChange);
@@ -170,6 +187,16 @@ function wireEvents() {
     const button = event.target.closest("[data-admin-user-view]");
     if (!button) return;
     state.adminUserView = button.dataset.adminUserView;
+    state.adminUserStatus = "all";
+    els.adminUserStatus.value = "all";
+    renderUsers(state.adminUsers);
+  });
+  els.adminUserSearch.addEventListener("input", () => {
+    state.adminUserQuery = els.adminUserSearch.value;
+    renderUsers(state.adminUsers);
+  });
+  els.adminUserStatus.addEventListener("change", () => {
+    state.adminUserStatus = els.adminUserStatus.value;
     renderUsers(state.adminUsers);
   });
 
@@ -948,6 +975,10 @@ async function onConnected(options = {}) {
     return;
   }
   state.adminUserView = "active";
+  state.adminUserQuery = "";
+  state.adminUserStatus = "all";
+  els.adminUserSearch.value = "";
+  els.adminUserStatus.value = "all";
   els.authMessage.textContent = `已登录为 ${state.me.identity}`;
   setupRoleTabs();
   setConnectedLabel();
@@ -1688,39 +1719,79 @@ async function loadAdmin() {
 function renderUsers(users) {
   state.adminUsers = users;
   const showDeleted = state.adminUserView === "deleted";
-  const visibleUsers = users.filter((u) => Boolean(u.deleted) === showDeleted);
+  const query = state.adminUserQuery.trim().toLowerCase();
+  const visibleUsers = users.filter((u) => {
+    if (Boolean(u.deleted) !== showDeleted) return false;
+    const identity = String(u.identity || "").toLowerCase();
+    const displayName = String(u.display_name || "").toLowerCase();
+    if (query && !identity.includes(query) && !displayName.includes(query)) return false;
+    if (showDeleted || state.adminUserStatus === "all") return true;
+    return state.adminUserStatus === "disabled" ? Boolean(u.disabled) : !u.disabled;
+  });
   els.adminUserTabs.querySelectorAll("[data-admin-user-view]").forEach((button) => {
     const active = button.dataset.adminUserView === state.adminUserView;
     button.classList.toggle("active", active);
     button.setAttribute("aria-selected", active ? "true" : "false");
   });
-  els.newUserForm.classList.toggle("hidden", showDeleted);
+  els.adminUserStatusWrap.classList.toggle("hidden", showDeleted);
   if (!visibleUsers.length) {
-    els.usersList.innerHTML = `<div class="empty-list">${showDeleted ? "没有已删除账号。" : "没有账号。"}</div>`;
+    const filtered = Boolean(query) || (!showDeleted && state.adminUserStatus !== "all");
+    const message = showDeleted
+      ? (filtered ? "没有匹配的已删除账号。" : "没有已删除账号。")
+      : (filtered ? "没有匹配的账号。" : "没有账号。");
+    els.usersList.innerHTML = `<div class="admin-user-empty">${message}</div>`;
     return;
   }
-  els.usersList.innerHTML = visibleUsers.map((u) => {
+  const rows = visibleUsers.map((u) => {
     const pending = state.pendingUserActions.has(u.identity);
     const self = u.identity === state.me?.identity;
+    const displayName = String(u.display_name || "").trim();
+    const title = displayName || u.identity;
+    const subtitle = displayName
+      ? `<span class="admin-user-identity">${escapeHTML(u.identity)}</span>`
+      : "";
+    const role = u.is_admin
+      ? `<span class="badge">系统管理员</span>`
+      : `<span class="admin-user-plain">普通成员</span>`;
+    const status = u.deleted
+      ? `<span class="badge expired">已删除</span>`
+      : (u.disabled
+        ? `<span class="badge warning">已停用</span>`
+        : `<span class="badge success">已启用</span>`);
+    const actions = u.deleted
+      ? ""
+      : (pending
+        ? `<span class="admin-user-pending" role="status">处理中…</span>`
+        : `<details class="admin-user-menu">
+            <summary aria-label="账号 ${escapeAttr(u.identity)} 的操作">•••</summary>
+            <div class="admin-user-menu-popover">
+              <button type="button" data-uaction="admin">${u.is_admin ? "取消管理员" : "授予管理员"}</button>
+              <button type="button" data-uaction="disable">${u.disabled ? "启用" : "停用"}</button>
+              <button type="button" data-uaction="reset">重置密码</button>
+              <button type="button" class="danger-text" data-uaction="delete" ${self ? `disabled title="不能删除当前登录账号"` : ""}>删除账号</button>
+            </div>
+          </details>`);
     return `
-    <div class="aux-card" data-user="${escapeAttr(u.identity)}" data-admin="${u.is_admin ? "1" : "0"}" data-disabled="${u.disabled ? "1" : "0"}" data-deleted="${u.deleted ? "1" : "0"}">
-      <div class="aux-card-head">
-        <div>
-          <strong>${escapeHTML(u.identity)}</strong>
-          ${u.is_admin ? `<span class="badge">系统管理员</span>` : ""}
-          ${u.deleted ? `<span class="badge expired">已删除</span>` : (u.disabled ? `<span class="badge expired">已停用</span>` : "")}
-        </div>
-        <div class="aux-card-actions">
-          ${u.deleted ? "" : `
-            <button class="secondary" type="button" data-uaction="admin" ${pending ? "disabled" : ""}>${u.is_admin ? "取消管理员" : "授予管理员"}</button>
-            <button class="secondary" type="button" data-uaction="disable" ${pending ? "disabled" : ""}>${u.disabled ? "启用" : "停用"}</button>
-            <button class="secondary" type="button" data-uaction="reset" ${pending ? "disabled" : ""}>重置密码</button>
-            <button class="danger" type="button" data-uaction="delete" ${pending || self ? "disabled" : ""} ${self ? `title="不能删除当前登录账号"` : ""}>${pending ? "处理中…" : "删除账号"}</button>
-          `}
-        </div>
+    <div class="admin-user-row" role="row" data-user="${escapeAttr(u.identity)}" data-admin="${u.is_admin ? "1" : "0"}" data-disabled="${u.disabled ? "1" : "0"}" data-deleted="${u.deleted ? "1" : "0"}">
+      <div class="admin-user-account" role="cell">
+        <div class="admin-user-title"><strong>${escapeHTML(title)}</strong>${self ? `<span class="badge current">当前</span>` : ""}</div>
+        ${subtitle}
       </div>
+      <div class="admin-user-role" role="cell" data-label="角色">${role}</div>
+      <div class="admin-user-status" role="cell" data-label="状态">${status}</div>
+      <div class="admin-user-actions" role="cell">${actions}</div>
     </div>`;
   }).join("");
+  els.usersList.innerHTML = `
+    <div class="admin-user-table" role="table" aria-label="账号列表">
+      <div class="admin-user-row admin-user-header" role="row">
+        <div role="columnheader">账号</div>
+        <div role="columnheader">角色</div>
+        <div role="columnheader">状态</div>
+        <div role="columnheader">操作</div>
+      </div>
+      ${rows}
+    </div>`;
 }
 
 async function onUsersListClick(event) {
@@ -1762,13 +1833,36 @@ async function onUsersListClick(event) {
   }
 }
 
+function openCreateUserDialog() {
+  if (state.creatingUser) return;
+  els.newUserIdentity.value = "";
+  els.newUserPassword.value = "";
+  els.newUserAdmin.checked = false;
+  els.createUserDialog.showModal();
+  els.newUserIdentity.focus();
+}
+
+function setCreateUserPending(pending) {
+  state.creatingUser = pending;
+  els.openCreateUser.disabled = pending;
+  els.createUserCancel.disabled = pending;
+  els.createUserSubmit.disabled = pending;
+  els.newUserIdentity.disabled = pending;
+  els.newUserPassword.disabled = pending;
+  els.newUserAdmin.disabled = pending;
+  els.createUserSubmit.textContent = pending ? "创建中…" : "创建账号";
+}
+
 async function onCreateUser(event) {
   event.preventDefault();
+  if (state.creatingUser) return;
   const identity = els.newUserIdentity.value.trim();
   if (!identity) {
     toast("请填 identity");
+    els.newUserIdentity.focus();
     return;
   }
+  setCreateUserPending(true);
   try {
     const body = { identity, is_admin: els.newUserAdmin.checked };
     const pw = els.newUserPassword.value.trim();
@@ -1777,6 +1871,7 @@ async function onCreateUser(event) {
     els.newUserIdentity.value = "";
     els.newUserPassword.value = "";
     els.newUserAdmin.checked = false;
+    els.createUserDialog.close();
     if (data.password) {
       await copyToClipboard(data.password, `账号已建，初始密码已复制（只显示这一次）：${data.password}`);
     } else {
@@ -1785,5 +1880,7 @@ async function onCreateUser(event) {
     await loadAdmin();
   } catch (err) {
     toast(err.message);
+  } finally {
+    setCreateUserPending(false);
   }
 }
