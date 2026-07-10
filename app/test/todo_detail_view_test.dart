@@ -17,6 +17,60 @@ void main() {
     expect(todoDetailDialogWidth(const Size(24, 760)), 420);
   });
 
+  test('todo detail read-only property pills fit compact widths', () {
+    expect(
+      todoDetailReadOnlyPillMaxWidth(const BoxConstraints(maxWidth: 320)),
+      220,
+    );
+    expect(
+      todoDetailReadOnlyPillMaxWidth(const BoxConstraints(maxWidth: 148)),
+      148,
+    );
+    expect(
+      todoDetailReadOnlyPillMaxWidth(const BoxConstraints(maxWidth: 64)),
+      64,
+    );
+    expect(todoDetailReadOnlyPillMaxWidth(const BoxConstraints()), 220);
+  });
+
+  testWidgets(
+    'read-only todo detail clamps long team metadata on compact screens',
+    (tester) async {
+      final client = _DelayedTodoClient();
+      final todo = _todo(
+        'td-readonly-long-meta',
+        'read only title',
+        workspaceName:
+            'a-very-long-team-workspace-name-that-would-otherwise-overflow',
+        repoName: 'extremely-long-repository-name-for-a-team-shared-project',
+        groupName: 'long-team-planning-group-name-for-cross-functional-work',
+      );
+
+      await tester.binding.setSurfaceSize(const Size(220, 520));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(
+            body: TodoDetailView(
+              client: client,
+              todo: todo,
+              access: TodoAccess.none,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      client.completeTodo('td-readonly-long-meta', todo);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('read only title'), findsOneWidget);
+    },
+  );
+
   testWidgets('stale todo detail load cannot overwrite a newer todo', (
     tester,
   ) async {
@@ -429,6 +483,9 @@ Todo _todo(
   String? assigneeAgentSessionId,
   String? assigneeWorkdir,
   String? assigneeAgentKind,
+  String? workspaceName,
+  String? repoName,
+  String? groupName,
 }) {
   final json = <String, dynamic>{
     'id': id,
@@ -454,6 +511,15 @@ Todo _todo(
   }
   if (assigneeAgentKind != null) {
     json['assignee_agent_kind'] = assigneeAgentKind;
+  }
+  if (workspaceName != null) {
+    json['workspace_name'] = workspaceName;
+  }
+  if (repoName != null) {
+    json['repo_name'] = repoName;
+  }
+  if (groupName != null) {
+    json['group_name'] = groupName;
   }
   return Todo.fromJson(json);
 }

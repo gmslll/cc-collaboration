@@ -27,6 +27,17 @@ double todoDetailDialogWidth(Size size, {double preferred = 420}) {
   return available < preferred ? available : preferred;
 }
 
+double todoDetailReadOnlyPillMaxWidth(
+  BoxConstraints constraints, {
+  double preferred = 220,
+  double minWidth = 96,
+}) {
+  final available = constraints.maxWidth;
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minWidth) return available;
+  return available < preferred ? available : preferred;
+}
+
 // TodoDetailView is the reusable 待办详情/编辑面板. Linear-flavored editing
 // model: title/body autosave on blur (+ a debounce while typing the body)
 // instead of a standalone Save button, and status/priority/recurrence/due-
@@ -807,111 +818,125 @@ class TodoDetailViewState extends State<TodoDetailView> {
           ],
         ),
         const SizedBox(height: 10),
-        Wrap(
-          spacing: 4,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            if (_access.canEdit)
-              StatusControl(
-                status: _current.status,
-                colorOf: _statusColor,
-                onChanged: _setStatus,
-                enabled: !_propertyMutating,
-              )
-            else
-              _readOnlyPill(
-                icon: Icons.adjust_rounded,
-                label: todoStatusLabel(_current.status),
-                color: _statusColor(_current.status),
-              ),
-            _dot(),
-            if (_access.canEdit)
-              PriorityControl(
-                priority: priorityLabels.containsKey(_current.priority)
-                    ? _current.priority
-                    : 'normal',
-                onChanged: (v) => _patch(priority: v),
-                enabled: !_propertyMutating,
-              )
-            else
-              _readOnlyPill(
-                icon: Icons.signal_cellular_alt_rounded,
-                label: priorityLabels[_current.priority] ?? '普通',
-              ),
-            _dot(),
-            if (_access.canEdit)
-              RecurrenceControl(
-                recurrence: recurrenceLabels.containsKey(_current.recurrence)
-                    ? _current.recurrence
-                    : '',
-                onChanged: (v) => _patch(recurrence: v),
-                enabled: !_propertyMutating,
-              )
-            else
-              _readOnlyPill(
-                icon: Icons.repeat_rounded,
-                label: recurrenceLabels[_current.recurrence] ?? '不重复',
-              ),
-            _dot(),
-            if (_access.canEdit)
-              DueDatePill(
-                dueAt: _current.dueAt,
-                onTap: _pickDueDate,
-                onClear: () => _patch(clearDueAt: true),
-                enabled: !_propertyMutating,
-              )
-            else
-              _readOnlyPill(
-                icon: Icons.calendar_today_rounded,
-                label: _current.dueAt == null
-                    ? '截止日期'
-                    : commitDate(_current.dueAt!),
-              ),
-            _dot(),
-            if (_access.canEdit)
-              WorkspaceRepoControl(
-                workspaceName: _current.workspaceName,
-                repoName: _current.repoName,
-                workspaces: widget.config?.workspaces ?? const [],
-                onBind: _bindRepo,
-                onClear: _clearRepo,
-                enabled: !_propertyMutating,
-              )
-            else
-              _readOnlyPill(
-                icon: Icons.dns_rounded,
-                label:
-                    (_current.workspaceName ?? '').isNotEmpty &&
-                        (_current.repoName ?? '').isNotEmpty
-                    ? '${_current.workspaceName} / ${_current.repoName}'
-                    : '未绑定库',
-              ),
-            _dot(),
-            if (_access.canEdit)
-              GroupControl(
-                groupName: _current.groupName,
-                existingGroups: widget.groups,
-                onSelect: _setGroup,
-                onClear: _clearGroup,
-                enabled: !_propertyMutating,
-              )
-            else
-              _readOnlyPill(
-                icon: Icons.folder_outlined,
-                label: (_current.groupName ?? '').isEmpty
-                    ? '未分组'
-                    : _current.groupName!,
-              ),
-            if (_propertyMutating) ...[
-              _dot(),
-              const SizedBox(
-                width: 13,
-                height: 13,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ],
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final readOnlyPillMaxWidth = todoDetailReadOnlyPillMaxWidth(
+              constraints,
+            );
+            return Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (_access.canEdit)
+                  StatusControl(
+                    status: _current.status,
+                    colorOf: _statusColor,
+                    onChanged: _setStatus,
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.adjust_rounded,
+                    label: todoStatusLabel(_current.status),
+                    color: _statusColor(_current.status),
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  PriorityControl(
+                    priority: priorityLabels.containsKey(_current.priority)
+                        ? _current.priority
+                        : 'normal',
+                    onChanged: (v) => _patch(priority: v),
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.signal_cellular_alt_rounded,
+                    label: priorityLabels[_current.priority] ?? '普通',
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  RecurrenceControl(
+                    recurrence:
+                        recurrenceLabels.containsKey(_current.recurrence)
+                        ? _current.recurrence
+                        : '',
+                    onChanged: (v) => _patch(recurrence: v),
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.repeat_rounded,
+                    label: recurrenceLabels[_current.recurrence] ?? '不重复',
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  DueDatePill(
+                    dueAt: _current.dueAt,
+                    onTap: _pickDueDate,
+                    onClear: () => _patch(clearDueAt: true),
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.calendar_today_rounded,
+                    label: _current.dueAt == null
+                        ? '截止日期'
+                        : commitDate(_current.dueAt!),
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  WorkspaceRepoControl(
+                    workspaceName: _current.workspaceName,
+                    repoName: _current.repoName,
+                    workspaces: widget.config?.workspaces ?? const [],
+                    onBind: _bindRepo,
+                    onClear: _clearRepo,
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.dns_rounded,
+                    label:
+                        (_current.workspaceName ?? '').isNotEmpty &&
+                            (_current.repoName ?? '').isNotEmpty
+                        ? '${_current.workspaceName} / ${_current.repoName}'
+                        : '未绑定库',
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                _dot(),
+                if (_access.canEdit)
+                  GroupControl(
+                    groupName: _current.groupName,
+                    existingGroups: widget.groups,
+                    onSelect: _setGroup,
+                    onClear: _clearGroup,
+                    enabled: !_propertyMutating,
+                  )
+                else
+                  _readOnlyPill(
+                    icon: Icons.folder_outlined,
+                    label: (_current.groupName ?? '').isEmpty
+                        ? '未分组'
+                        : _current.groupName!,
+                    maxWidth: readOnlyPillMaxWidth,
+                  ),
+                if (_propertyMutating) ...[
+                  _dot(),
+                  const SizedBox(
+                    width: 13,
+                    height: 13,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ],
+            );
+          },
         ),
         if ((_current.assigneeIdentity ?? '').isNotEmpty ||
             _hasSessionBinding) ...[
@@ -1020,15 +1045,26 @@ class TodoDetailViewState extends State<TodoDetailView> {
     required IconData icon,
     required String label,
     Color color = CcColors.muted,
-  }) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 6),
-        Text(label, style: TextStyle(fontSize: 12.5, color: color)),
-      ],
+    required double maxWidth,
+  }) => ConstrainedBox(
+    constraints: BoxConstraints(maxWidth: maxWidth),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12.5, color: color),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 
