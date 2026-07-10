@@ -712,6 +712,12 @@ void main() {
     );
   });
 
+  test('project dialogs are capped for compact screens', () {
+    expect(projectDialogWidth(const Size(1024, 800)), 420);
+    expect(projectDialogWidth(const Size(360, 760)), 328);
+    expect(projectDialogWidth(const Size(24, 760)), 420);
+  });
+
   test('member action width leaves room for identity text', () {
     expect(
       memberActionWidth(const BoxConstraints(maxWidth: 220)),
@@ -733,6 +739,25 @@ void main() {
     expect(projectsMenuMaxHeight(const Size(320, 420)), closeTo(243.6, 0.001));
     expect(projectsMenuMaxHeight(const Size(320, 220)), 160);
     expect(projectsMenuMaxHeight(Size.zero), 320);
+  });
+
+  test('project rename dialog uses responsive controls', () {
+    final start = source.indexOf('Future<void> _rename(String current) async');
+    final renameDialog = source.substring(
+      start,
+      source.indexOf(
+        'Future<void> _removeMember(String identity) async',
+        start,
+      ),
+    );
+
+    expect(renameDialog, contains('projectDialogWidth(size)'));
+    expect(renameDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(renameDialog, contains('maxLines: 1'));
+    expect(renameDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(renameDialog, contains('textInputAction: TextInputAction.done'));
+    expect(renameDialog, contains('onSubmitted: (_) => Navigator.pop'));
+    expect(renameDialog, isNot(contains('content: TextField(')));
   });
 
   test('sole project owner map only includes projects with one owner', () {

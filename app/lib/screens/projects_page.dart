@@ -322,6 +322,12 @@ double responsiveControlWidth(BoxConstraints constraints, double preferred) {
   return maxWidth < preferred ? maxWidth : preferred;
 }
 
+double projectDialogWidth(Size screenSize, {double preferred = 420}) {
+  final available = screenSize.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 double memberActionWidth(
   BoxConstraints constraints, {
   double preferred = 156,
@@ -2043,20 +2049,40 @@ class _ProjectSheetState extends State<_ProjectSheet> {
       ok =
           await showDialog<bool>(
             context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('重命名项目'),
-              content: TextField(controller: ctl, autofocus: true),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('取消'),
+            builder: (ctx) {
+              final size = MediaQuery.sizeOf(ctx);
+              return AlertDialog(
+                insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 24,
                 ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('保存'),
+                title: const Text(
+                  '重命名项目',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ],
-            ),
+                content: SizedBox(
+                  width: projectDialogWidth(size),
+                  child: TextField(
+                    controller: ctl,
+                    autofocus: true,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(labelText: '项目名称'),
+                    onSubmitted: (_) => Navigator.pop(ctx, true),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('取消'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('保存'),
+                  ),
+                ],
+              );
+            },
           ) ==
           true;
       name = ctl.text.trim();
