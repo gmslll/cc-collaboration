@@ -66,12 +66,14 @@ class AccountPage extends StatefulWidget {
   final String identity;
   final VoidCallback? onSwitchAccount;
   final VoidCallback? onConfigSaved;
+  final Future<List<HookInstallStatus>> Function()? hookStatusLoader;
   const AccountPage({
     super.key,
     required this.client,
     required this.identity,
     this.onSwitchAccount,
     this.onConfigSaved,
+    this.hookStatusLoader,
   });
 
   @override
@@ -195,25 +197,30 @@ class _AccountPageState extends State<AccountPage> {
   Future<void> _loadHookStatus() async {
     if (!_isDesktop) return;
     try {
-      final out = await Cli.run(['bus-hook', 'status']);
-      final list = (jsonDecode(out) as List).cast<Map<String, dynamic>>();
+      final loader = widget.hookStatusLoader;
+      final hooks = loader == null
+          ? _parseHookStatus(await Cli.run(['bus-hook', 'status']))
+          : await loader();
       if (!mounted) return;
-      setState(
-        () => _hooks = [
-          for (final h in list)
-            (
-              name: (h['agent'] ?? '').toString(),
-              path: (h['path'] ?? '').toString(),
-              ok: h['installed'] == true,
-              availableEvents: _stringList(h['available_events']),
-              installedEvents: _stringList(h['installed_events']),
-              missingEvents: _stringList(h['missing_events']),
-            ),
-        ],
-      );
+      setState(() => _hooks = hooks);
     } catch (_) {
       if (mounted) setState(() => _hooks = const []);
     }
+  }
+
+  static List<HookInstallStatus> _parseHookStatus(String out) {
+    final list = (jsonDecode(out) as List).cast<Map<String, dynamic>>();
+    return [
+      for (final h in list)
+        (
+          name: (h['agent'] ?? '').toString(),
+          path: (h['path'] ?? '').toString(),
+          ok: h['installed'] == true,
+          availableEvents: _stringList(h['available_events']),
+          installedEvents: _stringList(h['installed_events']),
+          missingEvents: _stringList(h['missing_events']),
+        ),
+    ];
   }
 
   static List<String> _stringList(Object? v) {
@@ -535,6 +542,8 @@ class _AccountPageState extends State<AccountPage> {
       children: [
         Text(
           '账号 · ${widget.identity}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
@@ -831,11 +840,36 @@ class _AccountPageState extends State<AccountPage> {
         ? CcColors.warning
         : CcColors.danger;
     final installing = _reinstallingAgents.contains(h.name);
+    final statusText = totalCount == 0
+        ? (h.ok ? '已安装' : '未安装')
+        : h.ok
+        ? '已安装 $installedCount/$totalCount'
+        : installedCount == 0
+        ? '未安装'
+        : '部分 $installedCount/$totalCount';
+    final status = Text(
+      statusText,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 11, color: color),
+    );
+    final action = TextButton(
+      onPressed: _reinstalling || installing
+          ? null
+          : () => _chooseHookEvents(h),
+      child: installing
+          ? const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Text('选择安装'),
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Icon(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final icon = Icon(
             h.ok
                 ? Icons.check_circle_rounded
                 : partial
@@ -843,54 +877,60 @@ class _AccountPageState extends State<AccountPage> {
                 : Icons.cancel_rounded,
             size: 16,
             color: color,
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 52,
-            child: Text(
-              h.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+          );
+          final name = Text(
+            h.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          );
+          final path = Text(
+            h.path,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: CcColors.subtle,
+              fontSize: 11,
+              fontFamily: CcType.mono,
             ),
-          ),
-          Expanded(
-            child: Text(
-              h.path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: CcColors.subtle,
-                fontSize: 11,
-                fontFamily: CcType.mono,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            totalCount == 0
-                ? (h.ok ? '已安装' : '未安装')
-                : h.ok
-                ? '已安装 $installedCount/$totalCount'
-                : installedCount == 0
-                ? '未安装'
-                : '部分 $installedCount/$totalCount',
-            style: TextStyle(fontSize: 11, color: color),
-          ),
-          const SizedBox(width: 6),
-          TextButton(
-            onPressed: _reinstalling || installing
-                ? null
-                : () => _chooseHookEvents(h),
-            child: installing
-                ? const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('选择安装'),
-          ),
-        ],
+          );
+          if (constraints.maxWidth.isFinite && constraints.maxWidth < 300) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    icon,
+                    const SizedBox(width: 8),
+                    Expanded(child: name),
+                    const SizedBox(width: 8),
+                    Flexible(child: status),
+                  ],
+                ),
+                if (h.path.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 24),
+                    child: path,
+                  ),
+                ],
+                Align(alignment: Alignment.centerRight, child: action),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              icon,
+              const SizedBox(width: 8),
+              SizedBox(width: 52, child: name),
+              Expanded(child: path),
+              const SizedBox(width: 8),
+              Flexible(flex: 0, child: status),
+              const SizedBox(width: 6),
+              action,
+            ],
+          );
+        },
       ),
     );
   }

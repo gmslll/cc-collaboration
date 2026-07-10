@@ -8,6 +8,9 @@ import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _longAccountIdentity =
+    'developer.with.a.very.long.identity.for.account.settings@kunlun.example.com';
+
 void main() {
   test('account dropdown menus are capped for compact screens', () {
     expect(accountMenuMaxHeight(const Size(1024, 900)), 320);
@@ -69,6 +72,83 @@ void main() {
     expect(dialog, contains('overflow: TextOverflow.ellipsis'));
     expect(dialog, contains('scrollDirection: Axis.horizontal'));
     expect(dialog, contains('SelectableText'));
+  });
+
+  testWidgets('account title clamps long identities', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(
+            client: _DelayedAccountPageFakeClient(),
+            identity: _longAccountIdentity,
+            hookStatusLoader: () async => const [],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final title = tester.widget<Text>(find.text('账号 · $_longAccountIdentity'));
+
+    expect(tester.takeException(), isNull);
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+  });
+
+  testWidgets('hook status rows fit compact screens', (tester) async {
+    tester.view.physicalSize = const Size(260, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: AccountPage(
+            client: _DelayedAccountPageFakeClient(),
+            identity: 'dev@x',
+            hookStatusLoader: () async => [
+              (
+                name: 'codex-with-a-long-agent-name',
+                path:
+                    '/Users/developer/.codex/hooks/very/deeply/nested/settings.json',
+                ok: false,
+                availableEvents: const [
+                  'SessionStart',
+                  'Stop',
+                  'Notification',
+                  'UserPromptSubmit',
+                ],
+                installedEvents: const ['Stop'],
+                missingEvents: const [
+                  'SessionStart',
+                  'Notification',
+                  'UserPromptSubmit',
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final name = tester.widget<Text>(find.text('codex-with-a-long-agent-name'));
+    final path = tester.widget<Text>(
+      find.text(
+        '/Users/developer/.codex/hooks/very/deeply/nested/settings.json',
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(name.maxLines, 1);
+    expect(name.overflow, TextOverflow.ellipsis);
+    expect(path.maxLines, 1);
+    expect(path.overflow, TextOverflow.ellipsis);
+    expect(find.widgetWithText(TextButton, '选择安装'), findsOneWidget);
   });
 
   testWidgets('password change completion after unmount is ignored', (
