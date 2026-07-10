@@ -287,6 +287,10 @@ void main() {
       ),
       320,
     );
+    expect(todoAssignUseCompactModePicker(288), isTrue);
+    expect(todoAssignUseCompactModePicker(440), isFalse);
+    expect(todoAssignDialogTitle(true), '一键指派');
+    expect(todoAssignDialogTitle(false), '指派给成员');
   });
 
   test('initial todo assign mode prefers the first actionable path', () {

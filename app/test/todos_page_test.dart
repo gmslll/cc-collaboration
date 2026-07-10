@@ -637,6 +637,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('assignment dialog title is constrained on compact screens', (
+    tester,
+  ) async {
+    final client = _DelayedAssignTodoClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+    final overview = SessionOverviewStore()
+      ..publish([_sessionCard('s1', project: 'Backend', projectId: 'p1')]);
+
+    await tester.binding.setSurfaceSize(const Size(320, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _me(),
+            store: store,
+            overviewStore: overview,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Team todo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('指派'));
+    await tester.pumpAndSettle();
+
+    final title = tester.widget<Text>(find.text('一键指派'));
+
+    expect(tester.takeException(), isNull);
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+  });
+
   testWidgets('new session assignment dispatch failure stays unassigned', (
     tester,
   ) async {

@@ -115,6 +115,17 @@ double todoDialogWidth(
   return available < preferred ? available : preferred;
 }
 
+bool todoAssignUseCompactModePicker(
+  double dialogWidth, {
+  double breakpoint = 360,
+}) {
+  if (!dialogWidth.isFinite || dialogWidth <= 0) return false;
+  return dialogWidth < breakpoint;
+}
+
+String todoAssignDialogTitle(bool showSessionModes) =>
+    showSessionModes ? '一键指派' : '指派给成员';
+
 Size todoQuickCreateDialogSize(
   Size screenSize, {
   double preferredWidth = 560,
@@ -2907,7 +2918,7 @@ class _AssignTodoDialog extends StatefulWidget {
 }
 
 class _AssignTodoDialogState extends State<_AssignTodoDialog> {
-  String _mode = 'existing'; // existing | new
+  String _mode = 'existing'; // existing | new | member
   String? _targetSid;
   // "已有会话" tab 的三级级联选择状态，跟 "新建会话" tab 的 _workspace/_project
   // 完全分开：这边筛的是已有 SessionCard，那边选的是 config 里可新建的
@@ -3751,7 +3762,11 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     final dialogWidth = todoDialogWidth(MediaQuery.sizeOf(context));
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      title: Text(_showSessionModes ? '一键指派' : '指派给成员'),
+      title: Text(
+        todoAssignDialogTitle(_showSessionModes),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       content: SizedBox(
         width: dialogWidth,
         child: SingleChildScrollView(
@@ -3768,19 +3783,38 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
                   ),
                 ),
               if (_showSessionModes) ...[
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'existing', label: Text('已有会话')),
-                    ButtonSegment(value: 'new', label: Text('新建会话')),
-                    ButtonSegment(value: 'member', label: Text('指派成员')),
-                  ],
-                  selected: {_mode},
-                  showSelectedIcon: false,
-                  onSelectionChanged: (s) => setState(() {
-                    _mode = s.first;
-                    if (_mode == 'member') _requestMembers();
-                  }),
-                ),
+                if (todoAssignUseCompactModePicker(dialogWidth))
+                  DropdownButtonFormField<String>(
+                    initialValue: _mode,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: '指派方式',
+                      isDense: true,
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'existing', child: Text('已有会话')),
+                      DropdownMenuItem(value: 'new', child: Text('新建会话')),
+                      DropdownMenuItem(value: 'member', child: Text('指派成员')),
+                    ],
+                    onChanged: (v) => setState(() {
+                      _mode = v ?? 'existing';
+                      if (_mode == 'member') _requestMembers();
+                    }),
+                  )
+                else
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'existing', label: Text('已有会话')),
+                      ButtonSegment(value: 'new', label: Text('新建会话')),
+                      ButtonSegment(value: 'member', label: Text('指派成员')),
+                    ],
+                    selected: {_mode},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (s) => setState(() {
+                      _mode = s.first;
+                      if (_mode == 'member') _requestMembers();
+                    }),
+                  ),
                 const SizedBox(height: 12),
               ],
               if (mode == 'existing')
