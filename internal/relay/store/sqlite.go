@@ -149,6 +149,23 @@ CREATE TABLE IF NOT EXISTS project_members (
   PRIMARY KEY (project_id, identity)
 );
 CREATE INDEX IF NOT EXISTS idx_project_members_identity ON project_members(identity);
+
+CREATE TABLE IF NOT EXISTS invitations (
+  id               TEXT PRIMARY KEY,
+  scope            TEXT NOT NULL,
+  org_id           TEXT NOT NULL DEFAULT '',
+  project_id       TEXT NOT NULL DEFAULT '',
+  identity         TEXT NOT NULL,
+  role             TEXT NOT NULL,
+  inviter_identity TEXT NOT NULL,
+  created_at       INTEGER NOT NULL,
+  CHECK(scope IN ('org', 'project')),
+  CHECK((scope = 'org' AND org_id != '' AND project_id = '') OR (scope = 'project' AND org_id != '' AND project_id != '')),
+  UNIQUE(scope, org_id, project_id, identity)
+);
+CREATE INDEX IF NOT EXISTS idx_invitations_identity ON invitations(identity);
+CREATE INDEX IF NOT EXISTS idx_invitations_org ON invitations(org_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_project ON invitations(project_id);
 `); err != nil {
 		return err
 	}

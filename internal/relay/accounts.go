@@ -251,11 +251,20 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if organizations == nil {
 		organizations = []store.OrganizationRole{}
 	}
+	invitations, err := s.Store.ListInvitationsForIdentity(r.Context(), identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if invitations == nil {
+		invitations = []store.Invitation{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"identity":      identity,
 		"is_admin":      s.isAdmin(r.Context(), identity),
 		"organizations": organizations,
 		"projects":      projects,
+		"invitations":   invitations,
 	})
 }
 

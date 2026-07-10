@@ -112,10 +112,19 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "list organization projects: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var invitations []store.Invitation
+	if store.OrgRoleCanManage(org.Role) || s.isAdmin(r.Context(), identity) {
+		invitations, err = s.Store.ListOrganizationInvitations(r.Context(), orgID)
+		if err != nil {
+			http.Error(w, "list organization invitations: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"organization": org,
 		"members":      members,
 		"projects":     projects,
+		"invitations":  invitations,
 	})
 }
 

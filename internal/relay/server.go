@@ -132,6 +132,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/orgs/{id}", s.getOrganization)
 	api.HandleFunc("POST /v1/orgs/{id}/members", s.addOrganizationMember)
 	api.HandleFunc("DELETE /v1/orgs/{id}/members/{identity}", s.removeOrganizationMember)
+	api.HandleFunc("POST /v1/orgs/{id}/invitations", s.createOrganizationInvitation)
+	api.HandleFunc("DELETE /v1/orgs/{id}/invitations/{invitation_id}", s.cancelOrganizationInvitation)
 	// Projects: self-service create + owner/admin management.
 	api.HandleFunc("GET /v1/projects", s.listProjects)
 	api.HandleFunc("POST /v1/projects", s.createProject)
@@ -142,6 +144,11 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /v1/projects/{id}/repos", s.unmapRepo)
 	api.HandleFunc("POST /v1/projects/{id}/members", s.addMember)
 	api.HandleFunc("DELETE /v1/projects/{id}/members/{identity}", s.removeMember)
+	api.HandleFunc("POST /v1/projects/{id}/invitations", s.createProjectInvitation)
+	api.HandleFunc("DELETE /v1/projects/{id}/invitations/{invitation_id}", s.cancelProjectInvitation)
+	api.HandleFunc("GET /v1/invitations", s.listMyInvitations)
+	api.HandleFunc("POST /v1/invitations/{id}/accept", s.acceptInvitation)
+	api.HandleFunc("POST /v1/invitations/{id}/decline", s.declineInvitation)
 	// Self-service machine tokens (any authenticated user, own tokens only).
 	api.HandleFunc("GET /v1/tokens", s.listTokens)
 	api.HandleFunc("POST /v1/tokens", s.createToken)

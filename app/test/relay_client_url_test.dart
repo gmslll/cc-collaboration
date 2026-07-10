@@ -59,11 +59,17 @@ void main() {
     await client.todoAttachment('td/team#1', 'screens/a #1.png');
     await client.organization('org/team#1');
     await client.addOrganizationMember('org/team#1', 'dev/team#1', 'member');
+    await client.inviteOrganizationMember('org/team#1', 'dev/team#1', 'member');
+    await client.cancelOrganizationInvitation('org/team#1', 'inv/team#1');
     await client.removeOrganizationMember('org/team#1', 'dev/team#1');
     await client.renameProject('proj/team#1', 'Renamed');
     await client.mapRepo('proj/team#1', 'owner/repo');
     await client.unmapRepo('proj/team#1', 'owner/repo');
     await client.addMember('proj/team#1', 'dev/team#1', 'member');
+    await client.inviteProjectMember('proj/team#1', 'dev/team#1', 'member');
+    await client.cancelProjectInvitation('proj/team#1', 'pinv/team#1');
+    await client.acceptInvitation('inv/team#1');
+    await client.declineInvitation('dinv/team#1');
     await client.removeMember('proj/team#1', 'dev/team#1');
     await client.deleteProject('proj/team#1');
     await client.deleteToken('tok/team#1');
@@ -81,11 +87,17 @@ void main() {
       'GET /v1/todos/td%2Fteam%231/attachments/screens%2Fa%20%231.png',
       'GET /v1/orgs/org%2Fteam%231',
       'POST /v1/orgs/org%2Fteam%231/members',
+      'POST /v1/orgs/org%2Fteam%231/invitations',
+      'DELETE /v1/orgs/org%2Fteam%231/invitations/inv%2Fteam%231',
       'DELETE /v1/orgs/org%2Fteam%231/members/dev%2Fteam%231',
       'PATCH /v1/projects/proj%2Fteam%231',
       'POST /v1/projects/proj%2Fteam%231/repos',
       'DELETE /v1/projects/proj%2Fteam%231/repos',
       'POST /v1/projects/proj%2Fteam%231/members',
+      'POST /v1/projects/proj%2Fteam%231/invitations',
+      'DELETE /v1/projects/proj%2Fteam%231/invitations/pinv%2Fteam%231',
+      'POST /v1/invitations/inv%2Fteam%231/accept',
+      'POST /v1/invitations/dinv%2Fteam%231/decline',
       'DELETE /v1/projects/proj%2Fteam%231/members/dev%2Fteam%231',
       'DELETE /v1/projects/proj%2Fteam%231',
       'DELETE /v1/tokens/tok%2Fteam%231',

@@ -159,7 +159,15 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "list project members: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": p, "repos": repos, "members": members})
+	var invitations []store.Invitation
+	if p.Role == store.RoleOwner || p.Role == store.RoleAdmin || s.isAdmin(r.Context(), identity) {
+		invitations, err = s.Store.ListProjectInvitations(r.Context(), id)
+		if err != nil {
+			http.Error(w, "list project invitations: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project": p, "repos": repos, "members": members, "invitations": invitations})
 }
 
 func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
@@ -328,6 +336,10 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, store.ErrLastOwner) {
 		http.Error(w, "last owner cannot be removed", http.StatusConflict)
+		return
+	}
+	if errors.Is(err, store.ErrConflict) {
+		http.Error(w, "conflict", http.StatusConflict)
 		return
 	}
 	if errors.Is(err, store.ErrInvalid) {

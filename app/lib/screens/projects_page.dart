@@ -89,6 +89,27 @@ String organizationMemberPickerLabel(OrganizationMember member) {
   return '${member.displayName} · ${member.identity} · $role';
 }
 
+String invitationTargetLabel(Invitation invitation) {
+  if (invitation.scope == 'project') {
+    final project = invitation.projectName.isEmpty
+        ? invitation.projectId
+        : invitation.projectName;
+    final org = invitation.orgName.isEmpty
+        ? invitation.orgId
+        : invitation.orgName;
+    return org.isEmpty ? project : '$org · $project';
+  }
+  return invitation.orgName.isEmpty ? invitation.orgId : invitation.orgName;
+}
+
+String invitationRoleLabel(Invitation invitation) =>
+    invitation.scope == 'project'
+    ? projectRoleLabel(invitation.role)
+    : organizationRoleLabel(invitation.role, isAdmin: false);
+
+String invitationScopeLabel(Invitation invitation) =>
+    invitation.scope == 'project' ? '项目邀请' : '团队邀请';
+
 int organizationOwnerCount(Iterable<OrganizationMember> members) =>
     members.where((m) => normalizedRole(m.role) == 'owner').length;
 
@@ -452,11 +473,13 @@ class ProjectsPage extends StatefulWidget {
 class _ProjectsPageState extends State<ProjectsPage> {
   List<Project>? _projects;
   List<Organization> _orgs = const [];
+  List<Invitation> _invitations = const [];
   Set<String> _manageableOrgIds = const <String>{};
   List<OnlineUser> _online = const [];
   bool _isAdmin = false;
   bool _creatingProject = false;
   bool _creatingOrg = false;
+  bool _handlingInvitation = false;
   String _identity = '';
   String? _error;
   final _name = TextEditingController();
@@ -486,11 +509,13 @@ class _ProjectsPageState extends State<ProjectsPage> {
       setState(() {
         _projects = null;
         _orgs = const [];
+        _invitations = const [];
         _manageableOrgIds = const <String>{};
         _online = const [];
         _isAdmin = false;
         _creatingProject = false;
         _creatingOrg = false;
+        _handlingInvitation = false;
         _identity = '';
         _selectedOrgId = null;
         _error = null;
@@ -558,6 +583,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
       if (_isCurrentLoad(generation, client)) {
         setState(() {
           _orgs = orgs;
+          _invitations = me?.invitations ?? const [];
           _manageableOrgIds = manageableOrgIds;
           _isAdmin = me?.isAdmin == true;
           _identity = me?.identity ?? '';
@@ -622,6 +648,42 @@ class _ProjectsPageState extends State<ProjectsPage> {
     } finally {
       if (mounted && identical(client, widget.client)) {
         setState(() => _creatingOrg = false);
+      }
+    }
+  }
+
+  Future<void> _acceptInvitation(Invitation invitation) async {
+    if (_handlingInvitation) return;
+    final client = widget.client;
+    if (mounted) setState(() => _handlingInvitation = true);
+    try {
+      await client.acceptInvitation(invitation.id);
+      if (!mounted || !identical(client, widget.client)) return;
+      await _load();
+    } catch (e) {
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '接受邀请失败: ${errorText(e)}');
+    } finally {
+      if (mounted && identical(client, widget.client)) {
+        setState(() => _handlingInvitation = false);
+      }
+    }
+  }
+
+  Future<void> _declineInvitation(Invitation invitation) async {
+    if (_handlingInvitation) return;
+    final client = widget.client;
+    if (mounted) setState(() => _handlingInvitation = true);
+    try {
+      await client.declineInvitation(invitation.id);
+      if (!mounted || !identical(client, widget.client)) return;
+      await _load();
+    } catch (e) {
+      if (!mounted || !identical(client, widget.client)) return;
+      snack(context, '拒绝邀请失败: ${errorText(e)}');
+    } finally {
+      if (mounted && identical(client, widget.client)) {
+        setState(() => _handlingInvitation = false);
       }
     }
   }
@@ -699,6 +761,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
         children: [
           _workspaceHeader(),
           const SizedBox(height: 12),
+          if (_invitations.isNotEmpty) ...[
+            _InvitationPanel(
+              invitations: _invitations,
+              busy: _handlingInvitation,
+              onAccept: _acceptInvitation,
+              onDecline: _declineInvitation,
+            ),
+            const SizedBox(height: 12),
+          ],
           _teamPanel(),
           const SizedBox(height: 12),
           _searchBar(),
@@ -1179,6 +1250,123 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 }
 
+class _InvitationPanel extends StatelessWidget {
+  final List<Invitation> invitations;
+  final bool busy;
+  final ValueChanged<Invitation> onAccept;
+  final ValueChanged<Invitation> onDecline;
+
+  const _InvitationPanel({
+    required this.invitations,
+    required this.busy,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: CcColors.panel,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CcRadius.md),
+        side: const BorderSide(color: CcColors.borderSoft),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.mark_email_unread_rounded,
+                  size: 18,
+                  color: CcColors.accentBright,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '待处理邀请',
+                  style: CcType.code(size: 12, color: CcColors.text),
+                ),
+                const Spacer(),
+                Text(
+                  '${invitations.length}',
+                  style: CcType.code(size: 12, color: CcColors.muted),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...invitations.map(
+              (invitation) => _IncomingInvitationTile(
+                invitation: invitation,
+                busy: busy,
+                onAccept: () => onAccept(invitation),
+                onDecline: () => onDecline(invitation),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IncomingInvitationTile extends StatelessWidget {
+  final Invitation invitation;
+  final bool busy;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+
+  const _IncomingInvitationTile({
+    required this.invitation,
+    required this.busy,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        invitation.scope == 'project'
+            ? Icons.folder_shared_rounded
+            : Icons.groups_rounded,
+        size: 18,
+        color: CcColors.muted,
+      ),
+      title: Text(
+        invitationTargetLabel(invitation),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        '${invitationScopeLabel(invitation)} · ${invitationRoleLabel(invitation)} · ${invitation.inviterIdentity}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Wrap(
+        spacing: 4,
+        children: [
+          IconButton(
+            tooltip: '拒绝',
+            onPressed: busy ? null : onDecline,
+            icon: const Icon(Icons.close_rounded, size: 18),
+          ),
+          FilledButton.icon(
+            onPressed: busy ? null : onAccept,
+            icon: busy
+                ? const _InlineButtonSpinner()
+                : const Icon(Icons.check_rounded, size: 18),
+            label: const Text('接受'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MetricPill extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1499,6 +1687,25 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     if (ok) _identity.clear();
   }
 
+  Future<void> _inviteMember() async {
+    final identity = _identity.text.trim();
+    if (identity.isEmpty) return;
+    final ok = await _do(
+      () => widget.client
+          .inviteOrganizationMember(widget.id, identity, _role)
+          .then((_) {}),
+      actionKey: 'inviteOrgMember',
+    );
+    if (ok) _identity.clear();
+  }
+
+  Future<void> _cancelInvitation(String invitationId) async {
+    await _do(
+      () => widget.client.cancelOrganizationInvitation(widget.id, invitationId),
+      actionKey: 'cancelOrgInvitation',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = _detail;
@@ -1718,6 +1925,20 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                       },
                     );
                   }),
+                  if (canManage && d.invitations.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '待接受邀请',
+                      style: CcType.code(size: 12, color: CcColors.muted),
+                    ),
+                    ...d.invitations.map(
+                      (invitation) => _PendingInvitationTile(
+                        invitation: invitation,
+                        busy: _mutating,
+                        onCancel: () => _cancelInvitation(invitation.id),
+                      ),
+                    ),
+                  ],
                   if (canManage) ...[
                     const SizedBox(height: 10),
                     LayoutBuilder(
@@ -1796,6 +2017,28 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                                   _mutationAction == 'addOrgMember'
                                       ? '加入中'
                                       : '加入团队',
+                                ),
+                              ),
+                            ),
+                            Tooltip(
+                              message:
+                                  memberInput.isNotEmpty && !canSubmitMember
+                                  ? '至少保留一个负责人'
+                                  : '邀请加入团队',
+                              child: OutlinedButton.icon(
+                                onPressed: canSubmitMember
+                                    ? _inviteMember
+                                    : null,
+                                icon: _mutationAction == 'inviteOrgMember'
+                                    ? const _InlineButtonSpinner()
+                                    : const Icon(
+                                        Icons.mark_email_unread_rounded,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  _mutationAction == 'inviteOrgMember'
+                                      ? '邀请中'
+                                      : '邀请',
                                 ),
                               ),
                             ),
@@ -2160,6 +2403,29 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     if (ok) _member.clear();
   }
 
+  Future<void> _inviteMember() async {
+    final member = _member.text.trim();
+    if (member.isEmpty) return;
+    final d = _d;
+    if (d == null || !canUpsertProjectMemberRole(member, _role, d.members)) {
+      return;
+    }
+    final ok = await _do(
+      () => widget.client
+          .inviteProjectMember(widget.id, member, _role)
+          .then((_) {}),
+      actionKey: 'inviteProjectMember',
+    );
+    if (ok) _member.clear();
+  }
+
+  Future<void> _cancelInvitation(String invitationId) async {
+    await _do(
+      () => widget.client.cancelProjectInvitation(widget.id, invitationId),
+      actionKey: 'cancelProjectInvitation',
+    );
+  }
+
   Future<void> _delete() async {
     final projectName = _d?.project.name.trim() ?? '';
     final detail = projectName.isEmpty
@@ -2520,6 +2786,20 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                       },
                     );
                   }),
+                  if (canManage && d.invitations.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '待接受邀请',
+                      style: CcType.code(size: 12, color: CcColors.muted),
+                    ),
+                    ...d.invitations.map(
+                      (invitation) => _PendingInvitationTile(
+                        invitation: invitation,
+                        busy: _mutating,
+                        onCancel: () => _cancelInvitation(invitation.id),
+                      ),
+                    ),
+                  ],
                   if (canManage)
                     LayoutBuilder(
                       builder: (context, constraints) {
@@ -2629,6 +2909,28 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                                 ),
                               ),
                             ),
+                            Tooltip(
+                              message:
+                                  memberInput.isNotEmpty && !canSubmitMember
+                                  ? '至少保留一个项目负责人'
+                                  : '邀请加入项目',
+                              child: OutlinedButton.icon(
+                                onPressed: canSubmitMember
+                                    ? _inviteMember
+                                    : null,
+                                icon: _mutationAction == 'inviteProjectMember'
+                                    ? const _InlineButtonSpinner()
+                                    : const Icon(
+                                        Icons.mark_email_unread_rounded,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  _mutationAction == 'inviteProjectMember'
+                                      ? '邀请中'
+                                      : '邀请',
+                                ),
+                              ),
+                            ),
                           ],
                         );
                       },
@@ -2636,6 +2938,42 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                 ],
               ),
             ),
+    );
+  }
+}
+
+class _PendingInvitationTile extends StatelessWidget {
+  final Invitation invitation;
+  final bool busy;
+  final VoidCallback onCancel;
+
+  const _PendingInvitationTile({
+    required this.invitation,
+    required this.busy,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.schedule_send_rounded, size: 18),
+      title: Text(
+        invitation.identity,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        '${invitationRoleLabel(invitation)} · ${invitation.inviterIdentity}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: IconButton(
+        tooltip: '取消邀请',
+        onPressed: busy ? null : onCancel,
+        icon: const Icon(Icons.close_rounded, size: 18),
+      ),
     );
   }
 }

@@ -322,6 +322,7 @@ class Me {
   final bool isAdmin;
   final List<OrganizationRole> organizations;
   final List<ProjectRole> projects;
+  final List<Invitation> invitations;
   Me.fromJson(Map<String, dynamic> j)
     : identity = _trimmed(j['identity']),
       isAdmin = j['is_admin'] == true,
@@ -334,6 +335,11 @@ class Me {
           (j['projects'] as List?)
               ?.map((e) => ProjectRole.fromJson(e as Map<String, dynamic>))
               .toList() ??
+          const [],
+      invitations =
+          (j['invitations'] as List?)
+              ?.map((e) => Invitation.fromJson(e as Map<String, dynamic>))
+              .toList() ??
           const [];
 
   // Minimal valid identity: a non-admin member with no projects. Used as a
@@ -342,7 +348,32 @@ class Me {
   const Me.member(this.identity)
     : isAdmin = false,
       organizations = const [],
-      projects = const [];
+      projects = const [],
+      invitations = const [];
+}
+
+class Invitation {
+  final String id,
+      scope,
+      orgId,
+      orgName,
+      projectId,
+      projectName,
+      identity,
+      role,
+      inviterIdentity;
+  final DateTime createdAt;
+  Invitation.fromJson(Map<String, dynamic> j)
+    : id = _trimmed(j['id']),
+      scope = _trimmed(j['scope']),
+      orgId = _trimmed(j['org_id']),
+      orgName = _trimmed(j['org_name']),
+      projectId = _trimmed(j['project_id']),
+      projectName = _trimmed(j['project_name']),
+      identity = _trimmed(j['identity']),
+      role = _trimmed(j['role']),
+      inviterIdentity = _trimmed(j['inviter_identity']),
+      createdAt = _t(j['created_at']);
 }
 
 class Organization {
@@ -366,6 +397,7 @@ class OrganizationDetail {
   final Organization organization;
   final List<OrganizationMember> members;
   final List<Project> projects;
+  final List<Invitation> invitations;
   OrganizationDetail.fromJson(Map<String, dynamic> j)
     : organization = Organization.fromJson(
         (j['organization'] ?? const {}) as Map<String, dynamic>,
@@ -380,6 +412,11 @@ class OrganizationDetail {
       projects =
           (j['projects'] as List?)
               ?.map((e) => Project.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      invitations =
+          (j['invitations'] as List?)
+              ?.map((e) => Invitation.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [];
 }
@@ -408,6 +445,7 @@ class ProjectDetail {
   final Project project;
   final List<String> repos;
   final List<ProjectMember> members;
+  final List<Invitation> invitations;
   ProjectDetail.fromJson(Map<String, dynamic> j)
     : project = Project.fromJson(
         (j['project'] ?? const {}) as Map<String, dynamic>,
@@ -416,6 +454,11 @@ class ProjectDetail {
       members =
           (j['members'] as List?)
               ?.map((e) => ProjectMember.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      invitations =
+          (j['invitations'] as List?)
+              ?.map((e) => Invitation.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [];
 }

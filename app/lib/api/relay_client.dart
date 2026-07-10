@@ -391,6 +391,37 @@ class RelayClient {
   Future<void> removeOrganizationMember(String id, String identity) =>
       _dio.delete('/v1/orgs/${_idSegment(id)}/members/${_idSegment(identity)}');
 
+  Future<Invitation> inviteOrganizationMember(
+    String id,
+    String identity,
+    String role,
+  ) async {
+    final r = await _dio.post(
+      '/v1/orgs/${_idSegment(id)}/invitations',
+      data: {'identity': identity.trim(), 'role': role.trim()},
+    );
+    return Invitation.fromJson(_asStringMap(r.data?['invitation']));
+  }
+
+  Future<void> cancelOrganizationInvitation(String id, String invitationId) =>
+      _dio.delete(
+        '/v1/orgs/${_idSegment(id)}/invitations/${_idSegment(invitationId)}',
+      );
+
+  Future<List<Invitation>> invitations() async {
+    final r = await _dio.get('/v1/invitations');
+    return _asList(
+      r.data,
+      'invitations',
+    ).map((e) => Invitation.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> acceptInvitation(String id) =>
+      _dio.post('/v1/invitations/${_idSegment(id)}/accept');
+
+  Future<void> declineInvitation(String id) =>
+      _dio.post('/v1/invitations/${_idSegment(id)}/decline');
+
   // --- per-identity synced settings (see internal/relay/settings.go) ---
 
   // getSetting returns the caller's synced setting blob for [key], or null when
@@ -488,6 +519,25 @@ class RelayClient {
 
   Future<void> removeMember(String id, String identity) => _dio.delete(
     '/v1/projects/${_idSegment(id)}/members/${_idSegment(identity)}',
+  );
+
+  Future<Invitation> inviteProjectMember(
+    String id,
+    String identity,
+    String role,
+  ) async {
+    final r = await _dio.post(
+      '/v1/projects/${_idSegment(id)}/invitations',
+      data: {'identity': identity.trim(), 'role': role.trim()},
+    );
+    return Invitation.fromJson(_asStringMap(r.data?['invitation']));
+  }
+
+  Future<void> cancelProjectInvitation(
+    String id,
+    String invitationId,
+  ) => _dio.delete(
+    '/v1/projects/${_idSegment(id)}/invitations/${_idSegment(invitationId)}',
   );
 
   Future<void> changePassword(String oldPw, String newPw) =>
@@ -653,4 +703,12 @@ List _asList(dynamic data, String key) {
     }
   }
   return const [];
+}
+
+Map<String, dynamic> _asStringMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) {
+    return value.map((key, value) => MapEntry(key.toString(), value));
+  }
+  return const {};
 }

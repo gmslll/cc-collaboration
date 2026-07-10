@@ -1542,6 +1542,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project sheet can invite a project member', (tester) async {
+    final client = _CountingProjectInvitationProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Backend'));
+    await tester.pumpAndSettle();
+
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'identity',
+    );
+    await tester.enterText(memberField, 'invite@x');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, '邀请'));
+    await tester.tap(find.widgetWithText(OutlinedButton, '邀请'));
+
+    expect(client.inviteMemberCalls, 1);
+    expect(client.invitedIdentity, 'invite@x');
+    await tester.pump();
+    expect(find.text('邀请中'), findsOneWidget);
+
+    client.completeInviteMember();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('project sheet member input submits from keyboard', (
     tester,
   ) async {
@@ -1855,6 +1887,62 @@ void main() {
     client.completeAddOrganizationMember();
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('organization sheet can invite a team member', (tester) async {
+    final client = _CountingOrgInvitationProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    final memberField = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == '成员 identity',
+    );
+    await tester.enterText(memberField, 'invite@x');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, '邀请'));
+    await tester.tap(find.widgetWithText(OutlinedButton, '邀请'));
+
+    expect(client.inviteOrganizationMemberCalls, 1);
+    expect(client.invitedOrganizationIdentity, 'invite@x');
+    await tester.pump();
+    expect(find.text('邀请中'), findsOneWidget);
+
+    client.completeInviteOrganizationMember();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('team workspace shows pending invitations and accepts them', (
+    tester,
+  ) async {
+    final client = _InvitationPanelProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('待处理邀请'), findsOneWidget);
+    expect(find.text('Kunlun · Backend'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '接受'));
+    await tester.pumpAndSettle();
+
+    expect(client.acceptInvitationCalls, 1);
+    expect(client.acceptedInvitationId, 'inv-project');
+    expect(find.text('待处理邀请'), findsNothing);
   });
 
   testWidgets(
@@ -2609,6 +2697,42 @@ class _CountingProjectMemberProjectsPageFakeClient
   }
 }
 
+class _CountingProjectInvitationProjectsPageFakeClient
+    extends _ProjectsPageFakeClient {
+  final _inviteMemberCompleter = Completer<Invitation>();
+  int inviteMemberCalls = 0;
+  String? invitedIdentity;
+
+  @override
+  Future<Invitation> inviteProjectMember(
+    String id,
+    String identity,
+    String role,
+  ) {
+    inviteMemberCalls++;
+    invitedIdentity = identity;
+    return _inviteMemberCompleter.future;
+  }
+
+  void completeInviteMember() {
+    if (_inviteMemberCompleter.isCompleted) return;
+    _inviteMemberCompleter.complete(
+      Invitation.fromJson({
+        'id': 'pinv',
+        'scope': 'project',
+        'org_id': 'org-a',
+        'org_name': 'Kunlun',
+        'project_id': 'p1',
+        'project_name': 'Backend',
+        'identity': invitedIdentity ?? 'invite@x',
+        'role': 'member',
+        'inviter_identity': 'owner@x',
+        'created_at': '2026-07-10T00:00:00Z',
+      }),
+    );
+  }
+}
+
 class _CountingLoadProjectsPageFakeClient extends _ProjectsPageFakeClient {
   int projectsCalls = 0;
 
@@ -2708,6 +2832,77 @@ class _CountingOrgMemberProjectsPageFakeClient extends _ProjectsPageFakeClient {
     if (!_addOrganizationMemberCompleter.isCompleted) {
       _addOrganizationMemberCompleter.complete();
     }
+  }
+}
+
+class _CountingOrgInvitationProjectsPageFakeClient
+    extends _ProjectsPageFakeClient {
+  final _inviteOrganizationMemberCompleter = Completer<Invitation>();
+  int inviteOrganizationMemberCalls = 0;
+  String? invitedOrganizationIdentity;
+
+  @override
+  Future<Invitation> inviteOrganizationMember(
+    String id,
+    String identity,
+    String role,
+  ) {
+    inviteOrganizationMemberCalls++;
+    invitedOrganizationIdentity = identity;
+    return _inviteOrganizationMemberCompleter.future;
+  }
+
+  void completeInviteOrganizationMember() {
+    if (_inviteOrganizationMemberCompleter.isCompleted) return;
+    _inviteOrganizationMemberCompleter.complete(
+      Invitation.fromJson({
+        'id': 'oinv',
+        'scope': 'org',
+        'org_id': 'org-a',
+        'org_name': 'Kunlun',
+        'identity': invitedOrganizationIdentity ?? 'invite@x',
+        'role': 'member',
+        'inviter_identity': 'owner@x',
+        'created_at': '2026-07-10T00:00:00Z',
+      }),
+    );
+  }
+}
+
+class _InvitationPanelProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  bool accepted = false;
+  int acceptInvitationCalls = 0;
+  String? acceptedInvitationId;
+
+  @override
+  Future<Me> me() async => Me.fromJson({
+    'identity': 'invitee@x',
+    'is_admin': false,
+    'organizations': const [],
+    'projects': const [],
+    'invitations': accepted
+        ? const []
+        : [
+            {
+              'id': 'inv-project',
+              'scope': 'project',
+              'org_id': 'org-a',
+              'org_name': 'Kunlun',
+              'project_id': 'p1',
+              'project_name': 'Backend',
+              'identity': 'invitee@x',
+              'role': 'member',
+              'inviter_identity': 'owner@x',
+              'created_at': '2026-07-10T00:00:00Z',
+            },
+          ],
+  });
+
+  @override
+  Future<void> acceptInvitation(String id) async {
+    acceptInvitationCalls++;
+    acceptedInvitationId = id;
+    accepted = true;
   }
 }
 
