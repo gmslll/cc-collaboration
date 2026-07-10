@@ -158,9 +158,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
         final oldId = oldWidget.todo.id;
         final oldTitle = _titleCtl.text.trim();
         final oldBody = _bodyCtl.text;
-        oldWidget.client
-            .updateTodo(oldId, title: oldTitle, bodyMd: oldBody)
-            .catchError((_) => oldWidget.todo);
+        Future.sync(
+          () => oldWidget.client.updateTodo(
+            oldId,
+            title: oldTitle,
+            bodyMd: oldBody,
+          ),
+        ).catchError((_) => oldWidget.todo);
       }
       _bodyDebounce?.cancel();
       setState(() {
@@ -205,9 +209,13 @@ class TodoDetailViewState extends State<TodoDetailView> {
     // widget is gone by the time this could fail, so there's nowhere left to
     // surface an error.
     if (_textDirty && _access.canEdit) {
-      _client
-          .updateTodo(_id, title: _titleCtl.text.trim(), bodyMd: _bodyCtl.text)
-          .catchError((_) => _current);
+      Future.sync(
+        () => _client.updateTodo(
+          _id,
+          title: _titleCtl.text.trim(),
+          bodyMd: _bodyCtl.text,
+        ),
+      ).catchError((_) => _current);
     }
     _bodyDebounce?.cancel();
     _titleCtl.dispose();

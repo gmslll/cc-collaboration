@@ -151,6 +151,53 @@ void main() {
     expect(find.widgetWithText(TextField, 'old account title'), findsNothing);
   });
 
+  testWidgets('switching todo ignores synchronous best-effort save failure', (
+    tester,
+  ) async {
+    final oldClient = _ThrowingUpdateTodoClient();
+    final newClient = _DelayedTodoClient();
+    final first = _todo('td1', 'first title');
+    final second = _todo('td2', 'second title');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: oldClient, todo: first),
+        ),
+      ),
+    );
+    await tester.pump();
+    oldClient.completeTodo('td1', _todo('td1', 'first full title'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'first full title'),
+      'dirty first title',
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodoDetailView(client: newClient, todo: second),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(oldClient.updateCalls, 1);
+    expect(newClient.requestedTodos, ['td2']);
+
+    newClient.completeTodo('td2', _todo('td2', 'second full title'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.widgetWithText(TextField, 'second full title'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'dirty first title'), findsNothing);
+  });
+
   testWidgets('same-todo detail refresh does not cancel comment reload', (
     tester,
   ) async {
@@ -631,5 +678,25 @@ class _DelayedTodoClient extends RelayClient {
 
   void completeUpdate(Todo todo, {int index = 0}) {
     if (!_updates[index].isCompleted) _updates[index].complete(todo);
+  }
+}
+
+class _ThrowingUpdateTodoClient extends _DelayedTodoClient {
+  @override
+  Future<Todo> updateTodo(
+    String id, {
+    String? title,
+    String? bodyMd,
+    String? priority,
+    String? recurrence,
+    DateTime? dueAt,
+    bool clearDueAt = false,
+    String? workspaceName,
+    String? repoName,
+    String? groupName,
+  }) {
+    updateCalls++;
+    updatedTitles.add(title ?? '');
+    throw StateError('best-effort-save-failed-synchronously');
   }
 }
