@@ -90,6 +90,12 @@ double workspaceConfirmDialogWidth(Size size, {double preferred = 420}) {
   return available < preferred ? available : preferred;
 }
 
+double workspaceOutgoingDialogWidth(Size size, {double preferred = 460}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 Size workspaceCompareWithHeadDialogSize(
   Size viewport, {
   double preferredWidth = 1040,
@@ -2539,9 +2545,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     showDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         backgroundColor: CcColors.panel,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
+          constraints: BoxConstraints(
+            maxWidth: workspaceOutgoingDialogWidth(MediaQuery.sizeOf(ctx)),
+          ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
             child: ListenableBuilder(

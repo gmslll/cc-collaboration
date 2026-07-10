@@ -556,6 +556,25 @@ void main() {
     expect(workspaceConfirmDialogWidth(const Size(20, 760)), 420);
   });
 
+  test('workspace outgoing dialog width fits compact screens', () {
+    expect(workspaceOutgoingDialogWidth(const Size(320, 760)), 288);
+    expect(workspaceOutgoingDialogWidth(const Size(1024, 760)), 460);
+    expect(workspaceOutgoingDialogWidth(const Size(20, 760)), 460);
+  });
+
+  test('workspace outgoing dialog uses viewport based bounds', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('void _showOutgoingDialog'),
+      source.indexOf('// remote/bus client asks for.'),
+    );
+
+    expect(dialog, contains('workspaceOutgoingDialogWidth'));
+    expect(dialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, isNot(contains('maxWidth: 460')));
+  });
+
   test('workspace log filter menus fit compact screens', () {
     expect(workspaceLogFilterMenuMaxHeight(const Size(1024, 900)), 320);
     expect(
