@@ -86,7 +86,7 @@ String _inboxLockPath(String sessionId) =>
 // acquireInboxDrainLock claims [sessionId]'s inbox lock, retrying with
 // backoff until [timeout]. A lock file older than _inboxLockStaleAfter is
 // treated as abandoned (the holder crashed mid critical section — both
-// sides' critical sections, list+clear / check+paste+delete, run in
+// sides' critical sections, list+write+clear / check+paste+delete, run in
 // low-single-digit milliseconds, never seconds) and is stolen. Returns false
 // on timeout, which the caller treats as "someone else is actively draining
 // this inbox right now" and simply gives up escalating for this round rather

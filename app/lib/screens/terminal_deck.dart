@@ -958,7 +958,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   }
 
   // _enqueueBusInbox drops a message into <busDir>/inbox/<targetId>/ for the
-  // target's `cc-handoff bus-hook` to drain as additionalContext. Filename is a
+  // target's `cc-handoff bus-hook` to drain as a Stop continuation. Filename is a
   // microsecond timestamp + counter so the hook reads FIFO; atomic tmp+rename so
   // the hook never sees a half-written file (mirrors local_bus.dart's writes and
   // the Go-side internal/localbus reader). Also arms the bounded escalate
@@ -1000,9 +1000,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // current turn and then sits fully idle never fires another hook, so
   // nothing was ever draining the message — see the local-bus-optimization
   // writeup). A Timer, not a blocking wait, so it never stalls the sender's
-  // own turn. If the target's own hook drains [path] first, the file is
-  // simply gone when the timer fires — file existence IS the ack, no separate
-  // protocol needed.
+  // own turn. If the target's own hook drains [path] first, the file is simply
+  // gone when the timer fires — file existence is the app-side ack.
   void _scheduleEscalate(TerminalSession target, String path, LocalMsg m) {
     Timer(_escalateTimeout, () => unawaited(_escalateBusInbox(target, path, m)));
   }

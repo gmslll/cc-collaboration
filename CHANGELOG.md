@@ -10,6 +10,10 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 - **管理员安全删除账号** — Relay、Web UI 与 Flutter App 支持全局管理员删除账号；删除采用不可恢复 tombstone，永久保留 identity 与 handoff/todo/评论历史归属，同时立即吊销 session、机器 token 和待处理邀请，并保护当前登录账号、最后可用管理员及团队/项目最后负责人。
 
+### Fixed
+
+- **Codex Stop hook 不再返回无效 JSON** — 同机会话消息投递对 Claude Code / Codex 都只返回标准顶层 `decision:block` + `reason`,不再给 Stop 混入不受支持的 `hookSpecificOutput.additionalContext`;marker 改为 JSON 成功写出后再清理,本地 stdout 失败时保留重试,并继续用 `stop_hook_active` 防止重复 continuation。
+
 ## [0.9.29] - 2026-07-10
 
 ### Changed

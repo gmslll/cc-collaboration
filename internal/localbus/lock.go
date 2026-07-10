@@ -24,9 +24,8 @@ const lockRetryInterval = 20 * time.Millisecond
 // message the hook hasn't drained in time instead of leaving it parked
 // forever — see deliverLocalMessage / _enqueueBusInbox in terminal_deck.dart)
 // never act on the same marker file at once. Without this lock the failure
-// mode is a double delivery: the hook injects a message as additionalContext
-// at the exact moment the app is independently pasting the same text into
-// the PTY.
+// mode is a double delivery: the hook includes a message in a Stop continuation
+// at the exact moment the app independently pastes the same text into the PTY.
 //
 // Implemented as an atomic exclusive-create claim file (O_CREATE|O_EXCL)
 // rather than flock: the desktop app is Dart, and Dart's file-locking API
