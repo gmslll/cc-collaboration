@@ -6,13 +6,27 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.30] - 2026-07-10
+
 ### Added
 
 - **管理员安全删除账号** — Relay、Web UI 与 Flutter App 支持全局管理员删除账号；删除采用不可恢复 tombstone，永久保留 identity 与 handoff/todo/评论历史归属，同时立即吊销 session、机器 token 和待处理邀请，并保护当前登录账号、最后可用管理员及团队/项目最后负责人。
+- **GitHub 团队项目绑定与拉取** — 团队项目可绑定经过规范化的 GitHub HTTPS/SSH clone URL；成员可从工作区一键拉取可访问项目，支持多仓库、部分成功反馈、既有 remote 校验和不覆盖安全导入。
+- **按工作区/项目分组的会话管理器** — 项目树、顶部会话条和全局管理器共用同一归属解析，支持搜索、状态筛选、固定、批量关闭、工作区专注模式与 worktree 归并到主项目。
+
+### Changed
+
+- **团队项目页改为紧凑主从工作台** — 桌面端使用团队侧栏 + 项目/成员/邀请详情，窄屏改为顶部团队选择；创建和管理操作收进 dialog/sheet，取消横向团队卡片和常驻输入框。
+- **胶囊广场改为响应式资料库** — 新增搜索、归属和来源筛选，桌面多列/窄屏单列紧凑卡片，展示完整摘要、作者、Agent、仓库、更新时间、会话/角色/技能包信息，并收口编辑删除权限。
+- **Admin 账号管理高密度化** — Flutter 和 Relay Web 同步采用创建 dialog、账号/已删除分段、搜索与启用状态筛选；桌面使用紧凑分栏行，窄屏自适应堆叠，并对账号切换中的异步响应做世代隔离。
+- **Relay 部署默认可被外部访问** — systemd/部署脚本的默认监听地址由 `127.0.0.1:8080` 改为 `0.0.0.0:8080`，同时保留参数覆盖。
 
 ### Fixed
 
 - **Codex Stop hook 不再返回无效 JSON** — 同机会话消息投递对 Claude Code / Codex 都只返回标准顶层 `decision:block` + `reason`,不再给 Stop 混入不受支持的 `hookSpecificOutput.additionalContext`;marker 改为 JSON 成功写出后再清理,本地 stdout 失败时保留重试,并继续用 `stop_hook_active` 防止重复 continuation。
+- **删除个人团队后不再被邀请/重启复活** — 组织回填迁移只处理 `org_id` 为空的真正 legacy 项目，不再扫描全部用户和已归属项目；无团队账号保持无团队，接受项目邀请只加入目标团队/项目。
+- **LocalBus 会话遗留文件可控清理** — 真正关闭会话时清理对应 events/mapping/空 inbox，启动及每 6 小时只清理超过 7 天的孤儿缓存和旧 receipt；活跃/恢复会话、非空 inbox、pending request 及 Agent transcript 始终保护，并对多实例、dispose/restart、symlink 和锁 ABA 竞态 fail-closed。
+- **工作区右键菜单不再重叠** — 工作区空白区和工作区/项目/会话行的右键命中层分离，行菜单不会再同时触发外层菜单，会话分组操作可正常弹出。
 
 ## [0.9.29] - 2026-07-10
 
@@ -713,7 +727,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.6.11...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.9.30...HEAD
+[0.9.30]: https://github.com/gmslll/cc-collaboration/compare/v0.9.29...v0.9.30
 [0.6.11]: https://github.com/gmslll/cc-collaboration/compare/v0.6.10...v0.6.11
 [0.6.10]: https://github.com/gmslll/cc-collaboration/compare/v0.6.9...v0.6.10
 [0.6.9]: https://github.com/gmslll/cc-collaboration/compare/v0.6.8...v0.6.9
