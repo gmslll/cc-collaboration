@@ -5,9 +5,11 @@ import 'package:app/api/models.dart';
 import 'package:app/local/diff_parse.dart';
 import 'package:app/local/remote_prefs.dart';
 import 'package:app/local/repo_config.dart';
+import 'package:app/screens/workspace_page.dart';
 import 'package:app/voice/stt.dart';
 import 'package:app/widgets.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _sampleDiff = '''
@@ -479,6 +481,27 @@ void main() {
     );
     expect(fieldsDialog, contains('overflow: TextOverflow.ellipsis'));
     expect(confirmDialog, contains('overflow: TextOverflow.ellipsis'));
+  });
+
+  test('workspace confirm dialog width fits compact screens', () {
+    expect(workspaceConfirmDialogWidth(const Size(320, 760)), 288);
+    expect(workspaceConfirmDialogWidth(const Size(1024, 760)), 420);
+    expect(workspaceConfirmDialogWidth(const Size(20, 760)), 420);
+  });
+
+  test('workspace confirm dialog uses responsive long-message content', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final confirmDialog = source.substring(
+      source.indexOf('@override\n  Future<bool> _confirm('),
+      source.indexOf('void _openTask('),
+    );
+
+    expect(confirmDialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(confirmDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(confirmDialog, contains('workspaceConfirmDialogWidth(size)'));
+    expect(confirmDialog, contains('SingleChildScrollView'));
+    expect(confirmDialog, contains('SelectableText'));
+    expect(confirmDialog, isNot(contains('content: Text(')));
   });
 
   test('workspace git dialog titles are width constrained', () {

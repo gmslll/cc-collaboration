@@ -84,6 +84,12 @@ enum _BranchFilter { all, local, remote, current, unpublished, diverged }
 
 const _workingTreeDiffSelection = '__working_tree_diff__';
 
+double workspaceConfirmDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 // 取前 take 行拼成预览,超出部分加 "...and N more"(用于确认对话框)。
 String _previewList(List<String> items, {int take = 5}) =>
     items.take(take).join('\n') +
@@ -4271,21 +4277,33 @@ class _WorkspacePageState extends State<WorkspacePage>
   Future<bool> _confirm(String title, String message) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确定'),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          content: SizedBox(
+            width: workspaceConfirmDialogWidth(size),
+            child: SingleChildScrollView(
+              child: SelectableText(message, style: CcType.code(size: 12)),
+            ),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确定'),
+            ),
+          ],
+        );
+      },
     );
     return ok == true;
   }
