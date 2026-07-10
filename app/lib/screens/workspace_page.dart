@@ -90,6 +90,19 @@ double workspaceConfirmDialogWidth(Size size, {double preferred = 420}) {
   return available < preferred ? available : preferred;
 }
 
+Size workspaceCompareWithHeadDialogSize(
+  Size viewport, {
+  double preferredWidth = 1040,
+  double preferredHeight = 720,
+}) => Size(
+  workspaceNavigationDialogDimension(viewport.width - 32, preferredWidth),
+  workspaceNavigationDialogDimension(
+    viewport.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
 // 取前 take 行拼成预览,超出部分加 "...and N more"(用于确认对话框)。
 String _previewList(List<String> items, {int take = 5}) =>
     items.take(take).join('\n') +
@@ -4866,61 +4879,72 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (!mounted) return;
       await showDialog<void>(
         context: context,
-        builder: (_) => Dialog(
-          child: SizedBox(
-            width: 1040,
-            height: 720,
-            child: Column(
-              children: [
-                Container(
-                  height: 42,
-                  padding: const EdgeInsets.only(left: 14, right: 6),
-                  decoration: const BoxDecoration(
-                    color: CcColors.panel,
-                    border: Border(bottom: BorderSide(color: CcColors.border)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.compare_arrows_rounded,
-                        size: 17,
-                        color: CcColors.muted,
+        builder: (ctx) {
+          final dialogSize = workspaceCompareWithHeadDialogSize(
+            MediaQuery.sizeOf(ctx),
+          );
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
+            ),
+            child: SizedBox(
+              width: dialogSize.width,
+              height: dialogSize.height,
+              child: Column(
+                children: [
+                  Container(
+                    height: 42,
+                    padding: const EdgeInsets.only(left: 14, right: 6),
+                    decoration: const BoxDecoration(
+                      color: CcColors.panel,
+                      border: Border(
+                        bottom: BorderSide(color: CcColors.border),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Compare with HEAD · $relPath',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.compare_arrows_rounded,
+                          size: 17,
+                          color: CcColors.muted,
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 18),
-                        tooltip: '关闭',
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Compare with HEAD · $relPath',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          tooltip: '关闭',
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: DiffView(
-                    files: files,
-                    editRoot: project.path,
-                    onChanged: _refreshGit,
-                    onReloadContext: (ctx) async => parseUnifiedDiff(
-                      await gitDiffFileWorking(
-                        project.path,
-                        relPath,
-                        context: ctx,
+                  Expanded(
+                    child: DiffView(
+                      files: files,
+                      editRoot: project.path,
+                      onChanged: _refreshGit,
+                      onReloadContext: (ctx) async => parseUnifiedDiff(
+                        await gitDiffFileWorking(
+                          project.path,
+                          relPath,
+                          context: ctx,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       );
     } catch (e) {
       _snack(errorText(e));

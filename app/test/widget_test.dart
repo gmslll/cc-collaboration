@@ -554,6 +554,21 @@ void main() {
     expect(workspaceConfirmDialogWidth(const Size(20, 760)), 420);
   });
 
+  test('workspace compare with HEAD dialog size fits compact screens', () {
+    expect(
+      workspaceCompareWithHeadDialogSize(const Size(1200, 900)),
+      const Size(1040, 720),
+    );
+    expect(
+      workspaceCompareWithHeadDialogSize(const Size(360, 420)),
+      const Size(328, 372),
+    );
+    expect(
+      workspaceCompareWithHeadDialogSize(const Size(220, 220)),
+      const Size(188, 172),
+    );
+  });
+
   test('workspace quick open dialog size fits compact screens', () {
     expect(
       workspaceQuickOpenDialogSize(const Size(1024, 800)),
@@ -677,6 +692,20 @@ void main() {
     expect(source, isNot(contains('height: 720')));
     expect(source, isNot(contains('height: 740')));
     expect(source, isNot(contains('width: 360,')));
+  });
+
+  test('workspace compare with HEAD dialog uses viewport based bounds', () {
+    final source = File('lib/screens/workspace_page.dart').readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<void> _compareProjectFileWithHead('),
+      source.indexOf('Widget _ideToolbar()'),
+    );
+
+    expect(dialog, contains('workspaceCompareWithHeadDialogSize'));
+    expect(dialog, contains('MediaQuery.sizeOf(ctx)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, isNot(contains('width: 1040')));
+    expect(dialog, isNot(contains('height: 720')));
   });
 
   test('workspace confirm dialog uses responsive long-message content', () {
