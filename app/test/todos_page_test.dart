@@ -65,6 +65,16 @@ void main() {
     expect(todoMemberListMaxHeight(const Size(320, 220)), 144);
   });
 
+  test('todo desktop panes adapt near the wide breakpoint', () {
+    expect(todoListPaneWidth(720), closeTo(316.8, 0.001));
+    expect(todoListPaneWidth(900), 360);
+    expect(todoListPaneWidth(double.infinity), 360);
+
+    expect(todoBoardDetailPaneWidth(720), closeTo(331.2, 0.001));
+    expect(todoBoardDetailPaneWidth(900), 380);
+    expect(todoBoardDetailPaneWidth(double.infinity), 380);
+  });
+
   testWidgets('team todo empty state ignores personal-only todos', (
     tester,
   ) async {

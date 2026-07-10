@@ -32,6 +32,21 @@ import 'todo_detail_view.dart';
 // split entirely and switches to a full-screen mobile card stream.
 const double _wideBreakpoint = 720;
 
+double todoListPaneWidth(double availableWidth, {double preferred = 360}) {
+  if (!availableWidth.isFinite || availableWidth <= 0) return preferred;
+  final adaptive = availableWidth * 0.44;
+  return adaptive.clamp(280, preferred).toDouble();
+}
+
+double todoBoardDetailPaneWidth(
+  double availableWidth, {
+  double preferred = 380,
+}) {
+  if (!availableWidth.isFinite || availableWidth <= 0) return preferred;
+  final adaptive = availableWidth * 0.46;
+  return adaptive.clamp(300, preferred).toDouble();
+}
+
 double todoMemberRolePillMaxWidth(
   BoxConstraints constraints, {
   double preferred = 128,
@@ -1274,14 +1289,17 @@ class _TodosPageState extends State<TodosPage> {
             Expanded(child: contentPane),
             if (_selected != null) ...[
               const VerticalDivider(width: 1),
-              SizedBox(width: 380, child: _rightPane()),
+              SizedBox(
+                width: todoBoardDetailPaneWidth(width),
+                child: _rightPane(),
+              ),
             ],
           ],
         );
       }
       return Row(
         children: [
-          SizedBox(width: 360, child: contentPane),
+          SizedBox(width: todoListPaneWidth(width), child: contentPane),
           const VerticalDivider(width: 1),
           Expanded(child: _rightPane()),
         ],
