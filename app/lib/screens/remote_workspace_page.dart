@@ -89,6 +89,31 @@ double remoteActivitySheetHeight(
   return available < preferred ? available : preferred;
 }
 
+Size remoteQuickReplyDialogSize(
+  Size screenSize, {
+  double preferredWidth = 520,
+  double preferredHeight = 520,
+}) => Size(
+  remoteWorkspaceDialogDimension(screenSize.width - 32, preferredWidth),
+  remoteWorkspaceDialogDimension(
+    screenSize.height - 32,
+    preferredHeight,
+    min: 240,
+  ),
+);
+
+double remoteQuickReplySnapshotHeight(
+  Size screenSize, {
+  double preferred = 220,
+  double minHeight = 120,
+  double maxFraction = 0.42,
+}) {
+  final available = screenSize.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minHeight) return available;
+  return available < preferred ? available : preferred;
+}
+
 String remoteWorktreeRemoveTarget(RemoteWorktree worktree) {
   final branch = worktree.branch.trim();
   return branch.isEmpty ? worktree.name : branch;
@@ -4753,100 +4778,110 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
         (widget.session.agent.isNotEmpty
             ? SessionStatus.idle
             : SessionStatus.shell);
+    final screenSize = MediaQuery.sizeOf(context);
+    final dialogSize = remoteQuickReplyDialogSize(screenSize);
     return Dialog(
       insetPadding: const EdgeInsets.all(16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SessionActivityAvatar(
-                  seed: _sid,
-                  isAgent: widget.session.agent.isNotEmpty,
-                  status: status,
-                  size: 24,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    widget.session.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
+                Row(
+                  children: [
+                    SessionActivityAvatar(
+                      seed: _sid,
+                      isAgent: widget.session.agent.isNotEmpty,
+                      status: status,
+                      size: 24,
                     ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        widget.session.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                if (ov != null) ...[
+                  const SizedBox(height: 4),
+                  sessionStatusRow(
+                    ov.status,
+                    ov.usageLabel,
+                    statusDetail: ov.statusDetail,
+                  ),
+                ],
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: remoteQuickReplySnapshotHeight(screenSize),
+                  child: SessionSnapshotView(
+                    snapshot: widget.client.screens[_sid],
+                    fontSize: 11,
                   ),
                 ),
-                IconButton(
-                  tooltip: '关闭',
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  onPressed: () => Navigator.of(context).pop(),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _quick('↵ 确认', _confirm),
+                    _quick('1', () => _keys('1')),
+                    _quick('2', () => _keys('2')),
+                    _quick('3', () => _keys('3')),
+                    _quick('y', () => _keys('y')),
+                    _quick('n', () => _keys('n')),
+                    _quick('Esc', () => _keys('\x1b')),
+                  ],
                 ),
-              ],
-            ),
-            if (ov != null) ...[
-              const SizedBox(height: 4),
-              sessionStatusRow(
-                ov.status,
-                ov.usageLabel,
-                statusDetail: ov.statusDetail,
-              ),
-            ],
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 220,
-              child: SessionSnapshotView(
-                snapshot: widget.client.screens[_sid],
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _quick('↵ 确认', _confirm),
-                _quick('1', () => _keys('1')),
-                _quick('2', () => _keys('2')),
-                _quick('3', () => _keys('3')),
-                _quick('y', () => _keys('y')),
-                _quick('n', () => _keys('n')),
-                _quick('Esc', () => _keys('\x1b')),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _ctl,
-                    maxLines: 1,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _sendText(),
-                    decoration: const InputDecoration(
-                      hintText: '快捷回复…',
-                      isDense: true,
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _ctl,
+                        maxLines: 1,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _sendText(),
+                        decoration: const InputDecoration(
+                          hintText: '快捷回复…',
+                          isDense: true,
+                        ),
+                      ),
                     ),
+                    const SizedBox(width: 8),
+                    FilledButton(onPressed: _sendText, child: const Text('发送')),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: widget.onOpenTerminal,
+                    icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                    label: const Text('打开终端'),
                   ),
                 ),
-                const SizedBox(width: 8),
-                FilledButton(onPressed: _sendText, child: const Text('发送')),
               ],
             ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: widget.onOpenTerminal,
-                icon: const Icon(Icons.open_in_full_rounded, size: 16),
-                label: const Text('打开终端'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

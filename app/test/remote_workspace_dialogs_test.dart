@@ -81,6 +81,33 @@ void main() {
     expect(remoteActivitySheetHeight(const Size(320, 160)), 112);
   });
 
+  test('remote quick reply dialog size fits compact screens', () {
+    expect(
+      remoteQuickReplyDialogSize(const Size(1024, 800)),
+      const Size(520, 520),
+    );
+    expect(
+      remoteQuickReplyDialogSize(const Size(360, 420)),
+      const Size(328, 388),
+    );
+    expect(
+      remoteQuickReplyDialogSize(const Size(220, 220)),
+      const Size(188, 188),
+    );
+  });
+
+  test('remote quick reply snapshot height fits compact screens', () {
+    expect(remoteQuickReplySnapshotHeight(const Size(1024, 900)), 220);
+    expect(
+      remoteQuickReplySnapshotHeight(const Size(360, 420)),
+      closeTo(176.4, 0.001),
+    );
+    expect(
+      remoteQuickReplySnapshotHeight(const Size(320, 260)),
+      closeTo(109.2, 0.001),
+    );
+  });
+
   test('remote new session dialog uses scroll-safe controls', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',
@@ -140,6 +167,22 @@ void main() {
     expect(sheet, contains('remoteActivitySheetHeight'));
     expect(sheet, contains('MediaQuery.sizeOf(ctx)'));
     expect(sheet, isNot(contains('height: 360')));
+  });
+
+  test('remote quick reply dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _QuickReplyDialogState'),
+      source.length,
+    );
+
+    expect(dialog, contains('remoteQuickReplyDialogSize'));
+    expect(dialog, contains('remoteQuickReplySnapshotHeight'));
+    expect(dialog, contains('MediaQuery.sizeOf(context)'));
+    expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, isNot(contains('height: 220')));
   });
 
   test('remote incoming file offer dialog uses scroll-safe content', () {
