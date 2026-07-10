@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/api/models.dart';
 import 'package:app/api/relay_client.dart';
@@ -63,6 +64,35 @@ void main() {
       closeTo(201.6, 0.001),
     );
     expect(todoMemberListMaxHeight(const Size(320, 220)), 144);
+  });
+
+  test('todo quick create dialog size fits compact screens', () {
+    expect(
+      todoQuickCreateDialogSize(const Size(1200, 900)),
+      const Size(560, 720),
+    );
+    expect(
+      todoQuickCreateDialogSize(const Size(360, 420)),
+      const Size(328, 372),
+    );
+    expect(
+      todoQuickCreateDialogSize(const Size(220, 220)),
+      const Size(188, 172),
+    );
+  });
+
+  test('todo quick create dialog uses viewport based bounds', () {
+    final source = File('lib/screens/todos_page.dart').readAsStringSync();
+    final quickCreate = source.substring(
+      source.indexOf('class _QuickCreateDialogState'),
+      source.indexOf('class _AssignTodoDialog'),
+    );
+
+    expect(quickCreate, contains('todoQuickCreateDialogSize'));
+    expect(quickCreate, contains('MediaQuery.sizeOf(context)'));
+    expect(quickCreate, contains('maxWidth: dialogSize.width'));
+    expect(quickCreate, contains('maxHeight: dialogSize.height'));
+    expect(quickCreate, isNot(contains('maxWidth: 560')));
   });
 
   test('todo desktop panes adapt near the wide breakpoint', () {

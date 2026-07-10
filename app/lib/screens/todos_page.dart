@@ -115,6 +115,18 @@ double todoDialogWidth(
   return available < preferred ? available : preferred;
 }
 
+Size todoQuickCreateDialogSize(
+  Size screenSize, {
+  double preferredWidth = 560,
+  double preferredHeight = 720,
+}) {
+  final availableHeight = screenSize.height - 48;
+  final height = !availableHeight.isFinite || availableHeight <= 0
+      ? preferredHeight
+      : (availableHeight < preferredHeight ? availableHeight : preferredHeight);
+  return Size(todoDialogWidth(screenSize, preferred: preferredWidth), height);
+}
+
 double todoMenuMaxHeight(
   Size screenSize, {
   double preferred = 320,
@@ -2595,7 +2607,7 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final maxDialogHeight = size.height > 48 ? size.height - 48 : size.height;
+    final dialogSize = todoQuickCreateDialogSize(size);
     final scopeProjectControls = <Widget>[
       if (widget.projects.isNotEmpty)
         SegmentedButton<String>(
@@ -2673,7 +2685,10 @@ class _QuickCreateDialogState extends State<_QuickCreateDialog> {
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 560, maxHeight: maxDialogHeight),
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
