@@ -750,6 +750,17 @@ void main() {
     expect(projectSheetLoadingHeight(const Size(320, 300)), 96);
   });
 
+  test('team rail dimensions adapt on compact screens', () {
+    expect(projectTeamPanelHeight(const Size(1024, 900)), 104);
+    expect(projectTeamPanelHeight(const Size(320, 360)), 96);
+    expect(projectTeamPanelHeight(Size.zero), 104);
+
+    expect(projectTeamCardWidth(const Size(1024, 900)), 286);
+    expect(projectTeamCardWidth(const Size(320, 760)), 272);
+    expect(projectTeamCardWidth(const Size(240, 760)), 220);
+    expect(projectTeamCardWidth(Size.zero), 286);
+  });
+
   test('project rename dialog uses responsive controls', () {
     final start = source.indexOf('Future<void> _rename(String current) async');
     final renameDialog = source.substring(
@@ -918,6 +929,13 @@ void main() {
     expect(find.text('在线'), findsOneWidget);
     expect(find.text('2'), findsNWidgets(2)); // teams + projects
     expect(find.text('1'), findsNWidgets(2)); // manageable + unique online
+    expect(find.text('Kunlun'), findsOneWidget);
+
+    final teamCard = find.ancestor(
+      of: find.text('Kunlun'),
+      matching: find.byType(Material),
+    );
+    expect(tester.getSize(teamCard.first).width, 286);
 
     FilledButton button(String label) =>
         tester.widget<FilledButton>(find.widgetWithText(FilledButton, label));

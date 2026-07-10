@@ -365,6 +365,32 @@ double projectSheetLoadingHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double projectTeamPanelHeight(
+  Size screenSize, {
+  double preferred = 104,
+  double minHeight = 96,
+  double maxFraction = 0.24,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
+double projectTeamCardWidth(
+  Size screenSize, {
+  double preferred = 286,
+  double minWidth = 220,
+  double horizontalInset = 48,
+}) {
+  final width = screenSize.width;
+  if (!width.isFinite || width <= 0) return preferred;
+  final available = width - horizontalInset;
+  if (available >= preferred) return preferred;
+  return available < minWidth ? minWidth : available;
+}
+
 Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   Iterable<ProjectDetail> details,
 ) {
@@ -1010,8 +1036,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
   Widget _teamPanel() {
     final orgs = _visibleOrgs;
     if (orgs.isEmpty) return const SizedBox.shrink();
+    final screenSize = MediaQuery.sizeOf(context);
     return SizedBox(
-      height: 104,
+      height: projectTeamPanelHeight(screenSize),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: orgs.length,
@@ -1020,7 +1047,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
           final org = orgs[i];
           final canManage = _manageableOrgIds.contains(org.id);
           return SizedBox(
-            width: 286,
+            width: projectTeamCardWidth(screenSize),
             child: Material(
               color: CcColors.panel,
               shape: RoundedRectangleBorder(
