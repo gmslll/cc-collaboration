@@ -527,9 +527,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
     final generation = ++_loadGeneration;
     final client = widget.client;
     try {
-      final orgs = await client.organizations().catchError(
-        (_) => <Organization>[],
-      );
+      final orgs = await Future.sync(
+        client.organizations,
+      ).catchError((_) => <Organization>[]);
       Me? me;
       try {
         me = await client.me();
@@ -537,9 +537,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
         me = null;
       }
       final ps = await client.projects();
-      final online = await client.onlineUsers().catchError(
-        (_) => <OnlineUser>[],
-      );
+      final online = await Future.sync(
+        client.onlineUsers,
+      ).catchError((_) => <OnlineUser>[]);
       final meOrgRoles = {
         for (final org in me?.organizations ?? const <OrganizationRole>[])
           org.id: org.role,

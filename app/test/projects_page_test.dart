@@ -1258,6 +1258,26 @@ void main() {
     expect(find.text('Old Team'), findsNothing);
   });
 
+  testWidgets(
+    'project page keeps loading when best-effort team context throws',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(
+            body: ProjectsPage(client: _ThrowingContextFakeClient()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('Backend'), findsOneWidget);
+      expect(find.text('Frontend'), findsOneWidget);
+      expect(find.textContaining('加载失败'), findsNothing);
+    },
+  );
+
   test('team and project sheets ignore stale detail loads', () {
     final orgSheet = source.substring(
       source.indexOf('class _OrganizationSheetState'),
@@ -2369,6 +2389,18 @@ class _ProjectsPageFakeClient extends RelayClient {
 class _NoProjectTeamsFakeClient extends _ProjectsPageFakeClient {
   @override
   Future<List<Project>> projects() async => const [];
+}
+
+class _ThrowingContextFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<List<Organization>> organizations() {
+    throw StateError('organizations-context-unavailable');
+  }
+
+  @override
+  Future<List<OnlineUser>> onlineUsers() {
+    throw StateError('online-context-unavailable');
+  }
 }
 
 class _CaptureCreateProjectFakeClient extends _ProjectsPageFakeClient {
