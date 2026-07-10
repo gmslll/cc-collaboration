@@ -88,7 +88,9 @@ class PtyIceCandidate {
       return null;
     }
     final line = value['sdpMLineIndex'];
-    if (line != null && line is! int) return null;
+    if (line != null && (line is! int || line < 0 || line > 0xffff)) {
+      return null;
+    }
     final mid = value['sdpMid'];
     if (mid != null && (mid is! String || mid.length > 256)) return null;
     return PtyIceCandidate(
@@ -143,7 +145,14 @@ typedef PtyStatusHandler = void Function(PtyPeerStatus status);
 bool isPtyDataFrame(Object? value) {
   if (value is! Map) return false;
   return switch (value['t']) {
-    'term.ready' || 'term.input' || 'term.output' || 'term.resize' => true,
+    'term.ready' ||
+    'term.input' ||
+    'term.output' ||
+    'term.resize' ||
+    'screen' ||
+    'reply' ||
+    'status' ||
+    'activity' => true,
     _ => false,
   };
 }
@@ -291,6 +300,28 @@ class _PtyPacketAssembly {
   int bytes = 0;
 }
 
+class _ParsedPtySignal {
+  const _ParsedPtySignal(this.frame, this.peerId, this.estimatedBytes);
+
+  final Map<String, dynamic> frame;
+  final int peerId;
+  final int estimatedBytes;
+}
+
+class _PtySignalLane {
+  _PtySignalLane(this.generation);
+
+  final int generation;
+  final Completer<void> cancelled = Completer<void>();
+  Future<void> tail = Future<void>.value();
+  int queuedCount = 0;
+  int queuedBytes = 0;
+
+  void cancel() {
+    if (!cancelled.isCompleted) cancelled.complete();
+  }
+}
+
 abstract class PtyTransportController {
   PtyTransportController._(
     this._mode,
@@ -298,7 +329,14 @@ abstract class PtyTransportController {
     this._sendSignal,
     this._onFrame,
     this._onStatus,
-  );
+    this._maxQueuedSignals,
+    this._maxQueuedSignalBytes,
+    this._maxPeerQueuedSignals,
+    this._maxPeerQueuedSignalBytes,
+  ) : assert(_maxQueuedSignals > 0),
+      assert(_maxQueuedSignalBytes > 0),
+      assert(_maxPeerQueuedSignals > 0),
+      assert(_maxPeerQueuedSignalBytes > 0);
 
   final PtyPeerFactory _peerFactory;
   final PtySignalSender _sendSignal;
@@ -308,7 +346,15 @@ abstract class PtyTransportController {
   final Map<int, PtyPeerStatus> _statuses = {};
   final Map<int, int> _latestRemoteOfferEpoch = {};
   final Map<(int, int), List<PtyIceCandidate>> _earlyIce = {};
-  final Map<int, Future<void>> _signalTails = {};
+  final Map<int, _PtySignalLane> _signalLanes = {};
+  final Map<int, int> _peerGenerations = {};
+  final int _maxQueuedSignals;
+  final int _maxQueuedSignalBytes;
+  final int _maxPeerQueuedSignals;
+  final int _maxPeerQueuedSignalBytes;
+  int _queuedSignalCount = 0;
+  int _queuedSignalBytes = 0;
+  int _nextPeerGeneration = 0;
   PtyTransportMode _mode;
   int _nextEpoch = 0;
   int _nextMessageId = 0;
@@ -360,11 +406,21 @@ abstract class PtyTransportController {
       final sent = await session.peer!.sendPackets(packets);
       if (sent) return PtySendResult.sentP2p;
       if (identical(_sessions[peerId], session)) {
-        await _failSession(peerId, session.epoch, 'data channel backpressure');
+        await _failSession(
+          peerId,
+          session.epoch,
+          'data channel backpressure',
+          generation: session.generation,
+        );
       }
     } catch (error) {
       if (identical(_sessions[peerId], session)) {
-        await _failSession(peerId, session.epoch, '$error');
+        await _failSession(
+          peerId,
+          session.epoch,
+          '$error',
+          generation: session.generation,
+        );
       }
     }
     // Once a frame was assigned to an open DataChannel route, never retry that
@@ -375,22 +431,150 @@ abstract class PtyTransportController {
 
   Future<bool> handleSignal(Map<String, dynamic> frame) {
     if (frame['t'] != ptySignalFrameType) return Future<bool>.value(false);
-    final from = frame['from'];
-    if (_disposed || from is! int || from <= 0) return Future<bool>.value(true);
-    final snapshot = Map<String, dynamic>.from(frame);
-    final previous = _signalTails[from] ?? Future<void>.value();
-    final queued = previous.then((_) => _handleSignal(snapshot));
-    // Relay is ordered per connection. Preserve that order per peer without a
-    // slow phone blocking negotiation for every other phone.
-    final settled = queued.then<void>((_) {}, onError: (_) {});
-    _signalTails[from] = settled;
+    if (_disposed) return Future<bool>.value(true);
+    final parsed = _parseSignal(frame);
+    if (parsed == null) return Future<bool>.value(true);
+    final generation = _generationFor(parsed.peerId);
+    final lane = _signalLanes.putIfAbsent(
+      parsed.peerId,
+      () => _PtySignalLane(generation),
+    );
+    if (lane.generation != generation || !_reserveSignal(lane, parsed)) {
+      return Future<bool>.value(true);
+    }
+
+    // A lifecycle cancellation releases queued work immediately instead of
+    // chaining a new connection behind a stuck operation from an old connId.
+    final turn = Future.any<void>([lane.tail, lane.cancelled.future]);
+    final queued = turn.then((_) async {
+      if (!_signalLaneIsCurrent(parsed.peerId, lane)) return;
+      await _handleSignal(parsed.frame);
+    });
+    final settled = queued.then<void>((_) {}, onError: (_) {}).then((_) {
+      _releaseSignal(lane, parsed.estimatedBytes);
+    });
+    lane.tail = settled;
     unawaited(
       settled.then((_) {
-        if (identical(_signalTails[from], settled)) _signalTails.remove(from);
+        if (_signalLaneIsCurrent(parsed.peerId, lane) &&
+            identical(lane.tail, settled) &&
+            lane.queuedCount == 0) {
+          _signalLanes.remove(parsed.peerId);
+          if (!_sessions.containsKey(parsed.peerId) &&
+              _peerGenerations[parsed.peerId] == lane.generation) {
+            _peerGenerations.remove(parsed.peerId);
+          }
+        }
       }),
     );
     return queued.then<bool>((_) => true, onError: (_) => true);
   }
+
+  _ParsedPtySignal? _parseSignal(Map<String, dynamic> frame) {
+    final from = frame['from'];
+    final kind = frame['kind'];
+    if (from is! int || from <= 0 || from > 0x7fffffff || kind is! String) {
+      return null;
+    }
+    if (kind == 'mode') {
+      final mode = PtyTransportMode.fromWire(frame['mode']);
+      if (mode == null) return null;
+      return _ParsedPtySignal(
+        {
+          't': ptySignalFrameType,
+          'from': from,
+          'kind': kind,
+          'mode': mode.wireName,
+        },
+        from,
+        64,
+      );
+    }
+
+    final epoch = frame['epoch'];
+    if (epoch is! int || epoch <= 0 || epoch > 0x7fffffff) return null;
+    switch (kind) {
+      case 'offer' || 'answer':
+        final description = PtyDescription.fromJson(frame['description']);
+        if (description == null || description.type != kind) return null;
+        return _ParsedPtySignal(
+          {
+            't': ptySignalFrameType,
+            'from': from,
+            'kind': kind,
+            'epoch': epoch,
+            'description': description.toJson(),
+          },
+          from,
+          128 + description.sdp.length * 2,
+        );
+      case 'ice':
+        final candidate = PtyIceCandidate.fromJson(frame['candidate']);
+        if (candidate == null) return null;
+        return _ParsedPtySignal(
+          {
+            't': ptySignalFrameType,
+            'from': from,
+            'kind': kind,
+            'epoch': epoch,
+            'candidate': candidate.toJson(),
+          },
+          from,
+          128 +
+              candidate.candidate.length * 2 +
+              (candidate.sdpMid?.length ?? 0) * 2,
+        );
+      case 'close':
+        final reasonValue = frame['reason'];
+        if (reasonValue != null &&
+            (reasonValue is! String || reasonValue.length > 1024)) {
+          return null;
+        }
+        final reason = reasonValue is String ? reasonValue : null;
+        return _ParsedPtySignal(
+          {
+            't': ptySignalFrameType,
+            'from': from,
+            'kind': kind,
+            'epoch': epoch,
+            'reason': ?reason,
+          },
+          from,
+          96 + (reason?.length ?? 0) * 2,
+        );
+      default:
+        return null;
+    }
+  }
+
+  bool _reserveSignal(_PtySignalLane lane, _ParsedPtySignal signal) {
+    if (_queuedSignalCount >= _maxQueuedSignals ||
+        _queuedSignalBytes > _maxQueuedSignalBytes - signal.estimatedBytes ||
+        lane.queuedCount >= _maxPeerQueuedSignals ||
+        lane.queuedBytes > _maxPeerQueuedSignalBytes - signal.estimatedBytes) {
+      return false;
+    }
+    _queuedSignalCount++;
+    _queuedSignalBytes += signal.estimatedBytes;
+    lane.queuedCount++;
+    lane.queuedBytes += signal.estimatedBytes;
+    return true;
+  }
+
+  void _releaseSignal(_PtySignalLane lane, int bytes) {
+    if (lane.queuedCount > 0) lane.queuedCount--;
+    lane.queuedBytes -= bytes;
+    if (lane.queuedBytes < 0) lane.queuedBytes = 0;
+    if (_queuedSignalCount > 0) _queuedSignalCount--;
+    _queuedSignalBytes -= bytes;
+    if (_queuedSignalBytes < 0) _queuedSignalBytes = 0;
+  }
+
+  bool _signalLaneIsCurrent(int peerId, _PtySignalLane lane) =>
+      !_disposed &&
+      identical(_signalLanes[peerId], lane) &&
+      _peerGenerations[peerId] == lane.generation &&
+      !lane.cancelled.isCompleted;
 
   Future<void> _handleSignal(Map<String, dynamic> frame) async {
     final from = frame['from'];
@@ -429,13 +613,24 @@ abstract class PtyTransportController {
       _sendClose(peerId, epoch, 'relay mode');
       return;
     }
+    final generation = _generationFor(peerId);
     final latest = _latestRemoteOfferEpoch[peerId] ?? 0;
     if (epoch <= latest) return;
     _latestRemoteOfferEpoch[peerId] = epoch;
-    await _replaceSession(peerId, epoch, initiator: false);
+    await _replaceSession(
+      peerId,
+      epoch,
+      generation: generation,
+      initiator: false,
+    );
     final session = _sessions[peerId];
     final peer = session?.peer;
-    if (session == null || peer == null || session.epoch != epoch) return;
+    if (session == null ||
+        peer == null ||
+        session.epoch != epoch ||
+        session.generation != generation) {
+      return;
+    }
     try {
       final answer = await peer.acceptOffer(offer);
       if (!_isCurrent(peerId, epoch, peer)) return;
@@ -443,23 +638,34 @@ abstract class PtyTransportController {
       await _drainIce(peerId, session);
       _signal(peerId, 'answer', epoch, description: answer.toJson());
     } catch (error) {
-      await _failSession(peerId, epoch, '$error');
+      await _failSession(peerId, epoch, '$error', generation: generation);
     }
   }
 
   Future<void> startOffer(int peerId) async {
     if (_disposed || _mode == PtyTransportMode.relay) return;
+    final generation = _generationFor(peerId);
     final epoch = ++_nextEpoch;
-    await _replaceSession(peerId, epoch, initiator: true);
+    await _replaceSession(
+      peerId,
+      epoch,
+      generation: generation,
+      initiator: true,
+    );
     final session = _sessions[peerId];
     final peer = session?.peer;
-    if (session == null || peer == null || session.epoch != epoch) return;
+    if (session == null ||
+        peer == null ||
+        session.epoch != epoch ||
+        session.generation != generation) {
+      return;
+    }
     try {
       final offer = await peer.createOffer();
       if (!_isCurrent(peerId, epoch, peer)) return;
       _signal(peerId, 'offer', epoch, description: offer.toJson());
     } catch (error) {
-      await _failSession(peerId, epoch, '$error');
+      await _failSession(peerId, epoch, '$error', generation: generation);
     }
   }
 
@@ -472,33 +678,64 @@ abstract class PtyTransportController {
   /// epoch. Used for retry on the same Relay connId so a delayed old offer
   /// cannot be accepted again between close and the replacement offer.
   Future<void> restartPeer(int peerId) async {
+    final generation = _invalidatePeerLifecycle(peerId);
     _earlyIce.removeWhere((key, _) => key.$1 == peerId);
     final session = _sessions[peerId];
-    if (session != null) {
-      await _closeSession(peerId, session.epoch, PtyPeerState.closed);
-    }
+    // Clear the old status before an awaited close so a concurrent new
+    // lifecycle cannot have its freshly published status removed afterward.
     _statuses.remove(peerId);
+    if (session != null) {
+      await _closeSession(
+        peerId,
+        session.epoch,
+        PtyPeerState.closed,
+        generation: session.generation,
+      );
+    }
+    if (_peerGenerations[peerId] == generation &&
+        !_sessions.containsKey(peerId) &&
+        !_signalLanes.containsKey(peerId)) {
+      _peerGenerations.remove(peerId);
+    }
   }
 
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    await Future.wait(_signalTails.values.toList());
-    _signalTails.clear();
+    for (final lane in _signalLanes.values) {
+      lane.cancel();
+    }
+    _signalLanes.clear();
     await _closeAll(PtyPeerState.closed);
     _earlyIce.clear();
+    _peerGenerations.clear();
+  }
+
+  int _generationFor(int peerId) =>
+      _peerGenerations.putIfAbsent(peerId, () => ++_nextPeerGeneration);
+
+  int _invalidatePeerLifecycle(int peerId) {
+    final generation = ++_nextPeerGeneration;
+    _peerGenerations[peerId] = generation;
+    _signalLanes.remove(peerId)?.cancel();
+    return generation;
   }
 
   Future<void> _replaceSession(
     int peerId,
     int epoch, {
+    required int generation,
     required bool initiator,
   }) async {
     final old = _sessions.remove(peerId);
     await _closePeer(old?.peer);
     old?.reassembler.clear();
-    if (_disposed || _mode == PtyTransportMode.relay) return;
-    final session = _PtyPeerSession(epoch, initiator);
+    if (_disposed ||
+        _mode == PtyTransportMode.relay ||
+        _peerGenerations[peerId] != generation) {
+      return;
+    }
+    final session = _PtyPeerSession(epoch, generation, initiator);
     _sessions[peerId] = session;
     _setStatus(peerId, PtyPeerState.connecting, epoch);
     try {
@@ -506,23 +743,29 @@ abstract class PtyTransportController {
         peerId: peerId,
         initiator: initiator,
         callbacks: PtyPeerCallbacks(
-          onPacket: (packet) => _receivePacket(peerId, epoch, packet),
+          onPacket: (packet) =>
+              _receivePacket(peerId, epoch, generation, packet),
           onIce: (candidate) {
-            if (_sessions[peerId]?.epoch == epoch) {
+            final current = _sessions[peerId];
+            if (current?.epoch == epoch &&
+                current?.generation == generation &&
+                _peerGenerations[peerId] == generation) {
               _signal(peerId, 'ice', epoch, candidate: candidate.toJson());
             }
           },
           onState: (state, error) =>
-              _peerStateChanged(peerId, epoch, state, error),
+              _peerStateChanged(peerId, epoch, generation, state, error),
         ),
       );
-      if (_disposed || _sessions[peerId] != session) {
+      if (_disposed ||
+          _sessions[peerId] != session ||
+          _peerGenerations[peerId] != generation) {
         await _closePeer(peer);
         return;
       }
       session.peer = peer;
     } catch (error) {
-      await _failSession(peerId, epoch, '$error');
+      await _failSession(peerId, epoch, '$error', generation: generation);
     }
   }
 
@@ -545,7 +788,12 @@ abstract class PtyTransportController {
       session.remoteDescriptionReady = true;
       await _drainIce(peerId, session);
     } catch (error) {
-      await _failSession(peerId, epoch, '$error');
+      await _failSession(
+        peerId,
+        epoch,
+        '$error',
+        generation: session.generation,
+      );
     }
   }
 
@@ -576,7 +824,12 @@ abstract class PtyTransportController {
     try {
       await session.peer?.addIce(candidate);
     } catch (error) {
-      await _failSession(peerId, epoch, '$error');
+      await _failSession(
+        peerId,
+        epoch,
+        '$error',
+        generation: session.generation,
+      );
     }
   }
 
@@ -591,9 +844,14 @@ abstract class PtyTransportController {
     );
   }
 
-  void _receivePacket(int peerId, int epoch, Uint8List packet) {
+  void _receivePacket(int peerId, int epoch, int generation, Uint8List packet) {
     final session = _sessions[peerId];
-    if (session == null || session.epoch != epoch) return;
+    if (session == null ||
+        session.epoch != epoch ||
+        session.generation != generation ||
+        _peerGenerations[peerId] != generation) {
+      return;
+    }
     try {
       final frame = session.reassembler.add(packet);
       if (frame == null) return;
@@ -602,33 +860,66 @@ abstract class PtyTransportController {
       }
       _onFrame(peerId, frame);
     } catch (error) {
-      unawaited(_failSession(peerId, epoch, '$error'));
+      unawaited(_failSession(peerId, epoch, '$error', generation: generation));
     }
   }
 
   void _peerStateChanged(
     int peerId,
     int epoch,
+    int generation,
     PtyPeerState state,
     String? error,
   ) {
     final session = _sessions[peerId];
-    if (session == null || session.epoch != epoch) return;
+    if (session == null ||
+        session.epoch != epoch ||
+        session.generation != generation ||
+        _peerGenerations[peerId] != generation) {
+      return;
+    }
     session.state = state;
     _setStatus(peerId, state, epoch, error);
     if (state == PtyPeerState.failed || state == PtyPeerState.closed) {
-      unawaited(_closeSession(peerId, epoch, state, error: error));
+      unawaited(
+        _closeSession(
+          peerId,
+          epoch,
+          state,
+          error: error,
+          generation: generation,
+        ),
+      );
     }
   }
 
   bool _isCurrent(int peerId, int epoch, PtyPeer peer) =>
       !_disposed &&
       _sessions[peerId]?.epoch == epoch &&
+      _sessions[peerId]?.generation == _peerGenerations[peerId] &&
       identical(_sessions[peerId]?.peer, peer);
 
-  Future<void> _failSession(int peerId, int epoch, String error) async {
+  Future<void> _failSession(
+    int peerId,
+    int epoch,
+    String error, {
+    int? generation,
+  }) async {
+    final session = _sessions[peerId];
+    if (session == null ||
+        session.epoch != epoch ||
+        (generation != null && session.generation != generation) ||
+        _peerGenerations[peerId] != session.generation) {
+      return;
+    }
     _sendClose(peerId, epoch, error);
-    await _closeSession(peerId, epoch, PtyPeerState.failed, error: error);
+    await _closeSession(
+      peerId,
+      epoch,
+      PtyPeerState.failed,
+      error: error,
+      generation: generation,
+    );
   }
 
   Future<void> _closeSession(
@@ -636,14 +927,24 @@ abstract class PtyTransportController {
     int epoch,
     PtyPeerState state, {
     String? error,
+    int? generation,
   }) async {
     final session = _sessions[peerId];
-    if (session == null || session.epoch != epoch) return;
+    if (session == null ||
+        session.epoch != epoch ||
+        (generation != null && session.generation != generation)) {
+      return;
+    }
     _sessions.remove(peerId);
     session.reassembler.clear();
     await _closePeer(session.peer);
+    if (_peerGenerations[peerId] != session.generation) return;
     final replacement = _sessions[peerId];
-    if (replacement != null && replacement.epoch != epoch) return;
+    if (replacement != null &&
+        (replacement.epoch != epoch ||
+            replacement.generation != session.generation)) {
+      return;
+    }
     final currentStatus = _statuses[peerId];
     if (currentStatus != null && currentStatus.epoch > epoch) return;
     _setStatus(peerId, state, epoch, error);
@@ -652,11 +953,13 @@ abstract class PtyTransportController {
   Future<void> _closeAll(PtyPeerState state) async {
     final sessions = _sessions.entries.toList();
     _sessions.clear();
-    for (final entry in sessions) {
-      entry.value.reassembler.clear();
-      await _closePeer(entry.value.peer);
-      _setStatus(entry.key, state, entry.value.epoch);
-    }
+    await Future.wait(
+      sessions.map((entry) async {
+        entry.value.reassembler.clear();
+        await _closePeer(entry.value.peer);
+        _setStatus(entry.key, state, entry.value.epoch);
+      }),
+    );
   }
 
   static Future<void> _closePeer(PtyPeer? peer) async {
@@ -724,10 +1027,26 @@ class PtyHostTransportController extends PtyTransportController {
     required PtySignalSender sendSignal,
     required PtyFrameHandler onFrame,
     PtyStatusHandler? onStatus,
-  }) : super._(mode, peerFactory, sendSignal, onFrame, onStatus);
+    int maxQueuedSignals = 128,
+    int maxQueuedSignalBytes = 8 * 1024 * 1024,
+    int maxPeerQueuedSignals = 32,
+    int maxPeerQueuedSignalBytes = 4 * 1024 * 1024,
+  }) : super._(
+         mode,
+         peerFactory,
+         sendSignal,
+         onFrame,
+         onStatus,
+         maxQueuedSignals,
+         maxQueuedSignalBytes,
+         maxPeerQueuedSignals,
+         maxPeerQueuedSignalBytes,
+       );
 
   final Set<int> _connectedPeers = {};
   final Map<int, PtyTransportMode> _remoteModes = {};
+
+  PtyTransportMode? remoteModeFor(int peerId) => _remoteModes[peerId];
 
   void peerConnected(int peerId) {
     if (peerId > 0) _connectedPeers.add(peerId);
@@ -786,7 +1105,21 @@ class PtyClientTransportController extends PtyTransportController {
     required PtySignalSender sendSignal,
     required PtyFrameHandler onFrame,
     PtyStatusHandler? onStatus,
-  }) : super._(mode, peerFactory, sendSignal, onFrame, onStatus);
+    int maxQueuedSignals = 128,
+    int maxQueuedSignalBytes = 8 * 1024 * 1024,
+    int maxPeerQueuedSignals = 32,
+    int maxPeerQueuedSignalBytes = 4 * 1024 * 1024,
+  }) : super._(
+         mode,
+         peerFactory,
+         sendSignal,
+         onFrame,
+         onStatus,
+         maxQueuedSignals,
+         maxQueuedSignalBytes,
+         maxPeerQueuedSignals,
+         maxPeerQueuedSignalBytes,
+       );
 
   int? _hostPeerId;
 
@@ -810,9 +1143,10 @@ class PtyClientTransportController extends PtyTransportController {
 }
 
 class _PtyPeerSession {
-  _PtyPeerSession(this.epoch, this.initiator);
+  _PtyPeerSession(this.epoch, this.generation, this.initiator);
 
   final int epoch;
+  final int generation;
   final bool initiator;
   final PtyPacketReassembler reassembler = PtyPacketReassembler();
   PtyPeer? peer;

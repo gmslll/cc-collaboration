@@ -6,6 +6,9 @@ import 'package:app/remote/pty_transport_webrtc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakePeerFactory implements PtyPeerFactory {
+  _FakePeerFactory({this.onCreate});
+
+  final void Function(_FakePeer peer)? onCreate;
   final List<_FakePeer> peers = [];
 
   @override
@@ -15,6 +18,7 @@ class _FakePeerFactory implements PtyPeerFactory {
     required PtyPeerCallbacks callbacks,
   }) async {
     final peer = _FakePeer(peerId, initiator, callbacks);
+    onCreate?.call(peer);
     peers.add(peer);
     return peer;
   }
@@ -32,6 +36,8 @@ class _FakePeer implements PtyPeer {
   bool closed = false;
   bool throwOnClose = false;
   int closeAttempts = 0;
+  Completer<void>? acceptOfferGate;
+  Completer<bool>? sendGate;
   Completer<void>? closeGate;
 
   @override
@@ -39,8 +45,10 @@ class _FakePeer implements PtyPeer {
       const PtyDescription(type: 'offer', sdp: 'offer-sdp');
 
   @override
-  Future<PtyDescription> acceptOffer(PtyDescription offer) async =>
-      const PtyDescription(type: 'answer', sdp: 'answer-sdp');
+  Future<PtyDescription> acceptOffer(PtyDescription offer) async {
+    await acceptOfferGate?.future;
+    return const PtyDescription(type: 'answer', sdp: 'answer-sdp');
+  }
 
   @override
   Future<void> acceptAnswer(PtyDescription answer) async {}
@@ -50,6 +58,8 @@ class _FakePeer implements PtyPeer {
 
   @override
   Future<bool> sendPackets(List<Uint8List> packets) async {
+    final gated = sendGate;
+    if (gated != null) return gated.future;
     if (!sendResult) return false;
     sent.add([for (final packet in packets) Uint8List.fromList(packet)]);
     return true;
@@ -81,12 +91,106 @@ void main() {
     expect(init.maxRetransmitTime, -1);
     expect(init.maxRetransmits, -1);
     expect(init.negotiated, isFalse);
+    expect(init.binaryType, 'binary');
   });
 
-  test('PTY data allowlist keeps ready and output on one ordered channel', () {
-    expect(isPtyDataFrame({'t': 'term.ready'}), isTrue);
-    expect(isPtyDataFrame({'t': 'term.output'}), isTrue);
-    expect(isPtyDataFrame({'t': 'sessions'}), isFalse);
+  test('PTY data allowlist includes only ordered terminal stream frames', () {
+    for (final type in [
+      'term.ready',
+      'term.input',
+      'term.output',
+      'term.resize',
+      'screen',
+      'reply',
+      'status',
+      'activity',
+    ]) {
+      expect(isPtyDataFrame({'t': type}), isTrue, reason: type);
+    }
+    for (final type in [
+      'term.open',
+      'term.close',
+      'term.routeFailed',
+      ptySignalFrameType,
+      'sessions',
+    ]) {
+      expect(isPtyDataFrame({'t': type}), isFalse, reason: type);
+    }
+  });
+
+  test('plugin deadline returns promptly and cleans up a late value', () async {
+    final source = Completer<int>();
+    final cleaned = Completer<int>();
+
+    await expectLater(
+      ptyWithDeadline<int>(
+        source.future,
+        timeout: const Duration(milliseconds: 20),
+        operation: 'test operation',
+        onLateValue: cleaned.complete,
+      ),
+      throwsA(isA<TimeoutException>()),
+    );
+    source.complete(42);
+    expect(await cleaned.future, 42);
+  });
+
+  test(
+    'peer close attempts the connection while channel close hangs',
+    () async {
+      final channelGate = Completer<void>();
+      var connectionCloseAttempts = 0;
+
+      await ptyCloseConcurrently(
+        closeChannel: () => channelGate.future,
+        closePeerConnection: () async {
+          connectionCloseAttempts++;
+        },
+        timeout: const Duration(milliseconds: 20),
+      ).timeout(const Duration(milliseconds: 100));
+
+      expect(connectionCloseAttempts, 1);
+    },
+  );
+
+  test('send queue reserves bounded memory before async chaining', () async {
+    final queue = PtySendQueue(maxQueuedBatches: 8, maxQueuedBytes: 80);
+    final firstGate = Completer<bool>();
+    var started = 0;
+    final sends = <Future<bool>>[];
+
+    sends.add(
+      queue.enqueue(
+        bytes: 10,
+        operation: () {
+          started++;
+          return firstGate.future;
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    for (var index = 1; index < 1000; index++) {
+      sends.add(
+        queue.enqueue(
+          bytes: 10,
+          operation: () async {
+            started++;
+            return true;
+          },
+        ),
+      );
+    }
+
+    expect(queue.queuedBatches, 8);
+    expect(queue.queuedBytes, 80);
+    expect(started, 1);
+    queue.close();
+    firstGate.complete(true);
+    final results = await Future.wait(sends);
+    expect(results.where((result) => result), hasLength(1));
+    expect(started, 1);
+    expect(queue.queuedBatches, 0);
+    expect(queue.queuedBytes, 0);
   });
 
   test('UTF-8 frames split below 16 KiB and reassemble losslessly', () {
@@ -167,6 +271,38 @@ void main() {
 
     expect(await waiting, isTrue);
   });
+
+  test(
+    'buffer gate bounds a hung plugin read and close wakes waiters',
+    () async {
+      final hungRead = Completer<int>();
+      final timed = PtyBufferGate(
+        maxBufferedBytes: 100,
+        waitTimeout: const Duration(milliseconds: 25),
+      );
+      expect(
+        await timed.waitForCapacity(
+          bytes: 10,
+          readBufferedAmount: () => hungRead.future,
+          isOpen: () => true,
+        ),
+        isFalse,
+      );
+
+      final closing = PtyBufferGate(
+        maxBufferedBytes: 100,
+        waitTimeout: const Duration(seconds: 5),
+      );
+      final waiting = closing.waitForCapacity(
+        bytes: 10,
+        readBufferedAmount: () => Completer<int>().future,
+        isOpen: () => true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      closing.close();
+      expect(await waiting, isFalse);
+    },
+  );
 
   test('forced relay neither creates a peer nor accepts an offer', () async {
     final factory = _FakePeerFactory();
@@ -501,7 +637,192 @@ void main() {
       }),
       isTrue,
     );
+    expect(
+      await controller.handleSignal({
+        't': ptySignalFrameType,
+        'from': 0x80000000,
+        'kind': 'ice',
+        'epoch': 1,
+        'candidate': {'candidate': 'candidate'},
+      }),
+      isTrue,
+    );
+    expect(
+      await controller.handleSignal({
+        't': ptySignalFrameType,
+        'from': 1,
+        'kind': 'ice',
+        'epoch': 1,
+        'candidate': {'candidate': 'candidate', 'sdpMLineIndex': -1},
+      }),
+      isTrue,
+    );
   });
+
+  test('signal lanes enforce count and byte limits before enqueue', () async {
+    final acceptGate = Completer<void>();
+    final factory = _FakePeerFactory(
+      onCreate: (peer) => peer.acceptOfferGate = acceptGate,
+    );
+    final client = PtyClientTransportController(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+      sendSignal: (_) {},
+      onFrame: (_, _) {},
+      maxQueuedSignals: 3,
+      maxQueuedSignalBytes: 4096,
+      maxPeerQueuedSignals: 3,
+      maxPeerQueuedSignalBytes: 4096,
+    );
+    addTearDown(client.dispose);
+
+    final offer = client.handleSignal({
+      't': ptySignalFrameType,
+      'from': 1,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer'},
+    });
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    final ice = <Future<bool>>[];
+    for (var index = 0; index < 100; index++) {
+      ice.add(
+        client.handleSignal({
+          't': ptySignalFrameType,
+          'from': 1,
+          'kind': 'ice',
+          'epoch': 1,
+          'candidate': {'candidate': 'candidate-$index'},
+        }),
+      );
+    }
+    acceptGate.complete();
+    await offer;
+    await Future.wait(ice);
+
+    expect(factory.peers, hasLength(1));
+    expect(factory.peers.single.ice.length, lessThanOrEqualTo(2));
+
+    final byteLimited = PtyClientTransportController(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+      sendSignal: (_) {},
+      onFrame: (_, _) {},
+      maxQueuedSignalBytes: 100,
+      maxPeerQueuedSignalBytes: 100,
+    );
+    await byteLimited.handleSignal({
+      't': ptySignalFrameType,
+      'from': 2,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'too-large-for-budget'},
+    });
+    await byteLimited.dispose();
+    expect(factory.peers, hasLength(1));
+  });
+
+  test(
+    'disconnect invalidates an offer before its queued turn starts',
+    () async {
+      final factory = _FakePeerFactory();
+      final client = PtyClientTransportController(
+        mode: PtyTransportMode.p2p,
+        peerFactory: factory,
+        sendSignal: (_) {},
+        onFrame: (_, _) {},
+      );
+      addTearDown(client.dispose);
+
+      final queued = client.handleSignal({
+        't': ptySignalFrameType,
+        'from': 1,
+        'kind': 'offer',
+        'epoch': 1,
+        'description': {'type': 'offer', 'sdp': 'offer'},
+      });
+      await client.peerDisconnected(1);
+      await queued;
+
+      expect(factory.peers, isEmpty);
+    },
+  );
+
+  test('new peer lifecycle is not blocked by a hung old signal lane', () async {
+    final oldAccept = Completer<void>();
+    final factory = _FakePeerFactory(
+      onCreate: (peer) {
+        if (peer.peerId == 1 &&
+            peer.initiator == false &&
+            oldAccept.isCompleted == false) {
+          peer.acceptOfferGate = oldAccept;
+        }
+      },
+    );
+    final client = PtyClientTransportController(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+      sendSignal: (_) {},
+      onFrame: (_, _) {},
+    );
+    addTearDown(client.dispose);
+
+    Future<bool> offer(int epoch) => client.handleSignal({
+      't': ptySignalFrameType,
+      'from': 1,
+      'kind': 'offer',
+      'epoch': epoch,
+      'description': {'type': 'offer', 'sdp': 'offer-$epoch'},
+    });
+
+    final oldSignal = offer(1);
+    while (factory.peers.isEmpty) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await client.peerDisconnected(1);
+    final replacementSignal = offer(1);
+    while (factory.peers.length < 2) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(factory.peers.first.closed, isTrue);
+    expect(factory.peers.last.closed, isFalse);
+    oldAccept.complete();
+    await Future.wait([oldSignal, replacementSignal]);
+    expect(factory.peers.last.closed, isFalse);
+  });
+
+  test(
+    'dispose closes peers without awaiting a hung signal operation',
+    () async {
+      final acceptGate = Completer<void>();
+      final factory = _FakePeerFactory(
+        onCreate: (peer) => peer.acceptOfferGate = acceptGate,
+      );
+      final client = PtyClientTransportController(
+        mode: PtyTransportMode.p2p,
+        peerFactory: factory,
+        sendSignal: (_) {},
+        onFrame: (_, _) {},
+      );
+      final handling = client.handleSignal({
+        't': ptySignalFrameType,
+        'from': 1,
+        'kind': 'offer',
+        'epoch': 1,
+        'description': {'type': 'offer', 'sdp': 'offer'},
+      });
+      while (factory.peers.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      await client.dispose().timeout(const Duration(milliseconds: 100));
+      expect(factory.peers.single.closeAttempts, 1);
+      acceptGate.complete();
+      await handling;
+    },
+  );
 
   test('wire close and immediate retry mode are processed in order', () async {
     final factory = _FakePeerFactory();
@@ -579,6 +900,94 @@ void main() {
       expect(host.statusFor(12).state, PtyPeerState.p2p);
     },
   );
+
+  test('restart close cannot erase a concurrently replaced status', () async {
+    final factory = _FakePeerFactory();
+    final client = PtyClientTransportController(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+      sendSignal: (_) {},
+      onFrame: (_, _) {},
+    );
+    addTearDown(client.dispose);
+    Future<void> offer(int epoch) => client.handleSignal({
+      't': ptySignalFrameType,
+      'from': 1,
+      'kind': 'offer',
+      'epoch': epoch,
+      'description': {'type': 'offer', 'sdp': 'offer-$epoch'},
+    });
+
+    await offer(1);
+    final old = factory.peers.single;
+    old.closeGate = Completer<void>();
+    final restarting = client.restartPeer(1);
+    await Future<void>.delayed(Duration.zero);
+    await offer(2);
+    factory.peers.last.open();
+    old.closeGate!.complete();
+    await restarting;
+
+    expect(client.statusFor(1).state, PtyPeerState.p2p);
+  });
+
+  test('an old send failure cannot close a replacement peer', () async {
+    final factory = _FakePeerFactory();
+    final host = PtyHostTransportController(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+      sendSignal: (_) {},
+      onFrame: (_, _) {},
+    );
+    addTearDown(host.dispose);
+    host.peerConnected(22);
+    Future<void> announce() => host.handleSignal({
+      't': ptySignalFrameType,
+      'from': 22,
+      'kind': 'mode',
+      'mode': 'p2p',
+    });
+
+    await announce();
+    final old = factory.peers.single..open();
+    old.sendGate = Completer<bool>();
+    final sending = host.sendPtyFrame(22, {
+      't': 'term.output',
+      'sid': 's1',
+      'd': 'old session',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    await host.restartPeer(22);
+    await announce();
+    final replacement = factory.peers.last..open();
+    old.sendGate!.complete(false);
+
+    expect(await sending, PtySendResult.unavailable);
+    expect(replacement.closed, isFalse);
+    expect(host.statusFor(22).state, PtyPeerState.p2p);
+  });
+
+  test('host exposes the negotiated remote transport mode', () async {
+    final host = PtyHostTransportController(
+      mode: PtyTransportMode.relay,
+      peerFactory: _FakePeerFactory(),
+      sendSignal: (_) {},
+      onFrame: (_, _) {},
+    );
+    addTearDown(host.dispose);
+    host.peerConnected(31);
+
+    await host.handleSignal({
+      't': ptySignalFrameType,
+      'from': 31,
+      'kind': 'mode',
+      'mode': 'auto',
+    });
+    expect(host.remoteModeFor(31), PtyTransportMode.auto);
+    await host.peerDisconnected(31);
+    expect(host.remoteModeFor(31), isNull);
+  });
 
   test('dispose closes every peer even when one close throws', () async {
     final factory = _FakePeerFactory();
