@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:app/screens/diff_page.dart';
+import 'package:app/screens/diff_view.dart';
 import 'package:app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,29 @@ void main() {
     expect(source, isNot(contains("title: Text('变动 · \${widget.name}')")));
     expect(source, contains("'变动 · \${widget.name}',\n          maxLines: 1"));
     expect(source, contains('overflow: TextOverflow.ellipsis'));
+  });
+
+  test('diff discard dialog width fits compact screens', () {
+    expect(diffDiscardDialogWidth(const Size(1200, 900)), 420);
+    expect(diffDiscardDialogWidth(const Size(320, 700)), 288);
+    expect(diffDiscardDialogWidth(const Size(20, 700)), 420);
+  });
+
+  test('diff discard dialog uses responsive long-path content', () {
+    final source = File('lib/screens/diff_view.dart').readAsStringSync();
+    final discard = source.substring(
+      source.indexOf('Future<void> _discard()'),
+      source.indexOf('@override\n  Widget build'),
+    );
+
+    expect(discard, contains('MediaQuery.sizeOf(ctx)'));
+    expect(discard, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(discard, contains('maxLines: 1'));
+    expect(discard, contains('overflow: TextOverflow.ellipsis'));
+    expect(discard, contains('diffDiscardDialogWidth(size)'));
+    expect(discard, contains('SingleChildScrollView'));
+    expect(discard, contains('SelectableText'));
+    expect(discard, isNot(contains('content: Text(')));
   });
 
   testWidgets('stale diff load cannot overwrite the selected mode', (

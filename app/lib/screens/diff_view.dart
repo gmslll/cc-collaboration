@@ -43,6 +43,12 @@ class DiffView extends StatefulWidget {
   State<DiffView> createState() => _DiffViewState();
 }
 
+double diffDiscardDialogWidth(Size size, {double preferred = 420}) {
+  final available = size.width - 32;
+  if (!available.isFinite || available <= 0) return preferred;
+  return available < preferred ? available : preferred;
+}
+
 class _DiffViewState extends State<DiffView> {
   FileDiff? _selected;
   String? _lang; // re_highlight language id of the selected file (null = plain)
@@ -206,21 +212,40 @@ class _DiffViewState extends State<DiffView> {
     if (f == null || root == null) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('丢弃改动?'),
-        content: Text('${f.path}\n\ngit checkout -- 丢弃未提交改动,不可撤销。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('丢弃'),
+          title: const Text(
+            '丢弃改动?',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
-      ),
+          content: SizedBox(
+            width: diffDiscardDialogWidth(size),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                '${f.path}\n\ngit checkout -- 丢弃未提交改动,不可撤销。',
+                style: CcType.code(size: 12),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('丢弃'),
+            ),
+          ],
+        );
+      },
     );
     if (ok != true) return;
     if (!mounted) return;
