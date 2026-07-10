@@ -25,6 +25,19 @@ double workspaceBranchDialogWidth(Size size, {double preferred = 420}) {
   return available < preferred ? available : preferred;
 }
 
+Size workspaceBranchFullDialogSize(
+  Size viewport, {
+  double preferredWidth = 760,
+  double preferredHeight = 660,
+}) => Size(
+  workspaceNavigationDialogDimension(viewport.width - 32, preferredWidth),
+  workspaceNavigationDialogDimension(
+    viewport.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
 class WorkspaceBranchCreateDialog extends StatefulWidget {
   final String initialBranch;
   final String initialStartRef;
@@ -266,10 +279,14 @@ class _BranchDialogState extends State<_BranchDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final dialogSize = workspaceBranchFullDialogSize(
+      MediaQuery.sizeOf(context),
+    );
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: SizedBox(
-        width: 760,
-        height: 660,
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Column(
           children: [
             _DialogHeader(

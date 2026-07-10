@@ -15,6 +15,37 @@ void main() {
     );
   });
 
+  test('workspace branch full dialog size fits compact screens', () {
+    expect(
+      workspaceBranchFullDialogSize(const Size(1024, 800)),
+      const Size(760, 660),
+    );
+    expect(
+      workspaceBranchFullDialogSize(const Size(360, 420)),
+      const Size(328, 372),
+    );
+    expect(
+      workspaceBranchFullDialogSize(const Size(220, 220)),
+      const Size(188, 172),
+    );
+  });
+
+  test('workspace branch full dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/workspace/branch_dialog.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _BranchDialogState'),
+      source.indexOf('class _BranchListPane'),
+    );
+
+    expect(dialog, contains('workspaceBranchFullDialogSize'));
+    expect(dialog, contains('MediaQuery.sizeOf(context)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, isNot(contains('width: 760')));
+    expect(dialog, isNot(contains('height: 660')));
+  });
+
   testWidgets('WorkspaceBranchConfirmDialog fits compact screens', (
     tester,
   ) async {
