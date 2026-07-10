@@ -90,4 +90,4 @@ echo "  sudo cc-handoff-backup"
 echo "  sudo cc-handoff-uninstall [--purge]"
 REMOTE
 
-say "done — point your reverse proxy at 127.0.0.1:8080 if not already"
+say "done — relay listens on 0.0.0.0:8080; restrict port 8080 with firewall/security-group rules"

@@ -29,5 +29,6 @@ systemctl enable --now cc-handoff-relay
 
 systemctl status cc-handoff-relay --no-pager
 echo
+echo "Relay listens on 0.0.0.0:8080. Restrict port 8080 with firewall/security-group rules."
 echo "Done. Put cc-handoff-relay behind a TLS-terminating reverse proxy (caddy / nginx)."
 echo "Bootstrap an admin with: cc-relay useradd -db /var/lib/cc-handoff/relay.db -identity <you@example.com> -admin"
