@@ -684,7 +684,7 @@ void main() {
     ]);
   });
 
-  test('project creation team id ignores default and stale selections', () {
+  test('project creation team id defaults to a real manageable team', () {
     final orgs = [
       Organization.fromJson({
         'id': 'org-a',
@@ -694,11 +694,12 @@ void main() {
       }),
     ];
 
-    expect(createProjectTeamId(null, orgs), isNull);
-    expect(createProjectTeamId('', orgs), isNull);
-    expect(createProjectTeamId('   ', orgs), isNull);
-    expect(createProjectTeamId('missing-org', orgs), isNull);
+    expect(createProjectTeamId(null, orgs), 'org-a');
+    expect(createProjectTeamId('', orgs), 'org-a');
+    expect(createProjectTeamId('   ', orgs), 'org-a');
+    expect(createProjectTeamId('missing-org', orgs), 'org-a');
     expect(createProjectTeamId(' org-a ', orgs), 'org-a');
+    expect(createProjectTeamId(null, const []), isNull);
   });
 
   test('responsive control width never exceeds the available width', () {
@@ -924,15 +925,15 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('团队工作台'), findsOneWidget);
     expect(find.text('新建团队'), findsOneWidget);
-    expect(find.text('新建项目'), findsOneWidget);
+    expect(find.text('新建项目'), findsWidgets);
     expect(find.text('可管理'), findsOneWidget);
     expect(find.text('在线'), findsOneWidget);
     expect(find.text('2'), findsNWidgets(2)); // teams + projects
     expect(find.text('1'), findsNWidgets(2)); // manageable + unique online
-    expect(find.text('Kunlun'), findsOneWidget);
+    expect(find.text('Kunlun'), findsNWidgets(2));
 
     final teamCard = find.ancestor(
-      of: find.text('Kunlun'),
+      of: find.text('Kunlun').last,
       matching: find.byType(Material),
     );
     expect(tester.getSize(teamCard.first).width, 286);
@@ -976,7 +977,7 @@ void main() {
     expect(projectField.focusNode?.hasFocus, isTrue);
   });
 
-  testWidgets('project creation does not submit empty default team id', (
+  testWidgets('project creation uses first manageable team by default', (
     tester,
   ) async {
     final client = _CaptureCreateProjectFakeClient();
@@ -996,7 +997,30 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(client.createdName, 'Default Scoped');
-    expect(client.createdOrgId, isNull);
+    expect(client.createdOrgId, 'org-a');
+  });
+
+  testWidgets('project creation is disabled until a team is available', (
+    tester,
+  ) async {
+    final client = _NoTeamsProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(1), 'Needs Team');
+    await tester.pump();
+
+    final createButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '新建项目').first,
+    );
+    expect(createButton.onPressed, isNull);
+    expect(find.text('等待加入团队'), findsOneWidget);
   });
 
   testWidgets('project creation ignores duplicate submit taps', (tester) async {
@@ -1081,7 +1105,8 @@ void main() {
         home: Scaffold(body: ProjectsPage(client: oldClient)),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     await tester.enterText(find.byType(TextField).at(1), 'Old Pending Project');
     await tester.pump();
@@ -1094,12 +1119,14 @@ void main() {
         home: Scaffold(body: ProjectsPage(client: newClient)),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
     await tester.enterText(find.byType(TextField).at(1), 'New Draft Project');
     await tester.pump();
 
     oldClient.completeCreateProject();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     expect(oldClient.createProjectCalls, 1);
     expect(find.text('Old Pending Project'), findsNothing);
@@ -1181,7 +1208,7 @@ void main() {
     },
   );
 
-  testWidgets('project creation refresh ignores stale initial project load', (
+  testWidgets('project creation is disabled until team context loads', (
     tester,
   ) async {
     final client = _StaleProjectsLoadFakeClient();
@@ -1197,21 +1224,18 @@ void main() {
     await tester.enterText(find.byType(TextField).at(1), 'Fresh Project');
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
-    await client.waitForProjectRequests(2);
-
-    client.completeProjects(1, [_project(id: 'fresh', name: 'Fresh Project')]);
     await tester.pump();
-    await tester.pump();
+    final createButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '新建项目'),
+    );
+    expect(createButton.onPressed, isNull);
 
-    expect(find.text('Fresh Project'), findsOneWidget);
-
-    client.completeProjects(0, [_project(id: 'stale', name: 'Stale Project')]);
+    client.completeProjects(0, const []);
     await tester.pump();
     await tester.pump();
 
     expect(tester.takeException(), isNull);
     expect(find.text('Fresh Project'), findsOneWidget);
-    expect(find.text('Stale Project'), findsNothing);
   });
 
   testWidgets('project page account switch ignores stale team loads', (
@@ -1247,13 +1271,13 @@ void main() {
     newClient.completeAll();
     await tester.pumpAndSettle();
     expect(find.text('New Project'), findsOneWidget);
-    expect(find.text('New Team'), findsOneWidget);
+    expect(find.text('New Team'), findsNWidgets(2));
 
     oldClient.completeAll();
     await tester.pumpAndSettle();
 
     expect(find.text('New Project'), findsOneWidget);
-    expect(find.text('New Team'), findsOneWidget);
+    expect(find.text('New Team'), findsNWidgets(2));
     expect(find.text('Old Project'), findsNothing);
     expect(find.text('Old Team'), findsNothing);
   });
@@ -1339,7 +1363,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Kunlun'), findsOneWidget);
+    expect(find.text('Kunlun'), findsNWidgets(2));
     expect(find.text('Ops'), findsOneWidget);
     expect(find.text('Backend'), findsOneWidget);
     expect(find.text('Frontend'), findsOneWidget);
@@ -1351,7 +1375,7 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Kunlun'), findsNothing);
+    expect(find.text('Kunlun'), findsOneWidget);
     expect(find.text('Backend'), findsNothing);
     expect(find.text('Ops'), findsOneWidget);
     expect(find.text('Frontend'), findsOneWidget);
@@ -1921,6 +1945,47 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('organization sheet can delete a team', (tester) async {
+    final client = _CountingDeleteOrganizationProjectsPageFakeClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(body: ProjectsPage(client: client)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kunlun').last);
+    await tester.pumpAndSettle();
+
+    Finder deleteButton() =>
+        find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '删除团队');
+
+    await tester.tap(deleteButton());
+    await tester.pumpAndSettle();
+    expect(find.text('删除团队?'), findsOneWidget);
+    expect(find.textContaining('1 个项目'), findsOneWidget);
+    expect(client.deleteOrganizationCalls, 0);
+
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+
+    expect(client.deleteOrganizationCalls, 1);
+    expect(client.deletedOrganizationId, 'org-a');
+    expect(tester.widget<IconButton>(deleteButton()).onPressed, isNull);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.tap(deleteButton());
+    await tester.pump();
+    expect(client.deleteOrganizationCalls, 1);
+
+    client.completeDeleteOrganization();
+    await tester.pumpAndSettle();
+    expect(find.text('删除团队?'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('team workspace shows pending invitations and accepts them', (
     tester,
   ) async {
@@ -2275,7 +2340,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final teamOption = tester.widget<Text>(
-      find.byKey(const ValueKey('project-create-team-org-a')),
+      find.byKey(const ValueKey('project-create-team-org-a')).last,
     );
 
     expect(tester.takeException(), isNull);
@@ -2494,6 +2559,22 @@ class _ProjectsPageFakeClient extends RelayClient {
 }
 
 class _NoProjectTeamsFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<List<Project>> projects() async => const [];
+}
+
+class _NoTeamsProjectsPageFakeClient extends _ProjectsPageFakeClient {
+  @override
+  Future<List<Organization>> organizations() async => const [];
+
+  @override
+  Future<Me> me() async => Me.fromJson({
+    'identity': 'owner@x',
+    'is_admin': false,
+    'organizations': const [],
+    'projects': const [],
+  });
+
   @override
   Future<List<Project>> projects() async => const [];
 }
@@ -2776,6 +2857,49 @@ class _CountingDeleteProjectProjectsPageFakeClient
   void completeDeleteProject() {
     if (!_deleteProjectCompleter.isCompleted) {
       _deleteProjectCompleter.complete();
+    }
+  }
+}
+
+class _CountingDeleteOrganizationProjectsPageFakeClient
+    extends _ProjectsPageFakeClient {
+  final _deleteOrganizationCompleter = Completer<void>();
+  int deleteOrganizationCalls = 0;
+  String? deletedOrganizationId;
+
+  @override
+  Future<OrganizationDetail> organization(String id) async =>
+      OrganizationDetail.fromJson({
+        'organization': {
+          'id': id,
+          'name': 'Kunlun',
+          'owner_identity': 'owner@x',
+          'role': 'owner',
+        },
+        'members': [
+          {'identity': 'owner@x', 'role': 'owner', 'display_name': 'Owner'},
+        ],
+        'projects': [
+          {
+            'id': 'p1',
+            'org_id': id,
+            'name': 'Backend',
+            'owner_identity': 'owner@x',
+            'role': 'owner',
+          },
+        ],
+      });
+
+  @override
+  Future<void> deleteOrganization(String id) {
+    deleteOrganizationCalls++;
+    deletedOrganizationId = id;
+    return _deleteOrganizationCompleter.future;
+  }
+
+  void completeDeleteOrganization() {
+    if (!_deleteOrganizationCompleter.isCompleted) {
+      _deleteOrganizationCompleter.complete();
     }
   }
 }

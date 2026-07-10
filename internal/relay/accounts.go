@@ -105,10 +105,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), u.Identity, time.Now().UTC()); err != nil {
-		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	s.issueSession(w, r, u.Identity, http.StatusOK)
 }
 
@@ -157,10 +153,6 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "create user: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), identity, time.Now().UTC()); err != nil {
-		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	machineToken, machineTokenID, err := s.createMachineToken(r.Context(), identity, "default", time.Now())
@@ -325,10 +317,6 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 			code = http.StatusConflict
 		}
 		http.Error(w, "create user: "+err.Error(), code)
-		return
-	}
-	if _, err := s.Store.EnsureDefaultOrganization(r.Context(), identity, time.Now().UTC()); err != nil {
-		http.Error(w, "create organization: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	resp := map[string]any{"identity": identity, "is_admin": req.IsAdmin}

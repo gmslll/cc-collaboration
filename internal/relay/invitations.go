@@ -172,18 +172,5 @@ func (s *Server) canInviteProjectTarget(w http.ResponseWriter, r *http.Request, 
 	} else if ok {
 		return true
 	}
-	caller := auth.Identity(r.Context())
-	if s.isAdmin(r.Context(), caller) {
-		return true
-	}
-	role, ok, err := s.Store.OrganizationMemberRole(r.Context(), project.OrgID, caller)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return false
-	}
-	if ok && store.OrgRoleCanManage(role) {
-		return true
-	}
-	http.Error(w, "target user must already belong to the team", http.StatusForbidden)
-	return false
+	return true
 }

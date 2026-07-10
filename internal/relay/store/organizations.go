@@ -278,6 +278,33 @@ func (s *Store) RemoveOrganizationMember(ctx context.Context, orgID, identity st
 	return tx.Commit()
 }
 
+func (s *Store) DeleteOrganization(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE org_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE org_id = ?`, id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM organizations WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
 func (s *Store) CountOrganizationOwners(ctx context.Context, orgID string) (int, error) {
 	orgID = strings.TrimSpace(orgID)
 	var count int

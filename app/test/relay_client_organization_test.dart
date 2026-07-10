@@ -143,6 +143,7 @@ void main() {
     await client.inviteOrganizationMember(' org1 ', ' invite@x ', ' member ');
     await client.cancelOrganizationInvitation(' org1 ', ' inv1 ');
     await client.removeOrganizationMember(' org1 ', ' dev@x ');
+    await client.deleteOrganization(' org1 ');
     await client.createProject(' Backend ', orgId: ' org1 ');
     await client.renameProject(' p1 ', ' Backend API ');
     await client.mapRepo(' p1 ', ' owner/repo ');
@@ -169,30 +170,31 @@ void main() {
     });
     expect(seen[3]['path'], '/v1/orgs/org1/invitations/inv1');
     expect(seen[4]['path'], '/v1/orgs/org1/members/dev%40x');
-    expect(seen[5]['body'], {'name': 'Backend', 'org_id': 'org1'});
-    expect(seen[6], {
+    expect(seen[5]['path'], '/v1/orgs/org1');
+    expect(seen[6]['body'], {'name': 'Backend', 'org_id': 'org1'});
+    expect(seen[7], {
       'method': 'PATCH',
       'path': '/v1/projects/p1',
       'query': <String, String>{},
       'body': {'name': 'Backend API'},
     });
-    expect(seen[7]['body'], {'repo_name': 'owner/repo'});
-    expect(seen[8]['query'], {'repo_name': 'owner/repo'});
-    expect(seen[9], {
+    expect(seen[8]['body'], {'repo_name': 'owner/repo'});
+    expect(seen[9]['query'], {'repo_name': 'owner/repo'});
+    expect(seen[10], {
       'method': 'POST',
       'path': '/v1/projects/p1/members',
       'query': <String, String>{},
       'body': {'identity': 'dev@x', 'role': 'member'},
     });
-    expect(seen[10], {
+    expect(seen[11], {
       'method': 'POST',
       'path': '/v1/projects/p1/invitations',
       'query': <String, String>{},
       'body': {'identity': 'project-invite@x', 'role': 'viewer'},
     });
-    expect(seen[11]['path'], '/v1/projects/p1/invitations/pinv1');
-    expect(seen[12]['path'], '/v1/invitations/inv-accept/accept');
-    expect(seen[13]['path'], '/v1/invitations/inv-decline/decline');
-    expect(seen[14]['path'], '/v1/projects/p1/members/dev%40x');
+    expect(seen[12]['path'], '/v1/projects/p1/invitations/pinv1');
+    expect(seen[13]['path'], '/v1/invitations/inv-accept/accept');
+    expect(seen[14]['path'], '/v1/invitations/inv-decline/decline');
+    expect(seen[15]['path'], '/v1/projects/p1/members/dev%40x');
   });
 }

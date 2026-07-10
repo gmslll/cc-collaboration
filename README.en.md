@@ -129,8 +129,8 @@ make deploy HOST=user@your-vps
 make deploy HOST=user@your-vps SSH_OPTS="-p 2222 -i ~/.ssh/id_ed25519"
 ```
 
-Idempotent. The first run is a fresh install; subsequent runs are rolling binary upgrades + restart, with config and DB left intact.
-The script cross-compiles `cc-relay` for the VPS architecture, installs the systemd unit, creates the `cc-handoff` system user, and seeds `/etc/cc-handoff/tokens.json` and `/var/lib/cc-handoff/relay.db`.
+Idempotent. The first run is a fresh install; subsequent runs are rolling binary upgrades + restart, with the DB left intact.
+The script cross-compiles `cc-relay` for the VPS architecture, installs the systemd unit, creates the `cc-handoff` system user, and initializes `/var/lib/cc-handoff/relay.db`.
 
 Add a reverse proxy on the VPS. One line of caddy is enough — `flush_interval -1` is mandatory for SSE:
 
@@ -142,16 +142,16 @@ handoff.your-domain.com {
 }
 ```
 
-### 2. Mint tokens
+### 2. Bootstrap an admin and machine token
 
-`/etc/cc-handoff/tokens.json` ships with one example identity/token pair. In production, mint one per side:
+After the first deploy, create the first admin account on the VPS:
 
 ```bash
-sudo cc-handoff-rotate-token user@backend
-sudo cc-handoff-rotate-token alex@frontend
+sudo -u cc-handoff /usr/local/bin/cc-relay useradd \
+  -db /var/lib/cc-handoff/relay.db -identity you@backend -admin
 ```
 
-Hand each token to the right person. `cc-handoff init` will ask for it next.
+From there, register team members in the App / UI and assign them to teams and projects. CLI / watch / MCP bearer credentials should come from the default DB machine token returned at registration or from the account page, not from a hand-edited `tokens.json`.
 
 ### 3. Install on each client (backend and frontend, once each)
 
@@ -366,7 +366,7 @@ Once installed, use `cc-handoff <subcommand>`; each has `--help`.
 
 ```bash
 # On the VPS (deploy installs these into /usr/local/sbin/)
-sudo cc-handoff-rotate-token <identity>     # rotate a token
+sudo -u cc-handoff /usr/local/bin/cc-relay useradd -db /var/lib/cc-handoff/relay.db -identity <you@example.com> -admin
 sudo cc-handoff-backup                       # hot-backup SQLite, KEEP=N to retain N copies
 sudo cc-handoff-uninstall [--purge]          # uninstall (--purge wipes DB and config)
 

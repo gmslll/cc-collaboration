@@ -2,7 +2,6 @@ package relay_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -54,16 +53,8 @@ func TestProjectVisibility(t *testing.T) {
 	}
 
 	// owner@t makes a project, maps the repo, seats member + viewer.
-	_, body := postJSON(t, srv.URL+"/v1/projects", owner, map[string]string{"name": "K"})
-	var proj struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(body, &proj)
-	p, err := st.GetProject(context.Background(), proj.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.AddOrganizationMember(context.Background(), p.OrgID, "org-admin@t", store.OrgRoleAdmin); err != nil {
+	proj := createProjectHTTP(t, srv.URL, owner, "K")
+	if err := st.AddOrganizationMember(context.Background(), proj.OrgID, "org-admin@t", store.OrgRoleAdmin); err != nil {
 		t.Fatal(err)
 	}
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend"}); code != http.StatusOK {
@@ -160,16 +151,7 @@ func TestProjectHandoffListExcludesCapsules(t *testing.T) {
 	owner := loginToken(t, srv.URL, "owner@t", "pw-owner@t-12345")
 	member := loginToken(t, srv.URL, "member@t", "pw-member@t-12345")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", owner, map[string]string{"name": "K"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(body, &proj); err != nil {
-		t.Fatal(err)
-	}
+	proj := createProjectHTTP(t, srv.URL, owner, "K")
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend"}); code != http.StatusOK {
 		t.Fatalf("map repo = %d", code)
 	}
@@ -193,7 +175,7 @@ func TestProjectHandoffListExcludesCapsules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, body = getAuthed(t, srv.URL+"/v1/handoffs?scope=project&project="+proj.ID, member)
+	code, body := getAuthed(t, srv.URL+"/v1/handoffs?scope=project&project="+proj.ID, member)
 	if code != http.StatusOK {
 		t.Fatalf("project list = %d %s", code, body)
 	}

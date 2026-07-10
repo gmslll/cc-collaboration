@@ -265,6 +265,64 @@ func TestRemoveOrganizationMemberRevokesProjectMemberships(t *testing.T) {
 	}
 }
 
+func TestDeleteOrganizationCascadesProjectsAndInvitations(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "Backend", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "dev@x", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "dev@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	insertOrganizationInvitationForTest(t, st, "org-inv", "org1", "invitee@x", OrgRoleMember, now)
+	insertProjectInvitationForTest(t, st, "project-inv", "org1", "p1", "project-invitee@x", RoleViewer, now)
+
+	if err := st.DeleteOrganization(ctx, " org1 "); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetOrganization(ctx, "org1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted organization: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.GetProject(ctx, "p1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted project: want ErrNotFound, got %v", err)
+	}
+	if _, ok, err := st.OrganizationMemberRole(ctx, "org1", "dev@x"); err != nil || ok {
+		t.Fatalf("organization member leaked after delete: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := st.MemberRole(ctx, "p1", "dev@x"); err != nil || ok {
+		t.Fatalf("project member leaked after delete: ok=%v err=%v", ok, err)
+	}
+	for _, identity := range []string{"invitee@x", "project-invitee@x"} {
+		invitations, err := st.ListInvitationsForIdentity(ctx, identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(invitations) != 0 {
+			t.Fatalf("invitations for %s leaked after delete: %+v", identity, invitations)
+		}
+	}
+}
+
+func TestDeleteOrganizationRejectsBlankAndMissing(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	if err := st.DeleteOrganization(ctx, " "); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank organization delete: want ErrInvalid, got %v", err)
+	}
+	if err := st.DeleteOrganization(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing organization delete: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestRemoveOrganizationOwnerProtectsProjectOwnerInvariant(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

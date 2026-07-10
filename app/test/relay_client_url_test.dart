@@ -62,6 +62,7 @@ void main() {
     await client.inviteOrganizationMember('org/team#1', 'dev/team#1', 'member');
     await client.cancelOrganizationInvitation('org/team#1', 'inv/team#1');
     await client.removeOrganizationMember('org/team#1', 'dev/team#1');
+    await client.deleteOrganization('org/team#1');
     await client.renameProject('proj/team#1', 'Renamed');
     await client.mapRepo('proj/team#1', 'owner/repo');
     await client.unmapRepo('proj/team#1', 'owner/repo');
@@ -90,6 +91,7 @@ void main() {
       'POST /v1/orgs/org%2Fteam%231/invitations',
       'DELETE /v1/orgs/org%2Fteam%231/invitations/inv%2Fteam%231',
       'DELETE /v1/orgs/org%2Fteam%231/members/dev%2Fteam%231',
+      'DELETE /v1/orgs/org%2Fteam%231',
       'PATCH /v1/projects/proj%2Fteam%231',
       'POST /v1/projects/proj%2Fteam%231/repos',
       'DELETE /v1/projects/proj%2Fteam%231/repos',

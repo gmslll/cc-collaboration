@@ -130,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/orgs", s.listOrganizations)
 	api.HandleFunc("POST /v1/orgs", s.createOrganization)
 	api.HandleFunc("GET /v1/orgs/{id}", s.getOrganization)
+	api.HandleFunc("DELETE /v1/orgs/{id}", s.deleteOrganization)
 	api.HandleFunc("POST /v1/orgs/{id}/members", s.addOrganizationMember)
 	api.HandleFunc("DELETE /v1/orgs/{id}/members/{identity}", s.removeOrganizationMember)
 	api.HandleFunc("POST /v1/orgs/{id}/invitations", s.createOrganizationInvitation)

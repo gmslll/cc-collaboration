@@ -82,10 +82,8 @@ func TestLoginFlow(t *testing.T) {
 	if me.Identity != "alice@backend" || !me.IsAdmin {
 		t.Fatalf("me=%+v", me)
 	}
-	if len(me.Organizations) != 1 ||
-		me.Organizations[0].Name != "alice@backend's team" ||
-		me.Organizations[0].Role != "owner" {
-		t.Fatalf("login should repair default organization for existing users: %+v", me.Organizations)
+	if len(me.Organizations) != 0 {
+		t.Fatalf("login should not create default organization: %+v", me.Organizations)
 	}
 
 	// No token → 401.
@@ -159,8 +157,8 @@ func TestRegisterFlow(t *testing.T) {
 	if me.Identity != "carol@demo" || me.IsAdmin {
 		t.Fatalf("me=%+v", me)
 	}
-	if len(me.Organizations) != 1 || me.Organizations[0].Role != "owner" {
-		t.Fatalf("registered default organization = %+v", me.Organizations)
+	if len(me.Organizations) != 0 {
+		t.Fatalf("registered account should start without organizations: %+v", me.Organizations)
 	}
 	if code, body = getAuthed(t, srv.URL+"/v1/me", rr.MachineToken); code != http.StatusOK {
 		t.Fatalf("default machine token should authenticate: status=%d body=%s", code, body)
@@ -421,8 +419,8 @@ func TestAdminCreateUserTrimsIdentity(t *testing.T) {
 	if me.Identity != "member@demo" {
 		t.Fatalf("me identity = %q, want trimmed", me.Identity)
 	}
-	if len(me.Organizations) != 1 || me.Organizations[0].Name != "member@demo's team" {
-		t.Fatalf("default organization should use trimmed identity: %+v", me.Organizations)
+	if len(me.Organizations) != 0 {
+		t.Fatalf("admin-created account should start without organizations: %+v", me.Organizations)
 	}
 }
 

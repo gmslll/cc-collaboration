@@ -2,5 +2,5 @@
 # This file holds machine-wide defaults shared across all repos.
 
 relay_url = "https://your-vps.example.com"
-token     = "REPLACE_WITH_TOKEN_FROM_RELAY_ADMIN"
-identity  = "you@backend"   # how this machine identifies itself; must match an entry in the relay's tokens.json
+token     = "REPLACE_WITH_DB_MACHINE_TOKEN_FROM_ACCOUNT"
+identity  = "you@backend"   # must match the registered account identity that owns this machine token

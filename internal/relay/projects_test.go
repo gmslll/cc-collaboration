@@ -3,6 +3,7 @@ package relay_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -47,8 +48,19 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 		t.Fatalf("admin /v1/users = %d", code)
 	}
 
-	// Self-service: dev creates a project and becomes its owner.
-	code, body := postJSON(t, srv.URL+"/v1/projects", devTok, map[string]string{"name": "Kunlun"})
+	// Self-service: dev creates a team, then a project inside that team.
+	code, body := postJSON(t, srv.URL+"/v1/orgs", devTok, map[string]string{"name": "Dev Team"})
+	if code != http.StatusCreated {
+		t.Fatalf("create org = %d %s", code, body)
+	}
+	var devOrg store.Organization
+	_ = json.Unmarshal(body, &devOrg)
+	if code, body := postJSON(t, srv.URL+"/v1/projects", devTok,
+		map[string]string{"name": "No Team"}); code != http.StatusBadRequest {
+		t.Fatalf("create project without org_id = %d %s", code, body)
+	}
+	code, body = postJSON(t, srv.URL+"/v1/projects", devTok,
+		map[string]string{"name": "Kunlun", "org_id": devOrg.ID})
 	if code != http.StatusCreated {
 		t.Fatalf("create project = %d %s", code, body)
 	}
@@ -94,7 +106,14 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	if role, ok, err := st.MemberRole(context.Background(), proj.ID, "z@y"); err != nil || !ok || role != store.RoleMember {
 		t.Fatalf("padded project member role = role:%q ok:%v err:%v", role, ok, err)
 	}
-	code, body = postJSON(t, srv.URL+"/v1/projects", malTok, map[string]string{"name": "Mallory Project"})
+	code, body = postJSON(t, srv.URL+"/v1/orgs", malTok, map[string]string{"name": "Mallory Team"})
+	if code != http.StatusCreated {
+		t.Fatalf("mallory create org = %d %s", code, body)
+	}
+	var malloryOrg store.Organization
+	_ = json.Unmarshal(body, &malloryOrg)
+	code, body = postJSON(t, srv.URL+"/v1/projects", malTok,
+		map[string]string{"name": "Mallory Project", "org_id": malloryOrg.ID})
 	if code != http.StatusCreated {
 		t.Fatalf("mallory create project = %d %s", code, body)
 	}
@@ -195,20 +214,13 @@ func TestProjectNamesAreTrimmed(t *testing.T) {
 
 	ownerTok := loginToken(t, srv.URL, "owner@demo", "ownerpass1")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok,
-		map[string]string{"name": "  Trimmed Project  "})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj store.Project
-	if err := json.Unmarshal(body, &proj); err != nil {
-		t.Fatal(err)
-	}
+	org := createOrganizationHTTP(t, srv.URL, ownerTok, "Owner Team")
+	proj := createProjectInOrgHTTP(t, srv.URL, ownerTok, "  Trimmed Project  ", org.ID)
 	if proj.Name != "Trimmed Project" {
 		t.Fatalf("created project name = %q, want trimmed", proj.Name)
 	}
 
-	code, body = patchJSON(t, srv.URL+"/v1/projects/"+proj.ID, ownerTok,
+	code, body := patchJSON(t, srv.URL+"/v1/projects/"+proj.ID, ownerTok,
 		map[string]string{"name": "  Renamed Project  "})
 	if code != http.StatusOK {
 		t.Fatalf("rename project = %d %s", code, body)
@@ -298,6 +310,38 @@ func assertOrganizationListRole(t *testing.T, base, token, orgID, wantRole strin
 		}
 	}
 	t.Fatalf("organization %s not found in list: %+v", orgID, resp.Organizations)
+}
+
+func createOrganizationHTTP(t *testing.T, base, token, name string) store.Organization {
+	t.Helper()
+	code, body := postJSON(t, base+"/v1/orgs", token, map[string]string{"name": name})
+	if code != http.StatusCreated {
+		t.Fatalf("create organization %q = %d %s", name, code, body)
+	}
+	var org store.Organization
+	if err := json.Unmarshal(body, &org); err != nil {
+		t.Fatalf("decode organization %q: %v", name, err)
+	}
+	return org
+}
+
+func createProjectInOrgHTTP(t *testing.T, base, token, name, orgID string) store.Project {
+	t.Helper()
+	code, body := postJSON(t, base+"/v1/projects", token, map[string]string{"name": name, "org_id": orgID})
+	if code != http.StatusCreated {
+		t.Fatalf("create project %q = %d %s", name, code, body)
+	}
+	var project store.Project
+	if err := json.Unmarshal(body, &project); err != nil {
+		t.Fatalf("decode project %q: %v", name, err)
+	}
+	return project
+}
+
+func createProjectHTTP(t *testing.T, base, token, name string) store.Project {
+	t.Helper()
+	org := createOrganizationHTTP(t, base, token, name+" Team")
+	return createProjectInOrgHTTP(t, base, token, name, org.ID)
 }
 
 func TestOrganizationSaaSFlow(t *testing.T) {
@@ -396,6 +440,15 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 	if code, _ := deleteAuthed(t, srv.URL+"/v1/orgs/"+org.ID+"/members/owner@demo", ownerTok); code != http.StatusOK {
 		t.Fatalf("remove owner with another owner/admin present = %d", code)
 	}
+	if code, body := deleteAuthed(t, srv.URL+"/v1/orgs/"+org.ID, teamTok); code != http.StatusOK {
+		t.Fatalf("delete org = %d %s", code, body)
+	}
+	if _, err := st.GetOrganization(context.Background(), org.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted org: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.GetProject(context.Background(), proj.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("project in deleted org: want ErrNotFound, got %v", err)
+	}
 }
 
 func TestTeamAndProjectMembersRejectTrailingJSON(t *testing.T) {
@@ -468,14 +521,7 @@ func TestProjectOwnerCannotInviteOutsideTeamAfterOrgDemotion(t *testing.T) {
 	ownerTok := loginToken(t, srv.URL, "owner@demo", "pw-owner@demo-12345")
 	coownerTok := loginToken(t, srv.URL, "coowner@demo", "pw-coowner@demo-12345")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Scoped Project"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj store.Project
-	if err := json.Unmarshal(body, &proj); err != nil {
-		t.Fatal(err)
-	}
+	proj := createProjectHTTP(t, srv.URL, ownerTok, "Scoped Project")
 
 	if code, body := postJSON(t, srv.URL+"/v1/orgs/"+proj.OrgID+"/members", ownerTok,
 		map[string]string{"identity": "coowner@demo", "role": "owner"}); code != http.StatusOK {

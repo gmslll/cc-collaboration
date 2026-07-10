@@ -8,7 +8,7 @@ import '../widgets.dart';
 String loginModeTitle(bool isRegisterMode) => isRegisterMode ? '注册新账号' : '登录';
 
 String loginModeSubtitle(bool isRegisterMode) =>
-    isRegisterMode ? '注册后会自动创建你的团队工作区' : '使用 relay 账号同步团队、待办和会话';
+    isRegisterMode ? '注册后可通过邀请加入团队或项目' : '使用 relay 账号同步团队、待办和会话';
 
 String loginModeSwitchLabel(bool isRegisterMode) =>
     isRegisterMode ? '已有账号?去登录' : '没有账号?去注册';
@@ -294,7 +294,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        '系统会为你创建一个默认团队。进入后可以在「团队」里改名、建项目、邀请成员。',
+                                        '注册后默认不创建团队。你可以接受团队或项目邀请，也可以在「团队」里新建自己的团队。',
                                         style: TextStyle(
                                           color: CcColors.muted,
                                           fontSize: 12.5,

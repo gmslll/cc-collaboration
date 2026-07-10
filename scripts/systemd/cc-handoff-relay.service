@@ -8,7 +8,7 @@ Type=simple
 User=cc-handoff
 Group=cc-handoff
 WorkingDirectory=/var/lib/cc-handoff
-ExecStart=/usr/local/bin/cc-relay -addr 127.0.0.1:8080 -db /var/lib/cc-handoff/relay.db -tokens /etc/cc-handoff/tokens.json
+ExecStart=/usr/local/bin/cc-relay -addr 127.0.0.1:8080 -db /var/lib/cc-handoff/relay.db
 Restart=on-failure
 RestartSec=2
 

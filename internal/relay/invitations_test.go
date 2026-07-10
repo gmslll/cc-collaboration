@@ -1,6 +1,7 @@
 package relay_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -27,22 +28,17 @@ func TestInvitationFlowForRegisteredAccount(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
-	var ownerMe struct {
-		Organizations []struct {
-			ID string `json:"id"`
-		} `json:"organizations"`
+	code, body := postJSON(t, srv.URL+"/v1/orgs", ownerTok, map[string]string{"name": "Owner Team"})
+	if code != http.StatusCreated {
+		t.Fatalf("create org = %d %s", code, body)
 	}
-	if code, body := getAuthed(t, srv.URL+"/v1/me", ownerTok); code != http.StatusOK {
-		t.Fatalf("owner me = %d %s", code, body)
-	} else if err := json.Unmarshal(body, &ownerMe); err != nil {
+	var org store.Organization
+	if err := json.Unmarshal(body, &org); err != nil {
 		t.Fatal(err)
 	}
-	if len(ownerMe.Organizations) != 1 {
-		t.Fatalf("owner organizations = %+v", ownerMe.Organizations)
-	}
-	orgID := ownerMe.Organizations[0].ID
+	orgID := org.ID
 
-	code, body := postJSON(t, srv.URL+"/v1/orgs/"+orgID+"/invitations", ownerTok,
+	code, body = postJSON(t, srv.URL+"/v1/orgs/"+orgID+"/invitations", ownerTok,
 		map[string]string{"identity": "new@x", "role": "member"})
 	if code != http.StatusCreated {
 		t.Fatalf("create org invitation = %d %s", code, body)
@@ -78,6 +74,7 @@ func TestProjectInvitationAcceptsIntoProjectAndTeam(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	mkUser(t, st, "owner@x", "ownerpass1")
+	mkUser(t, st, "lead@x", "leadpass1")
 
 	srv := httptest.NewServer((&relay.Server{
 		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
@@ -85,7 +82,17 @@ func TestProjectInvitationAcceptsIntoProjectAndTeam(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
-	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Backend"})
+	leadTok := loginToken(t, srv.URL, "lead@x", "leadpass1")
+	code, body := postJSON(t, srv.URL+"/v1/orgs", ownerTok, map[string]string{"name": "Owner Team"})
+	if code != http.StatusCreated {
+		t.Fatalf("create org = %d %s", code, body)
+	}
+	var org store.Organization
+	if err := json.Unmarshal(body, &org); err != nil {
+		t.Fatal(err)
+	}
+	code, body = postJSON(t, srv.URL+"/v1/projects", ownerTok,
+		map[string]string{"name": "Backend", "org_id": org.ID})
 	if code != http.StatusCreated {
 		t.Fatalf("create project = %d %s", code, body)
 	}
@@ -121,6 +128,43 @@ func TestProjectInvitationAcceptsIntoProjectAndTeam(t *testing.T) {
 	}
 	if code, body := getAuthed(t, srv.URL+"/v1/projects/"+project.ID, projectTok); code != http.StatusOK {
 		t.Fatalf("invitee get accepted project = %d %s", code, body)
+	}
+
+	if code, body := postJSON(t, srv.URL+"/v1/orgs/"+org.ID+"/members", ownerTok,
+		map[string]string{"identity": "lead@x", "role": "member"}); code != http.StatusOK {
+		t.Fatalf("add project lead to org = %d %s", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/projects/"+project.ID+"/members", ownerTok,
+		map[string]string{"identity": "lead@x", "role": "owner"}); code != http.StatusOK {
+		t.Fatalf("make lead project owner = %d %s", code, body)
+	}
+	code, body = postJSON(t, srv.URL+"/v1/projects/"+project.ID+"/invitations", leadTok,
+		map[string]string{"identity": "lead-invitee@x", "role": "viewer"})
+	if code != http.StatusCreated {
+		t.Fatalf("project owner create outside-team invitation = %d %s", code, body)
+	}
+	leadInviteeTok := registerToken(t, srv.URL, "lead-invitee@x", "invitepass123")
+	var leadInviteeMe struct {
+		Invitations []struct {
+			ID string `json:"id"`
+		} `json:"invitations"`
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/me", leadInviteeTok); code != http.StatusOK {
+		t.Fatalf("lead invitee me = %d %s", code, body)
+	} else if err := json.Unmarshal(body, &leadInviteeMe); err != nil {
+		t.Fatal(err)
+	}
+	if len(leadInviteeMe.Invitations) != 1 {
+		t.Fatalf("lead invitee invitations = %+v", leadInviteeMe.Invitations)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/invitations/"+leadInviteeMe.Invitations[0].ID+"/accept", leadInviteeTok, nil); code != http.StatusOK {
+		t.Fatalf("accept lead project invitation = %d %s", code, body)
+	}
+	if role, ok, err := st.OrganizationMemberRole(context.Background(), org.ID, "lead-invitee@x"); err != nil || !ok || role != store.OrgRoleMember {
+		t.Fatalf("lead invitee team role = %q ok=%v err=%v", role, ok, err)
+	}
+	if role, ok, err := st.MemberRole(context.Background(), project.ID, "lead-invitee@x"); err != nil || !ok || role != store.RoleViewer {
+		t.Fatalf("lead invitee project role = %q ok=%v err=%v", role, ok, err)
 	}
 }
 

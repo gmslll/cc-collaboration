@@ -128,6 +128,18 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) deleteOrganization(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("id")
+	if !s.requireOrgManager(w, r, orgID) {
+		return
+	}
+	if err := s.Store.DeleteOrganization(r.Context(), orgID); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) addOrganizationMember(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("id")
 	if !s.requireOrgManager(w, r, orgID) {

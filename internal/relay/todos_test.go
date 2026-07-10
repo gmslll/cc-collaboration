@@ -142,14 +142,7 @@ func TestTodoTeamViewerReadOnly(t *testing.T) {
 	memberTok := loginToken(t, srv.URL, "member@x", "memberpass1")
 	viewerTok := loginToken(t, srv.URL, "viewer@x", "viewerpass1")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Kunlun"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(body, &proj)
+	proj := createProjectHTTP(t, srv.URL, ownerTok, "Kunlun")
 
 	for _, m := range []struct{ identity, role string }{
 		{"member@x", "member"}, {"viewer@x", "viewer"},
@@ -198,16 +191,7 @@ func TestTodoAssignSessionMustMatchTodoProjectWhenPublished(t *testing.T) {
 
 	createProject := func(name string) string {
 		t.Helper()
-		code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": name})
-		if code != http.StatusCreated {
-			t.Fatalf("create project %q = %d %s", name, code, body)
-		}
-		var proj struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(body, &proj); err != nil {
-			t.Fatalf("decode project %q: %v", name, err)
-		}
+		proj := createProjectHTTP(t, srv.URL, ownerTok, name)
 		if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
 			map[string]string{"identity": "member@x", "role": "member"}); code != http.StatusOK {
 			t.Fatalf("add member to %q = %d %s", name, code, body)
@@ -314,14 +298,7 @@ func TestTodoSSEFanOut(t *testing.T) {
 	mkUser(t, st, "outsider@x", "outsiderpass1")
 	ownerTok := loginToken(t, srv.URL, "owner@x", "ownerpass1")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", ownerTok, map[string]string{"name": "Kunlun"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(body, &proj)
+	proj := createProjectHTTP(t, srv.URL, ownerTok, "Kunlun")
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,
 		map[string]string{"identity": "member@x", "role": "member"}); code != http.StatusOK {
 		t.Fatalf("add member: %d", code)
@@ -589,16 +566,7 @@ func TestFindTodoBySourceRefHTTPScopesToProject(t *testing.T) {
 	mkUser(t, st, "alice@x", "alicepass1")
 	aliceTok := loginToken(t, srv.URL, "alice@x", "alicepass1")
 
-	code, body := postJSON(t, srv.URL+"/v1/projects", aliceTok, map[string]string{"name": "Kunlun"})
-	if code != http.StatusCreated {
-		t.Fatalf("create project = %d %s", code, body)
-	}
-	var proj struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(body, &proj); err != nil {
-		t.Fatalf("decode project: %v", err)
-	}
+	proj := createProjectHTTP(t, srv.URL, aliceTok, "Kunlun")
 
 	personal := createTodoHTTP(t, srv.URL, aliceTok, map[string]any{
 		"title":      "Personal copy",
@@ -614,7 +582,7 @@ func TestFindTodoBySourceRefHTTPScopesToProject(t *testing.T) {
 		Found bool            `json:"found"`
 		Todo  todoschema.Todo `json:"todo"`
 	}
-	code, body = getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", aliceTok)
+	code, body := getAuthed(t, srv.URL+"/v1/todos/by-source?ref=linear:ENG-456", aliceTok)
 	if code != http.StatusOK {
 		t.Fatalf("personal by-source = %d %s", code, body)
 	}

@@ -130,8 +130,8 @@ make deploy HOST=user@your-vps
 make deploy HOST=user@your-vps SSH_OPTS="-p 2222 -i ~/.ssh/id_ed25519"
 ```
 
-幂等。第一次是全新部署,再跑就是滚动升级二进制 + 重启,配置和 DB 不动。
-脚本会自动跨编译 `cc-relay` 到 VPS 架构、装 systemd unit、建 `cc-handoff` 系统用户、初始化 `/etc/cc-handoff/tokens.json` 与 `/var/lib/cc-handoff/relay.db`。
+幂等。第一次是全新部署,再跑就是滚动升级二进制 + 重启,DB 不动。
+脚本会自动跨编译 `cc-relay` 到 VPS 架构、装 systemd unit、建 `cc-handoff` 系统用户、初始化 `/var/lib/cc-handoff/relay.db`。
 
 VPS 上挂反代,caddy 一行就好(`flush_interval -1` 是 SSE 必须的):
 
@@ -143,17 +143,16 @@ handoff.your-domain.com {
 }
 ```
 
-### 2. 拿 token
+### 2. 建管理员账号并拿机器 token
 
-VPS 上 `/etc/cc-handoff/tokens.json` 默认带一对示例 identity/token。
-线上要给前后端各自分配一对:
+第一次部署后，在 VPS 上创建第一个管理员账号：
 
 ```bash
-sudo cc-handoff-rotate-token user@backend
-sudo cc-handoff-rotate-token alex@frontend
+sudo -u cc-handoff /usr/local/bin/cc-relay useradd \
+  -db /var/lib/cc-handoff/relay.db -identity you@backend -admin
 ```
 
-输出的 token 各自保管,后面 `cc-handoff init` 要填。
+之后在 App / UI 里注册团队成员、加入团队和项目。CLI / watch / MCP 需要 bearer 时，用账号注册返回的默认机器 token，或在账号页生成新的 DB machine token；不需要手工维护 `tokens.json`。
 
 ### 3. 客户端装(前后端各一次)
 
@@ -376,7 +375,7 @@ cc-handoff pickup h_xxx --repo ~/work/frontend-project2
 
 ```bash
 # VPS 上(deploy 自动装到 /usr/local/sbin/)
-sudo cc-handoff-rotate-token <identity>     # 轮换 token
+sudo -u cc-handoff /usr/local/bin/cc-relay useradd -db /var/lib/cc-handoff/relay.db -identity <you@example.com> -admin
 sudo cc-handoff-backup                       # 热备份 SQLite,KEEP=N 保留份数
 sudo cc-handoff-uninstall [--purge]          # 卸载
 

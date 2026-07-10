@@ -332,9 +332,11 @@ String? createProjectTeamId(
   String? selectedOrgId,
   Iterable<Organization> manageableOrgs,
 ) {
+  final orgs = manageableOrgs.toList(growable: false);
+  if (orgs.isEmpty) return null;
   final id = selectedOrgId?.trim() ?? '';
-  if (id.isEmpty) return null;
-  return manageableOrgs.any((org) => org.id == id) ? id : null;
+  if (id.isEmpty) return orgs.first.id;
+  return orgs.any((org) => org.id == id) ? id : orgs.first.id;
 }
 
 double responsiveControlWidth(BoxConstraints constraints, double preferred) {
@@ -537,7 +539,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   bool get _canCreateProject =>
-      !_creatingProject && _name.text.trim().isNotEmpty;
+      !_creatingProject &&
+      _name.text.trim().isNotEmpty &&
+      createProjectTeamId(_selectedOrgId, _manageableOrgs) != null;
   bool get _canCreateOrg => !_creatingOrg && _orgName.text.trim().isNotEmpty;
 
   void _onCreateInputChanged() {
@@ -611,6 +615,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
     if (name.isEmpty || _creatingProject) return;
     final client = widget.client;
     final orgId = createProjectTeamId(_selectedOrgId, _manageableOrgs);
+    if (orgId == null) {
+      snack(context, '请先创建或加入一个团队');
+      return;
+    }
     if (mounted) setState(() => _creatingProject = true);
     try {
       await client.createProject(name, orgId: orgId);
@@ -689,7 +697,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   String _teamName(String id) {
-    if (id.isEmpty) return '默认团队';
+    if (id.isEmpty) return '未分配团队';
     for (final org in _orgs) {
       if (org.id == id) return org.name;
     }
@@ -882,26 +890,24 @@ class _ProjectsPageState extends State<ProjectsPage> {
                       SizedBox(
                         width: teamPickerWidth,
                         child: DropdownButton<String>(
-                          value: selectedTeamId ?? '',
+                          value: selectedTeamId,
                           isExpanded: true,
                           menuMaxHeight: menuMaxHeight,
-                          items: [
-                            const DropdownMenuItem(
-                              value: '',
-                              child: Text('我的默认团队'),
-                            ),
-                            ..._manageableOrgs.map(
-                              (o) => DropdownMenuItem(
-                                value: o.id,
-                                child: Text(
-                                  o.name,
-                                  key: ValueKey('project-create-team-${o.id}'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                          items: _manageableOrgs
+                              .map(
+                                (o) => DropdownMenuItem(
+                                  value: o.id,
+                                  child: Text(
+                                    o.name,
+                                    key: ValueKey(
+                                      'project-create-team-${o.id}',
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
-                              ),
-                            ),
-                          ],
+                              )
+                              .toList(),
                           onChanged: _creatingProject || _creatingOrg
                               ? null
                               : (v) => setState(
@@ -1497,7 +1503,7 @@ class _EmptyProjectsState extends StatelessWidget {
                         ),
                         SizedBox(height: compact ? 4 : 6),
                         Text(
-                          stats.teams > 0 ? '${stats.teams} 个团队已就绪' : '默认团队已就绪',
+                          stats.teams > 0 ? '${stats.teams} 个团队已就绪' : '等待加入团队',
                           textAlign: TextAlign.center,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1727,6 +1733,68 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
     );
   }
 
+  Future<void> _deleteOrganization() async {
+    final d = _detail;
+    if (d == null) return;
+    final name = d.organization.name.trim();
+    final projectCount = d.projects.length;
+    final detail = projectCount == 0
+        ? '将删除团队 "$name"。成员和待处理邀请会一并删除，删除后不可恢复。'
+        : '将删除团队 "$name"，并同时删除 $projectCount 个项目、项目成员、项目待办和邀请。删除后不可恢复。';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final size = MediaQuery.sizeOf(ctx);
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          title: const Text(
+            '删除团队?',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          content: SizedBox(
+            width: projectDialogWidth(size),
+            child: SingleChildScrollView(child: Text(detail)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: CcColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+    if (_closeIfStaleContext()) return;
+    if (_mutating) return;
+    if (mounted) setState(() => _mutationAction = 'deleteOrganization');
+    try {
+      await widget.client.deleteOrganization(widget.id);
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
+      widget.onChanged();
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
+      if (mounted) snack(context, errorText(e));
+    } finally {
+      if (mounted && widget.isCurrentContext()) {
+        setState(() => _mutationAction = null);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = _detail;
@@ -1789,6 +1857,23 @@ class _OrganizationSheetState extends State<_OrganizationSheet> {
                           ],
                         ),
                       ),
+                      if (canManage)
+                        SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: IconButton(
+                            padding: EdgeInsets.zero,
+                            tooltip: '删除团队',
+                            icon: _mutationAction == 'deleteOrganization'
+                                ? const _InlineButtonSpinner()
+                                : const Icon(
+                                    Icons.delete_rounded,
+                                    size: 18,
+                                    color: CcColors.danger,
+                                  ),
+                            onPressed: _mutating ? null : _deleteOrganization,
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 16),

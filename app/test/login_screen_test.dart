@@ -26,12 +26,14 @@ void main() {
     expect(loginModeTitle(false), '登录');
     expect(loginModeTitle(true), '注册新账号');
     expect(loginModeSubtitle(false), contains('同步团队'));
-    expect(loginModeSubtitle(true), contains('自动创建你的团队工作区'));
+    expect(loginModeSubtitle(true), contains('通过邀请加入团队或项目'));
     expect(loginModeSwitchLabel(false), '没有账号?去注册');
     expect(loginModeSwitchLabel(true), '已有账号?去登录');
   });
 
-  testWidgets('register mode shows default team guidance', (tester) async {
+  testWidgets('register mode shows invitation-first team guidance', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: ccTheme(),
@@ -43,15 +45,15 @@ void main() {
       ),
     );
 
-    expect(find.textContaining('默认团队'), findsNothing);
+    expect(find.textContaining('默认不创建团队'), findsNothing);
 
     await tester.tap(find.text('没有账号?去注册'));
     await tester.pump();
 
     expect(find.text('注册新账号'), findsOneWidget);
-    expect(find.textContaining('自动创建你的团队工作区'), findsOneWidget);
-    expect(find.textContaining('默认团队'), findsOneWidget);
-    expect(find.textContaining('邀请成员'), findsOneWidget);
+    expect(find.textContaining('通过邀请加入团队或项目'), findsOneWidget);
+    expect(find.textContaining('默认不创建团队'), findsOneWidget);
+    expect(find.textContaining('接受团队或项目邀请'), findsOneWidget);
   });
 
   testWidgets('register form scrolls on compact heights', (tester) async {
@@ -81,7 +83,7 @@ void main() {
     await tester.ensureVisible(find.text('注册新账号'));
     await tester.pump();
     expect(find.text('注册新账号'), findsOneWidget);
-    expect(find.textContaining('默认团队'), findsOneWidget);
+    expect(find.textContaining('默认不创建团队'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

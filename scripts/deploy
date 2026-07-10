@@ -61,15 +61,14 @@ say "install + restart on $HOST"
 SSH "bash -se" <<'REMOTE'
 set -euo pipefail
 cd /tmp/cc-handoff-deploy
-chmod +x cc-relay install.sh uninstall.sh rotate-token.sh backup.sh
+chmod +x cc-relay install.sh uninstall.sh backup.sh
 
-# install.sh is idempotent: creates user/dirs/unit/sample tokens only when
-# missing; always copies the binary and enables the service.
+# install.sh is idempotent: creates user/dirs/unit; always copies the binary
+# and enables the service.
 sudo BIN_SRC=./cc-relay bash install.sh
 
 # Drop the operational scripts where they're easy to invoke later.
 sudo install -m 0755 uninstall.sh    /usr/local/sbin/cc-handoff-uninstall
-sudo install -m 0755 rotate-token.sh /usr/local/sbin/cc-handoff-rotate-token
 sudo install -m 0755 backup.sh       /usr/local/sbin/cc-handoff-backup
 
 sudo systemctl restart cc-handoff-relay
@@ -83,12 +82,11 @@ echo
 sudo systemctl status cc-handoff-relay --no-pager | head -5 || true
 echo
 echo "binary  : /usr/local/bin/cc-relay"
-echo "tokens  : /etc/cc-handoff/tokens.json   (edit then: systemctl restart cc-handoff-relay)"
 echo "data    : /var/lib/cc-handoff/relay.db"
 echo
 echo "ops:"
-echo "  sudo cc-handoff-rotate-token <identity>"
-echo "  sudo cc-handoff-backup"o
+echo "  sudo -u cc-handoff /usr/local/bin/cc-relay useradd -db /var/lib/cc-handoff/relay.db -identity <you@example.com> -admin"
+echo "  sudo cc-handoff-backup"
 echo "  sudo cc-handoff-uninstall [--purge]"
 REMOTE
 

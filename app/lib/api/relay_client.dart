@@ -382,6 +382,9 @@ class RelayClient {
     return Organization.fromJson(r.data as Map<String, dynamic>);
   }
 
+  Future<void> deleteOrganization(String id) =>
+      _dio.delete('/v1/orgs/${_idSegment(id)}');
+
   Future<void> addOrganizationMember(String id, String identity, String role) =>
       _dio.post(
         '/v1/orgs/${_idSegment(id)}/members',

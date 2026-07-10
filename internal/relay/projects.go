@@ -72,30 +72,28 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	id := handoff.NewID(now)
-	var err error
 	orgID := strings.TrimSpace(req.OrgID)
 	if orgID == "" {
-		err = s.Store.CreateProject(r.Context(), id, name, identity, now)
-	} else {
-		if !s.requireOrgManager(w, r, orgID) {
-			return
-		}
-		if _, err := s.Store.GetOrganization(r.Context(), orgID); err != nil {
+		http.Error(w, "org_id required", http.StatusBadRequest)
+		return
+	}
+	if !s.requireOrgManager(w, r, orgID) {
+		return
+	}
+	if _, err := s.Store.GetOrganization(r.Context(), orgID); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if _, ok, err := s.Store.OrganizationMemberRole(r.Context(), orgID, identity); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if !ok && s.isAdmin(r.Context(), identity) {
+		if err := s.Store.AddOrganizationMember(r.Context(), orgID, identity, store.OrgRoleAdmin); err != nil {
 			s.writeStoreErr(w, err)
 			return
 		}
-		if _, ok, err := s.Store.OrganizationMemberRole(r.Context(), orgID, identity); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		} else if !ok && s.isAdmin(r.Context(), identity) {
-			if err := s.Store.AddOrganizationMember(r.Context(), orgID, identity, store.OrgRoleAdmin); err != nil {
-				s.writeStoreErr(w, err)
-				return
-			}
-		}
-		err = s.Store.CreateProjectInOrg(r.Context(), id, orgID, name, identity, now)
 	}
-	if err != nil {
+	if err := s.Store.CreateProjectInOrg(r.Context(), id, orgID, name, identity, now); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
