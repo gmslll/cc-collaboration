@@ -29,6 +29,7 @@ import '../local/lsp/lsp_client.dart';
 import '../local/path_utils.dart';
 import '../local/prefs.dart';
 import '../local/project_order.dart';
+import '../local/session_manager.dart';
 import '../local/session_overview.dart';
 import '../local/todo_materialize.dart';
 import '../local/todo_permissions.dart';
@@ -55,6 +56,7 @@ import 'github_pr_page.dart';
 import 'handoff_detail_view.dart';
 import 'plugins_page.dart';
 import 'repo_config_page.dart';
+import 'session_manager.dart';
 import 'terminal_deck.dart';
 import 'terminal_pane.dart';
 import 'todo_detail_view.dart';
@@ -933,22 +935,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   // prefix match; the worktree comes from the <project>/.worktrees/<name>
   // layout), the derived status, current usage, and the cached preview.
   SessionCard _cardFor(TerminalSession s) {
-    final hit = _projectForFile(s.workdir);
+    final membership = resolveSessionProject(s.workdir, _cfg.workspaces);
     String workspace = '', project = '';
     String? worktree;
-    if (hit != null) {
-      project = hit.project.name;
-      final rel = hit.rel;
+    if (membership != null) {
+      workspace = membership.workspace.name;
+      project = membership.project.name;
+      final rel = membership.relativePath;
       if (rel.startsWith('.worktrees/')) {
         worktree = rel.substring('.worktrees/'.length).split('/').first;
       } else if (rel.isNotEmpty) {
         worktree = rel.split('/').first;
-      }
-      for (final w in _cfg.workspaces) {
-        if (w.projects.any((p) => p.path == hit.project.path)) {
-          workspace = w.name;
-          break;
-        }
       }
     }
     final activities = _recentHookActivities(s, limit: 4);
@@ -962,7 +959,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       isAgent: s.isAgent,
       workspace: workspace,
       project: project,
-      projectId: hit?.project.projectId ?? '',
+      projectId: membership?.project.projectId ?? '',
       worktree: worktree,
       status: status,
       statusDetail: detail,
@@ -972,6 +969,66 @@ class _WorkspacePageState extends State<WorkspacePage>
       workdir: s.workdir,
       recentActivity: [for (final a in activities) a.overviewSummary()],
       isSupervisor: s.supervisor,
+    );
+  }
+
+  ManagedSession _managedSessionFor(TerminalSession session) {
+    final membership = resolveSessionProject(session.workdir, _cfg.workspaces);
+    final activities = _recentHookActivities(session, limit: 8);
+    final latest = _latestHookActivityFrom(activities);
+    final status = _statusFor(session, latest);
+    final rel = membership?.relativePath ?? '';
+    var worktree = '';
+    if (rel.startsWith('.worktrees/')) {
+      worktree = rel.substring('.worktrees/'.length).split('/').first;
+    }
+    var branch = '';
+    final project = membership?.project;
+    if (project != null) {
+      final known = resolveSessionWorktree(
+        session.workdir,
+        _worktrees[project.path] ?? const <Worktree>[],
+      );
+      if (known != null && known.path != project.path) {
+        branch = known.branch;
+        if (worktree.isEmpty) worktree = known.name;
+      }
+    }
+    final recentlyCompleted =
+        !session.busy &&
+        !session.needsReview &&
+        (latest?.event == 'Stop' || latest?.event == 'SubagentStop');
+    return ManagedSession(
+      id: session.id,
+      name: session.label,
+      agent: session.isAgent ? session.agentKind : 'shell',
+      workspace: membership?.workspace.name ?? '',
+      project: project?.name ?? '',
+      projectPath: project?.path ?? '',
+      worktree: worktree,
+      branch: branch,
+      status: status,
+      statusDetail: _statusDetailFor(session, status, latest),
+      lastActivity: activities.isEmpty ? null : activities.first.at,
+      preview: session.overviewPreview ?? '',
+      recentlyCompleted: recentlyCompleted,
+    );
+  }
+
+  List<ManagedSession> get _managedSessions => [
+    for (final session in terms) _managedSessionFor(session),
+  ];
+
+  TopSessionWorkset get _topSessionWorkset {
+    final hidden = {
+      for (final session in terms)
+        if (isTabHidden(session.id)) session.id,
+    };
+    return topSessionWorkset(
+      sessions: _managedSessions,
+      activeId: terms.isEmpty ? null : terms[activeTerm].id,
+      pinnedIds: _pinnedSessionIds,
+      explicitlyHiddenIds: hidden,
     );
   }
 
@@ -1140,6 +1197,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (changed) {
       unawaited(_localBus.syncRegistry());
       if (overviewChanged) _publishOverview();
+      if (mounted) setState(() {});
     }
   }
 
@@ -1220,6 +1278,17 @@ class _WorkspacePageState extends State<WorkspacePage>
   // expansion controllers per project path, so launching a session can expand
   // its project to reveal the new session node.
   final Map<String, ExpansibleController> _proj = {};
+  final Map<String, ExpansibleController> _workspaceControllers = {};
+  // Temporary tree focus: null shows every workspace. Deliberately not stored
+  // in Prefs — restarting the app always returns to the full project tree.
+  String? _focusedWorkspaceName;
+  bool _sessionManagerOpening = false;
+  final Set<String> _pinnedSessionIds = sessionManagerSetFromPref(
+    Prefs.getString('ws.sessionManager.pinned', def: '[]'),
+  );
+  final Set<String> _sessionManagerCollapsed = sessionManagerSetFromPref(
+    Prefs.getString('ws.sessionManager.collapsed', def: '[]'),
+  );
   bool _busy = false;
   ListItem? _detailItem;
   @override
@@ -1351,6 +1420,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     onAgentBusyChanged = (s) {
       unawaited(_localBus.syncRegistry());
       _publishOverview();
+      if (mounted) setState(() {});
     };
     // An agent finishing a turn pops a desktop banner (TerminalHost) and pushes
     // the same "任务通知" to any connected phone (reuses the shared copy helper).
@@ -1509,7 +1579,19 @@ class _WorkspacePageState extends State<WorkspacePage>
     // Any newly spawned session surfaces the bottom terminal panel (even if it
     // was showing Git) so the launched agent is visible. Restore doesn't go
     // through addTerm, so a restored Git view isn't hijacked on startup.
-    onTermAdded = () => _setBottomTool(_BottomTool.terminal);
+    onTermAdded = () {
+      if (terms.isNotEmpty && _focusedWorkspaceName != null) {
+        final membership = resolveSessionProject(
+          terms.last.workdir,
+          _cfg.workspaces,
+        );
+        if (membership == null ||
+            membership.workspace.name != _focusedWorkspaceName) {
+          _setWorkspaceFocus(null);
+        }
+      }
+      _setBottomTool(_BottomTool.terminal);
+    };
     _remoteHost.addListener(_onRemoteChange);
     PluginManager.instance.detectAll();
     PluginManager.instance.addListener(_onPluginsChanged);
@@ -1528,6 +1610,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (!mounted) return;
     // After restoring persisted sessions, expand the projects that own them so
     // the session tabs are visible in the tree.
+    _pruneRestoredSessionPins();
     WidgetsBinding.instance.addPostFrameCallback((_) => _expandWithSessions());
   }
 
@@ -2423,6 +2506,10 @@ class _WorkspacePageState extends State<WorkspacePage>
     if (cfg != null && mounted) {
       setState(() {
         _cfg = _mergeReloadedLocalConfig(cfg);
+        if (_focusedWorkspaceName != null &&
+            !_cfg.workspaces.any((ws) => ws.name == _focusedWorkspaceName)) {
+          _focusedWorkspaceName = null;
+        }
         _syncOnlineSendAction();
       });
       // Desktop-initiated workspace/project/worktree changes must reach connected
@@ -4555,12 +4642,197 @@ class _WorkspacePageState extends State<WorkspacePage>
     Prefs.setBool('ws.inboxSidebarCollapsed', true);
   }
 
+  ExpansibleController _workspaceCtlFor(String name) =>
+      _workspaceControllers.putIfAbsent(name, ExpansibleController.new);
+
+  void _persistSessionManagerSets() {
+    Prefs.setString(
+      'ws.sessionManager.pinned',
+      sessionManagerSetPrefValue(_pinnedSessionIds),
+    );
+    Prefs.setString(
+      'ws.sessionManager.collapsed',
+      sessionManagerSetPrefValue(_sessionManagerCollapsed),
+    );
+  }
+
+  void _pruneRestoredSessionPins() {
+    final liveIds = {for (final session in terms) session.id};
+    final before = _pinnedSessionIds.length;
+    _pinnedSessionIds.removeWhere((id) => !liveIds.contains(id));
+    if (_pinnedSessionIds.length != before) _persistSessionManagerSets();
+  }
+
+  void _setWorkspaceFocus(String? workspace) {
+    final names = [for (final item in _cfg.workspaces) item.name];
+    final next =
+        names.length <= 1 || (workspace != null && !names.contains(workspace))
+        ? null
+        : workspace;
+    if (_focusedWorkspaceName == next) return;
+    setState(() => _focusedWorkspaceName = next);
+  }
+
+  void _toggleWorkspaceFocus(String workspace) {
+    final next = workspaceFocusAfterDoubleClick(
+      workspaceNames: [for (final item in _cfg.workspaces) item.name],
+      currentFocus: _focusedWorkspaceName,
+      tappedWorkspace: workspace,
+    );
+    _setWorkspaceFocus(next);
+  }
+
+  void _exitWorkspaceFocus() {
+    if (_focusedWorkspaceName != null) _setWorkspaceFocus(null);
+  }
+
+  Future<String?> _renameManagedSession(String id) async {
+    final session = sessionById(id);
+    if (session == null) return null;
+    return _renameSession(session);
+  }
+
+  Future<bool> _requestCloseSession(String id) async {
+    final index = terms.indexWhere((session) => session.id == id);
+    if (index < 0) return false;
+    final session = terms[index];
+    if (session.busy) {
+      final ok = await _confirm(
+        '结束运行中的会话',
+        '「${session.label}」仍在运行。结束会话会停止当前任务，确定继续吗？',
+      );
+      if (!ok || !mounted) return false;
+    }
+    final current = terms.indexWhere((item) => item.id == id);
+    if (current < 0) return false;
+    closeTerm(current);
+    if (_pinnedSessionIds.remove(id)) {
+      _persistSessionManagerSets();
+      if (mounted) setState(() {});
+    }
+    return true;
+  }
+
+  Future<Set<String>> _closeCompletedSessions(Set<String> requested) async {
+    final completed = {
+      for (final item in _managedSessions)
+        if (requested.contains(item.id) && item.recentlyCompleted) item.id,
+    };
+    if (completed.isEmpty) return {};
+    final ok = await _confirm(
+      '关闭已完成会话',
+      '将结束 ${completed.length} 个最近已完成的会话。此操作不会影响运行中或需要处理的会话。',
+    );
+    if (!ok || !mounted) return {};
+    final indices = [
+      for (var i = 0; i < terms.length; i++)
+        if (completed.contains(terms[i].id)) i,
+    ]..sort((a, b) => b.compareTo(a));
+    final closed = <String>{};
+    for (final index in indices) {
+      final id = terms[index].id;
+      // Re-evaluate immediately before the existing close entry: a session may
+      // have started a new turn while the confirmation dialog was open.
+      final item = _managedSessionFor(terms[index]);
+      if (!item.recentlyCompleted ||
+          terms[index].busy ||
+          sessionNeedsAttention(item)) {
+        continue;
+      }
+      closeTerm(index);
+      closed.add(id);
+    }
+    final hadPinned = _pinnedSessionIds.any(closed.contains);
+    _pinnedSessionIds.removeAll(closed);
+    if (hadPinned) {
+      _persistSessionManagerSets();
+      if (mounted) setState(() {});
+    }
+    return closed;
+  }
+
+  void _activateManagedSession(String id) {
+    final index = terms.indexWhere((session) => session.id == id);
+    if (index < 0) return;
+    final membership = resolveSessionProject(
+      terms[index].workdir,
+      _cfg.workspaces,
+    );
+    if (_focusedWorkspaceName != null &&
+        (membership == null ||
+            _focusedWorkspaceName != membership.workspace.name)) {
+      _setWorkspaceFocus(null);
+    }
+    reopenTermView(index);
+    _setBottomTool(_BottomTool.terminal);
+    if (membership == null) return;
+    _selectGitProject(membership.project);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _workspaceCtlFor(membership.workspace.name).expand();
+      _ctlFor(membership.project.path).expand();
+      final rel = membership.relativePath;
+      if (rel.startsWith('.worktrees/')) {
+        final worktreeName = rel
+            .substring('.worktrees/'.length)
+            .split('/')
+            .first;
+        _ctlFor('${membership.project.path}/.worktrees/$worktreeName').expand();
+      }
+    });
+  }
+
+  Future<void> _showSessionManager() async {
+    if (_sessionManagerOpening) return;
+    _sessionManagerOpening = true;
+    try {
+      await _refreshAllPreviews();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => SessionManagerDialog(
+          sessions: _managedSessions,
+          sessionProvider: () => _managedSessions,
+          activeId: terms.isEmpty ? null : terms[activeTerm].id,
+          pinnedIds: _pinnedSessionIds,
+          collapsedKeys: _sessionManagerCollapsed,
+          onOpen: _activateManagedSession,
+          onPinnedChanged: (id, pinned) {
+            setState(() {
+              if (pinned) {
+                _pinnedSessionIds.add(id);
+              } else {
+                _pinnedSessionIds.remove(id);
+              }
+            });
+            _persistSessionManagerSets();
+          },
+          onRename: _renameManagedSession,
+          onClose: _requestCloseSession,
+          onCloseCompleted: _closeCompletedSessions,
+          onCollapsedChanged: (key, collapsed) {
+            if (collapsed) {
+              _sessionManagerCollapsed.add(key);
+            } else {
+              _sessionManagerCollapsed.remove(key);
+            }
+            _persistSessionManagerSets();
+          },
+        ),
+      );
+    } finally {
+      _sessionManagerOpening = false;
+    }
+  }
+
   // ---------------------------------------------------------------- view ----
 
   @override
   Widget build(BuildContext context) {
     return CallbackShortcuts(
       bindings: {
+        if (_focusedWorkspaceName != null)
+          const SingleActivator(LogicalKeyboardKey.escape): _exitWorkspaceFocus,
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true):
             _showQuickOpen,
         const SingleActivator(LogicalKeyboardKey.keyO, control: true):
@@ -4787,17 +5059,9 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   ({ProjectCfg project, String rel})? _projectForFile(String path) {
-    ProjectCfg? best;
-    for (final ws in _cfg.workspaces) {
-      for (final p in ws.projects) {
-        if (pathWithin(path, p.path)) {
-          if (best == null || p.path.length > best.path.length) best = p;
-        }
-      }
-    }
-    if (best == null) return null;
-    final rel = pathRelativeTo(best.path, path);
-    return (project: best, rel: rel);
+    final membership = resolveSessionProject(path, _cfg.workspaces);
+    if (membership == null) return null;
+    return (project: membership.project, rel: membership.relativePath);
   }
 
   // _sendGroupsFor splits live sessions into same-project vs other-project,
@@ -5235,9 +5499,9 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
           ],
           const SizedBox(width: 12),
-          Text(
-            '${terms.length} sessions',
-            style: CcType.code(size: 11.5, color: CcColors.subtle),
+          SessionManagerEntry(
+            count: terms.length,
+            onPressed: _showSessionManager,
           ),
           if (_parked.isNotEmpty) ...[const SizedBox(width: 4), _parkedBadge()],
           const SizedBox(width: 4),
@@ -6811,10 +7075,16 @@ class _WorkspacePageState extends State<WorkspacePage>
     final hasActiveFile = _activeFile >= 0 && _activeFile < _codeFiles.length;
     if (hasActiveFile) return _editorCanvasFor(_codeFiles[_activeFile]);
     if (_aiChatFocused) {
+      final workset = _topSessionWorkset;
       return terminalDeck(
         hideClosedTabs: true,
         enableSplit: true,
         onNewShell: _newShellTerminal,
+        visibleIds: workset.allIds.toSet(),
+        displayOrderIds: workset.allIds,
+        pinnedIds: workset.pinnedIds.toSet(),
+        attentionIds: workset.attentionIds.toSet(),
+        onShowAllSessions: _showSessionManager,
       );
     }
     return _workspaceWelcome();
@@ -10490,7 +10760,14 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Widget _sidebar() {
-    final wss = _cfg.workspaces;
+    final allWss = _cfg.workspaces;
+    final visibleNames = visibleWorkspaceNames([
+      for (final workspace in allWss) workspace.name,
+    ], _focusedWorkspaceName).toSet();
+    final wss = [
+      for (final workspace in allWss)
+        if (visibleNames.contains(workspace.name)) workspace,
+    ];
     return Column(
       children: [
         _panelHeader(
@@ -10512,11 +10789,21 @@ class _WorkspacePageState extends State<WorkspacePage>
             ),
             const SizedBox(width: 8),
             Text(
-              '${wss.length}',
+              _focusedWorkspaceName == null
+                  ? '${allWss.length}'
+                  : '${wss.length}/${allWss.length}',
               style: CcType.code(size: 11.5, color: CcColors.subtle),
             ),
           ],
           trailing: [
+            if (_focusedWorkspaceName != null)
+              IconButton(
+                key: const ValueKey('workspace-focus-exit'),
+                onPressed: _exitWorkspaceFocus,
+                tooltip: '显示全部工作区 (Esc)',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.filter_alt_off_rounded, size: 17),
+              ),
             IconButton(
               onPressed: _activeFile >= 0 && _activeFile < _codeFiles.length
                   ? _selectOpenedFileInProject
@@ -10585,51 +10872,79 @@ class _WorkspacePageState extends State<WorkspacePage>
                 _showWorkspaceAreaMenu(details.globalPosition),
             child: wss.isEmpty
                 ? centerMsg('config.toml 里没有 workspace —— 右键“拉取团队项目”,或点右上 + 新建')
-                : ListView(
-                    children: wss
-                        .map(
-                          (ws) => ExpansionTile(
-                            // Stable identity so the tile's expansion State isn't
-                            // reassigned if workspaces reorder.
-                            key: ValueKey('ws:${ws.name}'),
-                            title: _ctxMenu(
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  ws.name.isEmpty ? '(默认)' : ws.name,
-                                  style: const TextStyle(
-                                    fontSize: 15.5,
-                                    fontWeight: FontWeight.w700,
+                : WorkspaceFocusSurface(
+                    focused: _focusedWorkspaceName != null,
+                    onExit: _exitWorkspaceFocus,
+                    child: ListView(
+                      key: const ValueKey('workspace-project-tree'),
+                      children: wss
+                          .map(
+                            (ws) => ExpansionTile(
+                              // Stable identity so the tile's expansion State isn't
+                              // reassigned if workspaces reorder.
+                              key: ValueKey('ws:${ws.name}'),
+                              controller: _workspaceCtlFor(ws.name),
+                              tilePadding: const EdgeInsets.only(
+                                left: 12,
+                                right: 6,
+                              ),
+                              childrenPadding: EdgeInsets.zero,
+                              minTileHeight: 42,
+                              title: _ctxMenu(
+                                WorkspaceFocusTitle(
+                                  key: ValueKey('workspace-focus-${ws.name}'),
+                                  enabled: allWss.length > 1,
+                                  onToggle: () =>
+                                      _toggleWorkspaceFocus(ws.name),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Tooltip(
+                                      message: ws.name.isEmpty
+                                          ? '(默认)'
+                                          : ws.name,
+                                      child: Text(
+                                        ws.name.isEmpty ? '(默认)' : ws.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 15.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
+                                _workspaceMenu(
+                                  ws,
+                                  workspaceCount: allWss.length,
+                                ),
                               ),
-                              _workspaceMenu(ws),
+                              leading: const Icon(
+                                Icons.workspaces_rounded,
+                                size: 20,
+                              ),
+                              // Persist collapse across rebuilds: switching the left
+                              // panel to git/another view disposes this tree, and it
+                              // used to come back all-expanded (initiallyExpanded:true).
+                              // Mirror the section-collapse pattern (_secCollapsed) so a
+                              // collapsed workspace stays collapsed. Default expanded.
+                              initiallyExpanded: !Prefs.getBool(
+                                'ws.wsCollapsed.${ws.name}',
+                              ),
+                              onExpansionChanged: (open) => Prefs.setBool(
+                                'ws.wsCollapsed.${ws.name}',
+                                !open,
+                              ),
+                              shape: const Border(),
+                              children: applyOrder(
+                                ws.projects,
+                                loadOrder(desktopProjectOrderKey(ws.name)),
+                                (p) => p.name,
+                              ).map((p) => _projectTile(ws, p)).toList(),
                             ),
-                            leading: const Icon(
-                              Icons.workspaces_rounded,
-                              size: 20,
-                            ),
-                            // Persist collapse across rebuilds: switching the left
-                            // panel to git/another view disposes this tree, and it
-                            // used to come back all-expanded (initiallyExpanded:true).
-                            // Mirror the section-collapse pattern (_secCollapsed) so a
-                            // collapsed workspace stays collapsed. Default expanded.
-                            initiallyExpanded: !Prefs.getBool(
-                              'ws.wsCollapsed.${ws.name}',
-                            ),
-                            onExpansionChanged: (open) => Prefs.setBool(
-                              'ws.wsCollapsed.${ws.name}',
-                              !open,
-                            ),
-                            shape: const Border(),
-                            children: applyOrder(
-                              ws.projects,
-                              loadOrder(desktopProjectOrderKey(ws.name)),
-                              (p) => p.name,
-                            ).map((p) => _projectTile(ws, p)).toList(),
-                          ),
-                        )
-                        .toList(),
+                          )
+                          .toList(),
+                    ),
                   ),
           ),
         ),
@@ -10644,14 +10959,17 @@ class _WorkspacePageState extends State<WorkspacePage>
           builder: (h) => Row(
             children: [
               Expanded(
-                child: Text(
-                  p.name,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
+                child: Tooltip(
+                  message: p.name,
+                  child: Text(
+                    p.name,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               _rowActions(
@@ -10664,10 +10982,12 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
         _projectMenu(ws, p),
       ),
-      leading: const Icon(Icons.folder_rounded, size: 19),
+      leading: const Icon(Icons.folder_rounded, size: 15),
       controller: _ctlFor(p.path),
-      tilePadding: const EdgeInsets.only(left: 16, right: 8),
-      childrenPadding: const EdgeInsets.only(left: 14),
+      tilePadding: const EdgeInsets.only(left: 30, right: 8),
+      childrenPadding: const EdgeInsets.only(left: 16),
+      visualDensity: const VisualDensity(vertical: -2),
+      minTileHeight: 36,
       shape: const Border(),
       onExpansionChanged: (open) {
         if (open) {
@@ -10988,21 +11308,35 @@ class _WorkspacePageState extends State<WorkspacePage>
   List<({int idx, TerminalSession s})> _sessionsFor(ProjectCfg p) {
     final out = <({int idx, TerminalSession s})>[];
     for (var i = 0; i < terms.length; i++) {
-      final wd = terms[i].workdir;
-      if (wd == p.path || wd.startsWith('${p.path}/.worktrees/')) {
+      final membership = resolveSessionProject(
+        terms[i].workdir,
+        _cfg.workspaces,
+      );
+      if (membership?.project.path == p.path) {
         out.add((idx: i, s: terms[i]));
       }
     }
     return out;
   }
 
-  // _sessionsForDir returns the open terminal sessions launched in EXACTLY [dir]
-  // (a project root OR a worktree path), paired with their index in `terms`.
-  // Exact match is correct: _openAgent always launches at p.path or w.path.
+  // _sessionsForDir uses the same resolver as the manager/top workset. Project
+  // roots own every non-worktree descendant; a worktree row owns descendants of
+  // that worktree. Normal launch paths are exact roots, while this also keeps a
+  // restored/externally spawned session in a project subdirectory from vanishing.
   List<({int idx, TerminalSession s})> _sessionsForDir(String dir) {
     final out = <({int idx, TerminalSession s})>[];
+    final target = resolveSessionProject(dir, _cfg.workspaces);
+    final isProjectRoot = target?.project.path == dir;
     for (var i = 0; i < terms.length; i++) {
-      if (terms[i].workdir == dir) out.add((idx: i, s: terms[i]));
+      final membership = resolveSessionProject(
+        terms[i].workdir,
+        _cfg.workspaces,
+      );
+      final matches = isProjectRoot
+          ? membership?.project.path == dir &&
+                !membership!.relativePath.startsWith('.worktrees/')
+          : pathWithin(terms[i].workdir, dir);
+      if (matches) out.add((idx: i, s: terms[i]));
     }
     return out;
   }
@@ -11013,13 +11347,14 @@ class _WorkspacePageState extends State<WorkspacePage>
     String dir, {
     ProjectCfg? project,
     String preLaunch = '',
+    bool showHeader = true,
   }) {
     final ss = _sessionsForDir(dir);
     if (ss.isEmpty) return const [];
     final header = _sectionHeader(dir, 'sessions', '会话 (${ss.length})');
-    if (_secCollapsed(dir, 'sessions')) return [header];
+    if (showHeader && _secCollapsed(dir, 'sessions')) return [header];
     return [
-      header,
+      if (showHeader) header,
       ...ss.map((e) {
         final active = e.idx == activeTerm;
         // hidden = the session keeps running but its tab was closed ("close
@@ -11050,7 +11385,7 @@ class _WorkspacePageState extends State<WorkspacePage>
             } else if (v == 'rename') {
               _renameSession(e.s);
             } else if (v == 'close') {
-              closeTerm(e.idx);
+              unawaited(_requestCloseSession(e.s.id));
             } else if (v == 'send-online') {
               _showSendToOnlineUser(
                 e.s.selectedText ?? e.s.renderSnapshot(_kForwardLines),
@@ -11128,7 +11463,10 @@ class _WorkspacePageState extends State<WorkspacePage>
               ),
               child: ListTile(
                 visualDensity: _tileDensity,
-                contentPadding: const EdgeInsets.only(left: 12, right: 2),
+                contentPadding: EdgeInsets.only(
+                  left: showHeader ? 28 : 14,
+                  right: 2,
+                ),
                 horizontalTitleGap: 8,
                 selected: active,
                 // Live status avatar: rebuilds on the session's activity transitions
@@ -11155,18 +11493,21 @@ class _WorkspacePageState extends State<WorkspacePage>
                     size: 20,
                   ),
                 ),
-                title: Text(
-                  display,
-                  style: TextStyle(
-                    fontFamily: CcType.mono,
-                    fontSize: 13.5,
-                    color: active
-                        ? CcColors.text
-                        : (notLoaded ? CcColors.subtle : CcColors.muted),
-                    fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                title: Tooltip(
+                  message: display,
+                  child: Text(
+                    display,
+                    style: TextStyle(
+                      fontFamily: CcType.mono,
+                      fontSize: 12.5,
+                      color: active
+                          ? CcColors.text
+                          : (notLoaded ? CcColors.subtle : CcColors.muted),
+                      fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
                 onTap: () {
                   // Reopen the session's tab (un-hide it if its view was closed)
@@ -11232,7 +11573,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     );
   }
 
-  Future<void> _renameSession(TerminalSession s) async {
+  Future<String?> _renameSession(TerminalSession s) async {
     final raw = await showDialog<String>(
       context: context,
       builder: (_) => WorkspaceSessionRenameDialog(
@@ -11240,11 +11581,12 @@ class _WorkspacePageState extends State<WorkspacePage>
         hint: s.title,
       ),
     );
-    if (raw == null) return;
+    if (raw == null) return null;
     final v = raw.trim();
-    if (!mounted) return;
+    if (!mounted) return null;
     setState(() => s.name = v.isEmpty ? null : v);
     persistTerms();
+    return s.label;
   }
 
   List<Widget> _worktreeNodes(WorkspaceCfg ws, ProjectCfg p) {
@@ -11264,25 +11606,20 @@ class _WorkspacePageState extends State<WorkspacePage>
     // 主工作树的 path == 项目根,已由项目节点自身表示,这里只列附加 worktree。
     final linked = wts.where((w) => w.path != p.path).toList();
     if (linked.isEmpty) return const [];
-    final header = _sectionHeader(
-      p.path,
-      'worktrees',
-      'WORKTREES (${linked.length})',
-    );
-    if (_secCollapsed(p.path, 'worktrees')) return [header];
     return [
-      header,
       ...linked.map((w) {
         final title = w.branch.isEmpty ? w.name : w.branch;
         return ExpansionTile(
           leading: Icon(
             Icons.account_tree_rounded,
-            size: 18,
+            size: 15,
             color: w.isHandoff ? CcColors.accent : CcColors.muted,
           ),
           controller: _ctlFor(w.path),
-          tilePadding: const EdgeInsets.only(left: 10, right: 2),
-          childrenPadding: const EdgeInsets.only(left: 12),
+          tilePadding: const EdgeInsets.only(left: 18, right: 2),
+          childrenPadding: const EdgeInsets.only(left: 14),
+          visualDensity: const VisualDensity(vertical: -2),
+          minTileHeight: 36,
           shape: const Border(),
           onExpansionChanged: (open) {
             if (open) _ensureWorktreeChanges(w.path);
@@ -11292,28 +11629,31 @@ class _WorkspacePageState extends State<WorkspacePage>
               builder: (h) => Row(
                 children: [
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          title,
-                          style: const TextStyle(
-                            fontFamily: CcType.mono,
-                            fontSize: 13.5,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (w.isHandoff)
-                          const Text(
-                            'handoff',
-                            style: TextStyle(
-                              color: CcColors.accent,
-                              fontSize: 11,
+                    child: Tooltip(
+                      message: title,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontFamily: CcType.mono,
+                              fontSize: 12.5,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                      ],
+                          if (w.isHandoff)
+                            const Text(
+                              'handoff',
+                              style: TextStyle(
+                                color: CcColors.accent,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                   _rowActions(
@@ -11328,7 +11668,12 @@ class _WorkspacePageState extends State<WorkspacePage>
             _worktreeMenu(ws, p, w),
           ),
           children: [
-            ..._sessionNodesForDir(w.path, project: p, preLaunch: ws.preLaunch),
+            ..._sessionNodesForDir(
+              w.path,
+              project: p,
+              preLaunch: ws.preLaunch,
+              showHeader: false,
+            ),
             _filesNode(
               w.path,
               title,
@@ -11419,62 +11764,79 @@ class _WorkspacePageState extends State<WorkspacePage>
     ),
   ];
 
-  PopupMenuButton<String> _workspaceMenu(WorkspaceCfg ws) =>
-      PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert_rounded, size: 18),
-        tooltip: '工作区操作',
-        onSelected: (v) {
-          switch (v) {
-            case 'pull-team':
-              _pullTeamProject();
-            case 'new':
-              _newEmptyProject(ws);
-            case 'add':
-              _addProject(ws);
-            case 'reorder':
-              _openProjectOrderSheet(ws);
-            case 'settings':
-              _workspaceSettings(ws);
-            case 'remove':
-              _removeWorkspace(ws);
-          }
-        },
-        itemBuilder: (_) => [
-          ccMenuItem(
-            value: 'pull-team',
-            icon: Icons.cloud_download_outlined,
-            label: '拉取团队项目',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'new',
-            icon: Icons.create_new_folder_rounded,
-            label: 'New Empty Project',
-          ),
-          ccMenuItem(
-            value: 'add',
-            icon: Icons.create_new_folder_outlined,
-            label: 'Add Existing / Clone Project',
-          ),
-          ccMenuItem(
-            value: ws.projects.length > 1 ? 'reorder' : null,
-            icon: Icons.swap_vert_rounded,
-            label: '排序项目',
-          ),
-          const PopupMenuDivider(),
-          ccMenuItem(
-            value: 'settings',
-            icon: Icons.settings_rounded,
-            label: '工作区设置',
-          ),
-          ccMenuItem(
-            value: 'remove',
-            icon: Icons.delete_outline_rounded,
-            label: '删除工作区',
-            danger: true,
-          ),
-        ],
-      );
+  PopupMenuButton<String> _workspaceMenu(
+    WorkspaceCfg ws, {
+    required int workspaceCount,
+  }) => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert_rounded, size: 18),
+    tooltip: '工作区操作',
+    onSelected: (v) {
+      switch (v) {
+        case 'pull-team':
+          _pullTeamProject();
+        case 'new':
+          _newEmptyProject(ws);
+        case 'add':
+          _addProject(ws);
+        case 'reorder':
+          _openProjectOrderSheet(ws);
+        case 'focus':
+          _setWorkspaceFocus(ws.name);
+        case 'focus-exit':
+          _exitWorkspaceFocus();
+        case 'settings':
+          _workspaceSettings(ws);
+        case 'remove':
+          _removeWorkspace(ws);
+      }
+    },
+    itemBuilder: (_) => [
+      ccMenuItem(
+        value: 'pull-team',
+        icon: Icons.cloud_download_outlined,
+        label: '拉取团队项目',
+      ),
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'new',
+        icon: Icons.create_new_folder_rounded,
+        label: 'New Empty Project',
+      ),
+      ccMenuItem(
+        value: 'add',
+        icon: Icons.create_new_folder_outlined,
+        label: 'Add Existing / Clone Project',
+      ),
+      ccMenuItem(
+        value: ws.projects.length > 1 ? 'reorder' : null,
+        icon: Icons.swap_vert_rounded,
+        label: '排序项目',
+      ),
+      if (workspaceCount > 1) ...[
+        const PopupMenuDivider(),
+        ccMenuItem(
+          value: _focusedWorkspaceName == null ? 'focus' : 'focus-exit',
+          icon: _focusedWorkspaceName == null
+              ? Icons.filter_alt_rounded
+              : Icons.filter_alt_off_rounded,
+          label: _focusedWorkspaceName == null ? '专注此工作区' : '退出工作区专注',
+          shortcut: _focusedWorkspaceName == null ? null : 'Esc',
+        ),
+      ],
+      const PopupMenuDivider(),
+      ccMenuItem(
+        value: 'settings',
+        icon: Icons.settings_rounded,
+        label: '工作区设置',
+      ),
+      ccMenuItem(
+        value: 'remove',
+        icon: Icons.delete_outline_rounded,
+        label: '删除工作区',
+        danger: true,
+      ),
+    ],
+  );
 
   Future<void> _showWorkspaceAreaMenu(Offset position) async {
     final value = await showMenu<String>(

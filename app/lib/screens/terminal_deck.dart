@@ -40,6 +40,25 @@ String _genUuid() {
       '${h.substring(16, 20)}-${h.substring(20)}';
 }
 
+bool restoredSessionDuplicates({
+  required Iterable<TerminalSession> existing,
+  required String id,
+  required String workdir,
+  required String command,
+  required String agent,
+  required String agentSessionId,
+}) {
+  if (id.isNotEmpty && existing.any((session) => session.id == id)) return true;
+  if (id.isNotEmpty) return false;
+  return existing.any(
+    (session) =>
+        session.workdir == workdir &&
+        session.command == command &&
+        session.agent == agent &&
+        (agentSessionId.isEmpty || session.agentSessionId == agentSessionId),
+  );
+}
+
 // TerminalHost owns the terminal-session list + active index + lifecycle, shared
 // by the inbox cockpit and the workspace cockpit (both add sessions on pickup /
 // agent launch). Mix into a State and render terminalDeck().
@@ -224,8 +243,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       _paneActiveSession[newPaneId] = sessionId;
       if (_paneActiveSession[sourcePaneId] == sessionId) {
         final remaining = _paneSessions[sourcePaneId]!;
-        _paneActiveSession[sourcePaneId] =
-            remaining.isEmpty ? null : remaining.last;
+        _paneActiveSession[sourcePaneId] = remaining.isEmpty
+            ? null
+            : remaining.last;
       }
       // Splitting a pane's only tab moves it out and leaves nothing behind —
       // collapse the now-empty source rather than leave a permanent blank
@@ -357,15 +377,15 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     final sid = agentSessionId ?? (agent == 'claude' ? _genUuid() : null);
     final session =
         TerminalSession(
-          workdir,
-          command,
-          agent: agent,
-          preLaunch: preLaunch,
-          supervisor: supervisor,
-          todoAssistant: todoAssistant,
-          agentSessionId: sid,
-          resume: resume,
-        )
+            workdir,
+            command,
+            agent: agent,
+            preLaunch: preLaunch,
+            supervisor: supervisor,
+            todoAssistant: todoAssistant,
+            agentSessionId: sid,
+            resume: resume,
+          )
           ..onDone = _onSessionDone
           ..onBusyChanged = _onSessionBusyChanged
           ..onPersist = persistTerms;
@@ -634,7 +654,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
 
   // Matches a legacy persisted command ("claude"/"codex" or "pre && claude") so
   // restoreTerms can recover agent + preLaunch. Compiled once, not per entry.
-  static final RegExp _legacyAgentCmd = RegExp(r'^(?:(.+) && )?(claude|codex)$');
+  static final RegExp _legacyAgentCmd = RegExp(
+    r'^(?:(.+) && )?(claude|codex)$',
+  );
 
   // restoreTerms reopens persisted sessions (skipping any whose worktree dir is
   // gone). Call from the host's initState. No-op unless persistKey is set.
@@ -647,8 +669,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       final data = jsonDecode(await f.readAsString());
       if (data is! List) return;
       final restored = <TerminalSession>[];
-      final hiddenIds = <String>[]; // restore these as closed-to-tree (lazy) tabs
-      String? activeId; // persisted-active session id (focus it if still visible)
+      final hiddenIds =
+          <String>[]; // restore these as closed-to-tree (lazy) tabs
+      String?
+      activeId; // persisted-active session id (focus it if still visible)
       var upgraded = false; // a legacy entry was recovered → rewrite the file
       for (final e in data) {
         if (e is! Map) continue;
@@ -679,21 +703,32 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         // Restore the saved stable id (so a phone holding it still resolves after
         // this restart); reserve it so a freshly minted id can't collide.
         final savedId = (e['id'] ?? '').toString();
-        if (savedId.isNotEmpty) TerminalSession.reserveId(savedId);
-        final ts = TerminalSession(
-          wd,
-          cmd,
-          id: savedId.isEmpty ? null : savedId,
+        if (restoredSessionDuplicates(
+          existing: [...terms, ...restored],
+          id: savedId,
+          workdir: wd,
+          command: cmd,
           agent: agent,
-          preLaunch: preLaunch,
-          supervisor: supervisor,
-          todoAssistant: todoAssistant,
-          agentSessionId: sid.isEmpty ? null : sid,
-          resume: true,
-        )
-          ..onDone = _onSessionDone
-          ..onBusyChanged = _onSessionBusyChanged
-          ..onPersist = persistTerms;
+          agentSessionId: sid,
+        )) {
+          continue;
+        }
+        if (savedId.isNotEmpty) TerminalSession.reserveId(savedId);
+        final ts =
+            TerminalSession(
+                wd,
+                cmd,
+                id: savedId.isEmpty ? null : savedId,
+                agent: agent,
+                preLaunch: preLaunch,
+                supervisor: supervisor,
+                todoAssistant: todoAssistant,
+                agentSessionId: sid.isEmpty ? null : sid,
+                resume: true,
+              )
+              ..onDone = _onSessionDone
+              ..onBusyChanged = _onSessionBusyChanged
+              ..onPersist = persistTerms;
         final nm = (e['name'] ?? '').toString();
         if (nm.isNotEmpty) ts.name = nm;
         if (nm.isEmpty && supervisor) ts.name = '总管';
@@ -758,28 +793,26 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     try {
       final f = File(await _persistPath(key));
       await f.writeAsString(
-        jsonEncode(
-          [
-            for (final (i, s) in terms.indexed)
-              {
-                'id': s.id, // stable remote-addressing id (survives restart)
-                'workdir': s.workdir,
-                'command': s.command,
-                if (s.name?.isNotEmpty ?? false) 'name': s.name,
-                // AI-session binding (see TerminalSession) — lets a reopened
-                // tab --resume its exact conversation next launch.
-                if (s.agent.isNotEmpty) 'agent': s.agent,
-                if (s.preLaunch.isNotEmpty) 'preLaunch': s.preLaunch,
-                if (s.supervisor) 'supervisor': true,
-                if (s.todoAssistant) 'todoAssistant': true,
-                if (s.agentSessionId != null) 'sessionId': s.agentSessionId,
-                // Tab visibility + focus, so restore eager-starts only the visible
-                // tabs and re-focuses the right one (hidden tabs stay lazy).
-                if (isTabHidden(s.id)) 'hidden': true,
-                if (i == activeTerm) 'active': true,
-              },
-          ],
-        ),
+        jsonEncode([
+          for (final (i, s) in terms.indexed)
+            {
+              'id': s.id, // stable remote-addressing id (survives restart)
+              'workdir': s.workdir,
+              'command': s.command,
+              if (s.name?.isNotEmpty ?? false) 'name': s.name,
+              // AI-session binding (see TerminalSession) — lets a reopened
+              // tab --resume its exact conversation next launch.
+              if (s.agent.isNotEmpty) 'agent': s.agent,
+              if (s.preLaunch.isNotEmpty) 'preLaunch': s.preLaunch,
+              if (s.supervisor) 'supervisor': true,
+              if (s.todoAssistant) 'todoAssistant': true,
+              if (s.agentSessionId != null) 'sessionId': s.agentSessionId,
+              // Tab visibility + focus, so restore eager-starts only the visible
+              // tabs and re-focuses the right one (hidden tabs stay lazy).
+              if (isTabHidden(s.id)) 'hidden': true,
+              if (i == activeTerm) 'active': true,
+            },
+        ]),
       );
     } catch (_) {}
   }
@@ -816,7 +849,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // put same-project sessions first and other-project sessions under 其他会话.
   ({List<SendTarget> same, List<SendTarget> others}) sendGroupsFor(
     String selfId,
-  ) => (same: [for (final s in peersExcluding(selfId)) s.asTarget], others: const []);
+  ) => (
+    same: [for (final s in peersExcluding(selfId)) s.asTarget],
+    others: const [],
+  );
 
   // localBusRegistry is the sessions.json payload LocalBus publishes so the CLI
   // can resolve a target by id or name.
@@ -833,7 +869,8 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         'status': _busStatusName(s),
         'statusDetail': _busStatusDetail(s),
         if (s.usage.value != null) 'usage': s.usage.value!.shortLabel(),
-        if (s.overviewPreview?.isNotEmpty ?? false) 'preview': s.overviewPreview,
+        if (s.overviewPreview?.isNotEmpty ?? false)
+          'preview': s.overviewPreview,
       },
   ];
 
@@ -986,11 +1023,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         ..createSync(recursive: true);
       final path = '${dir.path}/$micros-${_busSeq++}.json';
       final tmp = File('$path.tmp');
-      tmp.writeAsStringSync(jsonEncode({
-        'from': m.from,
-        'fromLabel': _fromLabel(m.from),
-        'body': m.body,
-      }));
+      tmp.writeAsStringSync(
+        jsonEncode({
+          'from': m.from,
+          'fromLabel': _fromLabel(m.from),
+          'body': m.body,
+        }),
+      );
       tmp.renameSync(path);
       _scheduleEscalate(target, path, m);
       return null;
@@ -1016,7 +1055,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // own turn. If the target's own hook drains [path] first, the file is simply
   // gone when the timer fires — file existence is the app-side ack.
   void _scheduleEscalate(TerminalSession target, String path, LocalMsg m) {
-    Timer(_escalateTimeout, () => unawaited(_escalateBusInbox(target, path, m)));
+    Timer(
+      _escalateTimeout,
+      () => unawaited(_escalateBusInbox(target, path, m)),
+    );
   }
 
   // _escalateBusInbox force-delivers one parked message if the target's own
@@ -1055,8 +1097,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     TerminalSession target,
     String path,
     LocalMsg m,
-  ) =>
-      _escalateBusInbox(target, path, m);
+  ) => _escalateBusInbox(target, path, m);
 
   // _fromLabel resolves a sender session id to its human label, falling back to
   // the raw id ('?' when empty). Shared by bus-inbox delivery and PTY paste.
@@ -1098,7 +1139,12 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // screen-vs-transcript policy — the per-call `--transcript` flag OR the app's
   // `ws.read_transcript` toggle — so the bus stays plumbing, then delegates to
   // readTranscript / readSnapshot.
-  Future<String?> readOutput(String to, int lines, bool transcript, StringSink out) {
+  Future<String?> readOutput(
+    String to,
+    int lines,
+    bool transcript,
+    StringSink out,
+  ) {
     if (transcript || Prefs.getBool('ws.read_transcript')) {
       return readTranscript(to, lines, out);
     }
@@ -1125,7 +1171,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     }
     try {
       out.write(
-        await renderTranscriptTail(path, lines: lines, agentKind: target.agentKind),
+        await renderTranscriptTail(
+          path,
+          lines: lines,
+          agentKind: target.agentKind,
+        ),
       );
       return null;
     } catch (e) {
@@ -1183,13 +1233,27 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     VoidCallback? onNewShell,
     bool hideClosedTabs = false,
     bool enableSplit = false,
+    Set<String>? visibleIds,
+    List<String>? displayOrderIds,
+    Set<String> pinnedIds = const {},
+    Set<String> attentionIds = const {},
+    VoidCallback? onShowAllSessions,
   }) {
     final leaves = leafIds(_termPaneTree);
     if (!enableSplit || leaves.length <= 1) {
       return TerminalDeck(
         terms: terms,
         active: activeTerm,
-        hiddenIds: hideClosedTabs ? _hiddenTabs : null,
+        hiddenIds: {
+          for (final session in terms)
+            if ((hideClosedTabs && _hiddenTabs.contains(session.id)) ||
+                (visibleIds != null && !visibleIds.contains(session.id)))
+              session.id,
+        },
+        displayOrderIds: displayOrderIds,
+        pinnedIds: pinnedIds,
+        attentionIds: attentionIds,
+        onShowAllSessions: onShowAllSessions,
         onSwitch: (i) {
           setState(() => activeTerm = i);
           _activeChanged();
@@ -1200,7 +1264,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         // have merely backgrounded.
         onCloseOthers: hideClosedTabs ? closeOtherTermsView : closeOtherTerms,
         onCloseLeft: hideClosedTabs ? closeTermsToLeftView : closeTermsToLeft,
-        onCloseRight: hideClosedTabs ? closeTermsToRightView : closeTermsToRight,
+        onCloseRight: hideClosedTabs
+            ? closeTermsToRightView
+            : closeTermsToRight,
         onSplitRight: enableSplit ? splitTermRight : null,
         onSplitDown: enableSplit ? splitTermDown : null,
         onCollapse: onCollapse,
@@ -1216,6 +1282,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       onCollapse: onCollapse,
       onNewShell: onNewShell,
       hideClosedTabs: hideClosedTabs,
+      visibleIds: visibleIds,
+      displayOrderIds: displayOrderIds,
+      pinnedIds: pinnedIds,
+      attentionIds: attentionIds,
+      onShowAllSessions: onShowAllSessions,
     );
   }
 
@@ -1231,8 +1302,18 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     required VoidCallback? onCollapse,
     required VoidCallback? onNewShell,
     required bool hideClosedTabs,
+    required Set<String>? visibleIds,
+    required List<String>? displayOrderIds,
+    required Set<String> pinnedIds,
+    required Set<String> attentionIds,
+    required VoidCallback? onShowAllSessions,
   }) {
-    final globalHidden = hideClosedTabs ? _hiddenTabs : null;
+    final globalHidden = {
+      for (final session in terms)
+        if ((hideClosedTabs && _hiddenTabs.contains(session.id)) ||
+            (visibleIds != null && !visibleIds.contains(session.id)))
+          session.id,
+    };
     // sessionId -> paneId, computed once for this render pass (not per pane)
     // so building N panes over M sessions stays O(N+M), not O(N*M) with a
     // _paneOf lookup (which also self-heals/mutates) per session per pane.
@@ -1247,14 +1328,17 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       final paneHidden = <String>{
         for (final s in terms)
           if ((paneOfSession[s.id] ?? firstLeaf) != paneId) s.id,
-        ...?globalHidden,
+        ...globalHidden,
       };
+      // A split pane keeps its own front session reachable even when another
+      // pane changed the global current-project workset. This preserves the
+      // pane/session relationship without flattening every cross-project tab.
+      if (activeSessionId != null) paneHidden.remove(activeSessionId);
       final activeIndex = activeSessionId == null
           ? 0
-          : terms.indexWhere((s) => s.id == activeSessionId).clamp(
-              0,
-              terms.isEmpty ? 0 : terms.length - 1,
-            );
+          : terms
+                .indexWhere((s) => s.id == activeSessionId)
+                .clamp(0, terms.isEmpty ? 0 : terms.length - 1);
       final paneSessions = [
         for (final id in _paneSessions[paneId] ?? const <String>[])
           if (sessionById(id) != null) sessionById(id)!,
@@ -1289,6 +1373,10 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
               terms: terms,
               active: activeIndex,
               hiddenIds: paneHidden,
+              displayOrderIds: displayOrderIds,
+              pinnedIds: pinnedIds,
+              attentionIds: attentionIds,
+              onShowAllSessions: onShowAllSessions,
               onSwitch: (i) => _switchInPane(paneId, i),
               onClose: hideClosedTabs ? closeTermView : closeTerm,
               onCloseOthers: hideClosedTabs
@@ -1380,8 +1468,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     return SplitPaneView(
       tree: _termPaneTree,
       paneBuilder: buildPane,
-      onWeightsChanged: (target, w) =>
-          setState(() => _termPaneTree = updateWeights(_termPaneTree, target, w)),
+      onWeightsChanged: (target, w) => setState(
+        () => _termPaneTree = updateWeights(_termPaneTree, target, w),
+      ),
     );
   }
 
@@ -1424,6 +1513,10 @@ class TerminalDeck extends StatelessWidget {
   // (alive in the IndexedStack) but dropped from the tab strip. Null = nothing
   // hidden (inbox cockpit).
   final Set<String>? hiddenIds;
+  final List<String>? displayOrderIds;
+  final Set<String> pinnedIds;
+  final Set<String> attentionIds;
+  final VoidCallback? onShowAllSessions;
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   // onCloseOthers/onCloseLeft/onCloseRight power the tab's right-click menu
@@ -1457,6 +1550,10 @@ class TerminalDeck extends StatelessWidget {
     required this.terms,
     required this.active,
     this.hiddenIds,
+    this.displayOrderIds,
+    this.pinnedIds = const {},
+    this.attentionIds = const {},
+    this.onShowAllSessions,
     required this.onSwitch,
     required this.onClose,
     this.onCloseOthers,
@@ -1483,6 +1580,10 @@ class TerminalDeck extends StatelessWidget {
           terms: terms,
           active: active,
           hiddenIds: hiddenIds,
+          displayOrderIds: displayOrderIds,
+          pinnedIds: pinnedIds,
+          attentionIds: attentionIds,
+          onShowAllSessions: onShowAllSessions,
           onSwitch: onSwitch,
           onClose: onClose,
           onCloseOthers: onCloseOthers,
@@ -1548,6 +1649,10 @@ class TerminalTabBar extends StatelessWidget {
   // hiddenIds: ids of sessions whose tab was closed ("close view") — filtered
   // out of the strip but kept in [terms]. Null/empty = show every tab.
   final Set<String>? hiddenIds;
+  final List<String>? displayOrderIds;
+  final Set<String> pinnedIds;
+  final Set<String> attentionIds;
+  final VoidCallback? onShowAllSessions;
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   // onCloseOthers/onCloseLeft/onCloseRight power the right-click tab menu's
@@ -1567,6 +1672,10 @@ class TerminalTabBar extends StatelessWidget {
     required this.terms,
     required this.active,
     this.hiddenIds,
+    this.displayOrderIds,
+    this.pinnedIds = const {},
+    this.attentionIds = const {},
+    this.onShowAllSessions,
     required this.onSwitch,
     required this.onClose,
     this.onCloseOthers,
@@ -1585,10 +1694,24 @@ class TerminalTabBar extends StatelessWidget {
   // "this pane's tabs", with no separate pane-awareness needed. Unsplit, it's
   // just the hideClosedTabs host's usual hidden-view filter (or everything,
   // for the inbox cockpit) — same as before this existed.
-  List<int> _visibleIndices() => [
-    for (var i = 0; i < terms.length; i++)
-      if (!(hiddenIds?.contains(terms[i].id) ?? false)) i,
-  ];
+  List<int> _visibleIndices() {
+    final visible = [
+      for (var i = 0; i < terms.length; i++)
+        if (!(hiddenIds?.contains(terms[i].id) ?? false)) i,
+    ];
+    final order = {
+      for (final (index, id) in (displayOrderIds ?? const <String>[]).indexed)
+        id: index,
+    };
+    if (order.isNotEmpty) {
+      visible.sort(
+        (a, b) => (order[terms[a].id] ?? 1 << 30).compareTo(
+          order[terms[b].id] ?? 1 << 30,
+        ),
+      );
+    }
+    return visible;
+  }
 
   // 右键菜单项：跟 workspace_page.dart 里文件标签页的 _editorFileTabMenuItems 同一
   // 视觉风格(ccMenuItem/showMenu/menuPosAt)。"关闭"直接调 onClose(i) ——跟标签上
@@ -1604,44 +1727,44 @@ class TerminalTabBar extends StatelessWidget {
     final visible = _visibleIndices();
     final pos = visible.indexOf(i);
     return [
-    ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
-    ccMenuItem(
-      value: 'closeOthers',
-      icon: Icons.clear_rounded,
-      label: 'Close Others',
-      enabled: onCloseOthers != null && visible.length > 1,
-    ),
-    if (onCloseLeft != null && pos > 0)
+      ccMenuItem(value: 'close', icon: Icons.close_rounded, label: 'Close'),
       ccMenuItem(
-        value: 'closeLeft',
-        icon: Icons.first_page_rounded,
-        label: 'Close Tabs to the Left',
+        value: 'closeOthers',
+        icon: Icons.clear_rounded,
+        label: 'Close Others',
+        enabled: onCloseOthers != null && visible.length > 1,
       ),
-    if (onCloseRight != null && pos >= 0 && pos < visible.length - 1)
+      if (onCloseLeft != null && pos > 0)
+        ccMenuItem(
+          value: 'closeLeft',
+          icon: Icons.first_page_rounded,
+          label: 'Close Tabs to the Left',
+        ),
+      if (onCloseRight != null && pos >= 0 && pos < visible.length - 1)
+        ccMenuItem(
+          value: 'closeRight',
+          icon: Icons.keyboard_tab_rounded,
+          label: 'Close Tabs to the Right',
+        ),
+      if (onSplitRight != null || onSplitDown != null) const PopupMenuDivider(),
+      if (onSplitRight != null)
+        ccMenuItem(
+          value: 'splitRight',
+          icon: Icons.vertical_split_rounded,
+          label: 'Split Right',
+        ),
+      if (onSplitDown != null)
+        ccMenuItem(
+          value: 'splitDown',
+          icon: Icons.horizontal_split_rounded,
+          label: 'Split Down',
+        ),
+      const PopupMenuDivider(),
       ccMenuItem(
-        value: 'closeRight',
-        icon: Icons.keyboard_tab_rounded,
-        label: 'Close Tabs to the Right',
+        value: 'copyPath',
+        icon: Icons.content_copy_rounded,
+        label: 'Copy Path',
       ),
-    if (onSplitRight != null || onSplitDown != null) const PopupMenuDivider(),
-    if (onSplitRight != null)
-      ccMenuItem(
-        value: 'splitRight',
-        icon: Icons.vertical_split_rounded,
-        label: 'Split Right',
-      ),
-    if (onSplitDown != null)
-      ccMenuItem(
-        value: 'splitDown',
-        icon: Icons.horizontal_split_rounded,
-        label: 'Split Down',
-      ),
-    const PopupMenuDivider(),
-    ccMenuItem(
-      value: 'copyPath',
-      icon: Icons.content_copy_rounded,
-      label: 'Copy Path',
-    ),
     ];
   }
 
@@ -1677,11 +1800,7 @@ class TerminalTabBar extends StatelessWidget {
     // Tabs whose view was closed (hiddenIds) stay in [terms] (alive) but drop
     // out of the strip; keep each kept tab's REAL index so onSwitch/onClose and
     // the active underline stay aligned with the host's terms/activeTerm.
-    final visible = <({int i, TerminalSession s})>[];
-    for (var i = 0; i < terms.length; i++) {
-      if (hiddenIds?.contains(terms[i].id) ?? false) continue;
-      visible.add((i: i, s: terms[i]));
-    }
+    final visible = [for (final i in _visibleIndices()) (i: i, s: terms[i])];
     return Container(
       color: CcColors.panel,
       height: 38,
@@ -1689,56 +1808,77 @@ class TerminalTabBar extends StatelessWidget {
         children: [
           ?leading,
           Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: visible.length,
-              itemBuilder: (_, k) {
-                final i = visible[k].i;
-                final term = visible[k].s;
-                final isActive = i == idx;
-                return InkWell(
-                  onTap: () => onSwitch(i),
-                  onSecondaryTapDown: (d) =>
-                      _showTabMenu(context, d.globalPosition, i),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: isActive
-                              ? CcColors.accent
-                              : Colors.transparent,
-                          width: 2,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (visible.isEmpty) return const SizedBox.shrink();
+                final width = constraints.maxWidth;
+                final reserve = visible.length > 1 ? 48.0 : 0.0;
+                final sectionReserve = width >= 360 ? 104.0 : 48.0;
+                final maxTabs = ((width - reserve - sectionReserve) / 88)
+                    .floor()
+                    .clamp(1, visible.length);
+                final preferred = [
+                  ...visible.where((item) => item.i == idx),
+                  ...visible.where((item) => attentionIds.contains(item.s.id)),
+                  ...visible.where((item) => pinnedIds.contains(item.s.id)),
+                  ...visible,
+                ];
+                final shown = <({int i, TerminalSession s})>[];
+                for (final item in preferred) {
+                  if (!shown.contains(item)) shown.add(item);
+                  if (shown.length == maxTabs) break;
+                }
+                shown.sort(
+                  (a, b) => visible.indexOf(a).compareTo(visible.indexOf(b)),
+                );
+                final hidden = [
+                  for (final item in visible)
+                    if (!shown.contains(item)) item,
+                ];
+                int sectionOf(({int i, TerminalSession s}) item) {
+                  if (pinnedIds.contains(item.s.id)) return 1;
+                  if (attentionIds.contains(item.s.id)) return 2;
+                  return 0;
+                }
+
+                final sectionStarts = <int>{};
+                var previous = 0;
+                for (var i = 0; i < shown.length; i++) {
+                  final section = sectionOf(shown[i]);
+                  if (section > 0 && section != previous) sectionStarts.add(i);
+                  previous = section;
+                }
+                final compactSections = width < 360;
+                final sectionWidth = compactSections ? 25.0 : 52.0;
+                final overflowWidth = hidden.isEmpty ? 0.0 : 44.0;
+                final availableForTabs =
+                    width - sectionStarts.length * sectionWidth - overflowWidth;
+                final tabWidth = (availableForTabs / shown.length).clamp(
+                  44.0,
+                  168.0,
+                );
+                return Row(
+                  children: [
+                    for (final (shownIndex, item) in shown.indexed) ...[
+                      if (sectionStarts.contains(shownIndex))
+                        _tabSectionLabel(
+                          sectionOf(item),
+                          compact: compactSections,
                         ),
+                      _TerminalSessionTab(
+                        key: ValueKey('terminal-tab-${item.s.id}'),
+                        width: tabWidth,
+                        term: item.s,
+                        active: item.i == idx,
+                        onTap: () => onSwitch(item.i),
+                        onClose: () => onClose(item.i),
+                        onSecondaryTapDown: (position) =>
+                            _showTabMenu(context, position, item.i),
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        sessionAvatar(
-                          seed: term.id,
-                          isAgent: term.isAgent,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          term.label,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isActive ? CcColors.text : CcColors.muted,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        InkWell(
-                          onTap: () => onClose(i),
-                          child: const Icon(
-                            Icons.close_rounded,
-                            size: 14,
-                            color: CcColors.muted,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                    ],
+                    if (hidden.isNotEmpty)
+                      _overflowButton(context, hidden, hidden.length),
+                  ],
                 );
               },
             ),
@@ -1748,4 +1888,185 @@ class TerminalTabBar extends StatelessWidget {
       ),
     );
   }
+
+  Widget _tabSectionLabel(int section, {required bool compact}) {
+    final pinned = section == 1;
+    final icon = pinned ? Icons.push_pin_outlined : Icons.error_outline_rounded;
+    final label = pinned ? '固定' : '需处理';
+    return Container(
+      width: compact ? 25 : 52,
+      height: 38,
+      decoration: const BoxDecoration(
+        border: Border(left: BorderSide(color: CcColors.border)),
+      ),
+      child: Tooltip(
+        message: label,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 12,
+              color: pinned ? CcColors.accentBright : CcColors.warning,
+            ),
+            if (!compact) ...[
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: pinned ? CcColors.muted : CcColors.warning,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _overflowButton(
+    BuildContext context,
+    List<({int i, TerminalSession s})> hidden,
+    int count,
+  ) {
+    if (onShowAllSessions != null) {
+      return Tooltip(
+        message: '还有 $count 个会话 · 打开会话管理器',
+        child: InkWell(
+          key: const ValueKey('terminal-tabs-overflow'),
+          onTap: onShowAllSessions,
+          child: SizedBox(
+            width: 44,
+            height: 38,
+            child: Center(
+              child: Text(
+                '+$count',
+                style: CcType.code(size: 11.5, color: CcColors.accentBright),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return PopupMenuButton<int>(
+      key: const ValueKey('terminal-tabs-overflow'),
+      tooltip: '还有 $count 个会话',
+      padding: EdgeInsets.zero,
+      onSelected: onSwitch,
+      itemBuilder: (_) => [
+        for (final item in hidden)
+          PopupMenuItem(
+            value: item.i,
+            child: Text(
+              item.s.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      child: SizedBox(
+        width: 44,
+        height: 38,
+        child: Center(
+          child: Text(
+            '+$count',
+            style: CcType.code(size: 11.5, color: CcColors.muted),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TerminalSessionTab extends StatefulWidget {
+  final double width;
+  final TerminalSession term;
+  final bool active;
+  final VoidCallback onTap;
+  final VoidCallback onClose;
+  final ValueChanged<Offset> onSecondaryTapDown;
+
+  const _TerminalSessionTab({
+    super.key,
+    required this.width,
+    required this.term,
+    required this.active,
+    required this.onTap,
+    required this.onClose,
+    required this.onSecondaryTapDown,
+  });
+
+  @override
+  State<_TerminalSessionTab> createState() => _TerminalSessionTabState();
+}
+
+class _TerminalSessionTabState extends State<_TerminalSessionTab> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (_) => setState(() => _hovered = true),
+    onExit: (_) => setState(() => _hovered = false),
+    child: Focus(
+      onFocusChange: (focused) => setState(() => _focused = focused),
+      child: InkWell(
+        onTap: widget.onTap,
+        onSecondaryTapDown: (details) =>
+            widget.onSecondaryTapDown(details.globalPosition),
+        child: Container(
+          width: widget.width,
+          height: 38,
+          padding: const EdgeInsets.only(left: 9, right: 3),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? CcColors.panelHigh.withValues(alpha: 0.55)
+                : Colors.transparent,
+            border: Border(
+              bottom: BorderSide(
+                color: widget.active ? CcColors.accent : Colors.transparent,
+                width: 2,
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              sessionAvatar(
+                seed: widget.term.id,
+                isAgent: widget.term.isAgent,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Tooltip(
+                  message: widget.term.label,
+                  child: Text(
+                    widget.term.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: widget.active ? CcColors.text : CcColors.muted,
+                    ),
+                  ),
+                ),
+              ),
+              AnimatedOpacity(
+                opacity: _hovered || _focused ? 1 : (widget.active ? 0.24 : 0),
+                duration: const Duration(milliseconds: 140),
+                child: IconButton(
+                  key: ValueKey('terminal-tab-close-${widget.term.id}'),
+                  onPressed: widget.onClose,
+                  tooltip: '关闭视图',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close_rounded, size: 14),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
