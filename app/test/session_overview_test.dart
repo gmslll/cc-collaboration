@@ -113,12 +113,16 @@ void main() {
     expect(dialog, contains('MediaQuery.sizeOf(context)'));
     expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
     expect(dialog, contains('SingleChildScrollView'));
+    expect(dialog, contains('scrollableActions(['));
+    expect(dialog, contains('scrollableBar('));
+    expect(dialog, contains('alignScrollEnd: true'));
     expect(dialog, contains('maxWidth: dialogSize.width'));
     expect(dialog, contains('maxHeight: dialogSize.height'));
     expect(dialog, contains('width: dialogSize.width'));
     expect(dialog, contains('height: previewHeight'));
     expect(dialog, isNot(contains('width: _dialogW')));
     expect(dialog, isNot(contains('height: _previewH')));
+    expect(dialog, isNot(contains('const Spacer()')));
   });
 
   test('SessionStatus parses hook-derived overview states', () {

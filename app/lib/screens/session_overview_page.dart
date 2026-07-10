@@ -533,26 +533,34 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                           ),
                         ),
                       ),
-                      IconButton(
-                        tooltip: '缩小字体',
-                        icon: const Icon(Icons.text_decrease_rounded, size: 18),
-                        onPressed: () => _zoom(-1),
-                      ),
-                      IconButton(
-                        tooltip: '放大字体',
-                        icon: const Icon(Icons.text_increase_rounded, size: 18),
-                        onPressed: () => _zoom(1),
-                      ),
-                      IconButton(
-                        tooltip: '刷新',
-                        icon: const Icon(Icons.refresh_rounded, size: 18),
-                        onPressed: _refresh,
-                      ),
-                      IconButton(
-                        tooltip: '关闭',
-                        icon: const Icon(Icons.close_rounded, size: 18),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
+                      scrollableActions([
+                        IconButton(
+                          tooltip: '缩小字体',
+                          icon: const Icon(
+                            Icons.text_decrease_rounded,
+                            size: 18,
+                          ),
+                          onPressed: () => _zoom(-1),
+                        ),
+                        IconButton(
+                          tooltip: '放大字体',
+                          icon: const Icon(
+                            Icons.text_increase_rounded,
+                            size: 18,
+                          ),
+                          onPressed: () => _zoom(1),
+                        ),
+                        IconButton(
+                          tooltip: '刷新',
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          onPressed: _refresh,
+                        ),
+                        IconButton(
+                          tooltip: '关闭',
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ]),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -607,14 +615,14 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    children: [
+                  scrollableBar(
+                    alignScrollEnd: true,
+                    scrolling: [
                       TextButton.icon(
                         onPressed: widget.onOpenInWorkspace,
                         icon: const Icon(Icons.open_in_full_rounded, size: 16),
                         label: const Text('在工作区打开'),
                       ),
-                      const Spacer(),
                       // Only agent sessions with a working dir can be frozen into a
                       // capsule (a shell session has no transcript to distill).
                       if (c.isAgent && (c.workdir?.isNotEmpty ?? false))
