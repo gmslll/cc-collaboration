@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
@@ -5,6 +7,8 @@ import '../api/relay_client.dart';
 import '../local/identity.dart' as identity_utils;
 import '../theme.dart';
 import '../widgets.dart';
+
+part 'projects/master_detail.dart';
 
 String normalizedRole(String role) => role.trim();
 
@@ -244,6 +248,51 @@ bool isIdentityOnline(Iterable<OnlineUser> onlineUsers, String identity) =>
       (user) => user.online && identityMatches(user.identity, identity),
     );
 
+String? githubRepoNameFromCloneUrl(String value) {
+  final input = value.trim();
+  if (input.isEmpty ||
+      input.length > 2048 ||
+      input.contains(RegExp(r'[\x00-\x1f\x7f]')) ||
+      input.contains(RegExp(r'[?#%]'))) {
+    return null;
+  }
+  String path;
+  if (input.toLowerCase().startsWith('git@github.com:')) {
+    path = input.substring(input.indexOf(':') + 1);
+  } else {
+    final uri = Uri.tryParse(input);
+    final scheme = uri?.scheme.toLowerCase();
+    if (uri == null ||
+        (scheme != 'https' && scheme != 'ssh') ||
+        uri.host.toLowerCase() != 'github.com' ||
+        uri.hasPort ||
+        (scheme == 'https' && uri.userInfo.isNotEmpty) ||
+        (scheme == 'ssh' && uri.userInfo != 'git')) {
+      return null;
+    }
+    path = uri.path;
+  }
+  path = path.replaceFirst(RegExp(r'^/+'), '').replaceFirst(RegExp(r'/+$'), '');
+  final parts = path.split('/');
+  if (parts.length != 2) return null;
+  final owner = parts.first;
+  final name = parts.last.endsWith('.git')
+      ? parts.last.substring(0, parts.last.length - 4)
+      : parts.last;
+  final component = RegExp(r'^[A-Za-z0-9_.-]+$');
+  if (owner.isEmpty ||
+      name.isEmpty ||
+      owner == '.' ||
+      owner == '..' ||
+      name == '.' ||
+      name == '..' ||
+      !component.hasMatch(owner) ||
+      !component.hasMatch(name)) {
+    return null;
+  }
+  return name;
+}
+
 bool canManageProjectDetail(
   ProjectDetail detail, {
   required bool isAdmin,
@@ -388,32 +437,6 @@ double projectSheetLoadingHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
-double projectTeamPanelHeight(
-  Size screenSize, {
-  double preferred = 104,
-  double minHeight = 96,
-  double maxFraction = 0.24,
-}) {
-  final height = screenSize.height;
-  if (!height.isFinite || height <= 0) return preferred;
-  final capped = height * maxFraction.clamp(0, 1);
-  if (capped >= preferred) return preferred;
-  return capped < minHeight ? minHeight : capped;
-}
-
-double projectTeamCardWidth(
-  Size screenSize, {
-  double preferred = 286,
-  double minWidth = 220,
-  double horizontalInset = 48,
-}) {
-  final width = screenSize.width;
-  if (!width.isFinite || width <= 0) return preferred;
-  final available = width - horizontalInset;
-  if (available >= preferred) return preferred;
-  return available < minWidth ? minWidth : available;
-}
-
 Map<String, List<String>> soleProjectOwnerNamesByIdentity(
   Iterable<ProjectDetail> details,
 ) {
@@ -433,827 +456,6 @@ Map<String, List<String>> soleProjectOwnerNamesByIdentity(
     );
   }
   return out;
-}
-
-typedef TeamWorkspaceStats = ({
-  int teams,
-  int manageableTeams,
-  int projects,
-  int onlineUsers,
-});
-
-TeamWorkspaceStats teamWorkspaceStats({
-  required Iterable<Organization> organizations,
-  required Iterable<Project> projects,
-  required Iterable<OnlineUser> onlineUsers,
-  required Set<String> manageableOrgIds,
-}) {
-  final onlineIdentities = <String>{
-    for (final user in onlineUsers)
-      if (user.online &&
-          identity_utils.identityLookupKey(user.identity).isNotEmpty)
-        identity_utils.identityLookupKey(user.identity),
-  };
-  return (
-    teams: organizations.length,
-    manageableTeams: organizations
-        .where((org) => manageableOrgIds.contains(org.id))
-        .length,
-    projects: projects.length,
-    onlineUsers: onlineIdentities.length,
-  );
-}
-
-class ProjectsPage extends StatefulWidget {
-  final RelayClient client;
-  const ProjectsPage({super.key, required this.client});
-
-  @override
-  State<ProjectsPage> createState() => _ProjectsPageState();
-}
-
-class _ProjectsPageState extends State<ProjectsPage> {
-  List<Project>? _projects;
-  List<Organization> _orgs = const [];
-  List<Invitation> _invitations = const [];
-  Set<String> _manageableOrgIds = const <String>{};
-  List<OnlineUser> _online = const [];
-  bool _isAdmin = false;
-  bool _creatingProject = false;
-  bool _creatingOrg = false;
-  bool _handlingInvitation = false;
-  String _identity = '';
-  String? _error;
-  final _name = TextEditingController();
-  final _orgName = TextEditingController();
-  final _search = TextEditingController();
-  final _projectNameFocus = FocusNode();
-  String? _selectedOrgId;
-  int _loadGeneration = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _name.addListener(_onCreateInputChanged);
-    _orgName.addListener(_onCreateInputChanged);
-    _search.addListener(_onSearchChanged);
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(covariant ProjectsPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.client != widget.client) {
-      _loadGeneration++;
-      _name.clear();
-      _orgName.clear();
-      _search.clear();
-      setState(() {
-        _projects = null;
-        _orgs = const [];
-        _invitations = const [];
-        _manageableOrgIds = const <String>{};
-        _online = const [];
-        _isAdmin = false;
-        _creatingProject = false;
-        _creatingOrg = false;
-        _handlingInvitation = false;
-        _identity = '';
-        _selectedOrgId = null;
-        _error = null;
-      });
-      _load();
-    }
-  }
-
-  @override
-  void dispose() {
-    _name.removeListener(_onCreateInputChanged);
-    _orgName.removeListener(_onCreateInputChanged);
-    _search.removeListener(_onSearchChanged);
-    _name.dispose();
-    _orgName.dispose();
-    _search.dispose();
-    _projectNameFocus.dispose();
-    super.dispose();
-  }
-
-  bool get _canCreateProject =>
-      !_creatingProject &&
-      _name.text.trim().isNotEmpty &&
-      createProjectTeamId(_selectedOrgId, _manageableOrgs) != null;
-  bool get _canCreateOrg => !_creatingOrg && _orgName.text.trim().isNotEmpty;
-
-  void _onCreateInputChanged() {
-    if (mounted) setState(() {});
-  }
-
-  void _onSearchChanged() {
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _load() async {
-    final generation = ++_loadGeneration;
-    final client = widget.client;
-    try {
-      final orgs = await Future.sync(
-        client.organizations,
-      ).catchError((_) => <Organization>[]);
-      Me? me;
-      try {
-        me = await client.me();
-      } catch (_) {
-        me = null;
-      }
-      final ps = await client.projects();
-      final online = await Future.sync(
-        client.onlineUsers,
-      ).catchError((_) => <OnlineUser>[]);
-      final meOrgRoles = {
-        for (final org in me?.organizations ?? const <OrganizationRole>[])
-          org.id: org.role,
-      };
-      final manageableOrgIds = me?.isAdmin == true
-          ? orgs.map((org) => org.id).toSet()
-          : orgs
-                .where((org) {
-                  final role = normalizedRole(org.role).isNotEmpty
-                      ? org.role
-                      : meOrgRoles[org.id] ?? '';
-                  return isManageRole(role);
-                })
-                .map((org) => org.id)
-                .toSet();
-      if (_isCurrentLoad(generation, client)) {
-        setState(() {
-          _orgs = orgs;
-          _invitations = me?.invitations ?? const [];
-          _manageableOrgIds = manageableOrgIds;
-          _isAdmin = me?.isAdmin == true;
-          _identity = me?.identity ?? '';
-          _projects = ps;
-          _online = online;
-          _selectedOrgId = createProjectTeamId(_selectedOrgId, _manageableOrgs);
-          _error = null;
-        });
-      }
-    } catch (e) {
-      if (_isCurrentLoad(generation, client)) setState(() => _error = '$e');
-    }
-  }
-
-  bool _isCurrentLoad(int generation, RelayClient client) =>
-      mounted &&
-      generation == _loadGeneration &&
-      identical(client, widget.client);
-
-  bool _isCurrentClient(RelayClient client) =>
-      mounted && identical(client, widget.client);
-
-  Future<void> _create() async {
-    final name = _name.text.trim();
-    if (name.isEmpty || _creatingProject) return;
-    final client = widget.client;
-    final orgId = createProjectTeamId(_selectedOrgId, _manageableOrgs);
-    if (orgId == null) {
-      snack(context, '请先创建或加入一个团队');
-      return;
-    }
-    if (mounted) setState(() => _creatingProject = true);
-    try {
-      await client.createProject(name, orgId: orgId);
-      if (!mounted || !identical(client, widget.client)) return;
-      _name.clear();
-      await _load();
-    } catch (e) {
-      if (!mounted || !identical(client, widget.client)) return;
-      snack(context, '创建失败: ${errorText(e)}');
-    } finally {
-      if (mounted && identical(client, widget.client)) {
-        setState(() => _creatingProject = false);
-      }
-    }
-  }
-
-  Future<void> _createOrg() async {
-    final name = _orgName.text.trim();
-    if (name.isEmpty || _creatingOrg) return;
-    final client = widget.client;
-    if (mounted) setState(() => _creatingOrg = true);
-    try {
-      final org = await client.createOrganization(name);
-      if (!mounted || !identical(client, widget.client)) return;
-      _orgName.clear();
-      setState(() {
-        _orgs = [..._orgs, org];
-        _manageableOrgIds = {..._manageableOrgIds, org.id};
-        _selectedOrgId = org.id;
-      });
-      await _load();
-    } catch (e) {
-      if (!mounted || !identical(client, widget.client)) return;
-      snack(context, '创建团队失败: ${errorText(e)}');
-    } finally {
-      if (mounted && identical(client, widget.client)) {
-        setState(() => _creatingOrg = false);
-      }
-    }
-  }
-
-  Future<void> _acceptInvitation(Invitation invitation) async {
-    if (_handlingInvitation) return;
-    final client = widget.client;
-    if (mounted) setState(() => _handlingInvitation = true);
-    try {
-      await client.acceptInvitation(invitation.id);
-      if (!mounted || !identical(client, widget.client)) return;
-      await _load();
-    } catch (e) {
-      if (!mounted || !identical(client, widget.client)) return;
-      snack(context, '接受邀请失败: ${errorText(e)}');
-    } finally {
-      if (mounted && identical(client, widget.client)) {
-        setState(() => _handlingInvitation = false);
-      }
-    }
-  }
-
-  Future<void> _declineInvitation(Invitation invitation) async {
-    if (_handlingInvitation) return;
-    final client = widget.client;
-    if (mounted) setState(() => _handlingInvitation = true);
-    try {
-      await client.declineInvitation(invitation.id);
-      if (!mounted || !identical(client, widget.client)) return;
-      await _load();
-    } catch (e) {
-      if (!mounted || !identical(client, widget.client)) return;
-      snack(context, '拒绝邀请失败: ${errorText(e)}');
-    } finally {
-      if (mounted && identical(client, widget.client)) {
-        setState(() => _handlingInvitation = false);
-      }
-    }
-  }
-
-  String _teamName(String id) {
-    if (id.isEmpty) return '未分配团队';
-    for (final org in _orgs) {
-      if (org.id == id) return org.name;
-    }
-    return id;
-  }
-
-  List<Organization> get _manageableOrgs =>
-      _orgs.where((org) => _manageableOrgIds.contains(org.id)).toList();
-
-  int _orgProjectCount(String orgId) =>
-      (_projects ?? const <Project>[]).where((p) => p.orgId == orgId).length;
-
-  List<Organization> get _visibleOrgs {
-    final q = _search.text;
-    return _orgs.where((org) {
-      if (organizationMatchesSearch(org, q)) return true;
-      return (_projects ?? const <Project>[]).any(
-        (project) =>
-            project.orgId == org.id &&
-            projectMatchesSearch(
-              project,
-              q,
-              teamName: org.name,
-              isAdmin: _isAdmin,
-              identity: _identity,
-            ),
-      );
-    }).toList();
-  }
-
-  List<Project> get _visibleProjects {
-    final q = _search.text;
-    final orgById = {for (final org in _orgs) org.id: org};
-    return (_projects ?? const <Project>[])
-        .where(
-          (project) => projectVisibleForSearch(
-            project,
-            q,
-            team: orgById[project.orgId],
-            fallbackTeamName: _teamName(project.orgId),
-            isAdmin: _isAdmin,
-            identity: _identity,
-          ),
-        )
-        .toList();
-  }
-
-  Future<void> _showOrganizationSheet(Organization org) async {
-    final client = widget.client;
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _OrganizationSheet(
-        client: client,
-        id: org.id,
-        isAdmin: _isAdmin,
-        isCurrentContext: () => _isCurrentClient(client),
-        onChanged: _load,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _workspaceHeader(),
-          const SizedBox(height: 12),
-          if (_invitations.isNotEmpty) ...[
-            _InvitationPanel(
-              invitations: _invitations,
-              busy: _handlingInvitation,
-              onAccept: _acceptInvitation,
-              onDecline: _declineInvitation,
-            ),
-            const SizedBox(height: 12),
-          ],
-          _teamPanel(),
-          const SizedBox(height: 12),
-          _searchBar(),
-          const SizedBox(height: 12),
-          Expanded(child: _body()),
-        ],
-      ),
-    );
-  }
-
-  Widget _workspaceHeader() {
-    final stats = teamWorkspaceStats(
-      organizations: _orgs,
-      projects: _projects ?? const <Project>[],
-      onlineUsers: _online,
-      manageableOrgIds: _manageableOrgIds,
-    );
-    return Material(
-      color: CcColors.panelHigh,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CcRadius.md),
-        side: const BorderSide(color: CcColors.borderSoft),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final title = _workspaceTitle();
-                final metrics = _workspaceMetrics(stats);
-                if (constraints.maxWidth < 620) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [title, const SizedBox(height: 10), metrics],
-                  );
-                }
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: title),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Align(
-                        alignment: Alignment.topRight,
-                        child: metrics,
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 14),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final fieldWidth = responsiveControlWidth(constraints, 260);
-                final teamPickerWidth = responsiveControlWidth(
-                  constraints,
-                  240,
-                );
-                final menuMaxHeight = projectsMenuMaxHeight(
-                  MediaQuery.sizeOf(context),
-                );
-                final selectedTeamId = createProjectTeamId(
-                  _selectedOrgId,
-                  _manageableOrgs,
-                );
-                return Wrap(
-                  runSpacing: 8,
-                  spacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: fieldWidth,
-                      child: TextField(
-                        controller: _orgName,
-                        enabled: !_creatingOrg,
-                        decoration: const InputDecoration(
-                          hintText: '新团队名称',
-                          isDense: true,
-                          prefixIcon: Icon(Icons.groups_rounded),
-                        ),
-                        onSubmitted: (_) => _createOrg(),
-                      ),
-                    ),
-                    FilledButton.icon(
-                      onPressed: _canCreateOrg ? _createOrg : null,
-                      icon: _creatingOrg
-                          ? const _InlineButtonSpinner()
-                          : const Icon(Icons.group_add_rounded, size: 18),
-                      label: Text(_creatingOrg ? '创建中' : '新建团队'),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: fieldWidth,
-                      child: TextField(
-                        controller: _name,
-                        focusNode: _projectNameFocus,
-                        enabled: !_creatingProject,
-                        decoration: const InputDecoration(
-                          hintText: '新项目名称',
-                          isDense: true,
-                          prefixIcon: Icon(Icons.create_new_folder_rounded),
-                        ),
-                        onSubmitted: (_) => _create(),
-                      ),
-                    ),
-                    if (_manageableOrgs.isNotEmpty)
-                      SizedBox(
-                        width: teamPickerWidth,
-                        child: DropdownButton<String>(
-                          value: selectedTeamId,
-                          isExpanded: true,
-                          menuMaxHeight: menuMaxHeight,
-                          items: _manageableOrgs
-                              .map(
-                                (o) => DropdownMenuItem(
-                                  value: o.id,
-                                  child: Text(
-                                    o.name,
-                                    key: ValueKey(
-                                      'project-create-team-${o.id}',
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: _creatingProject || _creatingOrg
-                              ? null
-                              : (v) => setState(
-                                  () => _selectedOrgId = createProjectTeamId(
-                                    v,
-                                    _manageableOrgs,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    FilledButton.icon(
-                      onPressed: _canCreateProject ? _create : null,
-                      icon: _creatingProject
-                          ? const _InlineButtonSpinner()
-                          : const Icon(Icons.add_rounded, size: 18),
-                      label: Text(_creatingProject ? '创建中' : '新建项目'),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _workspaceTitle() {
-    return Row(
-      children: [
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: CcColors.accent.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(CcRadius.md),
-            border: Border.all(color: CcColors.accent.withValues(alpha: 0.36)),
-          ),
-          child: const Icon(
-            Icons.hub_rounded,
-            color: CcColors.accentBright,
-            size: 19,
-          ),
-        ),
-        const SizedBox(width: 10),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '团队工作台',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-              ),
-              SizedBox(height: 2),
-              Text(
-                '团队、项目、成员入口',
-                style: TextStyle(color: CcColors.muted, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _workspaceMetrics(TeamWorkspaceStats stats) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      alignment: WrapAlignment.end,
-      children: [
-        _MetricPill(
-          icon: Icons.groups_rounded,
-          label: '团队',
-          value: '${stats.teams}',
-        ),
-        _MetricPill(
-          icon: Icons.admin_panel_settings_rounded,
-          label: '可管理',
-          value: '${stats.manageableTeams}',
-          color: CcColors.accentBright,
-        ),
-        _MetricPill(
-          icon: Icons.folder_rounded,
-          label: '项目',
-          value: '${stats.projects}',
-        ),
-        _MetricPill(
-          icon: Icons.circle_rounded,
-          label: '在线',
-          value: '${stats.onlineUsers}',
-          color: CcColors.ok,
-        ),
-      ],
-    );
-  }
-
-  Widget _body() {
-    if (_error != null) {
-      return Center(
-        child: Text(_error!, style: const TextStyle(color: CcColors.danger)),
-      );
-    }
-    if (_projects == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_projects!.isEmpty) {
-      return _EmptyProjectsState(
-        stats: teamWorkspaceStats(
-          organizations: _orgs,
-          projects: _projects ?? const <Project>[],
-          onlineUsers: _online,
-          manageableOrgIds: _manageableOrgIds,
-        ),
-        onCreateProject: _creatingProject
-            ? null
-            : () => _projectNameFocus.requestFocus(),
-      );
-    }
-    final projects = _visibleProjects;
-    if (projects.isEmpty) {
-      return const Center(
-        child: Text('没有匹配的项目', style: TextStyle(color: CcColors.muted)),
-      );
-    }
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
-      children: projects
-          .map(
-            (p) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: HoverLift(
-                onTap: () {
-                  final client = widget.client;
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    builder: (_) => _ProjectSheet(
-                      client: client,
-                      id: p.id,
-                      teamName: _teamName(p.orgId),
-                      identity: _identity,
-                      isAdmin: _isAdmin,
-                      online: _online,
-                      isCurrentContext: () => _isCurrentClient(client),
-                      onChanged: _load,
-                    ),
-                  );
-                },
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.folder_rounded,
-                      color: CcColors.accent,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            p.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            projectListSubtitle(
-                              p,
-                              teamName: _teamName(p.orgId),
-                              isAdmin: _isAdmin,
-                              identity: _identity,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontFamily: CcType.mono,
-                              color: CcColors.muted,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      color: CcColors.subtle,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          )
-          .toList(),
-    );
-  }
-
-  Widget _teamPanel() {
-    final orgs = _visibleOrgs;
-    if (orgs.isEmpty) return const SizedBox.shrink();
-    final screenSize = MediaQuery.sizeOf(context);
-    return SizedBox(
-      height: projectTeamPanelHeight(screenSize),
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: orgs.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 10),
-        itemBuilder: (context, i) {
-          final org = orgs[i];
-          final canManage = _manageableOrgIds.contains(org.id);
-          return SizedBox(
-            width: projectTeamCardWidth(screenSize),
-            child: Material(
-              color: CcColors.panel,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(CcRadius.md),
-                side: BorderSide(
-                  color: canManage ? CcColors.accent : CcColors.borderSoft,
-                ),
-              ),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(CcRadius.md),
-                onTap: () => _showOrganizationSheet(org),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            canManage
-                                ? Icons.admin_panel_settings_rounded
-                                : Icons.groups_rounded,
-                            size: 18,
-                            color: canManage
-                                ? CcColors.accentBright
-                                : CcColors.muted,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              org.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Spacer(),
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              organizationRoleLabel(
-                                org.role,
-                                isAdmin: _isAdmin,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: CcType.code(
-                                size: 11.5,
-                                color: CcColors.accentBright,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            '  ·  ',
-                            style: CcType.code(
-                              size: 11.5,
-                              color: CcColors.subtle,
-                            ),
-                          ),
-                          Flexible(
-                            child: Text(
-                              '${_orgProjectCount(org.id)} 项目',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: CcType.code(
-                                size: 11.5,
-                                color: CcColors.muted,
-                              ),
-                            ),
-                          ),
-                          const Spacer(),
-                          const Icon(
-                            Icons.chevron_right_rounded,
-                            color: CcColors.subtle,
-                            size: 20,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _searchBar() {
-    if ((_projects ?? const <Project>[]).isEmpty && _orgs.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final hasQuery = _search.text.trim().isNotEmpty;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: _search,
-          decoration: InputDecoration(
-            hintText: '搜索团队 / 项目 / 负责人',
-            isDense: true,
-            prefixIcon: const Icon(Icons.search_rounded),
-            suffixIcon: hasQuery
-                ? IconButton(
-                    tooltip: '清除搜索',
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: _search.clear,
-                  )
-                : null,
-          ),
-        ),
-        if (hasQuery) ...[
-          const SizedBox(height: 6),
-          Text(
-            '匹配 ${_visibleOrgs.length} 团队 · ${_visibleProjects.length} 项目',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: CcType.code(size: 11.5, color: CcColors.muted),
-          ),
-        ],
-      ],
-    );
-  }
 }
 
 class _InvitationPanel extends StatelessWidget {
@@ -1394,43 +596,6 @@ class _IncomingInvitationTile extends StatelessWidget {
   }
 }
 
-class _MetricPill extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  const _MetricPill({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.color = CcColors.muted,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 9),
-      decoration: BoxDecoration(
-        color: CcColors.bg.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(CcRadius.pill),
-        border: Border.all(color: CcColors.border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 6),
-          Text(value, style: CcType.code(size: 12, color: CcColors.text)),
-          const SizedBox(width: 4),
-          Text(label, style: CcType.code(size: 11, color: CcColors.muted)),
-        ],
-      ),
-    );
-  }
-}
-
 class _InlineButtonSpinner extends StatelessWidget {
   const _InlineButtonSpinner();
 
@@ -1440,123 +605,6 @@ class _InlineButtonSpinner extends StatelessWidget {
       width: 18,
       height: 18,
       child: CircularProgressIndicator(strokeWidth: 2),
-    );
-  }
-}
-
-class _EmptyProjectsState extends StatelessWidget {
-  final TeamWorkspaceStats stats;
-  final VoidCallback? onCreateProject;
-
-  const _EmptyProjectsState({
-    required this.stats,
-    required this.onCreateProject,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxHeight < 230;
-        return SingleChildScrollView(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Material(
-                  color: CcColors.panelHigh,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(CcRadius.md),
-                    side: const BorderSide(color: CcColors.borderSoft),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: compact ? 34 : 46,
-                          height: compact ? 34 : 46,
-                          decoration: BoxDecoration(
-                            color: CcColors.accent.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(CcRadius.md),
-                            border: Border.all(
-                              color: CcColors.accent.withValues(alpha: 0.34),
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.create_new_folder_rounded,
-                            color: CcColors.accentBright,
-                            size: 22,
-                          ),
-                        ),
-                        SizedBox(height: compact ? 8 : 12),
-                        const Text(
-                          '还没有项目',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(height: compact ? 4 : 6),
-                        Text(
-                          stats.teams > 0 ? '${stats.teams} 个团队已就绪' : '等待加入团队',
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: CcColors.muted,
-                            fontSize: 12,
-                          ),
-                        ),
-                        if (!compact) ...[
-                          const SizedBox(height: 14),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            alignment: WrapAlignment.center,
-                            children: [
-                              _MetricPill(
-                                icon: Icons.groups_rounded,
-                                label: '团队',
-                                value: '${stats.teams}',
-                              ),
-                              _MetricPill(
-                                icon: Icons.admin_panel_settings_rounded,
-                                label: '可管理',
-                                value: '${stats.manageableTeams}',
-                                color: CcColors.accentBright,
-                              ),
-                              _MetricPill(
-                                icon: Icons.circle_rounded,
-                                label: '在线',
-                                value: '${stats.onlineUsers}',
-                                color: CcColors.ok,
-                              ),
-                            ],
-                          ),
-                        ],
-                        SizedBox(height: compact ? 10 : 16),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(minWidth: 132),
-                          child: FilledButton.icon(
-                            onPressed: onCreateProject,
-                            icon: const Icon(Icons.add_rounded, size: 18),
-                            label: const Text('新建项目'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }
@@ -2351,7 +1399,7 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     super.dispose();
   }
 
-  bool get _canMapRepo => _repo.text.trim().isNotEmpty;
+  bool get _canMapRepo => githubRepoNameFromCloneUrl(_repo.text) != null;
 
   void _onRepoInputChanged() {
     if (mounted) setState(() {});
@@ -2532,6 +1580,47 @@ class _ProjectSheetState extends State<_ProjectSheet> {
     );
   }
 
+  Future<void> _bindRepo() async {
+    final cloneUrl = _repo.text.trim();
+    final repoName = githubRepoNameFromCloneUrl(cloneUrl);
+    if (repoName == null) return;
+    final ok = await _do(
+      () => widget.client
+          .upsertProjectRepo(widget.id, repoName, cloneUrl)
+          .then((_) {}),
+      actionKey: 'mapRepo',
+    );
+    if (ok) _repo.clear();
+  }
+
+  Future<void> _editRepo(ProjectRepo repo) async {
+    final cloneUrl = await showDialog<String>(
+      context: context,
+      builder: (_) => _RepoUrlDialog(repo: repo),
+    );
+    if (cloneUrl == null || !mounted) return;
+    await _do(
+      () => widget.client
+          .upsertProjectRepo(widget.id, repo.repoName, cloneUrl)
+          .then((_) {}),
+      actionKey: 'editRepo:${repo.repoName}',
+    );
+  }
+
+  Future<void> _unbindRepo(ProjectRepo repo) async {
+    final ok = await confirm(
+      context,
+      '解除 ${repo.repoName} 与此团队项目的绑定？本地仓库不会被删除。',
+      title: '解绑 GitHub 仓库',
+      okLabel: '解绑',
+    );
+    if (!ok || !mounted) return;
+    await _do(
+      () => widget.client.unmapRepo(widget.id, repo.repoName),
+      actionKey: 'unmapRepo:${repo.repoName}',
+    );
+  }
+
   Future<void> _delete() async {
     final projectName = _d?.project.name.trim() ?? '';
     final detail = projectName.isEmpty
@@ -2687,74 +1776,131 @@ class _ProjectSheetState extends State<_ProjectSheet> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Repos',
+                    'GitHub 仓库',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: d.repos.isEmpty
-                        ? const [
-                            _CompactEmptyState(
-                              icon: Icons.link_off_rounded,
-                              title: '还没有绑定 repo',
-                              detail: '绑定 repo 后团队成员可以按项目查看交接和待办。',
-                            ),
-                          ]
-                        : d.repos
-                              .map(
-                                (r) => _CompactProjectChip(
-                                  label: r,
-                                  onDeleted: canManage && !_mutating
-                                      ? () => _do(
-                                          () => widget.client.unmapRepo(
-                                            widget.id,
-                                            r,
-                                          ),
-                                        )
-                                      : null,
-                                ),
-                              )
-                              .toList(),
-                  ),
-                  if (canManage)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _repo,
-                            enabled: !_mutating,
-                            decoration: const InputDecoration(
-                              hintText: 'repo 名(如 kunlun-backend)',
-                              isDense: true,
-                            ),
+                  if (d.repoBindings.isEmpty)
+                    const _CompactEmptyState(
+                      icon: Icons.link_off_rounded,
+                      title: '还没有绑定 GitHub 仓库',
+                      detail: '添加 clone URL 后，成员可从工作区拉取团队项目。',
+                    )
+                  else
+                    ...d.repoBindings.map(
+                      (repo) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.code_rounded, size: 18),
+                        title: Text(
+                          repo.repoName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: Text(
+                          repo.cloneUrl.isEmpty
+                              ? '历史绑定 · 尚未添加 GitHub clone URL'
+                              : repo.cloneUrl,
+                          key: ValueKey('project-repo-url-${repo.repoName}'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CcType.code(
+                            size: 11.5,
+                            color: repo.cloneUrl.isEmpty
+                                ? CcColors.warning
+                                : CcColors.muted,
                           ),
                         ),
-                        TextButton(
-                          onPressed: _canMapRepo && !_mutating
-                              ? () async {
-                                  final r = _repo.text.trim();
-                                  final ok = await _do(
-                                    () => widget.client.mapRepo(widget.id, r),
-                                    actionKey: 'mapRepo',
-                                  );
-                                  if (ok) _repo.clear();
-                                }
-                              : null,
-                          child: _mutationAction == 'mapRepo'
-                              ? const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    _InlineButtonSpinner(),
-                                    SizedBox(width: 6),
-                                    Text('绑定中'),
-                                  ],
-                                )
-                              : const Text('绑定'),
-                        ),
-                      ],
+                        trailing: canManage
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: repo.cloneUrl.isEmpty
+                                        ? '补充 GitHub URL'
+                                        : '更新 GitHub URL',
+                                    onPressed: _mutating
+                                        ? null
+                                        : () => _editRepo(repo),
+                                    icon:
+                                        _mutationAction ==
+                                            'editRepo:${repo.repoName}'
+                                        ? const _InlineButtonSpinner()
+                                        : const Icon(
+                                            Icons.edit_rounded,
+                                            size: 18,
+                                          ),
+                                  ),
+                                  IconButton(
+                                    tooltip: '解绑',
+                                    onPressed: _mutating
+                                        ? null
+                                        : () => _unbindRepo(repo),
+                                    icon: const Icon(
+                                      Icons.link_off_rounded,
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : null,
+                      ),
                     ),
+                  if (canManage) ...[
+                    const SizedBox(height: 6),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final inferred = githubRepoNameFromCloneUrl(_repo.text);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            TextField(
+                              controller: _repo,
+                              enabled: !_mutating,
+                              keyboardType: TextInputType.url,
+                              decoration: InputDecoration(
+                                hintText: 'GitHub HTTPS / SSH URL',
+                                isDense: true,
+                                prefixIcon: const Icon(Icons.link_rounded),
+                                helperText: _repo.text.trim().isEmpty
+                                    ? '不会保存 token 或密码，私有仓库使用本机 Git/SSH 凭据'
+                                    : inferred == null
+                                    ? '请输入 github.com 的 HTTPS 或 SSH clone URL'
+                                    : '仓库名：$inferred',
+                                errorText:
+                                    _repo.text.trim().isNotEmpty &&
+                                        inferred == null
+                                    ? 'GitHub URL 无效'
+                                    : null,
+                              ),
+                              onSubmitted: (_) {
+                                if (_canMapRepo && !_mutating) _bindRepo();
+                              },
+                            ),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton.icon(
+                                onPressed: _canMapRepo && !_mutating
+                                    ? _bindRepo
+                                    : null,
+                                icon: _mutationAction == 'mapRepo'
+                                    ? const _InlineButtonSpinner()
+                                    : const Icon(
+                                        Icons.add_link_rounded,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  _mutationAction == 'mapRepo' ? '绑定中' : '绑定仓库',
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   const Text(
                     '成员',
@@ -3084,12 +2230,87 @@ class _PendingInvitationTile extends StatelessWidget {
   }
 }
 
+class _RepoUrlDialog extends StatefulWidget {
+  final ProjectRepo repo;
+
+  const _RepoUrlDialog({required this.repo});
+
+  @override
+  State<_RepoUrlDialog> createState() => _RepoUrlDialogState();
+}
+
+class _RepoUrlDialogState extends State<_RepoUrlDialog> {
+  bool _submitted = false;
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.repo.cloneUrl,
+  )..addListener(_changed);
+
+  void _changed() => setState(() {});
+
+  @override
+  void dispose() {
+    _controller.removeListener(_changed);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final valid =
+        !_submitted && githubRepoNameFromCloneUrl(_controller.text) != null;
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: Text(
+        widget.repo.cloneUrl.isEmpty ? '补充 GitHub URL' : '更新 GitHub URL',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: projectDialogWidth(MediaQuery.sizeOf(context)),
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          decoration: InputDecoration(
+            labelText: widget.repo.repoName,
+            hintText: 'https://github.com/org/repo.git',
+            helperText: '仓库名保持不变；不会保存 GitHub 凭据',
+            errorText: _controller.text.trim().isNotEmpty && !valid
+                ? 'GitHub URL 无效'
+                : null,
+          ),
+          onSubmitted: (_) {
+            if (valid) _submit();
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: valid ? _submit : null,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+
+  void _submit() {
+    if (_submitted || githubRepoNameFromCloneUrl(_controller.text) == null) {
+      return;
+    }
+    _submitted = true;
+    Navigator.pop(context, _controller.text.trim());
+  }
+}
+
 class _CompactProjectChip extends StatelessWidget {
   final IconData? icon;
   final String label;
-  final VoidCallback? onDeleted;
 
-  const _CompactProjectChip({this.icon, required this.label, this.onDeleted});
+  const _CompactProjectChip({this.icon, required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -3098,7 +2319,6 @@ class _CompactProjectChip extends StatelessWidget {
       child: Chip(
         avatar: icon == null ? null : Icon(icon, size: 16),
         label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-        onDeleted: onDeleted,
       ),
     );
   }

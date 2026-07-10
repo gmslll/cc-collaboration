@@ -57,7 +57,7 @@ func TestProjectVisibility(t *testing.T) {
 	if err := st.AddOrganizationMember(context.Background(), proj.OrgID, "org-admin@t", store.OrgRoleAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend"}); code != http.StatusOK {
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend", "clone_url": "https://github.com/kunlun/kunlun-backend.git"}); code != http.StatusOK {
 		t.Fatalf("map repo = %d", code)
 	}
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", owner, map[string]string{"identity": "member@t", "role": "member"}); code != http.StatusOK {
@@ -152,7 +152,7 @@ func TestProjectHandoffListExcludesCapsules(t *testing.T) {
 	member := loginToken(t, srv.URL, "member@t", "pw-member@t-12345")
 
 	proj := createProjectHTTP(t, srv.URL, owner, "K")
-	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend"}); code != http.StatusOK {
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", owner, map[string]string{"repo_name": "kunlun-backend", "clone_url": "https://github.com/kunlun/kunlun-backend.git"}); code != http.StatusOK {
 		t.Fatalf("map repo = %d", code)
 	}
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", owner, map[string]string{"identity": "member@t", "role": "member"}); code != http.StatusOK {

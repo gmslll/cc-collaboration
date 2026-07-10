@@ -63,6 +63,7 @@ import 'workspace/git_graph.dart';
 part 'workspace/branch_dialog.dart';
 part 'workspace/navigation_dialogs.dart';
 part 'workspace/search_dialogs.dart';
+part 'workspace/team_project_pull.dart';
 part 'workspace/git_history_dialogs.dart';
 part 'workspace/git_mixin.dart';
 part 'workspace/search_mixin.dart';
@@ -4256,6 +4257,105 @@ class _WorkspacePageState extends State<WorkspacePage>
       _snack(msg);
     } catch (e) {
       _snack(errorText(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _teamProjectDefaultParent() {
+    var root = _cfg.workspaceRoot.trim();
+    if (root.isEmpty) root = '~/cc-handoff-workspaces';
+    if (root == '~') return Platform.environment['HOME'] ?? root;
+    if (root.startsWith('~/')) {
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) return '$home${root.substring(1)}';
+    }
+    return root;
+  }
+
+  Future<void> _pullTeamProject() async {
+    if (_busy) {
+      _snack('请等待当前工作区操作完成');
+      return;
+    }
+    final client = widget.client;
+    if (client == null || _cfg.token.trim().isEmpty) {
+      _snack('请先登录 relay，再拉取团队项目');
+      return;
+    }
+    final relayURL = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    bool contextStillCurrent() =>
+        mounted &&
+        teamProjectPullContextMatches(
+          expectedClient: client,
+          currentClient: widget.client,
+          expectedRelay: relayURL,
+          currentRelay: _cfg.relayUrl,
+          expectedToken: token,
+          currentToken: _cfg.token,
+          expectedIdentity: identity,
+          currentIdentity: _cfg.identity,
+        );
+    final draft = await showDialog<TeamProjectPullDraft>(
+      context: context,
+      builder: (_) => TeamProjectPullDialog(
+        loadProjects: client.cloneableProjectDetails,
+        initialParentDirectory: _teamProjectDefaultParent(),
+        pickDirectory: () => FilePicker.platform.getDirectoryPath(
+          dialogTitle: '选择团队项目 workspace 的父目录',
+        ),
+      ),
+    );
+    if (draft == null || !mounted) return;
+    if (!contextStillCurrent()) {
+      _snack('账号或 relay 已切换，请重新打开“拉取团队项目”');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final results = await showDialog<List<TeamProjectPullResult>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => TeamProjectPullProgressDialog(
+          draft: draft,
+          clone:
+              ({
+                required workspaceName,
+                required workspacePath,
+                required repoName,
+                required cloneUrl,
+                required projectId,
+              }) {
+                if (!contextStillCurrent()) {
+                  return Future.error(CliException('账号或 relay 已切换，已停止后续仓库'));
+                }
+                return Cli.workspacePullTeamRepo(
+                  workspaceName: workspaceName,
+                  workspacePath: workspacePath,
+                  repoName: repoName,
+                  cloneUrl: cloneUrl,
+                  projectId: projectId,
+                );
+              },
+        ),
+      );
+      if (!mounted) return;
+      try {
+        await _reloadConfig();
+        await _loadTasks();
+      } catch (e) {
+        _snack('仓库结果已保留，但刷新工作区失败: ${errorText(e)}');
+        return;
+      }
+      final succeeded = results?.where((result) => result.success).length ?? 0;
+      final failed = results?.where((result) => !result.success).length ?? 0;
+      _snack(
+        failed == 0
+            ? '拉取团队项目完成：$succeeded 个仓库'
+            : '拉取团队项目完成：$succeeded 个成功，$failed 个失败',
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -10479,54 +10579,59 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
         if (_busy) const LinearProgressIndicator(minHeight: 2),
         Expanded(
-          child: wss.isEmpty
-              ? centerMsg(
-                  'config.toml 里没有 workspace —— 点右上 + 新建,或 `cc-handoff workspace create`',
-                )
-              : ListView(
-                  children: wss
-                      .map(
-                        (ws) => ExpansionTile(
-                          // Stable identity so the tile's expansion State isn't
-                          // reassigned if workspaces reorder.
-                          key: ValueKey('ws:${ws.name}'),
-                          title: _ctxMenu(
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                ws.name.isEmpty ? '(默认)' : ws.name,
-                                style: const TextStyle(
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.w700,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: (details) =>
+                _showWorkspaceAreaMenu(details.globalPosition),
+            child: wss.isEmpty
+                ? centerMsg('config.toml 里没有 workspace —— 右键“拉取团队项目”,或点右上 + 新建')
+                : ListView(
+                    children: wss
+                        .map(
+                          (ws) => ExpansionTile(
+                            // Stable identity so the tile's expansion State isn't
+                            // reassigned if workspaces reorder.
+                            key: ValueKey('ws:${ws.name}'),
+                            title: _ctxMenu(
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  ws.name.isEmpty ? '(默认)' : ws.name,
+                                  style: const TextStyle(
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
+                              _workspaceMenu(ws),
                             ),
-                            _workspaceMenu(ws),
+                            leading: const Icon(
+                              Icons.workspaces_rounded,
+                              size: 20,
+                            ),
+                            // Persist collapse across rebuilds: switching the left
+                            // panel to git/another view disposes this tree, and it
+                            // used to come back all-expanded (initiallyExpanded:true).
+                            // Mirror the section-collapse pattern (_secCollapsed) so a
+                            // collapsed workspace stays collapsed. Default expanded.
+                            initiallyExpanded: !Prefs.getBool(
+                              'ws.wsCollapsed.${ws.name}',
+                            ),
+                            onExpansionChanged: (open) => Prefs.setBool(
+                              'ws.wsCollapsed.${ws.name}',
+                              !open,
+                            ),
+                            shape: const Border(),
+                            children: applyOrder(
+                              ws.projects,
+                              loadOrder(desktopProjectOrderKey(ws.name)),
+                              (p) => p.name,
+                            ).map((p) => _projectTile(ws, p)).toList(),
                           ),
-                          leading: const Icon(
-                            Icons.workspaces_rounded,
-                            size: 20,
-                          ),
-                          // Persist collapse across rebuilds: switching the left
-                          // panel to git/another view disposes this tree, and it
-                          // used to come back all-expanded (initiallyExpanded:true).
-                          // Mirror the section-collapse pattern (_secCollapsed) so a
-                          // collapsed workspace stays collapsed. Default expanded.
-                          initiallyExpanded: !Prefs.getBool(
-                            'ws.wsCollapsed.${ws.name}',
-                          ),
-                          onExpansionChanged: (open) =>
-                              Prefs.setBool('ws.wsCollapsed.${ws.name}', !open),
-                          shape: const Border(),
-                          children: applyOrder(
-                            ws.projects,
-                            loadOrder(desktopProjectOrderKey(ws.name)),
-                            (p) => p.name,
-                          ).map((p) => _projectTile(ws, p)).toList(),
-                        ),
-                      )
-                      .toList(),
-                ),
+                        )
+                        .toList(),
+                  ),
+          ),
         ),
       ],
     );
@@ -11320,6 +11425,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         tooltip: '工作区操作',
         onSelected: (v) {
           switch (v) {
+            case 'pull-team':
+              _pullTeamProject();
             case 'new':
               _newEmptyProject(ws);
             case 'add':
@@ -11333,6 +11440,12 @@ class _WorkspacePageState extends State<WorkspacePage>
           }
         },
         itemBuilder: (_) => [
+          ccMenuItem(
+            value: 'pull-team',
+            icon: Icons.cloud_download_outlined,
+            label: '拉取团队项目',
+          ),
+          const PopupMenuDivider(),
           ccMenuItem(
             value: 'new',
             icon: Icons.create_new_folder_rounded,
@@ -11362,6 +11475,39 @@ class _WorkspacePageState extends State<WorkspacePage>
           ),
         ],
       );
+
+  Future<void> _showWorkspaceAreaMenu(Offset position) async {
+    final value = await showMenu<String>(
+      context: context,
+      position: menuPosAt(context, position),
+      items: [
+        ccMenuItem(
+          value: 'pull-team',
+          icon: Icons.cloud_download_outlined,
+          label: '拉取团队项目',
+        ),
+        ccMenuItem(
+          value: 'new',
+          icon: Icons.create_new_folder_rounded,
+          label: '新建工作区',
+        ),
+        ccMenuItem(
+          value: 'import',
+          icon: Icons.drive_folder_upload_outlined,
+          label: '从文件夹导入工作区',
+        ),
+      ],
+    );
+    if (!mounted || value == null) return;
+    switch (value) {
+      case 'pull-team':
+        _pullTeamProject();
+      case 'new':
+        _newWorkspace();
+      case 'import':
+        _importWorkspace();
+    }
+  }
 
   // 拖拽给某工作区的项目排序。顺序是本设备的表现层偏好，存进 Prefs（不改 config.toml），
   // 侧栏与会话总览都读同一份覆盖。镜像 remote_workspace_page 的 _openKeyBarEditor。

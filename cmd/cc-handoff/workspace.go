@@ -28,6 +28,8 @@ func runWorkspace(ctx context.Context, args []string) error {
 		return runWorkspaceAdd(ctx, rest)
 	case "import":
 		return runWorkspaceImport(ctx, rest)
+	case "pull-team-repo":
+		return runWorkspacePullTeamRepo(ctx, rest)
 	case "remove", "rm", "delete":
 		return runWorkspaceRemove(ctx, rest)
 	case "set":
@@ -57,6 +59,10 @@ func workspaceUsage() {
         scan <dir> for git repos and register each as a project (in place, not
         moved/cloned) in workspace NAME (default: basename of <dir>); skips
         repos already tracked
+  cc-handoff workspace pull-team-repo <workspace> <repo-name> <github-url>
+        [--path DIR] [--project-id ID] [--json]
+        safely clone one team-project repo, or register an existing checkout
+        only when one of its Git remotes identifies the same GitHub repository
   cc-handoff workspace remove <name> [project]
         drop a workspace (or one project from it) from config; files on disk
         are left untouched

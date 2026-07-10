@@ -499,6 +499,16 @@ class RelayClient {
     return ProjectDetail.fromJson(r.data as Map<String, dynamic>);
   }
 
+  Future<List<ProjectDetail>> cloneableProjectDetails() async {
+    final summaries = await projects();
+    final details = await Future.wait([
+      for (final summary in summaries) project(summary.id),
+    ]);
+    return details
+        .where((detail) => detail.cloneableRepos.isNotEmpty)
+        .toList(growable: false);
+  }
+
   Future<void> renameProject(String id, String name) =>
       _dio.patch('/v1/projects/${_idSegment(id)}', data: {'name': name.trim()});
 
@@ -509,6 +519,18 @@ class RelayClient {
     '/v1/projects/${_idSegment(id)}/repos',
     data: {'repo_name': repoName.trim()},
   );
+
+  Future<ProjectRepo> upsertProjectRepo(
+    String id,
+    String repoName,
+    String cloneUrl,
+  ) async {
+    final r = await _dio.post(
+      '/v1/projects/${_idSegment(id)}/repos',
+      data: {'repo_name': repoName.trim(), 'clone_url': cloneUrl.trim()},
+    );
+    return ProjectRepo.fromJson(_asStringMap(r.data?['repo']));
+  }
 
   Future<void> unmapRepo(String id, String repoName) => _dio.delete(
     '/v1/projects/${_idSegment(id)}/repos',

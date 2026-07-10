@@ -16,6 +16,8 @@ const _longOwnerIdentity =
     'owner.with.a.very.long.identity.for.layout.regression@kunlun.example.com';
 const _longRepoName =
     'kunlun/dispatch-coordination-platform-with-very-long-repository-name';
+const _longRepoUrl =
+    'https://github.com/kunlun/dispatch-coordination-platform-with-very-long-repository-name.git';
 const _longCustomOrgRole =
     'custom-organization-access-controller-with-a-very-long-label';
 const _longCandidateIdentity =
@@ -751,17 +753,6 @@ void main() {
     expect(projectSheetLoadingHeight(const Size(320, 300)), 96);
   });
 
-  test('team rail dimensions adapt on compact screens', () {
-    expect(projectTeamPanelHeight(const Size(1024, 900)), 104);
-    expect(projectTeamPanelHeight(const Size(320, 360)), 96);
-    expect(projectTeamPanelHeight(Size.zero), 104);
-
-    expect(projectTeamCardWidth(const Size(1024, 900)), 286);
-    expect(projectTeamCardWidth(const Size(320, 760)), 272);
-    expect(projectTeamCardWidth(const Size(240, 760)), 220);
-    expect(projectTeamCardWidth(Size.zero), 286);
-  });
-
   test('project rename dialog uses responsive controls', () {
     final start = source.indexOf('Future<void> _rename(String current) async');
     final renameDialog = source.substring(
@@ -867,45 +858,6 @@ void main() {
     expect([for (final c in candidates) c.identity], ['qa@x']);
   });
 
-  test(
-    'team workspace stats count manageable teams and unique online users',
-    () {
-      Organization org(String id) => Organization.fromJson({
-        'id': id,
-        'name': id,
-        'owner_identity': 'owner@x',
-        'role': 'member',
-      });
-      Project project(String id, String orgId) => Project.fromJson({
-        'id': id,
-        'org_id': orgId,
-        'name': id,
-        'owner_identity': 'owner@x',
-        'role': 'member',
-      });
-      OnlineUser online(String identity, bool isOnline) =>
-          OnlineUser.fromJson({'identity': identity, 'online': isOnline});
-
-      final stats = teamWorkspaceStats(
-        organizations: [org('org-a'), org('org-b')],
-        projects: [project('p1', 'org-a'), project('p2', 'org-b')],
-        onlineUsers: [
-          online('alice@x', true),
-          online(' Alice@X ', true),
-          online('alice@x', true),
-          online('bob@x', false),
-          online('   ', true),
-        ],
-        manageableOrgIds: {'org-a', 'missing-org'},
-      );
-
-      expect(stats.teams, 2);
-      expect(stats.manageableTeams, 1);
-      expect(stats.projects, 2);
-      expect(stats.onlineUsers, 1);
-    },
-  );
-
   testWidgets('team workspace header renders on narrow screens', (
     tester,
   ) async {
@@ -923,36 +875,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('团队工作台'), findsOneWidget);
-    expect(find.text('新建团队'), findsOneWidget);
-    expect(find.text('新建项目'), findsWidgets);
-    expect(find.text('可管理'), findsOneWidget);
-    expect(find.text('在线'), findsOneWidget);
-    expect(find.text('2'), findsNWidgets(2)); // teams + projects
-    expect(find.text('1'), findsNWidgets(2)); // manageable + unique online
-    expect(find.text('Kunlun'), findsNWidgets(2));
-
-    final teamCard = find.ancestor(
-      of: find.text('Kunlun').last,
-      matching: find.byType(Material),
+    expect(
+      find.byKey(const ValueKey('projects-compact-team-picker')),
+      findsOneWidget,
     );
-    expect(tester.getSize(teamCard.first).width, 286);
-
-    FilledButton button(String label) =>
-        tester.widget<FilledButton>(find.widgetWithText(FilledButton, label));
-
-    expect(button('新建团队').onPressed, isNull);
-    expect(button('新建项目').onPressed, isNull);
-
-    await tester.enterText(find.byType(TextField).at(0), 'New Team');
-    await tester.pump();
-    expect(button('新建团队').onPressed, isNotNull);
-    expect(button('新建项目').onPressed, isNull);
-
-    await tester.enterText(find.byType(TextField).at(1), 'New Project');
-    await tester.pump();
-    expect(button('新建团队').onPressed, isNotNull);
-    expect(button('新建项目').onPressed, isNotNull);
+    expect(find.byKey(const ValueKey('projects-team-rail')), findsNothing);
+    expect(find.text('全部项目'), findsWidgets);
+    expect(find.text('Backend'), findsOneWidget);
+    expect(find.text('Frontend'), findsOneWidget);
   });
 
   testWidgets('empty project state focuses project creation', (tester) async {
@@ -965,16 +895,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('还没有项目'), findsOneWidget);
-    expect(find.text('2 个团队已就绪'), findsOneWidget);
-    expect(find.text('可管理'), findsOneWidget);
-    expect(find.text('在线'), findsOneWidget);
-
-    await tester.tap(find.widgetWithText(FilledButton, '新建项目').last);
-    await tester.pump();
-
-    final projectField = tester.widget<TextField>(find.byType(TextField).at(1));
-    expect(projectField.focusNode?.hasFocus, isTrue);
+    expect(find.text('这里还没有项目'), findsOneWidget);
+    await tester.tap(find.byTooltip('新建项目'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProjectCreateDialog), findsOneWidget);
+    expect(find.byKey(const ValueKey('create-project-name')), findsOneWidget);
   });
 
   testWidgets('project creation uses first manageable team by default', (
@@ -990,9 +915,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).at(1), 'Default Scoped');
+    await tester.tap(find.byTooltip('新建项目'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('create-project-name')),
+      'Default Scoped',
+    );
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
@@ -1013,14 +943,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).at(1), 'Needs Team');
-    await tester.pump();
-
-    final createButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, '新建项目').first,
-    );
-    expect(createButton.onPressed, isNull);
-    expect(find.text('等待加入团队'), findsOneWidget);
+    expect(find.byTooltip('新建项目'), findsNothing);
+    expect(find.text('这里还没有项目'), findsOneWidget);
+    expect(find.text('新建团队'), findsOneWidget);
   });
 
   testWidgets('project creation ignores duplicate submit taps', (tester) async {
@@ -1034,28 +959,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).at(1), 'Single Project');
+    await tester.tap(find.byTooltip('新建项目'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('create-project-name')),
+      'Single Project',
+    );
     await tester.pump();
-
-    final createButton = find.widgetWithText(FilledButton, '新建项目');
+    final createButton = find.widgetWithText(FilledButton, '创建');
     await tester.tap(createButton);
-    await tester.tap(createButton);
+    await tester.tap(createButton, warnIfMissed: false);
 
     expect(client.createProjectCalls, 1);
     expect(client.createdProjectName, 'Single Project');
-    await tester.pump();
-    expect(find.text('创建中'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField).at(1)).enabled,
-      isFalse,
+    await tester.pumpAndSettle();
+    expect(find.byType(ProjectCreateDialog), findsNothing);
+    final newProjectButton = tester.widget<IconButton>(
+      find.byWidgetPredicate(
+        (widget) => widget is IconButton && widget.tooltip == '新建项目',
+      ),
     );
-    expect(
-      tester
-          .widget<DropdownButton<String>>(find.byType(DropdownButton<String>))
-          .onChanged,
-      isNull,
-    );
+    expect(newProjectButton.onPressed, isNull);
 
     client.completeCreateProject();
     await tester.pumpAndSettle();
@@ -1075,9 +999,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).at(1), 'Unmounted Project');
+    await tester.tap(find.byTooltip('新建项目'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('create-project-name')),
+      'Unmounted Project',
+    );
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
     await tester.pump();
 
     await tester.pumpWidget(
@@ -1108,9 +1037,14 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    await tester.enterText(find.byType(TextField).at(1), 'Old Pending Project');
+    await tester.tap(find.byTooltip('新建项目'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('create-project-name')),
+      'Old Pending Project',
+    );
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
     await tester.pump();
 
     await tester.pumpWidget(
@@ -1121,16 +1055,12 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    await tester.enterText(find.byType(TextField).at(1), 'New Draft Project');
-    await tester.pump();
-
     oldClient.completeCreateProject();
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(oldClient.createProjectCalls, 1);
     expect(find.text('Old Pending Project'), findsNothing);
-    expect(find.text('New Draft Project'), findsOneWidget);
+    expect(find.text('全部项目'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -1147,22 +1077,23 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).at(0), 'Single Team');
+    await tester.tap(find.widgetWithText(OutlinedButton, '新建团队'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('create-organization-name')),
+      'Single Team',
+    );
     await tester.pump();
-
-    final createButton = find.widgetWithText(FilledButton, '新建团队');
+    final createButton = find.widgetWithText(FilledButton, '创建');
     await tester.tap(createButton);
-    await tester.tap(createButton);
+    await tester.tap(createButton, warnIfMissed: false);
 
     expect(client.createOrganizationCalls, 1);
     expect(client.createdOrganizationName, 'Single Team');
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('创建中'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField).at(0)).enabled,
-      isFalse,
-    );
+    expect(find.byType(OrganizationCreateDialog), findsNothing);
 
     client.completeCreateOrganization();
     await tester.pumpAndSettle();
@@ -1183,9 +1114,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).at(0), 'Old Pending Team');
+      await tester.tap(find.widgetWithText(OutlinedButton, '新建团队'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('create-organization-name')),
+        'Old Pending Team',
+      );
       await tester.pump();
-      await tester.tap(find.widgetWithText(FilledButton, '新建团队'));
+      await tester.tap(find.widgetWithText(FilledButton, '创建'));
       await tester.pump();
 
       await tester.pumpWidget(
@@ -1195,15 +1131,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).at(0), 'New Draft Team');
-      await tester.pump();
-
       oldClient.completeCreateOrganization();
       await tester.pumpAndSettle();
 
       expect(oldClient.createOrganizationCalls, 1);
       expect(find.text('Old Pending Team'), findsNothing);
-      expect(find.text('New Draft Team'), findsOneWidget);
+      expect(find.text('全部项目'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
   );
@@ -1221,21 +1154,14 @@ void main() {
     );
     await client.waitForProjectRequests(1);
 
-    await tester.enterText(find.byType(TextField).at(1), 'Fresh Project');
-    await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, '新建项目'));
-    await tester.pump();
-    final createButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, '新建项目'),
-    );
-    expect(createButton.onPressed, isNull);
+    expect(find.byTooltip('新建项目'), findsNothing);
 
     client.completeProjects(0, const []);
     await tester.pump();
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Fresh Project'), findsOneWidget);
+    expect(find.byTooltip('新建项目'), findsOneWidget);
   });
 
   testWidgets('project page account switch ignores stale team loads', (
@@ -1338,18 +1264,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final teamFieldWidth = tester.getSize(find.byType(TextField).at(0)).width;
-    final projectFieldWidth = tester
-        .getSize(find.byType(TextField).at(1))
-        .width;
-    final dropdownWidth = tester
-        .getSize(find.byType(DropdownButton<String>))
-        .width;
-
+    await tester.tap(find.byTooltip('新建项目'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byKey(const ValueKey('create-project-name'))).width,
+      lessThanOrEqualTo(208),
+    );
+    expect(
+      tester.getSize(find.byKey(const ValueKey('create-project-team'))).width,
+      lessThanOrEqualTo(208),
+    );
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('新建团队'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('create-organization-name')))
+          .width,
+      lessThanOrEqualTo(208),
+    );
     expect(tester.takeException(), isNull);
-    expect(teamFieldWidth, lessThanOrEqualTo(180));
-    expect(projectFieldWidth, lessThanOrEqualTo(180));
-    expect(dropdownWidth, lessThanOrEqualTo(180));
   });
 
   testWidgets('team workspace search filters teams and projects together', (
@@ -1364,7 +1299,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Kunlun'), findsNWidgets(2));
-    expect(find.text('Ops'), findsOneWidget);
+    expect(find.text('Ops'), findsNWidgets(2));
     expect(find.text('Backend'), findsOneWidget);
     expect(find.text('Frontend'), findsOneWidget);
 
@@ -1377,9 +1312,8 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Kunlun'), findsOneWidget);
     expect(find.text('Backend'), findsNothing);
-    expect(find.text('Ops'), findsOneWidget);
+    expect(find.text('Ops'), findsNWidgets(2));
     expect(find.text('Frontend'), findsOneWidget);
-    expect(find.text('匹配 1 团队 · 1 项目'), findsOneWidget);
 
     await tester.tap(find.byTooltip('清除搜索'));
     await tester.pump();
@@ -1397,8 +1331,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     expect(tester.takeException(), isNull);
     expect(find.text('还没有项目'), findsOneWidget);
@@ -1418,8 +1351,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('还没有绑定 repo'), findsOneWidget);
-    expect(find.text('绑定 repo 后团队成员可以按项目查看交接和待办。'), findsOneWidget);
+    expect(find.text('还没有绑定 GitHub 仓库'), findsOneWidget);
+    expect(find.text('添加 clone URL 后，成员可从工作区拉取团队项目。'), findsOneWidget);
   });
 
   testWidgets('project sheet disables repo binding until a repo is entered', (
@@ -1436,8 +1369,8 @@ void main() {
     await tester.tap(find.text('Backend'));
     await tester.pumpAndSettle();
 
-    TextButton bindButton() =>
-        tester.widget<TextButton>(find.widgetWithText(TextButton, '绑定'));
+    FilledButton bindButton() =>
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '绑定仓库'));
 
     expect(tester.takeException(), isNull);
     expect(bindButton().onPressed, isNull);
@@ -1446,9 +1379,9 @@ void main() {
       find.byWidgetPredicate(
         (w) =>
             w is TextField &&
-            w.decoration?.hintText == 'repo 名(如 kunlun-backend)',
+            w.decoration?.hintText == 'GitHub HTTPS / SSH URL',
       ),
-      'kunlun/backend',
+      'https://github.com/kunlun/backend.git',
     );
     await tester.pump();
 
@@ -1473,17 +1406,16 @@ void main() {
 
     final repoField = find.byWidgetPredicate(
       (w) =>
-          w is TextField &&
-          w.decoration?.hintText == 'repo 名(如 kunlun-backend)',
+          w is TextField && w.decoration?.hintText == 'GitHub HTTPS / SSH URL',
     );
-    await tester.enterText(repoField, 'kunlun/backend');
+    await tester.enterText(repoField, 'https://github.com/kunlun/backend.git');
     await tester.pump();
-    await tester.tap(find.widgetWithText(TextButton, '绑定'));
+    await tester.tap(find.widgetWithText(FilledButton, '绑定仓库'));
     await tester.pumpAndSettle();
 
     expect(
       tester.widget<TextField>(repoField).controller?.text,
-      'kunlun/backend',
+      'https://github.com/kunlun/backend.git',
     );
     await tester.pump(const Duration(seconds: 5));
   });
@@ -1506,13 +1438,12 @@ void main() {
 
     final repoField = find.byWidgetPredicate(
       (w) =>
-          w is TextField &&
-          w.decoration?.hintText == 'repo 名(如 kunlun-backend)',
+          w is TextField && w.decoration?.hintText == 'GitHub HTTPS / SSH URL',
     );
-    await tester.enterText(repoField, 'kunlun/backend');
+    await tester.enterText(repoField, 'https://github.com/kunlun/backend.git');
     await tester.pump();
 
-    final bindButton = find.widgetWithText(TextButton, '绑定');
+    final bindButton = find.widgetWithText(FilledButton, '绑定仓库');
     await tester.tap(bindButton);
     await tester.tap(bindButton);
 
@@ -1860,8 +1791,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     final memberField = find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == '成员 identity',
@@ -1888,8 +1818,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     final memberField = find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == '成员 identity',
@@ -1924,8 +1853,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     final memberField = find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == '成员 identity',
@@ -1956,8 +1884,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     Finder deleteButton() =>
         find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '删除团队');
@@ -1965,7 +1892,7 @@ void main() {
     await tester.tap(deleteButton());
     await tester.pumpAndSettle();
     expect(find.text('删除团队?'), findsOneWidget);
-    expect(find.textContaining('1 个项目'), findsOneWidget);
+    expect(find.textContaining('1 个项目'), findsWidgets);
     expect(client.deleteOrganizationCalls, 0);
 
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
@@ -2043,8 +1970,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Kunlun').last);
-      await tester.pumpAndSettle();
+      await _openOrganizationSheet(tester);
 
       final memberField = find.byWidgetPredicate(
         (w) => w is TextField && w.decoration?.hintText == '成员 identity',
@@ -2088,8 +2014,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Kunlun').last);
-      await tester.pumpAndSettle();
+      await _openOrganizationSheet(tester);
 
       Finder removeButton() =>
           find.byWidgetPredicate((w) => w is IconButton && w.tooltip == '移除');
@@ -2133,8 +2058,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     final memberField = find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == '成员 identity',
@@ -2190,8 +2114,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     expect(tester.takeException(), isNull);
     expect(find.widgetWithIcon(IconButton, Icons.close_rounded), findsWidgets);
@@ -2213,8 +2136,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kunlun').last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester);
 
     final roleMenus = find.descendant(
       of: find.byType(BottomSheet),
@@ -2307,13 +2229,14 @@ void main() {
     await tester.pumpAndSettle();
 
     final title = tester.widget<Text>(find.text(_longProjectName));
-    final subtitleText =
-        '$_longTeamName · 负责人 · ${projectOwnerLabel(_longOwnerIdentity)}';
-    final subtitle = tester.widget<Text>(find.text(subtitleText));
+    final subtitle = tester.widget<Text>(
+      find.byKey(const ValueKey('project-row-repos-p-long')),
+    );
 
     expect(tester.takeException(), isNull);
     expect(title.maxLines, 1);
     expect(title.overflow, TextOverflow.ellipsis);
+    expect(subtitle.data, _longRepoUrl);
     expect(subtitle.maxLines, 1);
     expect(subtitle.overflow, TextOverflow.ellipsis);
   });
@@ -2336,7 +2259,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.tap(find.byTooltip('新建项目'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create-project-team')));
     await tester.pumpAndSettle();
 
     final teamOption = tester.widget<Text>(
@@ -2367,8 +2292,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text(_longTeamName).last);
-    await tester.pumpAndSettle();
+    await _openOrganizationSheet(tester, teamName: _longTeamName);
 
     final title = tester.widget<Text>(find.text(_longTeamName).last);
     final summaryText = '$_longCustomOrgRole · 2 成员 · 1 项目';
@@ -2468,6 +2392,26 @@ void main() {
   });
 }
 
+Future<void> _openOrganizationSheet(
+  WidgetTester tester, {
+  String orgId = 'org-a',
+  String teamName = 'Kunlun',
+}) async {
+  final railScope = find.byKey(ValueKey('project-scope-org:$orgId'));
+  if (railScope.evaluate().isNotEmpty) {
+    await tester.tap(railScope);
+  } else {
+    await tester.tap(find.byType(DropdownButton<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(teamName).last);
+  }
+  await tester.pumpAndSettle();
+  await tester.tap(find.byTooltip('团队管理'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('管理团队').last);
+  await tester.pumpAndSettle();
+}
+
 class _ProjectsPageFakeClient extends RelayClient {
   _ProjectsPageFakeClient() : super('http://127.0.0.1', 'tok');
 
@@ -2556,6 +2500,13 @@ class _ProjectsPageFakeClient extends RelayClient {
 
   @override
   Future<void> mapRepo(String id, String repoName) async {}
+
+  @override
+  Future<ProjectRepo> upsertProjectRepo(
+    String id,
+    String repoName,
+    String cloneUrl,
+  ) async => ProjectRepo(repoName: repoName, cloneUrl: cloneUrl);
 }
 
 class _NoProjectTeamsFakeClient extends _ProjectsPageFakeClient {
@@ -2759,23 +2710,38 @@ class _DelayedProjectsContextFakeClient extends RelayClient {
 
 class _FailingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
   @override
-  Future<void> mapRepo(String id, String repoName) async {
+  Future<ProjectRepo> upsertProjectRepo(
+    String id,
+    String repoName,
+    String cloneUrl,
+  ) async {
     throw Exception('map failed');
   }
 }
 
 class _CountingMapRepoProjectsPageFakeClient extends _ProjectsPageFakeClient {
-  final _mapRepoCompleter = Completer<void>();
+  final _mapRepoCompleter = Completer<ProjectRepo>();
   int mapRepoCalls = 0;
 
   @override
-  Future<void> mapRepo(String id, String repoName) {
+  Future<ProjectRepo> upsertProjectRepo(
+    String id,
+    String repoName,
+    String cloneUrl,
+  ) {
     mapRepoCalls++;
     return _mapRepoCompleter.future;
   }
 
   void completeMapRepo() {
-    if (!_mapRepoCompleter.isCompleted) _mapRepoCompleter.complete();
+    if (!_mapRepoCompleter.isCompleted) {
+      _mapRepoCompleter.complete(
+        const ProjectRepo(
+          repoName: 'backend',
+          cloneUrl: 'https://github.com/kunlun/backend.git',
+        ),
+      );
+    }
   }
 }
 
@@ -3117,7 +3083,9 @@ class _LongNameProjectsPageFakeClient extends _ProjectsPageFakeClient {
       'owner_identity': _longOwnerIdentity,
       'role': 'owner',
     },
-    'repos': [_longRepoName],
+    'repo_bindings': [
+      {'repo_name': _longRepoName, 'clone_url': _longRepoUrl},
+    ],
     'members': [
       {
         'identity': _longOwnerIdentity,

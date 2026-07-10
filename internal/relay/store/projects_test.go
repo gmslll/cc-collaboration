@@ -26,6 +26,23 @@ func TestProjectsAndMembers(t *testing.T) {
 	if err := st.MapRepo(ctx, "kunlun-frontend", "p1"); err != nil {
 		t.Fatal(err)
 	}
+	binding, err := st.UpsertProjectRepo(ctx, "", "p1", " https://github.com/kunlun/desktop ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.RepoName != "desktop" || binding.CloneURL != "https://github.com/kunlun/desktop.git" {
+		t.Fatalf("normalized binding = %+v", binding)
+	}
+	bindings, err := st.ListProjectRepoBindings(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 3 || bindings[0].RepoName != "desktop" || bindings[1].CloneURL != "" {
+		t.Fatalf("project repo bindings = %+v", bindings)
+	}
+	if _, err := st.UpsertProjectRepo(ctx, "unsafe", "p1", "file:///tmp/repo"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unsafe clone URL: want ErrInvalid, got %v", err)
+	}
 	if err := st.AddMember(ctx, "p1", "dev@x", RoleMember); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +59,7 @@ func TestProjectsAndMembers(t *testing.T) {
 	}
 
 	// Visibility: a member sees the project's repos with their role.
-	if repos, _ := st.VisibleRepoNames(ctx, "qa@x"); len(repos) != 2 {
+	if repos, _ := st.VisibleRepoNames(ctx, "qa@x"); len(repos) != 3 {
 		t.Fatalf("visible repos = %v", repos)
 	}
 	if role, ok, _ := st.RepoVisibleTo(ctx, "kunlun-backend", "qa@x"); !ok || role != RoleViewer {
@@ -56,6 +73,21 @@ func TestProjectsAndMembers(t *testing.T) {
 	}
 	if err := st.CreateProject(ctx, "p2", "Other", "other@x", now); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := st.UpsertProjectRepo(ctx, "desktop", "p2", "https://github.com/other/desktop.git"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("unconditional cross-project repo move: want ErrConflict, got %v", err)
+	}
+	if projectID, ok, err := st.RepoProjectID(ctx, "desktop"); err != nil || !ok || projectID != "p1" {
+		t.Fatalf("conflicted repo binding moved: project=%q ok=%v err=%v", projectID, ok, err)
+	}
+	if _, err := st.UpsertProjectRepoFrom(ctx, "desktop", "p2", "git@github.com:kunlun/desktop.git", "p1"); err != nil {
+		t.Fatalf("authorized repo move: %v", err)
+	}
+	if _, err := st.UpsertProjectRepoFrom(ctx, "desktop", "p1", "https://github.com/kunlun/desktop.git", "p1"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale expected project: want ErrConflict, got %v", err)
+	}
+	if _, err := st.UpsertProjectRepoFrom(ctx, "desktop", "p1", "https://github.com/kunlun/desktop.git", "p2"); err != nil {
+		t.Fatalf("move repo back to original project: %v", err)
 	}
 	if err := st.MapRepo(ctx, "other-repo", "p2"); err != nil {
 		t.Fatal(err)

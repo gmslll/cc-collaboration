@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cc-collaboration/internal/githubrepo"
 	"github.com/cc-collaboration/internal/handoff"
 	"github.com/cc-collaboration/internal/relay/auth"
 	"github.com/cc-collaboration/internal/relay/store"
@@ -147,10 +148,14 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	} else if ok {
 		p.Role = role
 	}
-	repos, err := s.Store.ListProjectRepos(r.Context(), id)
+	repoBindings, err := s.Store.ListProjectRepoBindings(r.Context(), id)
 	if err != nil {
-		http.Error(w, "list project repos: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "list project repo bindings: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	var repos []string
+	for i := range repoBindings {
+		repos = append(repos, repoBindings[i].RepoName)
 	}
 	members, err := s.Store.ListMembers(r.Context(), id)
 	if err != nil {
@@ -165,7 +170,13 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": p, "repos": repos, "members": members, "invitations": invitations})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"project":       p,
+		"repos":         repos, // legacy clients still receive string names
+		"repo_bindings": repoBindings,
+		"members":       members,
+		"invitations":   invitations,
+	})
 }
 
 func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
@@ -211,23 +222,45 @@ func (s *Server) mapRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		RepoName string `json:"repo_name"`
+		CloneURL string `json:"clone_url"`
 	}
-	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil || strings.TrimSpace(req.RepoName) == "" {
-		http.Error(w, "repo_name required", http.StatusBadRequest)
+	if err := decodeJSONBody(w, r, 16<<10, &req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	parsed, err := githubrepo.Normalize(req.CloneURL)
+	if err != nil {
+		http.Error(w, "invalid clone_url: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	repoName := strings.TrimSpace(req.RepoName)
+	if repoName == "" {
+		repoName = parsed.RepoName
+	}
+	expectedProjectID := id
 	if existingProjectID, ok, err := s.Store.RepoProjectID(r.Context(), repoName); err != nil {
 		http.Error(w, "lookup repo: "+err.Error(), http.StatusInternalServerError)
 		return
-	} else if ok && existingProjectID != id && !s.requireProjectManager(w, r, existingProjectID) {
-		return
+	} else if ok {
+		expectedProjectID = existingProjectID
+		if existingProjectID != id && !s.requireProjectManager(w, r, existingProjectID) {
+			return
+		}
 	}
-	if err := s.Store.MapRepo(r.Context(), repoName, id); err != nil {
+	binding, err := s.Store.UpsertProjectRepoFrom(r.Context(), repoName, id, parsed.URL, expectedProjectID)
+	if err != nil {
+		if errors.Is(err, store.ErrInvalid) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, store.ErrConflict) {
+			http.Error(w, "repository binding changed; refresh and retry", http.StatusConflict)
+			return
+		}
 		http.Error(w, "map repo: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repo": binding})
 }
 
 // unmapRepo takes the repo name as a query param (repo names can contain "/",

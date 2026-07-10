@@ -87,9 +87,35 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	assertOrganizationListRole(t, srv.URL, aliceTok, proj.OrgID, "admin")
 
 	// Owner maps a repo + adds a member.
+	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", devTok,
+		map[string]string{
+			"repo_name": "kunlun-backend",
+			"clone_url": "https://github.com/kunlun/kunlun-backend",
+		}); code != http.StatusOK {
+		t.Fatalf("map repo = %d %s", code, body)
+	}
+	// Simulate a pre-clone_url row. It must remain visible in both the legacy
+	// names array and the new bindings array without becoming cloneable.
+	if err := st.MapRepo(context.Background(), "legacy-name-only", proj.ID); err != nil {
+		t.Fatal(err)
+	}
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", devTok,
-		map[string]string{"repo_name": "kunlun-backend"}); code != http.StatusOK {
-		t.Fatalf("map repo = %d", code)
+		map[string]string{"repo_name": "missing-url"}); code != http.StatusBadRequest {
+		t.Fatalf("map repo without clone_url = %d, want 400", code)
+	}
+	for _, cloneURL := range []string{
+		"file:///tmp/private",
+		"https://token@github.com/kunlun/private.git",
+		"https://github.com/kunlun/private.git?token=secret",
+		"ssh://git:password@github.com/kunlun/private.git",
+	} {
+		if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", devTok,
+			map[string]string{"repo_name": "unsafe", "clone_url": cloneURL}); code != http.StatusBadRequest {
+			t.Fatalf("map unsafe repo URL %q = %d, want 400", cloneURL, code)
+		}
+	}
+	if _, ok, err := st.RepoProjectID(context.Background(), "unsafe"); err != nil || ok {
+		t.Fatalf("unsafe credential URL was persisted: ok=%v err=%v", ok, err)
 	}
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", devTok,
 		map[string]string{"identity": "ghost@backend", "role": "viewer"}); code != http.StatusNotFound {
@@ -122,11 +148,17 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	}
 	_ = json.Unmarshal(body, &otherProj)
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+otherProj.ID+"/repos", malTok,
-		map[string]string{"repo_name": "mallory-repo"}); code != http.StatusOK {
+		map[string]string{
+			"repo_name": "mallory-repo",
+			"clone_url": "git@github.com:mallory/mallory-repo.git",
+		}); code != http.StatusOK {
 		t.Fatalf("mallory map repo = %d", code)
 	}
 	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", devTok,
-		map[string]string{"repo_name": "mallory-repo"}); code != http.StatusForbidden {
+		map[string]string{
+			"repo_name": "mallory-repo",
+			"clone_url": "https://github.com/mallory/mallory-repo.git",
+		}); code != http.StatusForbidden {
 		t.Fatalf("owner remap other project repo = %d, want 403", code)
 	}
 	if code, _ := deleteAuthed(t, srv.URL+"/v1/projects/"+proj.ID+"/repos?repo_name=mallory-repo", devTok); code != http.StatusNotFound {
@@ -158,6 +190,13 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	}
 	if code, _ := getAuthed(t, srv.URL+"/v1/projects/"+proj.ID, malTok); code != http.StatusForbidden {
 		t.Fatalf("non-member GET = %d (want 403)", code)
+	}
+	if code, _ := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", qaTok,
+		map[string]string{
+			"repo_name": "viewer-write",
+			"clone_url": "https://github.com/kunlun/viewer-write.git",
+		}); code != http.StatusForbidden {
+		t.Fatalf("viewer map repo = %d (want 403)", code)
 	}
 
 	// Admin can manage any project.
@@ -195,6 +234,26 @@ func TestProjectSelfServiceAndAdminGate(t *testing.T) {
 	// A member can GET the project detail (repos + members).
 	if code, _ := getAuthed(t, srv.URL+"/v1/projects/"+proj.ID, devTok); code != http.StatusOK {
 		t.Fatalf("owner GET project = %d", code)
+	}
+	code, body = getAuthed(t, srv.URL+"/v1/projects/"+proj.ID, qaTok)
+	if code != http.StatusOK {
+		t.Fatalf("viewer GET project repos = %d %s", code, body)
+	}
+	var repoDetail struct {
+		Repos        []string            `json:"repos"`
+		RepoBindings []store.ProjectRepo `json:"repo_bindings"`
+	}
+	if err := json.Unmarshal(body, &repoDetail); err != nil {
+		t.Fatal(err)
+	}
+	if len(repoDetail.Repos) != 2 || repoDetail.Repos[0] != "kunlun-backend" || repoDetail.Repos[1] != "legacy-name-only" {
+		t.Fatalf("legacy repos response = %+v", repoDetail.Repos)
+	}
+	if len(repoDetail.RepoBindings) != 2 ||
+		repoDetail.RepoBindings[0].CloneURL != "https://github.com/kunlun/kunlun-backend.git" ||
+		repoDetail.RepoBindings[1].RepoName != "legacy-name-only" ||
+		repoDetail.RepoBindings[1].CloneURL != "" {
+		t.Fatalf("viewer repo bindings = %+v", repoDetail.RepoBindings)
 	}
 }
 
@@ -425,7 +484,10 @@ func TestOrganizationSaaSFlow(t *testing.T) {
 		t.Fatalf("org owner me.projects = %+v", ownerMe.Projects)
 	}
 	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/repos", ownerTok,
-		map[string]string{"repo_name": "team/repo"}); code != http.StatusOK {
+		map[string]string{
+			"repo_name": "team/repo",
+			"clone_url": "https://github.com/team/repo.git",
+		}); code != http.StatusOK {
 		t.Fatalf("org owner map repo on team project = %d %s", code, body)
 	}
 	if code, body := postJSON(t, srv.URL+"/v1/projects/"+proj.ID+"/members", ownerTok,

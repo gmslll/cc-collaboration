@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/cc-collaboration/internal/githubrepo"
 	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
@@ -39,6 +42,13 @@ type ProjectMember struct {
 	Identity    string `json:"identity"`
 	Role        string `json:"role"`
 	DisplayName string `json:"display_name"`
+}
+
+// ProjectRepo is one stable project-to-repository binding. CloneURL is empty
+// only for rows created before repository URLs were introduced.
+type ProjectRepo struct {
+	RepoName string `json:"repo_name"`
+	CloneURL string `json:"clone_url"`
 }
 
 // ProjectRole is a project with the calling identity's role in it (for /v1/me).
@@ -293,6 +303,56 @@ func (s *Store) MapRepo(ctx context.Context, repoName, projectID string) error {
 	return err
 }
 
+// UpsertProjectRepo creates or updates a cloneable repository binding. The URL
+// is normalized before persistence and never accepts embedded credentials.
+// Empty repoName derives the stable name from the GitHub URL; callers updating
+// an existing binding pass its current name so a remote rename does not
+// silently change the local/project identity.
+func (s *Store) UpsertProjectRepo(ctx context.Context, repoName, projectID, cloneURL string) (ProjectRepo, error) {
+	return s.UpsertProjectRepoFrom(ctx, repoName, projectID, cloneURL, projectID)
+}
+
+// UpsertProjectRepoFrom performs the same write while allowing an explicitly
+// authorized move from expectedProjectID. The conditional conflict update
+// closes the check/write race in the HTTP layer: if another request moves the
+// stable repo name after its permissions were checked, this write fails rather
+// than overwriting that newer binding.
+func (s *Store) UpsertProjectRepoFrom(ctx context.Context, repoName, projectID, cloneURL, expectedProjectID string) (ProjectRepo, error) {
+	projectID = strings.TrimSpace(projectID)
+	expectedProjectID = strings.TrimSpace(expectedProjectID)
+	if projectID == "" {
+		return ProjectRepo{}, ErrInvalid
+	}
+	parsed, err := githubrepo.Normalize(cloneURL)
+	if err != nil {
+		return ProjectRepo{}, fmt.Errorf("%w: clone_url: %v", ErrInvalid, err)
+	}
+	repoName = strings.TrimSpace(repoName)
+	if repoName == "" {
+		repoName = parsed.RepoName
+	}
+	if strings.IndexFunc(repoName, unicode.IsControl) >= 0 {
+		return ProjectRepo{}, fmt.Errorf("%w: repo_name contains control characters", ErrInvalid)
+	}
+	result, err := s.db.ExecContext(ctx,
+		`INSERT INTO project_repos(repo_name, project_id, clone_url) VALUES(?, ?, ?)
+		 ON CONFLICT(repo_name) DO UPDATE SET
+		   project_id = excluded.project_id,
+		   clone_url = excluded.clone_url
+		 WHERE project_repos.project_id = excluded.project_id
+		    OR project_repos.project_id = ?`,
+		repoName, projectID, parsed.URL, expectedProjectID)
+	if err != nil {
+		return ProjectRepo{}, err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return ProjectRepo{}, err
+	} else if affected == 0 {
+		return ProjectRepo{}, fmt.Errorf("%w: repository binding changed concurrently", ErrConflict)
+	}
+	return ProjectRepo{RepoName: repoName, CloneURL: parsed.URL}, nil
+}
+
 func (s *Store) UnmapRepo(ctx context.Context, repoName, projectID string) error {
 	repoName = strings.TrimSpace(repoName)
 	projectID = strings.TrimSpace(projectID)
@@ -315,6 +375,21 @@ func (s *Store) RepoProjectID(ctx context.Context, repoName string) (string, boo
 func (s *Store) ListProjectRepos(ctx context.Context, projectID string) ([]string, error) {
 	projectID = strings.TrimSpace(projectID)
 	return s.queryStrings(ctx, `SELECT repo_name FROM project_repos WHERE project_id = ? ORDER BY repo_name`, projectID)
+}
+
+func (s *Store) ListProjectRepoBindings(ctx context.Context, projectID string) ([]ProjectRepo, error) {
+	projectID = strings.TrimSpace(projectID)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT repo_name, clone_url FROM project_repos WHERE project_id = ? ORDER BY repo_name`,
+		projectID)
+	if err != nil {
+		return nil, err
+	}
+	return scanRows(rows, func(r *sql.Rows) (ProjectRepo, error) {
+		var repo ProjectRepo
+		err := r.Scan(&repo.RepoName, &repo.CloneURL)
+		return repo, err
+	})
 }
 
 // AddMember adds or updates a member's role (upsert).

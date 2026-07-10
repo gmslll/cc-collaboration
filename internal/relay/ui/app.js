@@ -1554,10 +1554,10 @@ async function onProjectsListSubmit(event) {
   const id = card.dataset.project;
   try {
     if (form.dataset.form === "repo") {
-      const name = form.querySelector("input").value.trim();
-      if (!name) return;
-      await api(`/v1/projects/${encodeURIComponent(id)}/repos`, { method: "POST", body: JSON.stringify({ repo_name: name }) });
-      toast("已绑定 repo");
+      const cloneURL = form.querySelector("input").value.trim();
+      if (!cloneURL) return;
+      await api(`/v1/projects/${encodeURIComponent(id)}/repos`, { method: "POST", body: JSON.stringify({ clone_url: cloneURL }) });
+      toast("已绑定 GitHub 仓库");
     } else if (form.dataset.form === "member") {
       const candidate = form.querySelector("[name=candidate]")?.value.trim() || "";
       const manual = form.querySelector("[name=identity]")?.value.trim() || "";
@@ -1602,6 +1602,7 @@ async function renderProjectManage(id, body) {
   try {
     const data = await api(`/v1/projects/${encodeURIComponent(id)}`);
     const repos = data.repos || [];
+    const repoBindings = data.repo_bindings || repos.map((repo_name) => ({ repo_name, clone_url: "" }));
     const members = data.members || [];
     const project = data.project || {};
     const role = projectRole(id);
@@ -1633,13 +1634,13 @@ async function renderProjectManage(id, body) {
         <strong>${escapeHTML(organizationName(project.org_id))}</strong>
       </div>
       <div class="manage-block">
-        <h4>Repos</h4>
+        <h4>GitHub 仓库</h4>
         <div class="chip-row">
-          ${repos.length ? repos.map((r) => `<span class="chip">${escapeHTML(r)}${canManage ? `<button type="button" data-unmap="${escapeAttr(r)}" aria-label="移除 repo ${escapeAttr(r)}" title="移除">×</button>` : ""}</span>`).join("") : `<span class="muted">无</span>`}
+          ${repoBindings.length ? repoBindings.map((r) => `<span class="chip" title="${escapeAttr(r.clone_url || "历史绑定：尚无 clone URL")}">${escapeHTML(r.repo_name)}${r.clone_url ? ` · ${escapeHTML(r.clone_url)}` : " · 未配置 URL"}${canManage ? `<button type="button" data-unmap="${escapeAttr(r.repo_name)}" aria-label="移除 repo ${escapeAttr(r.repo_name)}" title="移除">×</button>` : ""}</span>`).join("") : `<span class="muted">无</span>`}
         </div>
         ${canManage ? `<form class="inline-form" data-form="repo">
-          <input type="text" aria-label="要绑定的 repo 名" placeholder="repo 名（如 kunlun-backend）">
-          <button type="submit" class="secondary">绑定 repo</button>
+          <input type="text" inputmode="url" aria-label="GitHub clone URL" placeholder="https://github.com/org/repo.git 或 git@github.com:org/repo.git">
+          <button type="submit" class="secondary">绑定仓库</button>
         </form>` : ""}
       </div>
       <div class="manage-block">

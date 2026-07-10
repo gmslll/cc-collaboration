@@ -139,7 +139,8 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS project_repos (
   repo_name   TEXT PRIMARY KEY,
-  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  clone_url   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_project_repos_project ON project_repos(project_id);
 
@@ -179,6 +180,10 @@ CREATE INDEX IF NOT EXISTS idx_invitations_project ON invitations(project_id);
 		{"bug_group_id", `ALTER TABLE handoffs ADD COLUMN bug_group_id TEXT NOT NULL DEFAULT ''`},
 		{"project_org_id", `ALTER TABLE projects ADD COLUMN org_id TEXT NOT NULL DEFAULT ''`},
 		{"user_deleted_at", `ALTER TABLE users ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0`},
+		// Legacy project_repos rows intentionally keep an empty clone_url. They
+		// remain readable/mappable, but only bindings with a validated URL are
+		// offered by clients as cloneable team projects.
+		{"project_repo_clone_url", `ALTER TABLE project_repos ADD COLUMN clone_url TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := s.db.Exec(ddl.sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {

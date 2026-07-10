@@ -448,16 +448,79 @@ class ProjectMember {
       displayName = _trimmed(j['display_name']);
 }
 
+class ProjectRepo {
+  final String repoName, cloneUrl;
+
+  const ProjectRepo({required this.repoName, required this.cloneUrl});
+
+  ProjectRepo.fromJson(Map<String, dynamic> j)
+    : repoName = _trimmed(j['repo_name']),
+      cloneUrl = _trimmed(j['clone_url']);
+
+  bool get isCloneable => repoName.isNotEmpty && cloneUrl.isNotEmpty;
+}
+
+List<ProjectRepo> _projectRepoBindings(Map<String, dynamic> j) {
+  final bindings = <ProjectRepo>[];
+  final rawBindings = j['repo_bindings'];
+  if (rawBindings is List) {
+    for (final value in rawBindings) {
+      if (value is Map) {
+        final binding = ProjectRepo.fromJson(Map<String, dynamic>.from(value));
+        if (binding.repoName.isNotEmpty) bindings.add(binding);
+      } else {
+        final name = _trimmed(value);
+        if (name.isNotEmpty) {
+          bindings.add(ProjectRepo(repoName: name, cloneUrl: ''));
+        }
+      }
+    }
+  }
+  if (bindings.isNotEmpty) return bindings;
+  // Old relays returned only repos: string[]. Preserve those rows as readable
+  // legacy bindings; an administrator can add a URL before they become
+  // available to the "拉取团队项目" flow.
+  for (final value in (j['repos'] as List?) ?? const []) {
+    if (value is Map) {
+      final binding = ProjectRepo.fromJson(Map<String, dynamic>.from(value));
+      if (binding.repoName.isNotEmpty) bindings.add(binding);
+    } else {
+      final name = _trimmed(value);
+      if (name.isNotEmpty) {
+        bindings.add(ProjectRepo(repoName: name, cloneUrl: ''));
+      }
+    }
+  }
+  return bindings;
+}
+
+List<String> _projectRepoNames(
+  Map<String, dynamic> j,
+  List<ProjectRepo> bindings,
+) {
+  final names = <String>[];
+  for (final value in (j['repos'] as List?) ?? const []) {
+    final name = value is Map ? _trimmed(value['repo_name']) : _trimmed(value);
+    if (name.isNotEmpty && !names.contains(name)) names.add(name);
+  }
+  if (names.isNotEmpty) return names;
+  return [for (final binding in bindings) binding.repoName];
+}
+
 class ProjectDetail {
   final Project project;
   final List<String> repos;
+  final List<ProjectRepo> repoBindings;
   final List<ProjectMember> members;
   final List<Invitation> invitations;
   ProjectDetail.fromJson(Map<String, dynamic> j)
+    : this._fromJson(j, _projectRepoBindings(j));
+
+  ProjectDetail._fromJson(Map<String, dynamic> j, this.repoBindings)
     : project = Project.fromJson(
         (j['project'] ?? const {}) as Map<String, dynamic>,
       ),
-      repos = (j['repos'] as List?)?.map(_s).toList() ?? const [],
+      repos = _projectRepoNames(j, repoBindings),
       members =
           (j['members'] as List?)
               ?.map((e) => ProjectMember.fromJson(e as Map<String, dynamic>))
@@ -468,6 +531,9 @@ class ProjectDetail {
               ?.map((e) => Invitation.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [];
+
+  List<ProjectRepo> get cloneableRepos =>
+      repoBindings.where((repo) => repo.isCloneable).toList(growable: false);
 }
 
 class OnlineUser {

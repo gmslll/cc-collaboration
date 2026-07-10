@@ -33,10 +33,16 @@ type ProjectSummary struct {
 	Role string `json:"role"`
 }
 
+type ProjectRepo struct {
+	RepoName string `json:"repo_name"`
+	CloneURL string `json:"clone_url"`
+}
+
 type ProjectDetail struct {
-	Project projectBrief    `json:"project"`
-	Repos   []string        `json:"repos"`
-	Members []ProjectMember `json:"members"`
+	Project      projectBrief    `json:"project"`
+	Repos        []string        `json:"repos"`
+	RepoBindings []ProjectRepo   `json:"repo_bindings"`
+	Members      []ProjectMember `json:"members"`
 }
 
 type OrganizationMember struct {
