@@ -46,6 +46,34 @@ double capsuleReviewLoadingHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+Size sessionQuickReplyDialogSize(
+  Size viewport,
+  double preferredWidth, {
+  double preferredHeight = 640,
+}) {
+  final availableWidth = viewport.width - 32;
+  final availableHeight = viewport.height - 48;
+  final width = !availableWidth.isFinite || availableWidth <= 0
+      ? preferredWidth
+      : (availableWidth < preferredWidth ? availableWidth : preferredWidth);
+  final height = !availableHeight.isFinite || availableHeight <= 0
+      ? preferredHeight
+      : (availableHeight < preferredHeight ? availableHeight : preferredHeight);
+  return Size(width, height);
+}
+
+double sessionQuickReplyPreviewHeight(
+  Size viewport,
+  double preferred, {
+  double minHeight = 120,
+  double maxFraction = 0.42,
+}) {
+  final available = viewport.height * maxFraction.clamp(0, 1);
+  if (!available.isFinite || available <= 0) return preferred;
+  if (available < minHeight) return available;
+  return available < preferred ? available : preferred;
+}
+
 // SessionOverviewPage is the desktop top-level "会话总览": every open session
 // laid out flat, grouped by 工作区 → 项目 → worktree, each as a card showing the
 // agent's latest reply preview + status + token usage — so the user can glance
@@ -466,128 +494,143 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   @override
   Widget build(BuildContext context) {
     final c = widget.card;
+    final screenSize = MediaQuery.sizeOf(context);
+    final dialogSize = sessionQuickReplyDialogSize(screenSize, _dialogW);
+    final previewHeight = sessionQuickReplyPreviewHeight(screenSize, _previewH);
     return Dialog(
-      child: SizedBox(
-        width: _dialogW,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
+        child: SingleChildScrollView(
+          child: SizedBox(
+            width: dialogSize.width,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SessionActivityAvatar(
-                    seed: c.sid,
-                    isAgent: c.isAgent,
-                    status: c.status,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      c.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
+                  Row(
+                    children: [
+                      SessionActivityAvatar(
+                        seed: c.sid,
+                        isAgent: c.isAgent,
+                        status: c.status,
+                        size: 24,
                       ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '缩小字体',
-                    icon: const Icon(Icons.text_decrease_rounded, size: 18),
-                    onPressed: () => _zoom(-1),
-                  ),
-                  IconButton(
-                    tooltip: '放大字体',
-                    icon: const Icon(Icons.text_increase_rounded, size: 18),
-                    onPressed: () => _zoom(1),
-                  ),
-                  IconButton(
-                    tooltip: '刷新',
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    onPressed: _refresh,
-                  ),
-                  IconButton(
-                    tooltip: '关闭',
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              sessionStatusRow(
-                c.status,
-                c.usageLabel,
-                statusDetail: c.statusDetail,
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                height: _previewH,
-                child: SessionSnapshotView(
-                  snapshot: _snap,
-                  fontSize: _fontSize,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _quick('↵ 确认', _confirm),
-                  _quick('1', () => _keys('1')),
-                  _quick('2', () => _keys('2')),
-                  _quick('3', () => _keys('3')),
-                  _quick('y', () => _keys('y')),
-                  _quick('n', () => _keys('n')),
-                  _quick('Esc', () => _keys('\x1b')),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _ctl,
-                      autofocus: true,
-                      maxLines: 1,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _sendText(),
-                      decoration: const InputDecoration(
-                        hintText: '快捷回复…（回车发送）',
-                        isDense: true,
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          c.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                        ),
                       ),
+                      IconButton(
+                        tooltip: '缩小字体',
+                        icon: const Icon(Icons.text_decrease_rounded, size: 18),
+                        onPressed: () => _zoom(-1),
+                      ),
+                      IconButton(
+                        tooltip: '放大字体',
+                        icon: const Icon(Icons.text_increase_rounded, size: 18),
+                        onPressed: () => _zoom(1),
+                      ),
+                      IconButton(
+                        tooltip: '刷新',
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        onPressed: _refresh,
+                      ),
+                      IconButton(
+                        tooltip: '关闭',
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  sessionStatusRow(
+                    c.status,
+                    c.usageLabel,
+                    statusDetail: c.statusDetail,
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: previewHeight,
+                    child: SessionSnapshotView(
+                      snapshot: _snap,
+                      fontSize: _fontSize,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton(onPressed: _sendText, child: const Text('发送')),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  TextButton.icon(
-                    onPressed: widget.onOpenInWorkspace,
-                    icon: const Icon(Icons.open_in_full_rounded, size: 16),
-                    label: const Text('在工作区打开'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _quick('↵ 确认', _confirm),
+                      _quick('1', () => _keys('1')),
+                      _quick('2', () => _keys('2')),
+                      _quick('3', () => _keys('3')),
+                      _quick('y', () => _keys('y')),
+                      _quick('n', () => _keys('n')),
+                      _quick('Esc', () => _keys('\x1b')),
+                    ],
                   ),
-                  const Spacer(),
-                  // Only agent sessions with a working dir can be frozen into a
-                  // capsule (a shell session has no transcript to distill).
-                  if (c.isAgent && (c.workdir?.isNotEmpty ?? false))
-                    TextButton.icon(
-                      onPressed: () =>
-                          startCapsuleFlow(context, widget.store, c),
-                      icon: const Icon(Icons.science_rounded, size: 16),
-                      label: const Text('打成胶囊'),
-                    ),
-                  const SizedBox(width: 4),
-                  _resizeHandle(),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _ctl,
+                          autofocus: true,
+                          maxLines: 1,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _sendText(),
+                          decoration: const InputDecoration(
+                            hintText: '快捷回复…（回车发送）',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: _sendText,
+                        child: const Text('发送'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: widget.onOpenInWorkspace,
+                        icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                        label: const Text('在工作区打开'),
+                      ),
+                      const Spacer(),
+                      // Only agent sessions with a working dir can be frozen into a
+                      // capsule (a shell session has no transcript to distill).
+                      if (c.isAgent && (c.workdir?.isNotEmpty ?? false))
+                        TextButton.icon(
+                          onPressed: () =>
+                              startCapsuleFlow(context, widget.store, c),
+                          icon: const Icon(Icons.science_rounded, size: 16),
+                          label: const Text('打成胶囊'),
+                        ),
+                      const SizedBox(width: 4),
+                      _resizeHandle(),
+                    ],
+                  ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
