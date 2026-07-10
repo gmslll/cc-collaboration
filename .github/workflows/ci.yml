@@ -31,3 +31,23 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./...
+
+  relay-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44.1'
+          cache: true
+      - name: build and verify embedded web client
+        run: |
+          make web
+          test -s internal/relay/app/index.html
+          test -s internal/relay/app/main.dart.js
+          go build ./cmd/relay

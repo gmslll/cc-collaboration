@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FLUTTER_VERSION: '3.44.1'
+
 jobs:
   build:
     name: build ${{ matrix.os }}/${{ matrix.arch }}
@@ -47,6 +50,20 @@ jobs:
         with:
           go-version: 'stable'
           cache: true
+
+      - uses: subosito/flutter-action@v2
+        if: matrix.include_relay
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: build relay web client
+        if: matrix.include_relay
+        run: |
+          make web
+          test -s internal/relay/app/index.html
+          test -s internal/relay/app/main.dart.js
 
       - name: read VERSION + verify tag
         id: ver

@@ -6,6 +6,12 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Fixed
+
+- **Relay 发布包不再遗漏 Flutter Web 客户端** — GitHub Release 和一键部署会先构建并校验 `/app/` 的 `index.html` / `main.dart.js`，再编译内嵌资源的 relay；支持显式 `FLUTTER` 路径并探测常见 Homebrew 安装位置。
+- **当前管理员不能再自行降权或停用** — 后端在串行账号变更锁内拒绝当前账号的取消管理员/停用操作，并保护最后有效管理员；Flutter 与 Relay Web 同步禁用对应菜单项。
+- **会话标签批量关闭严格按可见顺序生效** — “关闭其他/左侧/右侧”使用菜单打开时真实显示的处分屏标签 ID 顺序，不再误隐藏被项目过滤的后台会话或按重排前顺序操作固定会话。
+
 ## [0.9.30] - 2026-07-10
 
 ### Added

@@ -725,16 +725,22 @@ class _AdminPageState extends State<AdminPage> {
       onSelected: (value) => _handleUserAction(user, value),
       itemBuilder: (_) => [
         ccMenuItem(
-          value: 'admin',
+          value: user.identity == widget.currentIdentity ? null : 'admin',
           icon: Icons.shield_rounded,
-          label: adminToggleLabel(user.isAdmin),
+          label: user.identity == widget.currentIdentity
+              ? '不能取消当前账号管理员'
+              : adminToggleLabel(user.isAdmin),
         ),
         ccMenuItem(
-          value: 'disable',
+          value: user.identity == widget.currentIdentity ? null : 'disable',
           icon: user.disabled
               ? Icons.check_circle_outline_rounded
               : Icons.block_rounded,
-          label: user.disabled ? '启用' : '停用',
+          label: user.identity == widget.currentIdentity
+              ? '不能停用当前账号'
+              : user.disabled
+              ? '启用'
+              : '停用',
         ),
         ccMenuItem(value: 'reset', icon: Icons.password_rounded, label: '重置密码'),
         ccMenuItem(
@@ -749,6 +755,10 @@ class _AdminPageState extends State<AdminPage> {
 
   Future<void> _handleUserAction(User user, String value) async {
     final client = widget.client;
+    if (user.identity == widget.currentIdentity &&
+        (value == 'admin' || value == 'disable' || value == 'delete')) {
+      return;
+    }
     switch (value) {
       case 'admin':
         await _act(

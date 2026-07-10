@@ -186,6 +186,57 @@ void main() {
     },
   );
 
+  testWidgets('bulk tab menu reports the exact filtered display order', (
+    tester,
+  ) async {
+    final sessions = [
+      session('ts123', 'current project one'),
+      session('ts124', 'filtered project'),
+      session('ts125', 'current project two'),
+    ];
+    addTearDown(() {
+      for (final item in sessions) {
+        item.dispose();
+      }
+    });
+    String? targetId;
+    List<String>? visibleOrderIds;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: SizedBox(
+            width: 600,
+            child: TerminalTabBar(
+              terms: sessions,
+              active: 2,
+              hiddenIds: const {'ts124'},
+              displayOrderIds: const ['ts125', 'ts123'],
+              onSwitch: (_) {},
+              onClose: (_) {},
+              onCloseOthers: (target, visible) {
+                targetId = target;
+                visibleOrderIds = visible;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('terminal-tab-ts125')),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close Others'));
+    await tester.pumpAndSettle();
+
+    expect(targetId, 'ts125');
+    expect(visibleOrderIds, ['ts125', 'ts123']);
+  });
+
   testWidgets('close affordance becomes significant on hover', (tester) async {
     final item = session('ts130', 'hover me');
     addTearDown(item.dispose);

@@ -7,6 +7,7 @@
 # Optional env:
 #   ARCH=amd64|arm64  override; default = autodetect via ssh
 #   SSH_OPTS="-i ~/.ssh/id_ed25519 -p 2222"
+#   FLUTTER=/path/to/flutter  override Flutter executable discovery
 #
 # Idempotent: first run installs, subsequent runs upgrade the binary +
 # restart. Tokens, DB, and operational scripts are only seeded if absent.
@@ -40,6 +41,19 @@ else
   esac
 fi
 echo "  → linux/$arch"
+
+say "build Flutter Web client for relay"
+flutter_bin=${FLUTTER:-$(command -v flutter 2>/dev/null || true)}
+if [[ -z "$flutter_bin" ]]; then
+  for candidate in /opt/homebrew/bin/flutter /usr/local/bin/flutter; do
+    if [[ -x "$candidate" ]]; then flutter_bin="$candidate"; break; fi
+  done
+fi
+[[ -x "$flutter_bin" ]] \
+  || { echo "flutter is required to embed the relay /app/ client (set FLUTTER=/path/to/flutter)" >&2; exit 1; }
+( cd "$ROOT" && make web FLUTTER="$flutter_bin" )
+test -s "$ROOT/internal/relay/app/index.html"
+test -s "$ROOT/internal/relay/app/main.dart.js"
 
 say "build cc-relay for linux/$arch"
 ( cd "$ROOT" && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 \

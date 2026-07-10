@@ -339,7 +339,7 @@ func TestAdminAccountsUIUsesLocalizedStatusCopy(t *testing.T) {
 		`<span class="badge">系统管理员</span>`,
 		`<span class="badge warning">已停用</span>`,
 		`<span class="badge success">已启用</span>`,
-		`${u.is_admin ? "取消管理员" : "授予管理员"}`,
+		`u.is_admin ? "取消管理员" : "授予管理员"`,
 	}
 	for _, want := range required {
 		if !strings.Contains(js, want) {
@@ -373,6 +373,23 @@ func TestAdminAccountsUIProvidesGuardedDelete(t *testing.T) {
 	for _, want := range required {
 		if !strings.Contains(js, want) {
 			t.Fatalf("admin account UI is missing delete-state fragment %q", want)
+		}
+	}
+}
+
+func TestAdminAccountsUIProtectsCurrentAdminRoleAndStatus(t *testing.T) {
+	src, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	for _, want := range []string{
+		`disabled title="不能取消当前账号管理员"`,
+		`disabled title="不能停用当前账号"`,
+		`id === state.me?.identity && (action === "admin" || action === "disable" || action === "delete")`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("admin UI missing current-account guard %q", want)
 		}
 	}
 }

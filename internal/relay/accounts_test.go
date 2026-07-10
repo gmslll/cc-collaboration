@@ -452,6 +452,46 @@ func TestDeleteUserRequiresAdminAndRejectsSelf(t *testing.T) {
 	}
 }
 
+func TestAdminCannotDemoteOrDisableCurrentAccount(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	mkUser(t, st, "admin@demo", "adminpass1")
+	if err := st.SetAdmin(context.Background(), "admin@demo", true); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&relay.Server{
+		Store: st, Tokens: auth.NewTokens(), Hub: sse.NewHub(),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	adminTok := loginToken(t, srv.URL, "admin@demo", "adminpass1")
+	if code, body := postJSON(t, srv.URL+"/v1/users/admin@demo/admin", adminTok,
+		map[string]bool{"is_admin": false}); code != http.StatusConflict {
+		t.Fatalf("self demote = %d %s, want 409", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/users/admin@demo/disable", adminTok,
+		map[string]bool{"disabled": true}); code != http.StatusConflict {
+		t.Fatalf("self disable = %d %s, want 409", code, body)
+	}
+	if code, body := postJSON(t, srv.URL+"/v1/users/%20admin@demo%20/disable", adminTok,
+		map[string]bool{"disabled": true}); code != http.StatusConflict {
+		t.Fatalf("space-padded self disable = %d %s, want 409", code, body)
+	}
+	u, err := st.GetUser(context.Background(), "admin@demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.IsAdmin || u.Disabled {
+		t.Fatalf("rejected self mutation changed account: %+v", u)
+	}
+	if code, body := getAuthed(t, srv.URL+"/v1/me", adminTok); code != http.StatusOK {
+		t.Fatalf("admin token after rejected mutations = %d %s", code, body)
+	}
+}
+
 func TestDeleteUserRevokesCredentialsAndReservesIdentity(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {

@@ -470,17 +470,26 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     return null;
   }
 
-  // _paneTermIndices lists [paneId]'s sessions as *global* terms indices, in
-  // terms' own order — this is the order the tab strip actually renders them
-  // in (TerminalTabBar filters/orders by walking `terms`, not by
-  // _paneSessions' insertion order), so it's what "left"/"right" must be
-  // computed against. While unsplit, _paneOf resolves every session to the
-  // single root pane, so this is just every index — same as before split-pane
-  // existed.
+  // _paneTermIndices lists [paneId]'s sessions as global terms indices. It is
+  // the fallback scope for callers outside a rendered tab strip. Tab-menu bulk
+  // actions pass their exact visible ID order through _bulkTabScope instead,
+  // because project filtering and pinned/attention sections can hide or reorder
+  // entries relative to this underlying list.
   List<int> _paneTermIndices(String paneId) => [
     for (var i = 0; i < terms.length; i++)
       if (_paneOf(terms[i].id) == paneId) i,
   ];
+
+  List<int> _bulkTabScope(int target, List<String>? visibleOrderIds) {
+    final paneIndices = _paneTermIndices(_paneOf(terms[target].id));
+    if (visibleOrderIds == null) return paneIndices;
+    final paneSet = paneIndices.toSet();
+    final byId = {for (var i = 0; i < terms.length; i++) terms[i].id: i};
+    return [
+      for (final id in visibleOrderIds)
+        if (byId[id] case final int index when paneSet.contains(index)) index,
+    ];
+  }
 
   // closeOtherTerms/closeTermsToLeft/closeTermsToRight back the terminal tab's
   // right-click "关闭其他/左侧/右侧" — a real close (kills the PTY) for every
@@ -494,24 +503,24 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // index rather than reusing closeTerm's simple length-clamp, which only
   // accounts for removals at-or-after the active tab (a bulk close can also
   // drop tabs strictly before it).
-  void closeOtherTerms(int keep) {
+  void closeOtherTerms(int keep, {List<String>? visibleOrderIds}) {
     if (keep < 0 || keep >= terms.length) return;
-    final scope = _paneTermIndices(_paneOf(terms[keep].id)).toSet();
+    final scope = _bulkTabScope(keep, visibleOrderIds).toSet();
     _closeTermsWhere((i) => scope.contains(i) && i != keep);
   }
 
-  void closeTermsToLeft(int index) {
+  void closeTermsToLeft(int index, {List<String>? visibleOrderIds}) {
     if (index < 0 || index >= terms.length) return;
-    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final scope = _bulkTabScope(index, visibleOrderIds);
     final pos = scope.indexOf(index);
     if (pos <= 0) return;
     final toClose = scope.sublist(0, pos).toSet();
     _closeTermsWhere(toClose.contains);
   }
 
-  void closeTermsToRight(int index) {
+  void closeTermsToRight(int index, {List<String>? visibleOrderIds}) {
     if (index < 0 || index >= terms.length) return;
-    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final scope = _bulkTabScope(index, visibleOrderIds);
     final pos = scope.indexOf(index);
     if (pos < 0 || pos >= scope.length - 1) return;
     final toClose = scope.sublist(pos + 1).toSet();
@@ -557,25 +566,26 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // Wired up for hosts whose × is closeTermView (hideClosedTabs: true, e.g.
   // the workspace) so a right-click "关闭其他/左侧/右侧" can never surprise-kill
   // a background session the single × would have merely hidden. Scoped to
-  // the same pane as their non-View siblings above.
-  void closeOtherTermsView(int keep) {
+  // the same pane as their non-View siblings above. When invoked from a tab
+  // strip, visibleOrderIds keeps filtered sessions outside the strip untouched.
+  void closeOtherTermsView(int keep, {List<String>? visibleOrderIds}) {
     if (keep < 0 || keep >= terms.length) return;
-    final scope = _paneTermIndices(_paneOf(terms[keep].id)).toSet();
+    final scope = _bulkTabScope(keep, visibleOrderIds).toSet();
     _hideTermsWhere((i) => scope.contains(i) && i != keep);
   }
 
-  void closeTermsToLeftView(int index) {
+  void closeTermsToLeftView(int index, {List<String>? visibleOrderIds}) {
     if (index < 0 || index >= terms.length) return;
-    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final scope = _bulkTabScope(index, visibleOrderIds);
     final pos = scope.indexOf(index);
     if (pos <= 0) return;
     final toHide = scope.sublist(0, pos).toSet();
     _hideTermsWhere(toHide.contains);
   }
 
-  void closeTermsToRightView(int index) {
+  void closeTermsToRightView(int index, {List<String>? visibleOrderIds}) {
     if (index < 0 || index >= terms.length) return;
-    final scope = _paneTermIndices(_paneOf(terms[index].id));
+    final scope = _bulkTabScope(index, visibleOrderIds);
     final pos = scope.indexOf(index);
     if (pos < 0 || pos >= scope.length - 1) return;
     final toHide = scope.sublist(pos + 1).toSet();
@@ -600,6 +610,36 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
     });
     _activeChanged();
     unawaited(_save());
+  }
+
+  void _runTabBulkAction(
+    String action,
+    bool hideOnly,
+    String targetId,
+    List<String> visibleOrderIds,
+  ) {
+    final target = terms.indexWhere((session) => session.id == targetId);
+    if (target < 0) return;
+    switch (action) {
+      case 'others':
+        if (hideOnly) {
+          closeOtherTermsView(target, visibleOrderIds: visibleOrderIds);
+        } else {
+          closeOtherTerms(target, visibleOrderIds: visibleOrderIds);
+        }
+      case 'left':
+        if (hideOnly) {
+          closeTermsToLeftView(target, visibleOrderIds: visibleOrderIds);
+        } else {
+          closeTermsToLeft(target, visibleOrderIds: visibleOrderIds);
+        }
+      case 'right':
+        if (hideOnly) {
+          closeTermsToRightView(target, visibleOrderIds: visibleOrderIds);
+        } else {
+          closeTermsToRight(target, visibleOrderIds: visibleOrderIds);
+        }
+    }
   }
 
   // closeEntirePaneTerms/closeEntirePaneTermsView back a split pane's "关闭此
@@ -1262,11 +1302,24 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
         // Bulk close mirrors × exactly: hideClosedTabs hosts only ever hide, so
         // "关闭其他/左侧/右侧" can't surprise-kill a session the single × would
         // have merely backgrounded.
-        onCloseOthers: hideClosedTabs ? closeOtherTermsView : closeOtherTerms,
-        onCloseLeft: hideClosedTabs ? closeTermsToLeftView : closeTermsToLeft,
-        onCloseRight: hideClosedTabs
-            ? closeTermsToRightView
-            : closeTermsToRight,
+        onCloseOthers: (targetId, visibleOrderIds) => _runTabBulkAction(
+          'others',
+          hideClosedTabs,
+          targetId,
+          visibleOrderIds,
+        ),
+        onCloseLeft: (targetId, visibleOrderIds) => _runTabBulkAction(
+          'left',
+          hideClosedTabs,
+          targetId,
+          visibleOrderIds,
+        ),
+        onCloseRight: (targetId, visibleOrderIds) => _runTabBulkAction(
+          'right',
+          hideClosedTabs,
+          targetId,
+          visibleOrderIds,
+        ),
         onSplitRight: enableSplit ? splitTermRight : null,
         onSplitDown: enableSplit ? splitTermDown : null,
         onCollapse: onCollapse,
@@ -1379,15 +1432,24 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
               onShowAllSessions: onShowAllSessions,
               onSwitch: (i) => _switchInPane(paneId, i),
               onClose: hideClosedTabs ? closeTermView : closeTerm,
-              onCloseOthers: hideClosedTabs
-                  ? closeOtherTermsView
-                  : closeOtherTerms,
-              onCloseLeft: hideClosedTabs
-                  ? closeTermsToLeftView
-                  : closeTermsToLeft,
-              onCloseRight: hideClosedTabs
-                  ? closeTermsToRightView
-                  : closeTermsToRight,
+              onCloseOthers: (targetId, visibleOrderIds) => _runTabBulkAction(
+                'others',
+                hideClosedTabs,
+                targetId,
+                visibleOrderIds,
+              ),
+              onCloseLeft: (targetId, visibleOrderIds) => _runTabBulkAction(
+                'left',
+                hideClosedTabs,
+                targetId,
+                visibleOrderIds,
+              ),
+              onCloseRight: (targetId, visibleOrderIds) => _runTabBulkAction(
+                'right',
+                hideClosedTabs,
+                targetId,
+                visibleOrderIds,
+              ),
               onSplitRight: splitTermRight,
               onSplitDown: splitTermDown,
               trailing:
@@ -1503,6 +1565,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   }
 }
 
+typedef TerminalTabBulkAction =
+    void Function(String targetId, List<String> visibleOrderIds);
+
 // TerminalDeck renders a row of session tabs + the active terminal. The host
 // owns the session list + active index (so both the inbox cockpit and the
 // workspace cockpit can add sessions on pickup / agent launch).
@@ -1520,10 +1585,11 @@ class TerminalDeck extends StatelessWidget {
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   // onCloseOthers/onCloseLeft/onCloseRight power the tab's right-click menu
-  // bulk actions; null hides the corresponding row (falls back to disabled).
-  final ValueChanged<int>? onCloseOthers;
-  final ValueChanged<int>? onCloseLeft;
-  final ValueChanged<int>? onCloseRight;
+  // bulk actions; the callback receives the exact visible tab order captured
+  // when the menu opened. Null hides the corresponding row.
+  final TerminalTabBulkAction? onCloseOthers;
+  final TerminalTabBulkAction? onCloseLeft;
+  final TerminalTabBulkAction? onCloseRight;
   // onSplitRight/onSplitDown: see TerminalTabBar. Null hides the menu rows.
   final ValueChanged<int>? onSplitRight;
   final ValueChanged<int>? onSplitDown;
@@ -1656,10 +1722,11 @@ class TerminalTabBar extends StatelessWidget {
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
   // onCloseOthers/onCloseLeft/onCloseRight power the right-click tab menu's
-  // bulk-close rows; null hides (disables) the corresponding row.
-  final ValueChanged<int>? onCloseOthers;
-  final ValueChanged<int>? onCloseLeft;
-  final ValueChanged<int>? onCloseRight;
+  // bulk-close rows; the callback receives the exact visible tab order captured
+  // when the menu opened. Null hides (disables) the corresponding row.
+  final TerminalTabBulkAction? onCloseOthers;
+  final TerminalTabBulkAction? onCloseLeft;
+  final TerminalTabBulkAction? onCloseRight;
   // onSplitRight/onSplitDown power the right-click "Split Right"/"Split
   // Down" rows (split-pane terminals, workspace only); null hides both rows
   // — the inbox cockpit never sets these, so its menu is unchanged.
@@ -1769,27 +1836,35 @@ class TerminalTabBar extends StatelessWidget {
   }
 
   Future<void> _showTabMenu(BuildContext context, Offset pos, int i) async {
+    final visibleOrderIds = [
+      for (final index in _visibleIndices()) terms[index].id,
+    ];
+    final targetId = terms[i].id;
     final v = await showMenu<String>(
       context: context,
       position: menuPosAt(context, pos),
       items: _tabMenuItems(i),
     );
     if (v == null) return;
+    final targetIndex = terms.indexWhere((session) => session.id == targetId);
+    if (targetIndex < 0) return;
     switch (v) {
       case 'close':
-        onClose(i);
+        onClose(targetIndex);
       case 'closeOthers':
-        onCloseOthers?.call(i);
+        onCloseOthers?.call(targetId, visibleOrderIds);
       case 'closeLeft':
-        onCloseLeft?.call(i);
+        onCloseLeft?.call(targetId, visibleOrderIds);
       case 'closeRight':
-        onCloseRight?.call(i);
+        onCloseRight?.call(targetId, visibleOrderIds);
       case 'splitRight':
-        onSplitRight?.call(i);
+        onSplitRight?.call(targetIndex);
       case 'splitDown':
-        onSplitDown?.call(i);
+        onSplitDown?.call(targetIndex);
       case 'copyPath':
-        await Clipboard.setData(ClipboardData(text: terms[i].workdir));
+        await Clipboard.setData(
+          ClipboardData(text: terms[targetIndex].workdir),
+        );
         if (context.mounted) snack(context, '已复制路径');
     }
   }

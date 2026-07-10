@@ -346,7 +346,25 @@ func (s *Server) setUserAdmin(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	if err := s.Store.SetAdmin(r.Context(), r.PathValue("id"), req.IsAdmin); err != nil {
+	identity := strings.TrimSpace(r.PathValue("id"))
+	if !req.IsAdmin {
+		if identity == auth.Identity(r.Context()) {
+			http.Error(w, "cannot demote current account", http.StatusConflict)
+			return
+		}
+		if s.isAdmin(r.Context(), identity) {
+			hasOther, err := s.hasOtherAvailableAdmin(r.Context(), identity)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !hasOther {
+				http.Error(w, "last available admin cannot be demoted", http.StatusConflict)
+				return
+			}
+		}
+	}
+	if err := s.Store.SetAdmin(r.Context(), identity, req.IsAdmin); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
@@ -357,7 +375,7 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	identity := r.PathValue("id")
+	identity := strings.TrimSpace(r.PathValue("id"))
 	var req struct {
 		Disabled bool `json:"disabled"`
 	}
@@ -369,6 +387,23 @@ func (s *Server) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 	defer s.accountMu.Unlock()
 	if !s.requireAdmin(w, r) {
 		return
+	}
+	if req.Disabled {
+		if identity == auth.Identity(r.Context()) {
+			http.Error(w, "cannot disable current account", http.StatusConflict)
+			return
+		}
+		if s.isAdmin(r.Context(), identity) {
+			hasOther, err := s.hasOtherAvailableAdmin(r.Context(), identity)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !hasOther {
+				http.Error(w, "last available admin cannot be disabled", http.StatusConflict)
+				return
+			}
+		}
 	}
 	if err := s.Store.SetDisabled(r.Context(), identity, req.Disabled); err != nil {
 		s.writeStoreErr(w, err)

@@ -31,8 +31,11 @@ void main() {
     final err = host.killLocalSession(target.id, target.id);
     expect(err, isNotNull);
     expect(err, contains('自己'));
-    expect(host.terms.contains(target), isTrue,
-        reason: 'refused kill must not touch terms');
+    expect(
+      host.terms.contains(target),
+      isTrue,
+      reason: 'refused kill must not touch terms',
+    );
   });
 
   test('killLocalSession refuses a supervisor target regardless of caller', () {
@@ -49,8 +52,11 @@ void main() {
     final err = host.killLocalSession('ts-someone-else', target.id);
     expect(err, isNotNull);
     expect(err, contains('总管'));
-    expect(host.terms.contains(target), isTrue,
-        reason: 'refused kill must not touch terms');
+    expect(
+      host.terms.contains(target),
+      isTrue,
+      reason: 'refused kill must not touch terms',
+    );
   });
 
   test('killLocalSession errors on an unknown target', () {
@@ -75,8 +81,11 @@ void main() {
       await tester.pump();
 
       expect(err, isNull);
-      expect(host.terms.contains(target), isFalse,
-          reason: 'kill removes the session from terms, same as closeTerm');
+      expect(
+        host.terms.contains(target),
+        isFalse,
+        reason: 'kill removes the session from terms, same as closeTerm',
+      );
       expect(
         closedSid,
         target.id,
@@ -124,5 +133,58 @@ void main() {
     expect(host.terms, [keep]);
     expect(closed, [close1.id, close2.id]);
     addTearDown(keep.dispose);
+  });
+
+  testWidgets('bulk tab hide uses the displayed scope and order', (
+    tester,
+  ) async {
+    final key = GlobalKey<_HostState>();
+    await tester.pumpWidget(_Host(key: key));
+    final host = key.currentState!;
+    final current = TerminalSession('/repo-a', '', agent: '');
+    final otherProject = TerminalSession('/repo-b', '', agent: '');
+    final sameProject = TerminalSession('/repo-a/worktree', '', agent: '');
+    host.terms.addAll([current, otherProject, sameProject]);
+    for (final session in host.terms) {
+      host.debugAssignSessionToPane(session.id);
+      session.debugMarkBootSettled();
+    }
+
+    host.closeOtherTermsView(0, visibleOrderIds: [current.id, sameProject.id]);
+    await tester.pump();
+
+    expect(host.isTabHidden(current.id), isFalse);
+    expect(host.isTabHidden(sameProject.id), isTrue);
+    expect(
+      host.isTabHidden(otherProject.id),
+      isFalse,
+      reason: 'a filtered cross-project tab is outside this strip action',
+    );
+    addTearDown(host.disposeTerms);
+  });
+
+  testWidgets('bulk tab left follows reordered displayed tabs', (tester) async {
+    final key = GlobalKey<_HostState>();
+    await tester.pumpWidget(_Host(key: key));
+    final host = key.currentState!;
+    final first = TerminalSession('/repo-a', '', agent: '');
+    final pinned = TerminalSession('/repo-b', '', agent: '');
+    final second = TerminalSession('/repo-a/worktree', '', agent: '');
+    host.terms.addAll([first, pinned, second]);
+    for (final session in host.terms) {
+      host.debugAssignSessionToPane(session.id);
+      session.debugMarkBootSettled();
+    }
+
+    host.closeTermsToLeftView(
+      1,
+      visibleOrderIds: [first.id, second.id, pinned.id],
+    );
+    await tester.pump();
+
+    expect(host.isTabHidden(first.id), isTrue);
+    expect(host.isTabHidden(second.id), isTrue);
+    expect(host.isTabHidden(pinned.id), isFalse);
+    addTearDown(host.disposeTerms);
   });
 }

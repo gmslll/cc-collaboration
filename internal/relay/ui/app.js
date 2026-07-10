@@ -1820,8 +1820,8 @@ function renderUsers(users) {
         : `<details class="admin-user-menu">
             <summary aria-label="账号 ${escapeAttr(u.identity)} 的操作">•••</summary>
             <div class="admin-user-menu-popover">
-              <button type="button" data-uaction="admin">${u.is_admin ? "取消管理员" : "授予管理员"}</button>
-              <button type="button" data-uaction="disable">${u.disabled ? "启用" : "停用"}</button>
+              <button type="button" data-uaction="admin" ${self ? `disabled title="不能取消当前账号管理员"` : ""}>${self ? "不能取消当前账号管理员" : (u.is_admin ? "取消管理员" : "授予管理员")}</button>
+              <button type="button" data-uaction="disable" ${self ? `disabled title="不能停用当前账号"` : ""}>${self ? "不能停用当前账号" : (u.disabled ? "启用" : "停用")}</button>
               <button type="button" data-uaction="reset">重置密码</button>
               <button type="button" class="danger-text" data-uaction="delete" ${self ? `disabled title="不能删除当前登录账号"` : ""}>删除账号</button>
             </div>
@@ -1855,6 +1855,7 @@ async function onUsersListClick(event) {
   if (!card || !action) return;
   const id = card.dataset.user;
   if (state.pendingUserActions.has(id) || card.dataset.deleted === "1") return;
+  if (id === state.me?.identity && (action === "admin" || action === "disable" || action === "delete")) return;
   const authEpoch = state.authEpoch;
   if (action === "delete") {
     const confirmed = window.confirm(`确定删除账号 ${id}？\n\n删除后无法恢复，该 identity 不能重新注册，所有登录和机器 token 会立即失效。`);

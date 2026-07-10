@@ -530,32 +530,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('admin account delete disables current account action', (
-    tester,
-  ) async {
-    final client = _DelayedDeleteAdminPageFakeClient();
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: ccTheme(),
-        home: Scaffold(
-          body: AdminPage(client: client, currentIdentity: _longAdminIdentity),
+  testWidgets(
+    'admin account protects all destructive current account actions',
+    (tester) async {
+      final client = _CurrentAdminPageFakeClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(
+            body: AdminPage(
+              client: client,
+              currentIdentity: _longAdminIdentity,
+            ),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('当前'), findsOneWidget);
-    await tester.tap(_userActions(_longAdminIdentity));
-    await tester.pumpAndSettle();
-    final item = tester.widget<PopupMenuItem<String>>(
-      find.ancestor(
-        of: find.text('不能删除当前账号'),
-        matching: find.byType(PopupMenuItem<String>),
-      ),
-    );
-    expect(item.enabled, isFalse);
-    expect(client.deleteCount, 0);
-  });
+      expect(find.text('当前'), findsOneWidget);
+      await tester.tap(_userActions(_longAdminIdentity));
+      await tester.pumpAndSettle();
+      for (final label in const ['不能取消当前账号管理员', '不能停用当前账号', '不能删除当前账号']) {
+        final item = tester.widget<PopupMenuItem<String>>(
+          find.ancestor(
+            of: find.text(label),
+            matching: find.byType(PopupMenuItem<String>),
+          ),
+        );
+        expect(item.enabled, isFalse, reason: label);
+      }
+      expect(client.setAdminCount, 0);
+      expect(client.setDisabledCount, 0);
+      expect(client.deleteCount, 0);
+    },
+  );
 
   testWidgets('admin defaults to active accounts and switches to tombstones', (
     tester,
@@ -820,6 +828,36 @@ class _DelayedDeleteAdminPageFakeClient extends _AdminPageFakeClient {
         }),
       ]);
     }
+  }
+}
+
+class _CurrentAdminPageFakeClient extends _AdminPageFakeClient {
+  int setAdminCount = 0;
+  int setDisabledCount = 0;
+  int deleteCount = 0;
+
+  @override
+  Future<List<User>> users() async => [
+    User.fromJson({
+      'identity': _longAdminIdentity,
+      'display_name': _longAdminDisplayName,
+      'is_admin': true,
+    }),
+  ];
+
+  @override
+  Future<void> setUserAdmin(String identity, bool isAdmin) async {
+    setAdminCount++;
+  }
+
+  @override
+  Future<void> setUserDisabled(String identity, bool disabled) async {
+    setDisabledCount++;
+  }
+
+  @override
+  Future<void> deleteUser(String identity) async {
+    deleteCount++;
   }
 }
 

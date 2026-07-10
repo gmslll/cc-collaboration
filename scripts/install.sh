@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install cc-handoff relay on a Linux VPS.
 # Usage:  sudo bash install.sh
-# Run from the repo root after building (`make relay` or `go build -o cc-relay ./cmd/relay`).
+# Run from the repo root after building (`make relay`; this embeds the Flutter
+# Web client that `/app/` serves).
 
 set -euo pipefail
 
@@ -12,7 +13,7 @@ fi
 
 BIN_SRC=${BIN_SRC:-./cc-relay}
 if [[ ! -x "$BIN_SRC" ]]; then
-  echo "binary $BIN_SRC not found; build first: GOOS=linux GOARCH=amd64 go build -o cc-relay ./cmd/relay" >&2
+  echo "binary $BIN_SRC not found; build first with 'make relay' so /app/ is embedded" >&2
   exit 1
 fi
 
