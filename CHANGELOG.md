@@ -6,6 +6,18 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [0.9.29] - 2026-07-10
+
+### Changed
+
+- **项目级身份降级为旧点对点兼容** — 团队/项目模式下不再引导用户配置 `.cc-handoff.toml` 的 `identity.me` / `partner` / `partners`;CLI init、App 项目配置页、示例配置、命令模板和文档都改为默认使用登录态 / machine token 身份与团队项目收件范围。
+- **团队邀请式 onboarding 收口** — 新注册账号不再自动创建个人团队;项目创建必须选择真实团队,用户通过团队/项目邀请加入协作范围。
+
+### Fixed
+
+- **团队/项目管理清理更完整** — App 支持删除团队,relay 删除团队时同步清理项目和邀请;项目邀请可直接邀请团队外账号,接受项目邀请时自动补团队成员关系。
+- **旧身份配置不再被 App 空值写回** — 项目配置保存时,空的 legacy identity 会被移除而不是保留旧 `[identity]` 段;README 与 MCP 报错也明确 `identity.partners` 只属于 legacy 角色别名。
+
 ## [0.9.28] - 2026-07-10
 
 ### Added
