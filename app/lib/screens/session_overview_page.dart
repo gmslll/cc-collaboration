@@ -17,6 +17,22 @@ double capsuleChoiceDialogWidth(Size size, {double preferred = 440}) {
   return available < preferred ? available : preferred;
 }
 
+Size capsuleReviewDialogSize(
+  Size viewport, {
+  double preferredWidth = 620,
+  double preferredHeight = 760,
+}) {
+  final availableWidth = viewport.width - 32;
+  final availableHeight = viewport.height - 48;
+  final width = !availableWidth.isFinite || availableWidth <= 0
+      ? preferredWidth
+      : (availableWidth < preferredWidth ? availableWidth : preferredWidth);
+  final height = !availableHeight.isFinite || availableHeight <= 0
+      ? preferredHeight
+      : (availableHeight < preferredHeight ? availableHeight : preferredHeight);
+  return Size(width, height);
+}
+
 double capsuleReviewLoadingHeight(
   Size screenSize, {
   double preferred = 120,
@@ -825,9 +841,14 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final d = widget.draft;
+    final dialogSize = capsuleReviewDialogSize(MediaQuery.sizeOf(context));
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 620),
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: _loading

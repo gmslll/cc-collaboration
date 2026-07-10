@@ -25,6 +25,15 @@ void main() {
     expect(capsuleReviewLoadingHeight(const Size(320, 300)), 80);
   });
 
+  test('capsule review dialog size fits compact screens', () {
+    expect(
+      capsuleReviewDialogSize(const Size(1200, 900)),
+      const Size(620, 760),
+    );
+    expect(capsuleReviewDialogSize(const Size(360, 420)), const Size(328, 372));
+    expect(capsuleReviewDialogSize(const Size(220, 220)), const Size(188, 172));
+  });
+
   test('capsule choice dialog uses responsive content', () {
     final source = File(
       'lib/screens/session_overview_page.dart',
@@ -41,6 +50,22 @@ void main() {
     expect(dialog, contains('capsuleChoiceDialogWidth(size)'));
     expect(dialog, contains('SingleChildScrollView'));
     expect(dialog, isNot(contains('content: const Text(')));
+  });
+
+  test('capsule review dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+    );
+
+    expect(dialog, contains('capsuleReviewDialogSize'));
+    expect(dialog, contains('MediaQuery.sizeOf(context)'));
+    expect(dialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(dialog, contains('maxWidth: dialogSize.width'));
+    expect(dialog, contains('maxHeight: dialogSize.height'));
+    expect(dialog, isNot(contains('maxWidth: 620')));
   });
 
   test('SessionStatus parses hook-derived overview states', () {
