@@ -99,6 +99,49 @@ double workspaceOutgoingDialogWidth(Size size, {double preferred = 460}) {
   return available < preferred ? available : preferred;
 }
 
+// Keeps the tree-wide context menu on genuine empty space. Wrapping the whole
+// scroll view in a secondary-tap detector makes both that detector and a row's
+// own detector receive onSecondaryTapDown, opening two overlapping menus.
+class WorkspaceTreeScrollSurface extends StatelessWidget {
+  final List<Widget> children;
+  final Widget empty;
+  final GestureTapDownCallback onBackgroundSecondaryTapDown;
+
+  const WorkspaceTreeScrollSurface({
+    super.key,
+    required this.children,
+    required this.empty,
+    required this.onBackgroundSecondaryTapDown,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (children.isEmpty) {
+      return GestureDetector(
+        key: const ValueKey('workspace-tree-empty-context-region'),
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown: onBackgroundSecondaryTapDown,
+        child: empty,
+      );
+    }
+    return CustomScrollView(
+      key: const ValueKey('workspace-project-tree'),
+      slivers: [
+        SliverList(delegate: SliverChildListDelegate(children)),
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: GestureDetector(
+            key: const ValueKey('workspace-tree-blank-context-region'),
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: onBackgroundSecondaryTapDown,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 Size workspaceCompareWithHeadDialogSize(
   Size viewport, {
   double preferredWidth = 1040,
@@ -10866,86 +10909,69 @@ class _WorkspacePageState extends State<WorkspacePage>
         ),
         if (_busy) const LinearProgressIndicator(minHeight: 2),
         Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onSecondaryTapDown: (details) =>
-                _showWorkspaceAreaMenu(details.globalPosition),
-            child: wss.isEmpty
-                ? centerMsg('config.toml 里没有 workspace —— 右键“拉取团队项目”,或点右上 + 新建')
-                : WorkspaceFocusSurface(
-                    focused: _focusedWorkspaceName != null,
-                    onExit: _exitWorkspaceFocus,
-                    child: ListView(
-                      key: const ValueKey('workspace-project-tree'),
-                      children: wss
-                          .map(
-                            (ws) => ExpansionTile(
-                              // Stable identity so the tile's expansion State isn't
-                              // reassigned if workspaces reorder.
-                              key: ValueKey('ws:${ws.name}'),
-                              controller: _workspaceCtlFor(ws.name),
-                              tilePadding: const EdgeInsets.only(
-                                left: 12,
-                                right: 6,
-                              ),
-                              childrenPadding: EdgeInsets.zero,
-                              minTileHeight: 42,
-                              title: _ctxMenu(
-                                WorkspaceFocusTitle(
-                                  key: ValueKey('workspace-focus-${ws.name}'),
-                                  enabled: allWss.length > 1,
-                                  onToggle: () =>
-                                      _toggleWorkspaceFocus(ws.name),
-                                  child: Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Tooltip(
-                                      message: ws.name.isEmpty
-                                          ? '(默认)'
-                                          : ws.name,
-                                      child: Text(
-                                        ws.name.isEmpty ? '(默认)' : ws.name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 15.5,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                _workspaceMenu(
-                                  ws,
-                                  workspaceCount: allWss.length,
+          child: WorkspaceFocusSurface(
+            focused: _focusedWorkspaceName != null,
+            onExit: _exitWorkspaceFocus,
+            child: WorkspaceTreeScrollSurface(
+              onBackgroundSecondaryTapDown: (details) =>
+                  _showWorkspaceAreaMenu(details.globalPosition),
+              empty: centerMsg(
+                'config.toml 里没有 workspace —— 右键“拉取团队项目”,或点右上 + 新建',
+              ),
+              children: wss
+                  .map(
+                    (ws) => ExpansionTile(
+                      // Stable identity so the tile's expansion State isn't
+                      // reassigned if workspaces reorder.
+                      key: ValueKey('ws:${ws.name}'),
+                      controller: _workspaceCtlFor(ws.name),
+                      tilePadding: const EdgeInsets.only(left: 12, right: 6),
+                      childrenPadding: EdgeInsets.zero,
+                      minTileHeight: 42,
+                      title: _ctxMenu(
+                        WorkspaceFocusTitle(
+                          key: ValueKey('workspace-focus-${ws.name}'),
+                          enabled: allWss.length > 1,
+                          onToggle: () => _toggleWorkspaceFocus(ws.name),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Tooltip(
+                              message: ws.name.isEmpty ? '(默认)' : ws.name,
+                              child: Text(
+                                ws.name.isEmpty ? '(默认)' : ws.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              leading: const Icon(
-                                Icons.workspaces_rounded,
-                                size: 20,
-                              ),
-                              // Persist collapse across rebuilds: switching the left
-                              // panel to git/another view disposes this tree, and it
-                              // used to come back all-expanded (initiallyExpanded:true).
-                              // Mirror the section-collapse pattern (_secCollapsed) so a
-                              // collapsed workspace stays collapsed. Default expanded.
-                              initiallyExpanded: !Prefs.getBool(
-                                'ws.wsCollapsed.${ws.name}',
-                              ),
-                              onExpansionChanged: (open) => Prefs.setBool(
-                                'ws.wsCollapsed.${ws.name}',
-                                !open,
-                              ),
-                              shape: const Border(),
-                              children: applyOrder(
-                                ws.projects,
-                                loadOrder(desktopProjectOrderKey(ws.name)),
-                                (p) => p.name,
-                              ).map((p) => _projectTile(ws, p)).toList(),
                             ),
-                          )
-                          .toList(),
+                          ),
+                        ),
+                        _workspaceMenu(ws, workspaceCount: allWss.length),
+                      ),
+                      leading: const Icon(Icons.workspaces_rounded, size: 20),
+                      // Persist collapse across rebuilds: switching the left
+                      // panel to git/another view disposes this tree, and it
+                      // used to come back all-expanded (initiallyExpanded:true).
+                      // Mirror the section-collapse pattern (_secCollapsed) so a
+                      // collapsed workspace stays collapsed. Default expanded.
+                      initiallyExpanded: !Prefs.getBool(
+                        'ws.wsCollapsed.${ws.name}',
+                      ),
+                      onExpansionChanged: (open) =>
+                          Prefs.setBool('ws.wsCollapsed.${ws.name}', !open),
+                      shape: const Border(),
+                      children: applyOrder(
+                        ws.projects,
+                        loadOrder(desktopProjectOrderKey(ws.name)),
+                        (p) => p.name,
+                      ).map((p) => _projectTile(ws, p)).toList(),
                     ),
-                  ),
+                  )
+                  .toList(),
+            ),
           ),
         ),
       ],
