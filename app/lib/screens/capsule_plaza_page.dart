@@ -55,6 +55,19 @@ double capsuleReadonlyPreviewMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+double capsuleLoadMenuMaxHeight(
+  Size screenSize, {
+  double preferred = 320,
+  double minHeight = 160,
+  double maxFraction = 0.46,
+}) {
+  final height = screenSize.height;
+  if (!height.isFinite || height <= 0) return preferred;
+  final capped = height * maxFraction.clamp(0, 1);
+  if (capped >= preferred) return preferred;
+  return capped < minHeight ? minHeight : capped;
+}
+
 double capsuleDeleteDialogWidth(Size size, {double preferred = 420}) {
   final available = size.width - 32;
   if (!available.isFinite || available <= 0) return preferred;
@@ -722,6 +735,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   @override
   Widget build(BuildContext context) {
     final c = widget.capsule;
+    final screenSize = MediaQuery.sizeOf(context);
     return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
@@ -810,7 +824,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
               _sectionLabel('目标位置'),
               DropdownButton<String>(
                 isExpanded: true,
-                menuMaxHeight: 320,
+                menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
                 hint: const Text('workspace'),
                 value: _workspace,
                 items: _nameItems(widget.config.workspaces),
@@ -823,7 +837,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
               const SizedBox(height: 8),
               DropdownButton<String>(
                 isExpanded: true,
-                menuMaxHeight: 320,
+                menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
                 hint: const Text('project'),
                 value: _project,
                 items: _nameItems(_projects),

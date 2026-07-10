@@ -12,7 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('capsule load target menus are width constrained', () {
+  test('capsule load target menus are viewport constrained', () {
     final source = File(
       'lib/screens/capsule_plaza_page.dart',
     ).readAsStringSync();
@@ -21,7 +21,9 @@ void main() {
       source.indexOf('// bundledSkillNames lists'),
     );
 
-    expect(loadDialog, contains('menuMaxHeight: 320'));
+    expect(loadDialog, contains('MediaQuery.sizeOf(context)'));
+    expect(loadDialog, contains('capsuleLoadMenuMaxHeight'));
+    expect(loadDialog, isNot(contains('menuMaxHeight: 320')));
     expect(
       loadDialog,
       isNot(
@@ -52,6 +54,15 @@ void main() {
       closeTo(96, 0.001),
     );
     expect(capsuleReadonlyPreviewMaxHeight(const Size(320, 300)), 82);
+  });
+
+  test('capsule load target menus are responsive', () {
+    expect(capsuleLoadMenuMaxHeight(const Size(1200, 900)), 320);
+    expect(
+      capsuleLoadMenuMaxHeight(const Size(320, 420)),
+      closeTo(193.2, 0.001),
+    );
+    expect(capsuleLoadMenuMaxHeight(const Size(320, 220)), 160);
   });
 
   test('capsule delete dialog width fits compact screens', () {
