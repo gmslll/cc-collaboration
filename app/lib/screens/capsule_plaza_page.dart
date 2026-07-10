@@ -68,6 +68,15 @@ double capsuleLoadMenuMaxHeight(
   return capped < minHeight ? minHeight : capped;
 }
 
+Size capsuleLoadDialogSize(
+  Size viewport, {
+  double preferredWidth = 480,
+  double preferredHeight = 720,
+}) => Size(
+  capsuleDialogDimension(viewport.width - 32, preferredWidth),
+  capsuleDialogDimension(viewport.height - 48, preferredHeight, min: 300),
+);
+
 double capsuleDeleteDialogWidth(Size size, {double preferred = 420}) {
   final available = size.width - 32;
   if (!available.isFinite || available <= 0) return preferred;
@@ -736,146 +745,158 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   Widget build(BuildContext context) {
     final c = widget.capsule;
     final screenSize = MediaQuery.sizeOf(context);
+    final dialogSize = capsuleLoadDialogSize(screenSize);
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(
-                    Icons.download_rounded,
-                    size: 20,
-                    color: CcColors.accent,
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    '载入胶囊',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: '关闭',
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    onPressed: () => Navigator.of(context).pop(),
+        constraints: BoxConstraints(
+          maxWidth: dialogSize.width,
+          maxHeight: dialogSize.height,
+        ),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.download_rounded,
+                      size: 20,
+                      color: CcColors.accent,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      '载入胶囊',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: '关闭',
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  c.headline.isEmpty ? '(无说明)' : c.headline,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 12, color: CcColors.subtle),
+                ),
+                if (_bundledSkills != null && _bundledSkills!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _sectionLabel('自带技能'),
+                  _skillWrap(_bundledSkills!),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '起会话时自动装到本机 ${skillsDirLabel(_tool)}/',
+                      style: CcType.code(size: 11, color: CcColors.subtle),
+                    ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                c.headline.isEmpty ? '(无说明)' : c.headline,
-                style: CcType.code(size: 12, color: CcColors.subtle),
-              ),
-              if (_bundledSkills != null && _bundledSkills!.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _sectionLabel('自带技能'),
-                _skillWrap(_bundledSkills!),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '起会话时自动装到本机 ${skillsDirLabel(_tool)}/',
-                    style: CcType.code(size: 11, color: CcColors.subtle),
+                const SizedBox(height: 14),
+                _sectionLabel('形态'),
+                SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment(
+                      value: 'role',
+                      enabled: c.hasPersona,
+                      label: const Text('② 蒸馏角色'),
+                    ),
+                    ButtonSegment(
+                      value: 'snapshot',
+                      enabled: c.hasTranscript,
+                      label: const Text('① 完整快照'),
+                    ),
+                  ],
+                  selected: {_form},
+                  onSelectionChanged: (s) => setState(() => _form = s.first),
+                ),
+                if (_form == 'snapshot')
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _wouldNativeResume
+                          ? '同工具:拉原始日志到本地,原样 --resume(项目根,忽略 worktree 分支)'
+                          : '跨工具:以中性转录作上下文 seed 起新会话',
+                      style: CcType.code(size: 11, color: CcColors.subtle),
+                    ),
                   ),
+                const SizedBox(height: 12),
+                _sectionLabel('目标工具'),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'claude', label: Text('Claude')),
+                    ButtonSegment(value: 'codex', label: Text('Codex')),
+                  ],
+                  selected: {_tool},
+                  onSelectionChanged: (s) => setState(() => _tool = s.first),
+                ),
+                const SizedBox(height: 12),
+                _sectionLabel('目标位置'),
+                DropdownButton<String>(
+                  isExpanded: true,
+                  menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
+                  hint: const Text('workspace'),
+                  value: _workspace,
+                  items: _nameItems(widget.config.workspaces),
+                  onChanged: (v) => setState(() {
+                    _workspace = v;
+                    final p = _projects;
+                    _project = p.isEmpty ? null : p.first.name;
+                  }),
+                ),
+                const SizedBox(height: 8),
+                DropdownButton<String>(
+                  isExpanded: true,
+                  menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
+                  hint: const Text('project'),
+                  value: _project,
+                  items: _nameItems(_projects),
+                  onChanged: (v) => setState(() => _project = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _branchCtl,
+                  decoration: const InputDecoration(
+                    labelText: '新建 worktree 分支名(可选)',
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
+                      child: const Text('取消'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _submitting ? null : _submit,
+                      icon: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.rocket_launch_rounded, size: 16),
+                      label: const Text('起会话'),
+                    ),
+                  ],
                 ),
               ],
-              const SizedBox(height: 14),
-              _sectionLabel('形态'),
-              SegmentedButton<String>(
-                segments: [
-                  ButtonSegment(
-                    value: 'role',
-                    enabled: c.hasPersona,
-                    label: const Text('② 蒸馏角色'),
-                  ),
-                  ButtonSegment(
-                    value: 'snapshot',
-                    enabled: c.hasTranscript,
-                    label: const Text('① 完整快照'),
-                  ),
-                ],
-                selected: {_form},
-                onSelectionChanged: (s) => setState(() => _form = s.first),
-              ),
-              if (_form == 'snapshot')
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    _wouldNativeResume
-                        ? '同工具:拉原始日志到本地,原样 --resume(项目根,忽略 worktree 分支)'
-                        : '跨工具:以中性转录作上下文 seed 起新会话',
-                    style: CcType.code(size: 11, color: CcColors.subtle),
-                  ),
-                ),
-              const SizedBox(height: 12),
-              _sectionLabel('目标工具'),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'claude', label: Text('Claude')),
-                  ButtonSegment(value: 'codex', label: Text('Codex')),
-                ],
-                selected: {_tool},
-                onSelectionChanged: (s) => setState(() => _tool = s.first),
-              ),
-              const SizedBox(height: 12),
-              _sectionLabel('目标位置'),
-              DropdownButton<String>(
-                isExpanded: true,
-                menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
-                hint: const Text('workspace'),
-                value: _workspace,
-                items: _nameItems(widget.config.workspaces),
-                onChanged: (v) => setState(() {
-                  _workspace = v;
-                  final p = _projects;
-                  _project = p.isEmpty ? null : p.first.name;
-                }),
-              ),
-              const SizedBox(height: 8),
-              DropdownButton<String>(
-                isExpanded: true,
-                menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
-                hint: const Text('project'),
-                value: _project,
-                items: _nameItems(_projects),
-                onChanged: (v) => setState(() => _project = v),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _branchCtl,
-                decoration: const InputDecoration(
-                  labelText: '新建 worktree 分支名(可选)',
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: _submitting
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: _submitting ? null : _submit,
-                    icon: _submitting
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.rocket_launch_rounded, size: 16),
-                    label: const Text('起会话'),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         ),
       ),

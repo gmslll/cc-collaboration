@@ -65,6 +65,12 @@ void main() {
     expect(capsuleLoadMenuMaxHeight(const Size(320, 220)), 160);
   });
 
+  test('capsule load dialog size fits compact screens', () {
+    expect(capsuleLoadDialogSize(const Size(1200, 900)), const Size(480, 720));
+    expect(capsuleLoadDialogSize(const Size(360, 420)), const Size(328, 372));
+    expect(capsuleLoadDialogSize(const Size(220, 220)), const Size(188, 172));
+  });
+
   test('capsule delete dialog width fits compact screens', () {
     expect(capsuleDeleteDialogWidth(const Size(1200, 900)), 420);
     expect(capsuleDeleteDialogWidth(const Size(320, 700)), 288);
@@ -141,6 +147,24 @@ void main() {
     expect(loadDialog, contains('if (!mounted || !widget.isCurrentContext())'));
     expect(editDialog, contains('required this.isCurrentContext'));
     expect(editDialog, contains('if (!mounted || !widget.isCurrentContext())'));
+  });
+
+  test('capsule load dialog uses viewport based bounds', () {
+    final source = File(
+      'lib/screens/capsule_plaza_page.dart',
+    ).readAsStringSync();
+    final loadDialog = source.substring(
+      source.indexOf('class _CapsuleLoadDialogState'),
+      source.indexOf('// bundledSkillNames lists'),
+    );
+
+    expect(loadDialog, contains('capsuleLoadDialogSize'));
+    expect(loadDialog, contains('MediaQuery.sizeOf(context)'));
+    expect(loadDialog, contains('insetPadding: const EdgeInsets.symmetric'));
+    expect(loadDialog, contains('SingleChildScrollView'));
+    expect(loadDialog, contains('maxLines: 2'));
+    expect(loadDialog, contains('overflow: TextOverflow.ellipsis'));
+    expect(loadDialog, isNot(contains('maxWidth: 480')));
   });
 
   test('capsule load forwards selected relay project id to local spawn', () {
