@@ -680,6 +680,47 @@ void main() {
     expect(title.overflow, TextOverflow.ellipsis);
   });
 
+  testWidgets('member assignment load error is clamped on compact screens', (
+    tester,
+  ) async {
+    final client = _ThrowingMemberLoadClient();
+    final store = TodoStore()
+      ..debugSetClient(client)
+      ..all = [client.teamTodo];
+
+    await tester.binding.setSurfaceSize(const Size(320, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: TodosPage(
+            client: client,
+            config: _config(),
+            me: _me(),
+            store: store,
+            overviewStore: SessionOverviewStore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('团队'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Team todo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('指派'));
+    await tester.pumpAndSettle();
+
+    final error = tester.widget<Text>(find.textContaining('加载成员失败'));
+
+    expect(tester.takeException(), isNull);
+    expect(error.maxLines, 3);
+    expect(error.overflow, TextOverflow.ellipsis);
+  });
+
   testWidgets('new session assignment dispatch failure stays unassigned', (
     tester,
   ) async {
@@ -1236,6 +1277,16 @@ class _DelayedDeleteTodoClient extends _DelayedAssignTodoClient {
 
   void completeDelete() {
     _deleteCompleter.complete();
+  }
+}
+
+class _ThrowingMemberLoadClient extends _DelayedAssignTodoClient {
+  @override
+  Future<ProjectDetail> project(String id) {
+    throw StateError(
+      'team-member-load-failed-with-a-very-long-unbroken-relay-error-message-'
+      'that-should-not-stretch-the-assignment-dialog-on-compact-screens',
+    );
   }
 }
 

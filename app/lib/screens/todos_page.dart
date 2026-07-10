@@ -3124,8 +3124,12 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     // onlineUsers is best-effort (dot only). project() is load-bearing for team
     // todos; organization() is best-effort so older relays still show direct
     // project members.
-    final onlineF = client.onlineUsers().catchError((_) => <OnlineUser>[]);
-    final detailF = pid.isEmpty ? Future.value(null) : client.project(pid);
+    final onlineF = Future.sync(
+      client.onlineUsers,
+    ).catchError((_) => <OnlineUser>[]);
+    final detailF = pid.isEmpty
+        ? Future<ProjectDetail?>.value(null)
+        : Future<ProjectDetail?>.sync(() => client.project(pid));
 
     final ProjectDetail? detail;
     try {
@@ -3142,10 +3146,9 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     if (!_isCurrentMemberLoad(generation, client, todo, self)) return;
     final projectMembers = detail?.members ?? const <ProjectMember>[];
     final orgMembers = detail?.project.orgId.isNotEmpty == true
-        ? await client
-              .organization(detail!.project.orgId)
-              .then((d) => d.members)
-              .catchError((_) => <OrganizationMember>[])
+        ? await Future.sync(
+            () => client.organization(detail!.project.orgId),
+          ).then((d) => d.members).catchError((_) => <OrganizationMember>[])
         : const <OrganizationMember>[];
     if (!_isCurrentMemberLoad(generation, client, todo, self)) return;
 
@@ -3244,6 +3247,8 @@ class _AssignTodoDialogState extends State<_AssignTodoDialog> {
     if (_membersError != null) {
       return Text(
         '加载成员失败: $_membersError',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(color: CcColors.muted),
       );
     }
