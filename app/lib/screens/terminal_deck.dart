@@ -277,6 +277,13 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   // freshly launched agent is visible even if the bottom was showing Git.
   void Function()? onTermAdded;
 
+  // onTermClosed fires only for a REAL session close (closeTerm and every bulk
+  // close path routed through _closeTermsWhere). It deliberately does not fire
+  // for closeTermView (hide-only) or disposeTerms (app shutdown: sessions remain
+  // persisted for restore). WorkspacePage uses it to reclaim this sid's
+  // local-bus cache; supervisor kill reuses closeTerm and therefore lands here.
+  void Function(String sessionId)? onTermClosed;
+
   // onAgentDone fires when an agent session finishes a turn (see
   // TerminalSession.onDone). The mixin already pops the desktop banner; a host
   // that can reach further (the workspace, via RemoteHost) sets this to also
@@ -383,9 +390,11 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
   }
 
   void closeTerm(int i) {
-    _hiddenTabs.remove(terms[i].id);
-    _removeSessionFromPane(terms[i].id);
-    terms[i].dispose();
+    if (i < 0 || i >= terms.length) return;
+    final closed = terms[i];
+    _hiddenTabs.remove(closed.id);
+    _removeSessionFromPane(closed.id);
+    closed.dispose();
     setState(() {
       terms.removeAt(i);
       if (activeTerm >= terms.length) {
@@ -393,6 +402,7 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       }
     });
     onTermsChanged?.call();
+    onTermClosed?.call(closed.id);
     _activeChanged();
     unawaited(_save());
   }
@@ -513,6 +523,9 @@ mixin TerminalHost<T extends StatefulWidget> on State<T> {
       }
     });
     onTermsChanged?.call();
+    for (final s in toClose) {
+      onTermClosed?.call(s.id);
+    }
     _activeChanged();
     unawaited(_save());
   }

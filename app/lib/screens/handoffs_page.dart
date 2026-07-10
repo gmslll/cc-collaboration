@@ -7,6 +7,7 @@ import '../api/models.dart';
 import '../api/relay_client.dart';
 import '../api/sse.dart';
 import '../local/config.dart';
+import '../local/local_bus.dart';
 import '../local/prefs.dart';
 import '../notifications.dart';
 import '../theme.dart';
@@ -77,6 +78,9 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   double _listWidth = Prefs.getDouble('inbox.listWidth', def: 340);
   double _termWidth = Prefs.getDouble('inbox.termWidth', def: 560);
   final _detailKey = GlobalKey<HandoffDetailViewState>();
+  late final LocalBus _localBusArtifacts = LocalBus.artifactCleanup(
+    registry: localBusRegistry,
+  );
 
   RelayClient get _client => widget.client;
   AppConfig get _cfg => widget.config;
@@ -84,6 +88,12 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   @override
   void initState() {
     super.initState();
+    // This page does not own the bus watcher/registry publisher, but pickup
+    // terminals still create hook artifacts. Route every real close through the
+    // same guarded cleanup as WorkspacePage; hide/app-dispose remain untouched.
+    onTermClosed = (sid) {
+      unawaited(_localBusArtifacts.cleanupSessionArtifacts(sid));
+    };
     _refresh();
     _loadOnline();
     _connectEvents();
@@ -184,6 +194,7 @@ class _HandoffsPageState extends State<HandoffsPage> with TerminalHost {
   @override
   void dispose() {
     _sse?.cancel();
+    _localBusArtifacts.dispose();
     disposeTerms();
     super.dispose();
   }

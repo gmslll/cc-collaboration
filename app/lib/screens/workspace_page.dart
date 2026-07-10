@@ -1339,6 +1339,12 @@ class _WorkspacePageState extends State<WorkspacePage>
       _publishOverview(); // membership changed → refresh the 会话总览 snapshot
       unawaited(_refreshAllPreviews()); // pull a preview for any new session
     };
+    // A real close (including supervisor kill and bulk close) removes only this
+    // sid's local-bus cache. Hide-only tab closes and app shutdown do not fire
+    // this hook because those sessions remain live/persisted for restoration.
+    onTermClosed = (sid) {
+      unawaited(_localBus.cleanupSessionArtifacts(sid));
+    };
     // A session's busy state flipped (turn start/finish) → keep the overview's
     // 思考中/待 review state live on both the desktop page and connected phones.
     onAgentBusyChanged = (s) {
@@ -1489,7 +1495,6 @@ class _WorkspacePageState extends State<WorkspacePage>
       if (mounted) setState(() => _listening = v);
     };
     _voice.init();
-    _localBus.start();
     _hookActivityTicker = Timer.periodic(
       const Duration(seconds: 1),
       (_) => _publishHookActivities(),
@@ -1508,14 +1513,21 @@ class _WorkspacePageState extends State<WorkspacePage>
     PluginManager.instance.detectAll();
     PluginManager.instance.addListener(_onPluginsChanged);
     _loadTasks();
+    // Restore persisted tabs before LocalBus publishes sessions.json or runs its
+    // startup orphan prune. Starting the bus against the initial empty `terms`
+    // list would briefly declare old-but-restorable tabs orphaned and could
+    // delete their cache before restoreTerms had a chance to protect them.
+    unawaited(_restoreTermsThenStartLocalBus());
+  }
+
+  Future<void> _restoreTermsThenStartLocalBus() async {
+    await restoreTerms();
+    if (!mounted) return;
+    await _localBus.start();
+    if (!mounted) return;
     // After restoring persisted sessions, expand the projects that own them so
     // the session tabs are visible in the tree.
-    restoreTerms().then((_) {
-      if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _expandWithSessions(),
-      );
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _expandWithSessions());
   }
 
   ExpansibleController _ctlFor(String path) =>

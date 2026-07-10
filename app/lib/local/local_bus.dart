@@ -143,6 +143,9 @@ class LocalMsg {
 // host only: exactly one bus may watch the outbox, else a message is delivered
 // twice.
 class LocalBus {
+  static const Duration orphanTtl = Duration(days: 7);
+  static const Duration _maintenanceInterval = Duration(hours: 6);
+
   // registry returns the live sessions to publish to sessions.json.
   final List<Map<String, dynamic>> Function() registry;
   // deliver routes a message into the target session; returns null on success
@@ -188,6 +191,9 @@ class LocalBus {
   // Returns null on success or an error (unknown/ambiguous target, self-kill,
   // supervisor target) → <id>.err.
   final String? Function(String from, String to) kill;
+  // Tests pass a throwaway directory so lifecycle cleanup can be exercised
+  // without ever touching the user's live ~/.config/cc-handoff/local-bus.
+  final String? busDirectory;
 
   LocalBus({
     required this.registry,
@@ -196,14 +202,36 @@ class LocalBus {
     required this.readUsage,
     required this.spawn,
     required this.kill,
+    this.busDirectory,
   });
+
+  // Secondary TerminalHost surfaces (currently the handoff inbox) do not own
+  // the outbox watcher or sessions.json publisher, but their real-close paths
+  // still need the exact same artifact cleanup. This factory supplies inert bus
+  // callbacks so those hosts can call cleanupSessionArtifacts without starting
+  // a second LocalBus watcher.
+  factory LocalBus.artifactCleanup({
+    required List<Map<String, dynamic>> Function() registry,
+    String? busDirectory,
+  }) => LocalBus(
+    registry: registry,
+    deliver: (_) => 'artifact-cleanup-only bus',
+    readOutput: (_, _, _, _) async => 'artifact-cleanup-only bus',
+    readUsage: (_, _) async => 'artifact-cleanup-only bus',
+    spawn: (_, _, _, _, _, _) async => 'artifact-cleanup-only bus',
+    kill: (_, _) => 'artifact-cleanup-only bus',
+    busDirectory: busDirectory,
+  );
 
   StreamSubscription<FileSystemEvent>? _watch;
   Timer? _sweep;
+  Timer? _maintenanceSweep;
   final Set<String> _processing = {};
   bool _started = false;
+  bool _maintenanceRunning = false;
+  Future<void> _registryWrites = Future<void>.value();
 
-  String get _dir => localBusDir();
+  String get _dir => busDirectory ?? localBusDir();
   String get _outbox => '$_dir/outbox';
   String get _sessionsFile => '$_dir/sessions.json';
 
@@ -215,7 +243,11 @@ class LocalBus {
       // 700 so another local user can't drop forged messages into the outbox.
       await _chmod700([_dir, _outbox]);
       await syncRegistry();
+      if (!_started) return;
+      await runMaintenance();
+      if (!_started) return;
       await _drainExisting(); // messages left from before we started watching
+      if (!_started) return;
       _watch = Directory(_outbox).watch().listen(_onEvent, onError: (_) {});
       // Backstop for the watcher: FSEvents can coalesce or drop events under
       // load, and the watch stream can die silently. A low-frequency sweep
@@ -225,6 +257,14 @@ class LocalBus {
       _sweep = Timer.periodic(
         const Duration(seconds: 2),
         (_) => unawaited(_drainExisting()),
+      );
+      // Session artifact pruning is deliberately independent of the 2-second
+      // delivery backstop above: walking every events/sessions/inbox directory
+      // on each outbox sweep would turn a cheap reliability check into constant
+      // disk churn. Startup + every six hours is sufficient for a seven-day TTL.
+      _maintenanceSweep = Timer.periodic(
+        _maintenanceInterval,
+        (_) => unawaited(runMaintenance()),
       );
     } catch (_) {
       // Best-effort: without a watcher, `msg send` simply times out and reports
@@ -242,13 +282,307 @@ class LocalBus {
   // syncRegistry rewrites sessions.json from the live session list. Wire to the
   // host's onTermsChanged so it tracks every add/close/rename. Atomic via a
   // temp-file rename so a concurrent `msg list` never reads a half-written file.
-  Future<void> syncRegistry() async {
-    if (!_started) return;
+  Future<void> syncRegistry() {
+    if (!_started) return Future<void>.value();
+    late final String payload;
     try {
-      final tmp = File('$_sessionsFile.tmp');
-      await tmp.writeAsString(jsonEncode(registry()));
-      await tmp.rename(_sessionsFile);
+      payload = jsonEncode(registry());
+    } catch (_) {
+      return Future<void>.value();
+    }
+    // onTermsChanged/onActiveTermChanged can request overlapping writes. Keep
+    // the atomic tmp+rename sequence serial so one caller cannot rename another
+    // caller's temp file out from under it. cleanupSessionArtifacts awaits this
+    // queue before consulting sessions.json, so a just-closed sid is no longer
+    // mistaken for an active one due to a stale registry snapshot.
+    final write = _registryWrites.then((_) async {
+      try {
+        final tmp = File('$_sessionsFile.tmp');
+        await tmp.writeAsString(payload);
+        await tmp.rename(_sessionsFile);
+      } catch (_) {}
+    });
+    _registryWrites = write;
+    return write;
+  }
+
+  // cleanupSessionArtifacts is the one explicit-close cleanup entry point. It
+  // removes only local-bus cache for [sid]: hook activity events and the
+  // CC_SESSION_ID -> agent-session mapping. A non-empty inbox is durable
+  // delivery state, so it is always retained; an empty inbox directory is safe
+  // to remove. Agent transcripts/rollouts live elsewhere and are never in scope.
+  //
+  // The strict sid grammar makes every path below a single safe child name. A
+  // malformed/traversal sid is rejected before any filesystem operation.
+  Future<bool> cleanupSessionArtifacts(String sid) async {
+    if (!_isSafeSessionId(sid)) return false;
+    await syncRegistry();
+    final active = await _activeSessionIds();
+    if (active.contains(sid)) return false;
+    await _deleteSessionArtifacts(sid);
+    return true;
+  }
+
+  // runMaintenance performs the low-frequency storage pass: prune session
+  // cache whose latest activity is older than seven days, then discard only
+  // stale terminal outbox artifacts (.ok/.err/.taken/tmp). Pending .json
+  // requests are never TTL-deleted.
+  Future<void> runMaintenance({DateTime? now}) async {
+    if (_maintenanceRunning) return;
+    _maintenanceRunning = true;
+    try {
+      await pruneOrphanArtifacts(now: now);
+      await _pruneOutboxArtifacts(now ?? DateTime.now());
+    } finally {
+      _maintenanceRunning = false;
+    }
+  }
+
+  Future<void> pruneOrphanArtifacts({DateTime? now}) async {
+    final cutoffNow = now ?? DateTime.now();
+    await syncRegistry();
+    final active = await _activeSessionIds();
+    final candidates = await _artifactSessionIds();
+    for (final sid in candidates) {
+      if (active.contains(sid)) continue;
+      final lastActivity = await _lastSessionArtifactActivity(sid);
+      if (lastActivity == null) continue; // unknown age: preserve, don't guess
+      if (cutoffNow.difference(lastActivity) <= orphanTtl) continue;
+      // The pass can span many orphan directories. Re-check after the awaits
+      // above so a sid restored/spawned while maintenance was scanning cannot
+      // be deleted from under the newly active session.
+      if ((await _activeSessionIds()).contains(sid)) continue;
+      await _deleteSessionArtifacts(sid);
+    }
+  }
+
+  static final RegExp _safeSessionId = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
+  );
+
+  static bool _isSafeSessionId(String sid) => _safeSessionId.hasMatch(sid);
+
+  Future<Set<String>> _activeSessionIds() async {
+    final out = <String>{};
+    try {
+      for (final session in registry()) {
+        final sid = session['id']?.toString() ?? '';
+        if (_isSafeSessionId(sid)) out.add(sid);
+      }
     } catch (_) {}
+    // Protect the on-disk live registry too. Ordinarily syncRegistry just made
+    // it identical to registry(), but the union is intentionally conservative
+    // if a write failed or another app instance owns a still-active session.
+    try {
+      final decoded = jsonDecode(await File(_sessionsFile).readAsString());
+      if (decoded is List) {
+        for (final session in decoded) {
+          if (session is! Map) continue;
+          final sid = session['id']?.toString() ?? '';
+          if (_isSafeSessionId(sid)) out.add(sid);
+        }
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  Future<Set<String>> _artifactSessionIds() async {
+    final out = <String>{};
+    await _addDirectorySessionIds('$_dir/events', out);
+    await _addDirectorySessionIds('$_dir/inbox', out);
+    final mappings = Directory('$_dir/sessions');
+    try {
+      await for (final entity in mappings.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = _leafName(entity.path);
+        if (!name.endsWith('.json')) continue;
+        final sid = name.substring(0, name.length - '.json'.length);
+        if (_isSafeSessionId(sid)) out.add(sid);
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  Future<void> _addDirectorySessionIds(String root, Set<String> out) async {
+    try {
+      await for (final entity in Directory(root).list(followLinks: false)) {
+        if (entity is! Directory) continue;
+        final sid = _leafName(entity.path);
+        if (_isSafeSessionId(sid)) out.add(sid);
+      }
+    } catch (_) {}
+  }
+
+  String _leafName(String path) {
+    final slash = path.lastIndexOf('/');
+    final backslash = path.lastIndexOf(r'\');
+    return path.substring((slash > backslash ? slash : backslash) + 1);
+  }
+
+  Future<DateTime?> _lastSessionArtifactActivity(String sid) async {
+    if (!_isSafeSessionId(sid)) return null;
+    final times = <DateTime>[];
+    final eventActivity = await _directoryActivity('$_dir/events/$sid');
+    if (eventActivity != null) times.add(eventActivity);
+    final mappingActivity = await _fileActivity('$_dir/sessions/$sid.json');
+    if (mappingActivity != null) times.add(mappingActivity);
+
+    // An inbox marker is real session activity and participates in the TTL.
+    // An already-drained, empty inbox is only a disposable container; its
+    // directory mtime must not keep otherwise-old events alive indefinitely.
+    final inboxActivity = await _directoryActivity(
+      '$_dir/inbox/$sid',
+      includeEmptyDirectory: times.isEmpty,
+    );
+    if (inboxActivity != null) times.add(inboxActivity);
+    if (times.isEmpty) return null;
+    return times.reduce((a, b) => a.isAfter(b) ? a : b);
+  }
+
+  Future<DateTime?> _fileActivity(String path) async {
+    try {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type != FileSystemEntityType.file) return null;
+      return (await File(path).stat()).modified;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<DateTime?> _directoryActivity(
+    String path, {
+    bool includeEmptyDirectory = true,
+  }) async {
+    try {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type != FileSystemEntityType.directory) return null;
+      DateTime? latest;
+      await for (final entity in Directory(path).list(followLinks: false)) {
+        final entityType = await FileSystemEntity.type(
+          entity.path,
+          followLinks: false,
+        );
+        if (entityType != FileSystemEntityType.file &&
+            entityType != FileSystemEntityType.directory) {
+          continue;
+        }
+        try {
+          final modified = (await entity.stat()).modified;
+          if (latest == null || modified.isAfter(latest)) latest = modified;
+        } catch (_) {}
+      }
+      if (latest != null || !includeEmptyDirectory) return latest;
+      return (await Directory(path).stat()).modified;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _deleteSessionArtifacts(String sid) async {
+    if (!_isSafeSessionId(sid)) return;
+    await _deleteDirectoryOrLink('$_dir/events/$sid', recursive: true);
+    await _deleteFileOrLink('$_dir/sessions/$sid.json');
+    await _deleteInboxIfEmpty(sid);
+  }
+
+  Future<void> _deleteDirectoryOrLink(
+    String path, {
+    required bool recursive,
+  }) async {
+    try {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type == FileSystemEntityType.directory) {
+        await Directory(path).delete(recursive: recursive);
+      } else if (type == FileSystemEntityType.link) {
+        await Link(path).delete();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _deleteFileOrLink(String path) async {
+    try {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type == FileSystemEntityType.file) {
+        await File(path).delete();
+      } else if (type == FileSystemEntityType.link) {
+        await Link(path).delete();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _deleteInboxIfEmpty(String sid) async {
+    if (!_isSafeSessionId(sid)) return;
+    final path = '$_dir/inbox/$sid';
+    try {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type == FileSystemEntityType.link) {
+        return; // cannot prove the linked inbox has no pending messages
+      }
+      if (type != FileSystemEntityType.directory) return;
+      final staleLocks = <File>[];
+      await for (final entity in Directory(path).list(followLinks: false)) {
+        if (entity is File && _leafName(entity.path) == '.lock') {
+          final age = DateTime.now().difference((await entity.stat()).modified);
+          if (age <= _inboxLockStaleAfter) {
+            return; // a drainer may still own this inbox
+          }
+          staleLocks.add(entity);
+          continue;
+        }
+        return; // any message/tmp/unknown marker is conservatively pending
+      }
+      for (final lock in staleLocks) {
+        try {
+          await lock.delete();
+        } catch (_) {
+          return;
+        }
+      }
+      // Non-recursive delete closes the check/delete race safely: if a writer
+      // parked a message after the empty scan, deletion fails and the inbox is
+      // retained instead of losing that message.
+      await Directory(path).delete();
+    } catch (_) {}
+  }
+
+  Future<void> _pruneOutboxArtifacts(DateTime now) async {
+    try {
+      await for (final entity in Directory(_outbox).list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = _leafName(entity.path);
+        final requestId = _staleOutboxRequestId(name);
+        if (requestId == null) continue;
+        final modified = (await entity.stat()).modified;
+        if (now.difference(modified) <= orphanTtl) continue;
+        final jsonPath = '$_outbox/$requestId.json';
+        final takenPath = '$_outbox/$requestId.taken';
+        if (_processing.contains(jsonPath) ||
+            await File(jsonPath).exists() ||
+            (name != '$requestId.taken' && await File(takenPath).exists())) {
+          continue; // request is still published or currently claimed
+        }
+        try {
+          await entity.delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  String? _staleOutboxRequestId(String name) {
+    String? id;
+    if (name.startsWith('.') && name.endsWith('.tmp')) {
+      id = name.substring(1, name.length - '.tmp'.length);
+    } else if (name.endsWith('.ok.tmp')) {
+      id = name.substring(0, name.length - '.ok.tmp'.length);
+    } else {
+      for (final suffix in const ['.ok', '.err', '.taken', '.tmp']) {
+        if (name.endsWith(suffix)) {
+          id = name.substring(0, name.length - suffix.length);
+          break;
+        }
+      }
+    }
+    return id != null && _isSafeSessionId(id) ? id : null;
   }
 
   Future<void> _drainExisting() async {
@@ -362,6 +696,8 @@ class LocalBus {
     _watch = null;
     _sweep?.cancel();
     _sweep = null;
+    _maintenanceSweep?.cancel();
+    _maintenanceSweep = null;
     _started = false;
   }
 }

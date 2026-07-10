@@ -66,6 +66,8 @@ void main() {
       await tester.pumpWidget(_Host(key: key));
       final host = key.currentState!;
       final target = TerminalSession('/repo', 'claude', agent: 'claude');
+      String? closedSid;
+      host.onTermClosed = (sid) => closedSid = sid;
       host.terms.add(target);
       expect(host.terms.contains(target), isTrue);
 
@@ -75,6 +77,52 @@ void main() {
       expect(err, isNull);
       expect(host.terms.contains(target), isFalse,
           reason: 'kill removes the session from terms, same as closeTerm');
+      expect(
+        closedSid,
+        target.id,
+        reason: 'kill must enter the explicit-close artifact lifecycle',
+      );
     },
   );
+
+  test('disposeTerms does not report an explicit close', () {
+    final host = _HostState();
+    final target = TerminalSession('/repo', '', agent: '');
+    var closeCount = 0;
+    host.onTermClosed = (_) => closeCount++;
+    host.terms.add(target);
+
+    host.disposeTerms();
+
+    expect(
+      closeCount,
+      0,
+      reason: 'app shutdown preserves sessions for next-launch restore',
+    );
+  });
+
+  testWidgets('bulk real close reports every removed session once', (
+    tester,
+  ) async {
+    final key = GlobalKey<_HostState>();
+    await tester.pumpWidget(_Host(key: key));
+    final host = key.currentState!;
+    final keep = TerminalSession('/repo', '', agent: '');
+    final close1 = TerminalSession('/repo', '', agent: '');
+    final close2 = TerminalSession('/repo', '', agent: '');
+    final closed = <String>[];
+    host.onTermClosed = closed.add;
+    host.terms.addAll([keep, close1, close2]);
+    for (final session in host.terms) {
+      host.debugAssignSessionToPane(session.id);
+    }
+
+    host.closeTermsToRight(0);
+    keep.debugMarkBootSettled();
+    await tester.pump();
+
+    expect(host.terms, [keep]);
+    expect(closed, [close1.id, close2.id]);
+    addTearDown(keep.dispose);
+  });
 }
