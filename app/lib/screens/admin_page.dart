@@ -42,6 +42,7 @@ class _AdminPageState extends State<AdminPage> {
   final _password = TextEditingController();
   bool _newAdmin = false;
   bool _creating = false;
+  bool _showDeleted = false;
   final Set<String> _pendingUserActions = {};
   int _loadGeneration = 0;
 
@@ -64,6 +65,7 @@ class _AdminPageState extends State<AdminPage> {
       _error = null;
       _newAdmin = false;
       _creating = false;
+      _showDeleted = false;
       _pendingUserActions.clear();
     });
     _load();
@@ -78,6 +80,10 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   bool get _canCreateUser => !_creating && _identity.text.trim().isNotEmpty;
+
+  List<User> get _visibleUsers =>
+      _users?.where((user) => user.deleted == _showDeleted).toList() ??
+      const [];
 
   void _onCreateInputChanged() {
     if (mounted) setState(() {});
@@ -217,6 +223,21 @@ class _AdminPageState extends State<AdminPage> {
     return confirmed == true;
   }
 
+  void _markDeleted(User user) {
+    _users = _users
+        ?.map(
+          (candidate) => candidate.identity == user.identity
+              ? User.fromJson({
+                  'identity': candidate.identity,
+                  'display_name': candidate.displayName,
+                  'disabled': true,
+                  'deleted': true,
+                })
+              : candidate,
+        )
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -226,85 +247,108 @@ class _AdminPageState extends State<AdminPage> {
           '系统管理 · 账号',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 16),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '创建账号',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _identity,
-                  decoration: const InputDecoration(
-                    labelText: 'identity(如 alex@frontend)',
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _password,
-                  decoration: const InputDecoration(
-                    labelText: '初始密码(留空自动生成)',
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final optionWidth = adminCreateOptionWidth(
-                      constraints,
-                      220,
-                    );
-                    return Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: optionWidth,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Checkbox(
-                                value: _newAdmin,
-                                onChanged: (v) =>
-                                    setState(() => _newAdmin = v ?? false),
-                              ),
-                              const Flexible(
-                                child: Text(
-                                  '创建为系统管理员',
-                                  key: ValueKey('admin-create-admin-label'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        FilledButton(
-                          onPressed: _canCreateUser ? _create : null,
-                          child: Text(_creating ? '创建中...' : '创建账号'),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ],
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SegmentedButton<bool>(
+            key: const ValueKey('admin-user-view-tabs'),
+            segments: const [
+              ButtonSegment(value: false, label: Text('账号')),
+              ButtonSegment(value: true, label: Text('已删除')),
+            ],
+            selected: {_showDeleted},
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
+            onSelectionChanged: (selected) =>
+                setState(() => _showDeleted = selected.first),
           ),
         ),
+        if (!_showDeleted) ...[
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '创建账号',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _identity,
+                    decoration: const InputDecoration(
+                      labelText: 'identity(如 alex@frontend)',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _password,
+                    decoration: const InputDecoration(
+                      labelText: '初始密码(留空自动生成)',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final optionWidth = adminCreateOptionWidth(
+                        constraints,
+                        220,
+                      );
+                      return Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: optionWidth,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Checkbox(
+                                  value: _newAdmin,
+                                  onChanged: (v) =>
+                                      setState(() => _newAdmin = v ?? false),
+                                ),
+                                const Flexible(
+                                  child: Text(
+                                    '创建为系统管理员',
+                                    key: ValueKey('admin-create-admin-label'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          FilledButton(
+                            onPressed: _canCreateUser ? _create : null,
+                            child: Text(_creating ? '创建中...' : '创建账号'),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         if (_error != null)
           Text(_error!, style: const TextStyle(color: CcColors.danger))
         else if (_users == null)
           const Center(child: CircularProgressIndicator())
+        else if (_visibleUsers.isEmpty)
+          Center(child: Text(_showDeleted ? '没有已删除账号。' : '没有账号。'))
         else
-          ..._users!.map(
+          ..._visibleUsers.map(
             (u) => Card(
               child: ListTile(
                 title: Column(
@@ -388,11 +432,12 @@ class _AdminPageState extends State<AdminPage> {
                             case 'delete':
                               if (await _confirmDelete(u) &&
                                   _isCurrentClient(client)) {
-                                await _act(
-                                  client,
-                                  u.identity,
-                                  (client) => client.deleteUser(u.identity),
-                                );
+                                await _act(client, u.identity, (client) async {
+                                  await client.deleteUser(u.identity);
+                                  if (_isCurrentClient(client)) {
+                                    setState(() => _markDeleted(u));
+                                  }
+                                });
                               }
                           }
                         },

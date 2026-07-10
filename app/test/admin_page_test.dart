@@ -449,8 +449,28 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     client.completeDelete();
+    await tester.pump();
+
+    expect(
+      find.byKey(ValueKey('admin-user-title-$_longAdminIdentity')),
+      findsNothing,
+    );
+    expect(find.text('没有账号。'), findsOneWidget);
+    await tester.tap(find.text('已删除'));
+    await tester.pump();
+    expect(
+      find.byKey(ValueKey('admin-user-title-$_longAdminIdentity')),
+      findsOneWidget,
+    );
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+
+    client.completeReload();
     await tester.pumpAndSettle();
-    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+    expect(
+      find.byKey(ValueKey('admin-user-title-$_longAdminIdentity')),
+      findsOneWidget,
+    );
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -480,18 +500,39 @@ void main() {
     expect(client.deleteCount, 0);
   });
 
-  testWidgets('deleted admin account renders tombstone without actions', (
+  testWidgets('admin defaults to active accounts and switches to tombstones', (
     tester,
   ) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: ccTheme(),
-        home: Scaffold(body: AdminPage(client: _DeletedAdminPageFakeClient())),
+        home: Scaffold(body: AdminPage(client: _MixedAdminPageFakeClient())),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('已删除'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('admin-user-title-active@x')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-user-title-deleted@x')),
+      findsNothing,
+    );
+    expect(find.byType(PopupMenuButton<String>), findsOneWidget);
+
+    await tester.tap(find.text('已删除'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('admin-user-title-active@x')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-user-title-deleted@x')),
+      findsOneWidget,
+    );
+    expect(find.text('创建账号'), findsNothing);
     expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -636,7 +677,15 @@ class _DelayedAdminToggleAdminPageFakeClient extends _AdminPageFakeClient {
 
 class _DelayedDeleteAdminPageFakeClient extends _AdminPageFakeClient {
   final _deleteCompleter = Completer<void>();
+  final _reloadCompleter = Completer<List<User>>();
+  bool _deleted = false;
   int deleteCount = 0;
+
+  @override
+  Future<List<User>> users() {
+    if (_deleted) return _reloadCompleter.future;
+    return super.users();
+  }
 
   @override
   Future<void> deleteUser(String identity) {
@@ -646,14 +695,29 @@ class _DelayedDeleteAdminPageFakeClient extends _AdminPageFakeClient {
 
   void completeDelete() {
     if (!_deleteCompleter.isCompleted) {
+      _deleted = true;
       _deleteCompleter.complete();
+    }
+  }
+
+  void completeReload() {
+    if (!_reloadCompleter.isCompleted) {
+      _reloadCompleter.complete([
+        User.fromJson({
+          'identity': _longAdminIdentity,
+          'display_name': _longAdminDisplayName,
+          'disabled': true,
+          'deleted': true,
+        }),
+      ]);
     }
   }
 }
 
-class _DeletedAdminPageFakeClient extends _AdminPageFakeClient {
+class _MixedAdminPageFakeClient extends _AdminPageFakeClient {
   @override
   Future<List<User>> users() async => [
+    User.fromJson({'identity': 'active@x', 'display_name': 'Active User'}),
     User.fromJson({
       'identity': 'deleted@x',
       'display_name': 'Deleted User',

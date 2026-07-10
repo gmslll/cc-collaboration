@@ -376,6 +376,60 @@ func TestAdminAccountsUIProvidesGuardedDelete(t *testing.T) {
 	}
 }
 
+func TestAdminAccountsUIFiltersTombstoneArchive(t *testing.T) {
+	jsBytes, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	htmlBytes, err := os.ReadFile("ui/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssBytes, err := os.ReadFile("ui/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(jsBytes)
+	html := string(htmlBytes)
+	css := string(cssBytes)
+	for _, want := range []string{
+		`adminUserView: "active"`,
+		`state.adminUserView = button.dataset.adminUserView;`,
+		`const showDeleted = state.adminUserView === "deleted";`,
+		`const visibleUsers = users.filter((u) => Boolean(u.deleted) === showDeleted);`,
+		`els.newUserForm.classList.toggle("hidden", showDeleted);`,
+		`els.usersList.innerHTML = visibleUsers.map((u) => {`,
+		"${u.deleted ? \"\" : `",
+		`? { ...u, is_admin: false, disabled: true, deleted: true }`,
+		`renderUsers(state.adminUsers);`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("relay admin archive UI is missing behavior fragment %q", want)
+		}
+	}
+	for _, want := range []string{
+		`id="admin-user-tabs"`,
+		`data-admin-user-view="active"`,
+		`data-admin-user-view="deleted"`,
+		`role="tab" aria-selected="true">账号</button>`,
+		`role="tab" aria-selected="false">已删除</button>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("relay admin archive UI is missing tab markup %q", want)
+		}
+	}
+	for _, want := range []string{
+		`.admin-user-tabs {`,
+		`display: inline-flex;`,
+		`.admin-user-tab.active {`,
+		`min-height: 28px;`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("relay admin archive UI is missing compact tab style %q", want)
+		}
+	}
+}
+
 func TestOrganizationManageUIProtectsProjectSoleOwners(t *testing.T) {
 	src, err := os.ReadFile("ui/app.js")
 	if err != nil {

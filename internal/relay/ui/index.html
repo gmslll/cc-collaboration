@@ -232,6 +232,10 @@
             <p class="muted">创建账号、设管理员 / 停用、重置密码或删除账号。</p>
           </div>
         </div>
+        <div id="admin-user-tabs" class="admin-user-tabs" role="tablist" aria-label="账号状态">
+          <button type="button" class="admin-user-tab active" data-admin-user-view="active" role="tab" aria-selected="true">账号</button>
+          <button type="button" class="admin-user-tab" data-admin-user-view="deleted" role="tab" aria-selected="false">已删除</button>
+        </div>
         <form id="new-user-form" class="inline-form">
           <input id="new-user-identity" type="text" aria-label="新账号 identity" placeholder="identity（如 alex@frontend）">
           <input id="new-user-password" type="text" aria-label="初始密码（留空自动生成）" placeholder="初始密码（留空自动生成）">

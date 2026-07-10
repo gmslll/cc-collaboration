@@ -29,6 +29,7 @@ const state = {
   promptText: "",
   online: [],
   adminUsers: [],
+  adminUserView: "active",
   pendingUserActions: new Set(),
   workspaces: parseWorkspaces(localStorage.getItem("cc-handoff-workspaces")),
 };
@@ -74,6 +75,7 @@ const els = {
   newTokenLabel: document.querySelector("#new-token-label"),
   tokensList: document.querySelector("#tokens-list"),
   adminPane: document.querySelector("#admin-pane"),
+  adminUserTabs: document.querySelector("#admin-user-tabs"),
   newUserForm: document.querySelector("#new-user-form"),
   newUserIdentity: document.querySelector("#new-user-identity"),
   newUserPassword: document.querySelector("#new-user-password"),
@@ -164,6 +166,12 @@ function wireEvents() {
   els.orgsList.addEventListener("change", onOrganizationsListChange);
   els.tokensList.addEventListener("click", onTokensListClick);
   els.usersList.addEventListener("click", onUsersListClick);
+  els.adminUserTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-admin-user-view]");
+    if (!button) return;
+    state.adminUserView = button.dataset.adminUserView;
+    renderUsers(state.adminUsers);
+  });
 
   els.refreshButton.addEventListener("click", refreshAll);
   els.limitSelect.addEventListener("change", refreshAll);
@@ -939,6 +947,7 @@ async function onConnected(options = {}) {
     authError(err);
     return;
   }
+  state.adminUserView = "active";
   els.authMessage.textContent = `已登录为 ${state.me.identity}`;
   setupRoleTabs();
   setConnectedLabel();
@@ -1678,11 +1687,19 @@ async function loadAdmin() {
 
 function renderUsers(users) {
   state.adminUsers = users;
-  if (!users.length) {
-    els.usersList.innerHTML = `<div class="empty-list">没有账号。</div>`;
+  const showDeleted = state.adminUserView === "deleted";
+  const visibleUsers = users.filter((u) => Boolean(u.deleted) === showDeleted);
+  els.adminUserTabs.querySelectorAll("[data-admin-user-view]").forEach((button) => {
+    const active = button.dataset.adminUserView === state.adminUserView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  els.newUserForm.classList.toggle("hidden", showDeleted);
+  if (!visibleUsers.length) {
+    els.usersList.innerHTML = `<div class="empty-list">${showDeleted ? "没有已删除账号。" : "没有账号。"}</div>`;
     return;
   }
-  els.usersList.innerHTML = users.map((u) => {
+  els.usersList.innerHTML = visibleUsers.map((u) => {
     const pending = state.pendingUserActions.has(u.identity);
     const self = u.identity === state.me?.identity;
     return `
@@ -1733,6 +1750,7 @@ async function onUsersListClick(event) {
       state.adminUsers = state.adminUsers.map((u) => u.identity === id
         ? { ...u, is_admin: false, disabled: true, deleted: true }
         : u);
+      renderUsers(state.adminUsers);
       toast("账号已删除");
     }
     await loadAdmin();
