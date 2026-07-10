@@ -634,6 +634,51 @@ void main() {
     expect(source, isNot(contains('height: 560')));
   });
 
+  test('workspace git history dialog size fits compact screens', () {
+    expect(
+      workspaceGitHistoryDialogSize(
+        const Size(1200, 900),
+        preferredWidth: 1080,
+        preferredHeight: 740,
+      ),
+      const Size(1080, 740),
+    );
+    expect(
+      workspaceGitHistoryDialogSize(
+        const Size(360, 420),
+        preferredWidth: 980,
+        preferredHeight: 720,
+      ),
+      const Size(328, 372),
+    );
+    expect(workspaceGitHistorySidebarWidth(1080), 360);
+    expect(workspaceGitHistorySidebarWidth(328), closeTo(220, 0.001));
+  });
+
+  test('workspace git history dialogs use viewport based bounds', () {
+    final source = File(
+      'lib/screens/workspace/git_history_dialogs.dart',
+    ).readAsStringSync();
+
+    expect(
+      'workspaceGitHistoryDialogSize'.allMatches(source).length,
+      greaterThanOrEqualTo(3),
+    );
+    expect(
+      'insetPadding: const EdgeInsets.symmetric'.allMatches(source).length,
+      greaterThanOrEqualTo(2),
+    );
+    expect(
+      source,
+      contains('workspaceGitHistorySidebarWidth(dialogSize.width)'),
+    );
+    expect(source, isNot(contains('width: 980')));
+    expect(source, isNot(contains('width: 1080')));
+    expect(source, isNot(contains('height: 720')));
+    expect(source, isNot(contains('height: 740')));
+    expect(source, isNot(contains('width: 360,')));
+  });
+
   test('workspace confirm dialog uses responsive long-message content', () {
     final source = File('lib/screens/workspace_page.dart').readAsStringSync();
     final confirmDialog = source.substring(

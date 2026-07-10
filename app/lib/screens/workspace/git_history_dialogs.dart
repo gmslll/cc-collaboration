@@ -1,5 +1,24 @@
 part of '../workspace_page.dart';
 
+Size workspaceGitHistoryDialogSize(
+  Size viewport, {
+  required double preferredWidth,
+  required double preferredHeight,
+}) => Size(
+  workspaceNavigationDialogDimension(viewport.width - 32, preferredWidth),
+  workspaceNavigationDialogDimension(
+    viewport.height - 48,
+    preferredHeight,
+    min: 260,
+  ),
+);
+
+double workspaceGitHistorySidebarWidth(double dialogWidth) {
+  if (!dialogWidth.isFinite || dialogWidth <= 0) return 360;
+  final available = dialogWidth * 0.38;
+  return available.clamp(220, 360).toDouble();
+}
+
 class _BlameDialog extends StatefulWidget {
   final ProjectCfg project;
   final String relPath;
@@ -42,120 +61,129 @@ class _BlameDialogState extends State<_BlameDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
-    child: SizedBox(
-      width: 980,
-      height: 720,
-      child: Column(
-        children: [
-          _DialogHeader(
-            icon: Icons.person_search_rounded,
-            title: 'Annotate · ${widget.relPath}',
-            trailing: [
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                tooltip: '刷新',
-                onPressed: _load,
-              ),
-            ],
-          ),
-          if (_loading) const LinearProgressIndicator(minHeight: 2),
-          Expanded(
-            child: _error != null
-                ? centerMsg(_error!, onRetry: _load)
-                : _lines.isEmpty && !_loading
-                ? centerMsg('没有 blame 信息')
-                : ListView.builder(
-                    itemCount: _lines.length,
-                    itemBuilder: (_, i) {
-                      final l = _lines[i];
-                      final date = l.date.millisecondsSinceEpoch == 0
-                          ? ''
-                          : relativeTime(l.date);
-                      return Container(
-                        decoration: const BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(
-                              color: CcColors.border,
-                              width: 0.5,
+  Widget build(BuildContext context) {
+    final dialogSize = workspaceGitHistoryDialogSize(
+      MediaQuery.sizeOf(context),
+      preferredWidth: 980,
+      preferredHeight: 720,
+    );
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: SizedBox(
+        width: dialogSize.width,
+        height: dialogSize.height,
+        child: Column(
+          children: [
+            _DialogHeader(
+              icon: Icons.person_search_rounded,
+              title: 'Annotate · ${widget.relPath}',
+              trailing: [
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  tooltip: '刷新',
+                  onPressed: _load,
+                ),
+              ],
+            ),
+            if (_loading) const LinearProgressIndicator(minHeight: 2),
+            Expanded(
+              child: _error != null
+                  ? centerMsg(_error!, onRetry: _load)
+                  : _lines.isEmpty && !_loading
+                  ? centerMsg('没有 blame 信息')
+                  : ListView.builder(
+                      itemCount: _lines.length,
+                      itemBuilder: (_, i) {
+                        final l = _lines[i];
+                        final date = l.date.millisecondsSinceEpoch == 0
+                            ? ''
+                            : relativeTime(l.date);
+                        return Container(
+                          decoration: const BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: CcColors.border,
+                                width: 0.5,
+                              ),
                             ),
                           ),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                              width: 58,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 5),
-                                child: Text(
-                                  '${l.line}',
-                                  textAlign: TextAlign.right,
-                                  style: CcType.code(
-                                    size: 11,
-                                    color: CcColors.subtle,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 58,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 5),
+                                  child: Text(
+                                    '${l.line}',
+                                    textAlign: TextAlign.right,
+                                    style: CcType.code(
+                                      size: 11,
+                                      color: CcColors.subtle,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            SizedBox(
-                              width: 220,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 4,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '${l.hash.substring(0, 8)} · ${l.author}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: CcType.code(
-                                        size: 11.5,
-                                        color: CcColors.muted,
+                              const SizedBox(width: 10),
+                              SizedBox(
+                                width: 220,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${l.hash.substring(0, 8)} · ${l.author}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: CcType.code(
+                                          size: 11.5,
+                                          color: CcColors.muted,
+                                        ),
                                       ),
-                                    ),
-                                    Text(
-                                      date.isEmpty
-                                          ? l.summary
-                                          : '$date · ${l.summary}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: CcColors.subtle,
+                                      Text(
+                                        date.isEmpty
+                                            ? l.summary
+                                            : '$date · ${l.summary}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: CcColors.subtle,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  5,
-                                  10,
-                                  5,
-                                ),
-                                child: Text(
-                                  l.content.isEmpty ? ' ' : l.content,
-                                  style: CcType.code(size: 12.5),
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    5,
+                                    10,
+                                    5,
+                                  ),
+                                  child: Text(
+                                    l.content.isEmpty ? ' ' : l.content,
+                                    style: CcType.code(size: 12.5),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _FileHistoryDialog extends StatefulWidget {
@@ -251,43 +279,51 @@ class _FileHistoryDialogState extends State<_FileHistoryDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
-    child: SizedBox(
-      width: 1080,
-      height: 740,
-      child: Column(
-        children: [
-          _DialogHeader(
-            icon: Icons.history_rounded,
-            title: 'File History · ${widget.relPath}',
-            trailing: [
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                tooltip: '刷新',
-                onPressed: _loading ? null : _load,
-              ),
-            ],
-          ),
-          if (_loading) const LinearProgressIndicator(minHeight: 2),
-          Expanded(
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 360,
-                  child: DecoratedBox(
-                    decoration: const BoxDecoration(color: CcColors.panel),
-                    child: _historyList(),
-                  ),
+  Widget build(BuildContext context) {
+    final dialogSize = workspaceGitHistoryDialogSize(
+      MediaQuery.sizeOf(context),
+      preferredWidth: 1080,
+      preferredHeight: 740,
+    );
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: SizedBox(
+        width: dialogSize.width,
+        height: dialogSize.height,
+        child: Column(
+          children: [
+            _DialogHeader(
+              icon: Icons.history_rounded,
+              title: 'File History · ${widget.relPath}',
+              trailing: [
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  tooltip: '刷新',
+                  onPressed: _loading ? null : _load,
                 ),
-                const VerticalDivider(width: 1),
-                Expanded(child: _historyDiff()),
               ],
             ),
-          ),
-        ],
+            if (_loading) const LinearProgressIndicator(minHeight: 2),
+            Expanded(
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: workspaceGitHistorySidebarWidth(dialogSize.width),
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(color: CcColors.panel),
+                      child: _historyList(),
+                    ),
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: _historyDiff()),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _historyList() {
     if (_error != null) return centerMsg(_error!, onRetry: _load);
