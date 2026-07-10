@@ -26,11 +26,14 @@ import (
 // State is in-memory and transient, exactly like the SSE Hub.
 
 type wsConn struct {
-	id     uint64
-	role   string // "host" | "client"
-	send   chan []byte
-	mu     sync.Mutex
-	closed bool
+	id        uint64
+	role      string // "host" | "client"
+	send      chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+	closed    atomic.Bool
+	cancel    context.CancelFunc
+	onClose   func()
 }
 
 type wsBroker struct {
@@ -41,8 +44,19 @@ type wsBroker struct {
 
 func newWsBroker() *wsBroker { return &wsBroker{conns: map[string][]*wsConn{}} }
 
-func (b *wsBroker) add(identity, role string) *wsConn {
-	c := &wsConn{id: b.nextID.Add(1), role: role, send: make(chan []byte, 256)}
+func (b *wsBroker) add(identity, role string, cancels ...context.CancelFunc) *wsConn {
+	var cancel context.CancelFunc
+	if len(cancels) > 0 {
+		cancel = cancels[0]
+	}
+	c := &wsConn{
+		id:     b.nextID.Add(1),
+		role:   role,
+		send:   make(chan []byte, 256),
+		done:   make(chan struct{}),
+		cancel: cancel,
+	}
+	c.onClose = func() { b.detach(identity, c) }
 	b.mu.Lock()
 	b.conns[identity] = append(b.conns[identity], c)
 	b.mu.Unlock()
@@ -50,6 +64,11 @@ func (b *wsBroker) add(identity, role string) *wsConn {
 }
 
 func (b *wsBroker) remove(identity string, c *wsConn) {
+	c.close()
+	b.detach(identity, c)
+}
+
+func (b *wsBroker) detach(identity string, c *wsConn) {
 	b.mu.Lock()
 	list := b.conns[identity]
 	for i, x := range list {
@@ -62,12 +81,19 @@ func (b *wsBroker) remove(identity string, c *wsConn) {
 		delete(b.conns, identity)
 	}
 	b.mu.Unlock()
-	c.mu.Lock()
-	if !c.closed {
-		close(c.send)
-		c.closed = true
-	}
-	c.mu.Unlock()
+}
+
+func (c *wsConn) close() {
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		close(c.done)
+		if c.cancel != nil {
+			c.cancel()
+		}
+		if c.onClose != nil {
+			c.onClose()
+		}
+	})
 }
 
 // peers returns where a frame from `from` should go: the single connection with
@@ -106,17 +132,124 @@ func (b *wsBroker) rolePeers(identity, role string) []*wsConn {
 	return out
 }
 
-// deliver enqueues a frame for a peer, dropping it if the peer is hopelessly
-// behind rather than blocking the sender (one slow phone must not stall a host).
-func deliver(c *wsConn, frame []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return
+// deliverBestEffort is reserved for explicitly disposable frames: Relay PTY
+// output (which gets a reliable route-failure below) and peer presence hints.
+func deliverBestEffort(c *wsConn, frame []byte) bool {
+	if c.closed.Load() {
+		return false
 	}
 	select {
 	case c.send <- frame:
+		return !c.closed.Load()
+	case <-c.done:
+		return false
 	default:
+		return false
+	}
+}
+
+// deliverReliable applies bounded backpressure using the connection's fixed
+// queue. A stuck WebSocket writer has its own 15s write deadline; writer failure
+// closes done, which releases every blocked producer without a goroutine leak.
+func deliverReliable(ctx context.Context, c *wsConn, frame []byte) bool {
+	if c.closed.Load() {
+		return false
+	}
+	select {
+	case c.send <- frame:
+		return !c.closed.Load()
+	case <-c.done:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func frameType(env map[string]json.RawMessage) string {
+	var typ string
+	_ = json.Unmarshal(env["t"], &typ)
+	return typ
+}
+
+func relayOutputFailure(from, to uint64, env map[string]json.RawMessage) []byte {
+	var sid, routeID string
+	_ = json.Unmarshal(env["sid"], &sid)
+	_ = json.Unmarshal(env["routeId"], &routeID)
+	if sid == "" || routeID == "" {
+		return nil
+	}
+	failure, err := json.Marshal(map[string]any{
+		"t":       "term.routeFailed",
+		"from":    from,
+		"to":      to,
+		"sid":     sid,
+		"routeId": routeID,
+		"reason":  "Relay 输出队列已满，请重新载入终端",
+	})
+	if err != nil {
+		return nil
+	}
+	return failure
+}
+
+// deliverApplication keeps all application/control frames reliable except PTY
+// output. If output is dropped, a modern route gets a reliable recovery frame;
+// a legacy route is disconnected so its normal reconnect/history replay heals it.
+func deliverApplication(
+	ctx context.Context,
+	from *wsConn,
+	to *wsConn,
+	frame []byte,
+	env map[string]json.RawMessage,
+) {
+	if frameType(env) != "term.output" {
+		if !deliverReliable(ctx, to, frame) {
+			// Never silently lose an accepted reliable frame. Closing the target
+			// forces its normal reconnect/resync path if the sender/server context
+			// ended while backpressured.
+			to.close()
+		}
+		return
+	}
+	if deliverBestEffort(to, frame) {
+		return
+	}
+	failure := relayOutputFailure(from.id, to.id, env)
+	if failure == nil {
+		to.close()
+		return
+	}
+	// Recovery belongs to the recipient route once the dropped frame was
+	// accepted by the broker. Do not let a sender disconnect cancel this final
+	// signal; the recipient's done channel still bounds/unblocks the enqueue.
+	if !deliverReliable(context.Background(), to, failure) {
+		to.close()
+	}
+}
+
+func pumpWSWriter(
+	ctx context.Context,
+	c *wsConn,
+	write func(context.Context, []byte) error,
+) {
+	defer c.close()
+	for {
+		select {
+		case frame := <-c.send:
+			if c.closed.Load() {
+				return
+			}
+			wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err := write(wctx, frame)
+			cancel()
+			if err != nil {
+				return
+			}
+		case <-c.done:
+			return
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -149,29 +282,22 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer conn.CloseNow()
 	conn.SetReadLimit(8 << 20) // allow large terminal / file-read frames
 
-	c := s.WsBroker.add(identity, role)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	c := s.WsBroker.add(identity, role, cancel)
 	defer s.WsBroker.remove(identity, c)
-
-	ctx := r.Context()
 
 	// Hand the device its own connId, then tell the opposite role a peer joined
 	// (so a host learns its clients' connIds for directed replies).
 	if hello, err := json.Marshal(map[string]any{"t": "_hello", "connId": c.id, "role": role}); err == nil {
-		deliver(c, hello)
+		deliverReliable(ctx, c, hello)
 	}
 	s.wsNotifyPeers(identity, c, "connect")
 	defer s.wsNotifyPeers(identity, c, "disconnect")
 
-	go func() {
-		for frame := range c.send {
-			wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			err := conn.Write(wctx, websocket.MessageText, frame)
-			cancel()
-			if err != nil {
-				return
-			}
-		}
-	}()
+	go pumpWSWriter(ctx, c, func(wctx context.Context, frame []byte) error {
+		return conn.Write(wctx, websocket.MessageText, frame)
+	})
 
 	for {
 		typ, data, err := conn.Read(ctx)
@@ -207,7 +333,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, p := range s.WsBroker.peers(identity, c, to) {
-			deliver(p, stamped)
+			deliverApplication(ctx, c, p, stamped, env)
 		}
 	}
 }
@@ -224,6 +350,6 @@ func (s *Server) wsNotifyPeers(identity string, c *wsConn, event string) {
 		return
 	}
 	for _, p := range s.WsBroker.rolePeers(identity, other) {
-		deliver(p, note)
+		deliverBestEffort(p, note)
 	}
 }
