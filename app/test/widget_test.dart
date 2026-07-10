@@ -2631,4 +2631,26 @@ void main() {
       await dir.delete(recursive: true);
     }
   });
+
+  test('RepoConfig omits legacy identity when empty', () async {
+    final dir = await Directory.systemTemp.createTemp('repocfg-empty-identity');
+    try {
+      final c = RepoConfig(
+        raw: const {
+          'identity': {'partner': 'old@legacy'},
+        },
+        base: 'origin/main',
+        autoLaunch: false,
+      );
+      await c.save(dir.path);
+      final toml = await File('${dir.path}/.cc-handoff.toml').readAsString();
+      expect(toml, isNot(contains('[identity]')));
+      final back = await RepoConfig.load(dir.path);
+      expect(back.me, isEmpty);
+      expect(back.partner, isEmpty);
+      expect(back.partners, isEmpty);
+    } finally {
+      await dir.delete(recursive: true);
+    }
+  });
 }

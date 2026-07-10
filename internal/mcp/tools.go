@@ -603,9 +603,9 @@ func resolveRecipientRole(role string, res *config.Resolved) (string, error) {
 		}
 	}
 	if strings.EqualFold(res.Me, role) || identityMatchesRole(res.Me, role) {
-		return "", fmt.Errorf("role %q resolves to yourself (%s); pass the real recipient identity or update identity.partners", role, res.Me)
+		return "", fmt.Errorf("role %q resolves to yourself (%s); pass the real recipient identity or update legacy identity.partners", role, res.Me)
 	}
-	return "", fmt.Errorf("cannot resolve role %q to a recipient identity; pass the real identity (e.g. alex@frontend) or set identity.partners in .cc-handoff.toml", role)
+	return "", fmt.Errorf("cannot resolve role %q to a recipient identity; pass the real identity (e.g. alex@frontend) or set legacy identity.partners in .cc-handoff.toml", role)
 }
 
 func identityMatchesRole(identity, role string) bool {
