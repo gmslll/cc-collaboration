@@ -222,6 +222,11 @@ func (s *Store) AddOrganizationMember(ctx context.Context, orgID, identity, role
 			return err
 		}
 	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM invitations WHERE scope = ? AND org_id = ? AND project_id = '' AND identity = ?`,
+		InvitationScopeOrg, orgID, identity); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -264,6 +269,11 @@ func (s *Store) RemoveOrganizationMember(ctx context.Context, orgID, identity st
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM invitations WHERE org_id = ? AND identity = ?`,
+		orgID, identity); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

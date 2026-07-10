@@ -140,21 +140,189 @@ func TestAcceptProjectInvitationDoesNotDemoteExistingOwner(t *testing.T) {
 	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "Backend", "owner@x", now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateProjectInvitation(ctx, "project-inv", "p1", "dev@x", RoleMember, "owner@x", now); err != nil {
-		t.Fatal(err)
-	}
 	if err := st.AddOrganizationMember(ctx, "org1", "dev@x", OrgRoleMember); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AddMember(ctx, "p1", "dev@x", RoleOwner); err != nil {
 		t.Fatal(err)
 	}
+	insertProjectInvitationForTest(t, st, "project-inv", "org1", "p1", "dev@x", RoleMember, now)
 
 	if err := st.AcceptInvitation(ctx, "project-inv", "dev@x"); err != nil {
 		t.Fatal(err)
 	}
 	if role, ok, err := st.MemberRole(ctx, "p1", "dev@x"); err != nil || !ok || role != RoleOwner {
 		t.Fatalf("project owner should not be demoted by stale invite: role=%q ok=%v err=%v", role, ok, err)
+	}
+}
+
+func TestAcceptInvitationDoesNotDemoteExistingHigherRole(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "Backend", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "dev@x", OrgRoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "dev@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	insertOrganizationInvitationForTest(t, st, "org-inv", "org1", "dev@x", OrgRoleMember, now)
+	insertProjectInvitationForTest(t, st, "project-inv", "org1", "p1", "dev@x", RoleViewer, now)
+
+	if err := st.AcceptInvitation(ctx, "org-inv", "dev@x"); err != nil {
+		t.Fatal(err)
+	}
+	if role, ok, err := st.OrganizationMemberRole(ctx, "org1", "dev@x"); err != nil || !ok || role != OrgRoleAdmin {
+		t.Fatalf("organization admin should not be demoted by stale invite: role=%q ok=%v err=%v", role, ok, err)
+	}
+	if err := st.AcceptInvitation(ctx, "project-inv", "dev@x"); err != nil {
+		t.Fatal(err)
+	}
+	if role, ok, err := st.MemberRole(ctx, "p1", "dev@x"); err != nil || !ok || role != RoleMember {
+		t.Fatalf("project member should not be demoted by stale invite: role=%q ok=%v err=%v", role, ok, err)
+	}
+	if role, ok, err := st.OrganizationMemberRole(ctx, "org1", "dev@x"); err != nil || !ok || role != OrgRoleAdmin {
+		t.Fatalf("project invite should preserve higher organization role: role=%q ok=%v err=%v", role, ok, err)
+	}
+}
+
+func TestManualOrganizationAddRemovesPendingOrganizationInvitation(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateOrganizationInvitation(ctx, "org-inv", "org1", "dev@x", OrgRoleMember, "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.AddOrganizationMember(ctx, "org1", "dev@x", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.ListInvitationsForIdentity(ctx, "dev@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("manual organization add left pending invitation: %+v", pending)
+	}
+}
+
+func TestManualProjectAddRemovesPendingProjectInvitation(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "Backend", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateProjectInvitation(ctx, "project-inv", "p1", "dev@x", RoleMember, "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.AddMember(ctx, "p1", "dev@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.ListInvitationsForIdentity(ctx, "dev@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("manual project add left pending invitation: %+v", pending)
+	}
+}
+
+func TestRemoveOrganizationMemberRemovesPendingInvitationsInTeam(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "Backend", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "dev@x", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateProjectInvitation(ctx, "project-inv", "p1", "dev@x", RoleMember, "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.RemoveOrganizationMember(ctx, "org1", "dev@x"); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.ListInvitationsForIdentity(ctx, "dev@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("removed organization member left pending invitation: %+v", pending)
+	}
+}
+
+func TestRemoveProjectMemberRemovesPendingProjectInvitation(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "p1", "org1", "Backend", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org1", "dev@x", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "p1", "dev@x", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	insertProjectInvitationForTest(t, st, "project-inv", "org1", "p1", "dev@x", RoleViewer, now)
+
+	if err := st.RemoveMember(ctx, "p1", "dev@x"); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.ListInvitationsForIdentity(ctx, "dev@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("removed project member left pending invitation: %+v", pending)
+	}
+}
+
+func TestSetDisabledRemovesPendingInvitations(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := st.CreateUser(ctx, User{Identity: "dev@x"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org1", "Acme", "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateOrganizationInvitation(ctx, "org-inv", "org1", "dev@x", OrgRoleMember, "owner@x", now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.SetDisabled(ctx, "dev@x", true); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.ListInvitationsForIdentity(ctx, "dev@x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("disabled user still has pending invitation: %+v", pending)
 	}
 }
 
@@ -257,5 +425,25 @@ func TestAcceptInvitationRemovesMissingProjectInvitation(t *testing.T) {
 	}
 	if len(pending) != 0 {
 		t.Fatalf("missing project invitation still pending: %+v", pending)
+	}
+}
+
+func insertOrganizationInvitationForTest(t *testing.T, st *Store, id, orgID, identity, role string, now time.Time) {
+	t.Helper()
+	if _, err := st.db.ExecContext(context.Background(),
+		`INSERT INTO invitations(id, scope, org_id, project_id, identity, role, inviter_identity, created_at)
+		 VALUES(?, ?, ?, '', ?, ?, ?, ?)`,
+		id, InvitationScopeOrg, orgID, identity, role, "owner@x", now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertProjectInvitationForTest(t *testing.T, st *Store, id, orgID, projectID, identity, role string, now time.Time) {
+	t.Helper()
+	if _, err := st.db.ExecContext(context.Background(),
+		`INSERT INTO invitations(id, scope, org_id, project_id, identity, role, inviter_identity, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, InvitationScopeProject, orgID, projectID, identity, role, "owner@x", now.UnixMilli()); err != nil {
+		t.Fatal(err)
 	}
 }

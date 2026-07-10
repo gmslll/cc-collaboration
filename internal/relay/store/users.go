@@ -195,6 +195,9 @@ func (s *Store) SetDisabled(ctx context.Context, identity string, disabled bool)
 		if _, err := tx.ExecContext(ctx, `DELETE FROM machine_tokens WHERE identity = ?`, identity); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM invitations WHERE identity = ?`, identity); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

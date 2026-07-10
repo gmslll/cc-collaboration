@@ -351,6 +351,11 @@ func (s *Store) AddMember(ctx context.Context, projectID, identity, role string)
 			return err
 		}
 	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM invitations WHERE scope = ? AND project_id = ? AND identity = ?`,
+		InvitationScopeProject, projectID, identity); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -390,6 +395,11 @@ func (s *Store) RemoveMember(ctx context.Context, projectID, identity string) er
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM invitations WHERE scope = ? AND project_id = ? AND identity = ?`,
+		InvitationScopeProject, projectID, identity); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

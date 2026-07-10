@@ -175,11 +175,14 @@ func (s *Store) AcceptInvitation(ctx context.Context, id, identity string) error
 			}
 			return ErrNotFound
 		}
+		role, err := strongestOrganizationInvitationRole(ctx, tx, inv.OrgID, identity, inv.Role)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
-			 ON CONFLICT(org_id, identity) DO UPDATE SET role =
-			   CASE WHEN organization_members.role = ? THEN organization_members.role ELSE excluded.role END`,
-			inv.OrgID, identity, inv.Role, OrgRoleOwner); err != nil {
+			 ON CONFLICT(org_id, identity) DO UPDATE SET role = excluded.role`,
+			inv.OrgID, identity, role); err != nil {
 			return err
 		}
 	case InvitationScopeProject:
@@ -196,18 +199,24 @@ func (s *Store) AcceptInvitation(ctx context.Context, id, identity string) error
 			}
 			return err
 		}
+		orgRole, err := strongestOrganizationInvitationRole(ctx, tx, orgID, identity, OrgRoleMember)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO organization_members(org_id, identity, role) VALUES(?, ?, ?)
-			 ON CONFLICT(org_id, identity) DO UPDATE SET role =
-			   CASE WHEN organization_members.role = ? THEN organization_members.role ELSE excluded.role END`,
-			orgID, identity, OrgRoleMember, OrgRoleOwner); err != nil {
+			 ON CONFLICT(org_id, identity) DO UPDATE SET role = excluded.role`,
+			orgID, identity, orgRole); err != nil {
+			return err
+		}
+		projectRole, err := strongestProjectInvitationRole(ctx, tx, inv.ProjectID, identity, inv.Role)
+		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO project_members(project_id, identity, role) VALUES(?, ?, ?)
-			 ON CONFLICT(project_id, identity) DO UPDATE SET role =
-			   CASE WHEN project_members.role = ? THEN project_members.role ELSE excluded.role END`,
-			inv.ProjectID, identity, inv.Role, RoleOwner); err != nil {
+			 ON CONFLICT(project_id, identity) DO UPDATE SET role = excluded.role`,
+			inv.ProjectID, identity, projectRole); err != nil {
 			return err
 		}
 	default:
@@ -217,6 +226,66 @@ func (s *Store) AcceptInvitation(ctx context.Context, id, identity string) error
 		return err
 	}
 	return tx.Commit()
+}
+
+func strongestOrganizationInvitationRole(ctx context.Context, tx *sql.Tx, orgID, identity, invitedRole string) (string, error) {
+	var current string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT role FROM organization_members WHERE org_id = ? AND identity = ?`,
+		orgID, identity).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return invitedRole, nil
+		}
+		return "", err
+	}
+	if organizationRoleRank(current) > organizationRoleRank(invitedRole) {
+		return current, nil
+	}
+	return invitedRole, nil
+}
+
+func strongestProjectInvitationRole(ctx context.Context, tx *sql.Tx, projectID, identity, invitedRole string) (string, error) {
+	var current string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT role FROM project_members WHERE project_id = ? AND identity = ?`,
+		projectID, identity).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return invitedRole, nil
+		}
+		return "", err
+	}
+	if projectRoleRank(current) > projectRoleRank(invitedRole) {
+		return current, nil
+	}
+	return invitedRole, nil
+}
+
+func organizationRoleRank(role string) int {
+	switch strings.TrimSpace(role) {
+	case OrgRoleOwner:
+		return 4
+	case OrgRoleAdmin:
+		return 3
+	case OrgRoleMember:
+		return 2
+	case OrgRoleGuest:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func projectRoleRank(role string) int {
+	switch strings.TrimSpace(role) {
+	case RoleOwner:
+		return 3
+	case RoleMember:
+		return 2
+	case RoleViewer:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func organizationExists(ctx context.Context, tx *sql.Tx, orgID string) (bool, error) {
