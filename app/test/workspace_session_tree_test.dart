@@ -88,8 +88,16 @@ void main() {
   });
 
   test('stale pinned ids are pruned only after session restore completes', () {
-    expect(source, contains('restoreTerms().then((_) {'));
-    expect(source, contains('_pruneRestoredSessionPins();'));
+    final restoreFlow = source.substring(
+      source.indexOf('Future<void> _restoreTermsThenStartLocalBus'),
+      source.indexOf('ExpansibleController _ctlFor'),
+    );
+    final restore = restoreFlow.indexOf('await restoreTerms();');
+    final busStart = restoreFlow.indexOf('await _localBus.start();');
+    final prune = restoreFlow.indexOf('_pruneRestoredSessionPins();');
+    expect(restore, greaterThanOrEqualTo(0));
+    expect(busStart, greaterThan(restore));
+    expect(prune, greaterThan(busStart));
     expect(source, isNot(contains('onTermsChanged = () {\n      _prune')));
   });
 
