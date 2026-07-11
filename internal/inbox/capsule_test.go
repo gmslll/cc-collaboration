@@ -23,6 +23,7 @@ func TestMaterializeCapsule(t *testing.T) {
 		Visibility:      handoffschema.CapsulePublic,
 		SourceAgent:     "claude",
 		OriginSessionID: "sess-abc",
+		ProjectID:       "project-1",
 		SummaryMD:       "冻结 windows 闪退会话",
 		TranscriptJSONL: []byte("{}\n"),
 		TranscriptText:  []byte("USER: hi\n"),
@@ -50,7 +51,7 @@ func TestMaterializeCapsule(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("unmarshal manifest: %v", err)
 	}
-	if m.ID != "cap-1" || m.SourceAgent != "claude" || m.Visibility != handoffschema.CapsulePublic {
+	if m.ID != "cap-1" || m.SourceAgent != "claude" || m.Visibility != handoffschema.CapsulePublic || m.ProjectID != "project-1" {
 		t.Errorf("manifest identity mismatch: %+v", m)
 	}
 	if !m.HasTranscript || !m.HasPersona {

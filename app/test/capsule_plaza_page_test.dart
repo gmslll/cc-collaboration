@@ -8,6 +8,7 @@ import 'package:app/local/config.dart';
 import 'package:app/local/session_overview.dart';
 import 'package:app/screens/capsule_plaza_page.dart';
 import 'package:app/theme.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -22,6 +23,9 @@ void main() {
     );
 
     expect(loadDialog, contains('MediaQuery.sizeOf(context)'));
+    expect(loadDialog, contains('onPressed: _submitting'));
+    expect(loadDialog, contains('canPop: !_submitting'));
+    expect(source, contains('barrierDismissible: false'));
     expect(loadDialog, contains('capsuleLoadMenuMaxHeight'));
     expect(loadDialog, isNot(contains('menuMaxHeight: 320')));
     expect(
@@ -214,6 +218,7 @@ void main() {
 
     expect(capsule.summary, 'Legacy capsule');
     expect(capsule.skillPackCount, 0);
+    expect(capsule.projectId, isEmpty);
     expect(capsule.updatedAt, capsule.createdAt);
   });
 
@@ -1022,19 +1027,33 @@ class _DelayedCapsulesClient extends RelayClient {
   }
 
   @override
-  Future<Package> get(String id) async => Package.fromJson({
-    'id': id,
-    'kind': 'capsule',
-    'sender': 'owner@x',
-    'recipient': 'viewer@x',
-    'urgency': 'normal',
-    'summary_md': 'capsule package',
-    'repo': {'name': 'cc-collaboration', 'branch': 'main'},
-    'attachments': <Map<String, dynamic>>[],
-  });
+  Future<Package> get(String id) async {
+    final persona = utf8.encode('persona body');
+    return Package.fromJson({
+      'id': id,
+      'kind': 'capsule',
+      'sender': 'owner@x',
+      'recipient': 'viewer@x',
+      'urgency': 'normal',
+      'summary_md': 'capsule package',
+      'repo': {'name': 'cc-collaboration', 'branch': 'main'},
+      'attachments': <Map<String, dynamic>>[
+        {
+          'name': 'persona.md',
+          'sha256': sha256.convert(persona).toString(),
+          'size': persona.length,
+        },
+      ],
+    });
+  }
 
   @override
-  Future<List<int>> attachment(String id, String name) async {
+  Future<List<int>> attachment(
+    String id,
+    String name, {
+    String? expectedSha256,
+    int? expectedSize,
+  }) async {
     if (name == 'persona.md') return utf8.encode('persona body');
     throw Exception('missing attachment');
   }

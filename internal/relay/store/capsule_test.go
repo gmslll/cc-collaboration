@@ -77,11 +77,28 @@ func TestListCapsules_PublicScopedToSharedTeam(t *testing.T) {
 	if err := st.AddOrganizationMember(ctx, "org-shared", "bob", OrgRoleMember); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.CreateProjectInOrg(ctx, "project-shared", "org-shared", "Shared project", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "project-shared", "bob", RoleMember); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory", now); err != nil {
 		t.Fatal(err)
 	}
 
-	mustInsertCapsule(t, st, "c-public", "alice", handoffschema.CapsulePublic)
+	pkg := &handoffschema.Package{
+		ID: "c-public", SchemaVersion: handoffschema.SchemaVersion,
+		Kind: handoffschema.KindCapsule, Sender: "alice",
+		Urgency: handoffschema.UrgencyNormal, CreatedAt: now,
+		Capsule: &handoffschema.Capsule{
+			SourceAgent: "claude", Visibility: handoffschema.CapsulePublic,
+			ProjectID: "project-shared", HasPersona: true,
+		},
+	}
+	if err := st.Insert(ctx, pkg); err != nil {
+		t.Fatal(err)
+	}
 	mustInsertCapsule(t, st, "c-private", "alice", handoffschema.CapsulePrivate)
 
 	bob, err := st.ListCapsules(ctx, "bob", 0)
@@ -100,6 +117,65 @@ func TestListCapsules_PublicScopedToSharedTeam(t *testing.T) {
 	}
 }
 
+func TestListCapsules_UnscopedPublicFailsClosedForAccountTeams(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.CreateOrganization(ctx, "org", "Team", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org", "bob", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	mustInsertCapsule(t, st, "legacy-public", "alice", handoffschema.CapsulePublic)
+	if got, err := st.ListCapsules(ctx, "bob", 0); err != nil || len(got) != 0 {
+		t.Fatalf("unscoped public capsule leaked to account team: %+v, err=%v", got, err)
+	}
+}
+
+func TestListCapsules_ProjectScopeDoesNotLeakAcrossOwnersTeams(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.CreateOrganization(ctx, "org-a", "A", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-a", "bob", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "project-a", "org-a", "A project", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "project-a", "bob", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-b", "B", "dave", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-b", "alice", OrgRoleMember); err != nil {
+		t.Fatal(err)
+	}
+
+	pkg := &handoffschema.Package{
+		ID: "scoped", SchemaVersion: handoffschema.SchemaVersion,
+		Kind: handoffschema.KindCapsule, Sender: "alice",
+		Urgency: handoffschema.UrgencyNormal, CreatedAt: now,
+		Capsule: &handoffschema.Capsule{
+			SourceAgent: "claude", Visibility: handoffschema.CapsulePublic,
+			ProjectID: "project-a", HasPersona: true,
+		},
+	}
+	if err := st.Insert(ctx, pkg); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.ListCapsules(ctx, "bob", 0); err != nil || len(got) != 1 {
+		t.Fatalf("project member capsules = %+v, err=%v", got, err)
+	}
+	if got, err := st.ListCapsules(ctx, "dave", 0); err != nil || len(got) != 0 {
+		t.Fatalf("capsule leaked through a different shared team: %+v, err=%v", got, err)
+	}
+}
+
 func TestListCapsules_LimitAppliesAfterVisibility(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
@@ -110,11 +186,28 @@ func TestListCapsules_LimitAppliesAfterVisibility(t *testing.T) {
 	if err := st.AddOrganizationMember(ctx, "org-shared", "bob", OrgRoleMember); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.CreateProjectInOrg(ctx, "project-shared", "org-shared", "Shared project", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(ctx, "project-shared", "bob", RoleMember); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.CreateOrganization(ctx, "org-other", "Other", "mallory", now); err != nil {
 		t.Fatal(err)
 	}
 
-	mustInsertCapsuleAt(t, st, "visible-old", "alice", handoffschema.CapsulePublic, now.Add(-3*time.Minute))
+	visible := &handoffschema.Package{
+		ID: "visible-old", SchemaVersion: handoffschema.SchemaVersion,
+		Kind: handoffschema.KindCapsule, Sender: "alice",
+		Urgency: handoffschema.UrgencyNormal, CreatedAt: now.Add(-3 * time.Minute),
+		Capsule: &handoffschema.Capsule{
+			SourceAgent: "claude", Visibility: handoffschema.CapsulePublic,
+			ProjectID: "project-shared", HasPersona: true,
+		},
+	}
+	if err := st.Insert(ctx, visible); err != nil {
+		t.Fatal(err)
+	}
 	mustInsertCapsuleAt(t, st, "hidden-new-1", "mallory", handoffschema.CapsulePublic, now.Add(-2*time.Minute))
 	mustInsertCapsuleAt(t, st, "hidden-new-2", "mallory", handoffschema.CapsulePublic, now.Add(-1*time.Minute))
 

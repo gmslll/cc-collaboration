@@ -6,6 +6,10 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Fixed
+
+- **胶囊权限、完整性与本地载入安全** — 新团队胶囊按来源项目隔离；附件仅拥有者可上传且必须匹配发布时的 SHA/大小。App 校验下载完整性，拒绝会话 ID 路径穿越和覆盖，技能包使用有界流式安全解压并禁止链接/越界/覆盖，草稿在取消或发送后清理。
+
 ## [1.0.2] - 2026-07-11
 
 ### Added

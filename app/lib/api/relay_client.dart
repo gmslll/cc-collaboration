@@ -88,12 +88,34 @@ class RelayClient {
     return r.data?.toString() ?? '';
   }
 
-  Future<List<int>> attachment(String id, String name) async {
+  Future<List<int>> attachment(
+    String id,
+    String name, {
+    String? expectedSha256,
+    int? expectedSize,
+  }) async {
     final r = await _dio.get(
       '/v1/handoffs/${_pathSegment(id)}/attachments/${_pathSegment(name)}',
       options: Options(responseType: ResponseType.bytes),
     );
-    return (r.data as List).cast<int>();
+    final bytes = (r.data as List).cast<int>();
+    final actualSha256 = sha256.convert(bytes).toString();
+    final responseSha256 = r.headers.value('x-content-sha256')?.trim();
+    if (responseSha256 != null &&
+        responseSha256.isNotEmpty &&
+        responseSha256.toLowerCase() != actualSha256) {
+      throw StateError('attachment checksum does not match relay response');
+    }
+    final expected = expectedSha256?.trim().toLowerCase();
+    if (expected != null && expected.isNotEmpty && expected != actualSha256) {
+      throw StateError('attachment checksum does not match capsule metadata');
+    }
+    if (expectedSize != null &&
+        expectedSize >= 0 &&
+        bytes.length != expectedSize) {
+      throw StateError('attachment size does not match capsule metadata');
+    }
+    return bytes;
   }
 
   Future<List<Comment>> comments(String id) async {

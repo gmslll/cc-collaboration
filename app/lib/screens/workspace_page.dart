@@ -3079,39 +3079,55 @@ class _WorkspacePageState extends State<WorkspacePage>
     final draftDir = (await Directory.systemTemp.createTemp(
       'cc-capsule-',
     )).path;
-    final cap = await captureCapsuleTranscript(
-      agentKind: card.agentKind,
-      agentSessionId: card.agentSessionId,
-      workdir: workdir,
-      destDir: draftDir,
-      maxTextChars:
-          200000, // cap the neutral render fed to the headless distill
-    );
-    if (cap == null) {
-      return (null, '会话日志还没落盘,等它写一轮后再试');
-    }
-
-    final outcome = await distillCapsule(
-      agentKind: card.agentKind,
-      // Resolve the agent's real executable up front — a bare name is unreliable
-      // under the GUI's minimal PATH (same helper the PTY launcher uses).
-      headlessExe: await AgentResolver.resolve(card.agentKind),
-      draftDir: draftDir,
-      transcriptText: cap.text, // already in memory from capture — no re-read
-      sessionIdle: !sessionStatusIsActive(card.status),
-      userWantsSelf: preferSelfDistill,
-      deliverToSession: (prompt) async {
-        final s = sessionById(card.sid);
-        if (s == null) return false;
-        s.pasteText(prompt, submit: true);
-        return true;
-      },
-      runProc: systemProcRunner,
-    );
-    if (!outcome.personaWritten) {
+    Future<void> cleanDraft() async {
       try {
         await Directory(draftDir).delete(recursive: true);
       } catch (_) {}
+    }
+
+    late final CapsuleTranscript? cap;
+    try {
+      cap = await captureCapsuleTranscript(
+        agentKind: card.agentKind,
+        agentSessionId: card.agentSessionId,
+        workdir: workdir,
+        destDir: draftDir,
+        maxTextChars:
+            200000, // cap the neutral render fed to the headless distill
+      );
+    } catch (e) {
+      await cleanDraft();
+      return (null, '捕获会话失败: ${errorText(e)}');
+    }
+    if (cap == null) {
+      await cleanDraft();
+      return (null, '会话日志还没落盘,等它写一轮后再试');
+    }
+
+    late final DistillOutcome outcome;
+    try {
+      outcome = await distillCapsule(
+        agentKind: card.agentKind,
+        // Resolve the real executable; GUI PATH cannot resolve a bare shim.
+        headlessExe: await AgentResolver.resolve(card.agentKind),
+        draftDir: draftDir,
+        transcriptText: cap.text,
+        sessionIdle: !sessionStatusIsActive(card.status),
+        userWantsSelf: preferSelfDistill,
+        deliverToSession: (prompt) async {
+          final s = sessionById(card.sid);
+          if (s == null) return false;
+          s.pasteText(prompt, submit: true);
+          return true;
+        },
+        runProc: systemProcRunner,
+      );
+    } catch (e) {
+      await cleanDraft();
+      return (null, '蒸馏胶囊失败: ${errorText(e)}');
+    }
+    if (!outcome.personaWritten) {
+      await cleanDraft();
       return (null, '后台蒸馏未产出角色 persona.md,请稍后重试或改用「让它自己蒸馏」');
     }
 
@@ -3121,6 +3137,7 @@ class _WorkspacePageState extends State<WorkspacePage>
         sourceAgent: card.agentKind,
         originSessionId: card.agentSessionId,
         workdir: workdir,
+        projectId: card.projectId,
         hasTranscript: true,
         hasPersona: outcome.personaWritten,
         label: card.label,
@@ -3167,6 +3184,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     await addIfExists('--persona', 'persona.md');
     await addIfExists('--seed', 'seed.md');
     addFlag('--origin-session', draft.originSessionId);
+    addFlag('--project-id', draft.projectId);
     if (visibility == 'public') args.add('--public'); // else defaults to 个人
     addFlag('--summary', summary);
     for (final z in skillZips) {

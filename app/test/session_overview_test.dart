@@ -355,6 +355,10 @@ void main() {
     expect(reviewDialog, contains('catch (e)'));
     expect(reviewDialog, contains("snack(context, '发送失败: \${errorText(e)}');"));
     expect(reviewDialog, contains('setState(() => _submitting = false);'));
+    expect(source, contains('barrierDismissible: false'));
+    expect(source, contains('Directory(ready.draftDir).delete'));
+    expect(fullReviewDialog, contains('onPressed: _submitting'));
+    expect(fullReviewDialog, contains('canPop: !_submitting'));
     expect(fullReviewDialog, contains('capsuleReviewLoadingHeight'));
     expect(fullReviewDialog, isNot(contains('height: 120')));
   });

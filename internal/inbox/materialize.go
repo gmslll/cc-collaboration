@@ -96,6 +96,7 @@ type CapsuleManifest struct {
 	SourceAgent     string                          `json:"source_agent"`
 	OriginSessionID string                          `json:"origin_session_id,omitempty"`
 	Visibility      handoffschema.CapsuleVisibility `json:"visibility"`
+	ProjectID       string                          `json:"project_id,omitempty"`
 	CreatedAt       time.Time                       `json:"created_at"`
 	Repo            handoffschema.Repo              `json:"repo"`
 	HasTranscript   bool                            `json:"has_transcript"`
@@ -119,6 +120,7 @@ func writeCapsuleManifest(dir string, p *handoffschema.Package) error {
 		SourceAgent:     c.SourceAgent,
 		OriginSessionID: c.OriginSessionID,
 		Visibility:      c.EffectiveVisibility(),
+		ProjectID:       c.ProjectID,
 		CreatedAt:       p.CreatedAt,
 		Repo:            p.Repo,
 		HasTranscript:   c.HasTranscript,

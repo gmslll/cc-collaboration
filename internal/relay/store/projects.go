@@ -649,6 +649,24 @@ func (s *Store) IdentitiesShareTeam(ctx context.Context, a, b string) (bool, err
 	return false, nil
 }
 
+// IdentitiesUseLegacyFlatRoster reports whether neither identity has any
+// account, organization or project state. Only that pre-SaaS deployment shape
+// may retain the old "every token can see public capsules" behavior.
+func (s *Store) IdentitiesUseLegacyFlatRoster(ctx context.Context, a, b string) (bool, error) {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false, nil
+	}
+	var legacy bool
+	err := s.db.QueryRowContext(ctx, `
+SELECT NOT EXISTS (SELECT 1 FROM users WHERE identity IN (?, ?))
+   AND NOT EXISTS (SELECT 1 FROM organization_members WHERE identity IN (?, ?))
+   AND NOT EXISTS (SELECT 1 FROM project_members WHERE identity IN (?, ?))`,
+		a, b, a, b, a, b).Scan(&legacy)
+	return legacy, err
+}
+
 func (s *Store) identityHasUserRow(ctx context.Context, identity string) (bool, error) {
 	identity = strings.TrimSpace(identity)
 	var one int

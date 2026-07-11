@@ -735,18 +735,30 @@ Future<void> startCapsuleFlow(
       card.sid,
     ); // distill done → stop the card spinner
   }
-  if (!context.mounted) return;
   final ready = draft;
   if (ready == null) {
-    snack(context, '打成胶囊失败: ${err ?? "未知错误"}');
+    if (context.mounted) snack(context, '打成胶囊失败: ${err ?? "未知错误"}');
+    return;
+  }
+  if (!context.mounted) {
+    try {
+      await Directory(ready.draftDir).delete(recursive: true);
+    } catch (_) {}
     return;
   }
   // The review dialog is modal — the card behind can't be re-clicked — so the
   // in-flight guard isn't needed here.
-  await showDialog(
-    context: context,
-    builder: (_) => _CapsuleReviewDialog(store: store, draft: ready),
-  );
+  try {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _CapsuleReviewDialog(store: store, draft: ready),
+    );
+  } finally {
+    try {
+      await Directory(ready.draftDir).delete(recursive: true);
+    } catch (_) {}
+  }
 }
 
 // _CapsuleReviewDialog previews the distilled persona/seed, lets the user edit
@@ -781,26 +793,35 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   }
 
   Future<void> _load() async {
-    final p = File('${widget.draft.draftDir}/persona.md');
-    final s = File('${widget.draft.draftDir}/seed.md');
-    if (await p.exists()) _persona.text = await p.readAsString();
-    if (await s.exists()) _seed.text = await s.readAsString();
-    // deps.txt (from self-distill) auto-detects dirs to bundle → pre-checked.
-    final detected = <String>{};
-    final deps = File('${widget.draft.draftDir}/deps.txt');
-    if (await deps.exists()) {
-      for (final line in (await deps.readAsString()).split('\n')) {
-        final dir = line.trim();
-        if (dir.isNotEmpty && await Directory(dir).exists()) detected.add(dir);
+    try {
+      final p = File('${widget.draft.draftDir}/persona.md');
+      final s = File('${widget.draft.draftDir}/seed.md');
+      if (await p.exists()) _persona.text = await p.readAsString();
+      if (await s.exists()) _seed.text = await s.readAsString();
+      // deps.txt (from self-distill) auto-detects dirs to bundle → pre-checked.
+      final detected = <String>{};
+      final deps = File('${widget.draft.draftDir}/deps.txt');
+      if (await deps.exists()) {
+        for (final line in (await deps.readAsString()).split('\n')) {
+          final dir = line.trim();
+          if (dir.isNotEmpty && await Directory(dir).exists()) {
+            detected.add(dir);
+          }
+        }
       }
-    }
-    // Always list every installed skill so there's a place to pick even after a
-    // background distill (no deps.txt); auto-detected ones start checked.
-    for (final dir in await listInstalledSkills()) {
-      _skillDirs[dir] = detected.contains(dir);
-    }
-    for (final dir in detected) {
-      _skillDirs.putIfAbsent(dir, () => true); // a dep outside ~/.claude/skills
+      // Always list every installed skill so there's a place to pick even after a
+      // background distill (no deps.txt); auto-detected ones start checked.
+      for (final dir in await listInstalledSkills()) {
+        _skillDirs[dir] = detected.contains(dir);
+      }
+      for (final dir in detected) {
+        _skillDirs.putIfAbsent(
+          dir,
+          () => true,
+        ); // a dep outside ~/.claude/skills
+      }
+    } catch (e) {
+      if (mounted) snack(context, '读取胶囊草稿失败: ${errorText(e)}');
     }
     if (mounted) setState(() => _loading = false);
   }
@@ -815,6 +836,10 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
 
   Future<void> _submit() async {
     if (_submitting) return;
+    if (_public && widget.draft.projectId.trim().isEmpty) {
+      snack(context, '当前会话未绑定团队项目,不能发布为团队共享');
+      return;
+    }
     setState(() => _submitting = true);
     var keepSubmitting = false;
     try {
@@ -890,7 +915,10 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      PopScope(canPop: !_submitting, child: _buildDialog(context));
+
+  Widget _buildDialog(BuildContext context) {
     final d = widget.draft;
     final dialogSize = capsuleReviewDialogSize(MediaQuery.sizeOf(context));
     return Dialog(
@@ -929,7 +957,9 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                           IconButton(
                             tooltip: '关闭',
                             icon: const Icon(Icons.close_rounded, size: 18),
-                            onPressed: () => Navigator.of(context).pop(),
+                            onPressed: _submitting
+                                ? null
+                                : () => Navigator.of(context).pop(),
                           ),
                         ],
                       ),

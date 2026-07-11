@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:app/api/relay_client.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -139,6 +140,46 @@ void main() {
       'project': 'Backend',
       'project_id': 'project-1',
     });
+  });
+
+  test('attachment verifies relay and package integrity metadata', () async {
+    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final body = <int>[1, 2, 3];
+    server.listen((req) async {
+      req.response.headers.contentType = ContentType.binary;
+      req.response.headers.set('X-Content-Sha256', sha256.convert(body));
+      req.response.add(body);
+      await req.response.close();
+    });
+
+    final client = RelayClient('http://127.0.0.1:${server.port}', 'tok');
+    expect(
+      await client.attachment(
+        'cap-1',
+        'persona.md',
+        expectedSha256: sha256.convert(body).toString(),
+        expectedSize: body.length,
+      ),
+      body,
+    );
+    await expectLater(
+      client.attachment(
+        'cap-1',
+        'persona.md',
+        expectedSha256: sha256.convert(<int>[9]).toString(),
+        expectedSize: body.length,
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      client.attachment(
+        'cap-1',
+        'persona.md',
+        expectedSha256: sha256.convert(body).toString(),
+        expectedSize: body.length + 1,
+      ),
+      throwsStateError,
+    );
   });
 
   test('normalizes todo team fields before sending requests', () async {

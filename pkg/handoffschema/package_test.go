@@ -18,6 +18,7 @@ func TestNewCapsuleListItemProjectsLibraryMetadata(t *testing.T) {
 		Capsule: &Capsule{
 			SourceAgent:   "codex",
 			Visibility:    CapsulePublic,
+			ProjectID:     "project-1",
 			HasTranscript: true,
 			HasPersona:    true,
 			UpdatedAt:     updatedAt,
@@ -35,6 +36,9 @@ func TestNewCapsuleListItemProjectsLibraryMetadata(t *testing.T) {
 	}
 	if item.SkillPackCount != 2 {
 		t.Fatalf("skill pack count = %d, want 2", item.SkillPackCount)
+	}
+	if item.ProjectID != "project-1" {
+		t.Fatalf("project id = %q, want project-1", item.ProjectID)
 	}
 	if !item.UpdatedAt.Equal(updatedAt) {
 		t.Fatalf("updated_at = %s, want %s", item.UpdatedAt, updatedAt)

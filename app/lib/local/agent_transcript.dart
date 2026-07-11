@@ -410,27 +410,56 @@ Future<String?> importCapsuleTranscriptForResume({
   required String workdir,
   required String originId,
   required DateTime now,
+  String? homeOverride,
 }) async {
-  final home = Platform.environment['HOME'] ?? '';
+  final home = homeOverride ?? Platform.environment['HOME'] ?? '';
   if (home.isEmpty) return null;
   if (agentKind == 'codex') {
     // The resume id must come from the rollout itself, not the caller.
     final id = _rolloutIdFromBytes(bytes);
-    if (id == null || id.isEmpty) return null;
+    if (id == null || !_safeResumeSessionID(id)) return null;
     String two(int n) => n.toString().padLeft(2, '0');
     final dir = await Directory(
       '$home/.codex/sessions/${now.year}/${two(now.month)}/${two(now.day)}',
     ).create(recursive: true);
-    await File('${dir.path}/rollout-imported-$id.jsonl').writeAsBytes(bytes);
+    if (!await _writeNewTranscript(
+      '${dir.path}/rollout-imported-$id.jsonl',
+      bytes,
+    )) {
+      return null;
+    }
     return id;
   }
   // claude
-  if (originId.isEmpty) return null;
+  if (!_safeResumeSessionID(originId)) return null;
   final dir = await Directory(
     _claudeProjectDir(home, workdir),
   ).create(recursive: true);
-  await File('${dir.path}/$originId.jsonl').writeAsBytes(bytes);
+  if (!await _writeNewTranscript('${dir.path}/$originId.jsonl', bytes)) {
+    return null;
+  }
   return originId;
+}
+
+bool _safeResumeSessionID(String id) =>
+    RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$').hasMatch(id);
+
+Future<bool> _writeNewTranscript(String path, List<int> bytes) async {
+  final file = File(path);
+  try {
+    await file.create(exclusive: true);
+  } on FileSystemException {
+    return false;
+  }
+  try {
+    await file.writeAsBytes(bytes, flush: true);
+    return true;
+  } catch (_) {
+    try {
+      await file.delete();
+    } catch (_) {}
+    return false;
+  }
 }
 
 // _rolloutIdFromBytes reads a codex rollout's session_meta id from downloaded

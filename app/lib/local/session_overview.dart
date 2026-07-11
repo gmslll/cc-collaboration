@@ -364,6 +364,7 @@ class CapsuleDraft {
   final String sourceAgent; // 'claude' | 'codex'
   final String? originSessionId;
   final String workdir;
+  final String projectId;
   final bool hasTranscript;
   final bool hasPersona;
   final String label; // source session label, for a default summary
@@ -372,6 +373,7 @@ class CapsuleDraft {
     required this.sourceAgent,
     required this.originSessionId,
     required this.workdir,
+    this.projectId = '',
     required this.hasTranscript,
     required this.hasPersona,
     required this.label,

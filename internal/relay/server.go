@@ -338,6 +338,28 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if p.EffectiveKind() == handoffschema.KindCapsule {
+		capsule := p.Capsule
+		if capsule == nil || (capsule.SourceAgent != "claude" && capsule.SourceAgent != "codex") {
+			http.Error(w, "invalid capsule metadata", http.StatusBadRequest)
+			return
+		}
+		if capsule.EffectiveVisibility() == handoffschema.CapsulePublic {
+			projectID := strings.TrimSpace(capsule.ProjectID)
+			if projectID == "" {
+				http.Error(w, "public capsule requires project_id", http.StatusBadRequest)
+				return
+			}
+			if _, ok, err := s.Store.EffectiveProjectRole(r.Context(), projectID, identity); err != nil {
+				http.Error(w, "check capsule project: "+err.Error(), http.StatusInternalServerError)
+				return
+			} else if !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			capsule.ProjectID = projectID
+		}
+	}
 	// Server overrides sender + id + created_at + schema_version to prevent spoofing.
 	p.Sender = identity
 	if p.SchemaVersion == 0 {
@@ -891,8 +913,15 @@ func (s *Server) listInboxComments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putAttachment(w http.ResponseWriter, r *http.Request) {
-	pkg, _ := s.requireParticipant(w, r)
+	pkg, identity := s.requireParticipant(w, r)
 	if pkg == nil {
+		return
+	}
+	// Public capsules are readable by teammates, but their payload is immutable
+	// owner-authored content. Reusing the read gate for writes would let any
+	// teammate replace persona/transcript/skill-pack bytes after publication.
+	if pkg.EffectiveKind() == handoffschema.KindCapsule && pkg.Sender != identity {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	name := r.PathValue("name")
@@ -907,6 +936,19 @@ func (s *Server) putAttachment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid attachment name", http.StatusBadRequest)
 		return
 	}
+	var capsuleAttachment *handoffschema.Attachment
+	if pkg.EffectiveKind() == handoffschema.KindCapsule {
+		for i := range pkg.Attachments {
+			if pkg.Attachments[i].Name == name {
+				capsuleAttachment = &pkg.Attachments[i]
+				break
+			}
+		}
+		if capsuleAttachment == nil {
+			http.Error(w, "attachment not declared by capsule", http.StatusBadRequest)
+			return
+		}
+	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, handoff.AttachmentMaxBytes))
 	if err != nil {
@@ -918,6 +960,11 @@ func (s *Server) putAttachment(w http.ResponseWriter, r *http.Request) {
 
 	if want := r.Header.Get("X-Content-Sha256"); want != "" && want != hexSum {
 		http.Error(w, "sha256 mismatch", http.StatusBadRequest)
+		return
+	}
+	if capsuleAttachment != nil &&
+		(capsuleAttachment.SHA256 != hexSum || capsuleAttachment.Size != len(body)) {
+		http.Error(w, "attachment does not match capsule metadata", http.StatusBadRequest)
 		return
 	}
 

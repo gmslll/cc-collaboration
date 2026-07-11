@@ -224,6 +224,79 @@ void main() {
     expect(r, isNull);
   });
 
+  test('import rejects unsafe ids and never overwrites a local session',
+      () async {
+    final isolatedHome = Directory.systemTemp.createTempSync('cap_home_');
+    addTearDown(() => isolatedHome.deleteSync(recursive: true));
+    const workdir = '/w/safe';
+    const bytes = <int>[1, 2, 3];
+
+    for (final id in ['../escape', '/absolute', r'..\escape', 'bad\nname']) {
+      expect(
+        await importCapsuleTranscriptForResume(
+          agentKind: 'claude',
+          bytes: bytes,
+          workdir: workdir,
+          originId: id,
+          now: DateTime(2026, 7, 6),
+          homeOverride: isolatedHome.path,
+        ),
+        isNull,
+      );
+    }
+
+    const id = 'safe-session-1';
+    expect(
+      await importCapsuleTranscriptForResume(
+        agentKind: 'claude',
+        bytes: bytes,
+        workdir: workdir,
+        originId: id,
+        now: DateTime(2026, 7, 6),
+        homeOverride: isolatedHome.path,
+      ),
+      id,
+    );
+    expect(
+      await importCapsuleTranscriptForResume(
+        agentKind: 'claude',
+        bytes: const [9],
+        workdir: workdir,
+        originId: id,
+        now: DateTime(2026, 7, 6),
+        homeOverride: isolatedHome.path,
+      ),
+      isNull,
+    );
+    final encoded = workdir.replaceAll(RegExp(r'[/.]'), '-');
+    expect(
+      await File(
+        '${isolatedHome.path}/.claude/projects/$encoded/$id.jsonl',
+      ).readAsBytes(),
+      bytes,
+    );
+  });
+
+  test('import rejects an unsafe Codex session_meta id', () async {
+    final isolatedHome = Directory.systemTemp.createTempSync('cap_home_');
+    addTearDown(() => isolatedHome.deleteSync(recursive: true));
+    final rollout = jline({
+      'type': 'session_meta',
+      'payload': {'id': '../../escape', 'cwd': '/w'},
+    });
+    expect(
+      await importCapsuleTranscriptForResume(
+        agentKind: 'codex',
+        bytes: utf8.encode(rollout),
+        workdir: '/w',
+        originId: '',
+        now: DateTime(2026, 7, 6),
+        homeOverride: isolatedHome.path,
+      ),
+      isNull,
+    );
+  });
+
   test('import: codex reads the id from session_meta + writes a dated bucket',
       () async {
     if (!isolated) return;

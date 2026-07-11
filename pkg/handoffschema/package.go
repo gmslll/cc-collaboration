@@ -245,6 +245,9 @@ type Capsule struct {
 	// Visibility controls plaza reach: "private" (个人, owner-only) or "public"
 	// (公开, visible to the team). Empty is treated as private.
 	Visibility CapsuleVisibility `json:"visibility,omitempty"`
+	// ProjectID scopes a public capsule to one relay project. Older capsules
+	// have no value and retain visibility only in legacy flat-roster deployments.
+	ProjectID string `json:"project_id,omitempty"`
 	// HasTranscript is true when a transcript payload (raw and/or neutral text)
 	// is present, so the pickup UI can offer the "① full snapshot" form.
 	HasTranscript bool `json:"has_transcript,omitempty"`
@@ -273,6 +276,7 @@ type CapsuleListItem struct {
 	Owner       string            `json:"owner"`
 	Visibility  CapsuleVisibility `json:"visibility"`
 	SourceAgent string            `json:"source_agent"`
+	ProjectID   string            `json:"project_id,omitempty"`
 	// OriginSessionID is the capture-side session id — the filename id a
 	// same-tool native --resume writes the imported transcript under.
 	OriginSessionID string    `json:"origin_session_id,omitempty"`
@@ -304,6 +308,7 @@ func NewCapsuleListItem(p *Package) CapsuleListItem {
 		Owner:           p.Sender,
 		Visibility:      c.EffectiveVisibility(),
 		SourceAgent:     c.SourceAgent,
+		ProjectID:       c.ProjectID,
 		OriginSessionID: c.OriginSessionID,
 		HasTranscript:   c.HasTranscript,
 		HasPersona:      c.HasPersona,

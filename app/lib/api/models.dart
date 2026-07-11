@@ -60,6 +60,7 @@ class CapsuleListItem {
       visibility,
       sourceAgent,
       originSessionId,
+      projectId,
       headline,
       summary,
       repoName;
@@ -73,6 +74,7 @@ class CapsuleListItem {
       visibility = _s(j['visibility']), // server normalizes (never empty)
       sourceAgent = _s(j['source_agent']),
       originSessionId = _s(j['origin_session_id']),
+      projectId = _s(j['project_id']),
       headline = _s(j['headline']),
       repoName = _s(j['repo_name']),
       hasTranscript = j['has_transcript'] == true,

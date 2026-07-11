@@ -969,6 +969,7 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
     final token = widget.config.token;
     return showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => _CapsuleLoadDialog(
         client: client,
         overviewStore: widget.overviewStore,
@@ -1203,7 +1204,23 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
 
   Future<List<int>?> _fetchBytes(String name) async {
     try {
-      return await widget.client.attachment(widget.capsule.id, name);
+      final pkg = _pkg ?? await widget.client.get(widget.capsule.id);
+      if (!widget.isCurrentContext()) return null;
+      _pkg ??= pkg;
+      Attachment? metadata;
+      for (final attachment in pkg.attachments) {
+        if (attachment.name == name) {
+          metadata = attachment;
+          break;
+        }
+      }
+      if (metadata == null) return null;
+      return await widget.client.attachment(
+        widget.capsule.id,
+        name,
+        expectedSha256: metadata.sha256,
+        expectedSize: metadata.size,
+      );
     } catch (_) {
       return null;
     }
@@ -1271,7 +1288,10 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   ];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      PopScope(canPop: !_submitting, child: _buildDialog(context));
+
+  Widget _buildDialog(BuildContext context) {
     final c = widget.capsule;
     final screenSize = MediaQuery.sizeOf(context);
     final dialogSize = capsuleLoadDialogSize(screenSize);
@@ -1308,7 +1328,9 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                     IconButton(
                       tooltip: '关闭',
                       icon: const Icon(Icons.close_rounded, size: 18),
-                      onPressed: () => Navigator.of(context).pop(),
+                      onPressed: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
                     ),
                   ],
                 ),

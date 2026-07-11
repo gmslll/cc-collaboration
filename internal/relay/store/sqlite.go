@@ -680,7 +680,11 @@ func (s *Store) CapsuleVisibleTo(ctx context.Context, p *handoffschema.Package, 
 	if p.CapsuleOrEmpty().EffectiveVisibility() != handoffschema.CapsulePublic {
 		return false, nil
 	}
-	return s.IdentitiesShareTeam(ctx, p.Sender, viewer)
+	if projectID := strings.TrimSpace(p.CapsuleOrEmpty().ProjectID); projectID != "" {
+		_, ok, err := s.EffectiveProjectRole(ctx, projectID, viewer)
+		return ok, err
+	}
+	return s.IdentitiesUseLegacyFlatRoster(ctx, p.Sender, viewer)
 }
 
 // capsuleOwnerRow fetches (sender, kind) for id, enforcing "exists + is a
