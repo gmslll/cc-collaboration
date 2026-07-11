@@ -150,14 +150,27 @@ bool _remoteConfigGitStartAllowed(Object? value) {
 // _isHighSurrogate reports whether [u] is the leading half of a UTF-16 surrogate
 // pair, so backlog replay never splits an astral char (emoji) across two frames.
 bool _isHighSurrogate(int u) => u >= 0xd800 && u <= 0xdbff;
+bool _isLowSurrogate(int u) => u >= 0xdc00 && u <= 0xdfff;
+
+String _boundedRouteHistory(String value) {
+  if (value.length <= _maxRouteHistoryChars) return value;
+  var start = value.length - _maxRouteHistoryChars;
+  if (start < value.length && _isLowSurrogate(value.codeUnitAt(start))) {
+    start++;
+  }
+  return value.substring(start);
+}
 
 // Max chars per term.output frame: the coalescer's flush threshold and the
 // backlog-replay slice size. Bounds frame size (and worst-case latency).
 const int _maxFrameChars = 64 * 1024;
 const int _maxRouteQueueFrames = 64;
 const int _maxRouteQueueBytes = 512 * 1024;
-const int _maxInboundReorderFrames = 32;
-const int _maxInboundReorderBytes = 256 * 1024;
+const int _maxRouteHistoryChars = 512 * 1024;
+const int _maxActiveRoutesPerClient = 32;
+const int _maxActiveRoutesTotal = 128;
+const int _maxInboundReorderFrames = 64;
+const int _maxInboundReorderBytes = 4 * 1024 * 1024;
 const Duration _inboundReorderTimeout = Duration(milliseconds: 500);
 
 // _OutputBatcher coalesces a session's PTY output before it goes on the wire.
@@ -224,6 +237,23 @@ class _HostInboundFrame {
 
   final Map<String, dynamic> frame;
   final int bytes;
+}
+
+class _PendingHostPtyOpen {
+  _PendingHostPtyOpen(this.routeId, Duration timeout) {
+    _timer = Timer(timeout, resolve);
+  }
+
+  final String routeId;
+  final Completer<void> _resolved = Completer<void>();
+  late final Timer _timer;
+
+  Future<void> get resolved => _resolved.future;
+
+  void resolve() {
+    _timer.cancel();
+    if (!_resolved.isCompleted) _resolved.complete();
+  }
 }
 
 class _HostPtyRoute {
@@ -325,9 +355,12 @@ class RemoteHost extends RemoteChannel {
   final Map<int, PtyTransportMode> _clientPtyModes = {};
   final Map<String, Set<int>> _watchers = {}; // session id -> watching clients
   final Map<(String, int), _HostPtyRoute> _ptyRoutes = {};
+  final Map<(String, int), _PendingHostPtyOpen> _pendingPtyOpens = {};
   final Map<String, _OutputBatcher> _batchers =
       {}; // session id -> output coalescer
   static const int _maxRead = 2 * 1024 * 1024; // 2MB file-read cap
+  static const int _maxPendingPtyOpens = 64;
+  static const Duration _p2pOpenWait = Duration(seconds: 3);
 
   bool get sharing => active;
   int get clientCount => _clients;
@@ -347,6 +380,7 @@ class RemoteHost extends RemoteChannel {
             entry.key.$2,
             entry.value,
             mode == PtyTransportMode.relay ? '电脑已切换到 Relay' : '电脑已切换到仅 P2P',
+            code: mode == PtyTransportMode.p2p ? 'p2p_required' : null,
           );
         }
       }
@@ -561,6 +595,7 @@ class RemoteHost extends RemoteChannel {
     } else {
       _clientIds.remove(connId);
       _clientPtyModes.remove(connId);
+      _cancelPendingPtyOpensWhere((key, _) => key.$2 == connId);
       unawaited(_ptyTransport.peerDisconnected(connId));
       _dropClient(connId);
       _cancelClientXfers(connId); // abort any in-flight send to this phone
@@ -581,11 +616,17 @@ class RemoteHost extends RemoteChannel {
     }
     _clientNames.clear();
     _clientPtyModes.clear();
+    _cancelPendingPtyOpensWhere((_, _) => true);
   }
 
   void _onPtyStatus(PtyPeerStatus status) {
     if (_disposed) return;
-    if (status.state == PtyPeerState.p2p) return;
+    if (status.state == PtyPeerState.p2p) {
+      for (final entry in _pendingPtyOpens.entries.toList()) {
+        if (entry.key.$2 == status.peerId) entry.value.resolve();
+      }
+      return;
+    }
     for (final entry in _ptyRoutes.entries.toList()) {
       if (entry.key.$2 == status.peerId &&
           entry.value.channel == _PtyRouteChannel.p2p) {
@@ -666,7 +707,11 @@ class RemoteHost extends RemoteChannel {
       case 'term.open':
         if (channel == _PtyRouteChannel.relay) unawaited(_termOpen(f));
       case 'term.close':
-        if (channel == _PtyRouteChannel.relay) _termClose(f);
+        if (channel == _PtyRouteChannel.relay) {
+          _termClose(f);
+        } else {
+          _acceptInboundPtyFrame(f, channel);
+        }
       case 'term.input':
         _termInput(f, channel);
       case 'screen':
@@ -861,7 +906,12 @@ class RemoteHost extends RemoteChannel {
     // A newly-connected phone gets the latest rich overview snapshot (status +
     // usage + reply preview per session) so its 总览 grid is populated at once,
     // without waiting for the next turn-boundary broadcast.
-    send({'t': 'overview', 'to': to, 'items': _overviewFor(to)});
+    send({
+      't': 'overview',
+      'to': to,
+      'items': _overviewFor(to),
+      if (_strictOverviewFor(to)) 'ptySafe': true,
+    });
   }
 
   // _overview caches the latest session-overview snapshot (built by the
@@ -872,8 +922,12 @@ class RemoteHost extends RemoteChannel {
   void setOverview(List<SessionCard> cards) =>
       _overview = [for (final c in cards) c.toJson()];
 
+  bool _strictOverviewFor(int peerId) =>
+      _ptyMode == PtyTransportMode.p2p ||
+      _clientPtyModes[peerId] == PtyTransportMode.p2p;
+
   List<Map<String, dynamic>> _overviewFor(int peerId) {
-    if (_clientPtyModes[peerId] != PtyTransportMode.p2p) return _overview;
+    if (!_strictOverviewFor(peerId)) return _overview;
     return [
       for (final item in _overview)
         {
@@ -891,14 +945,26 @@ class RemoteHost extends RemoteChannel {
       // Until list/pty.signal declares a mode, fail closed: a strict client can
       // race its first mode frame with a workspace overview refresh.
       if (!_clientPtyModes.containsKey(peerId)) continue;
-      send({'t': 'overview', 'to': peerId, 'items': _overviewFor(peerId)});
+      send({
+        't': 'overview',
+        'to': peerId,
+        'items': _overviewFor(peerId),
+        if (_strictOverviewFor(peerId)) 'ptySafe': true,
+      });
     }
   }
 
   // broadcastSessions/Roots push the current lists to ALL connected clients
   // (to:0) after a change, so phones stay in sync without re-requesting.
   void broadcastSessions() {
-    if (connected) send({'t': 'sessions', 'to': 0, 'items': _sessionItems()});
+    final items = _sessionItems();
+    final available = {for (final item in items) item['sid']};
+    for (final entry in _ptyRoutes.entries.toList()) {
+      if (!available.contains(entry.key.$1)) {
+        _failPtyRoute(entry.key.$1, entry.key.$2, entry.value, '会话已不存在');
+      }
+    }
+    if (connected) send({'t': 'sessions', 'to': 0, 'items': items});
   }
 
   void broadcastRoots() {
@@ -972,7 +1038,13 @@ class RemoteHost extends RemoteChannel {
         routeIdValue is! String) {
       return;
     }
-    final route = _ptyRoutes[(sidValue, fromValue)];
+    final key = (sidValue, fromValue);
+    final pending = _pendingPtyOpens[key];
+    if (pending != null && pending.routeId == routeIdValue) {
+      _pendingPtyOpens.remove(key);
+      pending.resolve();
+    }
+    final route = _ptyRoutes[key];
     // A delayed close for an old route must never tear down its replacement.
     if (route == null || route.id != routeIdValue) return;
     _removePtyWatcher(sidValue, fromValue, route);
@@ -997,9 +1069,9 @@ class RemoteHost extends RemoteChannel {
         return;
       }
       if (route == null) {
-        _sendLegacyScreen(sid, from);
+        _sendLegacyScreen(sid, from, requestId: frame['requestId']);
       } else if (route.channel == _PtyRouteChannel.relay) {
-        _sendScreen(sid, from, route);
+        _sendScreen(sid, from, route, requestId: frame['requestId']);
       }
       return;
     }
@@ -1021,6 +1093,14 @@ class RemoteHost extends RemoteChannel {
     final sid = sidValue;
     final from = fromValue;
     final route = _ptyRoutes[(sid, from)];
+    final type = frame['t'];
+    if (type != 'term.input' &&
+        type != 'term.resize' &&
+        type != 'screen' &&
+        type != 'term.close') {
+      if (route != null) _failPtyRoute(sid, from, route, 'PTY 数据方向无效');
+      return;
+    }
     final routeIdValue = frame['routeId'];
     if (routeIdValue != null && routeIdValue is! String) {
       if (route != null) _failPtyRoute(sid, from, route, 'PTY routeId 类型无效');
@@ -1061,6 +1141,10 @@ class RemoteHost extends RemoteChannel {
     }
     if (channel != route.channel) {
       _failPtyRoute(sid, from, route, 'PTY 数据通道不匹配');
+      return;
+    }
+    if (type != 'term.close' && _sessionById(sid) == null) {
+      _failPtyRoute(sid, from, route, '会话已不存在');
       return;
     }
     final seq = frame['seq'];
@@ -1141,17 +1225,24 @@ class RemoteHost extends RemoteChannel {
       case 'term.resize':
         final rows = frame['rows'];
         final cols = frame['cols'];
-        if (rows is! int || cols is! int) {
-          _failPtyRoute(sid, from, route, 'PTY 尺寸类型无效');
+        if (rows is! int ||
+            cols is! int ||
+            rows < 2 ||
+            rows > 500 ||
+            cols < 2 ||
+            cols > 500) {
+          _failPtyRoute(sid, from, route, 'PTY 尺寸无效');
           return;
         }
         _sessionById(sid)?.resizeFromRemote(rows, cols);
       case 'screen':
-        _sendScreen(sid, from, route);
+        _sendScreen(sid, from, route, requestId: frame['requestId']);
+      case 'term.close':
+        _removePtyWatcher(sid, from, route);
     }
   }
 
-  void _sendLegacyScreen(String sid, int peerId) {
+  void _sendLegacyScreen(String sid, int peerId, {Object? requestId}) {
     final snap = _sessionById(sid)?.snapshotSized();
     send({
       't': 'screen',
@@ -1160,16 +1251,23 @@ class RemoteHost extends RemoteChannel {
       'text': snap?.ansi ?? '',
       'cols': snap?.cols ?? 0,
       'rows': snap?.rows ?? 0,
+      'requestId': ?requestId,
     });
   }
 
-  void _sendScreen(String sid, int peerId, _HostPtyRoute route) {
+  void _sendScreen(
+    String sid,
+    int peerId,
+    _HostPtyRoute route, {
+    Object? requestId,
+  }) {
     final snap = _sessionById(sid)?.snapshotSized();
     _enqueuePtyRouteFrame(sid, peerId, route, {
       't': 'screen',
       'text': snap?.ansi ?? '',
       'cols': snap?.cols ?? 0,
       'rows': snap?.rows ?? 0,
+      'requestId': ?requestId,
     }, sequenced: !route.legacy);
   }
 
@@ -1178,8 +1276,7 @@ class RemoteHost extends RemoteChannel {
     final fromValue = f['from'];
     final sid = sidValue is String && sidValue.isNotEmpty ? sidValue : null;
     final from = fromValue is int && fromValue > 0 ? fromValue : null;
-    final s = _sessionById(sid);
-    if (s == null || from == null) return;
+    if (sid == null || from == null) return;
     final routeIdValue = f['routeId'];
     final transportValue = f['transport'];
     final legacy = routeIdValue == null && transportValue == null;
@@ -1196,7 +1293,14 @@ class RemoteHost extends RemoteChannel {
     };
     if (!legacy && (!validRouteId || requestedChannel == null)) {
       if (routeId != null && routeId.isNotEmpty) {
-        _sendPtyRouteFailure(s.id, from, routeId, 'PTY 路由参数无效');
+        _sendPtyRouteFailure(sid, from, routeId, 'PTY 路由参数无效');
+      }
+      return;
+    }
+    var s = _sessionById(sid);
+    if (s == null) {
+      if (!legacy && routeId != null) {
+        _sendPtyRouteFailure(sid, from, routeId, '会话已不存在');
       }
       return;
     }
@@ -1205,23 +1309,88 @@ class RemoteHost extends RemoteChannel {
             _clientPtyModes[from] == PtyTransportMode.p2p) &&
         channel != _PtyRouteChannel.p2p) {
       if (routeId != null) {
-        _sendPtyRouteFailure(s.id, from, routeId, '仅 P2P 终端模式不允许 Relay');
+        _sendPtyRouteFailure(
+          s.id,
+          from,
+          routeId,
+          '电脑要求使用 P2P 终端传输',
+          code: 'p2p_required',
+        );
+      }
+      return;
+    }
+    final colsValue = f['cols'];
+    final rowsValue = f['rows'];
+    final cols = colsValue is int ? colsValue : 0;
+    final rows = rowsValue is int ? rowsValue : 0;
+    if ((colsValue != null || rowsValue != null) &&
+        (cols < 2 || cols > 500 || rows < 2 || rows > 500)) {
+      if (!legacy && routeId != null) {
+        _sendPtyRouteFailure(s.id, from, routeId, 'PTY 尺寸无效');
       }
       return;
     }
     if (channel == _PtyRouteChannel.p2p &&
         _ptyTransport.statusFor(from).state != PtyPeerState.p2p) {
-      _sendPtyRouteFailure(s.id, from, routeId!, 'P2P 数据通道尚未就绪');
-      return;
+      final key = (sid, from);
+      if (!_pendingPtyOpens.containsKey(key) &&
+          _pendingPtyOpens.length >= _maxPendingPtyOpens) {
+        _sendPtyRouteFailure(
+          sid,
+          from,
+          routeId!,
+          '等待 P2P 的终端路由过多',
+          code: 'route_limit',
+        );
+        return;
+      }
+      final pending = _PendingHostPtyOpen(routeId!, _p2pOpenWait);
+      final replaced = _pendingPtyOpens[key];
+      _pendingPtyOpens[key] = pending;
+      replaced?.resolve();
+      await pending.resolved;
+      if (!identical(_pendingPtyOpens[key], pending)) return;
+      _pendingPtyOpens.remove(key);
+      if (_disposed || !_clientIds.contains(from)) return;
+      if (_ptyTransport.statusFor(from).state != PtyPeerState.p2p) {
+        _sendPtyRouteFailure(sid, from, routeId, 'P2P 数据通道尚未就绪');
+        return;
+      }
+      s = _sessionById(sid);
+      if (s == null) {
+        _sendPtyRouteFailure(sid, from, routeId, '会话已不存在');
+        return;
+      }
     }
 
-    final key = (s.id, from);
+    final activeSession = s;
+    final key = (activeSession.id, from);
+    if (!_ptyRoutes.containsKey(key)) {
+      final peerRoutes = _ptyRoutes.keys
+          .where((candidate) => candidate.$2 == from)
+          .length;
+      if (_ptyRoutes.length >= _maxActiveRoutesTotal ||
+          peerRoutes >= _maxActiveRoutesPerClient) {
+        if (!legacy && routeId != null) {
+          _sendPtyRouteFailure(
+            sid,
+            from,
+            routeId,
+            '终端路由数量已达上限',
+            code: 'route_limit',
+          );
+        }
+        return;
+      }
+    }
     // A pending 8ms live batch is already present in Terminal history. Flush it
     // only to the pre-existing watchers before snapshotting, otherwise the new
     // route would receive the same bytes once in history and once as live output.
-    _batchers[s.id]?.flush();
+    _batchers[activeSession.id]?.flush();
     final oldRoute = _ptyRoutes[key];
-    if (oldRoute != null) _removePtyWatcher(s.id, from, oldRoute);
+    if (oldRoute != null) {
+      _removePtyWatcher(activeSession.id, from, oldRoute);
+    }
     final route = _HostPtyRoute(
       id: legacy ? null : routeId,
       channel: channel,
@@ -1246,45 +1415,41 @@ class RemoteHost extends RemoteChannel {
     // a buffer already at the phone's width. Without this, a non-active session
     // replays at the desktop width and overflows the phone, and the idle agent
     // never redraws to correct it.
-    final colsValue = f['cols'];
-    final rowsValue = f['rows'];
-    final cols = colsValue is int ? colsValue : 0;
-    final rows = rowsValue is int ? rowsValue : 0;
-    onSessionWatched?.call(s.id); // baseline voice reading for this session
-    if (cols >= 2 && rows >= 2) s.resizeFromRemote(rows, cols);
-    final wasDormant = s.deferred && !s.started;
+    onSessionWatched?.call(activeSession.id);
+    if (cols >= 2 && rows >= 2) activeSession.resizeFromRemote(rows, cols);
+    final wasDormant = activeSession.deferred && !activeSession.started;
     if (wasDormant) {
-      s.deferred = false;
-      s.start();
+      activeSession.deferred = false;
+      activeSession.start();
       notifyListeners(); // repaint the desktop tree: clear the 休眠 glyph.
     }
     // Resizing/waking may synchronously produce terminal output. Flush it only
     // to watchers that existed before this open; the new route's history
     // snapshot below already includes it.
-    _batchers[s.id]?.flush();
+    _batchers[activeSession.id]?.flush();
     final mode = (f['historyMode'] ?? 'text').toString();
-    // Replay the FULL backlog so the phone can scroll back through history; the
-    // phone re-wraps the plain text at its own width, so this stays readable.
-    route.history = switch (mode) {
+    // Replay the recent bounded backlog so the phone can scroll without one
+    // client/session multiplying unbounded route memory.
+    route.history = _boundedRouteHistory(switch (mode) {
       'none' => '',
-      'ansi' => s.historyAnsi(),
-      _ => s.historyText(),
-    };
+      'ansi' => activeSession.historyAnsi(),
+      _ => activeSession.historyText(),
+    });
     route.readyPending = !legacy;
     _ptyRoutes[key] = route;
-    (_watchers[s.id] ??= {}).add(from);
+    (_watchers[activeSession.id] ??= {}).add(from);
     // Once the snapshot is fixed, attach the new watcher without yielding. Any
     // later output enters its bounded route queue behind the history worker.
-    final batcher = _batchers[s.id] ??= _OutputBatcher((data) {
-      for (final c in _watchers[s.id]?.toList() ?? const <int>[]) {
-        final targetRoute = _ptyRoutes[(s.id, c)];
+    final batcher = _batchers[activeSession.id] ??= _OutputBatcher((data) {
+      for (final c in _watchers[activeSession.id]?.toList() ?? const <int>[]) {
+        final targetRoute = _ptyRoutes[(activeSession.id, c)];
         if (targetRoute != null) {
-          _enqueuePtyOutput(s.id, c, targetRoute, data);
+          _enqueuePtyOutput(activeSession.id, c, targetRoute, data);
         }
       }
     });
-    s.remoteSink = batcher.add;
-    _ensurePtyRoutePump(s.id, from, route);
+    activeSession.remoteSink = batcher.add;
+    _ensurePtyRoutePump(activeSession.id, from, route);
   }
 
   int _wireBytes(Map<String, dynamic> frame) {
@@ -1441,14 +1606,16 @@ class RemoteHost extends RemoteChannel {
     String sid,
     int peerId,
     String routeId,
-    String reason,
-  ) {
+    String reason, {
+    String? code,
+  }) {
     send({
       't': 'term.routeFailed',
       'to': peerId,
       'sid': sid,
       'routeId': routeId,
       'reason': reason,
+      'code': ?code,
     });
   }
 
@@ -1456,11 +1623,12 @@ class RemoteHost extends RemoteChannel {
     String sid,
     int peerId,
     _HostPtyRoute route,
-    String reason,
-  ) {
+    String reason, {
+    String? code,
+  }) {
     if (!identical(_ptyRoutes[(sid, peerId)], route)) return;
     if (route.id != null) {
-      _sendPtyRouteFailure(sid, peerId, route.id!, reason);
+      _sendPtyRouteFailure(sid, peerId, route.id!, reason, code: code);
     }
     _removePtyWatcher(sid, peerId, route);
   }
@@ -1486,6 +1654,16 @@ class RemoteHost extends RemoteChannel {
       if (entry.key.$2 == connId) {
         _removePtyWatcher(entry.key.$1, connId, entry.value);
       }
+    }
+  }
+
+  void _cancelPendingPtyOpensWhere(
+    bool Function((String, int), _PendingHostPtyOpen) predicate,
+  ) {
+    for (final entry in _pendingPtyOpens.entries.toList()) {
+      if (!predicate(entry.key, entry.value)) continue;
+      _pendingPtyOpens.remove(entry.key);
+      entry.value.resolve();
     }
   }
 
@@ -1908,6 +2086,7 @@ class RemoteHost extends RemoteChannel {
     if (_disposed) return;
     _disposed = true;
     _clientIds.clear();
+    _cancelPendingPtyOpensWhere((_, _) => true);
     _detachAllSessions();
     unawaited(_ptyTransport.dispose());
     unawaited(_shareHostInst?.stop());

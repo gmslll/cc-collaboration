@@ -169,6 +169,215 @@ void main() {
     expect(roots['items'], [containsPair('project_id', 'relay-project')]);
   });
 
+  test('modern open for a missing session returns route failure', () async {
+    final host = _TestRemoteHost(sessions: const []);
+    addTearDown(host.dispose);
+    host.onPeer(7, 'client', true);
+
+    host.onFrame({
+      't': 'term.open',
+      'sid': 'missing',
+      'from': 7,
+      'routeId': 'missing-route',
+      'transport': 'relay',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      host.sent,
+      contains(
+        allOf(
+          containsPair('t', 'term.routeFailed'),
+          containsPair('routeId', 'missing-route'),
+          containsPair('reason', contains('不存在')),
+        ),
+      ),
+    );
+  });
+
+  test('P2P open waits for the host DataChannel callback', () async {
+    final session = TerminalSession('', '');
+    final factory = _FakePtyPeerFactory();
+    final host = _TestRemoteHost(
+      sessions: [session],
+      ptyTransportMode: PtyTransportMode.p2p,
+      ptyPeerFactory: factory,
+    );
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+    host.onPeer(8, 'client', true);
+    host.onFrame({
+      't': ptySignalFrameType,
+      'from': 8,
+      'kind': 'mode',
+      'mode': 'p2p',
+    });
+    for (var i = 0; i < 20 && factory.peers.isEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    final peer = factory.peers.single;
+
+    host.onFrame({
+      't': 'term.open',
+      'sid': session.id,
+      'from': 8,
+      'routeId': 'wait-open',
+      'transport': 'p2p',
+      'historyMode': 'none',
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(
+      host.sent.where((frame) => frame['t'] == 'term.routeFailed'),
+      isEmpty,
+    );
+    expect(host.watching(session.id), isFalse);
+
+    peer.open();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+
+    expect(host.watching(session.id), isTrue);
+    expect(
+      peer.decodedFrames(),
+      contains(
+        allOf(
+          containsPair('t', 'term.ready'),
+          containsPair('routeId', 'wait-open'),
+        ),
+      ),
+    );
+  });
+
+  test('matching close cancels a pending P2P open', () async {
+    final session = TerminalSession('', '');
+    final factory = _FakePtyPeerFactory();
+    final host = _TestRemoteHost(
+      sessions: [session],
+      ptyTransportMode: PtyTransportMode.p2p,
+      ptyPeerFactory: factory,
+    );
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+    host.onPeer(8, 'client', true);
+    host.onFrame({
+      't': ptySignalFrameType,
+      'from': 8,
+      'kind': 'mode',
+      'mode': 'p2p',
+    });
+    for (var i = 0; i < 20 && factory.peers.isEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    final peer = factory.peers.single;
+
+    host.onFrame({
+      't': 'term.open',
+      'sid': session.id,
+      'from': 8,
+      'routeId': 'cancelled-open',
+      'transport': 'p2p',
+      'historyMode': 'none',
+    });
+    host.onFrame({
+      't': 'term.close',
+      'sid': session.id,
+      'from': 8,
+      'routeId': 'cancelled-open',
+    });
+    peer.open();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(host.watching(session.id), isFalse);
+    expect(
+      peer.decodedFrames().where((frame) => frame['t'] == 'term.ready'),
+      isEmpty,
+    );
+  });
+
+  test('stale close does not cancel a replacement pending P2P open', () async {
+    final session = TerminalSession('', '');
+    final factory = _FakePtyPeerFactory();
+    final host = _TestRemoteHost(
+      sessions: [session],
+      ptyTransportMode: PtyTransportMode.p2p,
+      ptyPeerFactory: factory,
+    );
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+    host.onPeer(8, 'client', true);
+    host.onFrame({
+      't': ptySignalFrameType,
+      'from': 8,
+      'kind': 'mode',
+      'mode': 'p2p',
+    });
+    for (var i = 0; i < 20 && factory.peers.isEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    final peer = factory.peers.single;
+
+    for (final routeId in ['old-open', 'replacement-open']) {
+      host.onFrame({
+        't': 'term.open',
+        'sid': session.id,
+        'from': 8,
+        'routeId': routeId,
+        'transport': 'p2p',
+        'historyMode': 'none',
+      });
+    }
+    host.onFrame({
+      't': 'term.close',
+      'sid': session.id,
+      'from': 8,
+      'routeId': 'old-open',
+    });
+    peer.open();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(host.watching(session.id), isTrue);
+    expect(
+      peer
+          .decodedFrames()
+          .where((frame) => frame['t'] == 'term.ready')
+          .map((frame) => frame['routeId']),
+      ['replacement-open'],
+    );
+  });
+
+  test('strict host sanitizes overview for a Relay-mode client', () {
+    final session = TerminalSession('', '');
+    final host = _TestRemoteHost(
+      sessions: [session],
+      ptyTransportMode: PtyTransportMode.p2p,
+    );
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+    host.setOverview([
+      SessionCard(
+        sid: session.id,
+        label: 'secret',
+        agentKind: 'codex',
+        isAgent: true,
+        workspace: 'ws',
+        project: 'proj',
+        worktree: null,
+        status: SessionStatus.working,
+        statusDetail: 'private status',
+        usageLabel: '10%',
+        preview: 'private output',
+        recentActivity: const [],
+      ),
+    ]);
+
+    host.onFrame({'t': 'list', 'from': 9, 'ptyMode': 'relay'});
+
+    final overview = host.sent.lastWhere((frame) => frame['t'] == 'overview');
+    expect(overview['ptySafe'], isTrue);
+    final item = (overview['items'] as List).single as Map;
+    expect(item['preview'], '');
+    expect(item['statusDetail'], '');
+  });
+
   test('remote git file path gate rejects traversal and pathspec magic', () {
     expect(remoteGitFilePathAllowed('lib/main.dart'), isTrue);
     expect(remoteGitFilePathAllowed('dir.with.dots/file.txt'), isTrue);
@@ -610,6 +819,7 @@ void main() {
         'from': 3,
         'routeId': 'routed',
         'seq': 1,
+        'requestId': 'routed-request',
       });
       await Future<void>.delayed(Duration.zero);
 
@@ -621,8 +831,34 @@ void main() {
       expect(routed.map((f) => f['seq']), [1, 2, 3, 4]);
       expect(routed.map((f) => f['routeId']).toSet(), {'routed'});
       expect(routed.map((f) => f['transport']).toSet(), {'relay'});
+      expect(
+        routed.singleWhere((f) => f['t'] == 'screen')['requestId'],
+        'routed-request',
+      );
     },
   );
+
+  test('legacy screen reply echoes its request id', () {
+    final session = TerminalSession('', '');
+    final host = _TestRemoteHost(sessions: [session]);
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+
+    host.onFrame({
+      't': 'screen',
+      'sid': session.id,
+      'from': 4,
+      'requestId': 'legacy-request',
+    });
+
+    expect(
+      host.sent.single,
+      allOf(
+        containsPair('t', 'screen'),
+        containsPair('requestId', 'legacy-request'),
+      ),
+    );
+  });
 
   test('strict client never receives an unbound Relay screen snapshot', () {
     final session = TerminalSession('', '');
@@ -853,6 +1089,110 @@ void main() {
     });
     expect(session.debugRemoteSize, (rows: 42, cols: 92));
     expect(host.watching(session.id), isTrue);
+  });
+
+  test('P2P close waits behind earlier input sequence', () async {
+    final session = TerminalSession('', '');
+    final factory = _FakePtyPeerFactory();
+    final host = _TestRemoteHost(
+      sessions: [session],
+      ptyTransportMode: PtyTransportMode.p2p,
+      ptyPeerFactory: factory,
+    );
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+    final peer = await _connectP2P(host, factory, 18);
+    host.onFrame({
+      't': 'term.open',
+      'sid': session.id,
+      'from': 18,
+      'routeId': 'ordered-close',
+      'transport': 'p2p',
+      'historyMode': 'none',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    peer.sendFrame({
+      't': 'term.close',
+      'sid': session.id,
+      'routeId': 'ordered-close',
+      'seq': 2,
+    });
+    expect(host.watching(session.id), isTrue);
+    peer.sendFrame({
+      't': 'term.resize',
+      'sid': session.id,
+      'routeId': 'ordered-close',
+      'seq': 1,
+      'rows': 40,
+      'cols': 90,
+    }, messageId: 2);
+
+    expect(host.watching(session.id), isFalse);
+  });
+
+  test('active route fails when its session disappears', () async {
+    final session = TerminalSession('', '');
+    final sessions = <TerminalSession>[session];
+    final host = _TestRemoteHost(sessions: sessions);
+    addTearDown(host.dispose);
+    addTearDown(session.dispose);
+    host.onPeer(19, 'client', true);
+    host.onFrame({
+      't': 'term.open',
+      'sid': session.id,
+      'from': 19,
+      'routeId': 'gone',
+      'transport': 'relay',
+      'historyMode': 'none',
+    });
+    await Future<void>.delayed(Duration.zero);
+    sessions.clear();
+    host.sent.clear();
+
+    host.onFrame({
+      't': 'term.input',
+      'sid': session.id,
+      'from': 19,
+      'routeId': 'gone',
+      'seq': 1,
+      'd': 'must-not-disappear',
+    });
+
+    expect(host.watching(session.id), isFalse);
+    expect(host.sent, contains(containsPair('t', 'term.routeFailed')));
+  });
+
+  test('remote PTY resize rejects oversized dimensions', () async {
+    final session = TerminalSession('', '');
+    final host = _TestRemoteHost(sessions: [session]);
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+    host.onPeer(20, 'client', true);
+    host.onFrame({
+      't': 'term.open',
+      'sid': session.id,
+      'from': 20,
+      'routeId': 'bounded-size',
+      'transport': 'relay',
+      'historyMode': 'none',
+    });
+    await Future<void>.delayed(Duration.zero);
+    host.sent.clear();
+
+    host.onFrame({
+      't': 'term.resize',
+      'sid': session.id,
+      'from': 20,
+      'routeId': 'bounded-size',
+      'seq': 1,
+      'rows': 501,
+      'cols': 80,
+    });
+
+    expect(session.debugRemoteSize, isNull);
+    expect(host.watching(session.id), isFalse);
+    expect(host.sent, contains(containsPair('t', 'term.routeFailed')));
   });
 
   test(
@@ -1256,6 +1596,84 @@ void main() {
     },
   );
 
+  test('active PTY routes have a global memory bound', () async {
+    final session = TerminalSession('', '');
+    final host = _TestRemoteHost(sessions: [session]);
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+
+    for (var peer = 1; peer <= 129; peer++) {
+      host.onPeer(peer, 'client', true);
+      host.onFrame({
+        't': 'term.open',
+        'sid': session.id,
+        'from': peer,
+        'routeId': 'route-$peer',
+        'transport': 'relay',
+        'historyMode': 'none',
+      });
+    }
+    await Future<void>.delayed(Duration.zero);
+
+    final failure = host.sent.lastWhere(
+      (frame) => frame['t'] == 'term.routeFailed',
+    );
+    expect(failure['to'], 129);
+    expect(failure['reason'], contains('数量已达上限'));
+    expect(failure['code'], 'route_limit');
+  });
+
+  test('invalid replacement viewport preserves the active route', () async {
+    final session = TerminalSession('', '');
+    final host = _TestRemoteHost(sessions: [session]);
+    addTearDown(host.dispose);
+    addTearDown(host.disposeSessions);
+
+    host.onFrame({
+      't': 'term.open',
+      'sid': session.id,
+      'from': 17,
+      'routeId': 'healthy',
+      'transport': 'relay',
+      'historyMode': 'none',
+    });
+    await Future<void>.delayed(Duration.zero);
+    host.sent.clear();
+
+    host.onFrame({
+      't': 'term.open',
+      'sid': session.id,
+      'from': 17,
+      'routeId': 'invalid-replacement',
+      'transport': 'relay',
+      'cols': 501,
+      'rows': 24,
+    });
+    session.remoteSink?.call('still-watched');
+    await _flushOutputBatcher();
+
+    expect(host.watching(session.id), isTrue);
+    expect(
+      host.sent,
+      contains(
+        allOf(
+          containsPair('t', 'term.routeFailed'),
+          containsPair('routeId', 'invalid-replacement'),
+        ),
+      ),
+    );
+    expect(
+      host.sent,
+      contains(
+        allOf(
+          containsPair('t', 'term.output'),
+          containsPair('routeId', 'healthy'),
+          containsPair('d', 'still-watched'),
+        ),
+      ),
+    );
+  });
+
   test('strict P2P host rejects and removes Relay terminal routes', () async {
     final session = TerminalSession('', '');
     final host = _TestRemoteHost(
@@ -1274,7 +1692,12 @@ void main() {
     });
     await Future<void>.delayed(Duration.zero);
     expect(host.watching(session.id), isFalse);
-    expect(host.sent, [containsPair('t', 'term.routeFailed')]);
+    expect(host.sent, [
+      allOf(
+        containsPair('t', 'term.routeFailed'),
+        containsPair('code', 'p2p_required'),
+      ),
+    ]);
 
     final automatic = _TestRemoteHost(sessions: [session]);
     addTearDown(automatic.dispose);
@@ -1293,7 +1716,7 @@ void main() {
     await transition;
     expect(
       automatic.sent.where((frame) => frame['t'] == 'term.routeFailed'),
-      isNotEmpty,
+      contains(containsPair('code', 'p2p_required')),
     );
   });
 

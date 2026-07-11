@@ -87,6 +87,12 @@ dev_dependencies:
 # had no way to color types distinctly. Split types into their own "type"
 # category. See third_party/re_highlight/lib/languages/dart.dart (marked
 # PATCH cc-handoff).
+#
+# Vendored dart_webrtc 1.8.1 with a DataChannel ordering fix: upstream writes
+# binaryType onto RTCDataChannelInit, which browsers ignore, and incoming
+# channels therefore deliver Blobs whose async conversions can reorder PTY
+# packets. The patched wrapper sets binaryType='arraybuffer' on the actual JS
+# RTCDataChannel for both initiator and answerer channels.
 dependency_overrides:
   xterm:
     path: third_party/xterm
@@ -94,6 +100,8 @@ dependency_overrides:
     path: third_party/flutter_pty
   re_highlight:
     path: third_party/re_highlight
+  dart_webrtc:
+    path: third_party/dart_webrtc
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

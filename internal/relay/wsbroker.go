@@ -26,15 +26,27 @@ import (
 // State is in-memory and transient, exactly like the SSE Hub.
 
 type wsConn struct {
-	id        uint64
-	role      string // "host" | "client"
-	send      chan []byte
-	done      chan struct{}
-	closeOnce sync.Once
-	closed    atomic.Bool
-	cancel    context.CancelFunc
-	onClose   func()
+	id          uint64
+	role        string // "host" | "client"
+	send        chan []byte
+	done        chan struct{}
+	closeOnce   sync.Once
+	closed      atomic.Bool
+	cancel      context.CancelFunc
+	onClose     func()
+	ptyMode     atomic.Uint32
+	queuedBytes atomic.Int64
 }
+
+const (
+	wsPTYModeUnknown uint32 = iota
+	wsPTYModeRelayAllowed
+	wsPTYModeStrict
+)
+
+const wsMaxQueuedBytes int64 = 16 << 20
+
+const wsStrictBarrierFrameType = "pty.strictBarrier"
 
 type wsBroker struct {
 	mu     sync.Mutex
@@ -138,29 +150,78 @@ func deliverBestEffort(c *wsConn, frame []byte) bool {
 	if c.closed.Load() {
 		return false
 	}
+	if !reserveQueuedBytes(c, len(frame)) {
+		return false
+	}
 	select {
 	case c.send <- frame:
 		return !c.closed.Load()
 	case <-c.done:
+		c.queuedBytes.Add(-int64(len(frame)))
 		return false
 	default:
+		c.queuedBytes.Add(-int64(len(frame)))
 		return false
 	}
 }
 
-// deliverReliable applies bounded backpressure using the connection's fixed
-// queue. A stuck WebSocket writer has its own 15s write deadline; writer failure
-// closes done, which releases every blocked producer without a goroutine leak.
+func reserveQueuedBytes(c *wsConn, size int) bool {
+	if size < 0 || int64(size) > wsMaxQueuedBytes {
+		return false
+	}
+	for {
+		current := c.queuedBytes.Load()
+		if current+int64(size) > wsMaxQueuedBytes {
+			return false
+		}
+		if c.queuedBytes.CompareAndSwap(current, current+int64(size)) {
+			return true
+		}
+	}
+}
+
+// deliverReliable applies backpressure using the connection's fixed queue. A
+// stuck WebSocket writer has its own 15s write deadline; writer failure closes
+// done, which releases every blocked producer without silently dropping an
+// accepted input/control frame.
 func deliverReliable(ctx context.Context, c *wsConn, frame []byte) bool {
 	if c.closed.Load() {
+		return false
+	}
+	if !reserveQueuedBytes(c, len(frame)) {
 		return false
 	}
 	select {
 	case c.send <- frame:
 		return !c.closed.Load()
 	case <-c.done:
+		c.queuedBytes.Add(-int64(len(frame)))
 		return false
 	case <-ctx.Done():
+		c.queuedBytes.Add(-int64(len(frame)))
+		return false
+	}
+}
+
+// deliverReliableNow is the fanout variant of deliverReliable. A broadcast
+// must not let one saturated peer stall the sender or healthy peers; the caller
+// closes a peer when this bounded enqueue fails so an accepted reliable frame
+// is never silently skipped for a connection that remains registered.
+func deliverReliableNow(c *wsConn, frame []byte) bool {
+	if c.closed.Load() {
+		return false
+	}
+	if !reserveQueuedBytes(c, len(frame)) {
+		return false
+	}
+	select {
+	case c.send <- frame:
+		return !c.closed.Load()
+	case <-c.done:
+		c.queuedBytes.Add(-int64(len(frame)))
+		return false
+	default:
+		c.queuedBytes.Add(-int64(len(frame)))
 		return false
 	}
 }
@@ -169,6 +230,72 @@ func frameType(env map[string]json.RawMessage) string {
 	var typ string
 	_ = json.Unmarshal(env["t"], &typ)
 	return typ
+}
+
+func (c *wsConn) observePTYMode(env map[string]json.RawMessage) {
+	if c.role != "client" {
+		return
+	}
+	typ := frameType(env)
+	var raw json.RawMessage
+	switch typ {
+	case "list":
+		raw = env["ptyMode"]
+		if raw == nil {
+			// Legacy clients do not send ptyMode and only use Relay.
+			c.ptyMode.Store(wsPTYModeRelayAllowed)
+			return
+		}
+	case "pty.signal":
+		var kind string
+		_ = json.Unmarshal(env["kind"], &kind)
+		if kind != "mode" {
+			return
+		}
+		raw = env["mode"]
+	default:
+		return
+	}
+
+	var mode string
+	if err := json.Unmarshal(raw, &mode); err != nil {
+		return
+	}
+	switch mode {
+	case "p2p":
+		c.ptyMode.Store(wsPTYModeStrict)
+	case "auto", "relay":
+		c.ptyMode.Store(wsPTYModeRelayAllowed)
+	}
+}
+
+func overviewMarkedPTYSafe(env map[string]json.RawMessage) bool {
+	var safe bool
+	return json.Unmarshal(env["ptySafe"], &safe) == nil && safe
+}
+
+func terminalContentFrame(typ string) bool {
+	switch typ {
+	case "term.output", "screen", "reply", "status", "activity", "overview":
+		return true
+	default:
+		return false
+	}
+}
+
+// relayAllowsPTYContent defaults new/unknown client connections to fail-closed.
+// A strict client can therefore connect to an older host without terminal
+// content crossing Relay before either endpoint has negotiated P2P. Strict
+// overview metadata is allowed only when the upgraded host marks it sanitized.
+func relayAllowsPTYContent(c *wsConn, env map[string]json.RawMessage) bool {
+	if c.role != "client" || !terminalContentFrame(frameType(env)) {
+		return true
+	}
+	mode := c.ptyMode.Load()
+	if mode == wsPTYModeRelayAllowed {
+		return true
+	}
+	return frameType(env) == "overview" && overviewMarkedPTYSafe(env)
 }
 
 func relayOutputFailure(from, to uint64, env map[string]json.RawMessage) []byte {
@@ -202,6 +329,9 @@ func deliverApplication(
 	frame []byte,
 	env map[string]json.RawMessage,
 ) {
+	if !relayAllowsPTYContent(to, env) {
+		return
+	}
 	if frameType(env) != "term.output" {
 		if !deliverReliable(ctx, to, frame) {
 			// Never silently lose an accepted reliable frame. Closing the target
@@ -227,6 +357,76 @@ func deliverApplication(
 	}
 }
 
+// deliverApplicationNow applies the same delivery policy as
+// deliverApplication without waiting for queue capacity. It is used only for
+// multi-peer fanout, where a slow peer must be disconnected instead of
+// backpressuring unrelated healthy peers and the sender.
+func deliverApplicationNow(
+	from *wsConn,
+	to *wsConn,
+	frame []byte,
+	env map[string]json.RawMessage,
+) {
+	if !relayAllowsPTYContent(to, env) {
+		return
+	}
+	if frameType(env) != "term.output" {
+		if !deliverReliableNow(to, frame) {
+			to.close()
+		}
+		return
+	}
+	if deliverBestEffort(to, frame) {
+		return
+	}
+	failure := relayOutputFailure(from.id, to.id, env)
+	if failure == nil || !deliverReliableNow(to, failure) {
+		to.close()
+	}
+}
+
+func deliverApplications(
+	ctx context.Context,
+	from *wsConn,
+	peers []*wsConn,
+	frame []byte,
+	env map[string]json.RawMessage,
+) {
+	// Client -> Host carries input/control and may backpressure briefly rather
+	// than drop an accepted command. Host -> Client must not stall the Host read
+	// loop behind one dead phone; disconnect that saturated recipient instead.
+	if len(peers) == 1 && from.role == "client" {
+		deliverApplication(ctx, from, peers[0], frame, env)
+		return
+	}
+	for _, peer := range peers {
+		deliverApplicationNow(from, peer, frame, env)
+	}
+}
+
+// handleWSControl consumes broker-owned control frames. A client sends the
+// strict barrier immediately before entering strict P2P mode; closing the
+// currently registered Host sockets synchronously drops legacy terminal
+// watchers without turning every later mobile disconnect into a global Host
+// reconnect.
+func (s *Server) handleWSControl(
+	identity string,
+	c *wsConn,
+	env map[string]json.RawMessage,
+) bool {
+	if frameType(env) != wsStrictBarrierFrameType {
+		return false
+	}
+	if c.role != "client" {
+		return true
+	}
+	c.ptyMode.Store(wsPTYModeStrict)
+	for _, peer := range s.WsBroker.rolePeers(identity, "host") {
+		peer.close()
+	}
+	return true
+}
+
 func pumpWSWriter(
 	ctx context.Context,
 	c *wsConn,
@@ -237,11 +437,15 @@ func pumpWSWriter(
 		select {
 		case frame := <-c.send:
 			if c.closed.Load() {
+				c.queuedBytes.Add(-int64(len(frame)))
 				return
 			}
 			wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			err := write(wctx, frame)
 			cancel()
+			// Keep the reservation while the network write is in flight so the
+			// advertised byte budget is a real queue+writer memory bound.
+			c.queuedBytes.Add(-int64(len(frame)))
 			if err != nil {
 				return
 			}
@@ -315,6 +519,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(data, &env); err != nil || env == nil {
 			continue
 		}
+		if s.handleWSControl(identity, c, env) {
+			continue
+		}
+		c.observePTYMode(env)
 		var to uint64
 		if raw := env["to"]; raw != nil {
 			if err := json.Unmarshal(raw, &to); err != nil {
@@ -332,9 +540,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		for _, p := range s.WsBroker.peers(identity, c, to) {
-			deliverApplication(ctx, c, p, stamped, env)
-		}
+		deliverApplications(ctx, c, s.WsBroker.peers(identity, c, to), stamped, env)
 	}
 }
 
@@ -350,6 +556,14 @@ func (s *Server) wsNotifyPeers(identity string, c *wsConn, event string) {
 		return
 	}
 	for _, p := range s.WsBroker.rolePeers(identity, other) {
-		deliverBestEffort(p, note)
+		if deliverBestEffort(p, note) {
+			continue
+		}
+		if event == "disconnect" {
+			// Presence disconnect is state, not a hint: a missed event leaves stale
+			// PTY watchers and can keep an old strict-mode route uploading output.
+			// A saturated target must reconnect and rebuild its complete peer set.
+			p.close()
+		}
 	}
 }

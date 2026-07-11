@@ -73,6 +73,10 @@ class _FakePtyPeer implements PtyPeer {
   final PtyPeerCallbacks callbacks;
   final List<List<Uint8List>> sentBatches = [];
   bool closed = false;
+  bool sendResult = true;
+  Completer<void>? sendGate;
+  int activeSends = 0;
+  int maxActiveSends = 0;
   Completer<void>? closeGate;
 
   @override
@@ -100,6 +104,11 @@ class _FakePtyPeer implements PtyPeer {
   @override
   Future<bool> sendPackets(List<Uint8List> packets) async {
     if (closed) return false;
+    activeSends++;
+    if (activeSends > maxActiveSends) maxActiveSends = activeSends;
+    await sendGate?.future;
+    activeSends--;
+    if (closed || !sendResult) return false;
     sentBatches.add([for (final packet in packets) Uint8List.fromList(packet)]);
     return true;
   }
@@ -363,6 +372,61 @@ void main() {
     expect(input['routeId'], opens.first['routeId']);
   });
 
+  testWidgets(
+    'quick reply reuses a full Relay route and auxiliary frames share its sequence',
+    (tester) async {
+      final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+      addTearDown(client.dispose);
+      client.onFrame(_sessionsFrame(7, ['sid-1']));
+      final terminal = client.terminalFor('sid-1');
+      final open = client.sent.singleWhere(
+        (frame) => frame['t'] == 'term.open',
+      );
+
+      expect(client.beginQuickReply('sid-1'), isTrue);
+      expect(client.requestScreen('sid-1'), isTrue);
+      expect(
+        client.sent.where((frame) => frame['t'] == 'term.open'),
+        hasLength(1),
+      );
+      final request = client.sent.singleWhere(
+        (frame) => frame['t'] == 'screen',
+      );
+      expect(request['routeId'], open['routeId']);
+      expect(request['seq'], 1);
+
+      client.onFrame({
+        't': 'screen',
+        'from': 7,
+        'sid': 'sid-1',
+        'routeId': open['routeId'],
+        'seq': 1,
+        'requestId': request['requestId'],
+        'text': 'snapshot',
+        'cols': 80,
+        'rows': 24,
+      });
+      client.onFrame({
+        't': 'term.output',
+        'from': 7,
+        'sid': 'sid-1',
+        'routeId': open['routeId'],
+        'seq': 2,
+        'd': 'after-snapshot',
+      });
+      await tester.pump(const Duration(milliseconds: 220));
+
+      expect(client.screens['sid-1']?.ansi, 'snapshot');
+      expect(terminal.buffer.getText(), contains('after-snapshot'));
+      expect(
+        client.sent.where((frame) => frame['t'] == 'term.open'),
+        hasLength(1),
+      );
+      client.endQuickReply('sid-1');
+      expect(client.sendKeys('sid-1', 'x'), isTrue);
+    },
+  );
+
   test(
     'strict P2P does not leak terminal input through Relay before ready',
     () {
@@ -418,6 +482,322 @@ void main() {
       ['first', 'second'],
     );
     expect(client.ptyRouteStatusText('sid-1'), isNull);
+  });
+
+  testWidgets('P2P route serializes a full pending input queue', (
+    tester,
+  ) async {
+    final factory = _FakePtyPeerFactory();
+    final client = _TestRemoteClient(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+    );
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+    for (var i = 0; i < 64; i++) {
+      expect(client.sendKeys('sid-1', '$i,'), isTrue);
+    }
+    client.onFrame({
+      't': ptySignalFrameType,
+      'from': 7,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+    });
+    await tester.pump();
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    factory.peer.sendGate = Completer<void>();
+    factory.peer.emit({
+      't': 'term.ready',
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+    });
+    await tester.pump();
+    expect(factory.peer.activeSends, 1);
+    expect(factory.peer.maxActiveSends, 1);
+
+    factory.peer.sendGate!.complete();
+    await tester.pumpAndSettle();
+    final inputs = factory.peer
+        .sentFrames()
+        .where((frame) => frame['t'] == 'term.input')
+        .toList();
+    expect(inputs, hasLength(64));
+    expect(inputs.map((frame) => frame['d']), [
+      for (var i = 0; i < 64; i++) '$i,',
+    ]);
+    expect(factory.peer.maxActiveSends, 1);
+  });
+
+  testWidgets('quick reply closes after its confirmed P2P input', (
+    tester,
+  ) async {
+    final factory = _FakePtyPeerFactory();
+    final client = _TestRemoteClient(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+    );
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onFrame({
+      't': ptySignalFrameType,
+      'from': 7,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+    });
+    await tester.pump();
+    client.beginQuickReply('sid-1');
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    factory.peer.emit({
+      't': 'term.ready',
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+    });
+    factory.peer.sendGate = Completer<void>();
+    final delivered = client.sendKeysConfirmed('sid-1', 'y\r');
+    await tester.pump();
+    client.endQuickReply('sid-1');
+    expect(client.sent.where((frame) => frame['t'] == 'term.close'), isEmpty);
+
+    factory.peer.sendGate!.complete();
+    expect(await delivered, isTrue);
+    await tester.pumpAndSettle();
+    expect(factory.peer.sentFrames().map((frame) => frame['t']), [
+      'term.input',
+      'term.close',
+    ]);
+  });
+
+  testWidgets('P2P input budget reserves an ordered close without data loss', (
+    tester,
+  ) async {
+    final factory = _FakePtyPeerFactory();
+    final client = _TestRemoteClient(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+    );
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onFrame({
+      't': ptySignalFrameType,
+      'from': 7,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+    });
+    await tester.pump();
+    expect(client.beginQuickReply('sid-1'), isTrue);
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    factory.peer.emit({
+      't': 'term.ready',
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+    });
+    factory.peer.sendGate = Completer<void>();
+
+    for (var i = 0; i < 64; i++) {
+      expect(client.sendKeys('sid-1', '$i,'), isTrue);
+    }
+    expect(client.sendKeys('sid-1', 'overflow'), isFalse);
+    await tester.pump();
+    expect(factory.peer.activeSends, 1);
+
+    client.endQuickReply('sid-1');
+    factory.peer.sendGate!.complete();
+    await tester.pumpAndSettle();
+
+    final frames = factory.peer.sentFrames();
+    expect(frames.where((frame) => frame['t'] == 'term.input'), hasLength(64));
+    expect(frames.last['t'], 'term.close');
+    expect(client.sent.where((frame) => frame['t'] == 'term.input'), isEmpty);
+  });
+
+  testWidgets(
+    'a failed confirmed input is never replayed after mode recovery',
+    (tester) async {
+      final factory = _FakePtyPeerFactory();
+      final client = _TestRemoteClient(
+        mode: PtyTransportMode.p2p,
+        peerFactory: factory,
+      );
+      addTearDown(client.dispose);
+      client.onFrame(_sessionsFrame(7, ['sid-1']));
+      client.onFrame({
+        't': ptySignalFrameType,
+        'from': 7,
+        'kind': 'offer',
+        'epoch': 1,
+        'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+      });
+      await tester.pump();
+      client.beginQuickReply('sid-1');
+      final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+      factory.peer.emit({
+        't': 'term.ready',
+        'sid': 'sid-1',
+        'routeId': open['routeId'],
+      });
+      factory.peer.sendGate = Completer<void>();
+      expect(client.sendKeys('sid-1', 'accepted-unconfirmed'), isTrue);
+      final confirmed = client.sendKeysConfirmed('sid-1', 'must-not-replay');
+      await tester.pump();
+
+      final switching = client.setPtyTransportMode(PtyTransportMode.relay);
+      expect(await confirmed, isFalse);
+      factory.peer.sendGate!.complete();
+      await switching;
+      await tester.pumpAndSettle();
+
+      final relayInputs = client.sent
+          .where((frame) => frame['t'] == 'term.input')
+          .map((frame) => frame['d']);
+      expect(relayInputs, isNot(contains('must-not-replay')));
+    },
+  );
+
+  testWidgets('mode switch completes an in-flight confirmed input promptly', (
+    tester,
+  ) async {
+    final factory = _FakePtyPeerFactory();
+    final client = _TestRemoteClient(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+    );
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onFrame({
+      't': ptySignalFrameType,
+      'from': 7,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+    });
+    await tester.pump();
+    client.beginQuickReply('sid-1');
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    factory.peer.emit({
+      't': 'term.ready',
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+    });
+    factory.peer.sendGate = Completer<void>();
+
+    final confirmed = client.sendKeysConfirmed('sid-1', 'in-flight');
+    await tester.pump();
+    expect(factory.peer.activeSends, 1);
+    final switching = client.setPtyTransportMode(PtyTransportMode.relay);
+
+    expect(await confirmed.timeout(const Duration(milliseconds: 100)), isFalse);
+    factory.peer.sendGate!.complete();
+    await switching;
+  });
+
+  testWidgets('quick reply rejects a delayed snapshot from its prior popup', (
+    tester,
+  ) async {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+    final open = client.sent.singleWhere((frame) => frame['t'] == 'term.open');
+
+    client.beginQuickReply('sid-1');
+    client.requestScreen('sid-1');
+    final firstRequest = client.sent.lastWhere(
+      (frame) => frame['t'] == 'screen',
+    );
+    client.endQuickReply('sid-1');
+    client.beginQuickReply('sid-1');
+    client.requestScreen('sid-1');
+    final secondRequest = client.sent.lastWhere(
+      (frame) => frame['t'] == 'screen',
+    );
+    expect(secondRequest['requestId'], isNot(firstRequest['requestId']));
+
+    client.onFrame({
+      't': 'screen',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+      'seq': 1,
+      'requestId': firstRequest['requestId'],
+      'text': 'stale approval prompt',
+      'cols': 80,
+      'rows': 24,
+    });
+    expect(client.hasFreshScreen('sid-1'), isFalse);
+
+    client.onFrame({
+      't': 'screen',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+      'seq': 2,
+      'requestId': secondRequest['requestId'],
+      'text': 'current approval prompt',
+      'cols': 80,
+      'rows': 24,
+    });
+    await tester.pump();
+    expect(client.hasFreshScreen('sid-1'), isTrue);
+    expect(client.screens['sid-1']?.ansi, 'current approval prompt');
+  });
+
+  test(
+    'quick reply explains when an old Host cannot echo snapshot identity',
+    () {
+      final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+      addTearDown(client.dispose);
+      client.onFrame(_sessionsFrame(7, ['sid-1']));
+      client.beginQuickReply('sid-1');
+      client.requestScreen('sid-1');
+      final open = client.sent.singleWhere(
+        (frame) => frame['t'] == 'term.open',
+      );
+
+      client.onFrame({
+        't': 'screen',
+        'from': 7,
+        'sid': 'sid-1',
+        'routeId': open['routeId'],
+        'seq': 1,
+        'text': 'unidentified old-host snapshot',
+        'cols': 80,
+        'rows': 24,
+      });
+
+      expect(client.hasFreshScreen('sid-1'), isFalse);
+      expect(client.ptyRouteStatusText('sid-1'), contains('版本过旧'));
+    },
+  );
+
+  testWidgets('P2P route open has an independent ready deadline', (
+    tester,
+  ) async {
+    final factory = _FakePtyPeerFactory();
+    final client = _TestRemoteClient(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+    );
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onFrame({
+      't': ptySignalFrameType,
+      'from': 7,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+    });
+    await tester.pump();
+    client.terminalFor('sid-1');
+
+    await tester.pump(const Duration(seconds: 16));
+
+    expect(client.ptyInputBlocked('sid-1'), isTrue);
+    expect(client.ptyRouteStatusText('sid-1'), contains('超时'));
+    expect(client.ptyPeerState, PtyPeerState.p2p);
   });
 
   test('opening route input queue is bounded and reports overflow', () {
@@ -508,7 +888,7 @@ void main() {
 
     expect(client.requestScreen('sid-1'), isFalse);
     expect(client.sent.where((frame) => frame['t'] == 'screen'), isEmpty);
-    expect(client.ptyRouteStatusText('sid-1'), contains('P2P'));
+    expect(client.ptyRouteStatusText('sid-1'), contains('路由尚未就绪'));
   });
 
   testWidgets('malformed P2P terminal output fails closed without throwing', (
@@ -632,6 +1012,147 @@ void main() {
   });
 
   test(
+    'strict discovery sends capability mode without requesting old host data',
+    () {
+      final client = _TestRemoteClient(mode: PtyTransportMode.p2p);
+      addTearDown(client.dispose);
+
+      client.onConnected();
+
+      expect(client.sent.where((frame) => frame['t'] == 'list'), isEmpty);
+      expect(
+        client.sent,
+        contains(
+          allOf(
+            containsPair('t', ptySignalFrameType),
+            containsPair('kind', 'mode'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test('closed route ignores delayed modern Relay metadata', () {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    var replies = 0;
+    var statuses = 0;
+    client.onReplyText = (_, _) => replies++;
+    client.onAgentStatus = (_, _, _, _) => statuses++;
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    final terminal = client.terminalFor('sid-1');
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    client.onFrame(_sessionsFrame(7));
+
+    for (final frame in [
+      {'t': 'term.output', 'd': 'stale'},
+      {'t': 'screen', 'text': 'stale'},
+      {'t': 'reply', 'text': 'stale'},
+      {'t': 'status', 'working': true, 'text': 'stale'},
+      {'t': 'activity', 'items': const []},
+    ]) {
+      client.onFrame({
+        ...frame,
+        'from': 7,
+        'sid': 'sid-1',
+        'routeId': open['routeId'],
+        'seq': 1,
+      });
+    }
+
+    expect(terminal.buffer.getText(), isNot(contains('stale')));
+    expect(client.screens['sid-1'], isNull);
+    expect(replies, 0);
+    expect(statuses, 0);
+  });
+
+  testWidgets('auto route send failure reopens through Relay', (tester) async {
+    final factory = _FakePtyPeerFactory();
+    final client = _TestRemoteClient(peerFactory: factory);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.onFrame({
+      't': ptySignalFrameType,
+      'from': 7,
+      'kind': 'offer',
+      'epoch': 1,
+      'description': {'type': 'offer', 'sdp': 'offer-sdp'},
+    });
+    await tester.pump();
+    client.terminalFor('sid-1');
+    final p2pOpen = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+    factory.peer.emit({
+      't': 'term.ready',
+      'sid': 'sid-1',
+      'routeId': p2pOpen['routeId'],
+    });
+    factory.peer.sendResult = false;
+    expect(client.sendKeys('sid-1', 'x'), isTrue);
+
+    await tester.pumpAndSettle();
+
+    final recovered = client.sent.lastWhere(
+      (frame) => frame['t'] == 'term.open',
+    );
+    expect(recovered['transport'], 'relay');
+    expect(client.ptyPeerState, isNot(PtyPeerState.p2p));
+    expect(client.ptyRouteStatusText('sid-1'), contains('可能未送达'));
+    expect(client.ptyRouteNeedsAttention('sid-1'), isTrue);
+    client.acknowledgePtyDeliveryWarning('sid-1');
+    expect(client.hasPtyDeliveryWarning('sid-1'), isFalse);
+    expect(client.ptyRouteNeedsAttention('sid-1'), isFalse);
+  });
+
+  test('p2p-required failure does not spin Relay route reopen', () {
+    final client = _TestRemoteClient();
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+
+    client.onFrame({
+      't': 'term.routeFailed',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+      'code': 'p2p_required',
+      'reason': '电脑要求使用 P2P 终端传输',
+    });
+
+    expect(
+      client.sent.where((frame) => frame['t'] == 'term.open'),
+      hasLength(1),
+    );
+    expect(client.ptyRouteStatusText('sid-1'), contains('P2P'));
+  });
+
+  testWidgets('route-limit failure stays failed without a reopen loop', (
+    tester,
+  ) async {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+    final open = client.sent.lastWhere((frame) => frame['t'] == 'term.open');
+
+    client.onFrame({
+      't': 'term.routeFailed',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': open['routeId'],
+      'code': 'route_limit',
+      'reason': '终端路由数量已达上限',
+    });
+    await tester.pump();
+
+    expect(
+      client.sent.where((frame) => frame['t'] == 'term.open'),
+      hasLength(1),
+    );
+    expect(client.ptyRouteStatusText('sid-1'), contains('数量已达上限'));
+  });
+
+  test(
     'strict P2P selection reconnects Relay to evict legacy host watchers',
     () async {
       final socket = _FakeRemoteSocket();
@@ -649,11 +1170,27 @@ void main() {
       await client.setPtyTransportMode(PtyTransportMode.p2p);
       await Future<void>.delayed(Duration.zero);
 
+      expect(client.sent, contains(containsPair('t', 'pty.strictBarrier')));
       expect(socket.closeCount, greaterThanOrEqualTo(1));
       expect(client.ptyInputBlocked('sid-1'), isTrue);
       client.dispose();
     },
   );
+
+  test('auto to strict reconnects even with no current Relay route', () async {
+    final socket = _FakeRemoteSocket();
+    final client = _TestRemoteClient(socketConnector: (_, _) => socket);
+    client.connect();
+    socket.readyCompleter.complete();
+    await Future<void>.delayed(Duration.zero);
+    client.onFrame(_sessionsFrame(7));
+
+    await client.setPtyTransportMode(PtyTransportMode.p2p);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(socket.closeCount, greaterThanOrEqualTo(1));
+    client.dispose();
+  });
 
   testWidgets('client ignores P2P signaling from a non-host peer', (
     tester,
@@ -674,6 +1211,59 @@ void main() {
 
     expect(factory.createCount, 0);
   });
+
+  testWidgets(
+    'strict P2P rotates from an unavailable Host to an offering Host',
+    (tester) async {
+      final factory = _FakePtyPeerFactory();
+      final client = _TestRemoteClient(
+        mode: PtyTransportMode.p2p,
+        peerFactory: factory,
+      );
+      addTearDown(client.dispose);
+      client.onPeer(7, 'host', true);
+      client.onPeer(8, 'host', true);
+
+      client.onFrame({
+        't': ptySignalFrameType,
+        'from': 8,
+        'kind': 'offer',
+        'epoch': 1,
+        'description': {'type': 'offer', 'sdp': 'first-offer'},
+      });
+      expect(
+        client.sent.where(
+          (frame) =>
+              frame['t'] == ptySignalFrameType &&
+              frame['kind'] == 'close' &&
+              frame['to'] == 8,
+        ),
+        hasLength(1),
+      );
+
+      await tester.pump(const Duration(seconds: 4));
+      expect(
+        client.sent.where(
+          (frame) =>
+              frame['t'] == ptySignalFrameType &&
+              frame['kind'] == 'mode' &&
+              frame['to'] == 8,
+        ),
+        isNotEmpty,
+      );
+      client.onFrame({
+        't': ptySignalFrameType,
+        'from': 8,
+        'kind': 'offer',
+        'epoch': 2,
+        'description': {'type': 'offer', 'sdp': 'retry-offer'},
+      });
+      await tester.pump();
+
+      expect(factory.createCount, 1);
+      expect(client.ptyPeerState, PtyPeerState.p2p);
+    },
+  );
 
   testWidgets('strict P2P blocks input immediately when the host disconnects', (
     tester,
@@ -841,6 +1431,30 @@ void main() {
     expect(recoveredOpen['routeId'], isNot(gapOpen['routeId']));
     expect(recoveredOpen['to'], 7);
     expect(resets, 1);
+  });
+
+  test('Relay routeFailed rebuilds the route instead of freezing it', () async {
+    final client = _TestRemoteClient(mode: PtyTransportMode.relay);
+    addTearDown(client.dispose);
+    client.onFrame(_sessionsFrame(7, ['sid-1']));
+    client.terminalFor('sid-1');
+    final first = client.sent.singleWhere((frame) => frame['t'] == 'term.open');
+
+    client.onFrame({
+      't': 'term.routeFailed',
+      'from': 7,
+      'sid': 'sid-1',
+      'routeId': first['routeId'],
+      'reason': 'Relay 输出队列已满',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    final opens = client.sent
+        .where((frame) => frame['t'] == 'term.open')
+        .toList();
+    expect(opens, hasLength(2));
+    expect(opens.last['routeId'], isNot(first['routeId']));
+    expect(client.ptyInputBlocked('sid-1'), isFalse);
   });
 
   test('host selection is stable and terminal routes stay owner-bound', () {

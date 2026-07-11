@@ -2808,23 +2808,33 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
             style: const TextStyle(color: CcColors.danger, fontSize: 11.5),
           ),
         ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: '重试 P2P',
-          icon: const Icon(Icons.refresh_rounded, size: 18),
-          onPressed: () => unawaited(widget.client.retryP2P()),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: '改用 Relay',
-          icon: const Icon(Icons.swap_horiz_rounded, size: 18),
-          onPressed: () {
-            saveRemotePtyTransportMode(PtyTransportMode.relay);
-            unawaited(
-              widget.client.setPtyTransportMode(PtyTransportMode.relay),
-            );
-          },
-        ),
+        if (widget.client.hasPtyDeliveryWarning(widget.session.sid))
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: '已核对终端，关闭提醒',
+            icon: const Icon(Icons.check_rounded, size: 18),
+            onPressed: () =>
+                widget.client.acknowledgePtyDeliveryWarning(widget.session.sid),
+          ),
+        if (widget.client.ptyInputBlocked(widget.session.sid)) ...[
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: '重试 P2P',
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            onPressed: () => unawaited(widget.client.retryP2P()),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: '改用 Relay',
+            icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+            onPressed: () {
+              saveRemotePtyTransportMode(PtyTransportMode.relay);
+              unawaited(
+                widget.client.setPtyTransportMode(PtyTransportMode.relay),
+              );
+            },
+          ),
+        ],
       ],
     ),
   );
@@ -3470,7 +3480,7 @@ class _RemoteTerminalScreenState extends State<_RemoteTerminalScreen> {
       ),
       body: Column(
         children: [
-          if (widget.client.ptyInputBlocked(widget.session.sid))
+          if (widget.client.ptyRouteNeedsAttention(widget.session.sid))
             _ptyBlockedBanner(),
           Expanded(
             child: Stack(
@@ -4787,6 +4797,7 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
   ScreenSnapshot? _lastScreen;
   SessionCard? _lastOverview;
   String? _lastRouteStatus;
+  bool _lastFreshScreen = false;
   String? _sendError;
 
   String get _sid => widget.session.sid;
@@ -4799,6 +4810,7 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     _lastScreen = widget.client.screens[_sid];
     _lastOverview = widget.client.overview[_sid];
     _lastRouteStatus = widget.client.ptyRouteStatusText(_sid);
+    _lastFreshScreen = widget.client.hasFreshScreen(_sid);
     widget.client.addListener(_onChange);
     _timer = Timer.periodic(
       const Duration(milliseconds: 1500),
@@ -4824,14 +4836,17 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     final screen = widget.client.screens[_sid];
     final overview = widget.client.overview[_sid];
     final routeStatus = widget.client.ptyRouteStatusText(_sid);
+    final freshScreen = widget.client.hasFreshScreen(_sid);
     if (screen == _lastScreen &&
         identical(overview, _lastOverview) &&
-        routeStatus == _lastRouteStatus) {
+        routeStatus == _lastRouteStatus &&
+        freshScreen == _lastFreshScreen) {
       return;
     }
     _lastScreen = screen;
     _lastOverview = overview;
     _lastRouteStatus = routeStatus;
+    _lastFreshScreen = freshScreen;
     setState(() {});
   }
 
@@ -4841,8 +4856,9 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     if (mounted) widget.client.requestScreen(_sid);
   });
 
-  void _keys(String keys) {
-    final accepted = widget.client.sendKeys(_sid, keys);
+  Future<void> _keys(String keys) async {
+    final accepted = await widget.client.sendKeysConfirmed(_sid, keys);
+    if (!mounted) return;
     setState(() {
       _sendError = accepted ? null : widget.client.ptyRouteStatusText(_sid);
     });
@@ -4850,12 +4866,13 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     _bump();
   }
 
-  void _confirm() => _keys('\r');
+  void _confirm() => unawaited(_keys('\r'));
 
-  void _sendText() {
+  Future<void> _sendText() async {
     final t = _ctl.text;
     if (t.trim().isEmpty) return;
-    final enterAccepted = widget.client.sendKeys(_sid, '$t\r');
+    final enterAccepted = await widget.client.sendKeysConfirmed(_sid, '$t\r');
+    if (!mounted) return;
     setState(() {
       _sendError = enterAccepted
           ? null
@@ -4866,14 +4883,15 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
     _bump();
   }
 
-  Widget _quick(String label, VoidCallback onTap) => OutlinedButton(
-    onPressed: onTap,
-    style: OutlinedButton.styleFrom(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      minimumSize: const Size(0, 32),
-    ),
-    child: Text(label, style: CcType.code(size: 12.5)),
-  );
+  Widget _quick(String label, VoidCallback onTap, {required bool enabled}) =>
+      OutlinedButton(
+        onPressed: enabled ? onTap : null,
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          minimumSize: const Size(0, 32),
+        ),
+        child: Text(label, style: CcType.code(size: 12.5)),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -4885,6 +4903,7 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
             : SessionStatus.shell);
     final screenSize = MediaQuery.sizeOf(context);
     final dialogSize = remoteQuickReplyDialogSize(screenSize);
+    final freshScreen = widget.client.hasFreshScreen(_sid);
     return Dialog(
       insetPadding: const EdgeInsets.all(16),
       child: ConstrainedBox(
@@ -4960,13 +4979,37 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _quick('↵ 确认', _confirm),
-                    _quick('1', () => _keys('1')),
-                    _quick('2', () => _keys('2')),
-                    _quick('3', () => _keys('3')),
-                    _quick('y', () => _keys('y')),
-                    _quick('n', () => _keys('n')),
-                    _quick('Esc', () => _keys('\x1b')),
+                    _quick('↵ 确认', _confirm, enabled: freshScreen),
+                    _quick(
+                      '1',
+                      () => unawaited(_keys('1')),
+                      enabled: freshScreen,
+                    ),
+                    _quick(
+                      '2',
+                      () => unawaited(_keys('2')),
+                      enabled: freshScreen,
+                    ),
+                    _quick(
+                      '3',
+                      () => unawaited(_keys('3')),
+                      enabled: freshScreen,
+                    ),
+                    _quick(
+                      'y',
+                      () => unawaited(_keys('y')),
+                      enabled: freshScreen,
+                    ),
+                    _quick(
+                      'n',
+                      () => unawaited(_keys('n')),
+                      enabled: freshScreen,
+                    ),
+                    _quick(
+                      'Esc',
+                      () => unawaited(_keys('\x1b')),
+                      enabled: freshScreen,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -4975,9 +5018,10 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                     Expanded(
                       child: TextField(
                         controller: _ctl,
+                        enabled: freshScreen,
                         maxLines: 1,
                         textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _sendText(),
+                        onSubmitted: (_) => unawaited(_sendText()),
                         decoration: const InputDecoration(
                           hintText: '快捷回复…',
                           isDense: true,
@@ -4985,7 +5029,12 @@ class _QuickReplyDialogState extends State<_QuickReplyDialog> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    FilledButton(onPressed: _sendText, child: const Text('发送')),
+                    FilledButton(
+                      onPressed: freshScreen
+                          ? () => unawaited(_sendText())
+                          : null,
+                      child: const Text('发送'),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),

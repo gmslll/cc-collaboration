@@ -119,6 +119,27 @@ func TestWSUpgradeAndBroker(t *testing.T) {
 	if waitForText(shortCtx, otherClient, `"t":"same-role"`) {
 		t.Fatal("directed client frame reached another client")
 	}
+
+	if err := host.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(
+		`{"t":"overview","to":%d,"ptySafe":true,"items":[]}`,
+		clientHello.ConnID,
+	))); err != nil {
+		t.Fatal(err)
+	}
+	if !waitForText(ctx, client, `"ptySafe":true`) {
+		t.Fatal("strict-safe overview metadata was not delivered end to end")
+	}
+	if err := host.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(
+		`{"t":"term.output","to":%d,"sid":"s1","routeId":"r1","seq":1,"d":"secret"}`,
+		clientHello.ConnID,
+	))); err != nil {
+		t.Fatal(err)
+	}
+	strictCtx, cancelStrict := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancelStrict()
+	if waitForText(strictCtx, client, `"t":"term.output"`) {
+		t.Fatal("strict client received Relay terminal content end to end")
+	}
 }
 
 func TestWSStopsForwardingAfterUserDisabled(t *testing.T) {

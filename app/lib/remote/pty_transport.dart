@@ -146,6 +146,7 @@ bool isPtyDataFrame(Object? value) {
   if (value is! Map) return false;
   return switch (value['t']) {
     'term.ready' ||
+    'term.close' ||
     'term.input' ||
     'term.output' ||
     'term.resize' ||
@@ -218,7 +219,11 @@ class PtyPacketReassembler {
   static const int _version = 1;
   static const int _maxMessageBytes = 2 * 1024 * 1024;
   static const int _maxParts = 160;
-  static const int _maxActiveMessages = 4;
+  // dart_webrtc converts Web Blob messages asynchronously, so callbacks for an
+  // ordered DataChannel can temporarily interleave packets from several logical
+  // frames. Keep this aligned with the bounded native send queue; the aggregate
+  // byte ceiling below remains the hard memory limit.
+  static const int _maxActiveMessages = 64;
   static const int _maxBufferedBytes = 4 * 1024 * 1024;
 
   final Map<int, _PtyPacketAssembly> _active = {};
@@ -355,6 +360,7 @@ abstract class PtyTransportController {
   int _queuedSignalCount = 0;
   int _queuedSignalBytes = 0;
   int _nextPeerGeneration = 0;
+  int _modeOperationGeneration = 0;
   PtyTransportMode _mode;
   int _nextEpoch = 0;
   int _nextMessageId = 0;
@@ -374,9 +380,13 @@ abstract class PtyTransportController {
 
   Future<void> setMode(PtyTransportMode next) async {
     if (_disposed || next == _mode) return;
+    final operation = ++_modeOperationGeneration;
     _mode = next;
     if (next == PtyTransportMode.relay) {
-      await _closeAll(PtyPeerState.relay);
+      await _closeAll(PtyPeerState.relay, modeOperationGeneration: operation);
+    }
+    if (_disposed || operation != _modeOperationGeneration || _mode != next) {
+      return;
     }
     await onModeChanged();
   }
@@ -405,27 +415,13 @@ abstract class PtyTransportController {
       );
       final sent = await session.peer!.sendPackets(packets);
       if (sent) return PtySendResult.sentP2p;
-      if (identical(_sessions[peerId], session)) {
-        await _failSession(
-          peerId,
-          session.epoch,
-          'data channel backpressure',
-          generation: session.generation,
-        );
-      }
-    } catch (error) {
-      if (identical(_sessions[peerId], session)) {
-        await _failSession(
-          peerId,
-          session.epoch,
-          '$error',
-          generation: session.generation,
-        );
-      }
-    }
+    } catch (_) {}
     // Once a frame was assigned to an open DataChannel route, never retry that
     // same frame through Relay: a partial batch could otherwise duplicate input
-    // or output. Auto mode recovers by opening a fresh Relay route instead.
+    // or output. A per-frame rejection also must not close the peer here: the
+    // route may have been replaced while this send was blocked. The route owner
+    // decides whether a still-current route should fail/recover; native peer
+    // state callbacks remain authoritative for connection-wide failure.
     return PtySendResult.unavailable;
   }
 
@@ -702,6 +698,7 @@ abstract class PtyTransportController {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _modeOperationGeneration++;
     for (final lane in _signalLanes.values) {
       lane.cancel();
     }
@@ -950,13 +947,29 @@ abstract class PtyTransportController {
     _setStatus(peerId, state, epoch, error);
   }
 
-  Future<void> _closeAll(PtyPeerState state) async {
+  Future<void> _closeAll(
+    PtyPeerState state, {
+    int? modeOperationGeneration,
+  }) async {
     final sessions = _sessions.entries.toList();
     _sessions.clear();
+    // A newer mode may start a replacement while these peer closes are still
+    // pending. Remove the detached session's status synchronously so that the
+    // replacement is not suppressed by a stale `p2p`/`connecting` value.
+    for (final entry in sessions) {
+      _statuses.remove(entry.key);
+    }
     await Future.wait(
       sessions.map((entry) async {
         entry.value.reassembler.clear();
         await _closePeer(entry.value.peer);
+        if (_sessions.containsKey(entry.key) ||
+            (modeOperationGeneration != null &&
+                (_disposed ||
+                    modeOperationGeneration != _modeOperationGeneration ||
+                    _mode != PtyTransportMode.relay))) {
+          return;
+        }
         _setStatus(entry.key, state, entry.value.epoch);
       }),
     );
@@ -1067,8 +1080,9 @@ class PtyHostTransportController extends PtyTransportController {
   @override
   Future<void> onRemoteMode(int peerId, PtyTransportMode remoteMode) async {
     if (!_connectedPeers.contains(peerId)) return;
+    final repeated = _remoteModes[peerId] == remoteMode;
     _remoteModes[peerId] = remoteMode;
-    await _reconcile(peerId);
+    await _reconcile(peerId, retryConnecting: repeated);
   }
 
   @override
@@ -1078,7 +1092,7 @@ class PtyHostTransportController extends PtyTransportController {
     }
   }
 
-  Future<void> _reconcile(int peerId) async {
+  Future<void> _reconcile(int peerId, {bool retryConnecting = false}) async {
     final remoteMode = _remoteModes[peerId];
     if (mode == PtyTransportMode.relay ||
         remoteMode == PtyTransportMode.relay) {
@@ -1090,9 +1104,10 @@ class PtyHostTransportController extends PtyTransportController {
       }
       return;
     }
+    final state = statusFor(peerId).state;
     if (remoteMode != null &&
-        statusFor(peerId).state != PtyPeerState.connecting &&
-        statusFor(peerId).state != PtyPeerState.p2p) {
+        state != PtyPeerState.p2p &&
+        (state != PtyPeerState.connecting || retryConnecting)) {
       await startOffer(peerId);
     }
   }

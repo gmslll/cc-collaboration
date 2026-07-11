@@ -492,14 +492,14 @@ class _WebRtcPtyPeer implements PtyPeer {
     if (_closing ||
         channel == null ||
         channel.state != RTCDataChannelState.RTCDataChannelOpen) {
-      return false;
+      return _closing ? false : _poisonAfterSendFailure();
     }
     for (final packet in packets) {
       if (_closing || channel.state != RTCDataChannelState.RTCDataChannelOpen) {
-        return false;
+        return _closing ? false : _poisonAfterSendFailure();
       }
       var remaining = sendBatchTimeout - stopwatch.elapsed;
-      if (remaining <= Duration.zero) return false;
+      if (remaining <= Duration.zero) return _poisonAfterSendFailure();
       final hasCapacity = await _bufferGate.waitForCapacity(
         bytes: packet.length,
         readBufferedAmount: channel.getBufferedAmount,
@@ -508,9 +508,9 @@ class _WebRtcPtyPeer implements PtyPeer {
             channel.state == RTCDataChannelState.RTCDataChannelOpen,
         timeout: remaining,
       );
-      if (!hasCapacity) return false;
+      if (!hasCapacity) return _poisonAfterSendFailure();
       remaining = sendBatchTimeout - stopwatch.elapsed;
-      if (remaining <= Duration.zero) return false;
+      if (remaining <= Duration.zero) return _poisonAfterSendFailure();
       try {
         await ptyWithDeadline<void>(
           channel.send(RTCDataChannelMessage.fromBinary(packet)),
@@ -518,10 +518,18 @@ class _WebRtcPtyPeer implements PtyPeer {
           operation: 'send PTY data channel packet',
         );
       } catch (_) {
-        return false;
+        return _poisonAfterSendFailure();
       }
     }
     return true;
+  }
+
+  bool _poisonAfterSendFailure() {
+    if (!_closing) {
+      _callbacks.onState(PtyPeerState.failed, 'PTY data channel send failed');
+      unawaited(close());
+    }
+    return false;
   }
 
   @override

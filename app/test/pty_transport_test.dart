@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:app/remote/pty_transport.dart';
@@ -94,9 +95,17 @@ void main() {
     expect(init.binaryType, 'binary');
   });
 
+  test('vendored WebRTC wrapper forces ArrayBuffer on the actual channel', () {
+    final source = File(
+      'third_party/dart_webrtc/lib/src/rtc_data_channel_impl.dart',
+    ).readAsStringSync();
+    expect(source, contains("_jsDc.binaryType = 'arraybuffer'"));
+  });
+
   test('PTY data allowlist includes only ordered terminal stream frames', () {
     for (final type in [
       'term.ready',
+      'term.close',
       'term.input',
       'term.output',
       'term.resize',
@@ -109,7 +118,6 @@ void main() {
     }
     for (final type in [
       'term.open',
-      'term.close',
       'term.routeFailed',
       ptySignalFrameType,
       'sessions',
@@ -250,6 +258,31 @@ void main() {
         reassembler.add(packet);
       }
     }, throwsFormatException);
+  });
+
+  test('reassembler tolerates Web Blob packet callback interleaving', () {
+    final batches = [
+      for (var id = 1; id <= 8; id++)
+        PtyPacketCodec.encode({
+          't': 'term.output',
+          'sid': 's$id',
+          'd': List.filled(20000, '$id').join(),
+        }, messageId: id),
+    ];
+    final reassembler = PtyPacketReassembler();
+    for (final batch in batches) {
+      expect(reassembler.add(batch.first), isNull);
+    }
+    final decoded = <Map<String, dynamic>>[];
+    for (final batch in batches) {
+      for (final packet in batch.skip(1)) {
+        final frame = reassembler.add(packet);
+        if (frame != null) decoded.add(frame);
+      }
+    }
+    expect(decoded.map((frame) => frame['sid']), [
+      for (var id = 1; id <= 8; id++) 's$id',
+    ]);
   });
 
   test('buffer gate waits for a slow healthy channel to drain', () async {
@@ -542,6 +575,67 @@ void main() {
   );
 
   test(
+    'an unselected host retries its connecting offer on failover mode',
+    () async {
+      final factory = _FakePeerFactory();
+      final signals = <Map<String, dynamic>>[];
+      final host = PtyHostTransportController(
+        mode: PtyTransportMode.p2p,
+        peerFactory: factory,
+        sendSignal: signals.add,
+        onFrame: (_, _) {},
+      );
+      addTearDown(host.dispose);
+
+      Future<void> announce(int peerId) async {
+        host.peerConnected(peerId);
+        await host.handleSignal({
+          't': ptySignalFrameType,
+          'from': peerId,
+          'kind': 'mode',
+          'mode': 'p2p',
+        });
+      }
+
+      await announce(2);
+      await announce(3);
+      final selected = factory.peers.singleWhere((peer) => peer.peerId == 2)
+        ..open();
+      final ignored = factory.peers.singleWhere((peer) => peer.peerId == 3);
+      expect(host.statusFor(3).state, PtyPeerState.connecting);
+
+      await host.handleSignal({
+        't': ptySignalFrameType,
+        'from': 3,
+        'kind': 'mode',
+        'mode': 'p2p',
+      });
+
+      final peer3Attempts = factory.peers
+          .where((peer) => peer.peerId == 3)
+          .toList();
+      expect(peer3Attempts, hasLength(2));
+      expect(ignored.closed, isTrue);
+      expect(selected.closed, isFalse);
+      expect(
+        signals.where((frame) => frame['to'] == 3 && frame['kind'] == 'offer'),
+        hasLength(2),
+      );
+
+      final replacement = peer3Attempts.last..open();
+      await host.handleSignal({
+        't': ptySignalFrameType,
+        'from': 3,
+        'kind': 'mode',
+        'mode': 'p2p',
+      });
+      expect(factory.peers.where((peer) => peer.peerId == 3), hasLength(2));
+      expect(replacement.closed, isFalse);
+      expect(host.statusFor(3).state, PtyPeerState.p2p);
+    },
+  );
+
+  test(
     'backpressure never retries an assigned P2P frame through Relay',
     () async {
       Future<PtySendResult> run(PtyTransportMode mode) async {
@@ -576,6 +670,38 @@ void main() {
     },
   );
 
+  test('one rejected frame does not close an otherwise open peer', () async {
+    final factory = _FakePeerFactory();
+    final host = PtyHostTransportController(
+      mode: PtyTransportMode.p2p,
+      peerFactory: factory,
+      sendSignal: (_) {},
+      onFrame: (_, _) {},
+    );
+    addTearDown(host.dispose);
+    host.peerConnected(2);
+    await host.handleSignal({
+      't': ptySignalFrameType,
+      'from': 2,
+      'kind': 'mode',
+      'mode': 'p2p',
+    });
+    final peer = factory.peers.single
+      ..open()
+      ..sendResult = false;
+
+    expect(
+      await host.sendPtyFrame(2, {
+        't': 'term.output',
+        'sid': 's1',
+        'd': 'stale route frame',
+      }),
+      PtySendResult.unavailable,
+    );
+    expect(peer.closed, isFalse);
+    expect(host.statusFor(2).state, PtyPeerState.p2p);
+  });
+
   test('client advertises mode over relay control signaling', () async {
     final signals = <Map<String, dynamic>>[];
     final client = PtyClientTransportController(
@@ -594,6 +720,59 @@ void main() {
       {'t': ptySignalFrameType, 'to': 1, 'kind': 'mode', 'mode': 'relay'},
     ]);
   });
+
+  test(
+    'superseded relay close cannot overwrite a replacement or advertise twice',
+    () async {
+      final factory = _FakePeerFactory();
+      final signals = <Map<String, dynamic>>[];
+      final client = PtyClientTransportController(
+        mode: PtyTransportMode.auto,
+        peerFactory: factory,
+        sendSignal: signals.add,
+        onFrame: (_, _) {},
+      );
+      addTearDown(client.dispose);
+      client.hostConnected(1);
+      await client.handleSignal({
+        't': ptySignalFrameType,
+        'from': 1,
+        'kind': 'offer',
+        'epoch': 1,
+        'description': {'type': 'offer', 'sdp': 'offer-1'},
+      });
+      final old = factory.peers.single..open();
+      old.closeGate = Completer<void>();
+
+      final relayChange = client.setMode(PtyTransportMode.relay);
+      await Future<void>.delayed(Duration.zero);
+      expect(old.closed, isTrue);
+      final p2pChange = client.setMode(PtyTransportMode.p2p);
+      await p2pChange;
+      final replacementSignal = client.handleSignal({
+        't': ptySignalFrameType,
+        'from': 1,
+        'kind': 'offer',
+        'epoch': 2,
+        'description': {'type': 'offer', 'sdp': 'offer-2'},
+      });
+      await Future<void>.delayed(Duration.zero);
+      final replacement = factory.peers.last..open();
+
+      old.closeGate!.complete();
+      await Future.wait([relayChange, replacementSignal]);
+
+      expect(client.mode, PtyTransportMode.p2p);
+      expect(client.statusFor(1).state, PtyPeerState.p2p);
+      expect(replacement.closed, isFalse);
+      expect(
+        signals
+            .where((frame) => frame['kind'] == 'mode')
+            .map((frame) => frame['mode']),
+        ['auto', 'p2p'],
+      );
+    },
+  );
 
   test('non-PTY frames always stay on relay', () async {
     final controller = PtyClientTransportController(
