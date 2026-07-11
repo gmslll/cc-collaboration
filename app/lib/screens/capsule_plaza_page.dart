@@ -1083,15 +1083,16 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   Future<void> _loadPackage() async {
     try {
       final pkg = await widget.client.get(widget.capsule.id);
-      if (!mounted || !widget.isCurrentContext()) return;
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       setState(() {
         _pkg = pkg;
         _bundledSkills = skillPackNames(pkg.attachments);
       });
     } catch (_) {
-      if (mounted && widget.isCurrentContext()) {
-        setState(() => _bundledSkills = const []);
-      }
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
+      setState(() => _bundledSkills = const []);
     }
   }
 
@@ -1207,7 +1208,8 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
     }
     try {
       final detail = await widget.client.project(projectID);
-      if (!mounted || !widget.isCurrentContext()) return;
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       final cloneable = detail.cloneableRepos;
       final sourceRepo = widget.capsule.repoName.trim();
       final sourceAvailable =
@@ -1234,7 +1236,8 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
         }
       });
     } catch (e) {
-      if (!mounted || !widget.isCurrentContext()) return;
+      if (!mounted) return;
+      if (_closeIfStaleContext()) return;
       setState(() {
         _environmentChecking = false;
         _environmentError = '无法读取绑定项目：${errorText(e)}';
@@ -1313,11 +1316,11 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
 
   Future<void> _submit() async {
     if (_submitting) return;
+    if (_closeIfStaleContext()) return;
     if (_environmentChecking) {
       snack(context, '正在检查绑定项目环境');
       return;
     }
-    if (_closeIfStaleContext()) return;
     setState(() => _submitting = true);
     try {
       if (!await _prepareEnvironmentIfNeeded()) return;
@@ -2000,7 +2003,11 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
     final persona = await personaF;
     final seed = await seedF;
     final bindings = await bindingsF;
-    if (!mounted || !widget.isCurrentContext()) return;
+    if (!mounted) return;
+    if (!widget.isCurrentContext()) {
+      Navigator.of(context).pop(false);
+      return;
+    }
     setState(() {
       _skills = skills;
       _persona = persona ?? '';
@@ -2080,6 +2087,10 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
 
   Future<void> _save() async {
     if (_saving) return;
+    if (!widget.isCurrentContext()) {
+      Navigator.of(context).pop(false);
+      return;
+    }
     final initialBinding = CapsuleBinding(
       orgId: widget.capsule.orgId,
       projectId: widget.capsule.projectId,
@@ -2092,14 +2103,18 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
       snack(context, '团队共享胶囊必须选择一个团队');
       return;
     }
+    final visibility = scopeChanged ? (_public ? 'public' : 'private') : null;
+    final summary = _summary.text.trim();
+    final orgId = scopeChanged ? _binding.orgId : null;
+    final projectId = scopeChanged ? _binding.projectId : null;
     setState(() => _saving = true);
     try {
       await widget.client.patchCapsule(
         widget.capsule.id,
-        visibility: scopeChanged ? (_public ? 'public' : 'private') : null,
-        summary: _summary.text.trim(),
-        orgId: scopeChanged ? _binding.orgId : null,
-        projectId: scopeChanged ? _binding.projectId : null,
+        visibility: visibility,
+        summary: summary,
+        orgId: orgId,
+        projectId: projectId,
       );
       if (!mounted || !widget.isCurrentContext()) return;
       Navigator.of(context).pop(true);
@@ -2114,146 +2129,158 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
   @override
   Widget build(BuildContext context) {
     final dialogSize = capsuleEditDialogSize(MediaQuery.sizeOf(context));
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: SizedBox(
-        width: dialogSize.width,
-        height: dialogSize.height,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.edit_rounded,
-                            size: 20,
-                            color: CcColors.accent,
-                          ),
-                          const SizedBox(width: 8),
-                          const Text(
-                            '编辑胶囊',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            tooltip: '关闭',
-                            icon: const Icon(Icons.close_rounded, size: 18),
-                            onPressed: () => Navigator.of(context).pop(false),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        key: const ValueKey('capsule-edit-summary'),
-                        controller: _summary,
-                        decoration: const InputDecoration(
-                          labelText: '说明',
-                          isDense: true,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      SegmentedButton<bool>(
-                        segments: const [
-                          ButtonSegment(
-                            value: false,
-                            label: Text('个人'),
-                            icon: Icon(Icons.lock_outline_rounded, size: 16),
-                          ),
-                          ButtonSegment(
-                            value: true,
-                            label: Text('团队'),
-                            icon: Icon(Icons.public_rounded, size: 16),
-                          ),
-                        ],
-                        selected: {_public},
-                        onSelectionChanged: (s) =>
-                            setState(() => _public = s.first),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _public ? '同团队成员能在广场看到' : '只有你自己能在广场看到',
-                        style: CcType.code(size: 11.5, color: CcColors.subtle),
-                      ),
-                      const SizedBox(height: 12),
-                      CapsuleBindingPicker(
-                        catalog: _bindingCatalog,
-                        binding: _binding,
-                        enabled: !_saving,
-                        error: _bindingError,
-                        onChanged: (binding) =>
-                            setState(() => _binding = binding),
-                      ),
-                      const SizedBox(height: 14),
-                      const Divider(height: 1),
-                      const SizedBox(height: 12),
-                      if (_skills == null)
-                        const Row(
+    return PopScope(
+      canPop: !_saving,
+      child: Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: SizedBox(
+          width: dialogSize.width,
+          height: dialogSize.height,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           children: [
-                            SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                            const Icon(
+                              Icons.edit_rounded,
+                              size: 20,
+                              color: CcColors.accent,
                             ),
-                            SizedBox(width: 8),
-                            Text('读取胶囊内容…', style: TextStyle(fontSize: 12)),
+                            const SizedBox(width: 8),
+                            const Text(
+                              '编辑胶囊',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              tooltip: '关闭',
+                              icon: const Icon(Icons.close_rounded, size: 18),
+                              onPressed: _saving
+                                  ? null
+                                  : () => Navigator.of(context).pop(false),
+                            ),
                           ],
-                        )
-                      else ...[
-                        _sectionLabel('自带技能'),
-                        if (_skills!.isEmpty)
-                          Text(
-                            '(无)',
-                            style: CcType.code(
-                              size: 11.5,
-                              color: CcColors.subtle,
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          key: const ValueKey('capsule-edit-summary'),
+                          controller: _summary,
+                          enabled: !_saving,
+                          decoration: const InputDecoration(
+                            labelText: '说明',
+                            isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(
+                              value: false,
+                              label: Text('个人'),
+                              icon: Icon(Icons.lock_outline_rounded, size: 16),
                             ),
+                            ButtonSegment(
+                              value: true,
+                              label: Text('团队'),
+                              icon: Icon(Icons.public_rounded, size: 16),
+                            ),
+                          ],
+                          selected: {_public},
+                          onSelectionChanged: _saving
+                              ? null
+                              : (s) => setState(() => _public = s.first),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          capsuleVisibilityDescription(_public, _binding),
+                          style: CcType.code(
+                            size: 11.5,
+                            color: CcColors.subtle,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        CapsuleBindingPicker(
+                          catalog: _bindingCatalog,
+                          binding: _binding,
+                          enabled: !_saving,
+                          error: _bindingError,
+                          onChanged: (binding) =>
+                              setState(() => _binding = binding),
+                        ),
+                        const SizedBox(height: 14),
+                        const Divider(height: 1),
+                        const SizedBox(height: 12),
+                        if (_skills == null)
+                          const Row(
+                            children: [
+                              SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              SizedBox(width: 8),
+                              Text('读取胶囊内容…', style: TextStyle(fontSize: 12)),
+                            ],
                           )
-                        else
-                          _skillWrap(_skills!),
-                        const SizedBox(height: 12),
-                        _readonlyBox('专职角色 (persona)', _persona),
-                        const SizedBox(height: 12),
-                        _readonlyBox('上下文摘要 (seed)', _seed),
+                        else ...[
+                          _sectionLabel('自带技能'),
+                          if (_skills!.isEmpty)
+                            Text(
+                              '(无)',
+                              style: CcType.code(
+                                size: 11.5,
+                                color: CcColors.subtle,
+                              ),
+                            )
+                          else
+                            _skillWrap(_skills!),
+                          const SizedBox(height: 12),
+                          _readonlyBox('专职角色 (persona)', _persona),
+                          const SizedBox(height: 12),
+                          _readonlyBox('上下文摘要 (seed)', _seed),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: _saving
-                        ? null
-                        : () => Navigator.of(context).pop(false),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: _saving ? null : _save,
-                    icon: _saving
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.check_rounded, size: 16),
-                    label: const Text('保存'),
-                  ),
-                ],
-              ),
-            ],
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: _saving
+                          ? null
+                          : () => Navigator.of(context).pop(false),
+                      child: const Text('取消'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _saving ? null : _save,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check_rounded, size: 16),
+                      label: const Text('保存'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

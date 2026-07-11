@@ -5,6 +5,13 @@ import '../theme.dart';
 
 enum CapsuleBindingMode { none, team, project }
 
+String capsuleVisibilityDescription(bool isPublic, CapsuleBinding binding) {
+  if (!isPublic) return '只有你自己能在广场看到';
+  if (binding.projectId.trim().isNotEmpty) return '该项目的参与者能在广场看到';
+  if (binding.orgId.trim().isNotEmpty) return '同团队成员能在广场看到';
+  return '选择团队后即可共享';
+}
+
 class CapsuleBindingPicker extends StatelessWidget {
   final CapsuleBindingCatalog? catalog;
   final CapsuleBinding binding;

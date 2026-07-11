@@ -363,9 +363,14 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 
 	var insertErr error
 	if p.EffectiveKind() == handoffschema.KindCapsule {
+		// Keep the effective-admin decision stable until the store transaction
+		// commits. Account demotion/disable/delete use the same lock; project and
+		// organization membership are checked inside the SQLite transaction.
+		s.accountMu.Lock()
 		insertErr = s.Store.InsertCapsuleAuthorized(
 			r.Context(), &p, identity, s.isAdmin(r.Context(), identity),
 		)
+		s.accountMu.Unlock()
 	} else {
 		insertErr = s.Store.Insert(r.Context(), &p)
 	}
@@ -433,10 +438,13 @@ func (s *Server) patchCapsule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid capsule visibility", http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.UpdateCapsuleMeta(
+	s.accountMu.Lock()
+	err := s.Store.UpdateCapsuleMeta(
 		r.Context(), r.PathValue("id"), identity, s.isAdmin(r.Context(), identity),
 		body.Visibility, body.Summary, body.OrgID, body.ProjectID,
-	); err != nil {
+	)
+	s.accountMu.Unlock()
+	if err != nil {
 		writeCapsuleScopeError(w, err)
 		return
 	}

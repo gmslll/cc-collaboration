@@ -41,13 +41,12 @@ void main() {
     expect(loadDialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
-  test('capsule plaza describes public visibility as team shared', () {
+  test('capsule plaza labels public cards as team shared', () {
     final source = File(
       'lib/screens/capsule_plaza_page.dart',
     ).readAsStringSync();
 
     expect(source, contains('团队共享'));
-    expect(source, contains('同团队成员能在广场看到'));
     expect(source, isNot(contains('团队所有人能在广场看到')));
     expect(source, isNot(contains('设为公开,就会出现在这里')));
   });
@@ -149,9 +148,10 @@ void main() {
 
     expect(loadDialog, contains('bool _closeIfStaleContext()'));
     expect(loadDialog, contains('if (_closeIfStaleContext()) return;'));
-    expect(loadDialog, contains('if (!mounted || !widget.isCurrentContext())'));
+    expect(loadDialog, contains('if (!mounted) return;'));
     expect(editDialog, contains('required this.isCurrentContext'));
-    expect(editDialog, contains('if (!mounted || !widget.isCurrentContext())'));
+    expect(editDialog, contains('if (!widget.isCurrentContext())'));
+    expect(editDialog, contains('Navigator.of(context).pop(false)'));
   });
 
   test('capsule load dialog uses viewport based bounds', () {
@@ -711,6 +711,58 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('capsule edit cannot start a stale-account mutation', (
+    tester,
+  ) async {
+    final oldClient = _DelayedCapsulesClient();
+    final newClient = _DelayedCapsulesClient();
+    final overviewStore = SessionOverviewStore();
+
+    Widget page(RelayClient client, String identity, String token) =>
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(
+            body: CapsulePlazaPage(
+              client: client,
+              identity: identity,
+              overviewStore: overviewStore,
+              config: AppConfig(
+                'http://127.0.0.1:1',
+                token,
+                identity,
+                const {},
+              ),
+              isDesktop: false,
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(page(oldClient, 'old@x', 'old'));
+    await tester.pump();
+    oldClient.completeNext([
+      _capsule('old-stale', headline: 'Old capsule', owner: 'old@x'),
+    ]);
+    await tester.pumpAndSettle();
+    await _chooseOwnerAction(tester, 'old-stale', '编辑');
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(page(newClient, 'new@x', 'new'));
+    await tester.pump();
+    newClient.completeNext([
+      _capsule('new-current', headline: 'New capsule', owner: 'new@x'),
+    ]);
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(oldClient.patchCalls, 0);
+    expect(newClient.patchCalls, 0);
+    expect(find.text('New capsule'), findsOneWidget);
+    expect(find.text('编辑胶囊'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('capsule edit ignores duplicate save taps', (tester) async {
     final client = _DelayedCapsulesClient();
     final overviewStore = SessionOverviewStore();
@@ -749,6 +801,12 @@ void main() {
 
     expect(client.patchCalls, 1);
     expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('capsule-edit-summary')))
+          .enabled,
+      isFalse,
+    );
 
     client.completePatch();
     await tester.pump();

@@ -99,6 +99,25 @@ void main() {
     expect(dialog, isNot(contains('maxWidth: 620')));
   });
 
+  test('capsule review freezes the submitted values and controls', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+    );
+
+    expect(
+      dialog,
+      contains("final visibility = _public ? 'public' : 'private'"),
+    );
+    expect(dialog, contains('final binding = _binding'));
+    expect(dialog, contains('final selectedSkillDirs = ['));
+    expect(dialog, contains('enabled: !_submitting'));
+    expect(dialog, contains('onChanged: _submitting'));
+    expect(dialog, contains('onSelectionChanged: _submitting'));
+  });
+
   test('session quick reply dialog uses viewport based bounds', () {
     final source = File(
       'lib/screens/session_overview_page.dart',
@@ -363,28 +382,25 @@ void main() {
     expect(fullReviewDialog, isNot(contains('height: 120')));
   });
 
-  test(
-    'capsule review keeps default private and labels public as team shared',
-    () {
-      final source = File(
-        'lib/screens/session_overview_page.dart',
-      ).readAsStringSync();
-      final reviewDialog = source.substring(
-        source.indexOf('class _CapsuleReviewDialogState'),
-        source.indexOf('  // _labeledCodeField'),
-      );
+  test('capsule review keeps default private and uses frozen visibility', () {
+    final source = File(
+      'lib/screens/session_overview_page.dart',
+    ).readAsStringSync();
+    final reviewDialog = source.substring(
+      source.indexOf('class _CapsuleReviewDialogState'),
+      source.indexOf('  // _labeledCodeField'),
+    );
 
-      expect(reviewDialog, contains('bool _public = false;'));
-      expect(
-        reviewDialog,
-        contains("visibility: _public ? 'public' : 'private'"),
-      );
-      expect(source, contains('个人 / 团队共享'));
-      expect(source, contains("label: Text('团队')"));
-      expect(source, contains('同团队成员能在广场看到'));
-      expect(source, isNot(contains('团队所有人能在广场看到')));
-    },
-  );
+    expect(reviewDialog, contains('bool _public = false;'));
+    expect(
+      reviewDialog,
+      contains("final visibility = _public ? 'public' : 'private'"),
+    );
+    expect(source, contains('个人 / 团队共享'));
+    expect(source, contains("label: Text('团队')"));
+    expect(source, contains('capsuleVisibilityDescription(_public, _binding)'));
+    expect(source, isNot(contains('团队所有人能在广场看到')));
+  });
 
   // The last hop of the "打开/恢复会话" chain: TerminalHost.addTerm mints a
   // fresh uuid for a brand-new claude session, but when the caller already

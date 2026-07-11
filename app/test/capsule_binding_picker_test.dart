@@ -16,6 +16,24 @@ void main() {
     ],
   );
 
+  test('visibility description follows the effective audience', () {
+    expect(
+      capsuleVisibilityDescription(false, const CapsuleBinding()),
+      '只有你自己能在广场看到',
+    );
+    expect(
+      capsuleVisibilityDescription(true, const CapsuleBinding(orgId: 'org-a')),
+      '同团队成员能在广场看到',
+    );
+    expect(
+      capsuleVisibilityDescription(
+        true,
+        const CapsuleBinding(orgId: 'org-a', projectId: 'project-a'),
+      ),
+      '该项目的参与者能在广场看到',
+    );
+  });
+
   testWidgets('binding picker supports none, team and project scopes', (
     tester,
   ) async {

@@ -859,32 +859,38 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
       snack(context, '团队共享胶囊必须选择一个团队');
       return;
     }
+    final visibility = _public ? 'public' : 'private';
+    final summary = _summary.text.trim();
+    final binding = _binding;
+    final persona = _persona.text;
+    final seed = _seed.text;
+    final selectedSkillDirs = [
+      for (final entry in _skillDirs.entries)
+        if (entry.value) entry.key,
+    ];
     setState(() => _submitting = true);
     var keepSubmitting = false;
     try {
       // Persist the user's edits back to the draft before shipping.
-      if (_persona.text.trim().isNotEmpty) {
+      if (persona.trim().isNotEmpty) {
         await File(
           '${widget.draft.draftDir}/persona.md',
-        ).writeAsString(_persona.text);
+        ).writeAsString(persona);
       }
-      if (_seed.text.trim().isNotEmpty) {
-        await File(
-          '${widget.draft.draftDir}/seed.md',
-        ).writeAsString(_seed.text);
+      if (seed.trim().isNotEmpty) {
+        await File('${widget.draft.draftDir}/seed.md').writeAsString(seed);
       }
       // Zip the skill dirs the user kept checked so they ride with the capsule.
       final skillZips = <String>[];
-      for (final e in _skillDirs.entries) {
-        if (!e.value) continue;
-        final zip = await packSkillDir(e.key, widget.draft.draftDir);
+      for (final dir in selectedSkillDirs) {
+        final zip = await packSkillDir(dir, widget.draft.draftDir);
         if (zip != null) skillZips.add(zip);
       }
       final (ok, err) = await widget.store.submitCapsule(
         widget.draft,
-        visibility: _public ? 'public' : 'private',
-        summary: _summary.text.trim(),
-        binding: _binding,
+        visibility: visibility,
+        summary: summary,
+        binding: binding,
         skillZips: skillZips,
       );
       if (!mounted) return;
@@ -921,6 +927,7 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
         const SizedBox(height: 4),
         TextField(
           controller: controller,
+          enabled: !_submitting,
           minLines: minLines,
           maxLines: maxLines,
           style: CcType.code(size: 12),
@@ -992,6 +999,7 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                       const SizedBox(height: 12),
                       TextField(
                         controller: _summary,
+                        enabled: !_submitting,
                         decoration: const InputDecoration(
                           labelText: '说明',
                           isDense: true,
@@ -1021,8 +1029,11 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                         for (final dir in _skillDirs.keys)
                           CheckboxListTile(
                             value: _skillDirs[dir],
-                            onChanged: (v) =>
-                                setState(() => _skillDirs[dir] = v ?? false),
+                            onChanged: _submitting
+                                ? null
+                                : (v) => setState(
+                                    () => _skillDirs[dir] = v ?? false,
+                                  ),
                             title: Text(
                               dir.split('/').last,
                               style: CcType.code(size: 12),
@@ -1061,13 +1072,14 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                               ),
                             ],
                             selected: {_public},
-                            onSelectionChanged: (s) =>
-                                setState(() => _public = s.first),
+                            onSelectionChanged: _submitting
+                                ? null
+                                : (s) => setState(() => _public = s.first),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              _public ? '同团队成员能在广场看到' : '只有你自己能在广场看到',
+                              capsuleVisibilityDescription(_public, _binding),
                               style: CcType.code(
                                 size: 11.5,
                                 color: CcColors.subtle,
