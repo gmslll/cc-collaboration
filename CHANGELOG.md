@@ -6,6 +6,8 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-11
+
 ### Added
 
 - **远程终端可选择自动、P2P 或 Relay 传输** — 手机端可持久化选择终端 PTY 数据路径；自动模式优先直连并安全回退，严格 P2P 不会把已分配的输入/输出帧重发到 Relay。认证、WebRTC 信令、文件、Git 和其它控制消息仍经 Relay，并补齐连接世代、服务端 peer 身份、背压和重组内存保护。
@@ -756,7 +758,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v0.9.30...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/gmslll/cc-collaboration/compare/v1.0.1...v1.0.2
 [0.9.30]: https://github.com/gmslll/cc-collaboration/compare/v0.9.29...v0.9.30
 [0.6.11]: https://github.com/gmslll/cc-collaboration/compare/v0.6.10...v0.6.11
 [0.6.10]: https://github.com/gmslll/cc-collaboration/compare/v0.6.9...v0.6.10
