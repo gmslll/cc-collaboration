@@ -36,7 +36,8 @@ void main() {
         ),
       ),
     );
-    expect(loadDialog, contains('x.name as String,\n          maxLines: 1'));
+    expect(loadDialog, contains('_stringItems(_workspaceNames)'));
+    expect(loadDialog, contains('_stringItems(_projectNames)'));
     expect(loadDialog, contains('overflow: TextOverflow.ellipsis'));
   });
 
@@ -180,7 +181,7 @@ void main() {
       source.indexOf('// bundledSkillNames lists'),
     );
 
-    expect(loadDialog, contains('projectId: _selectedProject?.projectId'));
+    expect(loadDialog, contains('projectId: _targetProjectId'));
   });
 
   test('capsule grid column count is stable across desktop widths', () {
@@ -923,6 +924,262 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('bound capsule prefers the matching local repo environment', (
+    tester,
+  ) async {
+    final client = _DelayedCapsulesClient();
+    final overview = SessionOverviewStore();
+    overview.resolveCapsuleEnvironmentHandler = (_) => const [
+      CapsuleEnvironmentTarget(
+        workspace: 'team',
+        project: 'other-repo',
+        projectId: 'relay-project',
+        workdir: '/tmp/team/other',
+      ),
+      CapsuleEnvironmentTarget(
+        workspace: 'team',
+        project: 'cc-collaboration',
+        projectId: 'relay-project',
+        workdir: '/tmp/team/cc-collaboration',
+      ),
+    ];
+    String? spawnedWorkspace, spawnedProject, spawnedProjectId;
+    overview.spawnHandler =
+        ({
+          required workspace,
+          required project,
+          required kind,
+          projectId,
+          newWorktreeBranch,
+          worktreeStart,
+          resumeAgentSessionId,
+          workdir,
+        }) async {
+          spawnedWorkspace = workspace;
+          spawnedProject = project;
+          spawnedProjectId = projectId;
+          return ('sid-bound', null);
+        };
+    overview.dispatchHandler = (_) => null;
+    final config = AppConfig('http://127.0.0.1:1', 'tok', 'me@x', const {});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ccTheme(),
+        home: Scaffold(
+          body: CapsulePlazaPage(
+            client: client,
+            identity: 'me@x',
+            overviewStore: overview,
+            config: config,
+            isDesktop: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    client.completeNext([
+      _capsule(
+        'bound-local',
+        headline: 'Bound local',
+        projectId: 'relay-project',
+        hasTranscript: false,
+        hasPersona: true,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, '载入'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('capsule-environment-ready')), findsOne);
+    expect(find.textContaining('team / cc-collaboration'), findsWidgets);
+
+    final submit = find.widgetWithText(FilledButton, '起会话');
+    await tester.ensureVisible(submit);
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+
+    expect(spawnedWorkspace, 'team');
+    expect(spawnedProject, 'cc-collaboration');
+    expect(spawnedProjectId, 'relay-project');
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets(
+    'missing bound project prepares environment before spawning the session',
+    (tester) async {
+      final client = _ProjectCapsulesClient();
+      final overview = SessionOverviewStore();
+      overview.resolveCapsuleEnvironmentHandler = (_) => const [
+        CapsuleEnvironmentTarget(
+          workspace: 'existing',
+          project: 'backend-only',
+          projectId: 'relay-project',
+          workdir: '/tmp/existing/backend-only',
+        ),
+      ];
+      CapsuleEnvironmentRequest? prepared;
+      overview.prepareCapsuleEnvironmentHandler = (request) async {
+        prepared = request;
+        return (
+          const CapsuleEnvironmentResult(
+            targets: [
+              CapsuleEnvironmentTarget(
+                workspace: 'relay-project',
+                project: 'cc-collaboration',
+                projectId: 'relay-project',
+                workdir: '/tmp/relay-project/cc-collaboration',
+              ),
+            ],
+          ),
+          null,
+        );
+      };
+      String? spawnedProjectId;
+      overview.spawnHandler =
+          ({
+            required workspace,
+            required project,
+            required kind,
+            projectId,
+            newWorktreeBranch,
+            worktreeStart,
+            resumeAgentSessionId,
+            workdir,
+          }) async {
+            spawnedProjectId = projectId;
+            return ('sid-prepared', null);
+          };
+      overview.dispatchHandler = (_) => null;
+      final config = AppConfig(
+        'http://127.0.0.1:1',
+        'tok',
+        'me@x',
+        const {},
+        const [],
+        '',
+        '/tmp',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(
+            body: CapsulePlazaPage(
+              client: client,
+              identity: 'me@x',
+              overviewStore: overview,
+              config: config,
+              isDesktop: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '载入'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('capsule-environment-missing')),
+        findsOne,
+      );
+
+      final submit = find.widgetWithText(FilledButton, '载入环境并起会话');
+      await tester.ensureVisible(submit);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      expect(prepared?.projectId, 'relay-project');
+      expect(
+        prepared?.repos.map((repo) => repo.name),
+        contains('cc-collaboration'),
+      );
+      expect(spawnedProjectId, 'relay-project');
+      expect(find.text('载入胶囊'), findsNothing);
+      await tester.pump(const Duration(seconds: 5));
+    },
+  );
+
+  testWidgets(
+    'environment preparation never falls back to a different project repo',
+    (tester) async {
+      final client = _ProjectCapsulesClient();
+      final overview = SessionOverviewStore();
+      overview.resolveCapsuleEnvironmentHandler = (_) => const [
+        CapsuleEnvironmentTarget(
+          workspace: 'existing',
+          project: 'backend-only',
+          projectId: 'relay-project',
+          workdir: '/tmp/existing/backend-only',
+        ),
+      ];
+      overview.prepareCapsuleEnvironmentHandler = (_) async => (
+        const CapsuleEnvironmentResult(
+          targets: [
+            CapsuleEnvironmentTarget(
+              workspace: 'existing',
+              project: 'backend-only',
+              projectId: 'relay-project',
+              workdir: '/tmp/existing/backend-only',
+            ),
+          ],
+          errors: ['cc-collaboration: clone failed'],
+        ),
+        null,
+      );
+      var spawnCalls = 0;
+      overview.spawnHandler =
+          ({
+            required workspace,
+            required project,
+            required kind,
+            projectId,
+            newWorktreeBranch,
+            worktreeStart,
+            resumeAgentSessionId,
+            workdir,
+          }) async {
+            spawnCalls++;
+            return ('should-not-spawn', null);
+          };
+      final config = AppConfig(
+        'http://127.0.0.1:1',
+        'tok',
+        'me@x',
+        const {},
+        const [],
+        '',
+        '/tmp',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ccTheme(),
+          home: Scaffold(
+            body: CapsulePlazaPage(
+              client: client,
+              identity: 'me@x',
+              overviewStore: overview,
+              config: config,
+              isDesktop: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '载入'));
+      await tester.pumpAndSettle();
+      final submit = find.widgetWithText(FilledButton, '载入环境并起会话');
+      await tester.ensureVisible(submit);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      expect(spawnCalls, 0);
+      expect(find.text('载入胶囊'), findsOne);
+      expect(find.textContaining('来源仓库 cc-collaboration 未成功载入'), findsOne);
+      await tester.pump(const Duration(seconds: 5));
+    },
+  );
 }
 
 Future<void> _setSurfaceSize(WidgetTester tester, Size size) async {
@@ -986,6 +1243,12 @@ class _ImmediateCapsulesClient extends RelayClient {
     if (error != null) throw error!;
     return items;
   }
+
+  @override
+  Future<List<Organization>> organizations() async => const [];
+
+  @override
+  Future<List<Project>> projects() async => const [];
 }
 
 class _PendingDeleteClient extends _ImmediateCapsulesClient {
@@ -1018,6 +1281,12 @@ class _DelayedCapsulesClient extends RelayClient {
     _requests.add(completer);
     return completer.future;
   }
+
+  @override
+  Future<List<Organization>> organizations() async => const [];
+
+  @override
+  Future<List<Project>> projects() async => const [];
 
   final deletedIds = <String>[];
 
@@ -1059,7 +1328,13 @@ class _DelayedCapsulesClient extends RelayClient {
   }
 
   @override
-  Future<void> patchCapsule(String id, {String? visibility, String? summary}) {
+  Future<void> patchCapsule(
+    String id, {
+    String? visibility,
+    String? summary,
+    String? orgId,
+    String? projectId,
+  }) {
     final completer = Completer<void>();
     _patches.add(completer);
     return completer.future;
@@ -1081,6 +1356,38 @@ class _DelayedCapsulesClient extends RelayClient {
   }
 }
 
+class _ProjectCapsulesClient extends _DelayedCapsulesClient {
+  @override
+  Future<List<CapsuleListItem>> capsules() async => [
+    _capsule(
+      'bound-missing',
+      headline: 'Bound missing',
+      projectId: 'relay-project',
+      hasTranscript: false,
+      hasPersona: true,
+    ),
+  ];
+
+  @override
+  Future<ProjectDetail> project(String id) async => ProjectDetail.fromJson({
+    'project': {
+      'id': id,
+      'org_id': 'org-team',
+      'name': 'Relay project',
+      'owner_identity': 'me@x',
+      'role': 'member',
+    },
+    'repo_bindings': [
+      {
+        'repo_name': 'cc-collaboration',
+        'clone_url': 'https://github.com/example/cc-collaboration.git',
+      },
+    ],
+    'members': const [],
+    'invitations': const [],
+  });
+}
+
 CapsuleListItem _capsule(
   String id, {
   required String headline,
@@ -1092,12 +1399,16 @@ CapsuleListItem _capsule(
   bool hasTranscript = true,
   bool hasPersona = false,
   int skillPackCount = 0,
+  String orgId = '',
+  String projectId = '',
 }) => CapsuleListItem.fromJson({
   'id': id,
   'owner': owner,
   'visibility': visibility,
   'source_agent': sourceAgent,
   'origin_session_id': 's-$id',
+  'org_id': orgId,
+  'project_id': projectId,
   'headline': headline,
   'summary': summary ?? headline,
   'repo_name': repoName,

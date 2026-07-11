@@ -78,6 +78,21 @@
         "member":     {"type": "string"}
       }
     },
+    "capsule": {
+      "type": "object",
+      "description": "Frozen agent context metadata. Team/project ids are optional for private capsules; new public capsules require an authorized organization or project scope.",
+      "required": ["source_agent"],
+      "properties": {
+        "source_agent":      {"type": "string", "enum": ["claude", "codex"]},
+        "origin_session_id": {"type": "string"},
+        "visibility":        {"type": "string", "enum": ["private", "public"]},
+        "org_id":            {"type": "string"},
+        "project_id":        {"type": "string"},
+        "has_transcript":    {"type": "boolean"},
+        "has_persona":       {"type": "boolean"},
+        "updated_at":        {"type": "string", "format": "date-time"}
+      }
+    },
     "note_md":     {"type": "string"},
     "prd_md":      {"type": "string"},
     "amends_handoff": {"type": "string"},

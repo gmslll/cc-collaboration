@@ -21,6 +21,70 @@ import 'local_bus.dart';
 // ansi through both the local previewHandler and the remote `screen` frame.
 typedef ScreenSnapshot = ({String ansi, int cols, int rows});
 
+class CapsuleBinding {
+  final String orgId, projectId;
+
+  const CapsuleBinding({this.orgId = '', this.projectId = ''});
+}
+
+class CapsuleBindingTeam {
+  final String id, name;
+
+  const CapsuleBindingTeam(this.id, this.name);
+}
+
+class CapsuleBindingProject {
+  final String id, orgId, name;
+
+  const CapsuleBindingProject(this.id, this.orgId, this.name);
+}
+
+class CapsuleBindingCatalog {
+  final List<CapsuleBindingTeam> teams;
+  final List<CapsuleBindingProject> projects;
+
+  const CapsuleBindingCatalog({required this.teams, required this.projects});
+}
+
+class CapsuleEnvironmentRepo {
+  final String name, cloneUrl;
+
+  const CapsuleEnvironmentRepo(this.name, this.cloneUrl);
+}
+
+class CapsuleEnvironmentRequest {
+  final String projectId, workspaceName, parentDirectory;
+  final List<CapsuleEnvironmentRepo> repos;
+
+  const CapsuleEnvironmentRequest({
+    required this.projectId,
+    required this.workspaceName,
+    required this.parentDirectory,
+    required this.repos,
+  });
+}
+
+class CapsuleEnvironmentTarget {
+  final String workspace, project, projectId, workdir;
+
+  const CapsuleEnvironmentTarget({
+    required this.workspace,
+    required this.project,
+    required this.projectId,
+    required this.workdir,
+  });
+}
+
+class CapsuleEnvironmentResult {
+  final List<CapsuleEnvironmentTarget> targets;
+  final List<String> errors;
+
+  const CapsuleEnvironmentResult({
+    required this.targets,
+    this.errors = const [],
+  });
+}
+
 // SessionStatus is the at-a-glance state shown on each card. `shell` = a plain
 // (non-agent) terminal. Agent states combine the coarse terminal busy flag with
 // recent hook events so the overview can say what the agent is actually doing.
@@ -248,13 +312,22 @@ class SessionOverviewStore extends ChangeNotifier {
     required bool preferSelfDistill,
   })?
   captureCapsuleHandler;
+  Future<(CapsuleBindingCatalog? catalog, String? error)> Function()?
+  capsuleBindingCatalogHandler;
   Future<(bool ok, String? error)> Function(
     CapsuleDraft draft, {
     required String visibility,
     required String summary,
+    required CapsuleBinding binding,
     required List<String> skillZips,
   })?
   submitCapsuleHandler;
+  List<CapsuleEnvironmentTarget> Function(String projectId)?
+  resolveCapsuleEnvironmentHandler;
+  Future<(CapsuleEnvironmentResult? result, String? error)> Function(
+    CapsuleEnvironmentRequest request,
+  )?
+  prepareCapsuleEnvironmentHandler;
 
   // capsuleInFlight tracks sessions whose capsule is currently being captured/
   // distilled, so the UI debounces repeat "打成胶囊" clicks and can show a busy
@@ -343,6 +416,7 @@ class SessionOverviewStore extends ChangeNotifier {
     CapsuleDraft draft, {
     required String visibility,
     required String summary,
+    CapsuleBinding binding = const CapsuleBinding(),
     List<String> skillZips = const [],
   }) async {
     if (submitCapsuleHandler == null) return (false, '会话总览未就绪');
@@ -350,8 +424,28 @@ class SessionOverviewStore extends ChangeNotifier {
       draft,
       visibility: visibility,
       summary: summary,
+      binding: binding,
       skillZips: skillZips,
     );
+  }
+
+  Future<(CapsuleBindingCatalog?, String?)> capsuleBindingCatalog() async {
+    if (capsuleBindingCatalogHandler == null) {
+      return (null, '工作区尚未就绪');
+    }
+    return capsuleBindingCatalogHandler!();
+  }
+
+  List<CapsuleEnvironmentTarget> resolveCapsuleEnvironment(String projectId) =>
+      resolveCapsuleEnvironmentHandler?.call(projectId.trim()) ?? const [];
+
+  Future<(CapsuleEnvironmentResult?, String?)> prepareCapsuleEnvironment(
+    CapsuleEnvironmentRequest request,
+  ) async {
+    if (prepareCapsuleEnvironmentHandler == null) {
+      return (null, '工作区尚未就绪');
+    }
+    return prepareCapsuleEnvironmentHandler!(request);
   }
 }
 

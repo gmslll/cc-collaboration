@@ -344,20 +344,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid capsule metadata", http.StatusBadRequest)
 			return
 		}
-		if capsule.EffectiveVisibility() == handoffschema.CapsulePublic {
-			projectID := strings.TrimSpace(capsule.ProjectID)
-			if projectID == "" {
-				http.Error(w, "public capsule requires project_id", http.StatusBadRequest)
-				return
-			}
-			if _, ok, err := s.Store.EffectiveProjectRole(r.Context(), projectID, identity); err != nil {
-				http.Error(w, "check capsule project: "+err.Error(), http.StatusInternalServerError)
-				return
-			} else if !ok {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			capsule.ProjectID = projectID
+		if !handoffschema.ValidCapsuleVisibility(capsule.Visibility) {
+			writeCapsuleScopeError(w, store.ErrInvalid)
+			return
 		}
 	}
 	// Server overrides sender + id + created_at + schema_version to prevent spoofing.
@@ -372,8 +361,20 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	p.CreatedAt = now
 	p.ID = handoff.NewID(now)
 
-	if err := s.Store.Insert(r.Context(), &p); err != nil {
-		http.Error(w, "insert: "+err.Error(), http.StatusInternalServerError)
+	var insertErr error
+	if p.EffectiveKind() == handoffschema.KindCapsule {
+		insertErr = s.Store.InsertCapsuleAuthorized(
+			r.Context(), &p, identity, s.isAdmin(r.Context(), identity),
+		)
+	} else {
+		insertErr = s.Store.Insert(r.Context(), &p)
+	}
+	if insertErr != nil {
+		if p.EffectiveKind() == handoffschema.KindCapsule {
+			writeCapsuleScopeError(w, insertErr)
+			return
+		}
+		http.Error(w, "insert: "+insertErr.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.publishHandoffCreated(r.Context(), &p, p.EffectiveRecipients())
@@ -414,23 +415,40 @@ func (s *Server) deleteCapsule(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// patchCapsule edits the caller's own capsule metadata — visibility / summary
-// (owner-only).
+// patchCapsule edits the caller's own capsule metadata and optional team /
+// project binding (owner-only).
 func (s *Server) patchCapsule(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Identity(r.Context())
 	var body struct {
 		Visibility *string `json:"visibility,omitempty"`
 		Summary    *string `json:"summary,omitempty"`
+		OrgID      *string `json:"org_id,omitempty"`
+		ProjectID  *string `json:"project_id,omitempty"`
 	}
 	if err := decodeJSONBody(w, r, 64<<10, &body); err != nil {
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.Store.UpdateCapsuleMeta(r.Context(), r.PathValue("id"), identity, body.Visibility, body.Summary); err != nil {
-		writeStoreError(w, err)
+	if body.Visibility != nil && !handoffschema.ValidCapsuleVisibility(*body.Visibility) {
+		http.Error(w, "invalid capsule visibility", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.UpdateCapsuleMeta(
+		r.Context(), r.PathValue("id"), identity, s.isAdmin(r.Context(), identity),
+		body.Visibility, body.Summary, body.OrgID, body.ProjectID,
+	); err != nil {
+		writeCapsuleScopeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeCapsuleScopeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrInvalid) {
+		http.Error(w, "invalid capsule team/project binding", http.StatusBadRequest)
+		return
+	}
+	writeStoreError(w, err)
 }
 
 // publishHandoffCreated fans a handoff.created SSE event out to each of the

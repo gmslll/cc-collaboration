@@ -292,6 +292,7 @@ type CapsuleOptions struct {
 	Urgency         handoffschema.Urgency
 	SourceAgent     string // "claude" | "codex"
 	OriginSessionID string
+	OrgID           string
 	ProjectID       string
 	SummaryMD       string // short human description of what this capsule is for
 	NoteMD          string
@@ -314,8 +315,11 @@ func BuildCapsule(opts CapsuleOptions) (*handoffschema.Package, map[string][]byt
 	if opts.SourceAgent != "claude" && opts.SourceAgent != "codex" {
 		return nil, nil, fmt.Errorf("capsule source_agent must be \"claude\" or \"codex\", got %q", opts.SourceAgent)
 	}
-	if opts.Visibility == handoffschema.CapsulePublic && strings.TrimSpace(opts.ProjectID) == "" {
-		return nil, nil, fmt.Errorf("public capsule requires a relay project id")
+	if !handoffschema.ValidCapsuleVisibility(opts.Visibility) {
+		return nil, nil, fmt.Errorf("invalid capsule visibility %q", opts.Visibility)
+	}
+	if opts.Visibility == handoffschema.CapsulePublic && strings.TrimSpace(opts.OrgID) == "" && strings.TrimSpace(opts.ProjectID) == "" {
+		return nil, nil, fmt.Errorf("public capsule requires a relay organization or project id")
 	}
 
 	attachments := map[string][]byte{}
@@ -357,6 +361,7 @@ func BuildCapsule(opts CapsuleOptions) (*handoffschema.Package, map[string][]byt
 			SourceAgent:     opts.SourceAgent,
 			OriginSessionID: opts.OriginSessionID,
 			Visibility:      opts.Visibility,
+			OrgID:           strings.TrimSpace(opts.OrgID),
 			ProjectID:       strings.TrimSpace(opts.ProjectID),
 			HasTranscript:   hasTranscript,
 			HasPersona:      hasPersona,

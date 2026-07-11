@@ -487,6 +487,32 @@ func (s *Store) Insert(ctx context.Context, p *handoffschema.Package) error {
 	return nil
 }
 
+// InsertCapsuleAuthorized validates and canonicalizes a new capsule's final
+// team/project scope in the same transaction that inserts it. This prevents a
+// membership revoke or project move from landing between authorization and
+// persistence.
+func (s *Store) InsertCapsuleAuthorized(ctx context.Context, p *handoffschema.Package, identity string, admin bool) error {
+	if p == nil || p.EffectiveKind() != handoffschema.KindCapsule || p.Capsule == nil {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin capsule tx: %w", err)
+	}
+	defer tx.Rollback()
+	if err := normalizeCapsuleScopeTx(ctx, tx, p.Capsule, identity, admin, true); err != nil {
+		return err
+	}
+	p.Sender = strings.TrimSpace(identity)
+	if err := insertHandoffInTx(ctx, tx, p); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit capsule insert: %w", err)
+	}
+	return nil
+}
+
 // insertHandoffInTx writes the package to `handoffs` and fans one row per
 // recipient into `handoff_recipients`, all inside the caller's transaction.
 // Shared between Insert (own tx) and Reassign (which already owns a tx that
@@ -684,6 +710,14 @@ func (s *Store) CapsuleVisibleTo(ctx context.Context, p *handoffschema.Package, 
 		_, ok, err := s.EffectiveProjectRole(ctx, projectID, viewer)
 		return ok, err
 	}
+	if orgID := strings.TrimSpace(p.CapsuleOrEmpty().OrgID); orgID != "" {
+		active, err := s.UserActive(ctx, viewer)
+		if err != nil || !active {
+			return false, err
+		}
+		_, ok, err := s.OrganizationMemberRole(ctx, orgID, viewer)
+		return ok, err
+	}
 	return s.IdentitiesUseLegacyFlatRoster(ctx, p.Sender, viewer)
 }
 
@@ -719,10 +753,14 @@ func (s *Store) DeleteCapsule(ctx context.Context, id, owner string) error {
 	return err
 }
 
-// UpdateCapsuleMeta edits an owner's capsule metadata in place — visibility
-// and/or summary (nil = unchanged). Only capsules, only the owner; attachment
-// bodies (persona/seed) are not touched here.
-func (s *Store) UpdateCapsuleMeta(ctx context.Context, id, owner string, visibility, summary *string) error {
+// UpdateCapsuleMeta atomically edits an owner's capsule metadata and validates
+// its final team/project binding. Reading the current payload, applying only
+// explicitly supplied fields, authorizing the resulting scope and writing it
+// happen in one transaction so concurrent partial PATCHes cannot lose updates.
+func (s *Store) UpdateCapsuleMeta(ctx context.Context, id, owner string, admin bool, visibility, summary, orgID, projectID *string) error {
+	if visibility != nil && !handoffschema.ValidCapsuleVisibility(*visibility) {
+		return ErrInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -739,7 +777,16 @@ func (s *Store) UpdateCapsuleMeta(ctx context.Context, id, owner string, visibil
 	if err := json.Unmarshal([]byte(payload), &p); err != nil {
 		return fmt.Errorf("decode capsule payload: %w", err)
 	}
-	p.ApplyCapsuleEdit(visibility, summary)
+	if visibility == nil && summary == nil && orgID == nil && projectID == nil {
+		return tx.Commit()
+	}
+	p.ApplyCapsuleEdit(visibility, summary, orgID, projectID)
+	changingScope := visibility != nil || orgID != nil || projectID != nil
+	if changingScope {
+		if err := normalizeCapsuleScopeTx(ctx, tx, p.Capsule, owner, admin, orgID != nil); err != nil {
+			return err
+		}
+	}
 	p.Capsule.UpdatedAt = time.Now().UTC()
 	updated, err := json.Marshal(&p)
 	if err != nil {
@@ -752,6 +799,64 @@ func (s *Store) UpdateCapsuleMeta(ctx context.Context, id, owner string, visibil
 		return err
 	}
 	return tx.Commit()
+}
+
+func normalizeCapsuleScopeTx(ctx context.Context, tx *sql.Tx, capsule *handoffschema.Capsule, identity string, admin, orgExplicit bool) error {
+	if capsule == nil || !handoffschema.ValidCapsuleVisibility(capsule.Visibility) {
+		return ErrInvalid
+	}
+	orgID := strings.TrimSpace(capsule.OrgID)
+	projectID := strings.TrimSpace(capsule.ProjectID)
+	orgFromProject := false
+	if projectID != "" {
+		var projectOrgID, projectRole, orgRole string
+		err := tx.QueryRowContext(ctx,
+			`SELECT p.org_id, COALESCE(pm.role, ''), COALESCE(om.role, '')
+			   FROM projects p
+			   LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.identity = ?
+			   LEFT JOIN organization_members om ON om.org_id = p.org_id AND om.identity = ?
+			  WHERE p.id = ?`, identity, identity, projectID,
+		).Scan(&projectOrgID, &projectRole, &orgRole)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if !admin && projectRole == "" && !OrgRoleCanManage(orgRole) {
+			return ErrForbidden
+		}
+		if orgExplicit && orgID != "" && orgID != projectOrgID {
+			return ErrInvalid
+		}
+		orgID = projectOrgID
+		orgFromProject = true
+	}
+	if orgID != "" && !orgFromProject {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM organizations WHERE id = ?`, orgID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if !admin {
+			var role string
+			if err := tx.QueryRowContext(ctx,
+				`SELECT role FROM organization_members WHERE org_id = ? AND identity = ?`,
+				orgID, identity,
+			).Scan(&role); errors.Is(err, sql.ErrNoRows) {
+				return ErrForbidden
+			} else if err != nil {
+				return err
+			}
+		}
+	}
+	if capsule.EffectiveVisibility() == handoffschema.CapsulePublic && orgID == "" {
+		return ErrInvalid
+	}
+	capsule.OrgID = orgID
+	capsule.ProjectID = projectID
+	return nil
 }
 
 // scanListItem reads one row produced by the standard ListItem column set

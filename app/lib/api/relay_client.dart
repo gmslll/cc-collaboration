@@ -67,10 +67,18 @@ class RelayClient {
   Future<void> deleteCapsule(String id) =>
       _dio.delete('/v1/capsules/${_pathSegment(id)}');
 
-  Future<void> patchCapsule(String id, {String? visibility, String? summary}) {
+  Future<void> patchCapsule(
+    String id, {
+    String? visibility,
+    String? summary,
+    String? orgId,
+    String? projectId,
+  }) {
     final data = <String, String>{};
     if (visibility != null) data['visibility'] = visibility;
     if (summary != null) data['summary'] = summary;
+    if (orgId != null) data['org_id'] = orgId;
+    if (projectId != null) data['project_id'] = projectId;
     return _dio.patch('/v1/capsules/${_pathSegment(id)}', data: data);
   }
 

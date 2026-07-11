@@ -23,6 +23,7 @@ func TestBuildCapsule_TeamScoped(t *testing.T) {
 		Visibility:      handoffschema.CapsulePublic,
 		SourceAgent:     "claude",
 		OriginSessionID: "sess-abc",
+		OrgID:           "org-1",
 		ProjectID:       "project-1",
 		SummaryMD:       "把摸透 windows 闪退的会话冻结成胶囊",
 		TranscriptJSONL: transcript,
@@ -43,7 +44,7 @@ func TestBuildCapsule_TeamScoped(t *testing.T) {
 		t.Fatal("Capsule metadata is nil")
 	}
 	c := pkg.Capsule
-	if c.SourceAgent != "claude" || c.OriginSessionID != "sess-abc" || c.Visibility != handoffschema.CapsulePublic || c.ProjectID != "project-1" {
+	if c.SourceAgent != "claude" || c.OriginSessionID != "sess-abc" || c.Visibility != handoffschema.CapsulePublic || c.OrgID != "org-1" || c.ProjectID != "project-1" {
 		t.Errorf("Capsule meta mismatch: %+v", c)
 	}
 	if !c.HasTranscript || !c.HasPersona {
@@ -113,6 +114,7 @@ func TestBuildCapsule_Rejections(t *testing.T) {
 		{"bad source_agent", CapsuleOptions{RepoName: "d", Sender: "a", SourceAgent: "gemini", Persona: []byte("x")}},
 		{"empty capsule", CapsuleOptions{RepoName: "d", Sender: "a", SourceAgent: "claude"}},
 		{"unscoped public capsule", CapsuleOptions{RepoName: "d", Sender: "a", SourceAgent: "claude", Visibility: handoffschema.CapsulePublic, Persona: []byte("x")}},
+		{"invalid visibility", CapsuleOptions{RepoName: "d", Sender: "a", SourceAgent: "claude", Visibility: "everyone", Persona: []byte("x")}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

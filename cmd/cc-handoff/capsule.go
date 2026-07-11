@@ -45,7 +45,8 @@ func runCapsuleSubmit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("capsule submit", flag.ContinueOnError)
 	sourceAgent := fs.String("source-agent", "", "source tool the capsule was captured from: claude | codex (required)")
 	originSession := fs.String("origin-session", "", "capture-side agent session id (claude uuid / codex rollout id)")
-	projectID := fs.String("project-id", "", "relay project id that scopes a public capsule (defaults to the mapped workspace project)")
+	orgID := fs.String("org-id", "", "optional relay organization id bound to the capsule")
+	projectID := fs.String("project-id", "", "optional relay project id bound to the capsule")
 	public := fs.Bool("public", false, "publish to the plaza as 公开 (visible to the team); default is 个人 (private, owner-only)")
 	transcriptPath := fs.String("transcript", "", "path to transcript.jsonl (raw log, for same-tool native --resume)")
 	transcriptTextPath := fs.String("transcript-text", "", "path to transcript.txt (neutral render, cross-tool seed)")
@@ -81,12 +82,14 @@ func runCapsuleSubmit(ctx context.Context, args []string) error {
 	if *public {
 		visibility = handoffschema.CapsulePublic
 	}
-	resolvedProjectID := strings.TrimSpace(*projectID)
-	if resolvedProjectID == "" {
-		resolvedProjectID = strings.TrimSpace(res.WorkspaceProjectID)
-	}
-	if visibility == handoffschema.CapsulePublic && resolvedProjectID == "" {
-		return fmt.Errorf("public capsule requires a mapped relay project (or --project-id)")
+	resolvedOrgID, resolvedProjectID := capsuleSubmitScope(
+		visibility,
+		*orgID,
+		*projectID,
+		res.WorkspaceProjectID,
+	)
+	if visibility == handoffschema.CapsulePublic && resolvedOrgID == "" && resolvedProjectID == "" {
+		return fmt.Errorf("public capsule requires --org-id or a mapped relay project")
 	}
 
 	transcript, err := readCapsuleFile(*transcriptPath)
@@ -147,6 +150,7 @@ func runCapsuleSubmit(ctx context.Context, args []string) error {
 		Urgency:         urgency,
 		SourceAgent:     *sourceAgent,
 		OriginSessionID: *originSession,
+		OrgID:           resolvedOrgID,
 		ProjectID:       resolvedProjectID,
 		SummaryMD:       summaryMD,
 		NoteMD:          *note,
@@ -171,6 +175,18 @@ func runCapsuleSubmit(ctx context.Context, args []string) error {
 	fmt.Printf("  source=%s  ①transcript=%v  ②persona=%v\n",
 		*sourceAgent, pkg.Capsule.HasTranscript, pkg.Capsule.HasPersona)
 	return nil
+}
+
+func capsuleSubmitScope(
+	visibility handoffschema.CapsuleVisibility,
+	orgID, projectID, mappedProjectID string,
+) (string, string) {
+	orgID = strings.TrimSpace(orgID)
+	projectID = strings.TrimSpace(projectID)
+	if visibility == handoffschema.CapsulePublic && orgID == "" && projectID == "" {
+		projectID = strings.TrimSpace(mappedProjectID)
+	}
+	return orgID, projectID
 }
 
 // readCapsuleFile reads an optional payload file; an empty path means the

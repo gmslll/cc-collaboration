@@ -9,6 +9,7 @@ import '../local/session_overview.dart';
 import '../local/skill_pack.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../widgets/capsule_binding_picker.dart';
 import '../widgets/session_snapshot_view.dart';
 
 double capsuleChoiceDialogWidth(Size size, {double preferred = 440}) {
@@ -780,6 +781,9 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
   bool _public = false; // default 个人 (private)
   bool _submitting = false;
   bool _loading = true;
+  CapsuleBindingCatalog? _bindingCatalog;
+  CapsuleBinding _binding = const CapsuleBinding();
+  String? _bindingError;
   // Skill/script dirs the work depends on (from deps.txt), each with a "bundle
   // it?" flag. Bundled dirs travel with the capsule so a teammate without the
   // skill still gets it.
@@ -820,6 +824,21 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
           () => true,
         ); // a dep outside ~/.claude/skills
       }
+      final (catalog, bindingError) = await widget.store
+          .capsuleBindingCatalog();
+      _bindingCatalog = catalog;
+      _bindingError = bindingError;
+      if (catalog != null && widget.draft.projectId.trim().isNotEmpty) {
+        for (final project in catalog.projects) {
+          if (project.id == widget.draft.projectId.trim()) {
+            _binding = CapsuleBinding(
+              orgId: project.orgId,
+              projectId: project.id,
+            );
+            break;
+          }
+        }
+      }
     } catch (e) {
       if (mounted) snack(context, '读取胶囊草稿失败: ${errorText(e)}');
     }
@@ -836,8 +855,8 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
 
   Future<void> _submit() async {
     if (_submitting) return;
-    if (_public && widget.draft.projectId.trim().isEmpty) {
-      snack(context, '当前会话未绑定团队项目,不能发布为团队共享');
+    if (_public && _binding.orgId.trim().isEmpty) {
+      snack(context, '团队共享胶囊必须选择一个团队');
       return;
     }
     setState(() => _submitting = true);
@@ -865,6 +884,7 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
         widget.draft,
         visibility: _public ? 'public' : 'private',
         summary: _summary.text.trim(),
+        binding: _binding,
         skillZips: skillZips,
       );
       if (!mounted) return;
@@ -1055,6 +1075,15 @@ class _CapsuleReviewDialogState extends State<_CapsuleReviewDialog> {
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+                      CapsuleBindingPicker(
+                        catalog: _bindingCatalog,
+                        binding: _binding,
+                        enabled: !_submitting,
+                        error: _bindingError,
+                        onChanged: (binding) =>
+                            setState(() => _binding = binding),
                       ),
                       const SizedBox(height: 16),
                       Row(

@@ -145,10 +145,16 @@ func ParseCapsuleVisibility(s string) CapsuleVisibility {
 	return CapsulePrivate
 }
 
-// ApplyCapsuleEdit mutates a capsule package's editable metadata in place —
-// visibility and/or summary (nil = unchanged), ensuring Capsule is non-nil so
-// callers (the store) needn't know the payload's shape.
-func (p *Package) ApplyCapsuleEdit(visibility, summary *string) {
+// ValidCapsuleVisibility accepts the wire values supported by new writes.
+// Empty is the backwards-compatible private default.
+func ValidCapsuleVisibility(s CapsuleVisibility) bool {
+	return s == "" || s == CapsulePrivate || s == CapsulePublic
+}
+
+// ApplyCapsuleEdit mutates a capsule package's editable metadata in place.
+// Nil means unchanged while a pointer to "" explicitly clears an optional
+// binding. The relay validates and normalizes scope before persisting it.
+func (p *Package) ApplyCapsuleEdit(visibility, summary, orgID, projectID *string) {
 	if p.Capsule == nil {
 		p.Capsule = &Capsule{}
 	}
@@ -157,6 +163,12 @@ func (p *Package) ApplyCapsuleEdit(visibility, summary *string) {
 	}
 	if summary != nil {
 		p.SummaryMD = *summary
+	}
+	if orgID != nil {
+		p.Capsule.OrgID = strings.TrimSpace(*orgID)
+	}
+	if projectID != nil {
+		p.Capsule.ProjectID = strings.TrimSpace(*projectID)
 	}
 }
 
@@ -245,8 +257,13 @@ type Capsule struct {
 	// Visibility controls plaza reach: "private" (个人, owner-only) or "public"
 	// (公开, visible to the team). Empty is treated as private.
 	Visibility CapsuleVisibility `json:"visibility,omitempty"`
-	// ProjectID scopes a public capsule to one relay project. Older capsules
-	// have no value and retain visibility only in legacy flat-roster deployments.
+	// OrgID optionally binds the capsule to one relay organization. New public
+	// capsules require this scope; when ProjectID is also present the relay
+	// derives OrgID from that project instead of trusting caller metadata.
+	OrgID string `json:"org_id,omitempty"`
+	// ProjectID optionally binds the context to one relay project and lets the
+	// loader prepare that project's current repositories before resuming.
+	// Project-scoped public capsules are visible only to project participants.
 	ProjectID string `json:"project_id,omitempty"`
 	// HasTranscript is true when a transcript payload (raw and/or neutral text)
 	// is present, so the pickup UI can offer the "① full snapshot" form.
@@ -276,6 +293,7 @@ type CapsuleListItem struct {
 	Owner       string            `json:"owner"`
 	Visibility  CapsuleVisibility `json:"visibility"`
 	SourceAgent string            `json:"source_agent"`
+	OrgID       string            `json:"org_id,omitempty"`
 	ProjectID   string            `json:"project_id,omitempty"`
 	// OriginSessionID is the capture-side session id — the filename id a
 	// same-tool native --resume writes the imported transcript under.
@@ -308,6 +326,7 @@ func NewCapsuleListItem(p *Package) CapsuleListItem {
 		Owner:           p.Sender,
 		Visibility:      c.EffectiveVisibility(),
 		SourceAgent:     c.SourceAgent,
+		OrgID:           c.OrgID,
 		ProjectID:       c.ProjectID,
 		OriginSessionID: c.OriginSessionID,
 		HasTranscript:   c.HasTranscript,

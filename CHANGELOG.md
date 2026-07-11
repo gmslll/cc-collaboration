@@ -6,6 +6,10 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Added
+
+- **胶囊可选绑定团队与项目环境** — 发布和编辑时可选择不绑定、团队或团队项目；Relay 校验并归一项目所属团队。载入项目胶囊时优先匹配本地 `project_id`，缺失则按项目当前 GitHub 仓库绑定先拉取并注册环境，配置刷新成功后再恢复对应会话。
+
 ### Fixed
 
 - **胶囊权限、完整性与本地载入安全** — 新团队胶囊按来源项目隔离；附件仅拥有者可上传且必须匹配发布时的 SHA/大小。App 校验下载完整性，拒绝会话 ID 路径穿越和覆盖，技能包使用有界流式安全解压并禁止链接/越界/覆盖，草稿在取消或发送后清理。

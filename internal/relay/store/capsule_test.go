@@ -117,6 +117,39 @@ func TestListCapsules_PublicScopedToSharedTeam(t *testing.T) {
 	}
 }
 
+func TestListCapsules_PublicScopedToOrganization(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.CreateOrganization(ctx, "org-a", "A", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddOrganizationMember(ctx, "org-a", "bob", OrgRoleGuest); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateOrganization(ctx, "org-b", "B", "mallory", now); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &handoffschema.Package{
+		ID: "team-only", SchemaVersion: handoffschema.SchemaVersion,
+		Kind: handoffschema.KindCapsule, Sender: "alice",
+		Urgency: handoffschema.UrgencyNormal, CreatedAt: now,
+		Capsule: &handoffschema.Capsule{
+			SourceAgent: "claude", Visibility: handoffschema.CapsulePublic,
+			OrgID: "org-a", HasPersona: true,
+		},
+	}
+	if err := st.Insert(ctx, pkg); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.ListCapsules(ctx, "bob", 0); err != nil || len(got) != 1 || got[0].OrgID != "org-a" {
+		t.Fatalf("organization member capsules = %+v, err=%v", got, err)
+	}
+	if got, err := st.ListCapsules(ctx, "mallory", 0); err != nil || len(got) != 0 {
+		t.Fatalf("organization-scoped capsule leaked: %+v, err=%v", got, err)
+	}
+}
+
 func TestListCapsules_UnscopedPublicFailsClosedForAccountTeams(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
@@ -294,14 +327,14 @@ func TestUpdateCapsuleMeta_OwnerEdits(t *testing.T) {
 	mustInsertCapsule(t, st, "c1", "alice", handoffschema.CapsulePublic)
 
 	pub := string(handoffschema.CapsulePublic)
-	if err := st.UpdateCapsuleMeta(context.Background(), "c1", "bob", &pub, nil); !errors.Is(err, ErrForbidden) {
+	if err := st.UpdateCapsuleMeta(context.Background(), "c1", "bob", false, &pub, nil, nil, nil); !errors.Is(err, ErrForbidden) {
 		t.Errorf("non-owner edit = %v, want ErrForbidden", err)
 	}
 
 	priv := string(handoffschema.CapsulePrivate)
 	sum := "改过的说明"
 	beforeEdit := time.Now().UTC()
-	if err := st.UpdateCapsuleMeta(context.Background(), "c1", "alice", &priv, &sum); err != nil {
+	if err := st.UpdateCapsuleMeta(context.Background(), "c1", "alice", false, &priv, &sum, nil, nil); err != nil {
 		t.Fatalf("owner edit: %v", err)
 	}
 	// Flipped to private → a teammate no longer sees it; the owner does, with the new headline.
@@ -314,5 +347,52 @@ func TestUpdateCapsuleMeta_OwnerEdits(t *testing.T) {
 	}
 	if own[0].UpdatedAt.Before(beforeEdit) {
 		t.Errorf("owner view did not receive metadata update time: %+v", own[0])
+	}
+}
+
+func TestUpdateCapsuleMeta_BindingIsAtomicAndProjectDerivesOrganization(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.CreateOrganization(ctx, "org-a", "A", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProjectInOrg(ctx, "project-a", "org-a", "A project", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	mustInsertCapsule(t, st, "binding", "alice", handoffschema.CapsulePrivate)
+
+	public := string(handoffschema.CapsulePublic)
+	projectID := "project-a"
+	if err := st.UpdateCapsuleMeta(ctx, "binding", "alice", false, &public, nil, nil, &projectID); err != nil {
+		t.Fatalf("bind project: %v", err)
+	}
+	pkg, _, err := st.Get(ctx, "binding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Capsule.OrgID != "org-a" || pkg.Capsule.ProjectID != "project-a" {
+		t.Fatalf("project binding not normalized: %+v", pkg.Capsule)
+	}
+
+	summary := "visibility-only patch keeps latest binding"
+	if err := st.UpdateCapsuleMeta(ctx, "binding", "alice", false, nil, &summary, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	pkg, _, _ = st.Get(ctx, "binding")
+	if pkg.Capsule.ProjectID != "project-a" || pkg.Capsule.OrgID != "org-a" {
+		t.Fatalf("partial patch lost binding: %+v", pkg.Capsule)
+	}
+
+	clear := ""
+	if err := st.UpdateCapsuleMeta(ctx, "binding", "alice", false, nil, nil, nil, &clear); err != nil {
+		t.Fatal(err)
+	}
+	pkg, _, _ = st.Get(ctx, "binding")
+	if pkg.Capsule.ProjectID != "" || pkg.Capsule.OrgID != "org-a" {
+		t.Fatalf("clearing project should keep team binding: %+v", pkg.Capsule)
+	}
+	if err := st.UpdateCapsuleMeta(ctx, "binding", "alice", false, nil, nil, &clear, nil); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("public capsule cleared to no scope = %v, want ErrInvalid", err)
 	}
 }

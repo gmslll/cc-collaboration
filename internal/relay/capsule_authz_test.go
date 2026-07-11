@@ -127,12 +127,12 @@ func TestCapsuleViewVisibility(t *testing.T) {
 		t.Errorf("undeclared capsule attachment PUT = %d, want 400", got)
 	}
 
-	submitCapsule := func(projectID string) int {
+	submitCapsule := func(visibility handoffschema.CapsuleVisibility, orgID, projectID string) int {
 		body, _ := json.Marshal(handoffschema.Package{
 			Kind: handoffschema.KindCapsule,
 			Capsule: &handoffschema.Capsule{
-				SourceAgent: "claude", Visibility: handoffschema.CapsulePublic,
-				ProjectID: projectID, HasPersona: true,
+				SourceAgent: "claude", Visibility: visibility,
+				OrgID: orgID, ProjectID: projectID, HasPersona: true,
 			},
 		})
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/handoffs", bytes.NewReader(body))
@@ -146,13 +146,69 @@ func TestCapsuleViewVisibility(t *testing.T) {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return resp.StatusCode
 	}
-	if got := submitCapsule(""); got != http.StatusBadRequest {
+	if got := submitCapsule(handoffschema.CapsulePublic, "", ""); got != http.StatusBadRequest {
 		t.Errorf("unscoped public capsule submit = %d, want 400", got)
 	}
-	if got := submitCapsule("project-other"); got != http.StatusForbidden {
+	if got := submitCapsule(handoffschema.CapsulePublic, "", "project-other"); got != http.StatusForbidden {
 		t.Errorf("foreign-project capsule submit = %d, want 403", got)
 	}
-	if got := submitCapsule("project-shared"); got != http.StatusCreated {
+	if got := submitCapsule(handoffschema.CapsulePrivate, "", "project-other"); got != http.StatusForbidden {
+		t.Errorf("private capsule foreign binding = %d, want 403", got)
+	}
+	if got := submitCapsule(handoffschema.CapsulePublic, "org-other", "project-shared"); got != http.StatusBadRequest {
+		t.Errorf("mismatched team/project submit = %d, want 400", got)
+	}
+	if got := submitCapsule(handoffschema.CapsulePublic, "org-shared", ""); got != http.StatusCreated {
+		t.Errorf("team-only public capsule submit = %d, want 201", got)
+	}
+	if got := submitCapsule(handoffschema.CapsulePublic, "", "project-shared"); got != http.StatusCreated {
 		t.Errorf("scoped public capsule submit = %d, want 201", got)
+	}
+	if got := submitCapsule("everyone", "org-shared", ""); got != http.StatusBadRequest {
+		t.Errorf("invalid visibility submit = %d, want 400", got)
+	}
+	items, err := st.ListCapsules(context.Background(), "owner@t", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var normalized bool
+	for _, item := range items {
+		if item.ProjectID == "project-shared" && item.OrgID == "org-shared" {
+			normalized = true
+			break
+		}
+	}
+	if !normalized {
+		t.Fatalf("project-scoped submit was not normalized to its organization: %+v", items)
+	}
+
+	patchCapsule := func(id, token string, body map[string]any) int {
+		data, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/v1/capsules/"+id, bytes.NewReader(data))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+	if got := patchCapsule("cap-priv", mate, map[string]any{"summary": "no"}); got != http.StatusForbidden {
+		t.Errorf("non-owner capsule patch = %d, want 403", got)
+	}
+	if got := patchCapsule("cap-priv", owner, map[string]any{
+		"visibility": "public", "org_id": "", "project_id": "",
+	}); got != http.StatusBadRequest {
+		t.Errorf("unscoped private->public patch = %d, want 400", got)
+	}
+	if got := patchCapsule("cap-priv", owner, map[string]any{
+		"visibility": "public", "org_id": "org-shared", "project_id": "",
+	}); got != http.StatusNoContent {
+		t.Errorf("team-only public patch = %d, want 204", got)
+	}
+	if got := patchCapsule("cap-priv", owner, map[string]any{"visibility": "everyone"}); got != http.StatusBadRequest {
+		t.Errorf("invalid visibility patch = %d, want 400", got)
 	}
 }

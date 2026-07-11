@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cc-collaboration/pkg/handoffschema"
 )
 
 func TestRunCapsule_Dispatch(t *testing.T) {
@@ -16,6 +18,24 @@ func TestRunCapsule_Dispatch(t *testing.T) {
 	err := runCapsule(ctx, []string{"frobnicate"})
 	if err == nil || !strings.Contains(err.Error(), "unknown capsule subcommand") {
 		t.Errorf("unknown subcommand: got %v", err)
+	}
+}
+
+func TestCapsuleSubmitScope(t *testing.T) {
+	if org, project := capsuleSubmitScope(
+		handoffschema.CapsulePrivate, "", "", "mapped",
+	); org != "" || project != "" {
+		t.Fatalf("private capsule inferred scope: org=%q project=%q", org, project)
+	}
+	if org, project := capsuleSubmitScope(
+		handoffschema.CapsulePublic, " org ", "", "mapped",
+	); org != "org" || project != "" {
+		t.Fatalf("explicit team should not infer project: org=%q project=%q", org, project)
+	}
+	if org, project := capsuleSubmitScope(
+		handoffschema.CapsulePublic, "", "", " mapped ",
+	); org != "" || project != "mapped" {
+		t.Fatalf("public mapped fallback: org=%q project=%q", org, project)
 	}
 }
 

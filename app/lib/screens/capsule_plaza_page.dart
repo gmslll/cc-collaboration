@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
@@ -12,6 +14,7 @@ import '../local/session_overview.dart';
 import '../local/skill_pack.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../widgets/capsule_binding_picker.dart';
 
 // CapsulePlazaPage is the 胶囊广场: a browsable gallery of session capsules the
 // caller can see — team-shared capsules plus their own 个人 (private) ones. Fed
@@ -141,6 +144,8 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
   String? _agentFilter;
   String? _repoFilter;
   final Set<String> _deletingIds = {};
+  Map<String, String> _organizationNames = const {};
+  Map<String, String> _relayProjectNames = const {};
 
   @override
   void initState() {
@@ -168,6 +173,8 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
         _agentFilter = null;
         _repoFilter = null;
         _deletingIds.clear();
+        _organizationNames = const {};
+        _relayProjectNames = const {};
       });
       _load();
     }
@@ -185,12 +192,23 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
       _error = null;
     });
     try {
-      final items = await client.capsules();
+      final itemsFuture = client.capsules();
+      final orgsFuture = client.organizations().catchError(
+        (_) => <Organization>[],
+      );
+      final projectsFuture = client.projects().catchError((_) => <Project>[]);
+      final items = await itemsFuture;
+      final orgs = await orgsFuture;
+      final projects = await projectsFuture;
       if (!_isCurrentLoad(generation, client, identity, relayUrl, token)) {
         return;
       }
       setState(() {
         _items = items;
+        _organizationNames = {for (final org in orgs) org.id: org.name};
+        _relayProjectNames = {
+          for (final project in projects) project.id: project.name,
+        };
         _loading = false;
       });
     } catch (e) {
@@ -639,6 +657,11 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
         : c.repoName.isNotEmpty
         ? '${c.repoName} 会话胶囊'
         : '未命名胶囊';
+    final bindingLabel = c.projectId.isNotEmpty
+        ? '项目 ${_relayProjectNames[c.projectId] ?? (c.repoName.isEmpty ? c.projectId : c.repoName)}'
+        : c.orgId.isNotEmpty
+        ? '团队 ${_organizationNames[c.orgId] ?? c.orgId}'
+        : '环境 未绑定';
     return Container(
       key: ValueKey('capsule-card-${c.id}'),
       padding: const EdgeInsets.all(13),
@@ -755,8 +778,12 @@ class _CapsulePlazaPageState extends State<CapsulePlazaPage> {
             children: [
               Expanded(
                 child: _metaItem(
-                  Icons.folder_outlined,
-                  '项目 ${c.repoName.isEmpty ? "未关联" : c.repoName}',
+                  c.projectId.isNotEmpty
+                      ? Icons.folder_outlined
+                      : c.orgId.isNotEmpty
+                      ? Icons.groups_outlined
+                      : Icons.link_off_rounded,
+                  bindingLabel,
                 ),
               ),
               const SizedBox(width: 10),
@@ -1021,9 +1048,17 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   String? _workspace;
   String? _project;
   final _branchCtl = TextEditingController();
+  final _environmentWorkspaceCtl = TextEditingController();
+  final _environmentParentCtl = TextEditingController();
   bool _submitting = false;
   Package? _pkg; // fetched once on open, reused by _extractSkillPacks at load
   List<String>? _bundledSkills; // null = still loading
+  List<CapsuleEnvironmentTarget> _boundTargets = const [];
+  CapsuleEnvironmentTarget? _explicitTarget;
+  ProjectDetail? _environmentProject;
+  Set<String> _environmentRepoNames = const {};
+  bool _environmentChecking = true;
+  String? _environmentError;
 
   @override
   void initState() {
@@ -1040,6 +1075,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
           : ws.first.projects.first.name;
     }
     _loadPackage();
+    _resolveBoundEnvironment();
   }
 
   // _loadPackage fetches the capsule package once: it drives the bundled-skill
@@ -1062,6 +1098,8 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
   @override
   void dispose() {
     _branchCtl.dispose();
+    _environmentWorkspaceCtl.dispose();
+    _environmentParentCtl.dispose();
     super.dispose();
   }
 
@@ -1072,8 +1110,189 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
     return m.isEmpty ? null : m.first;
   }
 
-  String? get _projectPath {
-    return _selectedProject?.path;
+  bool get _explicitTargetSelected =>
+      _explicitTarget != null &&
+      _explicitTarget!.workspace == _workspace &&
+      _explicitTarget!.project == _project;
+
+  String? get _projectPath => _explicitTargetSelected
+      ? _explicitTarget!.workdir
+      : _selectedProject?.path;
+
+  String? get _targetWorkspace => _workspace;
+
+  String? get _targetProject => _project;
+
+  String? get _targetProjectId => _explicitTargetSelected
+      ? _explicitTarget!.projectId
+      : _selectedProject?.projectId;
+
+  List<String> get _workspaceNames {
+    final names = [
+      for (final workspace in widget.config.workspaces) workspace.name,
+    ];
+    final explicit = _explicitTarget?.workspace;
+    if (explicit != null && !names.contains(explicit)) names.add(explicit);
+    return names;
+  }
+
+  List<String> get _projectNames {
+    final names = [for (final project in _projects) project.name];
+    final explicit = _explicitTarget;
+    if (explicit != null &&
+        explicit.workspace == _workspace &&
+        !names.contains(explicit.project)) {
+      names.add(explicit.project);
+    }
+    return names;
+  }
+
+  String _defaultEnvironmentParent() {
+    var root = widget.config.workspaceRoot.trim();
+    if (root.isEmpty) root = '~/cc-handoff-workspaces';
+    final home = Platform.environment['HOME'] ?? '';
+    if (root == '~' && home.isNotEmpty) return home;
+    if (root.startsWith('~/') && home.isNotEmpty) {
+      return '$home${root.substring(1)}';
+    }
+    return root;
+  }
+
+  String _safeEnvironmentWorkspaceName(String value) {
+    var result = value.trim().replaceAll(
+      RegExp(r'[<>:"/\\|?*\x00-\x1f\x7f]+'),
+      '-',
+    );
+    result = result.replaceAll(RegExp(r'[- ]{2,}'), '-');
+    result = result.replaceAll(RegExp(r'^[. ]+|[. ]+$'), '');
+    return result.isEmpty ? 'team-project' : result;
+  }
+
+  CapsuleEnvironmentTarget? _preferredTarget(
+    List<CapsuleEnvironmentTarget> targets,
+  ) {
+    if (targets.isEmpty) return null;
+    final repoName = widget.capsule.repoName.trim();
+    if (repoName.isNotEmpty) {
+      for (final target in targets) {
+        if (target.project == repoName) return target;
+      }
+      return null;
+    }
+    return targets.first;
+  }
+
+  void _selectBoundTarget(CapsuleEnvironmentTarget target) {
+    _explicitTarget = target;
+    _workspace = target.workspace;
+    _project = target.project;
+  }
+
+  Future<void> _resolveBoundEnvironment() async {
+    final projectID = widget.capsule.projectId.trim();
+    if (projectID.isEmpty) {
+      if (mounted) setState(() => _environmentChecking = false);
+      return;
+    }
+    final local = widget.overviewStore.resolveCapsuleEnvironment(projectID);
+    final localPreferred = _preferredTarget(local);
+    if (localPreferred != null) {
+      if (!mounted) return;
+      setState(() {
+        _boundTargets = local;
+        _selectBoundTarget(localPreferred);
+        _environmentChecking = false;
+      });
+      return;
+    }
+    try {
+      final detail = await widget.client.project(projectID);
+      if (!mounted || !widget.isCurrentContext()) return;
+      final cloneable = detail.cloneableRepos;
+      final sourceRepo = widget.capsule.repoName.trim();
+      final sourceAvailable =
+          sourceRepo.isEmpty ||
+          cloneable.any((repo) => repo.repoName == sourceRepo);
+      setState(() {
+        _environmentProject = cloneable.isNotEmpty && sourceAvailable
+            ? detail
+            : null;
+        _environmentRepoNames = sourceRepo.isEmpty
+            ? {for (final repo in cloneable) repo.repoName}
+            : sourceAvailable
+            ? {sourceRepo}
+            : const {};
+        _environmentWorkspaceCtl.text = _safeEnvironmentWorkspaceName(
+          detail.project.name,
+        );
+        _environmentParentCtl.text = _defaultEnvironmentParent();
+        _environmentChecking = false;
+        if (cloneable.isEmpty) {
+          _environmentError = '项目尚未绑定可拉取的 GitHub 仓库，可改用下方现有本地项目';
+        } else if (!sourceAvailable) {
+          _environmentError = '胶囊来源仓库 $sourceRepo 已从项目解绑，请选择下方匹配的本地项目';
+        }
+      });
+    } catch (e) {
+      if (!mounted || !widget.isCurrentContext()) return;
+      setState(() {
+        _environmentChecking = false;
+        _environmentError = '无法读取绑定项目：${errorText(e)}';
+      });
+    }
+  }
+
+  Future<bool> _prepareEnvironmentIfNeeded() async {
+    if (widget.capsule.projectId.trim().isEmpty ||
+        _boundTargets.isNotEmpty ||
+        _environmentProject == null ||
+        _environmentProject!.cloneableRepos.isEmpty) {
+      return true;
+    }
+    final workspaceName = _environmentWorkspaceCtl.text.trim();
+    final parent = _environmentParentCtl.text.trim();
+    if (workspaceName.isEmpty ||
+        parent.isEmpty ||
+        _environmentRepoNames.isEmpty) {
+      _fail('请选择要载入的仓库和本地位置');
+      return false;
+    }
+    final repos = [
+      for (final repo in _environmentProject!.cloneableRepos)
+        if (_environmentRepoNames.contains(repo.repoName))
+          CapsuleEnvironmentRepo(repo.repoName, repo.cloneUrl),
+    ];
+    final (result, error) = await widget.overviewStore
+        .prepareCapsuleEnvironment(
+          CapsuleEnvironmentRequest(
+            projectId: widget.capsule.projectId,
+            workspaceName: workspaceName,
+            parentDirectory: parent,
+            repos: repos,
+          ),
+        );
+    if (!mounted || _closeIfStaleContext()) return false;
+    if (result == null || result.targets.isEmpty) {
+      _fail('载入项目环境失败：${error ?? "未知错误"}');
+      return false;
+    }
+    final preferred = _preferredTarget(result.targets);
+    if (preferred == null) {
+      final sourceRepo = widget.capsule.repoName.trim();
+      _fail(
+        '来源仓库 $sourceRepo 未成功载入，已停止恢复会话'
+        '${result.errors.isEmpty ? "" : "：${result.errors.join("；")}"}',
+      );
+      return false;
+    }
+    setState(() {
+      _boundTargets = result.targets;
+      _selectBoundTarget(preferred);
+      _environmentError = result.errors.isEmpty
+          ? null
+          : '部分仓库未载入：${result.errors.join("；")}';
+    });
+    return true;
   }
 
   // _wouldNativeResume is true for ① when the target tool matches the source:
@@ -1094,15 +1313,20 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
 
   Future<void> _submit() async {
     if (_submitting) return;
-    final ws = _workspace, proj = _project;
-    final projPath = _projectPath;
-    if (ws == null || proj == null || projPath == null) {
-      snack(context, '请选择目标工作区 / 项目');
+    if (_environmentChecking) {
+      snack(context, '正在检查绑定项目环境');
       return;
     }
     if (_closeIfStaleContext()) return;
     setState(() => _submitting = true);
     try {
+      if (!await _prepareEnvironmentIfNeeded()) return;
+      final ws = _targetWorkspace, proj = _targetProject;
+      final projPath = _projectPath;
+      if (ws == null || proj == null || projPath == null) {
+        _fail('请选择目标工作区 / 项目');
+        return;
+      }
       // Place any bundled skill packs into the local skills dir first, so the
       // session (resumed or seeded) can use them immediately.
       final skills = await _extractSkillPacks();
@@ -1120,7 +1344,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
             workspace: ws,
             project: proj,
             kind: _tool,
-            projectId: _selectedProject?.projectId,
+            projectId: _targetProjectId,
             resumeAgentSessionId: resumeId,
             workdir: projPath,
           );
@@ -1149,7 +1373,7 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
         workspace: ws,
         project: proj,
         kind: _tool,
-        projectId: _selectedProject?.projectId,
+        projectId: _targetProjectId,
         newWorktreeBranch: branch.isEmpty ? null : branch,
       );
       if (!mounted) return;
@@ -1275,17 +1499,209 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
     return bytes == null ? null : utf8.decode(bytes, allowMalformed: true);
   }
 
-  List<DropdownMenuItem<String>> _nameItems(Iterable<dynamic> xs) => [
-    for (final x in xs)
+  List<DropdownMenuItem<String>> _stringItems(Iterable<String> values) => [
+    for (final value in values)
       DropdownMenuItem(
-        value: x.name as String,
-        child: Text(
-          x.name as String,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        value: value,
+        child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
   ];
+
+  Future<void> _pickEnvironmentParent() async {
+    final value = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: '选择团队项目 workspace 的父目录',
+    );
+    if (!mounted || value == null || value.trim().isEmpty) return;
+    _environmentParentCtl.text = value.trim();
+    setState(() {});
+  }
+
+  Widget _environmentPanel() {
+    final projectID = widget.capsule.projectId.trim();
+    final sourceRepo = widget.capsule.repoName.trim();
+    if (projectID.isEmpty) return const SizedBox.shrink();
+    if (_environmentChecking) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          key: ValueKey('capsule-environment-checking'),
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 8),
+            Text('检查绑定项目环境…', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    if (_boundTargets.isNotEmpty) {
+      final selected = _explicitTarget ?? _preferredTarget(_boundTargets)!;
+      return Container(
+        key: const ValueKey('capsule-environment-ready'),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          border: Border.all(color: CcColors.ok.withValues(alpha: 0.55)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.check_circle_outline_rounded,
+                  size: 17,
+                  color: CcColors.ok,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '项目环境已就绪 · ${selected.workspace} / ${selected.project}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            if (_boundTargets.length > 1) ...[
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                key: const ValueKey('capsule-environment-target'),
+                initialValue: selected.workdir,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: '本地仓库',
+                  isDense: true,
+                ),
+                items: [
+                  for (final target in _boundTargets)
+                    DropdownMenuItem(
+                      value: target.workdir,
+                      child: Text(
+                        '${target.workspace} / ${target.project}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: _submitting
+                    ? null
+                    : (workdir) {
+                        if (workdir == null) return;
+                        setState(() {
+                          _selectBoundTarget(
+                            _boundTargets.firstWhere(
+                              (target) => target.workdir == workdir,
+                            ),
+                          );
+                        });
+                      },
+              ),
+            ],
+            if (_environmentError != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                _environmentError!,
+                style: const TextStyle(color: CcColors.warning, fontSize: 11.5),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+    final detail = _environmentProject;
+    return Container(
+      key: const ValueKey('capsule-environment-missing'),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        border: Border.all(color: CcColors.warning.withValues(alpha: 0.55)),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.cloud_download_outlined,
+                size: 17,
+                color: CcColors.warning,
+              ),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '本机没有该项目环境，将先拉取再恢复会话',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          if (detail != null && detail.cloneableRepos.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            for (final repo in detail.cloneableRepos)
+              CheckboxListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: _environmentRepoNames.contains(repo.repoName),
+                title: Text(
+                  repo.repoName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CcType.code(size: 11.5),
+                ),
+                onChanged: _submitting || repo.repoName == sourceRepo
+                    ? null
+                    : (selected) => setState(() {
+                        final next = Set<String>.from(_environmentRepoNames);
+                        selected == true
+                            ? next.add(repo.repoName)
+                            : next.remove(repo.repoName);
+                        _environmentRepoNames = next;
+                      }),
+              ),
+            const SizedBox(height: 6),
+            TextField(
+              key: const ValueKey('capsule-environment-workspace'),
+              controller: _environmentWorkspaceCtl,
+              enabled: !_submitting,
+              decoration: const InputDecoration(
+                labelText: '本地 workspace 名称',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('capsule-environment-parent'),
+              controller: _environmentParentCtl,
+              readOnly: true,
+              enabled: !_submitting,
+              decoration: InputDecoration(
+                labelText: '父目录',
+                isDense: true,
+                suffixIcon: IconButton(
+                  tooltip: '选择目录',
+                  onPressed: _submitting ? null : _pickEnvironmentParent,
+                  icon: const Icon(Icons.folder_open_rounded, size: 18),
+                ),
+              ),
+            ),
+          ],
+          if (_environmentError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _environmentError!,
+              style: const TextStyle(color: CcColors.warning, fontSize: 11.5),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) =>
@@ -1369,7 +1785,9 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                     ),
                   ],
                   selected: {_form},
-                  onSelectionChanged: (s) => setState(() => _form = s.first),
+                  onSelectionChanged: _submitting
+                      ? null
+                      : (s) => setState(() => _form = s.first),
                 ),
                 if (_form == 'snapshot')
                   Padding(
@@ -1389,8 +1807,13 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                     ButtonSegment(value: 'codex', label: Text('Codex')),
                   ],
                   selected: {_tool},
-                  onSelectionChanged: (s) => setState(() => _tool = s.first),
+                  onSelectionChanged: _submitting
+                      ? null
+                      : (s) => setState(() => _tool = s.first),
                 ),
+                const SizedBox(height: 12),
+                _sectionLabel('关联环境'),
+                _environmentPanel(),
                 const SizedBox(height: 12),
                 _sectionLabel('目标位置'),
                 DropdownButton<String>(
@@ -1398,12 +1821,17 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                   menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
                   hint: const Text('workspace'),
                   value: _workspace,
-                  items: _nameItems(widget.config.workspaces),
-                  onChanged: (v) => setState(() {
-                    _workspace = v;
-                    final p = _projects;
-                    _project = p.isEmpty ? null : p.first.name;
-                  }),
+                  items: _stringItems(_workspaceNames),
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() {
+                          if (_explicitTarget?.workspace != v) {
+                            _explicitTarget = null;
+                          }
+                          _workspace = v;
+                          final projects = _projectNames;
+                          _project = projects.isEmpty ? null : projects.first;
+                        }),
                 ),
                 const SizedBox(height: 8),
                 DropdownButton<String>(
@@ -1411,12 +1839,20 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                   menuMaxHeight: capsuleLoadMenuMaxHeight(screenSize),
                   hint: const Text('project'),
                   value: _project,
-                  items: _nameItems(_projects),
-                  onChanged: (v) => setState(() => _project = v),
+                  items: _stringItems(_projectNames),
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() {
+                          if (_explicitTarget?.project != v) {
+                            _explicitTarget = null;
+                          }
+                          _project = v;
+                        }),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _branchCtl,
+                  enabled: !_submitting,
                   decoration: const InputDecoration(
                     labelText: '新建 worktree 分支名(可选)',
                     isDense: true,
@@ -1442,7 +1878,15 @@ class _CapsuleLoadDialogState extends State<_CapsuleLoadDialog> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.rocket_launch_rounded, size: 16),
-                      label: const Text('起会话'),
+                      label: Text(
+                        _environmentProject != null &&
+                                _environmentProject!
+                                    .cloneableRepos
+                                    .isNotEmpty &&
+                                _boundTargets.isEmpty
+                            ? '载入环境并起会话'
+                            : '起会话',
+                      ),
                     ),
                   ],
                 ),
@@ -1529,11 +1973,18 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
   List<String>? _skills; // null until the content fetch completes (loading)
   String _persona = '';
   String _seed = '';
+  CapsuleBindingCatalog? _bindingCatalog;
+  late CapsuleBinding _binding;
+  String? _bindingError;
 
   @override
   void initState() {
     super.initState();
     _public = widget.capsule.visibility == 'public';
+    _binding = CapsuleBinding(
+      orgId: widget.capsule.orgId,
+      projectId: widget.capsule.projectId,
+    );
     _summary = TextEditingController(text: widget.capsule.headline);
     _load();
   }
@@ -1544,15 +1995,53 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
     final skillsF = bundledSkillNames(widget.client, id);
     final personaF = fetchCapsuleText(widget.client, id, 'persona.md');
     final seedF = fetchCapsuleText(widget.client, id, 'seed.md');
+    final bindingsF = _loadBindings();
     final skills = await skillsF;
     final persona = await personaF;
     final seed = await seedF;
+    final bindings = await bindingsF;
     if (!mounted || !widget.isCurrentContext()) return;
     setState(() {
       _skills = skills;
       _persona = persona ?? '';
       _seed = seed ?? '';
+      _bindingCatalog = bindings.$1;
+      _bindingError = bindings.$2;
+      if (_binding.orgId.isEmpty && _binding.projectId.isNotEmpty) {
+        for (final project in bindings.$1?.projects ?? const []) {
+          if (project.id == _binding.projectId) {
+            _binding = CapsuleBinding(
+              orgId: project.orgId,
+              projectId: project.id,
+            );
+            break;
+          }
+        }
+      }
     });
+  }
+
+  Future<(CapsuleBindingCatalog?, String?)> _loadBindings() async {
+    try {
+      final values = await Future.wait<Object>([
+        widget.client.organizations(),
+        widget.client.projects(),
+      ]);
+      final orgs = values[0] as List<Organization>;
+      final projects = values[1] as List<Project>;
+      return (
+        CapsuleBindingCatalog(
+          teams: [for (final org in orgs) CapsuleBindingTeam(org.id, org.name)],
+          projects: [
+            for (final project in projects)
+              CapsuleBindingProject(project.id, project.orgId, project.name),
+          ],
+        ),
+        null,
+      );
+    } catch (e) {
+      return (null, errorText(e));
+    }
   }
 
   // _readonlyBox renders a labeled, scrollable, selectable preview of capsule
@@ -1591,12 +2080,26 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
 
   Future<void> _save() async {
     if (_saving) return;
+    final initialBinding = CapsuleBinding(
+      orgId: widget.capsule.orgId,
+      projectId: widget.capsule.projectId,
+    );
+    final scopeChanged =
+        _public != (widget.capsule.visibility == 'public') ||
+        _binding.orgId != initialBinding.orgId ||
+        _binding.projectId != initialBinding.projectId;
+    if (_public && _binding.orgId.trim().isEmpty && scopeChanged) {
+      snack(context, '团队共享胶囊必须选择一个团队');
+      return;
+    }
     setState(() => _saving = true);
     try {
       await widget.client.patchCapsule(
         widget.capsule.id,
-        visibility: _public ? 'public' : 'private',
+        visibility: scopeChanged ? (_public ? 'public' : 'private') : null,
         summary: _summary.text.trim(),
+        orgId: scopeChanged ? _binding.orgId : null,
+        projectId: scopeChanged ? _binding.projectId : null,
       );
       if (!mounted || !widget.isCurrentContext()) return;
       Navigator.of(context).pop(true);
@@ -1613,127 +2116,144 @@ class _CapsuleEditDialogState extends State<_CapsuleEditDialog> {
     final dialogSize = capsuleEditDialogSize(MediaQuery.sizeOf(context));
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: dialogSize.width,
-          maxHeight: dialogSize.height,
-        ),
+      child: SizedBox(
+        width: dialogSize.width,
+        height: dialogSize.height,
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.edit_rounded,
-                      size: 20,
-                      color: CcColors.accent,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      '编辑胶囊',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.edit_rounded,
+                            size: 20,
+                            color: CcColors.accent,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            '编辑胶囊',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: '关闭',
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            onPressed: () => Navigator.of(context).pop(false),
+                          ),
+                        ],
                       ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: '关闭',
-                      icon: const Icon(Icons.close_rounded, size: 18),
-                      onPressed: () => Navigator.of(context).pop(false),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  key: const ValueKey('capsule-edit-summary'),
-                  controller: _summary,
-                  decoration: const InputDecoration(
-                    labelText: '说明',
-                    isDense: true,
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: const ValueKey('capsule-edit-summary'),
+                        controller: _summary,
+                        decoration: const InputDecoration(
+                          labelText: '说明',
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment(
+                            value: false,
+                            label: Text('个人'),
+                            icon: Icon(Icons.lock_outline_rounded, size: 16),
+                          ),
+                          ButtonSegment(
+                            value: true,
+                            label: Text('团队'),
+                            icon: Icon(Icons.public_rounded, size: 16),
+                          ),
+                        ],
+                        selected: {_public},
+                        onSelectionChanged: (s) =>
+                            setState(() => _public = s.first),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _public ? '同团队成员能在广场看到' : '只有你自己能在广场看到',
+                        style: CcType.code(size: 11.5, color: CcColors.subtle),
+                      ),
+                      const SizedBox(height: 12),
+                      CapsuleBindingPicker(
+                        catalog: _bindingCatalog,
+                        binding: _binding,
+                        enabled: !_saving,
+                        error: _bindingError,
+                        onChanged: (binding) =>
+                            setState(() => _binding = binding),
+                      ),
+                      const SizedBox(height: 14),
+                      const Divider(height: 1),
+                      const SizedBox(height: 12),
+                      if (_skills == null)
+                        const Row(
+                          children: [
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('读取胶囊内容…', style: TextStyle(fontSize: 12)),
+                          ],
+                        )
+                      else ...[
+                        _sectionLabel('自带技能'),
+                        if (_skills!.isEmpty)
+                          Text(
+                            '(无)',
+                            style: CcType.code(
+                              size: 11.5,
+                              color: CcColors.subtle,
+                            ),
+                          )
+                        else
+                          _skillWrap(_skills!),
+                        const SizedBox(height: 12),
+                        _readonlyBox('专职角色 (persona)', _persona),
+                        const SizedBox(height: 12),
+                        _readonlyBox('上下文摘要 (seed)', _seed),
+                      ],
+                    ],
                   ),
                 ),
-                const SizedBox(height: 14),
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(
-                      value: false,
-                      label: Text('个人'),
-                      icon: Icon(Icons.lock_outline_rounded, size: 16),
-                    ),
-                    ButtonSegment(
-                      value: true,
-                      label: Text('团队'),
-                      icon: Icon(Icons.public_rounded, size: 16),
-                    ),
-                  ],
-                  selected: {_public},
-                  onSelectionChanged: (s) => setState(() => _public = s.first),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  _public ? '同团队成员能在广场看到' : '只有你自己能在广场看到',
-                  style: CcType.code(size: 11.5, color: CcColors.subtle),
-                ),
-                const SizedBox(height: 14),
-                const Divider(height: 1),
-                const SizedBox(height: 12),
-                if (_skills == null)
-                  const Row(
-                    children: [
-                      SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      SizedBox(width: 8),
-                      Text('读取胶囊内容…', style: TextStyle(fontSize: 12)),
-                    ],
-                  )
-                else ...[
-                  _sectionLabel('自带技能'),
-                  if (_skills!.isEmpty)
-                    Text(
-                      '(无)',
-                      style: CcType.code(size: 11.5, color: CcColors.subtle),
-                    )
-                  else
-                    _skillWrap(_skills!),
-                  const SizedBox(height: 12),
-                  _readonlyBox('专职角色 (persona)', _persona),
-                  const SizedBox(height: 12),
-                  _readonlyBox('上下文摘要 (seed)', _seed),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _saving
+                        ? null
+                        : () => Navigator.of(context).pop(false),
+                    child: const Text('取消'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _save,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.check_rounded, size: 16),
+                    label: const Text('保存'),
+                  ),
                 ],
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: _saving
-                          ? null
-                          : () => Navigator.of(context).pop(false),
-                      child: const Text('取消'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton.icon(
-                      onPressed: _saving ? null : _save,
-                      icon: _saving
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.check_rounded, size: 16),
-                      label: const Text('保存'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

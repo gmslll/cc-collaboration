@@ -847,6 +847,7 @@ class WorkspacePage extends StatefulWidget {
   // off one SSE subscription.
   final Me? me;
   final TodoStore store;
+  final Future<void> Function()? onConfigChanged;
   const WorkspacePage({
     super.key,
     required this.client,
@@ -854,6 +855,7 @@ class WorkspacePage extends StatefulWidget {
     required this.overviewStore,
     required this.me,
     required this.store,
+    this.onConfigChanged,
   });
 
   @override
@@ -1563,6 +1565,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     // it. Both need config/relay + Cli, which only live here.
     widget.overviewStore.captureCapsuleHandler = _captureSessionCapsule;
     widget.overviewStore.submitCapsuleHandler = _submitSessionCapsule;
+    widget.overviewStore.capsuleBindingCatalogHandler =
+        _loadCapsuleBindingCatalog;
+    widget.overviewStore.resolveCapsuleEnvironmentHandler =
+        _resolveCapsuleEnvironment;
+    widget.overviewStore.prepareCapsuleEnvironmentHandler =
+        _prepareCapsuleEnvironment;
     // Run the light preview-refresh ticker only while the overview page is on
     // screen or a phone is connected (both observe the snapshot).
     widget.overviewStore.observed.addListener(_syncOverviewTicker);
@@ -1749,6 +1757,9 @@ class _WorkspacePageState extends State<WorkspacePage>
     widget.overviewStore.previewHandler = null;
     widget.overviewStore.captureCapsuleHandler = null;
     widget.overviewStore.submitCapsuleHandler = null;
+    widget.overviewStore.capsuleBindingCatalogHandler = null;
+    widget.overviewStore.resolveCapsuleEnvironmentHandler = null;
+    widget.overviewStore.prepareCapsuleEnvironmentHandler = null;
     widget.overviewStore.reviewedHandler = null;
     widget.overviewStore.dispatchHandler = null;
     widget.overviewStore.spawnHandler = null;
@@ -2558,6 +2569,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       // Desktop-initiated workspace/project/worktree changes must reach connected
       // phones too — otherwise they only see config edits the phone itself made.
       _remoteHost.broadcastRoots();
+      await widget.onConfigChanged?.call();
     }
   }
 
@@ -3154,6 +3166,7 @@ class _WorkspacePageState extends State<WorkspacePage>
     CapsuleDraft draft, {
     required String visibility,
     required String summary,
+    required CapsuleBinding binding,
     List<String> skillZips = const [],
   }) async {
     final d = draft.draftDir;
@@ -3184,7 +3197,8 @@ class _WorkspacePageState extends State<WorkspacePage>
     await addIfExists('--persona', 'persona.md');
     await addIfExists('--seed', 'seed.md');
     addFlag('--origin-session', draft.originSessionId);
-    addFlag('--project-id', draft.projectId);
+    addFlag('--org-id', binding.orgId);
+    addFlag('--project-id', binding.projectId);
     if (visibility == 'public') args.add('--public'); // else defaults to 个人
     addFlag('--summary', summary);
     for (final z in skillZips) {
@@ -3200,6 +3214,143 @@ class _WorkspacePageState extends State<WorkspacePage>
       return (false, e.message);
     } catch (e) {
       return (false, '$e');
+    }
+  }
+
+  Future<(CapsuleBindingCatalog?, String?)> _loadCapsuleBindingCatalog() async {
+    final client = widget.client;
+    if (client == null) return (null, '请先登录 relay');
+    final relayURL = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    bool current() =>
+        mounted &&
+        teamProjectPullContextMatches(
+          expectedClient: client,
+          currentClient: widget.client,
+          expectedRelay: relayURL,
+          currentRelay: _cfg.relayUrl,
+          expectedToken: token,
+          currentToken: _cfg.token,
+          expectedIdentity: identity,
+          currentIdentity: _cfg.identity,
+        );
+    try {
+      final values = await Future.wait<Object>([
+        client.organizations(),
+        client.projects(),
+      ]);
+      final orgs = values[0] as List<Organization>;
+      final projects = values[1] as List<Project>;
+      if (!current()) return (null, '账号或 relay 已切换');
+      return (
+        CapsuleBindingCatalog(
+          teams: [for (final org in orgs) CapsuleBindingTeam(org.id, org.name)],
+          projects: [
+            for (final project in projects)
+              CapsuleBindingProject(project.id, project.orgId, project.name),
+          ],
+        ),
+        null,
+      );
+    } catch (e) {
+      return (null, errorText(e));
+    }
+  }
+
+  List<CapsuleEnvironmentTarget> _resolveCapsuleEnvironment(String projectId) {
+    final requested = projectId.trim();
+    if (requested.isEmpty) return const [];
+    return [
+      for (final workspace in _cfg.workspaces)
+        for (final project in workspace.projects)
+          if (project.projectId.trim() == requested)
+            CapsuleEnvironmentTarget(
+              workspace: workspace.name,
+              project: project.name,
+              projectId: requested,
+              workdir: project.path,
+            ),
+    ];
+  }
+
+  Future<(CapsuleEnvironmentResult?, String?)> _prepareCapsuleEnvironment(
+    CapsuleEnvironmentRequest request,
+  ) async {
+    if (_busy) return (null, '请等待当前工作区操作完成');
+    final client = widget.client;
+    if (client == null || _cfg.token.trim().isEmpty) {
+      return (null, '请先登录 relay');
+    }
+    if (request.projectId.trim().isEmpty ||
+        !validTeamWorkspaceName(request.workspaceName) ||
+        request.parentDirectory.trim().isEmpty ||
+        request.repos.isEmpty) {
+      return (null, '项目环境参数不完整');
+    }
+    final relayURL = _cfg.relayUrl;
+    final token = _cfg.token;
+    final identity = _cfg.identity;
+    bool current() =>
+        mounted &&
+        teamProjectPullContextMatches(
+          expectedClient: client,
+          currentClient: widget.client,
+          expectedRelay: relayURL,
+          currentRelay: _cfg.relayUrl,
+          expectedToken: token,
+          currentToken: _cfg.token,
+          expectedIdentity: identity,
+          currentIdentity: _cfg.identity,
+        );
+
+    setState(() => _busy = true);
+    final errors = <String>[];
+    try {
+      final detail = await client.project(request.projectId);
+      if (!current()) return (null, '账号或 relay 已切换');
+      final allowed = {
+        for (final repo in detail.cloneableRepos) repo.repoName: repo.cloneUrl,
+      };
+      final workspacePath = joinTeamProjectPath(
+        request.parentDirectory,
+        request.workspaceName,
+      );
+      for (final requestedRepo in request.repos) {
+        if (!current()) return (null, '账号或 relay 已切换，已停止后续仓库');
+        final cloneURL = allowed[requestedRepo.name];
+        if (cloneURL == null || cloneURL != requestedRepo.cloneUrl) {
+          errors.add('${requestedRepo.name}: 项目仓库绑定已变化');
+          continue;
+        }
+        try {
+          await Cli.workspacePullTeamRepo(
+            workspaceName: request.workspaceName,
+            workspacePath: workspacePath,
+            repoName: requestedRepo.name,
+            cloneUrl: cloneURL,
+            projectId: request.projectId,
+          );
+        } catch (e) {
+          errors.add('${requestedRepo.name}: ${errorText(e)}');
+        }
+      }
+      if (!current()) return (null, '账号或 relay 已切换');
+      await _reloadConfig();
+      if (!current()) return (null, '账号或 relay 已切换');
+      await _loadTasks();
+      final targets = _resolveCapsuleEnvironment(request.projectId);
+      if (targets.isEmpty) {
+        return (
+          CapsuleEnvironmentResult(targets: const [], errors: errors),
+          errors.isEmpty ? '项目环境未写入本地配置' : errors.join('\n'),
+        );
+      }
+      return (CapsuleEnvironmentResult(targets: targets, errors: errors), null);
+    } catch (e) {
+      return (null, errorText(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
