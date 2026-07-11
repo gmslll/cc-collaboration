@@ -6,6 +6,8 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-11
+
 ### Added
 
 - **胶囊可选绑定团队与项目环境** — 发布和编辑时可选择不绑定、团队或团队项目；Relay 校验并归一项目所属团队。载入项目胶囊时优先匹配本地 `project_id`，缺失则按项目当前 GitHub 仓库绑定先拉取并注册环境，配置刷新成功后再恢复对应会话。
@@ -13,6 +15,7 @@ The single source of truth for the version number is the `VERSION` file at the r
 ### Fixed
 
 - **胶囊权限、完整性与本地载入安全** — 新团队胶囊按来源项目隔离；附件仅拥有者可上传且必须匹配发布时的 SHA/大小。App 校验下载完整性，拒绝会话 ID 路径穿越和覆盖，技能包使用有界流式安全解压并禁止链接/越界/覆盖，草稿在取消或发送后清理。
+- **胶囊绑定流程不再跨账号或漂移提交** — 账号或 Relay 切换会关闭旧载入/编辑流程，发布和保存期间冻结表单快照；管理员降权、停用与跨团队绑定写入串行，项目绑定的可见范围文案与真实项目参与者权限一致。
 
 ## [1.0.2] - 2026-07-11
 
@@ -766,7 +769,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/gmslll/cc-collaboration/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/gmslll/cc-collaboration/compare/v1.0.1...v1.0.2
 [0.9.30]: https://github.com/gmslll/cc-collaboration/compare/v0.9.29...v0.9.30
 [0.6.11]: https://github.com/gmslll/cc-collaboration/compare/v0.6.10...v0.6.11
