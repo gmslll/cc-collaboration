@@ -57,6 +57,8 @@ abstract class RemoteChannel extends ChangeNotifier {
   Timer? _authHeartbeat;
   int? _connId; // this connection's id (from the relay's _hello)
   int _generation = 0;
+  int _probeCounter = 0;
+  final Map<int, Completer<bool>> _pendingProbes = {};
   bool _running = false;
   bool _disposed = false;
   String? lastError;
@@ -81,6 +83,7 @@ abstract class RemoteChannel extends ChangeNotifier {
     final pending = _pendingSocket;
     _ch = null;
     _pendingSocket = null;
+    _completeProbes(false);
     unawaited(_closeQuietly(ch));
     if (!identical(pending, ch)) unawaited(_closeQuietly(pending));
     _connId = null;
@@ -98,6 +101,7 @@ abstract class RemoteChannel extends ChangeNotifier {
     final pending = _pendingSocket;
     _ch = null;
     _pendingSocket = null;
+    _completeProbes(false);
     unawaited(_closeQuietly(ch));
     if (!identical(pending, ch)) unawaited(_closeQuietly(pending));
     super.dispose();
@@ -109,7 +113,46 @@ abstract class RemoteChannel extends ChangeNotifier {
   // a full ping interval to notice. No-op when not running / not connected.
   void kick() {
     if (!_running) return;
+    _completeProbes(false);
     unawaited(_closeQuietly(_ch));
+  }
+
+  // probe verifies that the authenticated Relay connection can still complete
+  // a round trip without tearing it down. Mobile foreground resume uses this to
+  // preserve a healthy terminal mirror and only kick a genuinely stale socket.
+  Future<bool> probe({Duration timeout = const Duration(seconds: 2)}) async {
+    final socket = _ch;
+    if (!_running || _disposed || socket == null) return false;
+    final id = ++_probeCounter;
+    final completer = Completer<bool>();
+    _pendingProbes[id] = completer;
+    final timer = Timer(timeout, () {
+      if (identical(_pendingProbes[id], completer)) {
+        _pendingProbes.remove(id);
+        completer.complete(false);
+      }
+    });
+    send({'t': '_probe', 'id': id});
+    try {
+      final acknowledged = await completer.future;
+      // A disconnect completes outstanding probes with false. If the reconnect
+      // loop has already replaced this socket, that recovery is sufficient and
+      // the caller must not kick the newly established connection as well.
+      return acknowledged || !identical(_ch, socket);
+    } finally {
+      timer.cancel();
+      if (identical(_pendingProbes[id], completer)) {
+        _pendingProbes.remove(id);
+      }
+    }
+  }
+
+  void _completeProbes(bool result) {
+    final probes = _pendingProbes.values.toList(growable: false);
+    _pendingProbes.clear();
+    for (final probe in probes) {
+      if (!probe.isCompleted) probe.complete(result);
+    }
   }
 
   // --- subclass hooks ---
@@ -211,6 +254,7 @@ abstract class RemoteChannel extends ChangeNotifier {
         _authHeartbeat = null;
         _ch = null;
         _connId = null;
+        _completeProbes(false);
         onDisconnected();
         _notify();
       } else if (!installed &&
@@ -241,6 +285,12 @@ abstract class RemoteChannel extends ChangeNotifier {
         final id = (f['connId'] as num?)?.toInt();
         final r = f['role'] as String?;
         if (id != null && r != null) onPeer(id, r, f['event'] == 'connect');
+      case '_probeAck':
+        final id = (f['id'] as num?)?.toInt();
+        if (id != null) {
+          final probe = _pendingProbes.remove(id);
+          if (probe != null && !probe.isCompleted) probe.complete(true);
+        }
       default:
         onFrame(f);
     }

@@ -48,6 +48,11 @@ const wsMaxQueuedBytes int64 = 16 << 20
 
 const wsStrictBarrierFrameType = "pty.strictBarrier"
 
+const (
+	wsProbeFrameType    = "_probe"
+	wsProbeAckFrameType = "_probeAck"
+)
+
 type wsBroker struct {
 	mu     sync.Mutex
 	nextID atomic.Uint64
@@ -404,17 +409,31 @@ func deliverApplications(
 	}
 }
 
-// handleWSControl consumes broker-owned control frames. A client sends the
-// strict barrier immediately before entering strict P2P mode; closing the
-// currently registered Host sockets synchronously drops legacy terminal
-// watchers without turning every later mobile disconnect into a global Host
-// reconnect.
+// handleWSControl consumes broker-owned control frames. Probes are acknowledged
+// on the same authenticated connection and never reach an opposite-role peer.
+// A client sends the strict barrier immediately before entering strict P2P mode;
+// closing the currently registered Host sockets synchronously drops legacy
+// terminal watchers without turning every later mobile disconnect into a global
+// Host reconnect.
 func (s *Server) handleWSControl(
 	identity string,
 	c *wsConn,
 	env map[string]json.RawMessage,
 ) bool {
-	if frameType(env) != wsStrictBarrierFrameType {
+	switch frameType(env) {
+	case wsProbeFrameType:
+		var id int64
+		if err := json.Unmarshal(env["id"], &id); err != nil || id <= 0 {
+			return true
+		}
+		ack, err := json.Marshal(map[string]any{"t": wsProbeAckFrameType, "id": id})
+		if err != nil || !deliverReliableNow(c, ack) {
+			c.close()
+		}
+		return true
+	case wsStrictBarrierFrameType:
+		// Continue below.
+	default:
 		return false
 	}
 	if c.role != "client" {

@@ -16,6 +16,43 @@ func connIDs(cs []*wsConn) []uint64 {
 	return out
 }
 
+func TestHandleWSControlProbeRepliesOnlyToCaller(t *testing.T) {
+	b := newWsBroker()
+	host := b.add("alice", "host")
+	client := b.add("alice", "client")
+	defer b.remove("alice", host)
+	defer b.remove("alice", client)
+	s := &Server{WsBroker: b}
+
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(`{"t":"_probe","id":42}`), &env); err != nil {
+		t.Fatal(err)
+	}
+	if !s.handleWSControl("alice", client, env) {
+		t.Fatal("probe was not consumed by the broker")
+	}
+	select {
+	case raw := <-client.send:
+		var ack struct {
+			Type string `json:"t"`
+			ID   int64  `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &ack); err != nil {
+			t.Fatal(err)
+		}
+		if ack.Type != wsProbeAckFrameType || ack.ID != 42 {
+			t.Fatalf("unexpected probe ack: %+v", ack)
+		}
+	default:
+		t.Fatal("probe ack was not queued")
+	}
+	select {
+	case raw := <-host.send:
+		t.Fatalf("probe leaked to host: %s", raw)
+	default:
+	}
+}
+
 func TestWsBrokerRoutesByIdentityAndRole(t *testing.T) {
 	b := newWsBroker()
 	host := b.add("alice", "host")

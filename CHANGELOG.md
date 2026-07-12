@@ -6,6 +6,10 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+### Fixed
+
+- **手机从后台恢复不再反复闪屏** — 前台恢复先通过 Relay 对当前 WebSocket 做原路探活，健康连接不再被无条件拆除；仅在探活超时且仍是同一账号/连接世代时重连，避免会话列表、终端缓存和 P2P 路由连续重建。
+
 ## [1.0.3] - 2026-07-11
 
 ### Added

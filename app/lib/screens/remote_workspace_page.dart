@@ -212,6 +212,11 @@ class _RemoteBranchCreateDialogState extends State<_RemoteBranchCreateDialog> {
 // RemoteWorkspacePage is the phone's view of a desktop workspace shared over the
 // relay: pick a terminal session to drive, or browse/read project code. The
 // desktop must have "cast to phone" enabled (workspace toolbar).
+const remoteResumeProbeAfter = Duration(seconds: 10);
+
+bool shouldProbeRemoteOnResume(DateTime? pausedAt, DateTime now) =>
+    pausedAt != null && now.difference(pausedAt) > remoteResumeProbeAfter;
+
 class RemoteWorkspacePage extends StatefulWidget {
   final String relayUrl;
   final String token;
@@ -243,6 +248,7 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   // Persisted so the focus survives an app restart; '' in Prefs means no focus.
   String? _focusedProjectPath;
   DateTime? _pausedAt; // when the app last backgrounded (for resume reconnect)
+  int _resumeProbeGeneration = 0;
   final List<String> _dirStack =
       []; // breadcrumb of opened dirs (empty = roots)
   String? _gitRepo; // selected repo in the Git tab (null = repo list)
@@ -324,16 +330,30 @@ class _RemoteWorkspacePageState extends State<RemoteWorkspacePage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       _pausedAt = DateTime.now();
+      _resumeProbeGeneration++;
     } else if (state == AppLifecycleState.resumed) {
-      // A socket idle through minutes of OS suspension is usually dead, so force
-      // a reconnect rather than wait out the ping timeout. But skip quick app
-      // switches — dropping a healthy connection (3s reconnect) isn't worth it.
       final paused = _pausedAt;
       _pausedAt = null;
-      if (paused != null &&
-          DateTime.now().difference(paused) > const Duration(seconds: 10)) {
-        _c.kick();
+      if (shouldProbeRemoteOnResume(paused, DateTime.now())) {
+        final client = _c;
+        final generation = ++_resumeProbeGeneration;
+        unawaited(_probeAfterResume(client, generation));
       }
+    }
+  }
+
+  Future<void> _probeAfterResume(RemoteClient client, int generation) async {
+    if (!client.connected) {
+      return; // the normal reconnect loop is already active
+    }
+    final healthy = await client.probe();
+    if (!mounted ||
+        generation != _resumeProbeGeneration ||
+        !identical(client, _c)) {
+      return;
+    }
+    if (!healthy && client.connected) {
+      client.kick();
     }
   }
 

@@ -23,6 +23,39 @@ void main() {
     expect(contentScroll.scrollDirection, Axis.vertical);
   }
 
+  test('remote resume probes only after a real background interval', () {
+    final now = DateTime(2026, 7, 12, 12);
+    expect(shouldProbeRemoteOnResume(null, now), isFalse);
+    expect(
+      shouldProbeRemoteOnResume(now.subtract(remoteResumeProbeAfter), now),
+      isFalse,
+    );
+    expect(
+      shouldProbeRemoteOnResume(
+        now.subtract(remoteResumeProbeAfter + const Duration(milliseconds: 1)),
+        now,
+      ),
+      isTrue,
+    );
+  });
+
+  test('remote resume probes before it kicks a stale connection', () {
+    final source = File(
+      'lib/screens/remote_workspace_page.dart',
+    ).readAsStringSync();
+    final lifecycle = source.substring(
+      source.indexOf('void didChangeAppLifecycleState'),
+      source.indexOf('  String? _lastGitOpErr'),
+    );
+
+    expect(lifecycle, contains('unawaited(_probeAfterResume'));
+    expect(lifecycle, contains('final healthy = await client.probe()'));
+    expect(lifecycle, contains('generation != _resumeProbeGeneration'));
+    expect(lifecycle, contains('if (!healthy && client.connected)'));
+    expect(lifecycle, contains('client.kick()'));
+    expect(lifecycle, isNot(contains('_c.kick()')));
+  });
+
   test('remote key bar button labels are width constrained', () {
     final source = File(
       'lib/screens/remote_workspace_page.dart',

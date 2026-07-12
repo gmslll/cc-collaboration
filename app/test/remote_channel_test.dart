@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:app/remote/remote_channel.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -121,5 +122,78 @@ void main() {
     expect(channel.connected, isFalse);
     expect(channel.connectedCount, 0);
     expect(socket.closeCount, greaterThanOrEqualTo(1));
+  });
+
+  test('probe acknowledges a healthy socket without reconnecting', () async {
+    final socket = _FakeRemoteSocket();
+    final channel = _TestRemoteChannel((_, _) => socket);
+    addTearDown(channel.dispose);
+
+    channel.start();
+    socket.readyCompleter.complete();
+    await Future<void>.delayed(Duration.zero);
+    socket.controller.add('{"t":"_hello","connId":7}');
+    await Future<void>.delayed(Duration.zero);
+
+    final result = channel.probe(timeout: const Duration(seconds: 1));
+    final request =
+        jsonDecode(socket.sent.last as String) as Map<String, dynamic>;
+    expect(request['t'], '_probe');
+    socket.controller.add(jsonEncode({'t': '_probeAck', 'id': request['id']}));
+
+    expect(await result, isTrue);
+    expect(channel.connected, isTrue);
+    expect(socket.closeCount, 0);
+  });
+
+  test(
+    'probe timeout reports stale without closing the socket itself',
+    () async {
+      final socket = _FakeRemoteSocket();
+      final channel = _TestRemoteChannel((_, _) => socket);
+      addTearDown(channel.dispose);
+
+      channel.start();
+      socket.readyCompleter.complete();
+      await Future<void>.delayed(Duration.zero);
+      socket.controller.add('{"t":"_hello","connId":8}');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        await channel.probe(timeout: const Duration(milliseconds: 10)),
+        isFalse,
+      );
+      expect(channel.connected, isTrue);
+      expect(socket.closeCount, 0);
+    },
+  );
+
+  test('stale probe does not invalidate a replacement socket', () async {
+    final first = _FakeRemoteSocket();
+    final second = _FakeRemoteSocket();
+    var connections = 0;
+    final channel = _TestRemoteChannel((_, _) {
+      connections++;
+      return connections == 1 ? first : second;
+    });
+    addTearDown(channel.dispose);
+
+    channel.start();
+    first.readyCompleter.complete();
+    await Future<void>.delayed(Duration.zero);
+    first.controller.add('{"t":"_hello","connId":8}');
+    await Future<void>.delayed(Duration.zero);
+
+    final result = channel.probe(timeout: const Duration(seconds: 5));
+    channel.stop();
+    channel.start();
+    second.readyCompleter.complete();
+    await Future<void>.delayed(Duration.zero);
+    second.controller.add('{"t":"_hello","connId":9}');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(await result, isTrue);
+    expect(channel.connected, isTrue);
+    expect(second.closeCount, 0);
   });
 }
