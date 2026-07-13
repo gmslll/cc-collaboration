@@ -6,6 +6,8 @@ The single source of truth for the version number is the `VERSION` file at the r
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-07-13
+
 ### Fixed
 
 - **手机从后台恢复不再反复闪屏** — 前台恢复先通过 Relay 对当前 WebSocket 做原路探活，健康连接不再被无条件拆除；仅在探活超时且仍是同一账号/连接世代时重连，避免会话列表、终端缓存和 P2P 路由连续重建。
@@ -773,7 +775,8 @@ First tagged release. Cuts a baseline before iteration so the MCP server version
 - Step 0 of the receiver prompt no longer references "API delta" when there is no api-delta to consume (module mode).
 - `internal/rules/engine.go` `Apply` performs a second-pass dedup on `(SuggestEdit, SuggestCreate)`. In module mode where many handler/dto files in the same module route to the same client target, 14 redundant hints collapse to one with `(and N other paths in module)` annotation.
 
-[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/gmslll/cc-collaboration/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/gmslll/cc-collaboration/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/gmslll/cc-collaboration/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/gmslll/cc-collaboration/compare/v1.0.1...v1.0.2
 [0.9.30]: https://github.com/gmslll/cc-collaboration/compare/v0.9.29...v0.9.30
